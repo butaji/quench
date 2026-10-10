@@ -34,7 +34,7 @@ impl<H: Host> Vm<H> {
             .intl_number_format_fallback_symbols
             .insert(global, fallback_symbol);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -128,7 +128,7 @@ impl<H: Host> Vm<H> {
             .insert(global, prototype);
         self.set_builtin_function_name(locale, "Locale")?;
         self.set_builtin_value_named(locale, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             locale,
             PropertyKey::string(prototype_atom),
@@ -532,7 +532,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         constructor: Native,
     ) -> Result<Value, JsError> {
-        let atom = self.intern_atom("prototype");
+        let atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, atom)?;
         if self.is_object_like(prototype) {
             return Ok(prototype);

@@ -67,7 +67,7 @@ pub fn run(profile: Option<&str>, filter: Option<&str>, timeout_secs: u64) -> Ex
         counts[5],
         fixtures.len()
     );
-    if counts[RunResult::Pass as usize] + counts[RunResult::Skip as usize] == fixtures.len() {
+    if counts[RunResult::Pass as usize] == fixtures.len() {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)

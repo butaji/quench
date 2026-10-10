@@ -295,14 +295,6 @@ impl<H: Host> Vm<H> {
                             pc = ins.jump_target() as usize;
                         }
                     }
-                    Op::JumpUnaryFalse => {
-                        let operator = ins.unary_operator_field();
-                        let input = self.resolve_operand(p, frame, ins.operand_b())?;
-                        let value = self.unary(p, operator, input)?;
-                        if !self.truthy(value) {
-                            pc = ins.jump_target() as usize;
-                        }
-                    }
                     Op::Return => {
                         self.frames[frame].pc = pc;
                         return Ok(StepResult::Return(self.read(frame, ins.register_a())));
@@ -405,9 +397,14 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn profile_numeric_fusion(&mut self, _frame: usize, _function: u32, _pc: usize, op: Op) {
         #[cfg(feature = "profile-aggregate")]
-        self.profile
-            .fused_opcode(op as usize, self.frames[_frame].program.raw());
+        self.profile.opcode(
+            op as usize,
+            _frame,
+            self.frames[_frame].program.raw(),
+            _function,
+            _pc,
+        );
         #[cfg(not(feature = "profile-aggregate"))]
-        self.profile.fused_opcode(op as usize);
+        self.profile.opcode(op as usize);
     }
 }

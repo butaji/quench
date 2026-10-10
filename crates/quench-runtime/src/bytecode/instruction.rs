@@ -405,15 +405,6 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
-            pub(crate) fn unary_operator_field(self) -> u32 {
-                debug_assert_eq!(
-                    self.op().field_layout(InstructionField::A),
-                    FieldLayout::UnaryOperator
-                );
-                u32::from(self.a())
-            }
-
-            #[allow(dead_code)]
             pub(crate) fn register_window(self) -> RegisterWindow {
                 debug_assert_eq!(
                     self.op().field_layout(InstructionField::B),
@@ -568,25 +559,6 @@ macro_rules! layout_accessors {
             pub(crate) fn local_slot(self) -> usize {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::LocalSlot);
                 self.imm() as usize
-            }
-
-            #[allow(dead_code)]
-            pub(crate) fn copy_local_source_slot(self) -> usize {
-                debug_assert_eq!(self.op(), Op::CopyLocalPlain);
-                debug_assert_eq!(
-                    self.op().field_layout(InstructionField::A),
-                    FieldLayout::LocalSlot
-                );
-                self.a() as usize
-            }
-
-            #[allow(dead_code)]
-            pub(crate) fn local_slot_a(self) -> usize {
-                debug_assert_eq!(
-                    self.op().field_layout(InstructionField::A),
-                    FieldLayout::LocalSlot
-                );
-                self.a() as usize
             }
 
             #[allow(dead_code)]

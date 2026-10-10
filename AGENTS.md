@@ -43,12 +43,13 @@ review requirements, not optional style preferences.
 
 ## Work and evidence
 
-[The task queue](tasks/index.json) owns status, dependencies and lane order;
-`critical_path` is the VM sequence and side lanes are explicitly non-blocking.
-[Documentation](docs/README.md) owns contracts and commands.
+[The Linear project](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview) owns backlog, status, lane ownership and
+coordination; its overview holds the lanes and sync rules. `evidence/` holds
+measurement artifacts. [Documentation](docs/README.md) owns contracts and
+commands.
 Measure V8-v7 at meaningful milestones after the affected execution path passes
 its safety/correctness checks. Evidence is a completion check on each critical-path
-state transition, not a separate prerequisite or replacement for the queue order;
+state transition, not a separate prerequisite or replacement for the backlog order;
 focused measurements may run earlier when they illuminate an affected path. A
 functional milestone can complete without a speed claim; performance claims require
 matched production measurements and regression analysis.

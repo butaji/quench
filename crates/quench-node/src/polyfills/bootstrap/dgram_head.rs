@@ -2,24 +2,19 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"/* eslint-disable max-lines-per-function, complexity */
 const __quenchOriginalRequireWithDgram = globalThis.require;
-const NodeBuffer = globalThis.Buffer;
-const __quenchDgramInternalsKey = Symbol.for("quench.dgram.internals");
-const __quenchDgramInternals = globalThis[__quenchDgramInternalsKey] || {
-  stateSymbol: Symbol.for("quench.dgram.state"),
-  boundPorts: new Set(),
-  closedPorts: new Set(),
-  sockets: new Set(),
-};
-globalThis[__quenchDgramInternalsKey] = __quenchDgramInternals;
-var __quenchDgramStateSymbol = __quenchDgramInternals.stateSymbol;
-var __quenchDgramBoundPorts = __quenchDgramInternals.boundPorts;
-var __quenchDgramClosedPorts = __quenchDgramInternals.closedPorts;
-var __quenchDgramSockets = __quenchDgramInternals.sockets;
+var __quenchDgramStateSymbol = Symbol.for("quench.dgram.state");
+var __quenchDgramBoundPorts = new Set();
+var __quenchDgramClosedPorts = new Set();
+var __quenchDgramSockets = new Set();
 var __quenchDgramNextPort = 40000;
 Object.defineProperties(globalThis, {
   __quenchDgramActiveFds: { value: new Set(), configurable: true },
   __quenchDgramUdpFds: { value: new Set(), configurable: true },
   __quenchDgramUdpHandleInfo: { value: new Map(), configurable: true },
+  __quenchDgramStateSymbol: { value: __quenchDgramStateSymbol, configurable: true },
+  __quenchDgramBoundPorts: { value: __quenchDgramBoundPorts, configurable: true },
+  __quenchDgramClosedPorts: { value: __quenchDgramClosedPorts, configurable: true },
+  __quenchDgramSockets: { value: __quenchDgramSockets, configurable: true },
 });
 const __quenchDgramTypeDetail = (value) => {
   if (value === null) return " Received null";
@@ -41,9 +36,8 @@ const __quenchDgramBufferError = (type, code, message) => {
   );
   error.name = "SystemError";
   error.code = "ERR_SOCKET_BUFFER_SIZE";
-  const errno = code === "EBADF" ? -9 : code === "EINVAL" ? -22 : undefined;
-  error.info = { errno, code, message, syscall };
-  let errorErrno = errno;
+  error.info = { errno: undefined, code, message, syscall };
+  let errorErrno;
   Object.defineProperty(error, "errno", {
     enumerable: true,
     get: () => errorErrno,

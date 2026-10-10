@@ -533,39 +533,36 @@ impl<H: Host> Vm<H> {
             self.report_memory_snapshot(&phase);
         }
         let shape_count = self.shapes.len();
-        let mut scanned_root_shapes = None::<Vec<u64>>;
+        let mut live_shape_bits = vec![0_u64; shape_count.div_ceil(u64::BITS as usize)];
         let mut live_shapes = Vec::new();
         let shapes = &mut self.shapes;
-        let finalization_jobs = self.heap.collect_with_object_roots(
-            roots,
-            |trace_kind, owner, shape, roots| {
-                if trace_kind == GcTraceKind::Collection {
-                    live_shapes.push(shape);
-                }
-                if shapes[shape as usize].may_have_gc_roots {
+        let finalization_jobs =
+            self.heap
+                .collect_with_object_roots(roots, |trace_kind, owner, shape, roots| {
+                    let shape_index = shape as usize;
+                    let word = shape_index / u64::BITS as usize;
+                    let mask = 1_u64 << (shape_index % u64::BITS as usize);
                     if trace_kind == GcTraceKind::VerifyFull {
-                        append_shape_roots(shapes, shape, roots);
+                        if shapes[shape_index].may_have_gc_roots {
+                            append_shape_roots(shapes, shape, roots);
+                        }
                     } else {
-                        let shape_index = shape as usize;
-                        let visited = scanned_root_shapes.get_or_insert_with(|| {
-                            vec![0; shape_count.div_ceil(u64::BITS as usize)]
-                        });
-                        let word = shape_index / u64::BITS as usize;
-                        let mask = 1_u64 << (shape_index % u64::BITS as usize);
-                        if visited[word] & mask == 0 {
-                            visited[word] |= mask;
+                        if full {
+                            live_shapes.push(shape);
+                        }
+                        if shapes[shape_index].may_have_gc_roots
+                            && live_shape_bits[word] & mask == 0
+                        {
+                            live_shape_bits[word] |= mask;
                             append_shape_roots(shapes, shape, roots);
                         }
                     }
-                }
-                if !owned_roots.is_empty()
-                    && let Some(edges) = owned_roots.get(&owner)
-                {
-                    roots.extend(edges.iter().copied());
-                }
-            },
-            full,
-        );
+                    if !owned_roots.is_empty()
+                        && let Some(edges) = owned_roots.get(&owner)
+                    {
+                        roots.extend(edges.iter().copied());
+                    }
+                }, full);
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.
@@ -588,9 +585,6 @@ impl<H: Host> Vm<H> {
             self.resume_continuation(*id);
         }
         self.prune_function_values();
-        if full {
-            self.heap.compact_property_arena();
-        }
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()
@@ -698,7 +692,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         let old_shape_count = old_shapes.len();
         #[cfg(feature = "profile-memory")]
-        let live_object_shape_count = live_shapes.len();
+        let live_shape_count = live_shapes.len();
         let mut mapping = vec![u32::MAX; old_shapes.len()];
         let mut shapes = vec![Shape::root()];
         let mut transitions = FxHashMap::default();
@@ -725,10 +719,10 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
             eprintln!(
-                "{{\"kind\":\"quench-shape-compaction\",\"before\":{},\"after\":{},\"live_objects\":{}}}",
+                "{{\"kind\":\"quench-shape-compaction\",\"before\":{},\"after\":{},\"live_shapes\":{}}}",
                 old_shape_count,
                 self.shapes.len(),
-                live_object_shape_count
+                live_shape_count
             );
         }
     }

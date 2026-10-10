@@ -49,13 +49,15 @@ impl<H: Host> Vm<H> {
                 slots[HostEnvironmentSlot::Data as usize] = data;
                 self.heap.alloc(Cell::Environment {
                     parent: Value::NULL,
-                    program: None,
-                    root_eval_scope: false,
-                    binding_site_pc: None,
                     function: HOST_ENVIRONMENT_FUNCTION,
                     slots: slots.into_boxed_slice().into(),
-                    dynamic_bindings: Box::new(Vec::new().into()),
-                    with_objects: Box::default(),
+                    scope: Box::new(crate::heap::EnvironmentScope {
+                        program: None,
+                        root_eval_scope: false,
+                        binding_site_pc: None,
+                        dynamic_bindings: Vec::new().into(),
+                        with_objects: Box::default(),
+                    }),
                 })
             }
         };

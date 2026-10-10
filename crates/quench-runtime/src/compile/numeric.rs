@@ -236,6 +236,7 @@ mod tests {
             local_atoms: vec![],
             environment_atoms: vec![],
             selective_capture_slots: None,
+            local_registers: Vec::new(),
             inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
@@ -251,6 +252,8 @@ mod tests {
             wide: vec![],
             registers: 3,
             dispatch: crate::bytecode::DispatchClass::Numeric,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
         };
@@ -309,6 +312,7 @@ mod tests {
             local_atoms: vec![],
             environment_atoms: vec![],
             selective_capture_slots: None,
+            local_registers: Vec::new(),
             inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
@@ -324,6 +328,8 @@ mod tests {
             wide: vec![],
             registers: 3,
             dispatch: crate::bytecode::DispatchClass::Numeric,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
         };

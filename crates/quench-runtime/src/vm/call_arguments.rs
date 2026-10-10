@@ -17,6 +17,12 @@ impl CallArguments {
         Self { values: arguments }
     }
 
+    pub(super) fn from_slice(values: &[Value]) -> Self {
+        Self {
+            values: SmallVec::from_slice(values),
+        }
+    }
+
     pub(super) fn as_slice(&self) -> &[Value] {
         &self.values
     }

@@ -11,6 +11,14 @@ const FACTORY: &str = quench_js_check::checked_js!(
     error.code = code;
     return error;
   };
+  const unitsToString = (units) => {
+    let text = "";
+    const chunkSize = 0x4000;
+    for (let offset = 0; offset < units.length; offset += chunkSize) {
+      text += String.fromCharCode(...units.slice(offset, offset + chunkSize));
+    }
+    return text;
+  };
   const byteView = (value) => {
     if (!ArrayBuffer.isView(value)) {
       let received = "an invalid value";
@@ -79,29 +87,30 @@ const FACTORY: &str = quench_js_check::checked_js!(
     const state = stateFor(this);
     const view = byteView(input);
     assertStringSize(state.pending.length, view.byteLength);
-    const result = decode(state, view, false);
+    const bytes = Array.from(view);
+    const result = decode(state, bytes, false);
     state.pending = result.pending;
     updateLastFields(this, state, result.lastTotal);
-    return result.text;
+    return unitsToString(result.units);
   };
 
   StringDecoder.prototype.end = function (input) {
     const state = stateFor(this);
     const view = input === undefined ? undefined : byteView(input);
     assertStringSize(state.pending.length, view === undefined ? 0 : view.byteLength);
-    const bytes = view === undefined ? [] : view;
+    const bytes = view === undefined ? [] : Array.from(view);
     const result = decode(state, bytes, true);
     state.pending = result.pending;
     updateLastFields(this, state, result.lastTotal);
-    return result.text;
+    return unitsToString(result.units);
   };
 
   StringDecoder.prototype.text = function (input, offset = 0) {
     stateFor(this);
     const view = byteView(input);
     const start = Math.max(0, Math.trunc(Number(offset)) || 0);
-    const result = decodeChunk([], view.subarray(start), "utf8", true);
-    return result.text;
+    const result = decodeChunk([], Array.from(view.subarray(start)), "utf8", true);
+    return unitsToString(result.units);
   };
 
   return { StringDecoder };
@@ -155,8 +164,13 @@ pub(crate) fn decode_chunk(
         mode,
     );
     let object = context.object_rooted()?;
-    let text = context.string_units_rooted(&decoded.units);
-    set(context, object, "text", text)?;
+    let units = decoded
+        .units
+        .iter()
+        .map(|unit| context.number(f64::from(*unit)))
+        .collect::<Vec<_>>();
+    let units = context.array_rooted(&units)?;
+    set(context, object, "units", units)?;
     let pending = decoded
         .pending
         .iter()
@@ -176,9 +190,6 @@ fn byte_array(
     let Some(root) = root else {
         return Ok(Vec::new());
     };
-    if let Some(bytes) = context.view_bytes_rooted(root) {
-        return Ok(bytes);
-    }
     let length_key = context.string_rooted("length");
     let length = context.get_property_rooted(root, length_key)?;
     let length = context

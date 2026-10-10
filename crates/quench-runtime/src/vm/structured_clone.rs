@@ -191,7 +191,7 @@ impl<H: Host> Vm<H> {
                 copied_bytes.extend_from_slice(&bytes);
                 let prototype = self.array_buffer_clone_prototype();
                 let target = self.heap.alloc(Cell::ArrayBuffer {
-                    object: Self::empty_object(prototype),
+                    object: Box::new(Self::empty_object(prototype)),
                     bytes: Rc::new(copied_bytes),
                     shared: false,
                     detached: false,
@@ -267,7 +267,7 @@ impl<H: Host> Vm<H> {
 
     fn array_buffer_clone_prototype(&mut self) -> Value {
         let constructor = self.native_value(Native::ArrayBuffer);
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto)
     }

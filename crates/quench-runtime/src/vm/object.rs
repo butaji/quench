@@ -2,6 +2,27 @@ use super::property_key::PropertyKey;
 use super::*;
 
 const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
+
+/// Bit set of facts derived from an atom's text; `DERIVED` marks the set as computed.
+#[derive(Clone, Copy)]
+pub(super) struct AtomClass(u8);
+
+impl AtomClass {
+    const DERIVED: u8 = 1 << 0;
+    pub(super) const PRIVATE: u8 = 1 << 1;
+    pub(super) const ARRAY_INDEX: u8 = 1 << 2;
+    pub(super) const TYPED_ARRAY_INDEX: u8 = 1 << 3;
+    pub(super) const RESTRICTED_FUNCTION_PROPERTY: u8 = 1 << 4;
+
+    #[inline(always)]
+    pub(super) fn contains(self, bits: u8) -> bool {
+        self.0 & bits == bits
+    }
+}
+/// Transitions a shape lookup may walk before the walk counts as long.
+const SHAPE_INDEX_WALK_DISTANCE: usize = 32;
+/// Long walks from one shape after which that shape gets a lookup index.
+const SHAPE_INDEX_LONG_WALKS: u8 = 8;
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 
 struct FieldCacheHit {
@@ -62,8 +83,43 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
 }
 
 impl<H: Host> Vm<H> {
+    /// Name-derived property classes, computed from the atom text once per atom.
+    #[inline(always)]
+    pub(super) fn atom_class(&self, atom: Atom) -> AtomClass {
+        let known = AtomClass(self.atom_classes[atom as usize].get());
+        if known.contains(AtomClass::DERIVED) {
+            return known;
+        }
+        self.derive_atom_class(atom)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn derive_atom_class(&self, atom: Atom) -> AtomClass {
+        let name = self.atom_name(atom);
+        let mut bits = AtomClass::DERIVED;
+        if name.starts_with(PRIVATE_NAME_PREFIX) {
+            bits |= AtomClass::PRIVATE;
+        }
+        if super::object_static::array_index(name).is_some() {
+            bits |= AtomClass::ARRAY_INDEX;
+        }
+        if !matches!(
+            Self::typed_array_index_key(name),
+            super::object_descriptors::TypedArrayIndexKey::NotCanonical
+        ) {
+            bits |= AtomClass::TYPED_ARRAY_INDEX;
+        }
+        if matches!(name, "caller" | "arguments") {
+            bits |= AtomClass::RESTRICTED_FUNCTION_PROPERTY;
+        }
+        self.atom_classes[atom as usize].set(bits);
+        AtomClass(bits)
+    }
+
+    #[inline(always)]
     pub(super) fn is_private_name(&self, atom: Atom) -> bool {
-        self.atom_name(atom).starts_with(PRIVATE_NAME_PREFIX)
+        self.atom_class(atom).contains(AtomClass::PRIVATE)
     }
 
     #[inline(always)]
@@ -82,18 +138,18 @@ impl<H: Host> Vm<H> {
             return index.slots.get(&key).map(|slot| *slot as usize);
         }
         let mut current = Some(shape);
-        while let Some(id) = current {
+        let mut distance = 0;
+        let slot = loop {
+            let Some(id) = current else {
+                break None;
+            };
             let shape = &self.shapes[id as usize];
             match shape.transition {
                 ShapeTransition::Add {
                     key: candidate,
                     slot,
-                } if candidate == key => {
-                    return Some(slot as usize);
-                }
-                ShapeTransition::Delete { key: candidate, .. } if candidate == key => {
-                    return None;
-                }
+                } if candidate == key => break Some(slot as usize),
+                ShapeTransition::Delete { key: candidate, .. } if candidate == key => break None,
                 ShapeTransition::Root
                 | ShapeTransition::Add { .. }
                 | ShapeTransition::Delete { .. }
@@ -101,8 +157,29 @@ impl<H: Host> Vm<H> {
                 | ShapeTransition::Descriptor { .. }
                 | ShapeTransition::Dictionary { .. } => current = shape.parent,
             }
+            distance += 1;
+        };
+        if distance >= SHAPE_INDEX_WALK_DISTANCE {
+            self.note_long_shape_walk(shape);
         }
-        None
+        slot
+    }
+    /// A shape whose lookups repeatedly walk long transition chains (such as
+    /// the global object or a builtin prototype) gets its lookup index. The
+    /// index is linear in the chain length and is built only after
+    /// `SHAPE_INDEX_LONG_WALKS` walks of at least that order already ran, so
+    /// index memory stays proportional to walking work already spent.
+    #[cold]
+    fn note_long_shape_walk(&self, shape: u32) {
+        let entry = &self.shapes[shape as usize];
+        let walks = entry.long_walks.get() + 1;
+        if walks < SHAPE_INDEX_LONG_WALKS {
+            entry.long_walks.set(walks);
+            return;
+        }
+        entry
+            .lookup_index
+            .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)));
     }
     pub(super) fn object_property_slot(
         &self,
@@ -218,6 +295,23 @@ impl<H: Host> Vm<H> {
             .then_some(super::object_array::ARRAY_LENGTH_ATTRIBUTES)
         })
     }
+    /// The one place descriptors are recorded. Objects remember whether any index-keyed entry
+    /// exists, so plain arrays can skip the per-index descriptor proof.
+    pub(super) fn insert_descriptor(
+        &mut self,
+        object: Value,
+        key: PropertyKey,
+        attributes: PropertyAttributes,
+    ) {
+        if let PropertyKey::String(atom) = key
+            && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+            && let Some(data) = self.object_data_mut(object)
+        {
+            data.mark_indexed_descriptors();
+        }
+        self.descriptors.insert((object, key), attributes);
+    }
+
     pub(super) fn set_property_attributes(
         &mut self,
         object: Value,
@@ -241,7 +335,7 @@ impl<H: Host> Vm<H> {
             self.invalidate_method_caches_for_key(key);
             return;
         }
-        self.descriptors.insert((object, key), attributes);
+        self.insert_descriptor(object, key, attributes);
         self.invalidate_field_caches();
         self.invalidate_method_caches_for_key(key);
     }
@@ -284,15 +378,13 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
     ) -> Result<Value, JsError> {
-        let current = self.frames[frame].this;
-        if !current.is_deleted() {
-            // `initialize_this_binding` updates live frames when `super()`
-            // initializes lexical this. Only the pre-super sentinel needs an
-            // environment lookup to observe that transition.
-            return Ok(current);
+        if self.frames[frame].fixed_this {
+            return Ok(self.frames[frame].this);
         }
         let atom = self.runtime_atoms.lexical_this;
-        let value = self.dynamic_binding(frame, atom).unwrap_or(current);
+        let value = self
+            .dynamic_binding(frame, atom)
+            .unwrap_or(self.frames[frame].this);
         self.frames[frame].this = value;
         if value.is_deleted() {
             return Err(self.reference_error(
@@ -416,6 +508,15 @@ impl<H: Host> Vm<H> {
         let slot = self.shape_slot(object.shape(), atom)?;
         self.heap.property_get(object, slot)
     }
+    /// The target and handler of a Proxy, copied out so callers need not clone its cell.
+    pub(super) fn proxy_parts(&self, value: Value) -> Option<(Value, Value)> {
+        match self.heap.get(value)? {
+            Cell::Proxy {
+                target, handler, ..
+            } => Some((*target, *handler)),
+            _ => None,
+        }
+    }
     pub(super) fn object_data(&self, value: Value) -> Option<&Object> {
         self.heap.get(value)?.object()
     }
@@ -461,6 +562,19 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
+        // A site is only populated after the atom and a non-dictionary receiver shape passed
+        // `shape_property_lookup_cell`, and an ordinary object is eligible whenever those hold,
+        // so a monomorphic own-shape hit needs no further eligibility probe.
+        if self.specialized
+            && p.specialized
+            && let Some(Cell::Object(receiver)) = self.heap.get(object)
+            && !receiver.is_module_namespace()
+            && let Some(hit) = self.cached_field_value(self.field_cache_index(site), receiver)
+        {
+            self.profile
+                .field_cache_hit(usize::from(hit.tier), hit.depth);
+            return Ok(hit.value);
+        }
         let lookup = match self.heap.get(object) {
             Some(Cell::String(_)) if self.specialized && p.specialized => {
                 if !self.field_cache_atom_eligible(atom) {
@@ -743,9 +857,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(target).cloned()
+        if let Some((target, handler)) = self.proxy_parts(target)
         {
             return self.proxy_set(
                 p,
@@ -791,9 +903,7 @@ impl<H: Host> Vm<H> {
                     super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
                 }
             }
-            if let Some(Cell::Proxy {
-                target, handler, ..
-            }) = self.heap.get(current).cloned()
+            if let Some((target, handler)) = self.proxy_parts(current)
             {
                 return self.proxy_set(
                     p,
@@ -1077,10 +1187,23 @@ impl<H: Host> Vm<H> {
                 },
             ));
         }
-        if let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(object).cloned()
+        if self.specialized
+            && p.specialized
+            && !self.is_private_name(atom)
+            && let Some(Cell::Object(data)) = self.heap.get(object)
+            && !data.is_module_namespace()
+            && !data.is_arguments_object()
         {
+            let site = self.field_cache_index(site);
+            let shape = data.shape();
+            if self.try_cached_field_store(object, atom, shape, value, site)
+                || (self.field_cache_atom_eligible(atom)
+                    && self.try_cached_field_add(object, atom, shape, value, site))
+            {
+                return Ok(());
+            }
+        }
+        if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
                 if self.own_property(object, atom).is_none() {
                     let extensible = self.object_is_extensible(p, &[object])?;
@@ -1112,22 +1235,6 @@ impl<H: Host> Vm<H> {
             } else {
                 Err(self.type_error(p, "cannot assign property on primitive value".into()))
             };
-        }
-        if self.specialized
-            && p.specialized
-            && !self.is_private_name(atom)
-            && let Some(Cell::Object(data)) = self.heap.get(object)
-            && !data.is_module_namespace()
-            && !data.is_arguments_object()
-        {
-            let site = self.field_cache_index(site);
-            let shape = data.shape();
-            if self.try_cached_field_store(object, atom, shape, value, site)
-                || (self.field_cache_atom_eligible(atom)
-                    && self.try_cached_field_add(object, atom, shape, value, site))
-            {
-                return Ok(());
-            }
         }
         let own = self.own_property(object, atom).is_some();
         if !own && self.prototype_chain_contains_proxy(object) {
@@ -1222,16 +1329,18 @@ impl<H: Host> Vm<H> {
                 && !self.shape_is_dictionary(shape)
                 && let Some(prototype_shapes) = add_prototype_shapes
             {
-                self.field_add_caches.insert(
-                    site,
-                    FieldAddCache {
-                        atom,
-                        source_shape: shape,
-                        target_shape: data_shape,
-                        slot: slot as u16,
-                        prototype_shapes,
-                    },
-                );
+                let caches = self.field_add_caches.entry(site).or_default();
+                caches.retain(|cache| cache.source_shape != shape || cache.atom != atom);
+                if caches.len() == FIELD_ADD_CACHE_WAYS {
+                    caches.remove(0);
+                }
+                caches.push(FieldAddCache {
+                    atom,
+                    source_shape: shape,
+                    target_shape: data_shape,
+                    slot: slot as u16,
+                    prototype_shapes,
+                });
             }
             self.record_field_cache(
                 site,
@@ -1253,12 +1362,14 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: usize,
     ) -> bool {
-        let Some(cache) = self.field_add_caches.get(&site) else {
+        let Some(cache) = self.field_add_caches.get(&site).and_then(|caches| {
+            caches
+                .iter()
+                .find(|cache| cache.source_shape == shape && cache.atom == atom)
+        }) else {
             return false;
         };
-        if cache.atom != atom
-            || cache.source_shape != shape
-            || self.shape_is_dictionary(shape)
+        if self.shape_is_dictionary(shape)
             || !self.object_data(object).is_some_and(Object::is_extensible)
             || !self.field_add_prototype_chain_matches(object, &cache.prototype_shapes)
         {
@@ -1341,7 +1452,7 @@ impl<H: Host> Vm<H> {
         } else {
             return false;
         };
-        let invalidates_method = self.callable_write(object, cache.slot as usize, value);
+        let invalidates_method = self.cached_store_is_callable(object, cache.slot as usize, value);
         // SAFETY: a matching immutable shape proves the cached slot layout.
         unsafe {
             self.heap
@@ -1473,6 +1584,20 @@ impl<H: Host> Vm<H> {
             object = self.object_data(current).map(|data| data.proto);
         }
         false
+    }
+    /// `callable_write` for a slot a matching cached shape proved present: an ordinary
+    /// object's old value is read in place rather than through `object_data`.
+    #[inline(always)]
+    fn cached_store_is_callable(&self, object: Value, slot: usize, value: Value) -> bool {
+        if self.is_function(value) {
+            return true;
+        }
+        let Some(Cell::Object(data)) = self.heap.get(object) else {
+            return self.callable_write(object, slot, value);
+        };
+        // SAFETY: the matching cached shape proves the slot lies within the object's storage.
+        let old = unsafe { self.heap.property_get_unchecked(data, slot) };
+        self.is_function(old)
     }
     fn callable_write(&self, object: Value, slot: usize, value: Value) -> bool {
         self.is_function(value)

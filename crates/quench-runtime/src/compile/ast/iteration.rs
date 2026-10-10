@@ -264,7 +264,6 @@ impl FunctionCompiler<'_, '_> {
             iteration_body_start,
             iteration_body_end,
             tracks_iterator_cleanup,
-            await_values,
         );
         let control = self.controls.pop().unwrap();
         self.iterator_closures.pop();
@@ -293,10 +292,6 @@ impl FunctionCompiler<'_, '_> {
         let close_fn = self.load_name("\0quench:iterator-close");
         let ignored = self.reg();
         self.emit(Op::Call, ignored, close_fn, iterator, 0);
-        if await_values {
-            let awaited = self.reg();
-            self.emit(Op::Await, awaited, ignored, 0, 0);
-        }
         let end = self.code.len() as u32;
         self.patch_to(end_edge, end);
     }
@@ -307,7 +302,6 @@ impl FunctionCompiler<'_, '_> {
         start: u32,
         end: u32,
         tracks_iterator_cleanup: bool,
-        await_values: bool,
     ) {
         let error = self.hidden_local("\0quench:for-of-body-error");
         let skip_cleanup = self.emit(Op::Jump, 0, 0, 0, 0);
@@ -338,12 +332,7 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
         }
         let close_iterator = self.load_atom(iterator);
-        let close_result = self.reg();
-        let _ = self.emit(Op::IteratorClose, close_result, close_iterator, 0, 0);
-        if await_values {
-            let awaited = self.reg();
-            self.emit(Op::Await, awaited, close_result, 0, 0);
-        }
+        let _ = self.emit(Op::IteratorClose, 0, close_iterator, 0, 0);
         let close_end = self.code.len() as u32;
         let close_ok = self.emit(Op::Jump, 0, 0, 0, 0);
         let close_error = self.code.len() as u32;

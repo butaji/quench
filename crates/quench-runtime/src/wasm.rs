@@ -772,6 +772,7 @@ impl Engine {
                 local_atoms: vec![],
                 environment_atoms: vec![],
                 selective_capture_slots: None,
+                local_registers: Vec::new(),
                 inherited_with_scope: false,
                 lexical_atoms: vec![],
                 global_lexical_atoms: vec![],
@@ -787,6 +788,8 @@ impl Engine {
                 wide: lowering.wide,
                 registers: lowering.registers,
                 dispatch: DispatchClass::General,
+                decoded: Default::default(),
+                plain_locals: Default::default(),
                 handlers: lowering.handlers,
                 register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
             };

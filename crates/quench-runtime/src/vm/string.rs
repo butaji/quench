@@ -280,7 +280,7 @@ impl<H: Host> Vm<H> {
         self.set_named_constant(program, prototype, "length", Value::number(0.0))?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             super::property_key::PropertyKey::string(prototype_atom),
@@ -527,16 +527,18 @@ impl<H: Host> Vm<H> {
             }
         };
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.string_iterator_proto),
+            object: Box::new(Self::empty_object(self.string_iterator_proto)),
             source,
-            next_method: Value::DELETED,
-            helper: None,
-            helper_running: false,
-            helper_started: false,
             kind: IteratorKind::String,
             index: 0,
             done: false,
-            generator: None,
+            ext: Box::new(crate::heap::IteratorExt {
+                next_method: None,
+                helper: None,
+                helper_running: false,
+                helper_started: false,
+                generator: None,
+            }),
         }))
     }
 

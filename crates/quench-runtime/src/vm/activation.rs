@@ -169,7 +169,6 @@ impl Continuation {
             pc: self.pc,
             binding_site_pc: None,
             env: self.env,
-            capture_base: Value::DELETED,
             this: self.this,
             locals: self.locals,
             dynamic_bindings: self.dynamic_bindings,
@@ -178,6 +177,7 @@ impl Continuation {
             active_iterators: self.active_iterators,
             with_objects: self.with_objects,
             with_base,
+            fixed_this: false,
         }
     }
 

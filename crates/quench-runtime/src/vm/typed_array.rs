@@ -56,7 +56,7 @@ impl<H: Host> Vm<H> {
             .expect("Uint8Array constructor")
             .proto = typed_array;
         self.set_named(program, uint8_array, "prototype", self.uint8_array_proto)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             uint8_array,
             PropertyKey::string(prototype_atom),

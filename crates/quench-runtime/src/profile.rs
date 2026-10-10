@@ -232,12 +232,6 @@ impl Profile {
     }
 
     #[cfg(feature = "profile-aggregate")]
-    #[inline(always)]
-    pub fn fused_opcode(&mut self, opcode: usize, program: u32) {
-        increment_program_counter(&mut self.opcodes, program, opcode);
-    }
-
-    #[cfg(feature = "profile-aggregate")]
     pub fn report_dispatch_census_if_enabled(&self, program: u32) -> bool {
         if std::env::var_os("QUENCH_OPCODE_CENSUS").is_none() {
             return false;
@@ -274,6 +268,7 @@ impl Profile {
         eprintln!("}}}}");
         true
     }
+
     #[cfg(feature = "profile-aggregate")]
     pub fn object_literal_instruction(
         &mut self,
@@ -364,10 +359,6 @@ impl Profile {
     #[cfg(not(feature = "profile-aggregate"))]
     #[inline(always)]
     pub fn opcode(&mut self, _opcode: usize) {}
-
-    #[cfg(not(feature = "profile-aggregate"))]
-    #[inline(always)]
-    pub fn fused_opcode(&mut self, _opcode: usize) {}
 
     #[inline(always)]
     pub fn shape_transition(&mut self, hit: bool) {
@@ -662,15 +653,9 @@ impl Profile {
         let binary_dependencies = dependencies::binary_pairs(&self.pair_sites, program_id, program);
         regional::report(self, program_id, program);
         eprintln!(
-            "{{\"kind\":\"quench-gc-breakdown\",\"collections\":{},\"full_collections\":{},\"minor_collections\":{},\"remembered_owner_scans\":{},\"young_cells_swept\":{},\"mark_nanos\":{},\"full_mark_nanos\":{},\"minor_mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"allocations_between_collections\":{{\"total\":{},\"min\":{},\"max\":{}}},\"survivors\":{{\"total\":{},\"min\":{},\"max\":{}}},\"sweep_slots\":{}}}",
+            "{{\"kind\":\"quench-gc-breakdown\",\"collections\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"allocations_between_collections\":{{\"total\":{},\"min\":{},\"max\":{}}},\"survivors\":{{\"total\":{},\"min\":{},\"max\":{}}},\"sweep_slots\":{}}}",
             heap_stats.1,
-            gc.full_collections,
-            gc.minor_collections,
-            gc.remembered_owner_scans,
-            gc.young_cells_swept,
             gc.mark_nanos,
-            gc.full_mark_nanos,
-            gc.minor_mark_nanos,
             gc.sweep_nanos,
             gc.mark_clear_nanos,
             gc.allocations_between_collections_total,

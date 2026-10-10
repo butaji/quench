@@ -3137,11 +3137,7 @@
       // event preserves the observable end -> finish ordering.
       this.once("prefinish", () => {
         const end = (error, data) => {
-          if (error) {
-            this.destroy(error);
-            return;
-          }
-          if (data != null) this.push(data);
+          if (!error && data != null) this.push(data);
           this.push(null);
         };
         if (this._flush) this._flush(end);

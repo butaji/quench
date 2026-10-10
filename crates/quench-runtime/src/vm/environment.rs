@@ -156,15 +156,15 @@ impl<H: Host> Vm<H> {
         }
         let (env, _) = self.outer_dynamic_binding(frame, atom)?;
         let Cell::Environment {
-            program: Some(program),
             function,
             parent,
+            scope,
             ..
         } = self.heap.get(env)?
         else {
             return None;
         };
-        Some((super::ProgramId::from_raw(*program), *function, *parent))
+        Some((super::ProgramId::from_raw(scope.program?), *function, *parent))
     }
 
     pub(super) fn initialize_this_binding(
@@ -280,12 +280,12 @@ impl<H: Host> Vm<H> {
         let mut environment = self.capture_env(frame, depth)?;
         while let Some(Cell::Environment {
             parent,
-            program,
             function,
-            binding_site_pc,
+            scope,
             ..
         }) = self.heap.get(environment)
         {
+            let (program, binding_site_pc) = (&scope.program, &scope.binding_site_pc);
             if let Some(program) = program.and_then(|id| {
                 self.programs
                     .get(super::program_store::ProgramId::from_raw(id))
@@ -731,12 +731,8 @@ impl<H: Host> Vm<H> {
         let mut inherited_count = 0;
         let mut before_binding = !local;
         let mut environment = parent;
-        while let Some(Cell::Environment {
-            parent,
-            with_objects,
-            ..
-        }) = self.heap.get(environment)
-        {
+        while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(environment) {
+            let with_objects = &scope.with_objects;
             inherited_count += with_objects.len();
             before_binding &= boundary != Some(environment);
             if before_binding && !with_objects.is_empty() {
@@ -757,8 +753,9 @@ impl<H: Host> Vm<H> {
         let declaration_depth = named.filter(|_| local || boundary == named_owner)
             .map_or(0, |binding| {
                 let owner_depth = named_owner.and_then(|owner| {
-                    let Cell::Environment { program, function, binding_site_pc: Some(pc), .. } = self.heap.get(owner)? else { return None; };
-                    let program = self.programs.get(super::ProgramId::from_raw((*program)?))?;
+                    let Cell::Environment { function, scope, .. } = self.heap.get(owner)? else { return None; };
+                    let pc = &scope.binding_site_pc?;
+                    let program = self.programs.get(super::ProgramId::from_raw(scope.program?))?;
                     let metadata = program.functions.get(*function as usize)?;
                     let site = &metadata.binding_sites[metadata.binding_sites.binary_search_by_key(pc, |site| site.resume_pc).ok()?];
                     let crate::bytecode::EvalBindingLocation::Capture { slot, .. } = binding.location else { return None; };
@@ -840,12 +837,12 @@ impl<H: Host> Vm<H> {
     ) -> Option<(Value, usize)> {
         while let Some(Cell::Environment {
             parent,
-            program,
             function,
             slots,
-            ..
+            scope,
         }) = self.heap.get(env)
         {
+            let program = &scope.program;
             if *function != u32::MAX
                 && let Some(environment_program) = program.and_then(|program| {
                     self.programs
@@ -1323,11 +1320,6 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn capture_env(&self, frame: usize, depth: u16) -> Option<Value> {
         let frame = &self.frames[frame];
-        Self::capture_env_uncached(self, frame, depth)
-    }
-
-    #[inline(always)]
-    fn capture_env_uncached(&self, frame: &Frame, depth: u16) -> Option<Value> {
         let mut env = if frame.captured {
             match self.heap.get(frame.env)? {
                 Cell::Environment { parent, .. } => *parent,
@@ -1347,41 +1339,15 @@ impl<H: Host> Vm<H> {
         Some(env)
     }
 
-    #[inline(always)]
-    fn capture_env_for_capture(&mut self, frame: usize, depth: u16) -> Option<Value> {
-        if depth == 0 && self.frames[frame].capture_base != Value::DELETED {
-            return Some(self.frames[frame].capture_base);
-        }
-        let resolved = Self::capture_env_uncached(self, &self.frames[frame], depth)?;
-        if depth == 0 && self.frames[frame].capture_base == Value::DELETED {
-            let frame_ref = &self.frames[frame];
-            let start = if frame_ref.captured {
-                match self.heap.get(frame_ref.env)? {
-                    Cell::Environment { parent, .. } => *parent,
-                    _ => return None,
-                }
-            } else {
-                frame_ref.env
-            };
-            // Skipped with/lexical wrappers can be sensitive to dynamic scope.
-            // Cache only when the generic walk proved that no wrapper was skipped.
-            if resolved == start {
-                self.frames[frame].capture_base = resolved;
-            }
-        }
-        Some(resolved)
-    }
-
     fn skip_with_environment_layers(&self, mut env: Value) -> Option<Value> {
         while let Some(Cell::Environment {
             parent,
             function,
             slots,
-            with_objects,
-            root_eval_scope,
-            ..
+            scope,
         }) = self.heap.get(env)
         {
+            let (with_objects, root_eval_scope) = (&scope.with_objects, &scope.root_eval_scope);
             let dynamic_bindings = self.heap.environment_bindings(env)?;
             let lexical_this_wrapper = !*root_eval_scope
                 && *function == u32::MAX
@@ -1405,7 +1371,7 @@ impl<H: Host> Vm<H> {
         slot: u16,
     ) -> Result<Value, JsError> {
         let env = self
-            .capture_env_for_capture(frame, depth)
+            .capture_env(frame, depth)
             .ok_or_else(|| JsError("invalid capture environment".into()))?;
         self.load_environment_binding(p, env, slot)
     }
@@ -1416,8 +1382,17 @@ impl<H: Host> Vm<H> {
         env: Value,
         slot: u16,
     ) -> Result<Value, JsError> {
+        // Global var, global lexical and module-import projections exist only for a program's
+        // root function, so any other initialized environment slot is the binding itself.
+        if let Some(Cell::Environment { function, .. }) = self.heap.get(env)
+            && *function != super::ROOT_FUNCTION_ID
+            && let Some(value) = self.heap.environment_slot(env, usize::from(slot))
+            && !value.is_deleted()
+        {
+            return Ok(value);
+        }
         let Cell::Environment {
-            function, program, ..
+            function, scope, ..
         } = self
             .heap
             .get(env)
@@ -1425,16 +1400,8 @@ impl<H: Host> Vm<H> {
         else {
             return Err(JsError("invalid capture".into()));
         };
+        let program = scope.program;
         let slot = usize::from(slot);
-        if *function != super::ROOT_FUNCTION_ID {
-            let value = self
-                .heap
-                .environment_slot(env, slot)
-                .ok_or_else(|| JsError("invalid capture slot".into()))?;
-            if !value.is_deleted() {
-                return Ok(value);
-            }
-        }
         let owner_id = program
             .map(super::ProgramId::from_raw)
             .unwrap_or(self.active_program);
@@ -1501,7 +1468,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let env = self
-            .capture_env_for_capture(frame, depth)
+            .capture_env(frame, depth)
             .ok_or_else(|| JsError("invalid capture environment".into()))?;
         self.store_environment_binding(p, frame, env, slot, value)
     }
@@ -1516,10 +1483,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let (function, program, deleted) = match self.heap.get(env) {
             Some(Cell::Environment {
-                function, program, ..
+                function, scope, ..
             }) => (
                 *function,
-                *program,
+                scope.program,
                 self.heap
                     .environment_slot(env, usize::from(slot))
                     .is_some_and(Value::is_deleted),

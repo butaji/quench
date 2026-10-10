@@ -5,10 +5,7 @@
 /// `./test/...` spelling when its canonical target exists; application paths
 /// retain normal host semantics.
 pub(crate) fn resolve_fixture_path(path: String) -> String {
-    let Some(suffix) = path
-        .strip_prefix("./test/")
-        .or_else(|| path.strip_prefix("test/"))
-    else {
+    let Some(suffix) = path.strip_prefix("./test/") else {
         return path;
     };
     let mapped = format!("tests/node/test/{suffix}");

@@ -96,7 +96,6 @@ mod json;
 mod method_cache;
 mod module;
 mod number;
-mod numeric_site;
 mod object;
 mod object_array;
 mod object_builtins;
@@ -111,13 +110,12 @@ mod object_tests;
 mod property_key;
 use activation::{Continuation, SuspendedEntry};
 use call_arguments::CallArguments;
-use numeric_site::NumericSite;
+use object::AtomClass;
 use program_store::{ModuleImport, ProgramId, ProgramStore};
 use promise::PromiseRuntime;
 use property_key::PropertyKey;
 mod operations;
 mod primitives;
-mod profile_edges;
 pub(crate) mod program_store;
 mod promise;
 mod promise_aggregate;
@@ -173,9 +171,6 @@ pub(super) struct Frame {
     // published for GC roots or saved as the continuation after a call.
     binding_site_pc: Option<u32>,
     env: Value,
-    // Cached lexical parent for depth-zero capture accesses. DELETED means
-    // capture lookup has not proved that the path contains no skipped layers.
-    capture_base: Value,
     this: Value,
     locals: Vec<Value>,
     dynamic_bindings: Vec<(Atom, Value)>,
@@ -185,11 +180,33 @@ pub(super) struct Frame {
     // Empty while active; owns the transferred scope stack while detached.
     with_objects: Vec<Value>,
     with_base: usize,
+    /// The frame pushed its own `this` binding with a live value. Only `super()` rebinds
+    /// `this`, and only in derived constructors, whose binding starts deleted; so for these
+    /// frames `this` is authoritative and the binding lookup can be skipped.
+    fixed_this: bool,
 }
 impl Frame {
     fn prepare_registers(&mut self, register_count: usize) {
         self.registers.resize(register_count, Value::UNDEFINED);
         self.registers.fill(Value::UNDEFINED);
+    }
+
+    fn initialize_promoted_registers(
+        &mut self,
+        function: &crate::bytecode::Function,
+        args: &[Value],
+    ) {
+        for entry in &function.local_registers {
+            let initial = if entry.local < function.params {
+                args.get(usize::from(entry.local))
+                    .copied()
+                    .unwrap_or(Value::UNDEFINED)
+            } else {
+                Value::UNDEFINED
+            };
+            self.locals[usize::from(entry.local)] = Value::UNDEFINED;
+            self.registers[usize::from(entry.register)] = initial;
+        }
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -266,6 +283,9 @@ const NO_FIELD_RECEIVER: u32 = u32::MAX;
 // DeltaBlue's measured inherited writes reach three prototypes; keep the
 // residual cache bounded while covering that common constructor shape.
 const FIELD_ADD_CACHE_MAX_PROTO_DEPTH: usize = 4;
+/// Source shapes one add site remembers; the oldest is evicted beyond this. Objects whose
+/// optional fields are assigned in varying order reach one add site with several shapes.
+const FIELD_ADD_CACHE_WAYS: usize = 4;
 const EMPTY_CACHE: FieldCache = FieldCache {
     receiver: NO_FIELD_RECEIVER,
     holder: NO_FIELD_HOLDER,
@@ -439,6 +459,9 @@ struct Shape {
     dictionary_trigger: Option<DictionaryTrigger>,
     may_have_gc_roots: bool,
     lookup_index: OnceCell<Box<ShapeLookupIndex>>,
+    /// Lookups that walked at least `SHAPE_INDEX_WALK_DISTANCE` transitions
+    /// from this shape before it had an index.
+    long_walks: std::cell::Cell<u8>,
 }
 impl Shape {
     fn root() -> Self {
@@ -459,6 +482,7 @@ impl Shape {
             dictionary_trigger,
             may_have_gc_roots: parent_may_have_gc_roots || transition.introduces_gc_roots(),
             lookup_index: OnceCell::new(),
+            long_walks: std::cell::Cell::new(0),
         }
     }
 }
@@ -479,6 +503,8 @@ pub(super) enum StepResult {
     PushFrame {
         destination: Register,
         stack_guard: crate::stack::StackGuard,
+        /// For `new`: the allocated receiver, the result unless the callee returns an object.
+        construct_this: Option<Value>,
     },
     Return(Value),
     Await {
@@ -513,12 +539,6 @@ pub(super) enum FrameOutcome {
 enum UserFrameStart {
     Outcome(FrameOutcome),
     Pushed(crate::stack::StackGuard),
-}
-struct PendingGeneralCall {
-    caller: usize,
-    call_pc: u32,
-    destination: Register,
-    stack_guard: crate::stack::StackGuard,
 }
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -623,10 +643,14 @@ pub(crate) struct Vm<H> {
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
     natives: Vec<(Native, Value)>,
-    frames: Vec<Frame>,
-    frame_pool: Vec<Frame>,
+    frames: Vec<Box<Frame>>,
+    frame_pool: Vec<Box<Frame>>,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
+    /// Set by the first `with` entry and never cleared: `Native::WithEnter` is
+    /// the only source of with objects, so until it runs no environment
+    /// carries any.
+    with_scope_entered: bool,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
@@ -634,22 +658,28 @@ pub(crate) struct Vm<H> {
     program_cache_layouts: Vec<ProgramCacheLayout>,
     active_program: ProgramId,
     profile: Profile,
-    numeric_sites: FxHashMap<(u32, u32), NumericSite>,
     shapes: Vec<Shape>,
     transitions: FxHashMap<(u32, ShapeTransitionKey), u32>,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
     dynamic_atoms: Vec<JsString>,
+    // The last string matched by a RegExp, prepared once for repeated matching.
+    regexp_subject: Option<Rc<quench_regexp::Subject>>,
+    regexp_matchers: regexp::RegExpMatcherCache,
+    // One lazily derived class byte per atom; length tracks atom_text plus dynamic_atoms.
+    atom_classes: Vec<std::cell::Cell<u8>>,
     dynamic_strings: Option<Box<FxHashMap<u64, Value>>>,
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
     field_caches: Vec<FieldCache>,
-    field_add_caches: FxHashMap<usize, FieldAddCache>,
+    field_add_caches: FxHashMap<usize, Vec<FieldAddCache>>,
     megamorphic_field_indices: Vec<u32>,
     megamorphic_fields: Vec<FieldCacheSet>,
     length_atom: Atom,
+    // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
+    prototype_atom: Atom,
     size_atom: Atom,
     byte_length_atom: Atom,
     byte_offset_atom: Atom,
@@ -975,7 +1005,7 @@ impl<H: Host> Vm<H> {
             .report_dispatch_census_if_enabled(ProgramId::MAIN.raw())
         {
             self.profile
-                .report_object_literal_sites(self.active_program.raw(), program);
+                .report_object_literal_sites(ProgramId::MAIN.raw(), program);
             #[cfg(feature = "profile-memory")]
             self.report_memory_if_enabled("complete");
             return;
@@ -1037,11 +1067,17 @@ impl<H: Host> Vm<H> {
             })
             .sum();
         let field_add_cache_bytes = self.field_add_caches.capacity()
-            * size_of::<(usize, FieldAddCache)>()
+            * size_of::<(usize, Vec<FieldAddCache>)>()
             + self
                 .field_add_caches
                 .values()
-                .map(|cache| cache.prototype_shapes.capacity() * size_of::<u32>())
+                .map(|caches| {
+                    caches.capacity() * size_of::<FieldAddCache>()
+                        + caches
+                            .iter()
+                            .map(|cache| cache.prototype_shapes.capacity() * size_of::<u32>())
+                            .sum::<usize>()
+                })
                 .sum::<usize>();
         eprintln!(
             "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
@@ -1187,13 +1223,16 @@ impl<H: Host> Vm<H> {
         self.eval_script_context = false;
         self.construct_target = None;
         self.realm.promise = Default::default();
-        self.numeric_sites.clear();
         self.shapes.truncate(1);
         self.transitions.clear();
         self.atom_text = program.atoms.clone();
         self.atoms.clear();
         self.atom_collisions.clear();
         self.dynamic_atoms.clear();
+        self.atom_classes.clear();
+        self.regexp_subject = None;
+        self.regexp_matchers.clear();
+        self.atom_classes.resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
@@ -1213,6 +1252,7 @@ impl<H: Host> Vm<H> {
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
+        self.prototype_atom = self.intern_atom("prototype");
         self.size_atom = self.intern_atom("size");
         self.byte_length_atom = self.intern_atom("byteLength");
         self.byte_offset_atom = self.intern_atom("byteOffset");
@@ -1314,9 +1354,11 @@ impl<H: Host> Vm<H> {
             u32::MAX,
         );
     }
+    #[inline(always)]
     fn active_cache_layout(&self) -> ProgramCacheLayout {
         self.program_cache_layouts[self.active_program.raw() as usize]
     }
+    #[inline(always)]
     pub(super) fn field_cache_index(&self, site: u16) -> usize {
         self.active_cache_layout().field_base + usize::from(site)
     }

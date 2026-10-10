@@ -1,6 +1,5 @@
-use super::{ArrayFromAsyncState, Cell, CellKind, EnvironmentBindings, Heap, Object, Slot, WeakMapEntries};
+use super::{Cell, CellKind, Heap, Object, Slot};
 use crate::value::Value;
-use crate::vm::wtf16::JsString;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use rustc_hash::FxHashMap;
 use std::collections::{BTreeMap, HashSet};
@@ -561,6 +560,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::Function { .. }
             | Cell::ShadowRealm { .. }
             | Cell::PromiseResolvingState { .. }
+            | Cell::TemporalDuration { .. }
             | Cell::TemporalInstant { .. }
             | Cell::TypedArray { .. }
             | Cell::DataView { .. }
@@ -568,6 +568,7 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::FinalizationRegistry { .. }
             | Cell::Iterator { .. }
             | Cell::Proxy { .. }
+            | Cell::ArrayFromAsyncState(_)
             | Cell::WasmBits64(_)
             | Cell::WasmV128(_)
             | Cell::WasmExtern(_)
@@ -581,15 +582,13 @@ fn cell_bytes(cell: &Cell) -> usize {
                 time_zone,
                 calendar,
                 ..
-            } => size_of::<String>() + time_zone.capacity() + calendar.capacity(),
-            Cell::TemporalDuration { .. } => size_of::<[f64; 10]>(),
-            Cell::ArrayFromAsyncState(_) => size_of::<ArrayFromAsyncState>(),
+            } => time_zone.capacity() + calendar.capacity(),
             Cell::TemporalPlainDate { calendar, .. } => calendar.capacity(),
             Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
             Cell::TemporalPlainMonthDay { calendar, .. }
             | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
-            Cell::WasmElements(elements)
-            | Cell::WasmTable { elements, .. }
+            Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
+            Cell::WasmTable { elements, .. }
             | Cell::WasmGc {
                 fields: elements, ..
             } => elements.capacity() * size_of::<Value>(),
@@ -598,26 +597,17 @@ fn cell_bytes(cell: &Cell) -> usize {
             Cell::WasmMemory { bytes, .. } => bytes.capacity(),
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
             Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
-            Cell::WeakMap { entries, .. } => {
-                size_of::<WeakMapEntries>() + entries.allocated_bytes()
-            }
+            Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
             Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
-            Cell::Environment {
-                slots,
-                dynamic_bindings: _,
-                with_objects,
-                ..
-            } => {
-                size_of::<EnvironmentBindings>()
-                    + slots.len() * size_of::<super::EnvironmentSlot>()
+            Cell::Environment { slots, scope, .. } => {
+                let with_objects = &scope.with_objects;
+                slots.len() * size_of::<super::EnvironmentSlot>()
                     + with_objects.len() * size_of::<Value>()
             }
             Cell::String(value) => value.capacity(),
             Cell::BigInt(value) | Cell::Error(value) => value.capacity(),
             Cell::Symbol(value) => value.as_ref().map_or(0, String::capacity),
             Cell::Date { .. } => 0,
-            Cell::RegExp { source, flags, .. } => {
-                size_of::<JsString>() + source.capacity() + flags.capacity()
-            }
+            Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
         }
 }

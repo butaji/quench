@@ -10,177 +10,20 @@ use std::{cell::RefCell, rc::Rc};
 const ASYNC_ID: &str = "\0quench:async_hooks:id";
 const LOCAL_ID: &str = "\0quench:async_hooks:local:id";
 const CLASS_FACTORY: &str = r#"(function(initializeResource, runInAsyncScope, emitDestroy,
-    initializeStorage, enterWith, getStore, disableStorage) {
+    initializeStorage, enterWith, getStore) {
   class AsyncResource {
-    constructor(type, options) {
-      if (typeof type !== "string") {
-        const error = new TypeError('The "type" argument must be of type string.');
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-      if (type.length === 0) {
-        const error = new TypeError('The "type" argument must be a non-empty string.');
-        error.code = "ERR_ASYNC_TYPE";
-        throw error;
-      }
-      if (typeof options === "number" &&
-          (!Number.isSafeInteger(options) || options < 0)) {
-        const error = new RangeError('The "triggerAsyncId" argument must be a non-negative integer.');
-        error.code = "ERR_INVALID_ASYNC_ID";
-        throw error;
-      }
-      initializeResource.call(this, type, options);
-      this["\0quench:async_hooks:type"] = type;
-      globalThis["\0quench:async_hooks:emit_init"]?.(
-        this, type, this["\0quench:async_hooks:id"]);
-    }
+    constructor(type, options) { initializeResource.call(this, type, options); }
     runInAsyncScope(fn, thisArg, ...args) {
-      const previous = currentAsyncId;
-      const previousTrigger = currentTriggerAsyncId;
-      currentAsyncId = this["\0quench:async_hooks:id"];
-      currentTriggerAsyncId = this["\0quench:async_hooks:trigger"];
-      try { return runInAsyncScope.call(this, fn, thisArg, ...args); }
-      finally {
-        currentAsyncId = previous;
-        currentTriggerAsyncId = previousTrigger;
-      }
-    }
-    asyncId() { return this["\0quench:async_hooks:id"]; }
-    triggerAsyncId() { return this["\0quench:async_hooks:trigger"]; }
-    asyncResourceType() { return this["\0quench:async_hooks:type"]; }
-    bind(fn, thisArg) {
-      if (typeof fn !== "function") {
-        const error = new TypeError("The \"fn\" argument must be of type function.");
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-      const resource = this;
-      const hasThisArg = arguments.length > 1;
-      const bound = function(...args) {
-        return resource.runInAsyncScope(fn, hasThisArg ? thisArg : this, ...args);
-      };
-      Object.defineProperty(bound, "length", { value: fn.length });
-      return bound;
-    }
-    static bind(fn, type = "bound-anonymous-fn") {
-      if (typeof fn !== "function") {
-        const error = new TypeError("The \"fn\" argument must be of type function.");
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-      const resource = new AsyncResource(type);
-      return resource.bind(fn);
+      return runInAsyncScope.call(this, fn, thisArg, ...args);
     }
     emitDestroy() { return emitDestroy.call(this); }
   }
   class AsyncLocalStorage {
-    static bind(fn) {
-      if (typeof fn !== "function") {
-        const error = new TypeError("The \"fn\" argument must be of type function.");
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-      const resource = new AsyncResource("AsyncLocalStorage.bind");
-      return function(...args) {
-        return resource.runInAsyncScope(fn, this, ...args);
-      };
-    }
-    static snapshot() {
-      const resource = new AsyncResource("AsyncLocalStorage.snapshot");
-      return function(fn, ...args) {
-        return resource.runInAsyncScope(fn, this, ...args);
-      };
-    }
-    constructor(options = {}) {
-      initializeStorage.call(this, options);
-      this.defaultValue = options?.defaultValue;
-    }
+    constructor(options) { initializeStorage.call(this, options); }
     enterWith(store) { return enterWith.call(this, store); }
-    run(store, callback, ...args) {
-      if (typeof callback !== "function") {
-        const error = new TypeError("The \"callback\" argument must be of type function.");
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-      const scope = this.withScope(store);
-      try { return Reflect.apply(callback, undefined, args); }
-      finally { scope.dispose(); }
-    }
-    exit(callback, ...args) {
-      if (typeof callback !== "function") {
-        const error = new TypeError("The \"callback\" argument must be of type function.");
-        error.code = "ERR_INVALID_ARG_TYPE";
-        throw error;
-      }
-      const scope = this.withScope(this.defaultValue);
-      try { return Reflect.apply(callback, undefined, args); }
-      finally { scope.dispose(); }
-    }
-    getStore() {
-      const store = getStore.call(this);
-      return store === undefined ? this.defaultValue : store;
-    }
-    disable() { return disableStorage.call(this); }
-    withScope(store) {
-      const previous = this.getStore();
-      this.enterWith(store);
-      let active = true;
-      const dispose = () => {
-        if (!active) return;
-        active = false;
-        this.enterWith(previous);
-      };
-      return { dispose, [Symbol.dispose]: dispose };
-    }
+    getStore() { return getStore.call(this); }
   }
-  const hooks = new Set();
-  let nextAsyncId = 1;
-  let currentAsyncId = 1;
-  let currentTriggerAsyncId = 1;
-  const createHook = (callbacks = {}) => {
-    if (callbacks === null || (typeof callbacks !== "object" && typeof callbacks !== "function")) {
-      throw new TypeError("The argument must be an object");
-    }
-    for (const name of ["init", "before", "after", "destroy", "promiseResolve"]) {
-      if (callbacks[name] !== undefined && typeof callbacks[name] !== "function") {
-        const error = new TypeError(`hook.${name} must be a function`);
-        error.code = "ERR_ASYNC_CALLBACK";
-        throw error;
-      }
-    }
-    const hook = {
-      enable() { hooks.add(hook); return hook; },
-      disable() { hooks.delete(hook); return hook; },
-    };
-    hook.callbacks = callbacks;
-    return hook;
-  };
-  Object.defineProperty(globalThis, "\0quench:async_hooks:emit_init", {
-    configurable: true,
-    value(resource, type, suppliedAsyncId) {
-      const triggerAsyncId = currentAsyncId;
-      const asyncId = suppliedAsyncId ?? ++nextAsyncId;
-      if (asyncId > nextAsyncId) nextAsyncId = asyncId;
-      currentAsyncId = asyncId;
-      currentTriggerAsyncId = triggerAsyncId;
-      for (const hook of hooks) {
-        if (typeof hook.callbacks?.init === "function") {
-          hook.callbacks.init(asyncId, type, triggerAsyncId, resource);
-        }
-      }
-      return asyncId;
-    },
-  });
-  return {
-    AsyncResource,
-    AsyncLocalStorage,
-    createHook,
-    enabledHooksExist: () => hooks.size !== 0,
-    symbols: { async_id_symbol: Symbol.for("quench.async_hooks.async_id") },
-    executionAsyncId: () => currentAsyncId,
-    triggerAsyncId: () => currentTriggerAsyncId,
-    executionAsyncResource: () => undefined,
-  };
+  return { AsyncResource, AsyncLocalStorage };
 })"#;
 
 /// Allocate an async identity for a host-created request context.
@@ -338,7 +181,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "asyncLocalStorageInit",
         "asyncLocalStorageEnterWith",
         "asyncLocalStorageGetStore",
-        "asyncLocalStorageDisable",
     ]
     .map(|name| context.host_function(crate::host::shared_vm::operation(name)))
     .into_iter()
@@ -353,29 +195,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .async_hooks
         .module = Some(retained);
     Ok(module)
-}
-
-/// Notify enabled JavaScript async hooks when the shared timer scheduler
-/// creates a Node timer resource. The emitter is installed with the
-/// async_hooks module and remains optional for programs that never load it.
-pub(crate) fn emit_init(
-    context: &mut NativeContext<'_, NodeHost>,
-    resource: RootId,
-    resource_type: &str,
-    async_id: u64,
-) -> Result<(), RootedError> {
-    let global = context.global_root()?;
-    let key = context.string_rooted("\0quench:async_hooks:emit_init");
-    let emitter = context.get_property_rooted(global, key)?;
-    if !context.is_callable_rooted(emitter)? {
-        return Ok(());
-    }
-    let resource_type = context.string_rooted(resource_type);
-    let async_id = context.number(async_id as f64);
-    let undefined = context.undefined();
-    let result = context.call_rooted(emitter, undefined, &[resource, resource_type, async_id])?;
-    context.release_root(result);
-    Ok(())
 }
 
 pub(crate) fn initialize_resource(
@@ -514,37 +333,6 @@ pub(crate) fn get_store(
             .copied()
     };
     Ok(store.unwrap_or_else(|| context.undefined()))
-}
-
-pub(crate) fn disable_storage(
-    context: &mut NativeContext<'_, NodeHost>,
-    receiver: RootId,
-    _: &[RootId],
-) -> Result<RootId, RootedError> {
-    let local_id = number_property(context, receiver, LOCAL_ID)?
-        .ok_or_else(|| RootedError::host("AsyncLocalStorage has no store ID"))?;
-    let released = {
-        let shared_state = context.host_mut().shared_state();
-        let mut shared = shared_state.borrow_mut();
-        let keys = shared
-            .async_hooks
-            .local_stores
-            .keys()
-            .filter_map(|(resource_id, candidate)| {
-                (*candidate == local_id).then_some((*resource_id, *candidate))
-            })
-            .collect::<Vec<_>>();
-        keys.into_iter()
-            .filter_map(|key| {
-                let store = shared.async_hooks.local_stores.remove(&key)?;
-                shared.async_hooks.release_store(store).then_some(store)
-            })
-            .collect::<Vec<_>>()
-    };
-    for store in released {
-        context.release_root(store);
-    }
-    Ok(receiver)
 }
 
 fn number_property(

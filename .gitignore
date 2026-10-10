@@ -24,7 +24,6 @@ Thumbs.db
 
 # Local JavaScript lint dependencies
 /node_modules/
-/tests/node_modules/
 
 # Test262 checkpoint (auto-created by staged runner)
 .test262_checkpoint
