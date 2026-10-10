@@ -2708,6 +2708,7 @@ impl<'a> Compiler<'a> {
             handlers: function.handlers,
             register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
             parameter_registers: None,
+            initial_register: Default::default(),
         };
         self.functions[id as usize] = Some(result);
         id

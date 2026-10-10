@@ -1,9 +1,9 @@
 use super::{
     AtomTable, BindingSite, Constant, DispatchClass, EvalBinding, EvalBindingDeclaration,
-    EvalBindingLocation, FieldBase, FieldSite, Function, Handler, Instr, LexicalBindingKind,
-    MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleLinkPlan,
-    ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase, ObjectSite, Op,
-    RegExpLiteralSite, SourcePosition, Superinstruction, WideInstruction,
+    EvalBindingLocation, FieldBase, FieldSite, Function, Handler, InitialRegister, Instr,
+    LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind,
+    ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase,
+    ObjectSite, Op, RegExpLiteralSite, SourcePosition, Superinstruction, WideInstruction,
 };
 
 const RESIDUAL_MAGIC: &[u8; 8] = &[
@@ -259,6 +259,7 @@ pub(super) fn write_program(
                 .parameter_registers
                 .unwrap_or(NO_PARAMETER_REGISTERS),
         );
+        out.u8(function.initial_register as u8);
         out.u32(function.code.len() as u32);
         for instruction in &function.code {
             out.u8(instruction.op() as u8);
@@ -540,6 +541,11 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         };
         let register_root_offset = input.u32()?;
         let parameter_registers = Some(input.u16()?).filter(|base| *base != NO_PARAMETER_REGISTERS);
+        let initial_register = match input.u8()? {
+            0 => InitialRegister::Undefined,
+            1 => InitialRegister::I32Zero,
+            _ => return Err("invalid residual initial register".into()),
+        };
         let code = input.list(|input| {
             let opcode = input.u8()?;
             let op = Op::from_index(usize::from(opcode))
@@ -642,6 +648,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             handlers,
             register_root_offset,
             parameter_registers,
+            initial_register,
         })
     })?;
     let cache_sites = input.u16()?;

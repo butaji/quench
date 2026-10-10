@@ -25,6 +25,7 @@ pub(crate) const INDEX_GROW_FAILURE: i64 = -1;
 
 pub use memory::{WasmData, WasmDataMode, WasmMemory};
 mod control;
+mod inline;
 mod scalar;
 mod types;
 pub use types::WasmTypes;
@@ -685,7 +686,19 @@ impl Engine {
         }
         let mut constants = vec![Constant::Number(0.0), Constant::Undefined];
         let mut functions = Vec::with_capacity(bodies.len());
-        for (index, (locals, operators)) in bodies.into_iter().enumerate() {
+        let bodies = bodies
+            .into_iter()
+            .map(|(locals, operators)| {
+                let operators = operators
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| Diagnostic::unsupported(name, e.to_string()))?;
+                Ok((locals, operators))
+            })
+            .collect::<Result<Vec<_>, Diagnostic>>()?;
+        let leaves = inline::leaves(&bodies, &signature_pool);
+        for (index, (locals, operators)) in bodies.iter().enumerate() {
+            let mut locals = locals.clone();
             let index = u32::try_from(index)
                 .map_err(|_| Diagnostic::unsupported(name, "too many Wasm functions"))?;
             let signature = signature_pool.defined_signature(index).unwrap().clone();
@@ -694,14 +707,20 @@ impl Engine {
             let results = u16::try_from(signature.results.len())
                 .map_err(|_| Diagnostic::unsupported(name, "too many Wasm function results"))?;
             let error = |message: &str| Diagnostic::unsupported(name, message);
+            let operators = inline::inline_leaf_calls(
+                index as usize,
+                usize::from(params),
+                &mut locals,
+                operators,
+                &bodies,
+                &leaves,
+                &signature_pool,
+            )
+            .ok_or_else(|| error("too many Wasm locals"))?;
             let local_count = usize::from(params)
                 .checked_add(locals.len())
                 .and_then(|count| u16::try_from(count).ok())
                 .ok_or_else(|| error("too many Wasm locals"))?;
-            let operators = operators
-                .into_iter()
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| Diagnostic::unsupported(name, e.to_string()))?;
             // Instance bindings the body uses get registers loaded once per call.
             let mut reserved: Register = 0;
             let mut reserve = |used: bool| {
@@ -832,6 +851,7 @@ impl Engine {
                 handlers: lowering.handlers,
                 register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
                 parameter_registers: lowering.local_base,
+                initial_register: crate::bytecode::InitialRegister::I32Zero,
             };
             functions.push(function);
             constants = lowering.constants;
@@ -1682,7 +1702,11 @@ impl Lowering<'_> {
         let mut run: Option<(Register, u16, u32)> = None;
         for (index, ty) in locals.iter().copied().enumerate() {
             let register = base + params + index as Register;
-            let constant = if ty.is_defaultable() && !assigned_first[index] {
+            // Activations start every register at i32 zero (see
+            // `InitialRegister`), which is already the i32 and f32 default.
+            let starts_at_default =
+                matches!(ty, wasmparser::ValType::I32 | wasmparser::ValType::F32);
+            let constant = if ty.is_defaultable() && !assigned_first[index] && !starts_at_default {
                 Some(self.default_constant(ty)?)
             } else {
                 None

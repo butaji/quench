@@ -60,7 +60,13 @@ impl Heap {
     }
 
     pub(crate) fn environment_slot(&self, environment: Value, slot: usize) -> Option<Value> {
-        let owner = self.environment_slot_owner(environment, slot)?;
+        let Cell::Environment { slots, .. } = self.get(environment)? else {
+            return None;
+        };
+        let owner = match slots.0.get(slot)? {
+            EnvironmentSlot::Owned(value) => return Some(*value),
+            EnvironmentSlot::Shared(owner) => *owner,
+        };
         let Cell::Environment { slots, .. } = self.get(owner)? else {
             return None;
         };
