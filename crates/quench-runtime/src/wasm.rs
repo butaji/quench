@@ -754,21 +754,13 @@ impl Engine {
             }
             // Defaultable locals get residual defaults; others remain uninitialized.
             // The frontend proves assignment before non-defaultable local reads.
-            for (index, ty) in locals.into_iter().enumerate() {
-                if ty.is_defaultable() {
-                    let slot = usize::from(params) + index;
-                    let target = local_base.map_or(0, |base| base + slot as Register);
-                    match ty {
-                        wasmparser::ValType::Ref(_) => {
-                            let constant = lowering.append_constant(Constant::Null)?;
-                            lowering.emit(Op::LoadConst, target, 0, 0, constant)?;
-                        }
-                        _ => lowering.load_zero(
-                            target,
-                            WasmType::from_wasm(ty).expect("numeric local type"),
-                        )?,
-                    }
-                    if local_base.is_none() {
+            if let Some(base) = local_base {
+                lowering.fill_register_locals(base, params, &locals, &operators)?;
+            } else {
+                for (index, ty) in locals.into_iter().enumerate() {
+                    if ty.is_defaultable() {
+                        let slot = usize::from(params) + index;
+                        lowering.load_default(0, ty)?;
                         lowering.emit(Op::StoreLocal, 0, 0, 0, slot as u32)?;
                     }
                 }
@@ -1332,6 +1324,39 @@ enum Alias {
     I32(i32),
 }
 
+/// Declared locals whose first textual use is a `local.set`/`local.tee` at
+/// function-body nesting: straight-line body code runs in order, so every read
+/// of such a local follows that write.
+fn first_use_assigns(params: u16, declared: usize, operators: &[Operator<'_>]) -> Vec<bool> {
+    let mut assigned = vec![false; declared];
+    let mut seen = vec![false; declared];
+    let mut nesting = 0_usize;
+    for operator in operators {
+        match operator {
+            Operator::Block { .. }
+            | Operator::Loop { .. }
+            | Operator::If { .. }
+            | Operator::Try { .. }
+            | Operator::TryTable { .. } => nesting += 1,
+            Operator::End | Operator::Delegate { .. } => nesting = nesting.saturating_sub(1),
+            Operator::LocalGet { local_index }
+            | Operator::LocalSet { local_index }
+            | Operator::LocalTee { local_index } => {
+                let Some(index) = (*local_index as usize).checked_sub(usize::from(params)) else {
+                    continue;
+                };
+                if index < declared && !seen[index] {
+                    seen[index] = true;
+                    assigned[index] =
+                        nesting == 0 && !matches!(operator, Operator::LocalGet { .. });
+                }
+            }
+            _ => {}
+        }
+    }
+    assigned
+}
+
 /// Locals live in frame registers while the whole register file stays small.
 const MAX_REGISTER_LOCALS: usize = 4096;
 
@@ -1470,6 +1495,11 @@ impl Lowering<'_> {
                 | Operator::I64Const { .. }
                 | Operator::F32Const { .. }
                 | Operator::F64Const { .. }
+                | Operator::If { .. }
+                | Operator::BrIf { .. }
+                | Operator::BrTable { .. }
+                | Operator::Select
+                | Operator::TypedSelect { .. }
         ) || (numeric_operator(operator).is_some() && !integer::wide_integer(operator))
             || memory::direct_access(operator).is_some_and(|(_, memarg)| {
                 matches!(
@@ -1570,26 +1600,81 @@ impl Lowering<'_> {
         Ok(())
     }
 
-    fn load_i32(&mut self, result: Register, value: i32) -> Result<(), Diagnostic> {
-        self.load_scalar(result, WasmValue::I32(value))
+    /// Load a defaultable local type's default value.
+    fn load_default(
+        &mut self,
+        result: Register,
+        ty: wasmparser::ValType,
+    ) -> Result<(), Diagnostic> {
+        let constant = self.default_constant(ty)?;
+        self.emit(Op::LoadConst, result, 0, 0, constant)
     }
 
-    fn load_zero(&mut self, result: Register, ty: WasmType) -> Result<(), Diagnostic> {
-        if matches!(ty, WasmType::FUNCREF | WasmType::EXTERNREF) {
-            return self.load_scalar(result, ty.default_value().unwrap());
+    fn default_constant(&mut self, ty: wasmparser::ValType) -> Result<u32, Diagnostic> {
+        let constant = match ty {
+            wasmparser::ValType::Ref(_) => Constant::Null,
+            wasmparser::ValType::I32 | wasmparser::ValType::F32 => return Ok(ZERO_LOCAL_CONSTANT),
+            ty => WasmType::from_wasm(ty)
+                .and_then(|ty| ty.default_value())
+                .and_then(|value| value.constant())
+                .ok_or_else(|| Diagnostic::unsupported(self.name, "non-defaultable Wasm local"))?,
+        };
+        let existing = self
+            .constants
+            .iter()
+            .position(|known| match (known, &constant) {
+                (Constant::Null, Constant::Null) => true,
+                (Constant::WasmBits64(known), Constant::WasmBits64(value)) => known == value,
+                (Constant::WasmV128(known), Constant::WasmV128(value)) => known == value,
+                _ => false,
+            });
+        Ok(match existing {
+            Some(index) => index as u32,
+            None => self.append_constant(constant)?,
+        })
+    }
+
+    /// Give register locals their defaults with one fill per run of locals that
+    /// share a default. A local whose first use is an unconditional top-level
+    /// `local.set` or `local.tee` is always written before it is read.
+    fn fill_register_locals(
+        &mut self,
+        base: Register,
+        params: u16,
+        locals: &[wasmparser::ValType],
+        operators: &[Operator<'_>],
+    ) -> Result<(), Diagnostic> {
+        let assigned_first = first_use_assigns(params, locals.len(), operators);
+        let mut run: Option<(Register, u16, u32)> = None;
+        for (index, ty) in locals.iter().copied().enumerate() {
+            let register = base + params + index as Register;
+            let constant = if ty.is_defaultable() && !assigned_first[index] {
+                Some(self.default_constant(ty)?)
+            } else {
+                None
+            };
+            match (run, constant) {
+                (Some((start, count, value)), Some(constant))
+                    if value == constant && start + count == register =>
+                {
+                    run = Some((start, count + 1, value));
+                }
+                (_, constant) => {
+                    if let Some((start, count, value)) = run {
+                        self.emit(Op::WasmFillRegisters, 0, start, count, value)?;
+                    }
+                    run = constant.map(|constant| (register, 1, constant));
+                }
+            }
         }
-        if matches!(ty, WasmType::I32 | WasmType::F32) {
-            return self.emit(Op::LoadConst, result, 0, 0, ZERO_LOCAL_CONSTANT);
+        if let Some((start, count, value)) = run {
+            self.emit(Op::WasmFillRegisters, 0, start, count, value)?;
         }
-        if matches!(ty, WasmType::I64 | WasmType::F64)
-            && let Some(index) = self
-                .constants
-                .iter()
-                .position(|constant| matches!(constant, Constant::WasmBits64(0)))
-        {
-            return self.emit(Op::LoadConst, result, 0, 0, index as u32);
-        }
-        self.load_scalar(result, ty.default_value().unwrap())
+        Ok(())
+    }
+
+    fn load_i32(&mut self, result: Register, value: i32) -> Result<(), Diagnostic> {
+        self.load_scalar(result, WasmValue::I32(value))
     }
 
     fn append_constant(&mut self, value: Constant) -> Result<u32, Diagnostic> {

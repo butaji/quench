@@ -1298,6 +1298,27 @@ impl<H: Host> Vm<H> {
             Op::WasmJumpI32GreaterEqualUnsigned => {
                 self.wasm_i32_jump(p, f, i, pc, I32BinaryOperator::GreaterEqualUnsigned)?;
             }
+            Op::WasmFillRegisters => {
+                let value = self
+                    .programs
+                    .constant(self.frames[f].program, i.constant_index())
+                    .ok_or_else(|| {
+                        JsError::validation("constant index is outside program".into())
+                    })?;
+                let window = i.register_window();
+                for offset in 0..window.count {
+                    self.write(f, window.base + offset, value);
+                }
+            }
+            Op::WasmSelect => {
+                let (condition, _) = i.register_pair();
+                let source = if self.read(f, condition).wasm_bits32() != 0 {
+                    i.register_b()
+                } else {
+                    i.register_c()
+                };
+                self.write(f, i.result_register(), self.read(f, source));
+            }
             Op::WasmJumpI32Zero => {
                 let taken = self.read(f, i.register_a()).wasm_bits32() == 0;
                 self.wasm_jump(p, f, i, pc, taken);
