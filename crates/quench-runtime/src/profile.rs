@@ -719,8 +719,9 @@ impl Profile {
             eprint!("\"{}\":{}", crate::bytecode::Op::NAMES[index], count);
         }
         eprint!("}}");
-        dispatch_opcodes::report(self, program);
-        dispatch_pairs::report(self, program);
+        if dispatch_opcodes::report(self, program) {
+            dispatch_pairs::report(self, program);
+        }
         eprint!(
             ",\"binary_pair_dependencies\":{{\"names\":[\"none\",\"left\",\"right\",\"both\"],\"counts\":{:?}}},\"top_pairs\":[",
             binary_dependencies

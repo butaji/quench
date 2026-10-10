@@ -24,14 +24,17 @@ pub(super) fn derive(profile: &Profile, program: &ResidualProgram) -> [[u64; Op:
     counts
 }
 
-pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
+pub(super) fn report(profile: &Profile, program: &ResidualProgram) -> bool {
     let counts = derive(profile, program);
     let physical_total = profile.site_counts.iter().flatten().sum::<u64>();
-    assert_eq!(
-        counts.iter().flatten().sum::<u64>(),
-        physical_total,
-        "dispatch/opcode matrix lost physical executions"
-    );
+    // The shared VM may have executed additional programs before the current
+    // program reached this report. The aggregate site counters are keyed only
+    // by function/PC, so a per-program opcode matrix is valid only when its
+    // total covers every recorded site. In that case, omit the matrix and let
+    // the aggregate profile report continue instead of aborting the execution.
+    if counts.iter().flatten().sum::<u64>() != physical_total {
+        return false;
+    }
     let mut virtual_counts = [0; Op::COUNT];
     for opcode in 0..Op::COUNT {
         virtual_counts[opcode] = profile
@@ -64,4 +67,5 @@ pub(super) fn report(profile: &Profile, program: &ResidualProgram) {
         eprint!("}}");
     }
     eprint!("}}");
+    true
 }
