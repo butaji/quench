@@ -93,25 +93,22 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
         (typeof flag === "string" && flag.startsWith("--stack-trace-limit="))
       );
     };
-    const protectedSets = (globalThis.__quenchProtectedSets ||= new WeakSet());
+    const protectedSets = new WeakSet();
     protectedSets.add(allowedFlags);
-    if (!globalThis.__quenchProtectedSetMethods) {
-      const originalAdd = Set.prototype.add;
-      const originalDelete = Set.prototype.delete;
-      const originalClear = Set.prototype.clear;
-      Set.prototype.add = function (value) {
-        return protectedSets.has(this) ? this : originalAdd.call(this, value);
-      };
-      Set.prototype.delete = function (value) {
-        return protectedSets.has(this)
-          ? false
-          : originalDelete.call(this, value);
-      };
-      Set.prototype.clear = function () {
-        if (!protectedSets.has(this)) originalClear.call(this);
-      };
-      globalThis.__quenchProtectedSetMethods = true;
-    }
+    const originalAdd = Set.prototype.add;
+    const originalDelete = Set.prototype.delete;
+    const originalClear = Set.prototype.clear;
+    Set.prototype.add = function (value) {
+      return protectedSets.has(this) ? this : originalAdd.call(this, value);
+    };
+    Set.prototype.delete = function (value) {
+      return protectedSets.has(this)
+        ? false
+        : originalDelete.call(this, value);
+    };
+    Set.prototype.clear = function () {
+      if (!protectedSets.has(this)) originalClear.call(this);
+    };
     globalThis.process.allowedNodeEnvironmentFlags =
       Object.freeze(allowedFlags);
     }
@@ -154,8 +151,30 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     globalThis.process.versions.cjs_module_lexer ??= "1.2.2";
     globalThis.process.title =
       globalThis.__quench_cli_title || globalThis.process.title || "node";
-    globalThis.process.getBuiltinModule ||= (name) =>
-      globalThis["\0quench:require"](String(name).replace(/^node:/, ""));
+    globalThis.process.getBuiltinModule ||= (name) => {
+      if (typeof name !== "string") {
+        const received = name === null ? "Received null" : name === undefined
+          ? "Received undefined"
+          : typeof name === "object"
+            ? `Received an instance of ${Array.isArray(name) ? "Array" : "Object"}`
+            : `Received type ${typeof name} (${String(name)})`;
+        throw Object.assign(
+          new TypeError(`The "id" argument must be of type string. ${received}`),
+          { code: "ERR_INVALID_ARG_TYPE" }
+        );
+      }
+      const builtin = name.replace(/^node:/, "");
+      const builtinNames = globalThis["\0quench:require"]("module").builtinModules;
+      if (!builtinNames.includes(name)) return undefined;
+      try {
+        return globalThis["\0quench:require"](builtin);
+      } catch (error) {
+        if (error?.code === "MODULE_NOT_FOUND" || error?.code === "ERR_UNKNOWN_BUILTIN_MODULE") {
+          return undefined;
+        }
+        throw error;
+      }
+    };
     globalThis.process.loadEnvFile ||= () => undefined;
     globalThis.process.finalization ||= {
       register: () => undefined,
@@ -174,7 +193,15 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
       involuntaryContextSwitches: 0,
       voluntaryContextSwitches: 0
     });
-    globalThis.process.memoryUsage.rss ||= () => 0;
+    globalThis.process.memoryUsage ||= () => ({
+      rss: 0,
+      heapTotal: 0,
+      heapUsed: 0,
+      external: 0,
+      arrayBuffers: 0
+    });
+    globalThis.process.memoryUsage.rss ||= () =>
+      globalThis.process.memoryUsage().rss;
   }
 }
 "#);
