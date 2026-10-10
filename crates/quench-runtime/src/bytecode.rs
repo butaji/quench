@@ -11,7 +11,7 @@ mod instruction;
 mod numeric_ops;
 pub(crate) use atoms::AtomTable;
 pub use instruction::Instr;
-pub(crate) use instruction::{ConstructArguments, WideInstruction};
+pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
 pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;

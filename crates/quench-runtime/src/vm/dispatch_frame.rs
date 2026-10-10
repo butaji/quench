@@ -10,6 +10,17 @@ struct GeneralCodeCursor {
     decoded: *const WideInstruction,
 }
 
+/// A caller suspended by an in-loop frame push, resumed when its callee completes.
+struct PendingGeneralCall {
+    caller: usize,
+    /// The caller's cursor, still valid on resume: the residual outlives the loop and a hot
+    /// decoding, once built, never moves; a cold caller simply keeps reading packed code.
+    caller_cursor: GeneralCodeCursor,
+    call_pc: u32,
+    destination: Register,
+    stack_guard: crate::stack::StackGuard,
+}
+
 impl GeneralCodeCursor {
     fn new(program_id: ProgramId, program: &ResidualProgram, function: u32) -> Self {
         let function_code = &program.functions[function as usize];
@@ -919,11 +930,7 @@ impl<H: Host> Vm<H> {
                             frame = pending.caller;
                             self.write(frame, pending.destination, value);
                             pc = self.frames[frame].pc;
-                            cursor = GeneralCodeCursor::new(
-                                executing_program,
-                                p,
-                                self.frames[frame].function,
-                            );
+                            cursor = pending.caller_cursor;
                             drop(pending.stack_guard);
                         } else {
                             self.frames[frame].pc = pc;
@@ -937,6 +944,7 @@ impl<H: Host> Vm<H> {
                     }) => {
                         pending_calls.push(PendingGeneralCall {
                             caller: frame,
+                            caller_cursor: cursor,
                             call_pc: instruction_pc as u32,
                             destination,
                             stack_guard,
@@ -1016,11 +1024,7 @@ impl<H: Host> Vm<H> {
                                         self.persist_global_lexical_bindings(p, &failed_frame);
                                         frame = pending.caller;
                                         pc = self.frames[frame].pc;
-                                        cursor = GeneralCodeCursor::new(
-                                            executing_program,
-                                            p,
-                                            self.frames[frame].function,
-                                        );
+                                        cursor = pending.caller_cursor;
                                         throwing_pc = pending.call_pc;
                                         drop(pending.stack_guard);
                                         error = match result {
@@ -1108,6 +1112,17 @@ impl<H: Host> Vm<H> {
             return Vec::new();
         }
         self.captured_with_objects(env)
+    }
+
+    /// The contiguous argument registers of a call window.
+    #[inline(always)]
+    pub(super) fn register_window(
+        &self,
+        f: usize,
+        window: crate::bytecode::RegisterWindow,
+    ) -> &[Value] {
+        let start = usize::from(window.base);
+        &self.frames[f].registers[start..start + usize::from(window.count)]
     }
 
     #[inline(always)]
