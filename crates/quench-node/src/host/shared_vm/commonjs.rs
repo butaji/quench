@@ -280,6 +280,12 @@ pub(super) fn require(
                 "internal/vfs/fd.js",
             );
         }
+        Some(BuiltinModule::InternalUndici) => {
+            let filename = std::env::current_dir()
+                .map_err(|error| RootedError::host(error.to_string()))?
+                .join("tests/node/deps/undici/undici.js");
+            return load(context, &filename, None, EntryGoal::Node);
+        }
         Some(BuiltinModule::InternalDgram) => {
             let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
             context.release_root(dgram);
@@ -509,6 +515,7 @@ enum BuiltinModule {
     InternalDgram,
     InternalUrl,
     InternalVfsFd,
+    InternalUndici,
     InternalTestBinding,
     InternalBlockList,
     InternalSocketAddress,
@@ -586,6 +593,7 @@ impl BuiltinModule {
             | Self::PathWin32 => None,
             Self::InternalUrl => None,
             Self::InternalVfsFd => None,
+            Self::InternalUndici => None,
             Self::InternalDgram
             | Self::InternalTestBinding
             | Self::InternalBlockList
@@ -688,6 +696,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/dgram", BuiltinModule::InternalDgram),
     ("internal/url", BuiltinModule::InternalUrl),
     ("internal/vfs/fd", BuiltinModule::InternalVfsFd),
+    ("internal/deps/undici/undici", BuiltinModule::InternalUndici),
     ("internal/test/binding", BuiltinModule::InternalTestBinding),
     ("internal/blocklist", BuiltinModule::InternalBlockList),
     ("internal/socketaddress", BuiltinModule::InternalSocketAddress),
@@ -857,7 +866,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         | BuiltinModule::InternalTestBinding
         | BuiltinModule::InternalBlockList
         | BuiltinModule::InternalSocketAddress
-        | BuiltinModule::InternalVfsFd => Err(RootedError::host(
+        | BuiltinModule::InternalVfsFd
+        | BuiltinModule::InternalUndici => Err(RootedError::host(
             "special builtin passed to generic shared module builder",
         )),
     }
