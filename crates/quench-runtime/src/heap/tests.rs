@@ -317,9 +317,9 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     let external = heap.alloc(Cell::WasmExtern(value));
     let descriptor = heap.alloc(Cell::WasmBits64(!bits));
     let owner = heap.alloc(Cell::WasmGc {
-        declarations,
+        declarations: Box::new(declarations),
         ty: 0,
-        fields: vec![external],
+        fields: Box::new(vec![external]),
         descriptor: Some(descriptor),
     });
     let tag = heap.alloc(Cell::WasmTag {

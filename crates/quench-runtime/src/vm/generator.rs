@@ -15,9 +15,9 @@ impl<H: Host> Vm<H> {
         let is_running = match self.heap.get(receiver) {
             Some(Cell::Iterator {
                 kind: IteratorKind::Generator,
-                generator: Some(record),
+                ext,
                 ..
-            }) => Some(record.running),
+            }) => ext.generator.as_ref().map(|record| record.running),
             _ => None,
         };
         let Some(is_running) = is_running else {
@@ -48,10 +48,7 @@ impl<H: Host> Vm<H> {
         generator: Value,
     ) -> Option<&mut GeneratorRecord> {
         match self.heap.get_mut(generator) {
-            Some(Cell::Iterator {
-                generator: Some(record),
-                ..
-            }) => Some(record.as_mut()),
+            Some(Cell::Iterator { ext, .. }) => ext.generator.as_deref_mut(),
             _ => None,
         }
     }
@@ -192,10 +189,6 @@ impl<H: Host> Vm<H> {
         let generator = self.heap.alloc(Cell::Iterator {
             object: Box::new(Self::empty_object(generator_prototype)),
             source: Value::NULL,
-            next_method: None,
-            helper: None,
-            helper_running: false,
-            helper_started: false,
             kind: if function.is_async {
                 IteratorKind::AsyncGenerator
             } else {
@@ -203,16 +196,19 @@ impl<H: Host> Vm<H> {
             },
             index: 0,
             done: false,
-            generator: None,
+            ext: Box::new(crate::heap::IteratorExt {
+                next_method: None,
+                helper: None,
+                helper_running: false,
+                helper_started: false,
+                generator: None,
+            }),
         });
         if let Some(Cell::Iterator { source, .. }) = self.heap.get_mut(generator) {
             *source = generator;
         }
-        if let Some(Cell::Iterator {
-            generator: slot, ..
-        }) = self.heap.get_mut(generator)
-        {
-            *slot = Some(Box::new(GeneratorRecord {
+        if let Some(Cell::Iterator { ext, .. }) = self.heap.get_mut(generator) {
+            ext.generator = Some(Box::new(GeneratorRecord {
                 continuation: Some(Continuation::from_frame(
                     &mut frame,
                     Completion::GeneratorStart,
@@ -510,10 +506,7 @@ impl<H: Host> Vm<H> {
 
     fn yield_star_iterator(&self, generator: Value) -> Option<(Value, u16)> {
         let record = match self.heap.get(generator) {
-            Some(Cell::Iterator {
-                generator: Some(record),
-                ..
-            }) => record,
+            Some(Cell::Iterator { ext, .. }) => ext.generator.as_ref()?,
             _ => return None,
         };
         let continuation = record.continuation.as_ref()?;
@@ -614,11 +607,10 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<bool, JsError> {
         let unwind = {
-            let Some(Cell::Iterator {
-                generator: Some(record),
-                ..
-            }) = self.heap.get(generator)
-            else {
+            let Some(record) = (match self.heap.get(generator) {
+                Some(Cell::Iterator { ext, .. }) => ext.generator.as_ref(),
+                _ => None,
+            }) else {
                 return Err(JsError("generator receiver is invalid".into()));
             };
             let Some(continuation) = record.continuation.as_ref() else {
@@ -828,9 +820,9 @@ impl<H: Host> Vm<H> {
             self.heap.get(receiver),
             Some(Cell::Iterator {
                 kind: IteratorKind::AsyncGenerator,
-                generator: Some(_),
+                ext,
                 ..
-            })
+            }) if ext.generator.is_some()
         ) {
             let name = match native {
                 Native::AsyncGeneratorNext => "next",
