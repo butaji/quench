@@ -119,6 +119,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         }
     }
     install(context, process, "env", env)?;
+    let load_env_file = context.host_function(crate::host::shared_vm::operation("processLoadEnvFile"))?;
+    install(context, process, "loadEnvFile", load_env_file)?;
     for (name, values) in [
         ("argv", argv.as_slice()),
         ("execArgv", exec_argv.as_slice()),
@@ -1248,6 +1250,146 @@ pub(crate) fn raw_debug(
         .and_then(|()| stderr.write_all(b"\n"))
         .map_err(|error| RootedError::host(error.to_string()))?;
     Ok(context.undefined())
+}
+
+pub(crate) fn load_env_file(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path_text = match args.first().copied() {
+        None => ".env".to_owned(),
+        Some(path) => match context.string_text(path)? {
+            Some(path) => path,
+            None => {
+                return Err(throw_process_error(
+                    context,
+                    "The \"path\" argument must be of type string",
+                    "ERR_INVALID_ARG_TYPE",
+                    true,
+                )?);
+            }
+        },
+    };
+    let cwd = context.host_mut().shared_state().borrow().cwd.path();
+    let requested = std::path::Path::new(&path_text);
+    let path = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        cwd.join(requested)
+    };
+    let contents = std::fs::read_to_string(&path).map_err(|error| {
+        dotenv_file_error(context, &path_text, error)
+    })?;
+    let process = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_module
+        .ok_or_else(|| RootedError::host("process.loadEnvFile called without process root"))?;
+    let env_key = context.string_rooted("env");
+    let env = context.get_property_rooted(process, env_key)?;
+    for (key_text, value_text) in parse_env_file(&contents) {
+        if std::env::var_os(&key_text).is_some() {
+            continue;
+        }
+        let key = context.string_rooted(&key_text);
+        let existing = context.get_property_rooted(env, key)?;
+        if !context
+            .rooted_value(existing)
+            .is_some_and(Value::is_undefined)
+        {
+            continue;
+        }
+        let value = context.string_rooted(&value_text);
+        if !context.set_property_rooted(env, key, value, env)? {
+            return Err(RootedError::host("cannot set process.env variable"));
+        }
+        // SAFETY: this synchronous Node API mirrors Node's process.env update;
+        // the environment is observed only at host process boundaries.
+        unsafe { std::env::set_var(&key_text, &value_text) };
+    }
+    Ok(context.undefined())
+}
+
+fn parse_env_file(contents: &str) -> Vec<(String, String)> {
+    let mut values = Vec::new();
+    let mut lines = contents.lines().peekable();
+    while let Some(line) = lines.next() {
+        let line = line.trim();
+        let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, raw_value)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty()
+            || !key
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.'))
+        {
+            continue;
+        }
+        let raw_value = raw_value.trim_start();
+        let value = if let Some(quote @ ('\'' | '"' | '`')) = raw_value.chars().next() {
+            let mut quoted = raw_value[quote.len_utf8()..].to_owned();
+            while !quoted.contains(quote) {
+                let Some(next) = lines.next() else { break };
+                quoted.push('\n');
+                quoted.push_str(next);
+            }
+            let value = quoted.split_once(quote).map_or(quoted.as_str(), |(value, _)| value);
+            if quote == '\'' {
+                value.to_owned()
+            } else {
+                value.replace("\\n", "\n").replace("\\r", "\r")
+            }
+        } else {
+            let value = raw_value
+                .char_indices()
+                .find(|(index, character)| {
+                    *character == '#' && (*index == 0 || raw_value[..*index].chars().next_back().is_some_and(char::is_whitespace))
+                })
+                .map_or(raw_value, |(index, _)| &raw_value[..index]);
+            value.trim_end().to_owned()
+        };
+        values.push((key.to_owned(), value));
+    }
+    values
+}
+
+fn dotenv_file_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    path: &str,
+    error: std::io::Error,
+) -> RootedError {
+    let details = crate::modules::fs_error_details::error_details("open", Some(path), &error);
+    let error_root = match context.error_rooted(&details.message) {
+        Ok(error) => error,
+        Err(error) => return error,
+    };
+    if let Err(error) = set_text(context, error_root, "code", details.code) {
+        return error;
+    }
+    if let Err(error) = set_text(context, error_root, "syscall", &details.syscall) {
+        return error;
+    }
+    if let Some(path) = details.path.as_deref() {
+        if let Err(error) = set_text(context, error_root, "path", path) {
+            return error;
+        }
+    }
+    let errno = context.number(details.errno as f64);
+    let errno_key = context.string_rooted("errno");
+    if !matches!(
+        context.set_property_rooted(error_root, errno_key, errno, error_root),
+        Ok(true)
+    ) {
+        return RootedError::host("cannot set process.loadEnvFile errno");
+    }
+    context.throw(error_root)
 }
 
 fn format_raw_debug(
