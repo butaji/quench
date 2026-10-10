@@ -646,7 +646,7 @@ impl Heap {
             work.push(object.proto);
             object_roots(owner, object.shape(), work);
             work.extend(object.private_names().iter().map(|brand| brand.home));
-            properties.append_live_values(object.properties, work);
+            properties.append_heap_references(object.properties, work);
             object.visit_stack_data_roots(|value| work.push(value));
         };
         if let Some((value, buffer)) = cell.typed_array_backing() {
@@ -661,7 +661,7 @@ impl Heap {
                 elements,
             } => {
                 object(value);
-                work.extend(elements.iter().copied());
+                work.extend(elements.iter().copied().filter(|value| value.is_heap()));
             }
             Cell::ArrayBuffer { object: value, .. } => object(value),
             Cell::RegExp {
