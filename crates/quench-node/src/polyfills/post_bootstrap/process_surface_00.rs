@@ -260,8 +260,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     globalThis.process.versions.ngtcp2 ??= "1.4.0";
     globalThis.process.versions.simdutf ??= "5.2.4";
     globalThis.process.versions.unicode ??= "15.1";
-    globalThis.process.versions.undici ??= "6.19.8";
-    globalThis.process.versions.cjs_module_lexer ??= "1.2.2";
+    Object.freeze(globalThis.process.versions);
     globalThis.process.title =
       globalThis.__quench_cli_title || globalThis.process.title || "node";
     delete globalThis.__quench_cli_title;
