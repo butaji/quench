@@ -997,6 +997,29 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(Value::UNDEFINED);
                 self.write(f, i.result_register(), result);
             }
+            Op::WasmI32Load
+            | Op::WasmI64Load
+            | Op::WasmF32Load
+            | Op::WasmF64Load
+            | Op::WasmI32Load8S
+            | Op::WasmI32Load8U
+            | Op::WasmI32Load16S
+            | Op::WasmI32Load16U
+            | Op::WasmI64Load8S
+            | Op::WasmI64Load8U
+            | Op::WasmI64Load16S
+            | Op::WasmI64Load16U
+            | Op::WasmI64Load32S
+            | Op::WasmI64Load32U => self.wasm_direct_load(f, i)?,
+            Op::WasmI32Store
+            | Op::WasmI64Store
+            | Op::WasmF32Store
+            | Op::WasmF64Store
+            | Op::WasmI32Store8
+            | Op::WasmI32Store16
+            | Op::WasmI64Store8
+            | Op::WasmI64Store16
+            | Op::WasmI64Store32 => self.wasm_direct_store(f, i)?,
             Op::WasmMemoryLoad | Op::WasmMemoryStore => {
                 let memory = self.read(f, i.register_b());
                 let address = self.wasm_i64_operand(self.read(f, i.register_c()))? as u64;

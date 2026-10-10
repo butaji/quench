@@ -68,10 +68,11 @@ struct Delegation {
 }
 
 impl Control {
-    pub(super) fn function(results: Register) -> Self {
+    /// The function's operand stack starts above its prologue binding registers.
+    pub(super) fn function(base: Register, results: Register) -> Self {
         Self {
             kind: Kind::Function,
-            base: 0,
+            base,
             params: 0,
             results,
             saved_inputs: None,
@@ -755,7 +756,7 @@ impl Lowering<'_> {
         };
         if matches!(control.kind, Kind::Function) {
             if control.results == 0 {
-                self.emit(Op::LoadConst, 0, 0, 0, VOID_RESULT_CONSTANT)?;
+                self.emit(Op::LoadConst, control.base, 0, 0, VOID_RESULT_CONSTANT)?;
             }
             let result = if usize::from(control.results) > SCALAR_RETURN_ARITY {
                 let bundle = self.push()?;
@@ -765,7 +766,7 @@ impl Lowering<'_> {
                 }
                 bundle
             } else {
-                0
+                control.base
             };
             self.emit(Op::Return, result, 0, 0, 0)?;
         }

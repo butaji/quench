@@ -1005,6 +1005,49 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Memory32 effective address of a direct access: the i32 operand plus
+    /// the static offset, computed without overflow in the 64-bit domain.
+    #[inline(always)]
+    fn wasm_direct_address(
+        &self,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+    ) -> Result<u64, JsError> {
+        let address = Self::wasm_u32_operand(self.read(f, i.register_c()))?;
+        Ok(u64::from(address) + u64::from(i.imm()))
+    }
+
+    #[inline(always)]
+    pub(super) fn wasm_direct_load(
+        &mut self,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+    ) -> Result<(), JsError> {
+        let operator = crate::wasm::memory::MemoryLoad::from_direct_op(i.op())
+            .expect("validated direct load opcode");
+        let address = self.wasm_direct_address(f, i)?;
+        let memory = self.read(f, i.register_b());
+        let value = operator
+            .read(&self.wasm_memory_bytes(memory)?, address)
+            .map_err(JsError::wasm_trap_error)?;
+        let value = self.encode_wasm_value(value);
+        self.write(f, i.result_register(), value);
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(super) fn wasm_direct_store(
+        &mut self,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+    ) -> Result<(), JsError> {
+        let operator = crate::wasm::memory::MemoryStore::from_direct_op(i.op())
+            .expect("validated direct store opcode");
+        let address = self.wasm_direct_address(f, i)?;
+        let memory = self.read(f, i.register_b());
+        self.wasm_memory_store(memory, address, operator, self.read(f, i.register_a()))
+    }
+
     pub(super) fn wasm_memory_store(
         &mut self,
         memory: Value,
@@ -1219,6 +1262,8 @@ impl<H: Host> Vm<H> {
             _ => unreachable!("validated Wasm function target"),
         };
         self.active_program = previous;
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.report_dispatch_census_if_enabled();
         result
     }
 

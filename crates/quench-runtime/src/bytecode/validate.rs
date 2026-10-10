@@ -220,6 +220,7 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::WasmMemoryLoadOperator => {
             crate::wasm::memory::MemoryLoad::from_tag(instruction.imm()).is_some()
         }
+        super::ImmediateRole::WasmMemoryOffset => true,
         super::ImmediateRole::WasmMemoryStoreOperator => {
             crate::wasm::memory::MemoryStore::from_tag(instruction.imm()).is_some()
         }

@@ -25,9 +25,10 @@ impl<H: Host> Vm<H> {
                 kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
                 ..
             }) => self.programs.get(*program_id).is_some_and(|program| {
-                program.functions.get(*id as usize).is_some_and(|function| {
-                    function.has_restricted_legacy_caller_access()
-                })
+                program
+                    .functions
+                    .get(*id as usize)
+                    .is_some_and(|function| function.has_restricted_legacy_caller_access())
             }),
             Some(Cell::Function {
                 kind: FunctionKind::Native(_),

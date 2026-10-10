@@ -266,6 +266,62 @@ stores! {
     V128Store, u128, V128;
 }
 
+// Scalar memory32 accesses with a static offset have one opcode each. The
+// access semantics remain the MemoryLoad/MemoryStore rules above; the opcode
+// only names the operator so dispatch needs no selector decode.
+macro_rules! direct_accesses {
+    ($kind:ident; $($name:ident => $op:ident;)+) => {
+        impl $kind {
+            pub(crate) const fn direct_op(self) -> Option<crate::bytecode::Op> {
+                match self { $(Self::$name => Some(crate::bytecode::Op::$op),)+ #[allow(unreachable_patterns)] _ => None }
+            }
+            pub(crate) const fn from_direct_op(op: crate::bytecode::Op) -> Option<Self> {
+                match op { $(crate::bytecode::Op::$op => Some(Self::$name),)+ _ => None }
+            }
+        }
+    }
+}
+direct_accesses! { MemoryLoad;
+    I32Load => WasmI32Load;
+    I64Load => WasmI64Load;
+    F32Load => WasmF32Load;
+    F64Load => WasmF64Load;
+    I32Load8S => WasmI32Load8S;
+    I32Load8U => WasmI32Load8U;
+    I32Load16S => WasmI32Load16S;
+    I32Load16U => WasmI32Load16U;
+    I64Load8S => WasmI64Load8S;
+    I64Load8U => WasmI64Load8U;
+    I64Load16S => WasmI64Load16S;
+    I64Load16U => WasmI64Load16U;
+    I64Load32S => WasmI64Load32S;
+    I64Load32U => WasmI64Load32U;
+}
+direct_accesses! { MemoryStore;
+    I32Store => WasmI32Store;
+    I64Store => WasmI64Store;
+    F32Store => WasmF32Store;
+    F64Store => WasmF64Store;
+    I32Store8 => WasmI32Store8;
+    I32Store16 => WasmI32Store16;
+    I64Store8 => WasmI64Store8;
+    I64Store16 => WasmI64Store16;
+    I64Store32 => WasmI64Store32;
+}
+
+/// The direct opcode for a scalar access, when the memory has a prologue
+/// binding register and the access can use the direct memory32 form.
+pub(super) fn direct_access(
+    operator: &wasmparser::Operator<'_>,
+) -> Option<(crate::bytecode::Op, wasmparser::MemArg)> {
+    MemoryLoad::from_wasm(operator)
+        .and_then(|(load, memarg)| Some((load.direct_op()?, memarg)))
+        .or_else(|| {
+            MemoryStore::from_wasm(operator)
+                .and_then(|(store, memarg)| Some((store.direct_op()?, memarg)))
+        })
+}
+
 // Lane accesses compose existing scalar memory access with SIMD lane rules.
 macro_rules! lane_accesses {
     ($($wasm:ident, $op:ident, $access:path, $lane_op:ident;)+) => {
@@ -287,6 +343,23 @@ lane_accesses! {
     V128Store32Lane, WasmMemoryStore, MemoryStore::I32Store, I32x4ExtractLane;
     V128Load64Lane, WasmMemoryLoad, MemoryLoad::I64Load, I64x2ReplaceLane;
     V128Store64Lane, WasmMemoryStore, MemoryStore::I64Store, I64x2ExtractLane;
+}
+
+/// Memories whose scalar accesses use a prologue binding register: memory32
+/// memories accessed directly at least once by this function body.
+pub(super) fn direct_access_memories(
+    memories: &[WasmMemory],
+    operators: &[wasmparser::Operator<'_>],
+) -> Vec<bool> {
+    let mut used = vec![false; memories.len()];
+    for (_, memarg) in operators.iter().filter_map(direct_access) {
+        if let Some(memory) = memories.get(memarg.memory as usize)
+            && !memory.ty.memory64
+        {
+            used[memarg.memory as usize] = true;
+        }
+    }
+    used
 }
 
 impl super::Lowering<'_> {
@@ -321,6 +394,26 @@ impl super::Lowering<'_> {
     ) -> Result<bool, crate::Diagnostic> {
         use crate::bytecode::Op;
         if self.atomic_operator(operator)? || self.bulk_memory_operator(operator)? {
+            return Ok(true);
+        }
+        if let Some((op, memarg)) = direct_access(operator)
+            && let Some(&Some(memory)) = self.memory_registers.get(memarg.memory as usize)
+        {
+            if self.path == super::Reachability::Dead {
+                return Ok(true);
+            }
+            let offset = u32::try_from(memarg.offset).map_err(|_| {
+                crate::Diagnostic::unsupported(self.name, "Wasm memory32 offset out of range")
+            })?;
+            if MemoryStore::from_direct_op(op).is_some() {
+                let value = self.pop()?;
+                let address = self.pop()?;
+                self.emit(op, value, memory, address, offset)?;
+            } else {
+                let address = self.pop()?;
+                let result = self.push()?;
+                self.emit(op, result, memory, address, offset)?;
+            }
             return Ok(true);
         }
         let access = MemoryLoad::from_wasm(operator)
