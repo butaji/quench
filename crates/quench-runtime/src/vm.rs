@@ -357,6 +357,16 @@ struct CachedPropertyAttributes {
     accessor: bool,
 }
 impl ShapeTransition {
+    fn introduces_gc_roots(self) -> bool {
+        match self {
+            Self::Add { key, .. } => key.symbol_value().is_some(),
+            Self::Descriptor { attributes, .. } => {
+                attributes.getter.is_some() || attributes.setter.is_some()
+            }
+            Self::Root | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
+        }
+    }
+
     fn cache_key(self) -> Option<ShapeTransitionKey> {
         match self {
             Self::Add {
@@ -424,11 +434,12 @@ struct Shape {
     transition: ShapeTransition,
     storage_len: usize,
     dictionary_trigger: Option<DictionaryTrigger>,
+    may_have_gc_roots: bool,
     lookup_index: OnceCell<Box<ShapeLookupIndex>>,
 }
 impl Shape {
     fn root() -> Self {
-        Self::child(None, ShapeTransition::Root, 0, None)
+        Self::child(None, ShapeTransition::Root, 0, None, false)
     }
 
     fn child(
@@ -436,12 +447,14 @@ impl Shape {
         transition: ShapeTransition,
         storage_len: usize,
         dictionary_trigger: Option<DictionaryTrigger>,
+        parent_may_have_gc_roots: bool,
     ) -> Self {
         Self {
             parent,
             transition,
             storage_len,
             dictionary_trigger,
+            may_have_gc_roots: parent_may_have_gc_roots || transition.introduces_gc_roots(),
             lookup_index: OnceCell::new(),
         }
     }

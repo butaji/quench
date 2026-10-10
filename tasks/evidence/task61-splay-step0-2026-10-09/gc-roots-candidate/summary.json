@@ -1,0 +1,257 @@
+{
+  "schema": "task61-splay-m1-gc-root-metadata-v1",
+  "change": "Derive a may_have_gc_roots bit per shape; scan a root-bearing shape once per collection; gather live shapes while marking; skip empty owned-root and ephemeron probes; gate sparse-array lookup on Array cells.",
+  "source": {
+    "base_revision": "0f980819a5982fd27f09a83fee87d03ba77368ff",
+    "candidate_patch": "m1.patch",
+    "candidate_patch_sha256": "dba18864fb66a08f8b5228d2e0a8a4a22b131d177a65b4a6dc38748018adba1a",
+    "changed_files": [
+      "crates/quench-runtime/src/heap.rs",
+      "crates/quench-runtime/src/heap/weak.rs",
+      "crates/quench-runtime/src/vm.rs",
+      "crates/quench-runtime/src/vm/gc.rs",
+      "crates/quench-runtime/src/vm/object.rs",
+      "crates/quench-runtime/src/vm/tests.rs"
+    ]
+  },
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2",
+    "model": "Mac16,10",
+    "memory_bytes": 17179869184,
+    "memory_limit_bytes": null,
+    "cpu_quota": null,
+    "process_metrics_backend": "macOS /usr/bin/time -l"
+  },
+  "binaries": {
+    "baseline_sha256": "59b94089d8527c8250b6ed3d83f2463e7a788bb0d3c3c23d194cc701a96a03f6",
+    "candidate_sha256": "d28c6a722fd77b3a52a2a5c31ec455fcf0207609e393ca7f82f96ffd5255b962",
+    "candidate_symbolized_sample_sha256": "ee1b810408ceee55fef941070559286f24184d26e0cabfd0115a7d097b29fcf4",
+    "candidate_symbolized_binary_sha256": "a96599f331cb079e47dcc370729a071b9e4850cb0414084a7cf3894522e974ce"
+  },
+  "splay_fixed_work": {
+    "schema": 2,
+    "rounds": 11,
+    "iterations_per_run": 300,
+    "valid": true,
+    "output_equal": true,
+    "speed_target_cycles_per_run": 4590844.29,
+    "rss_target_max_bytes": 57950208,
+    "baseline": {
+      "work": {
+        "median_wall_ns": 1021858792,
+        "median_cycles": 4125959642,
+        "median_instructions": 24268100241,
+        "median_max_rss_bytes": 217923584,
+        "valid_samples": 11
+      },
+      "setup_only": {
+        "median_wall_ns": 255461500,
+        "median_cycles": 1024427256,
+        "median_instructions": 5948795013,
+        "median_max_rss_bytes": 115523584,
+        "valid_samples": 11
+      },
+      "marginal_per_run": {
+        "median_wall_ns": 2550974.5833333335,
+        "median_cycles": 10324242.04,
+        "median_instructions": 61064860.06666667,
+        "paired_samples": 11
+      }
+    },
+    "candidate": {
+      "work": {
+        "median_wall_ns": 911057958,
+        "median_cycles": 3684935542,
+        "median_instructions": 20933905693,
+        "median_max_rss_bytes": 217939968,
+        "valid_samples": 11
+      },
+      "setup_only": {
+        "median_wall_ns": 217520333,
+        "median_cycles": 866682401,
+        "median_instructions": 4780672421,
+        "median_max_rss_bytes": 115539968,
+        "valid_samples": 11
+      },
+      "marginal_per_run": {
+        "median_wall_ns": 2313424.5833333335,
+        "median_cycles": 9395225.276666667,
+        "median_instructions": 53848575.81666667,
+        "paired_samples": 11
+      }
+    },
+    "paired_cycle_delta_percent_median": -9.034085049923346,
+    "paired_cycle_delta_percent_bootstrap_95_ci": [
+      -9.447375272903457,
+      -8.515305293149977
+    ],
+    "paired_cycle_delta_percent_range": [
+      -12.522770328913124,
+      -0.7437654671517469
+    ],
+    "paired_wall_delta_percent_median": -8.775033713778512,
+    "paired_wall_delta_percent_bootstrap_95_ci": [
+      -9.606066008956205,
+      -7.8927033752897895
+    ],
+    "paired_max_rss_delta_bytes_median": 16384,
+    "paired_max_rss_delta_bytes_bootstrap_95_ci": [
+      -32768,
+      196608
+    ],
+    "paired_max_rss_delta_bytes_range": [
+      -131072,
+      3473408
+    ],
+    "step0_distance_ratio": {
+      "speed_before": 2.2336703110732894,
+      "speed_after": 2.046513600370155,
+      "rss_before": 3.7588351710489114,
+      "rss_after": 3.7608142493638677
+    }
+  },
+  "all_eight_fixed_work_guard": {
+    "rounds": 3,
+    "complete": true,
+    "fixtures": {
+      "crypto.js": {
+        "valid": true,
+        "output_equal": true,
+        "rounds": 3,
+        "paired_cycle_delta_percent_median": 0.6435375012711075,
+        "paired_cycle_delta_percent_range": [
+          0.13588369788799515,
+          2.474406189104994
+        ],
+        "paired_max_rss_delta_bytes_median": -16384,
+        "paired_max_rss_delta_bytes_range": [
+          -180224,
+          0
+        ]
+      },
+      "deltablue.js": {
+        "valid": true,
+        "output_equal": true,
+        "rounds": 3,
+        "paired_cycle_delta_percent_median": -0.3663828999746044,
+        "paired_cycle_delta_percent_range": [
+          -1.4324312285570628,
+          0.356049514141521
+        ],
+        "paired_max_rss_delta_bytes_median": 16384,
+        "paired_max_rss_delta_bytes_range": [
+          -16384,
+          147456
+        ]
+      },
+      "earley-boyer.js": {
+        "valid": true,
+        "output_equal": true,
+        "rounds": 3,
+        "paired_cycle_delta_percent_median": -5.8670423373076925,
+        "paired_cycle_delta_percent_range": [
+          -6.437619503200409,
+          -5.657497995439298
+        ],
+        "paired_max_rss_delta_bytes_median": 49152,
+        "paired_max_rss_delta_bytes_range": [
+          -65536,
+          114688
+        ]
+      },
+      "navier-stokes.js": {
+        "valid": true,
+        "output_equal": true,
+        "rounds": 3,
+        "paired_cycle_delta_percent_median": 0.34674558542378,
+        "paired_cycle_delta_percent_range": [
+          -0.9801786152127567,
+          0.6569063700917921
+        ],
+        "paired_max_rss_delta_bytes_median": -131072,
+        "paired_max_rss_delta_bytes_range": [
+          -180224,
+          114688
+        ]
+      },
+      "raytrace.js": {
+        "valid": true,
+        "output_equal": true,
+        "rounds": 3,
+        "paired_cycle_delta_percent_median": -5.53580141394897,
+        "paired_cycle_delta_percent_range": [
+          -7.17689747377862,
+          -5.084153098613731
+        ],
+        "paired_max_rss_delta_bytes_median": -32768,
+        "paired_max_rss_delta_bytes_range": [
+          -98304,
+          65536
+        ]
+      },
+      "regexp.js": {
+        "valid": true,
+        "output_equal": true,
+        "rounds": 3,
+        "paired_cycle_delta_percent_median": -0.5799028132147055,
+        "paired_cycle_delta_percent_range": [
+          -1.2452015276500306,
+          1.3628497775112658
+        ],
+        "paired_max_rss_delta_bytes_median": -442368,
+        "paired_max_rss_delta_bytes_range": [
+          -507904,
+          114688
+        ]
+      },
+      "richards.js": {
+        "valid": true,
+        "output_equal": true,
+        "rounds": 3,
+        "paired_cycle_delta_percent_median": 0.08029773128532813,
+        "paired_cycle_delta_percent_range": [
+          0.0667437497302803,
+          0.20030859074291474
+        ],
+        "paired_max_rss_delta_bytes_median": -16384,
+        "paired_max_rss_delta_bytes_range": [
+          -114688,
+          65536
+        ]
+      },
+      "splay.js": {
+        "valid": true,
+        "output_equal": true,
+        "rounds": 3,
+        "paired_cycle_delta_percent_median": -9.425677601337235,
+        "paired_cycle_delta_percent_range": [
+          -10.835493332500656,
+          -8.35065623268818
+        ],
+        "paired_max_rss_delta_bytes_median": 32768,
+        "paired_max_rss_delta_bytes_range": [
+          -180224,
+          114688
+        ]
+      }
+    }
+  },
+  "symbolized_profile": {
+    "baseline": "../splay.sample.txt",
+    "candidate": "splay-m1.sample.txt",
+    "baseline_sample_seconds": 10,
+    "candidate_sample_seconds": 10,
+    "baseline_gc_root_helper_samples_at_gc_rs_21": 114,
+    "candidate_gc_root_helper_samples_at_gc_rs_21": 1,
+    "candidate_gc_root_helper_samples_at_gc_rs_30": 1,
+    "interpretation": "Sampled PCs only, not a time percentage. The candidate removes per-object active_shape_attributes work for ordinary shapes; rare root-bearing shapes remain."
+  },
+  "correctness": {
+    "runtime_unit_tests": "540/540 passed on the M1 source before gating",
+    "test262_stage_47": "47/47 passed",
+    "test262_stages_79_81": "255/255 passed",
+    "wasm_directives": "67124/67124 passed",
+    "fixed_work_outputs": "equal for Splay and all eight fixtures"
+  }
+}
