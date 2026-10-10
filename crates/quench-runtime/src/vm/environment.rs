@@ -434,15 +434,12 @@ impl<H: Host> Vm<H> {
         let slot = self.activation_binding_slot(frame, atom)?;
         let frame = self.frames.get(frame)?;
         let environment_owned = frame.captured
-            && self
-                .programs
-                .get(frame.program)
-                .is_none_or(|program| {
-                    program
-                        .functions
-                        .get(frame.function as usize)
-                        .is_none_or(|function| function.local_slot_uses_environment(slot))
-                });
+            && self.programs.get(frame.program).is_none_or(|program| {
+                program
+                    .functions
+                    .get(frame.function as usize)
+                    .is_none_or(|function| function.local_slot_uses_environment(slot))
+            });
         if environment_owned {
             self.heap.environment_slot(frame.env, slot)
         } else {
@@ -466,15 +463,12 @@ impl<H: Host> Vm<H> {
             )
         };
         let environment_owned = captured
-            && self
-                .programs
-                .get(program_id)
-                .is_none_or(|program| {
-                    program
-                        .functions
-                        .get(function_id as usize)
-                        .is_none_or(|function| function.local_slot_uses_environment(slot))
-                });
+            && self.programs.get(program_id).is_none_or(|program| {
+                program
+                    .functions
+                    .get(function_id as usize)
+                    .is_none_or(|function| function.local_slot_uses_environment(slot))
+            });
         let binding = if environment_owned {
             self.heap.environment_slot_mut(env, slot)
         } else {
