@@ -28,23 +28,47 @@ pub(crate) enum BinaryValuePath {
 #[cfg(feature = "profile-aggregate")]
 impl BinaryValuePath {
     const COUNT: usize = Self::NumberFastPath as usize + 1;
+    const NAMES: [&'static str; Self::COUNT] =
+        ["fallback", "integer_fast_path", "number_fast_path"];
+}
+
+#[cfg(feature = "profile-aggregate")]
+fn ensure_program_counter(
+    counters: &mut Vec<Vec<u64>>,
+    program: u32,
+    length: usize,
+) -> &mut Vec<u64> {
+    let program = program as usize;
+    if counters.len() <= program {
+        counters.resize_with(program + 1, Vec::new);
+    }
+    let counts = &mut counters[program];
+    if counts.len() < length {
+        counts.resize(length, 0);
+    }
+    counts
+}
+
+#[cfg(feature = "profile-aggregate")]
+fn increment_program_counter(counters: &mut Vec<Vec<u64>>, program: u32, index: usize) {
+    let counts = ensure_program_counter(counters, program, index + 1);
+    counts[index] = counts[index].saturating_add(1);
 }
 
 #[cfg(feature = "profile-aggregate")]
 #[derive(Default)]
 pub(crate) struct Profile {
-    pub opcodes: Vec<u64>,
-    pub dispatched_opcodes: Vec<u64>,
-    pub dispatched_sites: u64,
-    pub pairs: Vec<u64>,
-    pub pair_sites: rustc_hash::FxHashMap<(u32, u32), u64>,
-    pub last_locations: Vec<Option<(u32, usize, usize)>>,
-    pub functions: Vec<u64>,
-    pub site_counts: Vec<Vec<u64>>,
+    pub opcodes: Vec<Vec<u64>>,
+    pub dispatched_opcodes: Vec<Vec<u64>>,
+    pub pairs: Vec<Vec<u64>>,
+    pub pair_sites: rustc_hash::FxHashMap<(u32, u32, u32), u64>,
+    pub last_locations: Vec<Option<(u32, u32, usize, usize)>>,
+    pub functions: Vec<Vec<u64>>,
+    pub site_counts: Vec<Vec<Vec<u64>>>,
     pub object_literal_site_counts: rustc_hash::FxHashMap<(u32, u32, usize), u64>,
     pub object_literal_dispatch_counts: rustc_hash::FxHashMap<(u32, usize), u64>,
-    pub regional_binary_inputs: rustc_hash::FxHashMap<(u32, u32), [u64; 2]>,
-    pub gc_frame_pcs: rustc_hash::FxHashMap<(u32, u32, bool), u64>,
+    pub regional_binary_inputs: rustc_hash::FxHashMap<(u32, u32, u32), [u64; 2]>,
+    pub gc_frame_pcs: rustc_hash::FxHashMap<(u32, u32, u32, bool), u64>,
     pub allocations: u64,
     pub collections: u64,
     pub peak_live: u64,
@@ -174,66 +198,82 @@ pub(crate) struct Profile;
 impl Profile {
     #[cfg(not(feature = "profile-aggregate"))]
     #[inline(always)]
-    pub fn function(&mut self, _id: usize) {}
+    pub fn function(&mut self, _program: u32, _id: usize) {}
 
     #[cfg(feature = "profile-aggregate")]
     #[inline(always)]
-    pub fn opcode(&mut self, opcode: usize, frame: usize, function: u32, pc: usize) {
-        self.record_opcode(opcode, frame, function, pc, true);
-    }
-
-    #[cfg(feature = "profile-aggregate")]
-    #[inline(always)]
-    pub fn fused_opcode(&mut self, opcode: usize, frame: usize, function: u32, pc: usize) {
-        self.record_opcode(opcode, frame, function, pc, false);
-    }
-
-    #[cfg(feature = "profile-aggregate")]
-    #[inline(always)]
-    fn record_opcode(
-        &mut self,
-        opcode: usize,
-        frame: usize,
-        function: u32,
-        pc: usize,
-        dispatched: bool,
-    ) {
-        self.site(function, pc);
-        if dispatched {
-            if self.dispatched_opcodes.len() <= opcode {
-                self.dispatched_opcodes.resize(opcode + 1, 0);
-            }
-            self.dispatched_opcodes[opcode] = self.dispatched_opcodes[opcode].saturating_add(1);
-            self.dispatched_sites = self.dispatched_sites.saturating_add(1);
-        }
-        if self.opcodes.len() <= opcode {
-            self.opcodes.resize(opcode + 1, 0);
-        }
-        self.opcodes[opcode] = self.opcodes[opcode].saturating_add(1);
-        if self.pairs.len() < crate::bytecode::Op::COUNT * crate::bytecode::Op::COUNT {
-            self.pairs
-                .resize(crate::bytecode::Op::COUNT * crate::bytecode::Op::COUNT, 0);
-        }
+    pub fn opcode(&mut self, opcode: usize, frame: usize, program: u32, function: u32, pc: usize) {
+        self.site(program, function, pc);
+        increment_program_counter(&mut self.dispatched_opcodes, program, opcode);
+        increment_program_counter(&mut self.opcodes, program, opcode);
+        let pair_count = crate::bytecode::Op::COUNT * crate::bytecode::Op::COUNT;
+        ensure_program_counter(&mut self.pairs, program, pair_count);
         if self.last_locations.len() <= frame {
             self.last_locations.resize(frame + 1, None);
         }
-        if let Some((last_function, last_pc, last_opcode)) = self.last_locations[frame]
+        if let Some((last_program, last_function, last_pc, last_opcode)) =
+            self.last_locations[frame]
+            && last_program == program
             && last_function == function
             && last_pc + 1 == pc
         {
-            self.pairs[last_opcode * crate::bytecode::Op::COUNT + opcode] += 1;
+            let pair = last_opcode * crate::bytecode::Op::COUNT + opcode;
+            self.pairs[program as usize][pair] += 1;
             *self
                 .pair_sites
-                .entry((function, last_pc as u32))
+                .entry((program, function, last_pc as u32))
                 .or_default() += 1;
         }
-        self.last_locations[frame] = Some((function, pc, opcode));
+        self.last_locations[frame] = Some((program, function, pc, opcode));
         #[cfg(feature = "profile-trace")]
         if self.trace.len() < 4_000_000 {
             self.trace.extend_from_slice(&(opcode as u32).to_le_bytes());
         }
     }
 
+    #[cfg(feature = "profile-aggregate")]
+    #[inline(always)]
+    pub fn fused_opcode(&mut self, opcode: usize, program: u32) {
+        increment_program_counter(&mut self.opcodes, program, opcode);
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    pub fn report_dispatch_census_if_enabled(&self, program: u32) -> bool {
+        if std::env::var_os("QUENCH_OPCODE_CENSUS").is_none() {
+            return false;
+        }
+        let dispatched = self
+            .dispatched_opcodes
+            .get(program as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let sites = self
+            .site_counts
+            .get(program as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let total = dispatched.iter().sum::<u64>();
+        let site_total = sites.iter().flatten().sum::<u64>();
+        assert_eq!(total, site_total, "dispatch opcode/site counters diverged");
+        eprint!(
+            "{{\"kind\":\"quench-dispatch-opcode-census\",\"total\":{total},\"site_total\":{site_total},\"binary_value_paths\":{{\"operator_order\":\"oxc_ast::ast::BinaryOperator discriminant\",\"value_tag_order\":{:?},\"path_order\":{:?},\"counts\":{:?}}},\"counts\":{{",
+            crate::value::ProfileKind::NAMES,
+            BinaryValuePath::NAMES,
+            self.binary_value_paths,
+        );
+        for opcode in 0..crate::bytecode::Op::COUNT {
+            if opcode != 0 {
+                eprint!(",");
+            }
+            eprint!(
+                "\"{}\":{}",
+                crate::bytecode::Op::NAMES[opcode],
+                dispatched.get(opcode).copied().unwrap_or(0)
+            );
+        }
+        eprintln!("}}}}");
+        true
+    }
     #[cfg(feature = "profile-aggregate")]
     pub fn object_literal_instruction(
         &mut self,
@@ -328,51 +368,6 @@ impl Profile {
     #[cfg(not(feature = "profile-aggregate"))]
     #[inline(always)]
     pub fn fused_opcode(&mut self, _opcode: usize) {}
-
-    #[cfg(feature = "profile-aggregate")]
-    pub fn report_dispatch_census_if_enabled(&self) -> bool {
-        if std::env::var_os("QUENCH_OPCODE_CENSUS").is_none() {
-            return false;
-        }
-        let total = self.dispatched_opcodes.iter().sum::<u64>();
-        assert_eq!(total, self.dispatched_sites, "dispatch counters diverged");
-        eprint!(
-            "{{\"kind\":\"quench-dispatch-opcode-census\",\"total\":{total},\"dispatch_sites\":{},\"counts\":{{",
-            self.dispatched_sites
-        );
-        for opcode in 0..crate::bytecode::Op::COUNT {
-            if opcode != 0 {
-                eprint!(",");
-            }
-            eprint!(
-                "\"{}\":{}",
-                crate::bytecode::Op::NAMES[opcode],
-                self.dispatched_opcodes.get(opcode).copied().unwrap_or(0)
-            );
-        }
-        let mut pairs: Vec<_> = self
-            .pairs
-            .iter()
-            .copied()
-            .enumerate()
-            .filter(|(_, count)| *count > 0)
-            .collect();
-        pairs.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(*count));
-        eprint!("}},\"top_profile_pairs\":[");
-        for (position, (id, count)) in pairs.iter().take(32).enumerate() {
-            if position != 0 {
-                eprint!(",");
-            }
-            eprint!(
-                "[\"{}\",\"{}\",{}]",
-                crate::bytecode::Op::NAMES[id / crate::bytecode::Op::COUNT],
-                crate::bytecode::Op::NAMES[id % crate::bytecode::Op::COUNT],
-                count
-            );
-        }
-        eprintln!("]}}");
-        true
-    }
 
     #[inline(always)]
     pub fn shape_transition(&mut self, hit: bool) {
@@ -621,7 +616,12 @@ impl Profile {
     }
 
     #[cfg(feature = "profile-aggregate")]
-    pub fn report(&mut self, heap: &crate::heap::Heap, program: &crate::bytecode::ResidualProgram) {
+    pub fn report(
+        &mut self,
+        heap: &crate::heap::Heap,
+        program_id: u32,
+        program: &crate::bytecode::ResidualProgram,
+    ) {
         let heap_stats = heap.stats();
         let gc = heap.gc_profile();
         self.allocations = heap_stats.0;
@@ -631,13 +631,20 @@ impl Profile {
         self.max_gc_threshold = heap_stats.4 as u64;
         let mut pairs: Vec<_> = self
             .pairs
+            .get(program_id as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
             .iter()
             .copied()
             .enumerate()
             .filter(|(_, n)| *n > 0)
             .collect();
         pairs.sort_unstable_by_key(|(_, n)| std::cmp::Reverse(*n));
-        let mut pair_sites: Vec<_> = self.pair_sites.iter().collect();
+        let mut pair_sites: Vec<_> = self
+            .pair_sites
+            .iter()
+            .filter(|((site_program, _, _), _)| *site_program == program_id)
+            .collect();
         pair_sites.sort_unstable_by_key(|(_, count)| std::cmp::Reverse(**count));
         let mut binary_modes: Vec<_> = self
             .binary_operand_modes
@@ -652,8 +659,8 @@ impl Profile {
             .iter()
             .filter(|function| function.dispatch == crate::bytecode::DispatchClass::Numeric)
             .count();
-        let binary_dependencies = dependencies::binary_pairs(&self.pair_sites, program);
-        regional::report(self, program);
+        let binary_dependencies = dependencies::binary_pairs(&self.pair_sites, program_id, program);
+        regional::report(self, program_id, program);
         eprint!(
             "{{\"kind\":\"quench-profile\",\"allocations\":{},\"allocation_kinds\":{{\"names\":[\"object\",\"array\",\"map\",\"set\",\"iterator\",\"weak_map\",\"weak_set\",\"weak_ref\",\"function\",\"environment\",\"string\",\"bigint\",\"symbol\",\"date\",\"error\"],\"size_buckets\":[0,7,15,31,63,127,255,null],\"counts\":{:?},\"payload_bytes\":{:?},\"bucket_counts\":{:?}}},\"collections\":{},\"peak_live\":{},\"peak_survivors\":{},\"max_gc_threshold\":{},\"gc\":{{\"roots\":{},\"work_items\":{},\"max_worklist\":{},\"marked\":{},\"freed\":{},\"sweep_slots\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"marked_kinds\":{:?}}},\"shape_transitions\":{{\"hits\":{},\"misses\":{}}},\"dictionary_transitions\":{{\"names\":[\"property_count\",\"deletion_pattern\",\"prototype_use\"],\"counts\":{:?}}},\"field_cache\":{{\"hits\":{},\"misses\":{},\"tiers\":{:?},\"depths\":{:?}}},\"method_cache\":{{\"hits\":{},\"misses\":{},\"tiers\":{:?},\"refill_names\":[\"first\",\"post_gc\",\"post_mutation\"],\"refills\":{:?},\"same_target_names\":[\"gc\",\"mutation\"],\"same_targets\":{:?},\"invalidation_names\":[\"gc_candidates\",\"mutation_cleared\"],\"invalidation_entries\":{:?},\"dead_after_gc\":{}}},\"dynamic_atoms\":{},\"dynamic_strings\":{{\"hits\":{},\"misses\":{}}},\"string_concats\":{{\"coercing\":{},\"both_strings\":{},\"cache_hits\":{},\"cache_misses\":{},\"size_buckets\":{:?},\"max_bytes\":{}}},\"operand_tags\":{:?},\"binary_ops\":{:?},\"numeric_binary_paths\":{{\"names\":[\"fast_hit\",\"integer_operator_miss\",\"type_miss\"],\"counts\":{:?}}},\"branch_values\":{{\"names\":[\"undefined\",\"null\",\"boolean\",\"integer\",\"double\",\"heap\"],\"outcome_names\":[\"falsey\",\"truthy\"],\"counts\":{:?}}},\"method_argc\":{:?},\"calls\":{{\"source_names\":[\"dynamic\",\"known\",\"method\",\"this_method\",\"construct\"],\"sources\":{:?},\"target_names\":[\"native\",\"user\",\"numeric_user\"],\"targets\":{:?},\"target_argc\":{:?}}},\"terminal_calls\":{:?},\"indexed_access\":{{\"get_names\":[\"int_dense\",\"int_sparse\",\"int_missing\",\"wide_dense\",\"wide_sparse\",\"wide_missing\",\"numeric_non_array\",\"property\"],\"gets\":{:?},\"set_names\":[\"int_replace\",\"int_grow\",\"int_sparse\",\"wide_replace\",\"wide_grow\",\"wide_sparse\",\"numeric_non_array\",\"property\"],\"sets\":{:?},\"dispatch_names\":[\"get_general\",\"get_numeric\",\"set_general\",\"set_numeric\"],\"dispatches\":{:?}}},\"array_writes\":{{\"names\":[\"unique\",\"shared\"],\"counts\":{:?}}},\"dispatch_classes\":[{},{}],\"opcodes\":{{",
             self.allocations,
@@ -712,16 +719,20 @@ impl Profile {
             program.functions.len() - numeric_dispatches,
             numeric_dispatches
         );
-        for (index, count) in self.opcodes.iter().enumerate() {
+        let opcodes = self
+            .opcodes
+            .get(program_id as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        for (index, count) in opcodes.iter().enumerate() {
             if index != 0 {
                 eprint!(",");
             }
             eprint!("\"{}\":{}", crate::bytecode::Op::NAMES[index], count);
         }
         eprint!("}}");
-        if dispatch_opcodes::report(self, program) {
-            dispatch_pairs::report(self, program);
-        }
+        dispatch_opcodes::report(self, program_id, program);
+        dispatch_pairs::report(self, program_id, program);
         eprint!(
             ",\"binary_pair_dependencies\":{{\"names\":[\"none\",\"left\",\"right\",\"both\"],\"counts\":{:?}}},\"top_pairs\":[",
             binary_dependencies
@@ -745,7 +756,7 @@ impl Profile {
             eprint!("[{}, {}, {}, {}]", mode / 16, mode / 4 % 4, mode % 4, count);
         }
         eprint!("],\"top_pair_sites\":[");
-        for (position, ((function, pc), count)) in pair_sites.iter().take(20).enumerate() {
+        for (position, ((_, function, pc), count)) in pair_sites.iter().take(20).enumerate() {
             if position != 0 {
                 eprint!(",");
             }
@@ -761,8 +772,8 @@ impl Profile {
         }
         eprint!("]");
         instruction_words::report(program);
-        root_maps::report(self, program);
-        regional::report_functions(self, program);
+        root_maps::report(self, program_id, program);
+        regional::report_functions(self, program_id, program);
         #[cfg(feature = "profile-trace")]
         {
             let path = std::env::var_os("QUENCH_TRACE").unwrap_or_else(|| "Quench.trace".into());
@@ -775,7 +786,7 @@ impl Profile {
     }
 
     #[cfg(not(feature = "profile-aggregate"))]
-    pub fn report(&mut self, _: &crate::heap::Heap, _: &crate::bytecode::ResidualProgram) {}
+    pub fn report(&mut self, _: &crate::heap::Heap, _: u32, _: &crate::bytecode::ResidualProgram) {}
 }
 
 #[cfg(all(test, feature = "profile-aggregate"))]
@@ -786,11 +797,23 @@ mod tests {
     #[test]
     fn physical_dispatch_counts_exclude_virtual_fusion_steps() {
         let mut profile = Profile::default();
-        profile.opcode(Op::NumericAdd as usize, 0, 0, 0);
-        profile.virtual_opcode(Op::Binary as usize);
+        profile.opcode(Op::NumericAdd as usize, 0, 0, 0, 0);
+        profile.virtual_opcode(0, Op::Binary as usize);
 
-        assert_eq!(profile.dispatched_opcodes[Op::NumericAdd as usize], 1);
-        assert_eq!(profile.dispatched_opcodes[Op::Binary as usize], 0);
-        assert_eq!(profile.opcodes[Op::Binary as usize], 1);
+        assert_eq!(profile.dispatched_opcodes[0][Op::NumericAdd as usize], 1);
+        assert_eq!(profile.dispatched_opcodes[0][Op::Binary as usize], 0);
+        assert_eq!(profile.opcodes[0][Op::Binary as usize], 1);
+    }
+
+    #[test]
+    fn physical_sites_are_scoped_to_their_residual_program() {
+        let mut profile = Profile::default();
+        profile.opcode(Op::LoadLocal as usize, 0, 0, 0, 0);
+        profile.opcode(Op::Return as usize, 1, 1, 0, 0);
+
+        assert_eq!(profile.site_counts[0][0][0], 1);
+        assert_eq!(profile.site_counts[1][0][0], 1);
+        assert_eq!(profile.dispatched_opcodes[0][Op::LoadLocal as usize], 1);
+        assert_eq!(profile.dispatched_opcodes[1][Op::Return as usize], 1);
     }
 }
