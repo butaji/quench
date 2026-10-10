@@ -1,0 +1,20 @@
+diff --git a/crates/quench-runtime/src/vm/relational.rs b/crates/quench-runtime/src/vm/relational.rs
+index 4ede5f8ae..92a2e6494 100644
+--- a/crates/quench-runtime/src/vm/relational.rs
++++ b/crates/quench-runtime/src/vm/relational.rs
+@@ -167,6 +167,15 @@ impl<H: Host> Vm<H> {
+                     if !vm.is_function(method) {
+                         return Err(vm.type_error(p, "@@hasInstance is not callable".into()));
+                     }
++                    if matches!(
++                        vm.heap.get(method),
++                        Some(Cell::Function {
++                            kind: FunctionKind::Native(Native::FunctionPrototypeHasInstance),
++                            ..
++                        })
++                    ) {
++                        return vm.ordinary_has_instance(p, constructor, value);
++                    }
+                     let result = vm.call_value(p, method, constructor, &[value])?;
+                     return Ok(vm.truthy(result));
+                 }
