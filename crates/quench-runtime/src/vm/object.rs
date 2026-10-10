@@ -284,10 +284,15 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
     ) -> Result<Value, JsError> {
+        let current = self.frames[frame].this;
+        if !current.is_deleted() {
+            // `initialize_this_binding` updates live frames when `super()`
+            // initializes lexical this. Only the pre-super sentinel needs an
+            // environment lookup to observe that transition.
+            return Ok(current);
+        }
         let atom = self.runtime_atoms.lexical_this;
-        let value = self
-            .dynamic_binding(frame, atom)
-            .unwrap_or(self.frames[frame].this);
+        let value = self.dynamic_binding(frame, atom).unwrap_or(current);
         self.frames[frame].this = value;
         if value.is_deleted() {
             return Err(self.reference_error(
