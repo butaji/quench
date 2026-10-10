@@ -11,6 +11,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
 r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, cipherProcess) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
+  const kHandle = Symbol.for("quench.internal.crypto.kHandle");
   let repeatedHmacDigestWarningEmitted = false;
   const unsupportedDigest = (algorithm) => {
     const error = new Error(`Invalid digest: ${algorithm}`);
@@ -88,6 +89,7 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
       const defaultEncoding = options?.defaultEncoding ?? "utf8";
       const state = { name, chunks: [], lifecycle: "open", defaultEncoding, outputLength };
       states.set(this, state);
+      this[kHandle] = { update: () => true, digest: () => Buffer.from([]) };
       this._writableState.defaultEncoding = defaultEncoding;
       this._transform = (chunk, encoding, callback) => {
         try {
@@ -112,6 +114,11 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
     update(data, encoding) {
       const state = states.get(this);
       if (state.lifecycle !== "open") throw finalized();
+      if (!this[kHandle].update(data, encoding)) {
+        const error = new Error("Hash update failed");
+        error.code = "ERR_CRYPTO_HASH_UPDATE_FAILED";
+        throw error;
+      }
       const bytes = inputBuffer(data, encoding);
       state.chunks.push(Array.from(bytes));
       return this;
