@@ -339,13 +339,52 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
   function getHashes() { return hashNames.slice(); }
   function getCiphers() { return cipherNames.slice(); }
   function getCurves() { return curveNames.slice(); }
-  function getCipherInfo(name) {
-    const normalized = String(name).toLowerCase();
-    if (normalized === "aes-128-cbc") return { name: normalized, ivLength: 16, keyLength: 16, mode: "cbc" };
-    if (normalized === "aes-128-ecb") return { name: normalized, ivLength: 0, keyLength: 16, mode: "ecb" };
-    if (normalized === "aes-128-gcm") return { name: normalized, ivLength: 12, keyLength: 16, mode: "gcm" };
-    if (normalized === "des-ede3-cbc") return { name: normalized, ivLength: 8, keyLength: 24, mode: "cbc" };
-    return undefined;
+  const cipherInfoRecords = [
+    { name: "aes-128-cbc", nid: 419, blockSize: 16, ivLength: 16, keyLength: 16, mode: "cbc" },
+    { name: "aes-128-ecb", nid: 418, blockSize: 16, ivLength: 0, keyLength: 16, mode: "ecb" },
+    { name: "des-ede3-cbc", nid: 44, blockSize: 8, ivLength: 8, keyLength: 24, mode: "cbc" },
+    { name: "aes-128-gcm", nid: 895, blockSize: 1, ivLength: 12, keyLength: 16, mode: "gcm" },
+    { name: "aes-128-ccm", nid: 896, blockSize: 1, ivLength: 12, keyLength: 16, mode: "ccm" },
+    { name: "aes-128-ocb", nid: 958, blockSize: 1, ivLength: 12, keyLength: 16, mode: "ocb" },
+  ];
+  function getCipherInfo(nameOrNid, options = {}) {
+    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+      const error = new TypeError('The "options" argument must be of type object');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const validLength = (value, property) => {
+      if (value === undefined) return;
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 0xffffffff) {
+        const error = new TypeError(`The "options.${property}" argument must be a uint32`);
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+    };
+    validLength(options.keyLength, "keyLength");
+    validLength(options.ivLength, "ivLength");
+    let info;
+    if (typeof nameOrNid === "string") {
+      if (!nameOrNid) return undefined;
+      const name = nameOrNid.toLowerCase();
+      info = cipherInfoRecords.find(record => record.name === name);
+    } else if (typeof nameOrNid === "number") {
+      if (!Number.isInteger(nameOrNid) || nameOrNid < 1 || nameOrNid > 0x7fffffff) return undefined;
+      info = cipherInfoRecords.find(record => record.nid === nameOrNid);
+    } else {
+      const error = new TypeError('The "nameOrNid" argument must be of type string or number');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!info || (options.keyLength !== undefined && options.keyLength !== info.keyLength)) return undefined;
+    if (options.ivLength !== undefined) {
+      const ivLength = options.ivLength;
+      if (info.mode === "ccm" && (ivLength < 7 || ivLength > 13)) return undefined;
+      if (info.mode === "ocb" && (ivLength < 1 || ivLength > 15)) return undefined;
+      if (info.mode !== "ccm" && info.mode !== "ocb" && ivLength !== info.ivLength) return undefined;
+      return { ...info, ivLength };
+    }
+    return { ...info };
   }
   class CipherBase extends Transform {
     constructor(name, key, iv, decrypt) {
