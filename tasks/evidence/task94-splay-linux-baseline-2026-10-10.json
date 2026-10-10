@@ -4,11 +4,16 @@
   "experiment": "Splay Linux stock baseline and GC profile at large-heap headroom 1.0",
   "decision": "baseline only; Splay is not won on Linux",
   "source": {
-    "revision": "dd94f42f0408ebb40663308f5cabe6b6ca1c8e90",
+    "revision": "6507e0b19d79bd7b844b3a48e88e1289b24a4805",
     "stock_report_source_clean": true,
-    "stock_report_sha256": "1e8086ed53543433b331f7f64bc266041771010bee7bfb69d8a16deac43b12c1",
+    "stock_report_sha256": "f1fc5d78ec6f48b19db58041eb683f911d08812f86657e2f7722c83717fee21d",
     "profile_report_sha256": "933bb3fd03b527ab2986db0a6c15676046bd68850ec9f65d00c16c826d0fb85a",
-    "production_binary_sha256": "3f287358b54b56ef4ce3b439172ad114a4f09ed052fb6e3a1f9c069ff3fd3b53",
+    "production_binary_sha256": "95320d0460c2fe55392eda71c0b6d22fdc1681019a714b3a7297911aede6c318",
+    "pre_profile_commit_revision": "dd94f42f0408ebb40663308f5cabe6b6ca1c8e90",
+    "pre_profile_commit_stock_report_sha256": "1e8086ed53543433b331f7f64bc266041771010bee7bfb69d8a16deac43b12c1",
+    "pre_profile_commit_production_binary_sha256": "3f287358b54b56ef4ce3b439172ad114a4f09ed052fb6e3a1f9c069ff3fd3b53",
+    "profile_source_revision": "dd94f42f0408ebb40663308f5cabe6b6ca1c8e90",
+    "profile_source_dirty": true,
     "profile_binary_sha256": "5525c4518519554f4363e18f806fac39f958d824313c4db278478da0cb382ffe",
     "profile_feature": "quench-runtime/profile-aggregate",
     "profile_binary_note": "Built with a temporary local fix for the unrelated vm/wtf16.rs profile-capacity compile error; that fix was reverted and is not part of the candidate."
@@ -38,24 +43,36 @@
     "fixture_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
   },
   "stock_harness": {
+    "source_revision": "6507e0b19d79bd7b844b3a48e88e1289b24a4805",
     "rounds": 11,
     "valid_rounds": 11,
     "output_equal": true,
     "qualification_ready": false,
     "score_median": {
-      "quench": 1234,
-      "quickjs": 2730,
-      "bun_no_jit": 3509,
-      "node_jitless": 4621
+      "quench": 1026,
+      "quickjs": 1726,
+      "bun_no_jit": 1758,
+      "node_jitless": 3152
     },
     "max_rss_median_bytes": {
       "quench": 274669568,
       "quickjs": 149618688,
-      "bun_no_jit": 60133376,
-      "node_jitless": 403705856
+      "bun_no_jit": 60264448,
+      "node_jitless": 402280448
     },
-    "quench_score_fraction_of_best_reference": 0.26704176585154726,
-    "quench_rss_multiple_of_lowest_reference": 4.56767250187317,
+    "quench_score_fraction_of_best_reference": 0.32550761421319796,
+    "quench_rss_multiple_of_lowest_reference": 4.557738054781486,
+    "report_sha256": "f1fc5d78ec6f48b19db58041eb683f911d08812f86657e2f7722c83717fee21d",
+    "prior_unpaired_run": {
+      "source_revision": "dd94f42f0408ebb40663308f5cabe6b6ca1c8e90",
+      "quench_score_median": 1234,
+      "node_jitless_score_median": 4621,
+      "quench_score_fraction_of_best_reference": 0.26704176585154726,
+      "quench_rss_median_bytes": 274669568,
+      "bun_no_jit_rss_median_bytes": 60133376,
+      "quench_rss_multiple_of_lowest_reference": 4.56767250187317,
+      "note": "Separate 11-round session, not paired with the current run; retained only to show run-to-run spread."
+    },
     "lowest_rss_bar_engine": "Bun 1.4.2 with JIT disabled",
     "score_bar_engine": "Node v26.10.0 --jitless"
   },
