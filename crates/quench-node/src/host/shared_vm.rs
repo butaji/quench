@@ -24,6 +24,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processSeteuid" (1) => crate::modules::process_shared_vm::seteuid,
         method "processSetgid" (1) => crate::modules::process_shared_vm::setgid,
         method "processSetegid" (1) => crate::modules::process_shared_vm::setegid,
+        method "processSetgroups" (1) => crate::modules::process_shared_vm::setgroups,
+        method "processInitgroups" (2) => crate::modules::process_shared_vm::initgroups,
         method "processHrtimeNow" (0) => crate::modules::process_shared_vm::hrtime_now,
         method "processChdir" (1) => crate::modules::process_shared_vm::chdir,
         method "processUmask" (0) => crate::modules::process_shared_vm::umask,
