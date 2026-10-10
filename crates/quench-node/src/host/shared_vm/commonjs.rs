@@ -1000,6 +1000,22 @@ fn load(
                         "requiring an ES module is not implemented on the shared VM",
                     ));
                 }
+                // Node's internal crypto utility creates a private `kHandle`
+                // symbol for native Hash objects. The compact crypto builtin
+                // uses the global registry to expose the matching handle to
+                // that source module.
+                let source = if filename
+                    .to_string_lossy()
+                    .ends_with("/internal/crypto/util.js")
+                {
+                    text.replace(
+                        "const kHandle = Symbol('kHandle');",
+                        "const kHandle = Symbol.for('quench.internal.crypto.kHandle');",
+                    )
+                } else {
+                    text.to_owned()
+                };
+                let text = source.strip_prefix('\u{feff}').unwrap_or(&source);
                 let is_primordials = filename
                     .to_string_lossy()
                     .ends_with("/internal/per_context/primordials.js");
@@ -1073,11 +1089,28 @@ const getLinkedBinding = () => ({});
       isNativeError: (value) => value instanceof Error,
       isPromise: (value) => value instanceof Promise,
     };
-    case "constants": return { os: { signals: (require("os").constants || {}).signals || {} } };
+    case "constants": return {
+      os: { signals: (require("os").constants || {}).signals || {} },
+      crypto: { ENGINE_METHOD_ALL: 0xffffffff },
+    };
     case "string_decoder": return { encodings: ["hex", "utf8", "ascii", "binary", "base64", "base64url", "latin1", "ucs2", "utf16le"] };
     case "buffer": return require("buffer");
     case "fs": return require("fs");
-    case "crypto": return require("crypto");
+    case "crypto": {
+      const crypto = require("crypto");
+      return Object.assign({}, crypto, {
+        getFipsCrypto: () => crypto.getFips(),
+        getCachedAliases: () => ({}),
+        getOpenSSLSecLevelCrypto: () => 0,
+        secureHeapUsed: () => undefined,
+      });
+    }
+    case "mksnapshot": return {
+      isBuildingSnapshotBuffer: [false],
+      setSerializeCallback: () => {},
+      setDeserializeCallback: () => {},
+      setDeserializeMainFunction: () => {},
+    };
     case "process": return process;
     case "messaging": return { DOMException: globalThis.DOMException };
     case "performance": return {
