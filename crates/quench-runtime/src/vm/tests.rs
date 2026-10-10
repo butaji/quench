@@ -1,7 +1,8 @@
 use super::wtf16::JsString;
 use super::{
-    CallContext, CallTarget, IteratorRealmPrototypes, JsError, MethodCache, Native, TypedArrayKind,
-    Vm, activation::Completion, activation::Continuation, regexp::RegExpIntrinsics,
+    CallContext, CallTarget, IteratorRealmPrototypes, JsError, MethodCache, NO_FIELD_HOLDER,
+    Native, TypedArrayKind, Vm, activation::Completion, activation::Continuation,
+    regexp::RegExpIntrinsics,
 };
 use crate::{Engine, Host, Value};
 use std::cell::RefCell;
@@ -74,6 +75,207 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     assert!(vm.heap.weak_value(setter_weak).is_none());
     assert!(!vm.descriptors.contains_key(&(owner, key)));
     assert!(vm.heap.release_root(map_root));
+}
+
+#[test]
+fn shape_roots_keep_symbols_and_active_accessors_alive() {
+    use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
+    use crate::heap::Cell;
+
+    let program = Engine::specialize("", "shape-roots.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    let symbol = vm.heap.alloc(Cell::Symbol(None));
+    let symbol_weak = vm.heap.weak_handle(symbol).unwrap();
+    let symbol_shape = vm.transition_property_shape(0, PropertyKey::symbol(symbol));
+    let first =
+        vm.heap
+            .alloc_object_with_properties(Value::NULL, symbol_shape, &[Value::UNDEFINED]);
+    let second =
+        vm.heap
+            .alloc_object_with_properties(Value::NULL, symbol_shape, &[Value::UNDEFINED]);
+    let first_root = vm.heap.root(first);
+    let second_root = vm.heap.root(second);
+
+    vm.collect_now(&program);
+    assert_eq!(vm.heap.weak_value(symbol_weak), Some(symbol));
+    assert!(vm.heap.release_root(first_root));
+    assert!(vm.heap.release_root(second_root));
+    vm.collect_now(&program);
+    assert!(vm.heap.weak_value(symbol_weak).is_none());
+
+    let atom = vm.intern_atom("field");
+    let data_shape = vm.transition_shape(0, atom);
+    let owner = vm
+        .heap
+        .alloc_object_with_properties(Value::NULL, data_shape, &[Value::UNDEFINED]);
+    let getter = vm.heap.alloc(Cell::String("getter".into()));
+    let getter_weak = vm.heap.weak_handle(getter).unwrap();
+    vm.set_property_attributes(
+        owner,
+        PropertyKey::string(atom),
+        super::PropertyAttributes {
+            accessor: true,
+            getter: Some(getter),
+            ..DEFAULT_PROPERTY_ATTRIBUTES
+        },
+    );
+    let owner_root = vm.heap.root(owner);
+    vm.collect_now(&program);
+    assert_eq!(vm.heap.weak_value(getter_weak), Some(getter));
+
+    vm.set_property_attributes(
+        owner,
+        PropertyKey::string(atom),
+        DEFAULT_PROPERTY_ATTRIBUTES,
+    );
+    vm.collect_now(&program);
+    assert!(vm.heap.weak_value(getter_weak).is_none());
+    assert!(vm.heap.release_root(owner_root));
+}
+
+#[test]
+fn equivalent_data_descriptor_transitions_share_one_shape() {
+    use super::property_key::PropertyKey;
+
+    let program = Engine::specialize("", "descriptor-transition.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.initialize(&program).unwrap();
+    vm.heap.retain_allocations_for_test();
+
+    let atom = vm.intern_atom("field");
+    let attributes = super::PropertyAttributes {
+        writable: false,
+        enumerable: false,
+        configurable: true,
+        accessor: false,
+        getter: None,
+        setter: None,
+    };
+    let first = vm.object();
+    vm.set_property(first, atom, Value::integer(1)).unwrap();
+    vm.set_property_attributes(first, PropertyKey::string(atom), attributes);
+    let first_shape = vm.object_data(first).unwrap().shape();
+    let shape_count = vm.shapes.len();
+
+    let second = vm.object();
+    vm.set_property(second, atom, Value::integer(2)).unwrap();
+    vm.set_property_attributes(second, PropertyKey::string(atom), attributes);
+
+    assert_eq!(vm.object_data(second).unwrap().shape(), first_shape);
+    assert_eq!(vm.shapes.len(), shape_count);
+}
+
+#[test]
+fn repeated_normal_closures_reuse_function_descriptor_shapes() {
+    const CLOSURES: usize = 32;
+
+    let program = Engine::specialize(
+        "function outer() { return function plainName(x) { return x; }; }",
+        "closure-shape-transition.js",
+    )
+    .unwrap();
+    let closure_id = program
+        .functions
+        .iter()
+        .position(|function| {
+            function.parent.is_some()
+                && function
+                    .name
+                    .is_some_and(|atom| &program.atoms[atom as usize] == "plainName")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(SilentHost);
+    vm.initialize(&program).unwrap();
+    vm.heap.retain_allocations_for_test();
+
+    let first = vm.closure(&program, closure_id, Value::NULL).unwrap();
+    let first_shape = vm.object_data(first).unwrap().shape();
+    let shapes_after_first = vm.shapes.len();
+    let mut roots = vec![vm.heap.root(first)];
+
+    for _ in 1..CLOSURES {
+        let closure = vm.closure(&program, closure_id, Value::NULL).unwrap();
+        assert_eq!(vm.object_data(closure).unwrap().shape(), first_shape);
+        roots.push(vm.heap.root(closure));
+    }
+
+    assert_eq!(vm.shapes.len(), shapes_after_first);
+    assert_eq!(roots.len(), CLOSURES);
+}
+
+#[test]
+fn closures_share_cached_function_source_and_program_roots_it() {
+    let program = Engine::specialize(
+        "function outer() { return function inner() { return 1; }; }",
+        "closure-source-cache.js",
+    )
+    .unwrap();
+    let inner = program
+        .functions
+        .iter()
+        .position(|function| {
+            function.parent.is_some()
+                && function
+                    .name
+                    .is_some_and(|atom| &program.atoms[atom as usize] == "inner")
+        })
+        .unwrap() as u32;
+    let mut vm = Vm::new(SilentHost);
+    vm.initialize(&program).unwrap();
+
+    let first = vm.closure(&program, inner, Value::NULL).unwrap();
+    let source_atom = vm.intern_atom("\0quench:function-source");
+    let source = vm.own_property(first, source_atom).unwrap();
+    let source_weak = vm.heap.weak_handle(source).unwrap();
+    let second = vm.closure(&program, inner, Value::NULL).unwrap();
+
+    assert_eq!(vm.own_property(second, source_atom), Some(source));
+    vm.collect_now(&program);
+    assert_eq!(vm.heap.weak_value(source_weak), Some(source));
+}
+
+#[test]
+fn accessor_descriptor_transitions_do_not_root_values_in_the_cache() {
+    use super::property_key::PropertyKey;
+
+    let program = Engine::specialize("", "accessor-transition.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.initialize(&program).unwrap();
+    vm.heap.retain_allocations_for_test();
+
+    let atom = vm.intern_atom("field");
+    let first_getter = vm.native_value(Native::Object);
+    let second_getter = vm.native_value(Native::Array);
+    let first = vm.object();
+    let second = vm.object();
+    for (object, getter) in [(first, first_getter), (second, second_getter)] {
+        vm.set_property(object, atom, Value::UNDEFINED).unwrap();
+        vm.set_property_attributes(
+            object,
+            PropertyKey::string(atom),
+            super::PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(getter),
+                setter: None,
+            },
+        );
+    }
+
+    let first_attributes = vm
+        .property_attributes(first, PropertyKey::string(atom))
+        .unwrap();
+    let second_attributes = vm
+        .property_attributes(second, PropertyKey::string(atom))
+        .unwrap();
+    assert_eq!(first_attributes.getter, Some(first_getter));
+    assert_eq!(second_attributes.getter, Some(second_getter));
+    assert_ne!(
+        vm.object_data(first).unwrap().shape(),
+        vm.object_data(second).unwrap().shape()
+    );
 }
 
 #[test]
@@ -380,6 +582,24 @@ fn dynamic_primitive_strings_are_canonicalized() {
 }
 
 #[test]
+fn primitive_strings_keep_the_intrinsic_prototype_after_global_reassignment() {
+    let program = Engine::specialize(
+        r#"
+            function readCode() { return "a".charCodeAt(0); }
+            if (readCode() !== 97) throw new Error("initial String prototype");
+            String.prototype.charCodeAt = function() { return 99; };
+            if (readCode() !== 99) throw new Error("live prototype value");
+            String = function ReplacedString() {};
+            if (readCode() !== 99) throw new Error("intrinsic String prototype");
+        "#,
+        "primitive-string-intrinsic-prototype.js",
+    )
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+}
+
+#[test]
 fn repeated_string_concatenations_use_the_bounded_cache() {
     let mut vm = Vm::new(SilentHost);
     let left = vm.intern_dynamic_value("left".into());
@@ -516,7 +736,7 @@ fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
             assert!(
                 vm.megamorphic_fields
                     .iter()
-                    .all(|cache| cache.get(shape).is_none()),
+                    .all(|cache| cache.get(shape, NO_FIELD_HOLDER).is_none()),
                 "{mode}: dictionary shape entered a megamorphic field cache for {name}"
             );
             assert!(
@@ -748,7 +968,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
         dynamic_bindings: vec![].into(),
-        with_objects: vec![],
+        with_objects: Box::default(),
     });
     let dead = vm.heap.alloc(crate::heap::Cell::Environment {
         parent: crate::Value::NULL,
@@ -758,7 +978,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
         dynamic_bindings: vec![].into(),
-        with_objects: vec![],
+        with_objects: Box::default(),
     });
     vm.method_caches.push([
         MethodCache {
@@ -802,7 +1022,7 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
         dynamic_bindings: vec![].into(),
-        with_objects: vec![],
+        with_objects: Box::default(),
     });
     assert_eq!(reused, dead);
     assert!(vm.method_caches[0][1].target.is_none());
@@ -1991,7 +2211,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                     .into_boxed_slice()
                     .into(),
                 dynamic_bindings: vec![].into(),
-                with_objects: vec![],
+                with_objects: Box::default(),
             });
             vm.programs
                 .set_module_environment(super::program_store::ProgramId::MAIN, environment);
@@ -3562,7 +3782,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
         dynamic_bindings: vec![].into(),
-        with_objects: vec![],
+        with_objects: Box::default(),
     });
     let held = vm
         .heap
@@ -3681,7 +3901,6 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
     assert_eq!(recycled.context, super::activation::CallContext::Internal);
     assert!(recycled.original_arguments.is_empty());
     assert!(recycled.with_objects.is_empty());
-    assert_eq!(recycled.with_objects.capacity(), 0);
 }
 
 #[test]
@@ -5478,6 +5697,37 @@ fn coerced_binary_operands_restore_roots_after_each_completion() {
             }
         }
     }
+}
+
+#[test]
+fn numeric_binary_fast_paths_preserve_number_edges_and_generic_coercion() {
+    let source = r#"
+        function assert(condition) {
+            if (!condition) throw new Error('numeric fast-path mismatch');
+        }
+        assert(Object.is(0 * -1, -0));
+        assert(Object.is(-2 % 2, -0));
+        assert(Object.is(0 / -1, -0));
+        assert(Object.is((-2147483648) % -1, -0));
+        assert(6 / 3 === 2);
+        assert(1 / 2 === 0.5);
+        assert((2147483647 + 1) === 2147483648);
+        assert((1 << 31) === -2147483648);
+        assert((1 << 33) === 2);
+        assert((-1 >>> 0) === 4294967295);
+        assert(!((0 / 0) < 1));
+
+        let order = '';
+        const left = { valueOf() { order += 'l'; return 9; } };
+        const right = { valueOf() { order += 'r'; return 4; } };
+        assert(left - right === 5 && order === 'lr');
+
+        let mixedBigIntThrows = false;
+        try { 1n - 1; } catch (error) { mixedBigIntThrows = true; }
+        assert(mixedBigIntThrows);
+    "#;
+    let program = Engine::specialize(source, "numeric-binary-fast-paths.js").unwrap();
+    Vm::new(SilentHost).execute(&program).unwrap();
 }
 
 #[test]
@@ -7700,6 +7950,40 @@ fn regexp_entrypoints_root_receivers_and_arguments_through_callbacks() {
             }
         }
     }
+}
+
+#[test]
+fn regexp_literal_sites_share_matchers_but_create_fresh_objects() {
+    let program = Engine::specialize(
+        r#"
+        function make() { return /a/g; }
+        var first = make();
+        var second = make();
+        if (first === second) throw new Error('literal object was cached');
+        if (!first.exec('a') || first.lastIndex !== 1 || second.lastIndex !== 0)
+            throw new Error('lastIndex was shared');
+        first.compile('b', 'g');
+        if (!first.test('b') || !second.test('a'))
+            throw new Error('compile changed a shared matcher');
+        var callbackMatcher = make();
+        var nested = false;
+        var replaced = 'a'.replace(callbackMatcher, function () {
+            callbackMatcher.lastIndex = 0;
+            nested = !!callbackMatcher.exec('a');
+            return 'x';
+        });
+        if (!nested || replaced !== 'x') throw new Error('reentrant exec failed');
+        "#,
+        "regexp-literal-site.js",
+    )
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        vm.programs
+            .compiled_regexp_literal_count(super::program_store::ProgramId::MAIN),
+        1
+    );
 }
 
 #[test]

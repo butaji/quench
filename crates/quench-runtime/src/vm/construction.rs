@@ -212,10 +212,11 @@ impl<H: Host> Vm<H> {
         mut env: Value,
         realm: Value,
     ) -> Result<Value, JsError> {
+        let function_plan = &p.functions[id as usize];
         let with_objects = if env.is_null() {
             Vec::new()
         } else {
-            let inherited = self.captured_with_objects(env);
+            let inherited = self.captured_with_objects_for_function(env, function_plan, p.kind);
             let active = self.frames.last().map_or(&[][..], |frame| {
                 &self.with_stack[frame.with_base.min(self.with_stack.len())..]
             });
@@ -233,11 +234,10 @@ impl<H: Host> Vm<H> {
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
                 dynamic_bindings: Vec::new().into(),
-                with_objects,
+                with_objects: with_objects.into_boxed_slice(),
             });
         }
-        let is_arrow = p.functions[id as usize].is_arrow;
-        if is_arrow {
+        if function_plan.is_arrow {
             env = self.heap.alloc(Cell::Environment {
                 parent: env,
                 program: None,
@@ -246,11 +246,13 @@ impl<H: Host> Vm<H> {
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
                 dynamic_bindings: Vec::new().into(),
-                with_objects: Vec::new(),
+                with_objects: Box::default(),
             });
         }
-        let generator_prototype_parent =
-            if p.functions[id as usize].is_async && p.functions[id as usize].is_generator {
+        let has_instance_prototype = function_plan.constructible || function_plan.is_generator;
+        let prototype = if has_instance_prototype {
+            let generator_prototype_parent = if function_plan.is_async && function_plan.is_generator
+            {
                 let constructor_atom = self.intern_atom("AsyncGeneratorFunction");
                 let prototype_atom = self.intern_atom("prototype");
                 self.own_property(realm, constructor_atom)
@@ -260,7 +262,7 @@ impl<H: Host> Vm<H> {
                     })
                     .filter(|prototype| self.object_data(*prototype).is_some())
                     .unwrap_or(self.async_generator_proto)
-            } else if p.functions[id as usize].is_generator {
+            } else if function_plan.is_generator {
                 let constructor_atom = self.intern_atom("GeneratorFunction");
                 let prototype_atom = self.intern_atom("prototype");
                 self.own_property(realm, constructor_atom)
@@ -273,14 +275,15 @@ impl<H: Host> Vm<H> {
             } else {
                 self.realm_object_prototype(realm)
             };
-        let prototype = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(generator_prototype_parent)));
+            Some(
+                self.heap
+                    .alloc(Cell::Object(Self::empty_object(generator_prototype_parent))),
+            )
+        } else {
+            None
+        };
         let function_prototype_atom = self.intern_atom("prototype");
-        let intrinsic = match (
-            p.functions[id as usize].is_async,
-            p.functions[id as usize].is_generator,
-        ) {
+        let intrinsic = match (function_plan.is_async, function_plan.is_generator) {
             (true, true) => Some(Native::AsyncGeneratorFunction),
             (false, true) => Some(Native::GeneratorFunction),
             (true, false) => Some(Native::AsyncFunction),
@@ -306,15 +309,24 @@ impl<H: Host> Vm<H> {
         };
         let function = self.heap.alloc(Cell::Function {
             object: Box::new(Self::empty_object(function_object_prototype)),
-            kind: match p.functions[id as usize].dispatch {
+            kind: match function_plan.dispatch {
                 DispatchClass::General => FunctionKind::User(self.active_program, id),
                 DispatchClass::Numeric => FunctionKind::NumericUser(self.active_program, id),
             },
             env,
             realm,
         });
-        if let Some(source) = p.functions[id as usize].source_text.as_deref() {
-            self.set_function_source(function, source)?;
+        if let Some(source) = function_plan.source_text.as_deref() {
+            let source_value = self
+                .programs
+                .function_source(self.active_program, id)
+                .unwrap_or_else(|| {
+                    let source_value = self.heap.alloc(Cell::String(source.into()));
+                    self.programs
+                        .cache_function_source(self.active_program, id, source_value)
+                        .unwrap_or(source_value)
+                });
+            self.set_function_source_value(function, source_value)?;
         }
         let program = self.active_program;
         self.function_values.entry((program, id)).or_default().push(
@@ -323,11 +335,7 @@ impl<H: Host> Vm<H> {
                 .expect("new closure is live"),
         );
         let length = self.intern_atom("length");
-        self.set_property(
-            function,
-            length,
-            Value::number(p.functions[id as usize].length as f64),
-        )?;
+        self.set_property(function, length, Value::number(function_plan.length as f64))?;
         self.set_property_attributes(
             function,
             property_key::PropertyKey::string(length),
@@ -341,7 +349,7 @@ impl<H: Host> Vm<H> {
             },
         );
         let name = self.intern_atom("name");
-        let name_value = p.functions[id as usize]
+        let name_value = function_plan
             .name
             .map(|atom| {
                 self.heap
@@ -361,7 +369,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        if (p.functions[id as usize].constructible || p.functions[id as usize].is_generator)
+        if let Some(prototype) = prototype
             && let Some(atom) = self.lookup_atom("prototype")
         {
             self.set_property(function, atom, prototype)?;
@@ -369,7 +377,7 @@ impl<H: Host> Vm<H> {
                 function,
                 property_key::PropertyKey::string(atom),
                 PropertyAttributes {
-                    writable: !p.functions[id as usize].is_class_constructor,
+                    writable: !function_plan.is_class_constructor,
                     enumerable: false,
                     configurable: false,
                     accessor: false,
@@ -378,10 +386,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        let constructor = match (
-            p.functions[id as usize].is_async,
-            p.functions[id as usize].is_generator,
-        ) {
+        let constructor = match (function_plan.is_async, function_plan.is_generator) {
             (true, true) => self
                 .realm_constructor(realm, "AsyncGeneratorFunction")
                 .unwrap_or_else(|| self.native_value(Native::AsyncGeneratorFunction)),
@@ -393,7 +398,9 @@ impl<H: Host> Vm<H> {
                 .unwrap_or_else(|| self.native_value(Native::GeneratorFunction)),
             (false, false) => function,
         };
-        if !p.functions[id as usize].is_generator {
+        if !function_plan.is_generator
+            && let Some(prototype) = prototype
+        {
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
         }
         Ok(function)

@@ -367,7 +367,7 @@ impl<H: Host> Vm<H> {
             function: 0,
             slots: values.into_boxed_slice().into(),
             dynamic_bindings: crate::heap::EnvironmentBindings::Owned(vec![]),
-            with_objects: vec![],
+            with_objects: Box::default(),
         });
         let root = self.root(environment);
         let previous = std::mem::replace(&mut self.active_program, id);
@@ -1941,9 +1941,14 @@ mod tests {
         assert!(corrupt.validate().is_ok());
         let first = vm.instantiate_wasm_module(&owner).unwrap();
         let owner_env = vm.root_value(first.environment).unwrap();
-        let rejected = vm.programs.insert_shared(Rc::new(corrupt)).unwrap();
+        let mut signature_validation_vm = Vm::new(crate::SystemHost);
+        let rejected = signature_validation_vm
+            .programs
+            .insert_shared(Rc::new(corrupt))
+            .unwrap();
         assert!(
-            !vm.programs
+            !signature_validation_vm
+                .programs
                 .attach_wasm_signatures(rejected, &importer.signatures)
         );
 

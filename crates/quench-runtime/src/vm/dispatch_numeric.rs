@@ -1,53 +1,25 @@
+use super::operations::{numeric_integer_add_result, numeric_integer_multiply_result};
 use super::*;
-
-macro_rules! numeric_integer_binary {
-    ($op:expr, $a:expr, $b:expr) => {
-        match $op {
-            7 => Some(if $a >= $b { Value::TRUE } else { Value::FALSE }),
-            8 => Some(
-                $a.checked_add($b)
-                    .map(Value::integer)
-                    .unwrap_or_else(|| Value::number($a as f64 + $b as f64)),
-            ),
-            10 => Some(
-                $a.checked_mul($b)
-                    .map(Value::integer)
-                    .unwrap_or_else(|| Value::number($a as f64 * $b as f64)),
-            ),
-            15 => Some(Value::integer($a >> ($b as u32 & 31))),
-            19 => Some(Value::integer($a & $b)),
-            _ => None,
-        }
-    };
-}
 
 impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn numeric_binary(&self, op: u32, left: Value, right: Value) -> Option<Value> {
-        let (a, b) = Value::int_pair(left, right)?;
-        numeric_integer_binary!(op, a, b)
+        self.numeric_integer_binary(op, left, right)
     }
 }
 
-macro_rules! numeric_integer_semantic {
-    (add, $left:expr, $right:expr) => {
-        $left
-            .checked_add($right)
-            .map(Value::integer)
-            .unwrap_or_else(|| Value::number($left as f64 + $right as f64))
-    };
-    (multiply, $left:expr, $right:expr) => {
-        $left
-            .checked_mul($right)
-            .map(Value::integer)
-            .unwrap_or_else(|| Value::number($left as f64 * $right as f64))
-    };
-}
-
 macro_rules! specialized_numeric_value {
-    ($vm:expr, $program:expr, $operator:expr, $semantic:ident, $left:expr, $right:expr) => {{
-        let fast = Value::int_pair($left, $right)
-            .map(|(left, right)| numeric_integer_semantic!($semantic, left, right));
+    ($vm:expr, $program:expr, $operator:path, $integer_handler:ident, $left:expr, $right:expr) => {{
+        let fast =
+            Value::int_pair($left, $right).map(|(left, right)| $integer_handler(left, right));
+        if fast.is_some() {
+            $vm.record_binary_value_path(
+                $operator as u32,
+                $left,
+                $right,
+                crate::profile::BinaryValuePath::IntegerFastPath,
+            );
+        }
         #[cfg(feature = "profile-aggregate")]
         $vm.profile.numeric_binary_path(
             $operator as usize,
@@ -62,21 +34,22 @@ macro_rules! specialized_numeric_value {
 }
 
 macro_rules! execute_specialized_numeric {
-    ($vm:ident, $program:ident, $frame:ident, $ins:ident, $semantic:ident) => {{
-        let operator = $ins.binary_operator();
+    ($vm:ident, $program:ident, $frame:ident, $ins:ident, $operator:path, $integer_handler:ident) => {{
         let left_operand = $ins.operand_b();
         let right_operand = $ins.operand_c();
         $vm.profile
-            .binary(operator as usize, left_operand.0, right_operand.0);
+            .binary($operator as usize, left_operand.0, right_operand.0);
         let left = $vm.resolve_operand($program, $frame, left_operand)?;
         let right = $vm.resolve_operand($program, $frame, right_operand)?;
-        let value = specialized_numeric_value!($vm, $program, operator, $semantic, left, right);
+        let value =
+            specialized_numeric_value!($vm, $program, $operator, $integer_handler, left, right);
         if $ins.returns_from_frame() {
             return Ok(StepResult::Return(value));
         }
         if let Some(local) = $ins.numeric_local_target() {
             $vm.frames[$frame].locals[local as usize] = value;
-            $vm.profile.virtual_opcode(Op::StoreLocal as usize);
+            $vm.profile
+                .virtual_opcode($vm.frames[$frame].program.raw(), Op::StoreLocal as usize);
         } else {
             $vm.write($frame, $ins.result_register(), value);
         }
@@ -101,12 +74,42 @@ impl<H: Host> Vm<H> {
             let ins = unsafe { *code.get_unchecked(pc) };
             pc += 1;
             #[cfg(feature = "profile-aggregate")]
-            self.profile
-                .opcode(ins.op() as usize, frame, function as u32, _instruction_pc);
+            self.profile.opcode(
+                ins.op() as usize,
+                frame,
+                self.frames[frame].program.raw(),
+                function as u32,
+                _instruction_pc,
+            );
+            #[cfg(feature = "profile-aggregate")]
+            self.profile.object_literal_instruction(
+                self.frames[frame].program.raw(),
+                function as u32,
+                _instruction_pc,
+                ins.op(),
+            );
             #[cfg(not(feature = "profile-aggregate"))]
             self.profile.opcode(ins.op() as usize);
             let outcome = (|| -> Result<StepResult, JsError> {
                 match ins.op() {
+                    Op::LoadLocalPlain => {
+                        let local = ins.local_slot();
+                        // SAFETY: validated bytecode bounds the slot by Function.locals,
+                        // and frame setup sizes locals to that count.
+                        let value = unsafe { self.read_validated_local(frame, local) };
+                        self.write(frame, ins.result_register(), value);
+                        if let Some(target) = ins.numeric_local_store_target()
+                            && let Some(integer) = value.as_int()
+                        {
+                            self.numeric_local_inc_store(
+                                frame,
+                                &mut pc,
+                                integer,
+                                target,
+                                local as u32,
+                            );
+                        }
+                    }
                     Op::LoadLocal => {
                         let local = ins.local_slot();
                         let value = self.load_local_binding(p, frame, local, None)?;
@@ -139,6 +142,15 @@ impl<H: Host> Vm<H> {
                             self.write(frame, register, value);
                         }
                     }
+                    Op::StoreLocalPlain => {
+                        let value = self.read(frame, ins.register_a());
+                        // SAFETY: validated bytecode bounds the slot by Function.locals,
+                        // and frame setup sizes locals to that count.
+                        unsafe { self.write_validated_local(frame, ins.local_slot(), value) };
+                        if let Some(register) = ins.optional_register_b() {
+                            self.write(frame, register, value);
+                        }
+                    }
                     Op::GetIndex => {
                         #[cfg(feature = "profile-aggregate")]
                         self.profile.index_dispatch(false, true);
@@ -147,10 +159,16 @@ impl<H: Host> Vm<H> {
                         let base = self.numeric_index_source(frame, base_operand);
                         let index = self.numeric_index_source(frame, index_operand);
                         if base_operand.kind() == Some(crate::bytecode::OperandKind::Local) {
-                            self.profile.virtual_opcode(Op::LoadLocal as usize);
+                            self.profile.virtual_opcode(
+                                self.frames[frame].program.raw(),
+                                Op::LoadLocal as usize,
+                            );
                         }
                         if index_operand.kind() == Some(crate::bytecode::OperandKind::Local) {
-                            self.profile.virtual_opcode(Op::LoadLocal as usize);
+                            self.profile.virtual_opcode(
+                                self.frames[frame].program.raw(),
+                                Op::LoadLocal as usize,
+                            );
                         }
                         let value = self.get_index(p, base, index)?;
                         self.write(frame, ins.result_register(), value);
@@ -188,6 +206,14 @@ impl<H: Host> Vm<H> {
                             fast.is_some(),
                             left.as_int().is_some() && right.as_int().is_some(),
                         );
+                        if fast.is_some() {
+                            self.record_binary_value_path(
+                                operator,
+                                left,
+                                right,
+                                crate::profile::BinaryValuePath::IntegerFastPath,
+                            );
+                        }
                         let value = match fast {
                             Some(value) => value,
                             None => self.binary(p, operator, left, right)?,
@@ -197,16 +223,33 @@ impl<H: Host> Vm<H> {
                         }
                         if let Some(local) = ins.numeric_local_target() {
                             self.frames[frame].locals[local as usize] = value;
-                            self.profile.virtual_opcode(Op::StoreLocal as usize);
+                            self.profile.virtual_opcode(
+                                self.frames[frame].program.raw(),
+                                Op::StoreLocal as usize,
+                            );
                         } else {
                             self.write(frame, ins.result_register(), value);
                         }
                     }
                     Op::NumericAdd => {
-                        execute_specialized_numeric!(self, p, frame, ins, add)
+                        execute_specialized_numeric!(
+                            self,
+                            p,
+                            frame,
+                            ins,
+                            oxc_ast::ast::BinaryOperator::Addition,
+                            numeric_integer_add_result
+                        )
                     }
                     Op::NumericMultiply => {
-                        execute_specialized_numeric!(self, p, frame, ins, multiply)
+                        execute_specialized_numeric!(
+                            self,
+                            p,
+                            frame,
+                            ins,
+                            oxc_ast::ast::BinaryOperator::Multiplication,
+                            numeric_integer_multiply_result
+                        )
                     }
                     Op::IncDec => {
                         let input = self.read(frame, ins.register_b());
@@ -234,7 +277,8 @@ impl<H: Host> Vm<H> {
                         let value = self.read(frame, ins.register_a());
                         let truthy = self.truthy(value);
                         #[cfg(feature = "profile-aggregate")]
-                        self.profile.branch_value(value.profile_kind(), truthy);
+                        self.profile
+                            .branch_value(value.profile_kind() as usize, truthy);
                         if !truthy {
                             pc = ins.jump_target() as usize;
                         }
@@ -270,6 +314,9 @@ impl<H: Host> Vm<H> {
                 Ok(StepResult::TailCall) => {
                     return Err(JsError("tail call is not valid in numeric dispatch".into()));
                 }
+                Ok(StepResult::PushFrame { .. }) => {
+                    unreachable!("numeric dispatch cannot push general frames")
+                }
                 Ok(StepResult::Await { .. }) => {
                     return Err(JsError("await is not valid in numeric dispatch".into()));
                 }
@@ -292,7 +339,7 @@ impl<H: Host> Vm<H> {
                         let value = error
                             .thrown_value()
                             .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
-                        self.initialize_handler_binding(frame, slot, value)?;
+                        self.initialize_handler_binding(p, frame, slot, value)?;
                     }
                     pc = handler.target as usize;
                 }
@@ -309,7 +356,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<StepResult, JsError> {
         let mut pc = self.frames[frame].pc;
         self.frames[frame].pc = pc - 1;
-        let result = self.step(p, frame, instruction.as_wide(), &mut pc);
+        let result = self.step(p, frame, instruction.as_wide(), &mut pc, false);
         self.frames[frame].pc = pc;
         result
     }
@@ -350,7 +397,13 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn profile_numeric_fusion(&mut self, _frame: usize, _function: u32, _pc: usize, op: Op) {
         #[cfg(feature = "profile-aggregate")]
-        self.profile.opcode(op as usize, _frame, _function, _pc);
+        self.profile.opcode(
+            op as usize,
+            _frame,
+            self.frames[_frame].program.raw(),
+            _function,
+            _pc,
+        );
         #[cfg(not(feature = "profile-aggregate"))]
         self.profile.opcode(op as usize);
     }

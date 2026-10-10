@@ -3,11 +3,15 @@
 use crate::bytecode::{Op, Operand};
 
 pub(super) fn binary_pairs(
-    sites: &rustc_hash::FxHashMap<(u32, u32), u64>,
+    sites: &rustc_hash::FxHashMap<(u32, u32, u32), u64>,
+    program_id: u32,
     program: &crate::bytecode::ResidualProgram,
 ) -> [u64; 4] {
     let mut counts = [0; 4];
-    for (&(function, pc), &count) in sites {
+    for (&(site_program, function, pc), &count) in sites {
+        if site_program != program_id {
+            continue;
+        }
         let Some(code) = program
             .functions
             .get(function as usize)

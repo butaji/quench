@@ -1,5 +1,42 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+struct GeneralCodeCursor {
+    program: ProgramId,
+    function: u32,
+    code: *const Instr,
+    wide: *const WideInstruction,
+}
+
+impl GeneralCodeCursor {
+    fn new(program_id: ProgramId, program: &ResidualProgram, function: u32) -> Self {
+        let function_code = &program.functions[function as usize];
+        Self {
+            program: program_id,
+            function,
+            code: function_code.code.as_ptr(),
+            wide: function_code.wide.as_ptr(),
+        }
+    }
+
+    fn instruction(self, pc: usize) -> WideInstruction {
+        // SAFETY: residual validation establishes every reachable PC and wide
+        // operand index. This cursor stays local to `run_frame_general_until`:
+        // the borrowed entry residual remains alive for the whole call, and a
+        // switched residual is retained by `current_program` until the cursor
+        // is refreshed. Inline frame pushes are restricted to the same program.
+        // The loop refreshes the cursor whenever the active frame changes.
+        let packed = unsafe { *self.code.add(pc) };
+        if packed.is_wide() {
+            // SAFETY: the same validation guarantees this packed wide index is
+            // within the current function's wide-instruction table.
+            unsafe { *self.wide.add(packed.wide_index()) }
+        } else {
+            packed.as_wide()
+        }
+    }
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn call_this_value(&mut self, this: Value, strict: bool) -> Result<Value, JsError> {
         if strict {
@@ -67,7 +104,12 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
-        self.call_user_frame_mode(p, id, parent, this, args, context, false)
+        match self.call_user_frame_mode(p, id, parent, this, args, context, false, false)? {
+            UserFrameStart::Outcome(outcome) => Ok(outcome),
+            UserFrameStart::Pushed(_) => {
+                unreachable!("ordinary call unexpectedly stayed in dispatch")
+            }
+        }
     }
 
     pub(super) fn call_user_construct_frame(
@@ -78,7 +120,38 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
-        self.call_user_frame_mode(p, id, parent, Value::UNDEFINED, args, context, true)
+        match self.call_user_frame_mode(
+            p,
+            id,
+            parent,
+            Value::UNDEFINED,
+            args,
+            context,
+            true,
+            false,
+        )? {
+            UserFrameStart::Outcome(outcome) => Ok(outcome),
+            UserFrameStart::Pushed(_) => {
+                unreachable!("constructor unexpectedly stayed in dispatch")
+            }
+        }
+    }
+
+    pub(super) fn push_general_user_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        parent: Value,
+        this: Value,
+        args: &[Value],
+        context: CallContext,
+    ) -> Result<crate::stack::StackGuard, JsError> {
+        match self.call_user_frame_mode(p, id, parent, this, args, context, false, true)? {
+            UserFrameStart::Pushed(guard) => Ok(guard),
+            UserFrameStart::Outcome(_) => {
+                unreachable!("pushed user call unexpectedly ran to completion")
+            }
+        }
     }
 
     fn call_user_frame_mode(
@@ -90,8 +163,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
         capture_constructor_this: bool,
-    ) -> Result<FrameOutcome, JsError> {
-        self.profile.function(id as usize);
+        push_to_dispatch: bool,
+    ) -> Result<UserFrameStart, JsError> {
+        self.profile
+            .function(self.active_program.raw(), id as usize);
         if p.functions[id as usize].parameter_eval_arguments_error {
             return Err(self
                 .syntax_error_result(p, "arguments binding is not allowed in function parameters")
@@ -148,7 +223,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        self.initialize_frame_invocation(&mut frame, context, args);
+        self.initialize_frame_invocation(&mut frame, function, context, args);
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -177,7 +252,8 @@ impl<H: Host> Vm<H> {
             frame.captured = true;
         }
         frame.with_base = self.with_stack.len();
-        self.with_stack.extend(self.captured_with_objects(parent));
+        self.with_stack
+            .extend(self.captured_with_objects_for_function(parent, function, p.kind));
         if id == super::ROOT_FUNCTION_ID {
             for &(slot, import) in self.programs.module_imports(frame.program) {
                 let value = match import {
@@ -203,6 +279,7 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(&mut frame, arrow, new_target);
         let register_count = function.registers as usize;
         let run_numeric = numeric_frame_is_safe(function, capture_constructor_this);
+        debug_assert!(!push_to_dispatch || !run_numeric);
         frame.prepare_registers(register_count);
         self.frames.push(frame);
         let frame_index = self.frames.len() - 1;
@@ -212,6 +289,22 @@ impl<H: Host> Vm<H> {
             let environment = self.promote_frame_environment(frame_index);
             self.programs
                 .set_module_environment(self.frames[frame_index].program, environment);
+        }
+        if push_to_dispatch {
+            let stack_guard = match self.enter_stack() {
+                Ok(guard) => guard,
+                Err(error) => {
+                    let outcome = Err(error);
+                    let mut frame = self.frames.pop().unwrap();
+                    self.deactivate_frame(&mut frame, &outcome);
+                    self.persist_global_lexical_bindings(p, &frame);
+                    return match outcome {
+                        Err(error) => Err(error),
+                        Ok(_) => unreachable!(),
+                    };
+                }
+            };
+            return Ok(UserFrameStart::Pushed(stack_guard));
         }
         // Numeric dispatch changes the body loop only. Frame activation and cleanup
         // remain shared; unsupported tail-call and suspension completions use general.
@@ -240,7 +333,7 @@ impl<H: Host> Vm<H> {
                     FrameOutcome::Complete(value)
                 };
                 self.frame_pool.push(Self::recycle_frame(frame));
-                Ok(outcome)
+                Ok(UserFrameStart::Outcome(outcome))
             }
             FrameOutcome::ConstructComplete { .. } => {
                 self.frame_pool.push(Self::recycle_frame(frame));
@@ -250,11 +343,11 @@ impl<H: Host> Vm<H> {
             }
             FrameOutcome::Await {
                 value, destination, ..
-            } => Ok(FrameOutcome::Await {
+            } => Ok(UserFrameStart::Outcome(FrameOutcome::Await {
                 value,
                 destination,
                 frame: Some(frame),
-            }),
+            })),
             FrameOutcome::Yield { .. } => {
                 Err(JsError("yield requires generator continuation".into()))
             }
@@ -278,7 +371,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<(), JsError> {
-        self.profile.function(id as usize);
+        self.profile
+            .function(self.active_program.raw(), id as usize);
         if p.functions[id as usize].parameter_eval_arguments_error {
             return Err(self
                 .syntax_error_result(p, "arguments binding is not allowed in function parameters")
@@ -340,7 +434,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        self.initialize_frame_invocation(&mut frame, context, args);
+        self.initialize_frame_invocation(&mut frame, function, context, args);
         frame.program = self.active_program;
         frame.function = id;
         frame.pc = 0;
@@ -364,7 +458,8 @@ impl<H: Host> Vm<H> {
         };
         frame.captured = false;
         frame.with_base = self.with_stack.len();
-        self.with_stack.extend(self.captured_with_objects(parent));
+        self.with_stack
+            .extend(self.captured_with_objects_for_function(parent, function, p.kind));
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(&mut frame, arrow, new_target);
         let register_count = function.registers as usize;
@@ -376,15 +471,13 @@ impl<H: Host> Vm<H> {
     pub(super) fn initialize_frame_invocation(
         &self,
         frame: &mut Frame,
+        function: &crate::bytecode::Function,
         context: CallContext,
         args: &[Value],
     ) {
         frame.context = context;
         frame.original_arguments.clear();
-        if context
-            .callable()
-            .is_some_and(|function| !self.function_caller_is_restricted(function))
-        {
+        if context.callable().is_some() && !function.has_restricted_legacy_caller_access() {
             frame.original_arguments.extend_from_slice(args);
         }
     }
@@ -396,6 +489,39 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         expose_callee: bool,
     ) -> Result<(), JsError> {
+        let template_key = (self.realm.globals, expose_callee);
+        if let Some(template) = self
+            .realm
+            .intrinsics
+            .arguments_objects
+            .get(&template_key)
+            .copied()
+        {
+            let anchor = self
+                .object_data(template.anchor)
+                .expect("arguments template anchor is an object");
+            let shape = anchor.shape();
+            let iterator = self
+                .heap
+                .property_get(anchor, template.iterator_slot)
+                .expect("arguments template has an iterator method");
+            let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
+            properties[template.length_slot] = Value::number(args.len() as f64);
+            properties[template.callee_slot] = if expose_callee {
+                callable.ok_or_else(|| {
+                    JsError::validation("arguments object requires callable identity".into())
+                })?
+            } else {
+                Value::UNDEFINED
+            };
+            properties[template.iterator_slot] = iterator;
+            self.object_data_mut(arguments)
+                .expect("arguments object is an array")
+                .set_arguments_object();
+            self.heap
+                .initialize_object_properties(arguments, shape, &properties);
+            return Ok(());
+        }
         if let Some(object) = self.object_data_mut(arguments) {
             object.set_arguments_object();
         }
@@ -451,7 +577,8 @@ impl<H: Host> Vm<H> {
             );
         }
         if let Some(iterator) = self.well_known_symbols.get("iterator").copied() {
-            self.set_symbol_property(arguments, iterator, self.native_value(Native::ArrayValues))?;
+            let iterator_method = self.native_value(Native::ArrayValues);
+            self.set_symbol_property(arguments, iterator, iterator_method)?;
             self.set_property_attributes(
                 arguments,
                 property_key::PropertyKey::symbol(iterator),
@@ -464,8 +591,58 @@ impl<H: Host> Vm<H> {
                     setter: None,
                 },
             );
+            self.cache_arguments_object_template(arguments, template_key, length, callee, iterator);
         }
         Ok(())
+    }
+
+    fn cache_arguments_object_template(
+        &mut self,
+        arguments: Value,
+        key: (Value, bool),
+        length: Atom,
+        callee: Atom,
+        iterator: Value,
+    ) {
+        let Some((shape, length_slot)) =
+            self.object_property_slot(arguments, property_key::PropertyKey::string(length))
+        else {
+            return;
+        };
+        let Some((_, callee_slot)) =
+            self.object_property_slot(arguments, property_key::PropertyKey::string(callee))
+        else {
+            return;
+        };
+        let Some((_, iterator_slot)) =
+            self.object_property_slot(arguments, property_key::PropertyKey::symbol(iterator))
+        else {
+            return;
+        };
+        if self.shapes[shape as usize].storage_len != ARGUMENTS_OBJECT_PROPERTY_COUNT {
+            return;
+        }
+        let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
+        let Some(object) = self.object_data(arguments) else {
+            return;
+        };
+        let proto = object.proto;
+        let Some(iterator_method) = self.heap.property_get(object, iterator_slot) else {
+            return;
+        };
+        properties[iterator_slot] = iterator_method;
+        let anchor = self
+            .heap
+            .alloc_object_with_properties(proto, shape, &properties);
+        self.realm.intrinsics.arguments_objects.insert(
+            key,
+            ArgumentsObjectTemplate {
+                anchor,
+                length_slot,
+                callee_slot,
+                iterator_slot,
+            },
+        );
     }
 
     pub(super) fn promote_frame_environment(&mut self, frame: usize) -> Value {
@@ -473,7 +650,29 @@ impl<H: Host> Vm<H> {
             return self.frames[frame].env;
         }
         let parent = self.frames[frame].env;
-        let slots = std::mem::take(&mut self.frames[frame].locals);
+        let function = self.frames[frame].function as usize;
+        let selective_capture_slots =
+            self.programs
+                .get(self.frames[frame].program)
+                .and_then(|program| {
+                    program
+                        .functions
+                        .get(function)
+                        .and_then(|function| function.selective_capture_slots.clone())
+                });
+        let slots = if let Some(captured) = selective_capture_slots {
+            let mut slots = self.frames[frame].locals.clone();
+            for slot in 0..slots.len() {
+                if u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok()) {
+                    self.frames[frame].locals[slot] = Value::DELETED;
+                } else {
+                    slots[slot] = Value::DELETED;
+                }
+            }
+            slots
+        } else {
+            std::mem::take(&mut self.frames[frame].locals)
+        };
         let env = self.heap.alloc(Cell::Environment {
             parent,
             program: Some(self.frames[frame].program.raw()),
@@ -482,7 +681,7 @@ impl<H: Host> Vm<H> {
             function: self.frames[frame].function,
             slots: slots.into_boxed_slice().into(),
             dynamic_bindings: std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
-            with_objects: Vec::new(),
+            with_objects: Box::default(),
         });
         self.frames[frame].env = env;
         self.frames[frame].captured = true;
@@ -603,10 +802,15 @@ impl<H: Host> Vm<H> {
     ) -> Result<FrameOutcome, JsError> {
         let entry_program = p;
         let frame_program = self.frames[frame].program;
+        let allow_inline_calls = stop_pc.is_none()
+            && initial_error.is_none()
+            && p.kind != crate::bytecode::ProgramKind::Wasm;
         let previous_program = std::mem::replace(&mut self.active_program, frame_program);
         let previous_global = self.realm.globals;
         let outcome = (|| {
             let mut current_program: Option<Rc<ResidualProgram>> = None;
+            let mut frame = frame;
+            let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
             let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
                 crate::stack::StackGuard::enter()
                     .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
@@ -614,6 +818,9 @@ impl<H: Host> Vm<H> {
                 self.enter_stack()?
             };
             let initial_function = self.frames[frame].function as usize;
+            let mut executing_program = self.frames[frame].program;
+            let mut cursor =
+                GeneralCodeCursor::new(executing_program, entry_program, initial_function as u32);
             let mut pc = self.frames[frame].pc;
             if let Some(error) = initial_error {
                 pc = self.exception_handler_target(
@@ -630,45 +837,98 @@ impl<H: Host> Vm<H> {
                     self.frames[frame].pc = pc;
                     return Ok(FrameOutcome::ParameterInitializationComplete);
                 }
-                let executing_program = self.frames[frame].program;
-                let function = self.frames[frame].function as usize;
-                let code = &p.functions[function].code;
+                debug_assert_eq!(cursor.program, self.frames[frame].program);
+                debug_assert_eq!(cursor.function, self.frames[frame].function);
                 let instruction_pc = pc;
+                #[cfg(feature = "profile-memory")]
+                self.heap.set_memory_allocation_site(
+                    cursor.program.raw(),
+                    cursor.function,
+                    instruction_pc,
+                );
                 // GC inside a getter or native operation needs this instruction's root map.
                 self.frames[frame].pc = instruction_pc;
-                // SAFETY: the validated residual program has in-range branch targets
-                // and a terminal Return. The frame publishes the active instruction.
-                let packed = unsafe { *code.get_unchecked(pc) };
-                let ins = if packed.is_wide() {
-                    p.functions[function].wide[packed.wide_index()]
-                } else {
-                    packed.as_wide()
-                };
+                let ins = cursor.instruction(pc);
                 pc += 1;
                 #[cfg(feature = "profile-aggregate")]
-                self.profile
-                    .opcode(ins.op() as usize, frame, function as u32, instruction_pc);
+                self.profile.opcode(
+                    ins.op() as usize,
+                    frame,
+                    cursor.program.raw(),
+                    cursor.function,
+                    instruction_pc,
+                );
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.object_literal_instruction(
+                    cursor.program.raw(),
+                    cursor.function,
+                    instruction_pc,
+                    ins.op(),
+                );
                 #[cfg(not(feature = "profile-aggregate"))]
                 self.profile.opcode(ins.op() as usize);
-                match self.step(p, frame, ins, &mut pc) {
+                match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
                     Ok(StepResult::Return(value)) => {
-                        self.frames[frame].pc = pc;
-                        return Ok(FrameOutcome::Complete(value));
+                        if let Some(pending) = pending_calls.pop() {
+                            debug_assert_eq!(frame, pending.caller + 1);
+                            let result = Ok(FrameOutcome::Complete(value));
+                            let mut completed_frame = self.frames.pop().unwrap();
+                            self.deactivate_frame(&mut completed_frame, &result);
+                            self.persist_global_lexical_bindings(p, &completed_frame);
+                            self.frame_pool.push(Self::recycle_frame(completed_frame));
+                            frame = pending.caller;
+                            self.write(frame, pending.destination, value);
+                            pc = self.frames[frame].pc;
+                            cursor = GeneralCodeCursor::new(
+                                executing_program,
+                                p,
+                                self.frames[frame].function,
+                            );
+                            drop(pending.stack_guard);
+                        } else {
+                            self.frames[frame].pc = pc;
+                            return Ok(FrameOutcome::Complete(value));
+                        }
                     }
                     Ok(StepResult::Continue) => {}
-                    Ok(StepResult::TailCall) => {
-                        if self.frames[frame].program != executing_program {
-                            self.active_program = self.frames[frame].program;
-                            current_program =
-                                Some(self.programs.get(self.frames[frame].program).ok_or_else(
-                                    || JsError::validation("missing tail-call program".into()),
-                                )?);
-                        }
+                    Ok(StepResult::PushFrame {
+                        destination,
+                        stack_guard,
+                    }) => {
+                        pending_calls.push(PendingGeneralCall {
+                            caller: frame,
+                            call_pc: instruction_pc as u32,
+                            destination,
+                            stack_guard,
+                        });
+                        frame += 1;
                         pc = self.frames[frame].pc;
+                        let callee_program = self.frames[frame].program;
+                        debug_assert_eq!(callee_program, executing_program);
+                        cursor =
+                            GeneralCodeCursor::new(callee_program, p, self.frames[frame].function);
+                    }
+                    Ok(StepResult::TailCall) => {
+                        let replacement_program = self.frames[frame].program;
+                        if replacement_program != executing_program {
+                            self.active_program = replacement_program;
+                            current_program =
+                                Some(self.programs.get(replacement_program).ok_or_else(|| {
+                                    JsError::validation("missing tail-call program".into())
+                                })?);
+                        }
+                        executing_program = replacement_program;
+                        pc = self.frames[frame].pc;
+                        cursor = GeneralCodeCursor::new(
+                            replacement_program,
+                            current_program.as_deref().unwrap_or(entry_program),
+                            self.frames[frame].function,
+                        );
                         // The replacement frame publishes all callee roots before this back edge.
                         self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
                     }
                     Ok(StepResult::Await { value, destination }) => {
+                        debug_assert!(pending_calls.is_empty());
                         self.frames[frame].pc = pc;
                         return Ok(FrameOutcome::Await {
                             value,
@@ -681,6 +941,7 @@ impl<H: Host> Vm<H> {
                         destination,
                         delegated_result,
                     }) => {
+                        debug_assert!(pending_calls.is_empty());
                         self.frames[frame].pc = pc;
                         return Ok(FrameOutcome::Yield {
                             value,
@@ -690,19 +951,48 @@ impl<H: Host> Vm<H> {
                         });
                     }
                     Err(error) => {
-                        pc = match self.exception_handler_target(
-                            p,
-                            frame,
-                            function,
-                            instruction_pc as u32,
-                            error,
-                        ) {
-                            Ok(target) => target,
-                            Err(error) => {
-                                self.frames[frame].pc = pc;
-                                return Err(error);
+                        let mut throwing_pc = instruction_pc as u32;
+                        let mut error = error;
+                        loop {
+                            let function = self.frames[frame].function as usize;
+                            match self.exception_handler_target(
+                                p,
+                                frame,
+                                function,
+                                throwing_pc,
+                                error,
+                            ) {
+                                Ok(target) => {
+                                    pc = target;
+                                    break;
+                                }
+                                Err(unhandled) => {
+                                    self.frames[frame].pc = pc;
+                                    if let Some(pending) = pending_calls.pop() {
+                                        debug_assert_eq!(frame, pending.caller + 1);
+                                        let result = Err(unhandled);
+                                        let mut failed_frame = self.frames.pop().unwrap();
+                                        self.deactivate_frame(&mut failed_frame, &result);
+                                        self.persist_global_lexical_bindings(p, &failed_frame);
+                                        frame = pending.caller;
+                                        pc = self.frames[frame].pc;
+                                        cursor = GeneralCodeCursor::new(
+                                            executing_program,
+                                            p,
+                                            self.frames[frame].function,
+                                        );
+                                        throwing_pc = pending.call_pc;
+                                        drop(pending.stack_guard);
+                                        error = match result {
+                                            Err(error) => error,
+                                            Ok(_) => unreachable!(),
+                                        };
+                                    } else {
+                                        return Err(unhandled);
+                                    }
+                                }
                             }
-                        };
+                        }
                     }
                 }
             }
@@ -739,7 +1029,7 @@ impl<H: Host> Vm<H> {
             if wasm {
                 self.frames[frame].locals[usize::from(slot)] = value;
             } else {
-                self.initialize_handler_binding(frame, slot, value)?;
+                self.initialize_handler_binding(program, frame, slot, value)?;
             }
         }
         Ok(handler.target as usize)
@@ -754,7 +1044,7 @@ impl<H: Host> Vm<H> {
         }) = self.heap.get(env)
         {
             if !with_objects.is_empty() {
-                layers.push(with_objects.clone());
+                layers.push(with_objects.to_vec());
             }
             env = *parent;
             if env.is_null() {
@@ -763,6 +1053,18 @@ impl<H: Host> Vm<H> {
         }
         layers.reverse();
         layers.into_iter().flatten().collect()
+    }
+
+    pub(super) fn captured_with_objects_for_function(
+        &self,
+        env: Value,
+        function: &crate::bytecode::Function,
+        program_kind: crate::bytecode::ProgramKind,
+    ) -> Vec<Value> {
+        if !function.inherited_with_scope && program_kind != crate::bytecode::ProgramKind::Eval {
+            return Vec::new();
+        }
+        self.captured_with_objects(env)
     }
 
     #[inline(always)]
@@ -787,6 +1089,40 @@ impl<H: Host> Vm<H> {
                 .get_unchecked_mut(f)
                 .registers
                 .get_unchecked_mut(r as usize) = v;
+        }
+    }
+
+    #[inline(always)]
+    /// Reads a local whose slot was checked by residual validation.
+    ///
+    /// # Safety
+    /// `frame` must identify an active frame, and `slot` must be less than the
+    /// active function's local count. Frame initialization sizes locals to that
+    /// count.
+    pub(super) unsafe fn read_validated_local(&self, frame: usize, slot: usize) -> Value {
+        // SAFETY: the caller establishes that the frame is active and validation
+        // established `slot < Function.locals`; invocation setup sizes this frame
+        // to that function's local count.
+        unsafe { *self.frames.get_unchecked(frame).locals.get_unchecked(slot) }
+    }
+
+    #[inline(always)]
+    /// Writes a local whose slot was checked by residual validation.
+    ///
+    /// # Safety
+    /// `frame` must identify an active frame, and `slot` must be less than the
+    /// active function's local count. Frame initialization sizes locals to that
+    /// count.
+    pub(super) unsafe fn write_validated_local(&mut self, frame: usize, slot: usize, value: Value) {
+        // SAFETY: the caller establishes that the frame is active and validation
+        // established `slot < Function.locals`; invocation setup sizes this frame
+        // to that function's local count.
+        unsafe {
+            *self
+                .frames
+                .get_unchecked_mut(frame)
+                .locals
+                .get_unchecked_mut(slot) = value;
         }
     }
 }
