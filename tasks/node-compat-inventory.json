@@ -4,7 +4,7 @@
   "module_progress": [
     {
       "module": "process",
-      "source_revision": "fb53b2f9dbd21e4bcb07e071eb04f02d0813e308",
+      "source_revision": "3a607ae7597771ad6d865966cdcbdc911beb64df",
       "tests_node_revision": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
       "node_version": "v24.19.0",
       "rustc_version": "1.99.0",
@@ -12,9 +12,9 @@
       "command": "target/iteration/run-parallel --all --filter test-process- --timeout-secs 10 --jobs 8",
       "inventory_hash": "55829c463e82016b",
       "counts": {
-        "pass": 45,
+        "pass": 46,
         "skip": 3,
-        "fail": 49,
+        "fail": 48,
         "timeout": 0,
         "crash": 0,
         "total": 97
