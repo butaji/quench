@@ -652,7 +652,7 @@ impl<H: Host> Vm<H> {
                 }) => (
                     DateTimeDefaults::TemporalZonedDateTime(ZONED_DATE_TIME_DEFAULTS),
                     Some((
-                        *epoch_nanoseconds,
+                        **epoch_nanoseconds,
                         time_zone.as_ref().clone(),
                         calendar.clone(),
                     )),
@@ -692,7 +692,7 @@ impl<H: Host> Vm<H> {
             self.set_date_time_property(resolved, "timeZone", time_zone)?;
             let instant = self.heap.alloc(Cell::TemporalInstant {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                epoch_nanoseconds,
+                epoch_nanoseconds: Box::new(epoch_nanoseconds),
             });
             self.active_call_roots.push(instant);
             let result = self.date_time_format(p, formatter, &[instant]);
@@ -946,7 +946,7 @@ impl<H: Host> Vm<H> {
                 Some(Cell::Date { milliseconds, .. }) => *milliseconds,
                 Some(Cell::TemporalInstant {
                     epoch_nanoseconds, ..
-                }) => (*epoch_nanoseconds as f64) / NANOSECONDS_PER_MILLISECOND,
+                }) => (**epoch_nanoseconds as f64) / NANOSECONDS_PER_MILLISECOND,
                 _ => self.to_number(p, value)?,
             }
         };

@@ -637,7 +637,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(self.object_proto)),
-            epoch_nanoseconds: relative.epoch_nanoseconds,
+            epoch_nanoseconds: Box::new(relative.epoch_nanoseconds),
             time_zone: Box::new(relative.time_zone.clone()),
             calendar: relative.calendar.clone(),
         });
@@ -682,7 +682,7 @@ impl<H: Host> Vm<H> {
         {
             let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                epoch_nanoseconds: zoned.epoch_nanoseconds,
+                epoch_nanoseconds: Box::new(zoned.epoch_nanoseconds),
                 time_zone: Box::new(zoned.time_zone.clone()),
                 calendar: zoned.calendar.clone(),
             });
@@ -698,7 +698,7 @@ impl<H: Host> Vm<H> {
             else {
                 return Err(self.range_error(p, "Invalid relativeTo".into()));
             };
-            *epoch_nanoseconds
+            **epoch_nanoseconds
         } else {
             zoned.epoch_nanoseconds
         };
@@ -897,7 +897,7 @@ impl<H: Host> Vm<H> {
                     calendar,
                     ..
                 }) => Some(super::temporal_zoned_date_time::ZonedDateTimeRecord {
-                    epoch_nanoseconds: *epoch_nanoseconds,
+                    epoch_nanoseconds: **epoch_nanoseconds,
                     time_zone: time_zone.as_ref().clone(),
                     calendar: calendar.clone(),
                 }),
@@ -1386,7 +1386,7 @@ impl<H: Host> Vm<H> {
             let date_duration = self.temporal_duration_construct(p, &date_fields)?;
             let start = self.heap.alloc(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                epoch_nanoseconds: zoned.epoch_nanoseconds,
+                epoch_nanoseconds: Box::new(zoned.epoch_nanoseconds),
                 time_zone: Box::new(zoned.time_zone.clone()),
                 calendar: zoned.calendar.clone(),
             });
@@ -1405,7 +1405,7 @@ impl<H: Host> Vm<H> {
             else {
                 return Err(self.range_error(p, "Invalid relativeTo".into()));
             };
-            let date_endpoint_epoch = *date_endpoint_epoch;
+            let date_endpoint_epoch = **date_endpoint_epoch;
             let time_zone = time_zone.clone();
             let calendar = calendar.clone();
             let actual = self.relative_duration_nanoseconds(p, &relative_date, &fields)?;
@@ -1419,7 +1419,7 @@ impl<H: Host> Vm<H> {
             let next_day_duration = self.temporal_duration_construct(p, &day_fields)?;
             let date_endpoint = self.heap.alloc(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                epoch_nanoseconds: date_endpoint_epoch,
+                epoch_nanoseconds: Box::new(date_endpoint_epoch),
                 time_zone,
                 calendar,
             });
