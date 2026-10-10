@@ -87,6 +87,13 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
         if (options.type === "DeprecationWarning" && globalThis.process.noDeprecation) {
           return undefined;
         }
+        if (options.type === "DeprecationWarning" && globalThis.process.throwDeprecation) {
+          const error = new Error(message);
+          error.name = options.type;
+          if (typeof options.code === "string") error.code = options.code;
+          if (typeof options.detail === "string") error.detail = options.detail;
+          return globalThis.process.nextTick(() => { throw error; });
+        }
         return emitWarning(message, options);
       };
     }

@@ -2122,31 +2122,13 @@ pub(crate) fn dispatch_warning(
     let code = string_property(context, warning, "code")?;
     let detail = string_property(context, warning, "detail")?;
 
-    let shared_state = context.host_mut().shared_state();
-    let (listeners, suppress_stderr) = {
-        let shared = shared_state.borrow();
-        (
-            shared.scheduler.shared_listener_roots(
-                &crate::modules::shared_event_loop::SharedEventKey::String("warning".to_owned()),
-            ),
-            shared
-                .exec_argv
-                .iter()
-                .any(|argument| argument == "--no-warnings"),
-        )
-    };
-    for (callback, receiver) in listeners {
-        let callback = context.retain(callback)?;
-        let receiver = context.retain(receiver)?;
-        let warning_argument = context.retain(warning)?;
-        shared_state.borrow_mut().scheduler.queue_shared_next_tick(
-            crate::modules::shared_event_loop::SharedCallback {
-                callback,
-                receiver,
-                args: vec![warning_argument],
-            },
-        );
-    }
+    let suppress_stderr = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .exec_argv
+        .iter()
+        .any(|argument| argument == "--no-warnings");
     if !suppress_stderr {
         let code = code.map_or_else(String::new, |code| format!(" [{code}]"));
         let mut output = format!("(node:{}){code} {name}: {message}\n", std::process::id());
@@ -2159,6 +2141,18 @@ pub(crate) fn dispatch_warning(
             .write_all(output.as_bytes())
             .map_err(|error| RootedError::host(error.to_string()))?;
     }
+    let global = context.global_root()?;
+    let process_key = context.string_rooted("process");
+    let process = context.get_property_rooted(global, process_key);
+    context.release_root(global);
+    context.release_root(process_key);
+    let process = process?;
+    let event = context.string_rooted("warning");
+    let emitted = emit(context, process, &[event, warning]);
+    context.release_root(event);
+    context.release_root(process);
+    let emitted = emitted?;
+    context.release_root(emitted);
     Ok(context.undefined())
 }
 
