@@ -162,3 +162,35 @@ diff SHA-256
 `ce85800a2ed7946543bdc38da88029da30ea2ecc921ae45f53078b5aa77a9226`.
 The report's source revision again identifies the clean runner checkout
 (`a352d170f`), not that candidate worktree.
+
+## Richards field-cache counter census: no inherited-holder hits
+
+To classify the hot cache tier before another accessor hypothesis, a
+profile-aggregate build of the compact-space candidate ran the fixed Richards
+input at K=100 and K=0 on the M4 arm64 macOS host (Mac16,10, 16 GiB). Both
+runner engine names used the same profile executable, so this is a counter
+census only; its timings and RSS are not performance evidence. The fixed-work
+plan validates at 100 benchmark iterations.
+
+After subtracting setup-only counters, the 100-iteration work recorded
+21,210,143 field-cache hits and 4,046,657 misses: about 212,101 hits and
+40,467 misses per iteration. All net hits were tier 0, depth 0; there were no
+depth-1 immediate-prototype cache hits. This excludes the inherited-holder
+cache as a source of the Richards regression. Tier-0 counters combine own
+field reads, field stores and cached field additions, so this census does not
+split those operations. The earlier Callgrind attribution remains the stronger
+causal evidence: the compact candidate's extra work is distributed through
+`Heap::object`, `object_property_slot` and field-miss/prototype lookup paths.
+Two attempts to bypass the shared object view on own-field hits were already
+measured slower, so this census does not justify another version of that same
+fast-path hypothesis. The active Splay distances remain 1.24x speed and 2.09x
+RSS on M4 arm64 macOS.
+
+Raw counter report: [`richards-field-cache-profile-counter-census-2026-10-10.json`](richards-field-cache-profile-counter-census-2026-10-10.json).
+The profile executable SHA-256 is
+`73a042380a7e70e085bc7590ce916515f4fe8be515b415f2298697e37ef19cce`; it was
+built from candidate worktree base `a03e0646ff216a192d85c6d1d22307855cdb21f2`
+plus profiling-only source diff SHA-256
+`faf16ab6c45a3757f5d234d0432d61090985f616990dab65aaff93d407e7f718` to repair
+two stale profiler-build call sites. The production candidate binaries and
+their previous fixed-work results are unchanged.
