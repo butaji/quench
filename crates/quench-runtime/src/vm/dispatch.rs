@@ -987,11 +987,11 @@ impl<H: Host> Vm<H> {
                 } else {
                     None
                 };
-                let Some(Cell::WasmMemory { bytes, ty }) = self.heap.get(memory) else {
+                let Some(Cell::WasmMemory { bytes, .. }) = self.heap.get(memory) else {
                     return Err(JsError::validation("invalid atomic memory binding".into()));
                 };
                 let result = operator
-                    .apply(bytes, address, value, replacement, ty.shared)
+                    .apply(bytes, address, value, replacement)
                     .map_err(JsError::wasm_trap_error)?;
                 let result = result
                     .map(|value| self.encode_wasm_value(value))
@@ -1326,20 +1326,6 @@ impl<H: Host> Vm<H> {
             Op::WasmJumpI32NonZero => {
                 let taken = self.read(f, i.register_a()).wasm_bits32() != 0;
                 self.wasm_jump(p, f, i, pc, taken);
-            }
-            Op::WasmI32Binary => {
-                let (left, right) =
-                    Value::int_pair(self.read(f, i.register_b()), self.read(f, i.register_c()))
-                        .ok_or_else(|| JsError::validation("invalid Wasm i32 operands".into()))?;
-                let operator = crate::wasm::integer::I32BinaryOperator::from_tag(i.imm())
-                    .expect("validated Wasm binary operator");
-                let value = operator
-                    .apply(left, right)
-                    .map_err(JsError::wasm_trap_error)?;
-                let crate::WasmValue::I32(value) = value else {
-                    unreachable!("i32 operator result")
-                };
-                self.write(f, i.result_register(), Value::integer(value));
             }
             Op::WasmArrayGet | Op::WasmArrayGetS | Op::WasmArrayGetU | Op::WasmArraySet => {
                 let access =

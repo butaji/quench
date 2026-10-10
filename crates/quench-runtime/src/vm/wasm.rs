@@ -310,7 +310,10 @@ impl<H: Host> Vm<H> {
                 .map_err(|_| JsError::validation("Wasm memory allocation failed".into()))?;
             bytes.resize(length, 0);
             values.push(self.heap.alloc(Cell::WasmMemory {
-                bytes: std::sync::Arc::new(crate::wasm::memory::MemoryStorage::new(bytes)),
+                bytes: std::rc::Rc::new(crate::wasm::memory::MemoryStorage::new(
+                    bytes,
+                    memory.ty.shared,
+                )),
                 ty: memory.ty,
             }));
         }

@@ -197,7 +197,6 @@ impl Lowering<'_> {
                     self.materialize_aliases()?;
                     let depth = self.depth;
                     self.push()?; // Keep the selector live while allocating scratch slots.
-                    let constant = self.push()?;
                     let condition = self.push()?;
                     self.depth = depth;
                     for (ordinal, target) in targets.targets().enumerate() {
@@ -205,13 +204,12 @@ impl Lowering<'_> {
                             .map_err(|e| Diagnostic::unsupported(self.name, e.to_string()))?;
                         let ordinal = u32::try_from(ordinal)
                             .map_err(|_| self.control_error("Wasm branch table too large"))?;
-                        self.load_i32(constant, ordinal as i32)?;
                         self.emit(
-                            Op::WasmI32Binary,
+                            I32BinaryOperator::Equal.immediate_op(),
                             condition,
                             index,
-                            constant,
-                            I32BinaryOperator::Equal as u32,
+                            0,
+                            ordinal,
                         )?;
                         self.branch_if(target, Condition::Value(condition))?;
                     }

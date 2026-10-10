@@ -1007,12 +1007,6 @@ mod tests {
     fn residual_validation_rejects_unknown_wasm_numeric_selectors() {
         for (operator, opcode, ty, result_type) in [
             (
-                Operator::I32Add,
-                Op::WasmI32Binary,
-                WasmType::I32,
-                WasmType::I32,
-            ),
-            (
                 Operator::I32Eqz,
                 Op::WasmI32Unary,
                 WasmType::I32,
@@ -1360,10 +1354,25 @@ fn first_use_assigns(params: u16, declared: usize, operators: &[Operator<'_>]) -
 /// Locals live in frame registers while the whole register file stays small.
 const MAX_REGISTER_LOCALS: usize = 4096;
 
-fn numeric_operator(operator: &Operator<'_>) -> Option<(Op, u32)> {
+/// How a scalar numeric operator lowers: i32 binary operators name their own
+/// opcode; the remaining families carry their operator as a selector.
+enum NumericLowering {
+    I32Binary(I32BinaryOperator),
+    Selector(Op, u32),
+}
+
+fn numeric_operator(operator: &Operator<'_>) -> Option<NumericLowering> {
     I32BinaryOperator::from_wasm(operator)
-        .map(|op| (Op::WasmI32Binary, op as u32))
-        .or_else(|| I32UnaryOperator::from_wasm(operator).map(|op| (Op::WasmI32Unary, op as u32)))
+        .map(NumericLowering::I32Binary)
+        .or_else(|| {
+            selector_numeric_operator(operator)
+                .map(|(op, selector)| NumericLowering::Selector(op, selector))
+        })
+}
+
+fn selector_numeric_operator(operator: &Operator<'_>) -> Option<(Op, u32)> {
+    I32UnaryOperator::from_wasm(operator)
+        .map(|op| (Op::WasmI32Unary, op as u32))
         .or_else(|| I64BinaryOperator::from_wasm(operator).map(|op| (Op::WasmI64Binary, op as u32)))
         .or_else(|| I64UnaryOperator::from_wasm(operator).map(|op| (Op::WasmI64Unary, op as u32)))
         .or_else(|| {
@@ -1793,14 +1802,14 @@ impl Lowering<'_> {
             }
             return Ok(());
         }
-        if let Some((op, selector)) = numeric_operator(&operator) {
+        if let Some(numeric) = numeric_operator(&operator) {
             if self.path == Reachability::Dead {
                 return Ok(());
             }
-            if op == Op::WasmI32Binary {
-                let operator = I32BinaryOperator::from_tag(selector).expect("i32 binary selector");
-                return self.i32_binary(operator);
-            }
+            let (op, selector) = match numeric {
+                NumericLowering::I32Binary(operator) => return self.i32_binary(operator),
+                NumericLowering::Selector(op, selector) => (op, selector),
+            };
             let right = if op
                 .field_layout(crate::bytecode::InstructionField::C)
                 .is_register_field()
