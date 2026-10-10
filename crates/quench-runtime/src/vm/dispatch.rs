@@ -1496,15 +1496,17 @@ impl<H: Host> Vm<H> {
             Op::Call | Op::CallDirectEvalArray => {
                 self.profile.call_source(0);
                 let window = i.call_window();
-                let arguments = if i.op() == Op::CallDirectEvalArray {
+                // A spread direct-eval array is read before any call state changes, since
+                // reading it can fail; register windows are copied only on the paths that
+                // need an owned argument list.
+                let spread_arguments = if i.op() == Op::CallDirectEvalArray {
                     let array = self.read(f, window.base);
-                    CallArguments::from_values(self.array_values(array)?)
+                    Some(CallArguments::from_values(self.array_values(array)?))
                 } else {
-                    CallArguments::from_slice(self.register_window(f, window))
+                    None
                 };
                 let this = self.read(f, i.register_c());
                 let callee = self.read(f, i.register_b());
-                let args = arguments.as_slice();
                 self.frames[f].pc = *pc;
                 let direct_eval = i.direct_eval()
                     && matches!(
@@ -1576,18 +1578,23 @@ impl<H: Host> Vm<H> {
                             && !function.parameter_eval_arguments_error
                     })
                 {
-                    self.profile.call_target(1, args.len());
+                    self.profile.call_target(1, usize::from(window.count));
                     // Collection happens only at back edges, tail calls and explicit host
                     // safepoints, none of which can run while a frame is pushed; afterwards the
-                    // new frame itself roots the callee, receiver and arguments.
+                    // new frame itself roots the callee, receiver and arguments. Callee setup
+                    // never reads the caller's registers, so the caller's register file lends
+                    // the argument window directly instead of copying it.
+                    let registers = std::mem::take(&mut self.frames[f].registers);
+                    let start = usize::from(window.base);
                     let result = self.push_general_user_frame(
                         p,
                         id,
                         env,
                         this,
-                        args,
+                        &registers[start..start + usize::from(window.count)],
                         CallContext::user_function(id, callee),
                     );
+                    self.frames[f].registers = registers;
                     self.direct_eval = previous_direct_eval;
                     self.parameter_eval = previous_parameter_eval;
                     let stack_guard = result?;
@@ -1597,6 +1604,9 @@ impl<H: Host> Vm<H> {
                         construct_this: None,
                     });
                 }
+                let arguments = spread_arguments
+                    .unwrap_or_else(|| CallArguments::from_slice(self.register_window(f, window)));
+                let args = arguments.as_slice();
                 if p.kind == crate::bytecode::ProgramKind::Wasm
                     && i.returns_from_frame()
                     && let Some(CallTarget::User(program_id, id, env)) =
