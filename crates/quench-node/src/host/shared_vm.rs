@@ -142,6 +142,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoHash" (3) => crate::modules::crypto_shared_vm::hash,
         method "cryptoHmac" (3) => crate::modules::crypto_shared_vm::hmac,
         method "cryptoSign" (3) => crate::modules::crypto_shared_vm::sign,
+        method "cryptoVerify" (4) => crate::modules::crypto_shared_vm::verify,
         method "cryptoRandomBytes" (1) => crate::modules::crypto_shared_vm::random_bytes,
         method "cryptoPbkdf2" (5) => crate::modules::crypto_shared_vm::pbkdf2,
         method "cryptoScrypt" (7) => crate::modules::crypto_shared_vm::scrypt,
