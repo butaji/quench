@@ -1464,13 +1464,13 @@ pub(crate) enum Cell {
     },
     TemporalZonedDateTime {
         object: Box<Object>,
-        epoch_nanoseconds: i128,
+        epoch_nanoseconds: Box<i128>,
         time_zone: Box<String>,
         calendar: String,
     },
     TemporalInstant {
         object: Box<Object>,
-        epoch_nanoseconds: i128,
+        epoch_nanoseconds: Box<i128>,
     },
 }
 

@@ -604,7 +604,7 @@ impl<H: Host> Vm<H> {
         }) = self.heap.get(value)
         {
             let (epoch_nanoseconds, time_zone, calendar) = (
-                *epoch_nanoseconds,
+                **epoch_nanoseconds,
                 time_zone.as_ref().clone(),
                 calendar.clone(),
             );
