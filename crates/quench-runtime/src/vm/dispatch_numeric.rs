@@ -280,6 +280,14 @@ impl<H: Host> Vm<H> {
                             pc = ins.jump_target() as usize;
                         }
                     }
+                    Op::JumpUnaryFalse => {
+                        let operator = ins.unary_operator_field();
+                        let input = self.resolve_operand(p, frame, ins.operand_b())?;
+                        let value = self.unary(p, operator, input)?;
+                        if !self.truthy(value) {
+                            pc = ins.jump_target() as usize;
+                        }
+                    }
                     Op::Return => {
                         self.frames[frame].pc = pc;
                         return Ok(StepResult::Return(self.read(frame, ins.register_a())));

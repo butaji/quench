@@ -117,6 +117,20 @@ fusion_recipes! {
                 second.jump_target(),
             ))
         };
+    UnaryJumpFalse: [Unary, JumpFalse] =>
+        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+            if first.result_register() != second.register_a() {
+                return None;
+            }
+            let operator = u16::try_from(first.unary_operator()).ok()?;
+            Instr::try_new(
+                Op::JumpUnaryFalse,
+                operator,
+                Operand::register(first.register_b()).0,
+                0,
+                second.jump_target(),
+            )
+        };
     ReturnResult: [
         Binary, Return; GetField, Return; Call, Return; CallKnown, Return;
         CallMethod, Return; CallThisMethod, Return; Construct, Return;
@@ -511,6 +525,29 @@ mod tests {
     }
 
     #[test]
+    fn fuses_unary_condition_only_when_branch_consumes_result() {
+        let unary = Instr::new(
+            Op::Unary,
+            7,
+            Operand::register(2).0,
+            0,
+            oxc_ast::ast::UnaryOperator::UnaryPlus as u32,
+        );
+        let branch = Instr::new(Op::JumpFalse, 7, 0, 0, 41);
+        let fused = apply_recipe(Recipe::UnaryJumpFalse, unary, branch, &mut vec![]).unwrap();
+        assert_eq!(fused.op(), Op::JumpUnaryFalse);
+        assert_eq!(
+            fused.unary_operator_field(),
+            oxc_ast::ast::UnaryOperator::UnaryPlus as u32
+        );
+        assert_eq!(fused.operand_b(), Operand::register(2));
+        assert_eq!(fused.jump_target(), 41);
+
+        let other = Instr::new(Op::JumpFalse, 8, 0, 0, 41);
+        assert!(apply_recipe(Recipe::UnaryJumpFalse, unary, other, &mut vec![]).is_none());
+    }
+
+    #[test]
     fn plain_store_load_keeps_value_and_local_order() {
         let store = Instr::new(Op::StoreLocalPlain, 4, 0, 0, 9);
         let load = Instr::new(Op::LoadLocalPlain, 5, 0, 0, 9);
@@ -599,6 +636,27 @@ mod tests {
         assert_eq!(fused[0].jump_target(), 2);
         assert_eq!(fused.len(), dead_branch.len() - 1);
         assert_rewrite_preserves_code(dead_branch, u64::BITS as u16 + 1);
+    }
+
+    #[test]
+    fn unary_branch_discards_a_result_only_when_dead_on_every_successor() {
+        let unary = Instr::new(
+            Op::Unary,
+            3,
+            Operand::register(0).0,
+            0,
+            oxc_ast::ast::UnaryOperator::UnaryPlus as u32,
+        );
+        let branch = Instr::new(Op::JumpFalse, 3, 0, 0, 3);
+        let returned = Instr::new(Op::Return, 2, 0, 0, 0);
+        let live_branch = vec![unary, branch, returned, Instr::new(Op::Return, 3, 0, 0, 0)];
+        assert_rewrite_preserves_code(live_branch, 4);
+
+        let dead_branch = vec![unary, branch, returned, returned];
+        let fused = rewrite_fixture(dead_branch.clone(), 4);
+        assert_eq!(fused[0].op(), Op::JumpUnaryFalse);
+        assert_eq!(fused[0].jump_target(), 2);
+        assert_eq!(fused.len(), dead_branch.len() - 1);
     }
 
     #[test]
