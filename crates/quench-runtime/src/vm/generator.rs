@@ -65,7 +65,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<Value, JsError> {
-        self.profile.function(id as usize);
+        self.profile.function(self.active_program.raw(), id as usize);
         let parameter_eval_arguments_error =
             p.functions[id as usize].parameter_eval_arguments_error;
         if parameter_eval_arguments_error {
