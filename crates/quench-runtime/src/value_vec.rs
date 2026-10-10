@@ -10,7 +10,7 @@ const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
 pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
-const MIN_CAPACITY: usize = 4;
+const MIN_CAPACITY: usize = 2;
 const BUCKETS: usize = 32;
 const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
 const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
@@ -277,7 +277,6 @@ impl ValueArena {
     /// The heap references among a vector's values: the edges a collector traces. Numbers,
     /// other immediates and deleted slots are not references.
     pub(crate) fn append_heap_references(&self, vector: ValueVec, output: &mut Vec<Value>) {
-        debug_assert!(!vector.has_inline_property_storage());
         let len = self.len(vector);
         if vector.is_dictionary() {
             let values = &self.dictionaries[&vector.dictionary_id()];

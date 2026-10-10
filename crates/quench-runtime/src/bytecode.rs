@@ -960,18 +960,16 @@ impl Function {
             return plain;
         }
         let mut tdz_slots = vec![false; usize::from(self.locals)];
-        let tdz_initializers = self
-            .code
-            .iter()
-            .map(|instruction| (instruction.op(), instruction.local_slot()))
-            .chain(
-                self.wide
-                    .iter()
-                    .map(|instruction| (instruction.op(), instruction.local_slot())),
-            );
-        for (op, slot) in tdz_initializers {
-            if op == Op::InitializeTdz
-                && let Some(slot) = tdz_slots.get_mut(slot)
+        for instruction in &self.code {
+            if instruction.op() == Op::InitializeTdz
+                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+            {
+                *slot = true;
+            }
+        }
+        for instruction in &self.wide {
+            if instruction.op() == Op::InitializeTdz
+                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
             {
                 *slot = true;
             }

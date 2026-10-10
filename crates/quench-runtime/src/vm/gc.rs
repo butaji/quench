@@ -521,11 +521,10 @@ impl<H: Host> Vm<H> {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
             self.report_memory_snapshot(&phase);
         }
-        // Every marked object reports its shape to the mark callback. The first
-        // report of a shape records it as live and, only when the shape can hold
-        // symbol or accessor roots, appends those fixed roots once.
-        let shapes = &self.shapes;
-        let mut live_shape_bits = vec![0_u64; shapes.len().div_ceil(u64::BITS as usize)];
+        let shape_count = self.shapes.len();
+        let mut live_shape_bits = vec![0_u64; shape_count.div_ceil(u64::BITS as usize)];
+        let mut live_shapes = Vec::new();
+        let shapes = &mut self.shapes;
         let finalization_jobs =
             self.heap
                 .collect_with_object_roots(roots, |owner, shape, roots| {
@@ -534,6 +533,7 @@ impl<H: Host> Vm<H> {
                     let mask = 1_u64 << (shape_index % u64::BITS as usize);
                     if live_shape_bits[word] & mask == 0 {
                         live_shape_bits[word] |= mask;
+                        live_shapes.push(shape);
                         if shapes[shape_index].may_have_gc_roots {
                             append_shape_roots(shapes, shape, roots);
                         }
@@ -547,12 +547,6 @@ impl<H: Host> Vm<H> {
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.
-        let live_shapes = (0..self.shapes.len())
-            .filter(|&shape| {
-                live_shape_bits[shape / u64::BITS as usize] & (1 << (shape % u64::BITS as usize)) != 0
-            })
-            .map(|shape| shape as u32)
-            .collect::<Vec<_>>();
         if self.should_compact_live_shapes(&live_shapes) {
             #[cfg(feature = "profile-aggregate")]
             self.snapshot_method_caches(0);
