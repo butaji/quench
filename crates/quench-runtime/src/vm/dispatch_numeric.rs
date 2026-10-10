@@ -48,7 +48,8 @@ macro_rules! execute_specialized_numeric {
         }
         if let Some(local) = $ins.numeric_local_target() {
             $vm.frames[$frame].locals[local as usize] = value;
-            $vm.profile.virtual_opcode(Op::StoreLocal as usize);
+            $vm.profile
+                .virtual_opcode($vm.frames[$frame].program.raw(), Op::StoreLocal as usize);
         } else {
             $vm.write($frame, $ins.result_register(), value);
         }
@@ -73,8 +74,13 @@ impl<H: Host> Vm<H> {
             let ins = unsafe { *code.get_unchecked(pc) };
             pc += 1;
             #[cfg(feature = "profile-aggregate")]
-            self.profile
-                .opcode(ins.op() as usize, frame, function as u32, _instruction_pc);
+            self.profile.opcode(
+                ins.op() as usize,
+                frame,
+                self.frames[frame].program.raw(),
+                function as u32,
+                _instruction_pc,
+            );
             #[cfg(feature = "profile-aggregate")]
             self.profile.object_literal_instruction(
                 self.frames[frame].program.raw(),
@@ -153,10 +159,16 @@ impl<H: Host> Vm<H> {
                         let base = self.numeric_index_source(frame, base_operand);
                         let index = self.numeric_index_source(frame, index_operand);
                         if base_operand.kind() == Some(crate::bytecode::OperandKind::Local) {
-                            self.profile.virtual_opcode(Op::LoadLocal as usize);
+                            self.profile.virtual_opcode(
+                                self.frames[frame].program.raw(),
+                                Op::LoadLocal as usize,
+                            );
                         }
                         if index_operand.kind() == Some(crate::bytecode::OperandKind::Local) {
-                            self.profile.virtual_opcode(Op::LoadLocal as usize);
+                            self.profile.virtual_opcode(
+                                self.frames[frame].program.raw(),
+                                Op::LoadLocal as usize,
+                            );
                         }
                         let value = self.get_index(p, base, index)?;
                         self.write(frame, ins.result_register(), value);
@@ -211,7 +223,10 @@ impl<H: Host> Vm<H> {
                         }
                         if let Some(local) = ins.numeric_local_target() {
                             self.frames[frame].locals[local as usize] = value;
-                            self.profile.virtual_opcode(Op::StoreLocal as usize);
+                            self.profile.virtual_opcode(
+                                self.frames[frame].program.raw(),
+                                Op::StoreLocal as usize,
+                            );
                         } else {
                             self.write(frame, ins.result_register(), value);
                         }
@@ -382,7 +397,13 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn profile_numeric_fusion(&mut self, _frame: usize, _function: u32, _pc: usize, op: Op) {
         #[cfg(feature = "profile-aggregate")]
-        self.profile.opcode(op as usize, _frame, _function, _pc);
+        self.profile.opcode(
+            op as usize,
+            _frame,
+            self.frames[_frame].program.raw(),
+            _function,
+            _pc,
+        );
         #[cfg(not(feature = "profile-aggregate"))]
         self.profile.opcode(op as usize);
     }
