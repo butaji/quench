@@ -419,7 +419,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     "sha3-224", "sha3-256", "sha3-384", "sha3-512",
   ].sort());
   const cipherNames = Object.freeze([
-    "aes-128-cbc", "aes-128-ecb", "aes-256-cbc", "des-ede3-cbc",
+    "aes-128-cbc", "aes-128-ecb", "aes-128-gcm", "aes-192-gcm", "aes-256-cbc", "aes-256-gcm", "chacha20-poly1305", "des-ede3-cbc",
   ].sort());
   const curveNames = Object.freeze([
     "prime192v1", "secp224r1", "secp256k1", "secp256r1",
@@ -432,6 +432,9 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     { name: "aes-128-cbc", nid: 419, blockSize: 16, ivLength: 16, keyLength: 16, mode: "cbc" },
     { name: "aes-128-ecb", nid: 418, blockSize: 16, ivLength: 0, keyLength: 16, mode: "ecb" },
     { name: "aes-256-cbc", nid: 427, blockSize: 16, ivLength: 16, keyLength: 32, mode: "cbc" },
+    { name: "aes-192-gcm", nid: 898, blockSize: 1, ivLength: 12, keyLength: 24, mode: "gcm" },
+    { name: "aes-256-gcm", nid: 901, blockSize: 1, ivLength: 12, keyLength: 32, mode: "gcm" },
+    { name: "chacha20-poly1305", nid: 1018, blockSize: 1, ivLength: 12, keyLength: 32, mode: "stream" },
     { name: "des-ede3-cbc", nid: 44, blockSize: 8, ivLength: 8, keyLength: 24, mode: "cbc" },
     { name: "aes-128-gcm", nid: 895, blockSize: 1, ivLength: 12, keyLength: 16, mode: "gcm" },
     { name: "aes-128-ccm", nid: 896, blockSize: 1, ivLength: 12, keyLength: 16, mode: "ccm" },
@@ -477,7 +480,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     return { ...info };
   }
   class CipherBase extends Transform {
-    constructor(name, key, iv, decrypt) {
+    constructor(name, key, iv, decrypt, options = {}) {
       super();
       this._cipherName = name;
       this._cipherKey = Buffer.from(secretKeys.has(key) ? secretKeys.get(key) : key);
@@ -489,6 +492,14 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
       this._autoPadding = true;
       this._cipherInputEncoding = undefined;
       this._cipherOutputEncoding = undefined;
+      this._cipherMode = getCipherInfo(name)?.mode;
+      this._authTagLength = options.authTagLength ?? 16;
+      this._authTagLengthExplicit = options.authTagLength !== undefined;
+      this._authTagSet = false;
+      this._authTagLengthStrictDefault = this._cipherName === "chacha20-poly1305" && !this._authTagLengthExplicit;
+      this._cipherAad = Buffer.alloc(0);
+      this._authTag = undefined;
+      this._cipherDataStarted = false;
       this._transform = (chunk, encoding, callback) => {
         try { callback(null, this.update(chunk)); }
         catch (error) { callback(error); }
@@ -502,11 +513,20 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
       const input = Buffer.concat(this._cipherChunks);
       let output;
       try {
-        output = Buffer.from(cipherProcess(
+        const processed = cipherProcess(
           this._cipherName, this._cipherKey, this._cipherIv, input,
-          finalBlock, this._cipherDecrypt,
-        ));
+          finalBlock, this._cipherDecrypt, this._cipherAad,
+          this._authTag ?? Buffer.alloc(0), this._authTagLength,
+        );
+        output = Buffer.from(processed.output);
+        if (finalBlock && (this._cipherMode === "gcm" || this._cipherName === "chacha20-poly1305") && !this._cipherDecrypt)
+          this._authTag = Buffer.from(processed.tag);
       } catch (cause) {
+        if ((this._cipherMode === "gcm" || this._cipherName === "chacha20-poly1305") && this._cipherDecrypt && finalBlock) {
+          const error = new Error("Unsupported state or unable to authenticate data");
+          error.code = "ERR_CRYPTO_AUTH_TAG_MISMATCH";
+          throw error;
+        }
         if (this._cipherDecrypt && finalBlock) {
           const error = new Error("error:1C800064:Provider routines::bad decrypt");
           error.library = "Provider routines";
@@ -552,6 +572,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
         throw error;
       }
       this._cipherChunks.push(inputBuffer(data, inputEncoding));
+      this._cipherDataStarted = true;
       const result = this._process(false);
       return outputEncoding === undefined || outputEncoding === "buffer"
         ? result
@@ -567,7 +588,8 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
           error.code = "ERR_UNKNOWN_ENCODING";
           throw error;
         }
-        if (this._cipherOutputEncoding !== undefined && normalized !== this._cipherOutputEncoding) {
+        if (this._cipherOutputEncoding !== undefined && normalized !== this._cipherOutputEncoding &&
+            !((this._cipherMode === "gcm" || this._cipherName === "chacha20-poly1305") && this._cipherDecrypt)) {
           const error = new TypeError(`The encoding cannot be changed from '${this._cipherOutputEncoding}'`);
           error.code = "ERR_INVALID_ARG_VALUE";
           throw error;
@@ -584,13 +606,67 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
       this._autoPadding = Boolean(autoPadding);
       return this;
     }
+    setAAD(aad) {
+      if ((this._cipherMode !== "gcm" && this._cipherName !== "chacha20-poly1305") || this._cipherDataStarted || this._cipherFinalized)
+        throw new Error("Invalid state for operation setAAD");
+      this._cipherAad = inputBuffer(aad);
+      return this;
+    }
+    setAuthTag(tag) {
+      if ((this._cipherMode !== "gcm" && this._cipherName !== "chacha20-poly1305") || !this._cipherDecrypt || this._cipherFinalized || this._authTagSet)
+        throw new Error("Invalid state for operation setAuthTag");
+      const bytes = inputBuffer(tag);
+      const validLength = this._cipherName === "chacha20-poly1305"
+        ? bytes.length >= 1 && bytes.length <= 16
+        : [4, 8, 12, 13, 14, 15, 16].includes(bytes.length);
+      if (!validLength || ((this._authTagLengthExplicit || this._authTagLengthStrictDefault) && bytes.length !== this._authTagLength)) {
+        const error = new TypeError(`Invalid authentication tag length: ${bytes.length}`);
+        error.code = (this._cipherName === "chacha20-poly1305" || this._cipherMode === "gcm")
+          ? "ERR_CRYPTO_INVALID_AUTH_TAG"
+          : "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      this._authTagLength = bytes.length;
+      this._authTag = bytes;
+      this._authTagSet = true;
+      return this;
+    }
+    getAuthTag() {
+      if ((this._cipherMode !== "gcm" && this._cipherName !== "chacha20-poly1305") || this._cipherDecrypt || !this._cipherFinalized || !this._authTag)
+        throw new Error("Invalid state for operation getAuthTag");
+      return this._authTag;
+    }
   }
-  function createCipheriv(name, key, iv) {
+  function cipherOptions(options) {
+    if (options === undefined) return {};
+    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+      const error = new TypeError('The "options" argument must be of type object');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return options;
+  }
+  function validateTagLength(options, chacha = false) {
+    const length = options.authTagLength ?? 16;
+    if (chacha && (typeof length !== "number" || !Number.isInteger(length) || length < 1 || length > 16)) {
+      const error = new Error("Invalid authentication tag length");
+      error.code = "ERR_CRYPTO_INVALID_AUTH_TAG";
+      throw error;
+    }
+    if (!chacha && (typeof length !== "number" || !Number.isInteger(length) || ![4, 8, 12, 13, 14, 15, 16].includes(length))) {
+      const error = new TypeError("Invalid authentication tag length");
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    return { authTagLength: length };
+  }
+  function createCipheriv(name, key, iv, options) {
     if (typeof name !== "string") {
       const error = new TypeError(`The "cipher" argument must be of type string. ${receivedArgument(name)}`);
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    options = cipherOptions(options);
     const info = getCipherInfo(name);
     if (info === undefined) {
       const error = new Error("Unknown cipher");
@@ -622,14 +698,15 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     if (info.mode === "gcm" ? ivBytes.length === 0 : ivBytes.length !== info.ivLength) {
       throw new Error("Invalid initialization vector");
     }
-    return new CipherBase(info.name, keyBytes, ivBytes, false);
+    return new CipherBase(info.name, keyBytes, ivBytes, false, (info.mode === "gcm" || info.name === "chacha20-poly1305") ? validateTagLength(options, info.name === "chacha20-poly1305") : options);
   }
-  function createDecipheriv(name, key, iv) {
+  function createDecipheriv(name, key, iv, options) {
     if (typeof name !== "string") {
       const error = new TypeError(`The "cipher" argument must be of type string. ${receivedArgument(name)}`);
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    options = cipherOptions(options);
     const info = getCipherInfo(name);
     if (info === undefined) {
       const error = new Error("Unknown cipher");
@@ -661,7 +738,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     if (info.mode === "gcm" ? ivBytes.length === 0 : ivBytes.length !== info.ivLength) {
       throw new Error("Invalid initialization vector");
     }
-    return new CipherBase(info.name, keyBytes, ivBytes, true);
+    return new CipherBase(info.name, keyBytes, ivBytes, true, (info.mode === "gcm" || info.name === "chacha20-poly1305") ? validateTagLength(options, info.name === "chacha20-poly1305") : options);
   }
   function Cipheriv(name, key, iv) { return createCipheriv(name, key, iv); }
   function Decipheriv(name, key, iv) { return createDecipheriv(name, key, iv); }
@@ -1341,7 +1418,11 @@ pub(crate) fn cipher_process(
     let cipher = match algorithm.to_ascii_lowercase().as_str() {
         "aes-128-cbc" => openssl::symm::Cipher::aes_128_cbc(),
         "aes-128-ecb" => openssl::symm::Cipher::aes_128_ecb(),
+        "aes-128-gcm" => openssl::symm::Cipher::aes_128_gcm(),
+        "aes-192-gcm" => openssl::symm::Cipher::aes_192_gcm(),
         "aes-256-cbc" => openssl::symm::Cipher::aes_256_cbc(),
+        "aes-256-gcm" => openssl::symm::Cipher::aes_256_gcm(),
+        "chacha20-poly1305" => openssl::symm::Cipher::chacha20_poly1305(),
         "des-ede3-cbc" => openssl::symm::Cipher::des_ede3_cbc(),
         _ => {
         return Err(RootedError::host(format!("Unknown cipher: {algorithm}")));
@@ -1369,6 +1450,15 @@ pub(crate) fn cipher_process(
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
+    let aad = args.get(6).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
+    let auth_tag = args.get(7).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
+    let auth_tag_length = args.get(8)
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(|value| value.as_number())
+        .filter(|length| length.is_finite() && *length >= 0.0 && length.fract() == 0.0)
+        .unwrap_or(16.0) as usize;
+    let is_gcm = algorithm.to_ascii_lowercase().ends_with("-gcm");
+    let is_aead = is_gcm || algorithm.eq_ignore_ascii_case("chacha20-poly1305");
     let mode = if decrypt {
         openssl::symm::Mode::Decrypt
     } else {
@@ -1377,21 +1467,41 @@ pub(crate) fn cipher_process(
     let iv = if cipher.iv_len() == Some(0) { None } else { Some(iv.as_slice()) };
     let mut crypter = openssl::symm::Crypter::new(cipher, mode, &key, iv)
         .map_err(|error| RootedError::host(error.to_string()))?;
+    if is_aead {
+        if !aad.is_empty() {
+            crypter.aad_update(&aad).map_err(|error| RootedError::host(error.to_string()))?;
+        }
+    }
     let mut output = vec![0; input.len() + cipher.block_size()];
     let mut written = crypter
         .update(&input, &mut output)
         .map_err(|error| RootedError::host(error.to_string()))?;
     if final_block {
+        if is_aead && decrypt {
+            crypter.set_tag(&auth_tag).map_err(|error| RootedError::host(error.to_string()))?;
+        }
         written += crypter
             .finalize(&mut output[written..])
             .map_err(|error| RootedError::host(error.to_string()))?;
     }
     output.truncate(written);
-    let values = output
+    let output_values = output
         .iter()
         .map(|byte| context.number(f64::from(*byte)))
         .collect::<Vec<_>>();
-    context.array_rooted(&values)
+    let output_array = context.array_rooted(&output_values)?;
+    let tag_array = if is_aead && final_block && !decrypt {
+        let mut tag = vec![0; auth_tag_length];
+        crypter.get_tag(&mut tag).map_err(|error| RootedError::host(error.to_string()))?;
+        let values = tag.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+        context.array_rooted(&values)?
+    } else {
+        context.array_rooted(&[])?
+    };
+    let result = context.object_rooted()?;
+    set(context, result, "output", output_array)?;
+    set(context, result, "tag", tag_array)?;
+    Ok(result)
 }
 
 pub(crate) fn hash(
@@ -1567,6 +1677,20 @@ fn get(
 ) -> Result<RootId, RootedError> {
     let key = context.string_rooted(name);
     context.get_property_rooted(object, key)
+}
+
+fn set(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+    value: RootId,
+) -> Result<(), RootedError> {
+    let key = context.string_rooted(name);
+    if context.set_property_rooted(object, key, value, object)? {
+        Ok(())
+    } else {
+        Err(RootedError::host(format!("cannot install crypto property {name}")))
+    }
 }
 
 fn type_error(
