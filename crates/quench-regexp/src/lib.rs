@@ -263,7 +263,8 @@ impl Regex {
         let allocator = oxc::allocator::Allocator::default();
         let flags_text = flag_text(flags);
         let control_source = normalize_control_letter_escapes(source);
-        let normalized_source = normalize_new_unicode_scripts(&control_source);
+        let backslash_quantifier_source = normalize_escaped_backslash_quantifiers(&control_source);
+        let normalized_source = normalize_new_unicode_scripts(&backslash_quantifier_source);
         let parsed = LiteralParser::new(
             &allocator,
             &normalized_source,
@@ -503,6 +504,61 @@ const NEW_UNICODE_SCRIPTS: &[UnicodeScriptData] = &[
         ranges: &[(0x11DB0, 0x11DDB), (0x11DE0, 0x11DE9)],
     },
 ];
+
+fn normalize_escaped_backslash_quantifiers(source: &str) -> std::borrow::Cow<'_, str> {
+    let bytes = source.as_bytes();
+    let mut normalized = String::with_capacity(source.len());
+    let mut copied_until = 0;
+    let mut index = 0;
+    let mut in_class = false;
+    while index < bytes.len() {
+        if bytes[index] == b'[' && (index == 0 || bytes[index - 1] != b'\\') {
+            in_class = true;
+        } else if bytes[index] == b']' && in_class && (index == 0 || bytes[index - 1] != b'\\') {
+            in_class = false;
+        }
+        if !in_class && bytes.get(index..index + 3) == Some(b"\\\\{") {
+            if let Some(end) = braced_quantifier_end(bytes, index + 3) {
+                normalized.push_str(&source[copied_until..index]);
+                // Grouping that atom avoids an OXC parser bug without changing meaning.
+                normalized.push_str(r"(?:\\)");
+                normalized.push_str(&source[index + 2..end]);
+                copied_until = end;
+                index = end;
+                continue;
+            }
+        }
+        if bytes[index] == b'\\' {
+            index = (index + 2).min(bytes.len());
+        } else {
+            index += 1;
+        }
+    }
+    if copied_until == 0 {
+        std::borrow::Cow::Borrowed(source)
+    } else {
+        normalized.push_str(&source[copied_until..]);
+        std::borrow::Cow::Owned(normalized)
+    }
+}
+
+fn braced_quantifier_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut index = start;
+    let minimum_start = index;
+    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        index += 1;
+    }
+    if index == minimum_start {
+        return None;
+    }
+    if bytes.get(index) == Some(&b',') {
+        index += 1;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+    }
+    (bytes.get(index) == Some(&b'}')).then_some(index + 1)
+}
 
 fn normalize_control_letter_escapes(source: &str) -> std::borrow::Cow<'_, str> {
     if !source.contains("\\c") {
