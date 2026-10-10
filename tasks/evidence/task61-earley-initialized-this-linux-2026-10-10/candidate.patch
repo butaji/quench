@@ -1,0 +1,17 @@
+diff --git a/crates/quench-runtime/src/vm/object.rs b/crates/quench-runtime/src/vm/object.rs
+index 0f18b4311..2b25eb3bb 100644
+--- a/crates/quench-runtime/src/vm/object.rs
++++ b/crates/quench-runtime/src/vm/object.rs
+@@ -286,0 +287,7 @@ impl<H: Host> Vm<H> {
++        let current = self.frames[frame].this;
++        if !current.is_deleted() {
++            // `initialize_this_binding` updates live frames when `super()`
++            // initializes lexical this. Only the pre-super sentinel needs an
++            // environment lookup to observe that transition.
++            return Ok(current);
++        }
+@@ -288,3 +295 @@ impl<H: Host> Vm<H> {
+-        let value = self
+-            .dynamic_binding(frame, atom)
+-            .unwrap_or(self.frames[frame].this);
++        let value = self.dynamic_binding(frame, atom).unwrap_or(current);

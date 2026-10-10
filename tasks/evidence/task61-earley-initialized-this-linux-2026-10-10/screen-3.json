@@ -1,0 +1,69 @@
+{
+  "experiment": "bypass lexical-this lookup when Frame.this is initialized, on EarleyBoyer",
+  "baseline_sha256": "fc9011c45104a9389710e7f075f1fc41c36b40c7d073eb996c8cc6fbe2bdaf86",
+  "candidate_sha256": "88e7706b6e85bc036dfe5fe7a020e86e86ae3e9d8789fb506b2aea6c3fa6590a",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "oracle_sha256": "21e7457c2583ddfca4dcbc5180d05e338d7a3e43255ba06a82d703b059844f54",
+  "node_semantic_output": [],
+  "rounds": 3,
+  "baseline_score_median": 401.0,
+  "candidate_score_median": 407.0,
+  "score_delta_median": 4.0,
+  "baseline_maximum_rss_median_bytes": 42708992,
+  "candidate_maximum_rss_median_bytes": 42307584,
+  "maximum_rss_delta_median_bytes": -331776,
+  "valid": true,
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "node_equal": true,
+      "baseline_score": 406.0,
+      "candidate_score": 410.0,
+      "score_delta": 4.0,
+      "baseline_rss_bytes": 42708992,
+      "candidate_rss_bytes": 42242048,
+      "rss_delta_bytes": -466944,
+      "baseline_wall_ns": 23015962711,
+      "candidate_wall_ns": 22821939863
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "node_equal": true,
+      "baseline_score": 401.0,
+      "candidate_score": 407.0,
+      "score_delta": 6.0,
+      "baseline_rss_bytes": 42770432,
+      "candidate_rss_bytes": 42438656,
+      "rss_delta_bytes": -331776,
+      "baseline_wall_ns": 23199385294,
+      "candidate_wall_ns": 22926300732
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "node_equal": true,
+      "baseline_score": 399.0,
+      "candidate_score": 403.0,
+      "score_delta": 4.0,
+      "baseline_rss_bytes": 42565632,
+      "candidate_rss_bytes": 42307584,
+      "rss_delta_bytes": -258048,
+      "baseline_wall_ns": 23340929820,
+      "candidate_wall_ns": 22977607105
+    }
+  ]
+}
