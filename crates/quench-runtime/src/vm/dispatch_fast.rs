@@ -34,12 +34,6 @@ pub(super) struct LaneInstruction {
     a: u16,
     b: u16,
     c: u16,
-    /// The general path executes this instruction; `handler` only reports
-    /// that if the lane reaches it.
-    exits: bool,
-    /// The general loop enters the lane here: the straight-line lane run
-    /// from this record is long enough to repay the lane's entry cost.
-    enters: bool,
 }
 
 /// The immediate, resolved by its role: a jump target becomes the byte
@@ -81,6 +75,11 @@ type Ip = *const LaneInstruction;
 /// register exactly.
 pub(super) struct LaneView {
     records: Box<[LaneInstruction]>,
+    /// Per instruction, whether the general loop enters the lane there: the
+    /// straight-line lane run from it is long enough to repay the lane's
+    /// entry cost, and its record does not read the accumulator. Kept apart
+    /// from the records, which only the lane reads.
+    entries: Box<[bool]>,
     memory_register: Option<u16>,
 }
 
@@ -148,6 +147,9 @@ impl MemoryView {
 struct Carried {
     memory: MemoryView,
     integers: crate::value::IntegerEncoding,
+    /// The value an accumulator producer just wrote to its result register.
+    /// A record reads it only where the view proved it equals that register.
+    acc: Value,
 }
 
 /// Lane state that handlers read rarely; the hot state travels in handler
@@ -165,17 +167,41 @@ struct LaneContext<H: Host> {
     /// lane returns complete exactly as the general loop would.
     pending: *mut Vec<PendingGeneralCall>,
     inline_calls: bool,
-    /// Safepoint jumps left to dispatch before returning to the lane loop.
-    direct_jumps: u32,
     /// The view handlers start from when the lane loop dispatches.
     memory: MemoryView,
+    /// The last memory binding resolved in this lane run and its view. No
+    /// lane instruction grows memory or runs host code, so a binding's view
+    /// holds for the whole run; calls and returns within one instance reuse
+    /// it instead of resolving the binding again.
+    resolved: (Value, MemoryView),
 }
 
 /// A lane handler returns the next record for the lane loop, tagged with
-/// [`EXIT_TAG`] when the general path must execute it. The memory view is
-/// passed as scalars so every argument stays in a register.
-type Handler<H> =
-    fn(*mut LaneContext<H>, Registers, Ip, *mut u8, usize, crate::value::IntegerEncoding) -> Ip;
+/// [`EXIT_TAG`] when the general path must execute it. The carried state is
+/// passed as scalars so every argument stays in a register; the context,
+/// which hot handlers do not touch, is reached through [`LANE_CONTEXT`].
+type Handler = fn(Registers, Ip, *mut u8, usize, crate::value::IntegerEncoding, Value) -> Ip;
+
+thread_local! {
+    /// The context of this thread's running lane. A lane run never calls
+    /// out, so runs nest only through the general path, and each run
+    /// restores the outer context when it returns.
+    static LANE_CONTEXT: std::cell::Cell<*mut ()> =
+        const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+thread_local! {
+    /// Safepoint jumps the running lane dispatches directly before returning
+    /// to the lane loop. Kept apart from the context so a taken safepoint
+    /// jump updates it without loading the context.
+    static SAFEPOINT_BUDGET: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// The running lane's context.
+#[inline(always)]
+fn lane_context<H: Host>() -> *mut LaneContext<H> {
+    LANE_CONTEXT.with(std::cell::Cell::get).cast()
+}
 
 /// Records are word aligned, so the low address bit is free to mark a lane
 /// exit.
@@ -197,10 +223,10 @@ unsafe fn vm<'a, H: Host>(cx: *mut LaneContext<H>) -> &'a mut Vm<H> {
 
 /// The handler of the record at `ip`.
 #[inline(always)]
-fn handler<H: Host>(ip: Ip) -> Handler<H> {
+fn handler<H: Host>(ip: Ip) -> Handler {
     // SAFETY: a view is only run by the VM type whose handlers built it, and
     // every reachable record is initialized.
-    unsafe { std::mem::transmute::<*const (), Handler<H>>((*ip).handler) }
+    unsafe { std::mem::transmute::<*const (), Handler>((*ip).handler) }
 }
 
 /// Continue with the handler of the record at `ip`.
@@ -209,13 +235,14 @@ macro_rules! next {
     ($cx:expr, $r:expr, $ip:expr, $view:expr) => {{
         let ip: Ip = $ip;
         let view: Carried = $view;
+        let _ = $cx;
         return handler::<H>(ip)(
-            $cx,
             $r,
             ip,
             view.memory.bytes,
             view.memory.len,
             view.integers,
+            view.acc,
         );
     }};
 }
@@ -235,22 +262,64 @@ macro_rules! lane_handler {
         $(#[$meta])*
         #[allow(unused_variables)]
         fn $name<H: Host, $(const $param: $ty),*>(
-            $cx: *mut LaneContext<H>,
             $r: Registers,
             $ip: Ip,
             bytes: *mut u8,
             len: usize,
             integers: crate::value::IntegerEncoding,
+            acc: Value,
         ) -> Ip {
+            let $cx = lane_context::<H>();
             let $view = Carried {
                 memory: MemoryView { bytes, len },
                 integers,
+                acc,
             };
             // SAFETY: the lane only dispatches records of the running view.
             let $i = unsafe { &*$ip };
             $body
         }
     };
+}
+
+/// Which field of a record reads the accumulator: none, or the field the
+/// constant names. The view selects a reading instantiation only where the
+/// field's register is the previous record's result register and control
+/// reaches the record only by falling through from it.
+const ACC_NONE: u8 = 0;
+const ACC_A: u8 = 1;
+const ACC_B: u8 = 2;
+const ACC_C: u8 = 3;
+
+impl InstructionField {
+    const fn accumulator(self) -> u8 {
+        match self {
+            Self::A => ACC_A,
+            Self::B => ACC_B,
+            Self::C => ACC_C,
+        }
+    }
+}
+
+/// The value of register field `FIELD` of a record whose accumulator field
+/// is `ACC`.
+#[inline(always)]
+fn read<const ACC: u8, const FIELD: u8>(r: Registers, register: u16, view: Carried) -> Value {
+    if ACC == FIELD { view.acc } else { r.get(register) }
+}
+
+#[inline(always)]
+fn read_i32<const ACC: u8, const FIELD: u8>(r: Registers, register: u16, view: Carried) -> i32 {
+    read::<ACC, FIELD>(r, register, view).wasm_bits32() as i32
+}
+
+/// Write an accumulator producer's result and continue with it carried.
+macro_rules! produce {
+    ($cx:expr, $r:expr, $ip:expr, $register:expr, $value:expr, $view:expr) => {{
+        let value: Value = $value;
+        $r.set($register, value);
+        next!($cx, $r, following($ip), Carried { acc: value, ..$view })
+    }};
 }
 
 /// The record after `ip`.
@@ -277,16 +346,14 @@ lane_handler! {
 }
 
 lane_handler! {
-    fn lane_move<>(cx, r, ip, i, view) {
-        r.set(i.a, r.get(i.b));
-        next!(cx, r, following(ip), view)
+    fn lane_move<ACC: u8>(cx, r, ip, i, view) {
+        produce!(cx, r, ip, i.a, read::<ACC, ACC_B>(r, i.b, view), view)
     }
 }
 
 lane_handler! {
     fn lane_load_const<>(cx, r, ip, i, view) {
-        r.set(i.a, i.constant());
-        next!(cx, r, following(ip), view)
+        produce!(cx, r, ip, i.a, i.constant(), view)
     }
 }
 
@@ -510,15 +577,14 @@ fn lane_jump<H: Host>(
     // SAFETY: the view records the distance to a validated jump target.
     let target = unsafe { ip.byte_offset(jump) };
     if safepoint {
-        let budget = unsafe { &mut (*cx).direct_jumps };
-        let (remaining, exhausted) = budget.overflowing_sub(1);
-        *budget = remaining;
+        let (remaining, exhausted) = SAFEPOINT_BUDGET.with(std::cell::Cell::get).overflowing_sub(1);
+        SAFEPOINT_BUDGET.with(|budget| budget.set(remaining));
         if exhausted {
             let vm = unsafe { vm(cx) };
             if vm.heap.should_collect() {
                 return exit(ip);
             }
-            unsafe { (*cx).direct_jumps = safepoint_budget(vm) };
+            SAFEPOINT_BUDGET.with(|budget| budget.set(safepoint_budget(vm)));
             return target;
         }
     }
@@ -553,33 +619,33 @@ lane_handler! {
 }
 
 lane_handler! {
-    fn lane_bit_field<>(cx, r, ip, i, view) {
+    fn lane_bit_field<ACC: u8>(cx, r, ip, i, view) {
         let value = crate::wasm::integer::shift_right_unsigned_and(
-            r.i32(i.b),
+            read_i32::<ACC, ACC_B>(r, i.b, view),
             i32::from(i.c as i16),
             i.imm() as i32,
         );
-        r.set(i.a, view.integers.encode(value));
-        next!(cx, r, following(ip), view)
+        produce!(cx, r, ip, i.a, view.integers.encode(value), view)
     }
 }
 
 lane_handler! {
     /// A counted loop's step and test.
-    fn lane_add_jump_nonzero<BACKWARD: bool>(cx, r, ip, i, view) {
-        let sum = r.i32(i.b).wrapping_add(i32::from(i.c as i16));
-        r.set(i.a, view.integers.encode(sum));
+    fn lane_add_jump_nonzero<BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
+        let sum = read_i32::<ACC, ACC_B>(r, i.b, view).wrapping_add(i32::from(i.c as i16));
         if sum != 0 {
+            r.set(i.a, view.integers.encode(sum));
             return lane_jump(cx, r, ip, BACKWARD, view);
         }
-        next!(cx, r, following(ip), view)
+        // Falling through, the step is an accumulator producer.
+        produce!(cx, r, ip, i.a, view.integers.encode(sum), view)
     }
 }
 
 lane_handler! {
     /// `WasmJumpI32Zero` and `WasmJumpI32NonZero`.
-    fn lane_jump_i32_zero<WHEN_ZERO: bool, BACKWARD: bool>(cx, r, ip, i, view) {
-        if (r.i32(i.a) == 0) == WHEN_ZERO {
+    fn lane_jump_i32_zero<WHEN_ZERO: bool, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
+        if (read_i32::<ACC, ACC_A>(r, i.a, view) == 0) == WHEN_ZERO {
             return lane_jump(cx, r, ip, BACKWARD, view);
         }
         next!(cx, r, following(ip), view)
@@ -588,7 +654,7 @@ lane_handler! {
 
 lane_handler! {
     /// Fused i32 comparison and branch, against a register or a constant.
-    fn lane_compare_jump<OP: u16, BACKWARD: bool>(cx, r, ip, i, view) {
+    fn lane_compare_jump<OP: u16, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
         let (comparison, immediate) = const {
             match I32BinaryOperator::from_jump_op(opcode(OP)) {
                 Some(comparison) => (comparison, false),
@@ -601,9 +667,9 @@ lane_handler! {
         let right = if immediate {
             i32::from(i.b as i16)
         } else {
-            r.i32(i.b)
+            read_i32::<ACC, ACC_B>(r, i.b, view)
         };
-        let Ok(taken) = comparison.evaluate(r.i32(i.a), right) else {
+        let Ok(taken) = comparison.evaluate(read_i32::<ACC, ACC_A>(r, i.a, view), right) else {
             return exit(ip);
         };
         if taken != 0 {
@@ -624,7 +690,7 @@ lane_handler! {
         };
         r.set(i.a, value);
         let view = if MEMORY {
-            let memory = memory_view(vm, value);
+            let memory = resolve_memory(cx, value);
             unsafe { (*cx).memory = memory };
             Carried { memory, ..view }
         } else {
@@ -663,8 +729,7 @@ lane_handler! {
     fn lane_select<>(cx, r, ip, i, view) {
         let (condition, _) = ImmediateLayout::register_pair(i.imm());
         let source = if r.i32(condition) != 0 { i.b } else { i.c };
-        r.set(i.a, r.get(source));
-        next!(cx, r, following(ip), view)
+        produce!(cx, r, ip, i.a, r.get(source), view)
     }
 }
 
@@ -679,22 +744,21 @@ lane_handler! {
 }
 
 lane_handler! {
-    fn lane_i32_unary<>(cx, r, ip, i, view) {
+    fn lane_i32_unary<ACC: u8>(cx, r, ip, i, view) {
         let Some(operator) = I32UnaryOperator::from_tag(i.imm()) else {
             return exit(ip);
         };
-        let crate::WasmValue::I32(value) = operator.apply(r.i32(i.b)) else {
+        let crate::WasmValue::I32(value) = operator.apply(read_i32::<ACC, ACC_B>(r, i.b, view)) else {
             return exit(ip);
         };
-        r.set(i.a, view.integers.encode(value));
-        next!(cx, r, following(ip), view)
+        produce!(cx, r, ip, i.a, view.integers.encode(value), view)
     }
 }
 
 lane_handler! {
     /// An i32 operator over two registers or a register and a constant; a
     /// trap leaves the lane.
-    fn lane_i32_binary<OP: u16>(cx, r, ip, i, view) {
+    fn lane_i32_binary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let (operator, immediate) = const {
             match I32BinaryOperator::from_register_op(opcode(OP)) {
                 Some(operator) => (operator, false),
@@ -704,20 +768,23 @@ lane_handler! {
                 },
             }
         };
-        let right = if immediate { i.imm() as i32 } else { r.i32(i.c) };
-        let Ok(value) = operator.evaluate(r.i32(i.b), right) else {
+        let right = if immediate {
+            i.imm() as i32
+        } else {
+            read_i32::<ACC, ACC_C>(r, i.c, view)
+        };
+        let Ok(value) = operator.evaluate(read_i32::<ACC, ACC_B>(r, i.b, view), right) else {
             return exit(ip);
         };
-        r.set(i.a, view.integers.encode(value));
-        next!(cx, r, following(ip), view)
+        produce!(cx, r, ip, i.a, view.integers.encode(value), view)
     }
 }
 
 /// The memory32 effective address of a direct access through the function's
 /// memory register.
 #[inline(always)]
-fn lane_address(r: Registers, i: &LaneInstruction) -> u64 {
-    u64::from(r.get(i.c).wasm_bits32()) + u64::from(i.imm())
+fn lane_address<const ACC: u8>(r: Registers, i: &LaneInstruction, view: Carried) -> u64 {
+    u64::from(read::<ACC, ACC_C>(r, i.c, view).wasm_bits32()) + u64::from(i.imm())
 }
 
 /// The view of the unshared memory `binding` names, or the empty view.
@@ -739,10 +806,27 @@ fn memory_view<H: Host>(vm: &Vm<H>, binding: Value) -> MemoryView {
     }
 }
 
+/// The view of memory binding `binding`, reusing the run's last resolution.
+#[inline(always)]
+fn resolve_memory<H: Host>(cx: *mut LaneContext<H>, binding: Value) -> MemoryView {
+    // SAFETY: handlers run with exclusive access to their context.
+    let (resolved, view) = unsafe { (*cx).resolved };
+    if resolved == binding {
+        return view;
+    }
+    let view = memory_view(unsafe { vm(cx) }, binding);
+    unsafe { (*cx).resolved = (binding, view) };
+    view
+}
+
 /// The view behind `view`'s memory register in `registers`.
-fn frame_memory_view<H: Host>(vm: &Vm<H>, view: &LaneView, registers: Registers) -> MemoryView {
+fn frame_memory_view<H: Host>(
+    cx: *mut LaneContext<H>,
+    view: &LaneView,
+    registers: Registers,
+) -> MemoryView {
     view.memory_register.map_or(MemoryView::NONE, |register| {
-        memory_view(vm, registers.get(register))
+        resolve_memory(cx, registers.get(register))
     })
 }
 
@@ -754,7 +838,7 @@ fn lane_box_bits64<H: Host>(cx: *mut LaneContext<H>, bits: u64) -> Value {
     let vm = unsafe { vm(cx) };
     let value = vm.heap.alloc(Cell::WasmBits64(bits));
     // A due collection waits for the next safepoint, which checks the heap.
-    unsafe { (*cx).direct_jumps = safepoint_budget(vm) };
+    SAFEPOINT_BUDGET.with(|budget| budget.set(safepoint_budget(vm)));
     value
 }
 
@@ -776,7 +860,7 @@ fn lane_unbox_bits64<H: Host>(
 }
 
 lane_handler! {
-    fn lane_load<OP: u16>(cx, r, ip, i, view) {
+    fn lane_load<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let load = const {
             match MemoryLoad::from_direct_op(opcode(OP)) {
                 Some(load) => load,
@@ -785,7 +869,8 @@ lane_handler! {
         };
         // SAFETY: the view admits direct accesses only through the memory
         // register, whose bytes `view` holds; see MemoryView.
-        let Ok(value) = load.read(unsafe { view.memory.bytes() }, lane_address(r, i)) else {
+        let Ok(value) = load.read(unsafe { view.memory.bytes() }, lane_address::<ACC>(r, i, view))
+        else {
             return exit(ip);
         };
         let value = match value {
@@ -795,13 +880,12 @@ lane_handler! {
             crate::WasmValue::F64(bits) => lane_box_bits64(cx, bits),
             _ => return exit(ip),
         };
-        r.set(i.a, value);
-        next!(cx, r, following(ip), view)
+        produce!(cx, r, ip, i.a, value, view)
     }
 }
 
 lane_handler! {
-    fn lane_store<OP: u16>(cx, r, ip, i, view) {
+    fn lane_store<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let store = const {
             match MemoryStore::from_direct_op(opcode(OP)) {
                 Some(store) => store,
@@ -809,7 +893,7 @@ lane_handler! {
             }
         };
         let value = match store.value_type() {
-            crate::WasmType::I32 => crate::WasmValue::I32(r.i32(i.a)),
+            crate::WasmType::I32 => crate::WasmValue::I32(read_i32::<ACC, ACC_A>(r, i.a, view)),
             crate::WasmType::F32 => match r.get(i.a).as_int() {
                 Some(bits) => crate::WasmValue::F32(bits as u32),
                 None => return exit(ip),
@@ -825,7 +909,10 @@ lane_handler! {
             _ => return exit(ip),
         };
         // SAFETY: as for `lane_load`.
-        if store.write(unsafe { view.memory.bytes() }, lane_address(r, i), value).is_err() {
+        if store
+            .write(unsafe { view.memory.bytes() }, lane_address::<ACC>(r, i, view), value)
+            .is_err()
+        {
             return exit(ip);
         }
         next!(cx, r, following(ip), view)
@@ -848,7 +935,7 @@ fn lane_enter_frame<H: Host>(cx: *mut LaneContext<H>, frame: usize, pc: usize) -
     let lane_view = unsafe { &*lane_view };
     let base = lane_view.records();
     let r = Registers(vm.frames[frame].registers.as_mut_ptr());
-    let view = frame_memory_view(vm, lane_view, r);
+    let view = frame_memory_view(cx, lane_view, r);
     // SAFETY: the view has one record per instruction of the function, and
     // `pc` is the frame's validated resume point.
     let ip = unsafe { base.add(pc) };
@@ -861,6 +948,7 @@ fn lane_enter_frame<H: Host>(cx: *mut LaneContext<H>, frame: usize, pc: usize) -
     let view = Carried {
         memory: view,
         integers: crate::value::IntegerEncoding::TAG,
+        acc: Value::UNDEFINED,
     };
     next!(cx, r, ip, view)
 }
@@ -876,22 +964,19 @@ lane_handler! {
         let caller = unsafe { (*cx).frame };
         // SAFETY: `ip` is a record of the active view.
         let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
-        let parent = vm.capture_env(caller, 0).unwrap_or(vm.frames[caller].env);
         let window = crate::bytecode::RegisterWindow {
             base: ImmediateLayout::call_window_base(i.imm()),
             count: ImmediateLayout::argument_count(i.imm()),
         };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Ok(stack_guard) = vm.push_wasm_frame(code, caller, u32::from(i.b), parent, window) else {
+        let Ok(stack_guard) = vm.push_wasm_frame(code, caller, u32::from(i.b), window) else {
             return exit(ip);
         };
         vm.frames[caller].pc = call_pc + 1;
-        let caller_cursor =
-            vm.general_cursor(unsafe { (*cx).program }, code, vm.frames[caller].function, true);
         unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
             caller,
-            caller_cursor,
+            caller_cursor: None,
             call_pc: call_pc as u32,
             destination: i.a,
             construct_this: None,
@@ -927,30 +1012,75 @@ lane_handler! {
     }
 }
 
-/// The handler serving opcode `OP`, derived from the opcode's semantic
-/// family; `None` when the general path executes the opcode.
-const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool>() -> Option<Handler<H>> {
+/// A lane opcode's handler, and whether that handler is an accumulator
+/// producer: whenever it falls through to the next record, it has written
+/// its result register and carries the written value into that record.
+#[derive(Clone, Copy)]
+struct LaneHandler {
+    handler: Handler,
+    produces: bool,
+}
+
+impl LaneHandler {
+    const fn producer(handler: Handler) -> Option<Self> {
+        Some(Self {
+            handler,
+            produces: true,
+        })
+    }
+}
+
+/// The handler serving opcode `OP` whose accumulator field is `ACC`, derived
+/// from the opcode's semantic family; `None` when the general path executes
+/// the opcode.
+const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8>(
+) -> Option<LaneHandler> {
     let Some(op) = Op::from_index(OP as usize) else {
         return None;
     };
     if I32BinaryOperator::from_register_op(op).is_some()
         || I32BinaryOperator::from_immediate_op(op).is_some()
     {
-        return Some(lane_i32_binary::<H, OP>);
+        return LaneHandler::producer(lane_i32_binary::<H, OP, ACC>);
     }
-    if I32BinaryOperator::from_jump_op(op).is_some()
+    let handler: Handler = if I32BinaryOperator::from_jump_op(op).is_some()
         || I32BinaryOperator::from_immediate_jump_op(op).is_some()
     {
-        return Some(lane_compare_jump::<H, OP, BACKWARD>);
-    }
-    if MemoryLoad::from_direct_op(op).is_some() {
-        return Some(lane_load::<H, OP>);
-    }
-    if MemoryStore::from_direct_op(op).is_some() {
-        return Some(lane_store::<H, OP>);
-    }
+        lane_compare_jump::<H, OP, BACKWARD, ACC>
+    } else if MemoryLoad::from_direct_op(op).is_some() {
+        return LaneHandler::producer(lane_load::<H, OP, ACC>);
+    } else if MemoryStore::from_direct_op(op).is_some() {
+        lane_store::<H, OP, ACC>
+    } else {
+        match op {
+            Op::Move => return LaneHandler::producer(lane_move::<H, ACC>),
+            Op::LoadConst => return LaneHandler::producer(lane_load_const::<H>),
+            Op::WasmI32ShiftRightUnsignedAndImmediate => {
+                return LaneHandler::producer(lane_bit_field::<H, ACC>);
+            }
+            Op::WasmSelect => return LaneHandler::producer(lane_select::<H>),
+            Op::WasmI32AddImmediateJumpNonZero => {
+                return LaneHandler::producer(lane_add_jump_nonzero::<H, BACKWARD, ACC>);
+            }
+            Op::WasmI32Unary => return LaneHandler::producer(lane_i32_unary::<H, ACC>),
+            _ => match other_handler::<H, BACKWARD, ACC>(op) {
+                Some(handler) => handler,
+                None => return None,
+            },
+        }
+    };
+    Some(LaneHandler {
+        handler,
+        produces: false,
+    })
+}
+
+/// Handlers that neither produce nor read the accumulator, apart from the
+/// branch tests, which read it.
+const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(
+    op: Op,
+) -> Option<Handler> {
     match op {
-        Op::Move => Some(lane_move::<H>),
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
         Op::GetField => Some(lane_get_field::<H>),
@@ -960,21 +1090,16 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool>() -> Option<H
         Op::IncDec => Some(lane_inc_dec::<H>),
         Op::Binary => Some(lane_binary::<H>),
         Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
-        Op::LoadConst => Some(lane_load_const::<H>),
         Op::LoadLocalPlain => Some(lane_load_local_plain::<H>),
         Op::Jump => Some(lane_jump_always::<H>),
         Op::JumpFalse => Some(lane_jump_false::<H>),
         Op::WasmBranchTable => Some(lane_branch_table::<H>),
-        Op::WasmI32ShiftRightUnsignedAndImmediate => Some(lane_bit_field::<H>),
-        Op::WasmI32AddImmediateJumpNonZero => Some(lane_add_jump_nonzero::<H, BACKWARD>),
-        Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD>),
-        Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD>),
+        Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC>),
+        Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC>),
         Op::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Op::WasmGlobalGet => Some(lane_global_get::<H>),
         Op::WasmGlobalSet => Some(lane_global_set::<H>),
-        Op::WasmSelect => Some(lane_select::<H>),
         Op::WasmFillRegisters => Some(lane_fill_registers::<H>),
-        Op::WasmI32Unary => Some(lane_i32_unary::<H>),
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Return => Some(lane_return::<H>),
         _ => None,
@@ -990,31 +1115,31 @@ const TABLE_ROW: u16 = 16;
 const TABLE_ROWS: usize = TABLE_SLOTS / TABLE_ROW as usize;
 
 macro_rules! table_row {
-    ($h:ty, $backward:literal, $row:literal) => {
+    ($h:ty, $backward:literal, $acc:expr, $row:literal) => {
         [
-            handler_for::<$h, { $row * TABLE_ROW }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 1 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 2 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 3 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 4 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 5 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 6 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 7 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 8 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 9 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 10 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 11 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 12 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 13 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 14 }, $backward>(),
-            handler_for::<$h, { $row * TABLE_ROW + 15 }, $backward>(),
+            handler_for::<$h, { $row * TABLE_ROW }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 1 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 2 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 3 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 4 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 5 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 6 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 7 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 8 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 9 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 10 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 11 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 12 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 13 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 14 }, $backward, { $acc }>(),
+            handler_for::<$h, { $row * TABLE_ROW + 15 }, $backward, { $acc }>(),
         ]
     };
 }
 
-const fn flatten_rows<H: Host>(
-    rows: [[Option<Handler<H>>; TABLE_ROW as usize]; TABLE_ROWS],
-) -> [Option<Handler<H>>; TABLE_SLOTS] {
+const fn flatten_rows(
+    rows: [[Option<LaneHandler>; TABLE_ROW as usize]; TABLE_ROWS],
+) -> [Option<LaneHandler>; TABLE_SLOTS] {
     let mut table = [None; TABLE_SLOTS];
     let mut slot = 0;
     while slot < TABLE_SLOTS {
@@ -1024,47 +1149,52 @@ const fn flatten_rows<H: Host>(
     table
 }
 
+/// One handler table: the opcode's handler for one jump direction and one
+/// accumulator field.
+type Table = [Option<LaneHandler>; TABLE_SLOTS];
+
+macro_rules! lane_table {
+    ($h:ty, $backward:literal, $acc:expr) => {
+        flatten_rows([
+            table_row!($h, $backward, $acc, 0),
+            table_row!($h, $backward, $acc, 1),
+            table_row!($h, $backward, $acc, 2),
+            table_row!($h, $backward, $acc, 3),
+            table_row!($h, $backward, $acc, 4),
+            table_row!($h, $backward, $acc, 5),
+            table_row!($h, $backward, $acc, 6),
+            table_row!($h, $backward, $acc, 7),
+            table_row!($h, $backward, $acc, 8),
+            table_row!($h, $backward, $acc, 9),
+            table_row!($h, $backward, $acc, 10),
+            table_row!($h, $backward, $acc, 11),
+            table_row!($h, $backward, $acc, 12),
+            table_row!($h, $backward, $acc, 13),
+            table_row!($h, $backward, $acc, 14),
+            table_row!($h, $backward, $acc, 15),
+        ])
+    };
+}
+
 struct LaneTable<H>(std::marker::PhantomData<H>);
 
 impl<H: Host> LaneTable<H> {
-    /// Handlers for instructions whose jump, if any, goes forward.
-    const FORWARD: [Option<Handler<H>>; TABLE_SLOTS] = flatten_rows([
-        table_row!(H, false, 0),
-        table_row!(H, false, 1),
-        table_row!(H, false, 2),
-        table_row!(H, false, 3),
-        table_row!(H, false, 4),
-        table_row!(H, false, 5),
-        table_row!(H, false, 6),
-        table_row!(H, false, 7),
-        table_row!(H, false, 8),
-        table_row!(H, false, 9),
-        table_row!(H, false, 10),
-        table_row!(H, false, 11),
-        table_row!(H, false, 12),
-        table_row!(H, false, 13),
-        table_row!(H, false, 14),
-        table_row!(H, false, 15),
-    ]);
-    /// Handlers for instructions whose jump goes backward: a safepoint.
-    const BACKWARD: [Option<Handler<H>>; TABLE_SLOTS] = flatten_rows([
-        table_row!(H, true, 0),
-        table_row!(H, true, 1),
-        table_row!(H, true, 2),
-        table_row!(H, true, 3),
-        table_row!(H, true, 4),
-        table_row!(H, true, 5),
-        table_row!(H, true, 6),
-        table_row!(H, true, 7),
-        table_row!(H, true, 8),
-        table_row!(H, true, 9),
-        table_row!(H, true, 10),
-        table_row!(H, true, 11),
-        table_row!(H, true, 12),
-        table_row!(H, true, 13),
-        table_row!(H, true, 14),
-        table_row!(H, true, 15),
-    ]);
+    /// Tables indexed by jump direction (forward, then backward: a
+    /// safepoint) and by accumulator field.
+    const TABLES: [[Table; 4]; 2] = [
+        [
+            lane_table!(H, false, ACC_NONE),
+            lane_table!(H, false, ACC_A),
+            lane_table!(H, false, ACC_B),
+            lane_table!(H, false, ACC_C),
+        ],
+        [
+            lane_table!(H, true, ACC_NONE),
+            lane_table!(H, true, ACC_A),
+            lane_table!(H, true, ACC_B),
+            lane_table!(H, true, ACC_C),
+        ],
+    ];
 }
 
 /// Whether the lane may run `instruction` from its view record: every
@@ -1166,8 +1296,6 @@ fn lane_writes(instruction: WideInstruction, register: u16) -> bool {
     result || optional || filled
 }
 
-/// Derive a function's lane view from its bytecode and its program's
-/// constants.
 /// The shortest straight-line lane run the general loop enters. Entering
 /// builds the lane context and memory view, which one or two lane
 /// instructions do not repay: on V8-v7 fixed work, three keeps every
@@ -1176,10 +1304,21 @@ fn lane_writes(instruction: WideInstruction, register: u16) -> bool {
 /// whose runs are long, unchanged.
 const LANE_ENTRY_MIN_RUN: usize = 3;
 
+/// Whether records may read the accumulator. Without sibling calls every
+/// handler returns to the lane loop, which carries no accumulator.
+const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
+
+/// Derive a function's lane view from its bytecode and its program's
+/// constants.
 fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneView {
-    let forward = const { &LaneTable::<H>::FORWARD };
-    let backward = const { &LaneTable::<H>::BACKWARD };
+    let tables = const { &LaneTable::<H>::TABLES };
     let memory_register = memory_register(function);
+    let jump_targets = jump_targets(function);
+    let mut producer: Option<u16> = None;
+    // Per instruction: the general path executes it, and its record reads
+    // the accumulator.
+    let mut exits = Vec::with_capacity(function.code.len());
+    let mut reads_accumulator = Vec::with_capacity(function.code.len());
     let mut records: Box<[LaneInstruction]> = function
         .code
         .iter()
@@ -1199,21 +1338,33 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             };
             let operand = lane_operand(instruction, pc, constants)
                 .filter(|_| keeps_view && lane_fields_fit(instruction, function));
-            let handler = operand.and(if binds_memory {
-                Some(lane_instance_binding::<H, true> as Handler<H>)
+            // Control reaches this record only from the previous one when no
+            // jump targets it; the general loop never enters at a record that
+            // reads the accumulator.
+            let carried = producer.take().filter(|_| ACCUMULATOR && !jump_targets[pc]);
+            let acc = carried.map_or(ACC_NONE, |register| accumulator_field(instruction, register));
+            let backward_jump = op.immediate_role() == ImmediateRole::JumpTarget
+                && instruction.imm() as usize <= pc;
+            let selected = operand.and(if binds_memory {
+                Some(LaneHandler {
+                    handler: lane_instance_binding::<H, true> as Handler,
+                    produces: false,
+                })
             } else {
-                let backward_jump = op.immediate_role() == ImmediateRole::JumpTarget
-                    && instruction.imm() as usize <= pc;
-                (if backward_jump { backward } else { forward })[op as usize]
+                tables[usize::from(backward_jump)][usize::from(acc)][op as usize]
             });
+            producer = selected
+                .filter(|selected| selected.produces)
+                .map(|_| instruction.a());
+            exits.push(selected.is_none());
+            reads_accumulator.push(selected.is_some() && acc != ACC_NONE);
             LaneInstruction {
-                handler: handler.unwrap_or(lane_exit::<H>) as *const (),
+                handler: selected.map_or(lane_exit::<H> as Handler, |selected| selected.handler)
+                    as *const (),
                 operand: operand.unwrap_or(LaneOperand { imm: 0 }),
                 a: instruction.a(),
                 b: instruction.b(),
                 c: instruction.c(),
-                exits: handler.is_none(),
-                enters: false,
             }
         })
         .collect();
@@ -1223,21 +1374,52 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
         let instruction = decoded_instruction(function, *packed);
         if instruction.op() == Op::WasmBranchTable
             && crate::bytecode::branch_table_entries(pc, instruction)
-                .any(|entry| records[entry].exits)
+                .any(|entry| exits[entry])
         {
-            records[pc].handler = lane_exit::<H> as Handler<H> as *const ();
-            records[pc].exits = true;
+            records[pc].handler = lane_exit::<H> as Handler as *const ();
+            exits[pc] = true;
+            reads_accumulator[pc] = false;
         }
     }
+    let mut entries = vec![false; records.len()].into_boxed_slice();
     let mut run = 0usize;
-    for record in records.iter_mut().rev() {
-        run = if record.exits { 0 } else { run + 1 };
-        record.enters = run >= LANE_ENTRY_MIN_RUN;
+    for pc in (0..records.len()).rev() {
+        run = if exits[pc] { 0 } else { run + 1 };
+        entries[pc] = run >= LANE_ENTRY_MIN_RUN && !reads_accumulator[pc];
     }
     LaneView {
         records,
+        entries,
         memory_register,
     }
+}
+
+/// The register field of `instruction` that reads `register`, as an
+/// accumulator field; `ACC_NONE` when no register field reads it, or more
+/// than one does.
+fn accumulator_field(instruction: WideInstruction, register: u16) -> u8 {
+    let mut fields = InstructionField::ALL.iter().copied().filter(|&field| {
+        instruction.op().field_layout(field).reads_register()
+            && instruction.field_value(field) == register
+    });
+    match (fields.next(), fields.next()) {
+        (Some(field), None) => field.accumulator(),
+        _ => ACC_NONE,
+    }
+}
+
+/// The instructions some jump of `function` targets.
+fn jump_targets(function: &Function) -> Vec<bool> {
+    let mut targets = vec![false; function.code.len()];
+    for packed in &function.code {
+        let instruction = decoded_instruction(function, *packed);
+        if instruction.op().immediate_role() == ImmediateRole::JumpTarget
+            && let Some(target) = targets.get_mut(instruction.imm() as usize)
+        {
+            *target = true;
+        }
+    }
+    targets
 }
 
 fn decoded_instruction(function: &Function, packed: crate::bytecode::Instr) -> WideInstruction {
@@ -1259,8 +1441,8 @@ impl<H: Host> Vm<H> {
     /// Whether the instruction at `pc` of `view` runs in the lane.
     #[inline(always)]
     pub(super) fn lane_runs(view: *const LaneView, pc: usize) -> bool {
-        // SAFETY: a non-null view has a record for every validated PC.
-        !view.is_null() && unsafe { (*(*view).records().add(pc)).enters }
+        // SAFETY: a non-null view has an entry for every validated PC.
+        !view.is_null() && unsafe { *(&(*view).entries).get_unchecked(pc) }
     }
 
     /// Run lane instructions from `pc` in `frame` and return the PC of the
@@ -1284,9 +1466,8 @@ impl<H: Host> Vm<H> {
         let view = unsafe { &*view };
         let base = view.records();
         let registers = Registers(self.frames[*frame].registers.as_mut_ptr());
-        let direct_jumps = safepoint_budget(self);
-        let memory = frame_memory_view(self, view, registers);
-        let mut cx = LaneContext {
+        SAFEPOINT_BUDGET.with(|budget| budget.set(safepoint_budget(self)));
+        let mut context = LaneContext {
             vm: self,
             code,
             program,
@@ -1295,27 +1476,34 @@ impl<H: Host> Vm<H> {
             base,
             pending,
             inline_calls: inline_calls && code.kind == crate::bytecode::ProgramKind::Wasm,
-            direct_jumps,
-            memory,
+            memory: MemoryView::NONE,
+            resolved: (Value::UNDEFINED, MemoryView::NONE),
         };
+        let cx: *mut LaneContext<H> = &mut context;
+        let outer = LANE_CONTEXT.with(|current| current.replace(cx.cast()));
+        // SAFETY: `cx` is the only access path to the context during the run.
+        unsafe { (*cx).memory = frame_memory_view(cx, view, registers) };
         // SAFETY: the view has one record per instruction, and residual
         // validation establishes every reachable PC.
         let mut ip = unsafe { base.add(pc) };
         loop {
-            let view = cx.memory;
+            // SAFETY: handlers have returned, so no other access is live.
+            let (view, registers) = unsafe { ((*cx).memory, (*cx).registers) };
             let next = handler::<H>(ip)(
-                &mut cx,
-                cx.registers,
+                registers,
                 ip,
                 view.bytes,
                 view.len,
                 crate::value::IntegerEncoding::TAG,
+                Value::UNDEFINED,
             );
             ip = next.map_addr(|address| address & !EXIT_TAG);
             if next.addr() & EXIT_TAG != 0 {
-                *frame = cx.frame;
+                LANE_CONTEXT.with(|current| current.set(outer));
+                // SAFETY: as above.
+                *frame = unsafe { (*cx).frame };
                 // SAFETY: handlers only return records of the active view.
-                return unsafe { ip.offset_from(cx.base) } as usize;
+                return unsafe { ip.offset_from((*cx).base) } as usize;
             }
         }
     }
