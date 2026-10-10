@@ -8,9 +8,9 @@
     "base_revision": "348a1b0790bb774e1c9c7e53cab6acfb2532beee",
     "worktree": "/private/tmp/quench-task61-compact-slot",
     "branch": "task61-splay-compact-slot",
-    "working_tree_dirty": true,
-    "runtime_diff_sha256": "e129f7895d65c60aa39a832f22715455aee4135fede2ab9b847ddcb90c6739c7",
-    "change": "Store ordinary-object prototypes on root/transition shapes; rebase shape on prototype mutation; trace the live shape's prototype edge and prune dead root-cache keys."
+    "working_tree_dirty": false,
+    "runtime_diff_sha256": "91d07e2535a44fc376a4e65263f083cd75600cea6d4c1c5e34b50cd4b76637ff",
+    "change": "Store ordinary-object prototypes on root/transition shapes; rebase shape on prototype mutation; trace the live shape's prototype edge and prune dead root-cache keys. The follow-up correctness audit also derives immutable Object.prototype identities from the per-realm intrinsic registry."
   },
   "result": {
     "correctness": "passed_with_one_known_baseline_failure",
@@ -25,7 +25,7 @@
     {
       "name": "quench-runtime library tests",
       "command": "cargo test -p quench-runtime --lib",
-      "result": "545 passed, 0 failed"
+      "result": "546 passed, 0 failed"
     },
     {
       "name": "Test262 Object, Promise, Proxy, Reflect",
@@ -56,6 +56,16 @@
       "name": "Node util.inherits oracle fixture",
       "command": "target/iteration/run-parallel --one /Users/admin/Code/GitHub/quench-v2/tests/node/test/parallel/test-util-inherits.js",
       "result": "PASS"
+    },
+    {
+      "name": "Immutable Object.prototype behavior in primary and ShadowRealm realms",
+      "command": "CARGO_TARGET_DIR=target/iteration cargo test -p quench-runtime --lib immutable_object_prototypes_are_protected_in_every_realm",
+      "result": "1 passed; same-prototype mutation succeeds, different-prototype Reflect mutation returns false in both realms, and Object.setPrototypeOf throws in the primary realm"
+    },
+    {
+      "name": "Node oracle for primary and vm-context Object.prototype",
+      "command": "node -e with node:vm context and Reflect.setPrototypeOf",
+      "result": "primary=true,false; foreign=true,false"
     },
     {
       "name": "diff whitespace validation",

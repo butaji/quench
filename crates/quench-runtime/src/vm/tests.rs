@@ -200,6 +200,34 @@ fn shape_prototype_keeps_live_prototypes_alive_without_rooting_dead_shapes() {
 }
 
 #[test]
+fn immutable_object_prototypes_are_protected_in_every_realm() {
+    let source = r#"
+      const samePrimary = Reflect.setPrototypeOf(
+        Object.prototype,
+        Object.getPrototypeOf(Object.prototype)
+      );
+      const changedPrimary = Reflect.setPrototypeOf(Object.prototype, {});
+      let objectSetThrew = false;
+      try {
+        Object.setPrototypeOf(Object.prototype, {});
+      } catch (error) {
+        objectSetThrew = error instanceof TypeError;
+      }
+      const foreignRealm = new ShadowRealm();
+      const changedForeign = foreignRealm.evaluate(
+        "Reflect.setPrototypeOf(Object.prototype, {})"
+      );
+      print(`${samePrimary},${changedPrimary},${objectSetThrew},${changedForeign}`);
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "immutable-realm-prototypes.js").unwrap();
+    vm.execute(&program).unwrap();
+
+    assert_eq!(output.borrow().as_slice(), ["true,false,true,false"]);
+}
+
+#[test]
 fn equivalent_data_descriptor_transitions_share_one_shape() {
     use super::property_key::PropertyKey;
 
