@@ -109,10 +109,18 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "pid", pid)?;
     let version = format!("v{}", process_state::NODE_VERSION);
     set_text(context, process, "version", &version)?;
+    let global = context.global_root()?;
+    let symbol_key = context.string_rooted("Symbol");
+    let symbol = context.get_property_rooted(global, symbol_key)?;
+    let tag_key = context.string_rooted("toStringTag");
+    let tag = context.get_property_rooted(symbol, tag_key)?;
+    let process_tag = context.string_rooted("process");
+    if !context.set_property_rooted(process, tag, process_tag, process)? {
+        return Err(RootedError::host("cannot set process toStringTag"));
+    }
     install_config(context, process)?;
     install_facts(context, process, "features", process_state::feature_facts())?;
     install_versions(context, process)?;
-    let global = context.global_root()?;
     install(context, global, "global", global)?;
     define_global_process(context, global, process)?;
     let retained = context.retain(process)?;
