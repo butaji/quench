@@ -157,7 +157,7 @@ fn install_vfs_globals(
     let undefined = context.undefined();
     context.call_rooted(install_missing_fs_methods, undefined, &[fs])?;
     let install = context.evaluate_script_rooted(
-        "(buffer, fs, path, stream) => Object.defineProperties(globalThis, { NodeBuffer: { configurable: true, value: buffer }, __nodeFs: { configurable: true, value: fs }, __nodePath: { configurable: true, value: path }, __nodeStream: { configurable: true, value: stream }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
+        "(buffer, fs, path, stream) => Object.defineProperties(globalThis, { NodeBuffer: { configurable: true, value: buffer }, __nodeFs: { configurable: true, value: fs }, __nodePath: { configurable: true, value: path }, __nodeStream: { configurable: true, value: stream }, __nodeFdPaths: { configurable: true, value: {} }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
         "node:bootstrap/vfs-globals.js",
     )?;
     let undefined = context.undefined();
