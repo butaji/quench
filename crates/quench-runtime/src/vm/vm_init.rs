@@ -66,6 +66,7 @@ impl<H: Host> Vm<H> {
             frame_pool: vec![],
             active_call_roots: vec![],
             with_stack: vec![],
+            with_scope_entered: false,
             suspended: vec![],
             suspended_free: vec![],
             test262_agent: Default::default(),
