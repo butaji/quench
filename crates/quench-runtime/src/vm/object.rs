@@ -19,6 +19,10 @@ impl AtomClass {
         self.0 & bits == bits
     }
 }
+/// Transitions a shape lookup may walk before the walk counts as long.
+const SHAPE_INDEX_WALK_DISTANCE: usize = 32;
+/// Long walks from one shape after which that shape gets a lookup index.
+const SHAPE_INDEX_LONG_WALKS: u8 = 8;
 pub(super) const FIELD_CACHE_SLOT_CAPACITY: usize = u16::MAX as usize + 1;
 
 struct FieldCacheHit {
@@ -134,18 +138,18 @@ impl<H: Host> Vm<H> {
             return index.slots.get(&key).map(|slot| *slot as usize);
         }
         let mut current = Some(shape);
-        while let Some(id) = current {
+        let mut distance = 0;
+        let slot = loop {
+            let Some(id) = current else {
+                break None;
+            };
             let shape = &self.shapes[id as usize];
             match shape.transition {
                 ShapeTransition::Add {
                     key: candidate,
                     slot,
-                } if candidate == key => {
-                    return Some(slot as usize);
-                }
-                ShapeTransition::Delete { key: candidate, .. } if candidate == key => {
-                    return None;
-                }
+                } if candidate == key => break Some(slot as usize),
+                ShapeTransition::Delete { key: candidate, .. } if candidate == key => break None,
                 ShapeTransition::Root
                 | ShapeTransition::Add { .. }
                 | ShapeTransition::Delete { .. }
@@ -153,8 +157,29 @@ impl<H: Host> Vm<H> {
                 | ShapeTransition::Descriptor { .. }
                 | ShapeTransition::Dictionary { .. } => current = shape.parent,
             }
+            distance += 1;
+        };
+        if distance >= SHAPE_INDEX_WALK_DISTANCE {
+            self.note_long_shape_walk(shape);
         }
-        None
+        slot
+    }
+    /// A shape whose lookups repeatedly walk long transition chains (such as
+    /// the global object or a builtin prototype) gets its lookup index. The
+    /// index is linear in the chain length and is built only after
+    /// `SHAPE_INDEX_LONG_WALKS` walks of at least that order already ran, so
+    /// index memory stays proportional to walking work already spent.
+    #[cold]
+    fn note_long_shape_walk(&self, shape: u32) {
+        let entry = &self.shapes[shape as usize];
+        let walks = entry.long_walks.get() + 1;
+        if walks < SHAPE_INDEX_LONG_WALKS {
+            entry.long_walks.set(walks);
+            return;
+        }
+        entry
+            .lookup_index
+            .get_or_init(|| Box::new(derive_shape_lookup_index(&self.shapes, shape)));
     }
     pub(super) fn object_property_slot(
         &self,
