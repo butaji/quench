@@ -55,6 +55,7 @@ impl SlotArena {
         }
     }
 
+    #[cfg(any(test, feature = "profile-memory"))]
     pub(super) fn iter(&self) -> impl Iterator<Item = &Slot> {
         self.slabs
             .iter()
@@ -68,6 +69,17 @@ impl SlotArena {
             .iter_mut()
             .flat_map(|slab| slab.iter_mut())
             .take(len)
+    }
+
+    /// Occupied slots grouped by slab, each with the flat index of its first
+    /// slot, so whole-heap passes run a plain loop per slab.
+    pub(super) fn slabs_mut(&mut self) -> impl Iterator<Item = (usize, &mut [Slot])> {
+        let len = self.len;
+        self.slabs.iter_mut().enumerate().map(move |(slab, slots)| {
+            let base = slab * SLOTS_PER_SLAB;
+            let occupied = (len - base).min(SLOTS_PER_SLAB);
+            (base, &mut slots[..occupied])
+        })
     }
 
     pub(super) fn clear(&mut self) {

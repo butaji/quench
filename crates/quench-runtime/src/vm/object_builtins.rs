@@ -74,7 +74,7 @@ impl<H: Host> Vm<H> {
         let object = self.native_value(Native::Object);
         self.set_builtin_function_name(object, "Object")?;
         self.set_named(program, object, "prototype", self.object_proto)?;
-        let prototype = self.intern_atom("prototype");
+        let prototype = self.prototype_atom();
         self.set_property_attributes(
             object,
             super::property_key::PropertyKey::string(prototype),

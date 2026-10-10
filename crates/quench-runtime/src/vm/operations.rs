@@ -361,6 +361,7 @@ impl<H: Host> Vm<H> {
                 }
                 let object = self.box_object(value)?;
                 self.with_stack.push(object);
+                self.with_scope_entered = true;
                 Ok(Value::UNDEFINED)
             }
             Native::WithExit => {
@@ -1218,6 +1219,13 @@ impl<H: Host> Vm<H> {
                     right,
                     crate::profile::BinaryValuePath::Fallback,
                 );
+                // ToPrimitive of a string is the string itself and concatenation never
+                // collects, so string + string needs neither coercion nor extra roots.
+                if matches!(self.heap.get(left), Some(Cell::String(_)))
+                    && matches!(self.heap.get(right), Some(Cell::String(_)))
+                {
+                    return self.binary_slow(p, op, left, right);
+                }
                 return self.with_coerced_operands(
                     p,
                     OperandCoercion::PrimitiveDefault,

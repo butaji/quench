@@ -312,6 +312,11 @@ impl ProgramStore {
         })
     }
 
+    /// Borrows the residual without the reference-count traffic of `get`.
+    pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
+        self.programs.get(id.index()).map(|entry| &*entry.residual)
+    }
+
     pub(crate) fn get(&self, id: ProgramId) -> Option<Rc<ResidualProgram>> {
         self.programs
             .get(id.index())

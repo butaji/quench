@@ -1,34 +1,58 @@
 use super::*;
 
 #[derive(Clone, Copy)]
-struct GeneralCodeCursor {
+pub(super) struct GeneralCodeCursor {
     program: ProgramId,
     function: u32,
     code: *const Instr,
     wide: *const WideInstruction,
+    /// Fixed-width expansion of `code`; null while the function is cold.
+    decoded: *const WideInstruction,
     /// The function's lane view, or null where the lane does not run.
     lane: *const dispatch_fast::LaneView,
+}
+
+/// A caller suspended by an in-loop frame push, resumed when its callee completes.
+pub(super) struct PendingGeneralCall {
+    pub(super) caller: usize,
+    /// The caller's cursor, still valid on resume: the residual outlives the loop and a hot
+    /// decoding, once built, never moves; a cold caller simply keeps reading packed code.
+    pub(super) caller_cursor: GeneralCodeCursor,
+    pub(super) call_pc: u32,
+    pub(super) destination: Register,
+    /// Set for an in-loop `new`; see `StepResult::PushFrame`.
+    pub(super) construct_this: Option<Value>,
+    pub(super) stack_guard: crate::stack::StackGuard,
 }
 
 impl GeneralCodeCursor {
     fn new(program_id: ProgramId, program: &ResidualProgram, function: u32) -> Self {
         let function_code = &program.functions[function as usize];
+        let decoded = function_code
+            .decoded
+            .on_entry(&function_code.code, &function_code.wide)
+            .map_or(std::ptr::null(), <[WideInstruction]>::as_ptr);
         Self {
             program: program_id,
             function,
             code: function_code.code.as_ptr(),
             wide: function_code.wide.as_ptr(),
+            decoded,
             lane: std::ptr::null(),
         }
     }
 
+    #[inline(always)]
     fn instruction(self, pc: usize) -> WideInstruction {
         // SAFETY: residual validation establishes every reachable PC and wide
-        // operand index. This cursor stays local to `run_frame_general_until`:
-        // the borrowed entry residual remains alive for the whole call, and a
-        // switched residual is retained by `current_program` until the cursor
-        // is refreshed. Inline frame pushes are restricted to the same program.
-        // The loop refreshes the cursor whenever the active frame changes.
+        // operand index, and `decoded` has one entry per code word. This cursor stays local
+        // to `run_frame_general_until`: the borrowed entry residual remains alive for the
+        // whole call, and a switched residual is retained by `current_program` until the
+        // cursor is refreshed. Inline frame pushes are restricted to the same program. The
+        // loop refreshes the cursor whenever the active frame changes.
+        if !self.decoded.is_null() {
+            return unsafe { *self.decoded.add(pc) };
+        }
         let packed = unsafe { *self.code.add(pc) };
         if packed.is_wide() {
             // SAFETY: the same validation guarantees this packed wide index is
@@ -42,7 +66,7 @@ impl GeneralCodeCursor {
 
 impl<H: Host> Vm<H> {
     /// A code cursor for `function`, with its lane view where the lane runs.
-    fn general_cursor(
+    pub(super) fn general_cursor(
         &self,
         program_id: ProgramId,
         program: &ResidualProgram,
@@ -69,6 +93,7 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    #[inline(always)]
     pub(super) fn initialize_activation_bindings(
         &mut self,
         frame: &mut Frame,
@@ -90,6 +115,7 @@ impl<H: Host> Vm<H> {
             let atom = self.runtime_atoms.lexical_this;
             frame.dynamic_bindings.push((atom, frame.this));
         }
+        frame.fixed_this = !inherits_this && !frame.this.is_deleted();
     }
 
     #[inline(never)]
@@ -177,7 +203,7 @@ impl<H: Host> Vm<H> {
         let mut frame = self
             .frame_pool
             .pop()
-            .unwrap_or_else(|| Frame::empty(program, with_base));
+            .unwrap_or_else(|| Box::new(Frame::empty(program, with_base)));
         let caller = &self.frames[caller];
         let arguments_base = usize::from(arguments.base);
         let local_arguments = usize::from(arguments.count.min(function.local_parameter_count()));
@@ -197,6 +223,7 @@ impl<H: Host> Vm<H> {
         frame.this = Value::UNDEFINED;
         frame.captured = false;
         frame.with_base = with_base;
+        frame.fixed_this = false;
         frame.prepare_registers(function.registers, function.initial_register);
         if let Some(base) = function.parameter_registers {
             let base = usize::from(base);
@@ -208,8 +235,8 @@ impl<H: Host> Vm<H> {
         Ok(stack_guard)
     }
 
-    fn empty_frame(&self) -> Frame {
-        Frame::empty(self.active_program, self.with_stack.len())
+    fn empty_frame(&self) -> Box<Frame> {
+        Box::new(Frame::empty(self.active_program, self.with_stack.len()))
     }
 
     pub(super) fn push_general_user_frame(
@@ -248,10 +275,7 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let mut frame = self
-            .frame_pool
-            .pop()
-            .unwrap_or_else(|| self.empty_frame());
+        let mut frame = self.frame_pool.pop().unwrap_or_else(|| self.empty_frame());
         frame
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
@@ -398,11 +422,11 @@ impl<H: Host> Vm<H> {
                 } else {
                     FrameOutcome::Complete(value)
                 };
-                self.frame_pool.push(Self::recycle_frame(frame));
+                self.pool_frame(frame);
                 Ok(UserFrameStart::Outcome(outcome))
             }
             FrameOutcome::ConstructComplete { .. } => {
-                self.frame_pool.push(Self::recycle_frame(frame));
+                self.pool_frame(frame);
                 Err(JsError(
                     "nested constructor completion escaped its activation".into(),
                 ))
@@ -412,7 +436,7 @@ impl<H: Host> Vm<H> {
             } => Ok(UserFrameStart::Outcome(FrameOutcome::Await {
                 value,
                 destination,
-                frame: Some(frame),
+                frame: Some(*frame),
             })),
             FrameOutcome::Yield { .. } => {
                 Err(JsError("yield requires generator continuation".into()))
@@ -445,28 +469,13 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let old = std::mem::replace(
-            &mut self.frames[frame_index],
-            Frame {
-                context: CallContext::Internal,
-                original_arguments: vec![],
-                program: self.active_program,
-                function: 0,
-                pc: 0,
-                binding_site_pc: None,
-                env: Value::NULL,
-                this: Value::UNDEFINED,
-                locals: vec![],
-                dynamic_bindings: vec![],
-                captured: false,
-                registers: vec![],
-                active_iterators: vec![],
-                with_objects: Vec::new(),
-                with_base: self.with_stack.len(),
-            },
-        );
+        let placeholder = self.frame_pool.pop().unwrap_or_else(|| {
+            self.empty_frame()
+        });
+        let old = std::mem::replace(&mut self.frames[frame_index], placeholder);
         self.with_stack.truncate(old.with_base);
-        let mut frame = Self::recycle_frame(old);
+        let mut frame = old;
+        Self::recycle_frame(&mut frame);
         frame
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
@@ -534,7 +543,8 @@ impl<H: Host> Vm<H> {
         frame.prepare_registers(function.registers, function.initial_register);
         frame.bind_register_parameters(function, args);
         frame.initialize_promoted_registers(function, args);
-        self.frames[frame_index] = frame;
+        let placeholder = std::mem::replace(&mut self.frames[frame_index], frame);
+        self.frame_pool.push(placeholder);
         Ok(())
     }
 
@@ -745,13 +755,15 @@ impl<H: Host> Vm<H> {
         };
         let env = self.heap.alloc(Cell::Environment {
             parent,
-            program: Some(self.frames[frame].program.raw()),
-            root_eval_scope: false,
-            binding_site_pc: None,
             function: self.frames[frame].function,
             slots: slots.into_boxed_slice().into(),
-            dynamic_bindings: std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
-            with_objects: Box::default(),
+            scope: Box::new(crate::heap::EnvironmentScope {
+                program: Some(self.frames[frame].program.raw()),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
+                with_objects: Box::default(),
+            }),
         });
         self.frames[frame].env = env;
         self.frames[frame].captured = true;
@@ -777,11 +789,8 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("invalid environment clone owner".into()))?;
         let Some(Cell::Environment {
             parent,
-            program,
-            root_eval_scope,
-            binding_site_pc,
             function,
-            with_objects,
+            scope,
             ..
         }) = self.heap.get(source)
         else {
@@ -789,13 +798,15 @@ impl<H: Host> Vm<H> {
         };
         let environment = Cell::Environment {
             parent: *parent,
-            program: *program,
-            root_eval_scope: *root_eval_scope,
-            binding_site_pc: *binding_site_pc,
             function: *function,
             slots,
-            dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
-            with_objects: with_objects.clone(),
+            scope: Box::new(crate::heap::EnvironmentScope {
+                program: scope.program,
+                root_eval_scope: scope.root_eval_scope,
+                binding_site_pc: scope.binding_site_pc,
+                dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
+                with_objects: scope.with_objects.clone(),
+            }),
         };
         let env = self.heap.alloc(environment);
         self.frames[frame].env = env;
@@ -820,6 +831,18 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Returns a finished activation's buffers to the pool without copying the frame again.
+    /// Moves a detached activation back into pooled frame storage for the frame stack.
+    pub(super) fn adopt_frame(&mut self, frame: Frame) -> Box<Frame> {
+        match self.frame_pool.pop() {
+            Some(mut slot) => {
+                *slot = frame;
+                slot
+            }
+            None => Box::new(frame),
+        }
+    }
+
     /// Return from a frame the running loop pushed. Such a frame completes
     /// or throws, so it releases its `with` scopes and returns its storage to
     /// the pool; a root record still persists its global lexical bindings.
@@ -827,10 +850,16 @@ impl<H: Host> Vm<H> {
         let frame = self.frames.pop().expect("pending frame is active");
         self.with_stack.truncate(frame.with_base);
         self.persist_global_lexical_bindings(p, &frame);
-        self.frame_pool.push(Self::recycle_frame(frame));
+        self.pool_frame(frame);
     }
 
-    pub(super) fn recycle_frame(mut frame: Frame) -> Frame {
+    pub(super) fn pool_frame(&mut self, frame: impl Into<Box<Frame>>) {
+        let mut frame = frame.into();
+        Self::recycle_frame(&mut frame);
+        self.frame_pool.push(frame);
+    }
+
+    pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
         frame.original_arguments.clear();
         frame.with_objects = Vec::new();
@@ -853,7 +882,7 @@ impl<H: Host> Vm<H> {
             frame.dynamic_bindings.clear();
         }
         frame.active_iterators.clear();
-        frame
+        frame.fixed_this = false;
     }
 
     pub(super) fn run_frame_general(
@@ -880,242 +909,253 @@ impl<H: Host> Vm<H> {
         stop_pc: Option<usize>,
         initial_error: Option<JsError>,
     ) -> Result<FrameOutcome, JsError> {
+        let entry_program = p;
         let frame_program = self.frames[frame].program;
         let allow_inline_calls = stop_pc.is_none() && initial_error.is_none();
         let previous_program = std::mem::replace(&mut self.active_program, frame_program);
         let previous_global = self.realm.globals;
-        let outcome = self.run_general_loop(p, frame, stop_pc, initial_error, allow_inline_calls);
-        self.active_program = previous_program;
-        self.realm.globals = previous_global;
-        outcome
-    }
-
-    #[inline(always)]
-    fn run_general_loop(
-        &mut self,
-        p: &ResidualProgram,
-        frame: usize,
-        stop_pc: Option<usize>,
-        initial_error: Option<JsError>,
-        allow_inline_calls: bool,
-    ) -> Result<FrameOutcome, JsError> {
-        let entry_program = p;
-        let mut current_program: Option<Rc<ResidualProgram>> = None;
-        let mut frame = frame;
-        let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
-        let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
-            crate::stack::StackGuard::enter()
-                .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
-        } else {
-            self.enter_stack()?
-        };
-        // Parameter-initialization stops and instruction profiling observe
-        // every PC, so they run the general path only.
-        let fast_lane = stop_pc.is_none()
-            && !cfg!(any(
-                feature = "profile-aggregate",
-                feature = "profile-memory"
-            ));
-        let initial_function = self.frames[frame].function as usize;
-        let mut executing_program = self.frames[frame].program;
-        let mut cursor = self.general_cursor(
-            executing_program,
-            entry_program,
-            initial_function as u32,
-            fast_lane,
-        );
-        let mut pc = self.frames[frame].pc;
-        if let Some(error) = initial_error {
-            pc = self.exception_handler_target(
-                p,
-                frame,
-                initial_function,
-                pc.saturating_sub(1) as u32,
-                error,
-            )?;
-        }
-        loop {
-            let p = current_program.as_deref().unwrap_or(p);
-            if Self::lane_runs(cursor.lane, pc) {
-                pc = self.run_fast_lane(
+        let outcome = (|| {
+            let mut current_program: Option<Rc<ResidualProgram>> = None;
+            let mut frame = frame;
+            let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
+            let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
+                crate::stack::StackGuard::enter()
+                    .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
+            } else {
+                self.enter_stack()?
+            };
+            // Parameter-initialization stops and instruction profiling observe
+            // every PC, so they run the general path only.
+            let fast_lane = stop_pc.is_none()
+                && !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"));
+            let initial_function = self.frames[frame].function as usize;
+            let mut executing_program = self.frames[frame].program;
+            let mut cursor = self.general_cursor(
+                executing_program,
+                entry_program,
+                initial_function as u32,
+                fast_lane,
+            );
+            let mut pc = self.frames[frame].pc;
+            if let Some(error) = initial_error {
+                pc = self.exception_handler_target(
                     p,
-                    cursor.program,
-                    cursor.lane,
-                    &mut frame,
-                    pc,
-                    &mut pending_calls,
-                    allow_inline_calls,
-                );
-                // Lane calls and returns can leave a different activation,
-                // or a new one in the same frame slot.
-                if self.frames[frame].function != cursor.function {
-                    cursor = self.general_cursor(
-                        cursor.program,
+                    frame,
+                    initial_function,
+                    pc.saturating_sub(1) as u32,
+                    error,
+                )?;
+            }
+            loop {
+                let p = current_program.as_deref().unwrap_or(p);
+                if Self::lane_runs(cursor.lane, pc) {
+                    pc = self.run_fast_lane(
                         p,
-                        self.frames[frame].function,
-                        fast_lane,
+                        cursor.program,
+                        cursor.lane,
+                        &mut frame,
+                        pc,
+                        &mut pending_calls,
+                        allow_inline_calls,
                     );
-                }
-            }
-            if stop_pc == Some(pc) {
-                self.frames[frame].pc = pc;
-                return Ok(FrameOutcome::ParameterInitializationComplete);
-            }
-            debug_assert_eq!(cursor.program, self.frames[frame].program);
-            debug_assert_eq!(cursor.function, self.frames[frame].function);
-            let instruction_pc = pc;
-            #[cfg(feature = "profile-memory")]
-            self.heap.set_memory_allocation_site(
-                cursor.program.raw(),
-                cursor.function,
-                instruction_pc,
-            );
-            // GC inside a getter or native operation needs this instruction's root map.
-            self.frames[frame].pc = instruction_pc;
-            let ins = cursor.instruction(pc);
-            pc += 1;
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.opcode(
-                ins.op() as usize,
-                frame,
-                cursor.program.raw(),
-                cursor.function,
-                instruction_pc,
-            );
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.object_literal_instruction(
-                cursor.program.raw(),
-                cursor.function,
-                instruction_pc,
-                ins.op(),
-            );
-            #[cfg(not(feature = "profile-aggregate"))]
-            self.profile.opcode(ins.op() as usize);
-            match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
-                Ok(StepResult::Return(value)) => {
-                    if let Some(pending) = pending_calls.pop() {
-                        debug_assert_eq!(frame, pending.caller + 1);
-                        self.retire_pending_frame(p);
-                        frame = pending.caller;
-                        self.write(frame, pending.destination, value);
-                        pc = self.frames[frame].pc;
+                    // Lane calls and returns can leave a different activation,
+                    // or a new one in the same frame slot.
+                    if self.frames[frame].function != cursor.function {
                         cursor = self.general_cursor(
-                            executing_program,
+                            cursor.program,
                             p,
                             self.frames[frame].function,
                             fast_lane,
                         );
-                        drop(pending.stack_guard);
-                    } else {
-                        self.frames[frame].pc = pc;
-                        return Ok(FrameOutcome::Complete(value));
                     }
                 }
-                Ok(StepResult::Continue) => {}
-                Ok(StepResult::PushFrame {
-                    destination,
-                    stack_guard,
-                }) => {
-                    pending_calls.push(PendingGeneralCall {
-                        caller: frame,
-                        call_pc: instruction_pc as u32,
+                if stop_pc == Some(pc) {
+                    self.frames[frame].pc = pc;
+                    return Ok(FrameOutcome::ParameterInitializationComplete);
+                }
+                debug_assert_eq!(cursor.program, self.frames[frame].program);
+                debug_assert_eq!(cursor.function, self.frames[frame].function);
+                let instruction_pc = pc;
+                #[cfg(feature = "profile-memory")]
+                self.heap.set_memory_allocation_site(
+                    cursor.program.raw(),
+                    cursor.function,
+                    instruction_pc,
+                );
+                let ins = cursor.instruction(pc);
+                pc += 1;
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.opcode(
+                    ins.op() as usize,
+                    frame,
+                    cursor.program.raw(),
+                    cursor.function,
+                    instruction_pc,
+                );
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.object_literal_instruction(
+                    cursor.program.raw(),
+                    cursor.function,
+                    instruction_pc,
+                    ins.op(),
+                );
+                #[cfg(not(feature = "profile-aggregate"))]
+                self.profile.opcode(ins.op() as usize);
+                // Register/local moves cannot allocate, collect or throw, so they need neither the
+                // published root-map PC nor the general step result.
+                match ins.op() {
+                    Op::LoadLocalPlain => {
+                        // SAFETY: validated bytecode bounds the slot by Function.locals.
+                        let value = unsafe { self.read_validated_local(frame, ins.local_slot()) };
+                        self.write(frame, ins.result_register(), value);
+                        continue;
+                    }
+                    Op::StoreLocalPlain => {
+                        let value = self.read(frame, ins.register_a());
+                        // SAFETY: validated bytecode bounds the slot by Function.locals.
+                        unsafe { self.write_validated_local(frame, ins.local_slot(), value) };
+                        if let Some(register) = ins.optional_register_b() {
+                            self.write(frame, register, value);
+                        }
+                        continue;
+                    }
+                    Op::Move => {
+                        self.write(frame, ins.result_register(), self.read(frame, ins.register_b()));
+                        continue;
+                    }
+                    _ => {}
+                }
+                // GC inside a getter or native operation needs this instruction's root map.
+                self.frames[frame].pc = instruction_pc;
+                match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
+                    Ok(StepResult::Return(value)) => {
+                        if let Some(pending) = pending_calls.pop() {
+                            debug_assert_eq!(frame, pending.caller + 1);
+                            self.retire_pending_frame(p);
+                            frame = pending.caller;
+                            // [[Construct]] of an ordinary constructor yields its returned object,
+                            // otherwise the receiver it allocated.
+                            let value = match pending.construct_this {
+                                Some(this) if !self.is_object_like(value) => this,
+                                _ => value,
+                            };
+                            self.write(frame, pending.destination, value);
+                            pc = self.frames[frame].pc;
+                            cursor = pending.caller_cursor;
+                            drop(pending.stack_guard);
+                        } else {
+                            self.frames[frame].pc = pc;
+                            return Ok(FrameOutcome::Complete(value));
+                        }
+                    }
+                    Ok(StepResult::Continue) => {}
+                    Ok(StepResult::PushFrame {
                         destination,
                         stack_guard,
-                    });
-                    frame += 1;
-                    pc = self.frames[frame].pc;
-                    let callee_program = self.frames[frame].program;
-                    debug_assert_eq!(callee_program, executing_program);
-                    cursor = self.general_cursor(
-                        callee_program,
-                        p,
-                        self.frames[frame].function,
-                        fast_lane,
-                    );
-                }
-                Ok(StepResult::TailCall) => {
-                    let replacement_program = self.frames[frame].program;
-                    if replacement_program != executing_program {
-                        self.active_program = replacement_program;
-                        current_program =
-                            Some(self.programs.get(replacement_program).ok_or_else(|| {
-                                JsError::validation("missing tail-call program".into())
-                            })?);
+                        construct_this,
+                    }) => {
+                        pending_calls.push(PendingGeneralCall {
+                            caller: frame,
+                            caller_cursor: cursor,
+                            call_pc: instruction_pc as u32,
+                            destination,
+                            construct_this,
+                            stack_guard,
+                        });
+                        frame += 1;
+                        pc = self.frames[frame].pc;
+                        let callee_program = self.frames[frame].program;
+                        debug_assert_eq!(callee_program, executing_program);
+                        cursor = self.general_cursor(
+                            callee_program,
+                            p,
+                            self.frames[frame].function,
+                            fast_lane,
+                        );
                     }
-                    executing_program = replacement_program;
-                    pc = self.frames[frame].pc;
-                    cursor = self.general_cursor(
-                        replacement_program,
-                        current_program.as_deref().unwrap_or(entry_program),
-                        self.frames[frame].function,
-                        fast_lane,
-                    );
-                    // The replacement frame publishes all callee roots before this back edge.
-                    self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
-                }
-                Ok(StepResult::Await { value, destination }) => {
-                    debug_assert!(pending_calls.is_empty());
-                    self.frames[frame].pc = pc;
-                    return Ok(FrameOutcome::Await {
-                        value,
-                        destination,
-                        frame: None,
-                    });
-                }
-                Ok(StepResult::Yield {
-                    value,
-                    destination,
-                    delegated_result,
-                }) => {
-                    debug_assert!(pending_calls.is_empty());
-                    self.frames[frame].pc = pc;
-                    return Ok(FrameOutcome::Yield {
+                    Ok(StepResult::TailCall) => {
+                        let replacement_program = self.frames[frame].program;
+                        if replacement_program != executing_program {
+                            self.active_program = replacement_program;
+                            current_program =
+                                Some(self.programs.get(replacement_program).ok_or_else(|| {
+                                    JsError::validation("missing tail-call program".into())
+                                })?);
+                        }
+                        executing_program = replacement_program;
+                        pc = self.frames[frame].pc;
+                        cursor = self.general_cursor(
+                            replacement_program,
+                            current_program.as_deref().unwrap_or(entry_program),
+                            self.frames[frame].function,
+                            fast_lane,
+                        );
+                        // The replacement frame publishes all callee roots before this back edge.
+                        self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
+                    }
+                    Ok(StepResult::Await { value, destination }) => {
+                        debug_assert!(pending_calls.is_empty());
+                        self.frames[frame].pc = pc;
+                        return Ok(FrameOutcome::Await {
+                            value,
+                            destination,
+                            frame: None,
+                        });
+                    }
+                    Ok(StepResult::Yield {
                         value,
                         destination,
                         delegated_result,
-                        frame: None,
-                    });
-                }
-                Err(error) => {
-                    let mut throwing_pc = instruction_pc as u32;
-                    let mut error = error;
-                    loop {
-                        let function = self.frames[frame].function as usize;
-                        match self.exception_handler_target(p, frame, function, throwing_pc, error)
-                        {
-                            Ok(target) => {
-                                pc = target;
-                                break;
-                            }
-                            Err(unhandled) => {
-                                self.frames[frame].pc = pc;
-                                if let Some(pending) = pending_calls.pop() {
-                                    debug_assert_eq!(frame, pending.caller + 1);
-                                    let result: Result<FrameOutcome, JsError> = Err(unhandled);
-                                    self.retire_pending_frame(p);
-                                    frame = pending.caller;
-                                    pc = self.frames[frame].pc;
-                                    cursor = self.general_cursor(
-                                        executing_program,
-                                        p,
-                                        self.frames[frame].function,
-                                        fast_lane,
-                                    );
-                                    throwing_pc = pending.call_pc;
-                                    drop(pending.stack_guard);
-                                    error = match result {
-                                        Err(error) => error,
-                                        Ok(_) => unreachable!(),
-                                    };
-                                } else {
-                                    return Err(unhandled);
+                    }) => {
+                        debug_assert!(pending_calls.is_empty());
+                        self.frames[frame].pc = pc;
+                        return Ok(FrameOutcome::Yield {
+                            value,
+                            destination,
+                            delegated_result,
+                            frame: None,
+                        });
+                    }
+                    Err(error) => {
+                        let mut throwing_pc = instruction_pc as u32;
+                        let mut error = error;
+                        loop {
+                            let function = self.frames[frame].function as usize;
+                            match self.exception_handler_target(
+                                p,
+                                frame,
+                                function,
+                                throwing_pc,
+                                error,
+                            ) {
+                                Ok(target) => {
+                                    pc = target;
+                                    break;
+                                }
+                                Err(unhandled) => {
+                                    self.frames[frame].pc = pc;
+                                    if let Some(pending) = pending_calls.pop() {
+                                        debug_assert_eq!(frame, pending.caller + 1);
+                                        self.retire_pending_frame(p);
+                                        frame = pending.caller;
+                                        pc = self.frames[frame].pc;
+                                        cursor = pending.caller_cursor;
+                                        throwing_pc = pending.call_pc;
+                                        drop(pending.stack_guard);
+                                        error = unhandled;
+                                    } else {
+                                        return Err(unhandled);
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-        }
+        })();
+        self.active_program = previous_program;
+        self.realm.globals = previous_global;
+        outcome
     }
 
     fn exception_handler_target(
@@ -1152,15 +1192,13 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn captured_with_objects(&self, mut env: Value) -> Vec<Value> {
+        if !self.with_scope_entered {
+            return Vec::new();
+        }
         let mut layers = Vec::new();
-        while let Some(Cell::Environment {
-            parent,
-            with_objects,
-            ..
-        }) = self.heap.get(env)
-        {
-            if !with_objects.is_empty() {
-                layers.push(with_objects.to_vec());
+        while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(env) {
+            if !scope.with_objects.is_empty() {
+                layers.push(scope.with_objects.to_vec());
             }
             env = *parent;
             if env.is_null() {
@@ -1171,16 +1209,30 @@ impl<H: Host> Vm<H> {
         layers.into_iter().flatten().collect()
     }
 
+    #[inline(always)]
     pub(super) fn captured_with_objects_for_function(
         &self,
         env: Value,
         function: &crate::bytecode::Function,
         program_kind: crate::bytecode::ProgramKind,
     ) -> Vec<Value> {
-        if !function.inherited_with_scope && program_kind != crate::bytecode::ProgramKind::Eval {
+        if !self.with_scope_entered
+            || !function.inherited_with_scope && program_kind != crate::bytecode::ProgramKind::Eval
+        {
             return Vec::new();
         }
         self.captured_with_objects(env)
+    }
+
+    /// The contiguous argument registers of a call window.
+    #[inline(always)]
+    pub(super) fn register_window(
+        &self,
+        f: usize,
+        window: crate::bytecode::RegisterWindow,
+    ) -> &[Value] {
+        let start = usize::from(window.base);
+        &self.frames[f].registers[start..start + usize::from(window.count)]
     }
 
     #[inline(always)]

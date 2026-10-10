@@ -207,7 +207,7 @@ inconclusive. The cursor and supporting validation were removed. The important
 boundary is now empirical: native PC residence transfers, but substituting an
 equivalent address form does not; a follow-up must eliminate dispatch or
 semantic transport. Exact citations remain in
-`tasks/evidence/376-cursor-runtime-source-extract.md`.
+`evidence/376-cursor-runtime-source-extract.md`.
 
 Task 383 then transferred the semantic rule without repeating task 376's
 rejected address-form experiment. The general interpreter keeps its integer
