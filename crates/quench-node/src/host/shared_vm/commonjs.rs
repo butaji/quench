@@ -203,6 +203,20 @@ pub(super) fn require(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Require)?;
+    if specifier == "vfs" {
+        let error = context.error_rooted("Cannot find module 'vfs'")?;
+        let code = context.string_rooted("MODULE_NOT_FOUND");
+        set(context, error, "code", code)?;
+        return Err(context.throw(error));
+    }
+    if specifier == "node:vfs" && !vfs_enabled(context) {
+        let error = context.error_rooted(
+            "ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:vfs",
+        )?;
+        let code = context.string_rooted("ERR_UNKNOWN_BUILTIN_MODULE");
+        set(context, error, "code", code)?;
+        return Err(context.throw(error));
+    }
     if specifier == "internal/bootstrap/realm" {
         let builtin_ids = BUILTIN_SPECIFIERS
             .iter()
@@ -454,6 +468,16 @@ pub(super) fn require(
     let parent = context.host_function_data()?;
     let filename = resolve_filename(context, &specifier, parent)?;
     load(context, &filename, Some(parent), EntryGoal::Node)
+}
+
+fn vfs_enabled(context: &mut Context<'_>) -> bool {
+    context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .exec_argv
+        .iter()
+        .any(|argument| argument == "--experimental-vfs")
 }
 
 pub(super) fn resolve(
@@ -1297,6 +1321,13 @@ const getLinkedBinding = () => ({});
         context.release_root(retained);
         if let Some(parent) = parent {
             transition_child(context, parent, module, ChildTransition::Detach)?;
+        }
+    }
+    if key.ends_with("/internal/fs/utils.js") {
+        if let Ok(exports) = &result {
+            let state = get(context, *exports, "vfsState")?;
+            let global = context.global_root()?;
+            set(context, global, "\0quench:vfsState", state)?;
         }
     }
     result
