@@ -75,6 +75,18 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let shared_state = context.host_mut().shared_state();
     let argv = shared_state.borrow().process_argv.clone();
     let exec_argv = shared_state.borrow().exec_argv.clone();
+    let title = exec_argv
+        .iter()
+        .find_map(|argument| argument.strip_prefix("--title="));
+    if let Some(title) = title {
+        let global = context.global_root()?;
+        let key = context.string_rooted("__quench_cli_title");
+        let value = context.string_rooted(title);
+        if !context.set_property_rooted(global, key, value, global)? {
+            return Err(RootedError::host("cannot install CLI process title"));
+        }
+        set_text(context, process, "title", title)?;
+    }
     let env = context.object_rooted()?;
     for (name, value) in std::env::vars() {
         let key = context.string_rooted(&name);
