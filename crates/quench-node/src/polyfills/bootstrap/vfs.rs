@@ -2252,6 +2252,23 @@ for (const __quenchVfsAsyncMethod of "access truncate chmod chown lchown utimes 
 )) {
   __quenchVfsWrapAsyncFs(__quenchVfsAsyncMethod);
 }
+if (typeof globalThis.__nodeFs?.watch !== "function") {
+  globalThis.__nodeFs.watch = function (path, options, listener) {
+    if (typeof options === "function") {
+      listener = options;
+      options = {};
+    }
+    const vfs = [...__quenchVfsMounts]
+      .reverse()
+      .find((item) => item.shouldHandle(path));
+    if (!vfs) {
+      const error = new Error("The watch operation is unavailable outside a mounted VFS");
+      error.code = "ENOSYS";
+      throw error;
+    }
+    return vfs.watch(__quenchVfsRelative(vfs, path), options || {}, listener);
+  };
+}
 const __quenchVfsOriginalCreateReadStream = globalThis.__nodeFs?.createReadStream;
 if (typeof __quenchVfsOriginalCreateReadStream === "function") {
   globalThis.__nodeFs.createReadStream = function (path, options) {
