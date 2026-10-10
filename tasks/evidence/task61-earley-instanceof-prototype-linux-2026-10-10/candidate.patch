@@ -1,0 +1,17 @@
+diff --git a/crates/quench-runtime/src/vm/relational.rs b/crates/quench-runtime/src/vm/relational.rs
+index b1c6c4569..710f27e79 100644
+--- a/crates/quench-runtime/src/vm/relational.rs
++++ b/crates/quench-runtime/src/vm/relational.rs
+@@ -212,6 +212,12 @@ impl<H: Host> Vm<H> {
+             if !vm.is_object_like(prototype) {
+                 return Err(vm.type_error(p, "instanceof prototype is not an object".into()));
+             }
++            if matches!(
++                vm.heap.get(value),
++                Some(Cell::Object(instance)) if instance.proto == prototype
++            ) {
++                return Ok(true);
++            }
+             vm.with_call_roots([prototype], |vm| {
+                 let current_root = vm.heap.root(value);
+                 let result = (|| {
