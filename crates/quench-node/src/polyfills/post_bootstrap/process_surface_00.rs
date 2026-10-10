@@ -3,6 +3,11 @@
 pub const JS: &str = quench_js_check::checked_js!(r#"{
   if (globalThis.process) {
     globalThis.process[Symbol.toStringTag] ||= "process";
+    if (globalThis.__nodeEventEmitter?.prototype) {
+      const Process = function process() {};
+      Object.setPrototypeOf(Process.prototype, globalThis.__nodeEventEmitter.prototype);
+      Object.setPrototypeOf(globalThis.process, Process.prototype);
+    }
     const processEnv = globalThis.process.env;
     if (processEnv) {
       globalThis.process.env = new Proxy(processEnv, {
