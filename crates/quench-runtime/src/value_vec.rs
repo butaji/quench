@@ -7,13 +7,15 @@ const FROZEN: u32 = 1 << 31;
 const DICTIONARY_STORAGE: u32 = 1 << 31;
 const SHAPE_MASK: u32 = !DICTIONARY_STORAGE;
 const EMPTY_START: u32 = START_MASK;
-const MAX_ARENA_START: usize = EMPTY_START as usize;
+const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
+const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
+pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
 const MIN_CAPACITY: usize = 4;
 const BUCKETS: usize = 32;
 const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
 const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
 
-/// Compact metadata for values owned by the heap's canonical property arena.
+/// Compact per-object shape, integrity, and property-storage metadata.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ValueVec {
     start: u32,
@@ -28,8 +30,19 @@ impl ValueVec {
         }
     }
 
+    pub(crate) const fn inline_property_storage(shape: u32) -> Self {
+        Self {
+            start: INLINE_PROPERTY_START,
+            auxiliary: shape,
+        }
+    }
+
     pub(crate) const fn auxiliary(self) -> u32 {
         self.auxiliary & SHAPE_MASK
+    }
+
+    pub(crate) fn has_inline_property_storage(self) -> bool {
+        self.start() as u32 == INLINE_PROPERTY_START
     }
 
     pub(crate) fn set_auxiliary(&mut self, value: u32) {
@@ -76,12 +89,18 @@ impl ValueVec {
         }
     }
 
+    pub(crate) fn preserve_integrity_from(&mut self, previous: Self) {
+        self.start = (self.start & !(NON_EXTENSIBLE | FROZEN))
+            | (previous.start & (NON_EXTENSIBLE | FROZEN));
+    }
+
     fn start(self) -> usize {
         (self.start & START_MASK) as usize
     }
 
     pub(crate) fn start_offset(self) -> usize {
         debug_assert!(!self.is_dictionary());
+        debug_assert!(!self.has_inline_property_storage());
         self.start()
     }
 
@@ -151,6 +170,7 @@ impl ValueArena {
     }
 
     pub(crate) fn get(&self, vector: ValueVec, index: usize) -> Option<Value> {
+        debug_assert!(!vector.has_inline_property_storage());
         if index >= self.len(vector) {
             return None;
         }
@@ -167,6 +187,7 @@ impl ValueArena {
     /// # Safety
     /// `index` must be within the initialized length recorded by `vector`.
     pub(crate) unsafe fn get_unchecked(&self, vector: ValueVec, index: usize) -> Value {
+        debug_assert!(!vector.has_inline_property_storage());
         debug_assert!(index < self.len(vector));
         if vector.is_dictionary() {
             return self.dictionaries[&vector.dictionary_id()][&(index as u32)];
@@ -177,6 +198,7 @@ impl ValueArena {
     }
 
     pub(crate) fn set(&mut self, vector: ValueVec, index: usize, value: Value) {
+        debug_assert!(!vector.has_inline_property_storage());
         assert!(index < self.len(vector));
         if vector.is_dictionary() {
             self.dictionaries
@@ -191,6 +213,7 @@ impl ValueArena {
     /// # Safety
     /// `index` must be within the initialized length recorded by `vector`.
     pub(crate) unsafe fn set_unchecked(&mut self, vector: ValueVec, index: usize, value: Value) {
+        debug_assert!(!vector.has_inline_property_storage());
         debug_assert!(index < self.len(vector));
         if vector.is_dictionary() {
             self.dictionaries
@@ -206,6 +229,7 @@ impl ValueArena {
     }
 
     pub(crate) fn push(&mut self, vector: &mut ValueVec, value: Value) {
+        debug_assert!(!vector.has_inline_property_storage());
         let len = self.len(*vector);
         if vector.is_dictionary() {
             self.dictionaries
@@ -227,30 +251,31 @@ impl ValueArena {
         self.values[vector.start() + len] = value;
     }
 
-    pub(crate) fn pair(&mut self, auxiliary: u32, first: Value, second: Value) -> ValueVec {
+    pub(crate) fn with_values(&mut self, shape: u32, values: &[Value]) -> ValueVec {
+        self.assert_shape_length(shape, values.len());
         let mut vector = ValueVec {
             start: EMPTY_START,
-            auxiliary,
+            auxiliary: shape,
         };
-        if let Some(start) = self.allocate(MIN_CAPACITY, MAX_ARENA_START) {
+        if values.is_empty() {
+            return vector;
+        }
+        let capacity = values
+            .len()
+            .max(MIN_CAPACITY)
+            .checked_next_power_of_two()
+            .expect("property vector capacity overflow");
+        if let Some(start) = self.allocate(capacity, MAX_ARENA_START) {
             vector.start = start as u32;
-            self.values[start] = first;
-            self.values[start + 1] = second;
+            self.values[start..start + values.len()].copy_from_slice(values);
         } else {
-            let mut values = vec![Value::UNDEFINED; self.len(vector)];
-            if let Some(value) = values.get_mut(0) {
-                *value = first;
-            }
-            if let Some(value) = values.get_mut(1) {
-                *value = second;
-            }
-            let id = self.allocate_dictionary(values);
-            vector.use_dictionary(id);
+            vector.use_dictionary(self.allocate_dictionary(values.to_vec()));
         }
         vector
     }
 
     pub(crate) fn append_live_values(&self, vector: ValueVec, output: &mut Vec<Value>) {
+        debug_assert!(!vector.has_inline_property_storage());
         let len = self.len(vector);
         if vector.is_dictionary() {
             let values = &self.dictionaries[&vector.dictionary_id()];
@@ -273,6 +298,9 @@ impl ValueArena {
     }
 
     pub(crate) fn release(&mut self, vector: ValueVec) {
+        if vector.has_inline_property_storage() {
+            return;
+        }
         if vector.is_dictionary() {
             let id = vector.dictionary_id();
             self.dictionaries.remove(&id);
@@ -290,7 +318,9 @@ impl ValueArena {
     }
 
     pub(crate) fn has_compact_range(&self, vector: ValueVec) -> bool {
-        !vector.is_dictionary() && vector.start() != EMPTY_START as usize
+        !vector.has_inline_property_storage()
+            && !vector.is_dictionary()
+            && vector.start() != EMPTY_START as usize
     }
 
     pub(crate) fn compact_vector(&mut self, vector: &mut ValueVec, target: usize) -> usize {
@@ -333,6 +363,12 @@ impl ValueArena {
                 .map(|values| values.capacity() * size_of::<(u32, Value)>())
                 .sum::<usize>()
             + self.free_dictionaries.capacity() * size_of::<u32>()
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn memory_breakdown(&self) -> (usize, usize) {
+        let values = self.values.capacity() * size_of::<Value>();
+        (values, self.memory_bytes() - values)
     }
 
     #[cfg(feature = "profile-memory")]
@@ -383,11 +419,19 @@ impl ValueArena {
         (self.len(vector), self.capacity(vector))
     }
 
-    fn len(&self, vector: ValueVec) -> usize {
+    pub(crate) fn len(&self, vector: ValueVec) -> usize {
         self.shape_lengths[vector.auxiliary() as usize] as usize
     }
 
+    pub(crate) fn assert_shape_length(&self, shape: u32, length: usize) {
+        let expected = self.shape_lengths[shape as usize] as usize;
+        assert_eq!(length, expected, "property values must match shape");
+    }
+
     fn capacity(&self, vector: ValueVec) -> usize {
+        if vector.has_inline_property_storage() {
+            return 0;
+        }
         if vector.is_dictionary() {
             return self.dictionaries[&vector.dictionary_id()].capacity();
         }
@@ -471,10 +515,28 @@ mod tests {
     }
 
     #[test]
+    fn initialized_vector_uses_the_shape_length_and_preserves_values() {
+        let mut arena = ValueArena::default();
+        arena.register_shape(1, 3);
+        let expected = [Value::heap(11), Value::heap(12), Value::heap(13)];
+
+        let vector = arena.with_values(1, &expected);
+
+        assert_eq!(arena.len(vector), expected.len());
+        assert_eq!(
+            (0..expected.len())
+                .map(|slot| arena.get(vector, slot).unwrap())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(vector.auxiliary(), 1);
+    }
+
+    #[test]
     fn arena_exhaustion_migrates_live_slots_to_dictionary_storage() {
         let mut arena = ValueArena::default();
         arena.register_shape(1, 2);
-        let mut vector = arena.pair(1, Value::number(11.0), Value::number(22.0));
+        let mut vector = arena.with_values(1, &[Value::number(11.0), Value::number(22.0)]);
 
         let start = vector.start();
         let range_count = arena.values.len();
@@ -509,7 +571,7 @@ mod tests {
     fn dictionary_roots_skip_deleted_slots_after_arena_migration() {
         let mut arena = ValueArena::default();
         arena.register_shape(1, 2);
-        let mut vector = arena.pair(1, Value::heap(11), Value::heap(12));
+        let mut vector = arena.with_values(1, &[Value::heap(11), Value::heap(12)]);
         arena.set(vector, 1, Value::DELETED);
 
         arena.migrate_to_dictionary_for_test(&mut vector);

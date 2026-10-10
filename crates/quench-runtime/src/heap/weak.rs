@@ -42,11 +42,13 @@ impl EphemeronWork {
         marks: &[u64],
         work: &mut Vec<Value>,
     ) {
-        let mut next = self.heads.remove(&index);
-        while let Some(index) = next {
-            let pending = self.values[index];
-            work.push(pending.value);
-            next = pending.next;
+        if !self.heads.is_empty() {
+            let mut next = self.heads.remove(&index);
+            while let Some(index) = next {
+                let pending = self.values[index];
+                work.push(pending.value);
+                next = pending.next;
+            }
         }
         if let Cell::WeakMap { entries, .. } = cell {
             for (key, value) in entries.iter() {

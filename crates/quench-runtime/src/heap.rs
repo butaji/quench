@@ -1,5 +1,5 @@
 use crate::value::Value;
-use crate::value_vec::ValueArena;
+use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
 #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
 use crate::vm::wtf16::JsString;
 use rustc_hash::FxHashMap;
@@ -24,6 +24,48 @@ use slots::SlotArena;
 // storage. Derive the slot count from the runtime Value representation.
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
+const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
+const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
+
+#[derive(Clone, Copy)]
+struct GcHeadroomFactor {
+    numerator: usize,
+    denominator: usize,
+}
+
+impl GcHeadroomFactor {
+    fn allocation_headroom(self, live_cells: usize) -> usize {
+        debug_assert!(self.denominator > 0);
+        debug_assert!(self.numerator <= self.denominator);
+        let whole = live_cells / self.denominator;
+        let remainder = live_cells % self.denominator;
+        whole * self.numerator + remainder * self.numerator / self.denominator
+    }
+}
+
+const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
+    numerator: 1,
+    denominator: 2,
+};
+// This is the sweep variable for large-heap RSS/Score measurements. A factor
+// of 1/1 allows one live set's worth of new cells before collection (2x total
+// occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x.
+const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
+    numerator: 1,
+    denominator: 1,
+};
+
+fn gc_allocation_headroom(live_cells: usize) -> usize {
+    let factor = if live_cells >= LARGE_HEAP_MINIMUM_LIVE_CELLS {
+        LARGE_HEAP_GC_HEADROOM
+    } else {
+        SMALL_HEAP_GC_HEADROOM
+    };
+    factor
+        .allocation_headroom(live_cells)
+        .max(MINIMUM_GC_ALLOCATION_HEADROOM)
+}
+
 pub(super) struct Slot {
     cell: Option<Cell>,
 }
@@ -179,8 +221,8 @@ impl Heap {
             slots: SlotArena::with_small_capacity(),
             marks: Vec::with_capacity(12),
             free: Vec::with_capacity(384),
-            threshold: 384,
-            max_threshold: 384,
+            threshold: MINIMUM_GC_ALLOCATION_HEADROOM,
+            max_threshold: MINIMUM_GC_ALLOCATION_HEADROOM,
             ..Self::default()
         }
     }
@@ -197,6 +239,11 @@ impl Heap {
             .iter()
             .filter(|slot| matches!(slot.cell, Some(Cell::Environment { .. })))
             .count()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn occupied_cell_count_for_test(&self) -> usize {
+        self.slots.iter().filter(|slot| slot.cell.is_some()).count()
     }
 
     #[cfg(test)]
@@ -221,21 +268,10 @@ impl Heap {
                 self.retired_slots += 1;
                 continue;
             };
-            if let Some(arrays) = &mut self.sparse_arrays {
-                arrays.remove(&index);
-            }
             self.generations[index as usize] = generation;
             self.slots.get_mut(index as usize).unwrap().cell = Some(cell);
             #[cfg(feature = "profile-memory")]
-            self.memory_profile.allocated(
-                index as usize,
-                self.slots
-                    .get(index as usize)
-                    .unwrap()
-                    .cell
-                    .as_ref()
-                    .unwrap(),
-            );
+            self.profile_allocation(index as usize);
             self.peak_live = self
                 .peak_live
                 .max(self.slots.len() - self.free.len() - self.retired_slots);
@@ -244,8 +280,7 @@ impl Heap {
         let index = self.slots.len();
         self.slots.push(Slot { cell: Some(cell) });
         #[cfg(feature = "profile-memory")]
-        self.memory_profile
-            .allocated(index, self.slots.get(index).unwrap().cell.as_ref().unwrap());
+        self.profile_allocation(index);
         if index / 64 == self.marks.len() {
             self.marks.push(0);
         }
@@ -262,17 +297,60 @@ impl Heap {
         first: Value,
         second: Value,
     ) -> Value {
-        let properties = self.properties.pair(shape, first, second);
-        self.alloc(Cell::Object(Object::new(proto, properties)))
+        let values = [first, second];
+        self.alloc_object_with_properties(proto, shape, &values)
+    }
+    pub(crate) fn alloc_object_with_properties(
+        &mut self,
+        proto: Value,
+        shape: u32,
+        values: &[Value],
+    ) -> Value {
+        let (properties, inline_properties) = self.initial_object_storage(shape, values);
+        self.alloc(Cell::Object(Object::with_property_storage(
+            proto,
+            properties,
+            inline_properties,
+        )))
+    }
+    pub(crate) fn initialize_object_properties(
+        &mut self,
+        owner: Value,
+        shape: u32,
+        values: &[Value],
+    ) {
+        let (properties, inline_properties) = self.initial_object_storage(shape, values);
+        let previous = {
+            let object = self
+                .get_mut(owner)
+                .and_then(Cell::object_mut)
+                .expect("property owner is an object");
+            object.replace_property_storage(properties, inline_properties)
+        };
+        self.properties.release(previous);
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(owner, values.len());
+    }
+
+    fn initial_object_storage(
+        &mut self,
+        shape: u32,
+        values: &[Value],
+    ) -> (ValueVec, [Value; INLINE_PROPERTY_COUNT]) {
+        self.properties.assert_shape_length(shape, values.len());
+        if values.len() <= INLINE_PROPERTY_COUNT {
+            let mut inline = [Value::UNDEFINED; INLINE_PROPERTY_COUNT];
+            inline[..values.len()].copy_from_slice(values);
+            (ValueVec::inline_property_storage(shape), inline)
+        } else {
+            (
+                self.properties.with_values(shape, values),
+                [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+            )
+        }
     }
     pub(crate) fn register_property_shape(&mut self, shape: u32, length: usize) {
         self.properties.register_shape(shape, length);
-    }
-    pub(crate) fn live_object_shapes(&self) -> Vec<u32> {
-        self.slots
-            .iter()
-            .filter_map(|slot| slot.cell.as_ref()?.object().map(Object::shape))
-            .collect()
     }
     pub(crate) fn remap_live_object_shapes(&mut self, mapping: &[u32], lengths: &[usize]) {
         for slot in self.slots.iter_mut() {
@@ -339,12 +417,12 @@ impl Heap {
         self.generations.clear();
         self.external_bytes = 0;
         self.allocations = 0;
-        self.threshold = 384;
+        self.threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
         self.total_allocations = 0;
         self.collections = 0;
         self.peak_live = 0;
         self.peak_survivors = 0;
-        self.max_threshold = 384;
+        self.max_threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
         self.properties.reset();
         self.roots.clear();
         self.sparse_arrays = None;
@@ -410,13 +488,19 @@ impl Heap {
             } else if let Some(cell) = slot.cell.take() {
                 self.external_bytes = self.external_bytes.saturating_sub(cell.external_bytes());
                 #[cfg(feature = "profile-memory")]
-                self.memory_profile.freed(index, &cell);
+                {
+                    let object_slots = cell
+                        .object()
+                        .map(|object| properties.len(object.properties));
+                    self.memory_profile.freed(index, &cell, object_slots);
+                }
                 if let Some(object) = cell.object() {
                     properties.release(object.properties);
                 }
                 if let Some(arrays) = &mut self.sparse_arrays {
                     arrays.remove(&(index as u32));
                 }
+                // Reused slots enter `free` only after their side-table entries are gone.
                 self.free.push(index as u32);
                 #[cfg(feature = "profile-aggregate")]
                 {
@@ -430,10 +514,9 @@ impl Heap {
         }
         self.marks.fill(0);
         self.allocations = 0;
-        // `threshold` counts allocations *after* this collection. Half the
-        // surviving set therefore targets a 1.5x total occupied high-water.
-        let headroom = if live >= 1 << 16 { live } else { live / 2 };
-        self.threshold = headroom.max(384);
+        // `threshold` counts allocations after collection. The selected growth
+        // factor is added to the live set to describe the occupied high-water.
+        self.threshold = gc_allocation_headroom(live);
         self.peak_survivors = self.peak_survivors.max(live);
         self.max_threshold = self.max_threshold.max(self.threshold);
         finalization_jobs
@@ -467,10 +550,9 @@ impl Heap {
             }
             Self::children(value, cell, &self.properties, work, object_roots);
             ephemerons.newly_marked(index as u32, cell, &self.marks, work);
-            if let Some(elements) = self
-                .sparse_arrays
-                .as_ref()
-                .and_then(|arrays| arrays.get(&(index as u32)))
+            if let Some(arrays) = self.sparse_arrays.as_ref()
+                && matches!(cell, Cell::Array { .. })
+                && let Some(elements) = arrays.get(&(index as u32))
             {
                 work.extend(elements.values.values().copied());
             }
@@ -566,15 +648,31 @@ impl Heap {
         }
     }
     pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
-        self.properties
-            .get(object.properties, slot)
-            .filter(|value| !value.is_deleted())
+        let value = match object.inline_properties() {
+            Some(values) => values.get(slot).copied(),
+            None => self.properties.get(object.properties, slot),
+        }?;
+        (!value.is_deleted()).then_some(value)
     }
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
-        unsafe { self.properties.get_unchecked(object.properties, slot) }
+        if let Some(values) = object.inline_properties() {
+            debug_assert!(slot < INLINE_PROPERTY_COUNT);
+            // SAFETY: the caller proves that the property slot exists.
+            unsafe { *values.get_unchecked(slot) }
+        } else {
+            // SAFETY: the caller proves that the property slot exists.
+            unsafe { self.properties.get_unchecked(object.properties, slot) }
+        }
     }
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
-        let vector = self.get(object).unwrap().object().unwrap().properties;
+        let vector = {
+            let data = self.get_mut(object).unwrap().object_mut().unwrap();
+            if data.inline_properties().is_some() {
+                data.set_inline_property(slot, value);
+                return;
+            }
+            data.properties
+        };
         self.properties.set(vector, slot, value);
     }
     pub(crate) unsafe fn property_set_unchecked(
@@ -583,17 +681,83 @@ impl Heap {
         slot: usize,
         value: Value,
     ) {
-        let vector = self.get(object).unwrap().object().unwrap().properties;
+        let vector = {
+            let data = self.get_mut(object).unwrap().object_mut().unwrap();
+            if data.inline_properties().is_some() {
+                debug_assert!(slot < INLINE_PROPERTY_COUNT);
+                data.set_inline_property(slot, value);
+                return;
+            }
+            data.properties
+        };
+        // SAFETY: the caller proves that the property slot exists.
         unsafe { self.properties.set_unchecked(vector, slot, value) };
     }
     pub(crate) fn property_push(&mut self, object: Value, value: Value) {
-        let mut vector = self.get(object).unwrap().object().unwrap().properties;
+        let (vector, inline, slot) = {
+            let data = self.get(object).unwrap().object().unwrap();
+            (
+                data.properties,
+                data.inline_properties().copied(),
+                self.properties.len(data.properties),
+            )
+        };
+        if let Some(inline) = inline {
+            if slot < INLINE_PROPERTY_COUNT {
+                self.get_mut(object)
+                    .unwrap()
+                    .object_mut()
+                    .unwrap()
+                    .set_inline_property(slot, value);
+                #[cfg(feature = "profile-memory")]
+                self.note_object_slots(object, slot + 1);
+                return;
+            }
+            debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
+            let mut vector = self.properties.with_values(vector.auxiliary(), &inline);
+            self.properties.push(&mut vector, value);
+            self.get_mut(object)
+                .unwrap()
+                .object_mut()
+                .unwrap()
+                .replace_property_storage(vector, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+            #[cfg(feature = "profile-memory")]
+            self.note_object_slots(object, slot + 1);
+            return;
+        }
+        let mut vector = vector;
         self.properties.push(&mut vector, value);
-        self.get_mut(object)
-            .unwrap()
-            .object_mut()
-            .unwrap()
-            .properties = vector;
+        let data = self.get_mut(object).unwrap().object_mut().unwrap();
+        data.properties = vector;
+        #[cfg(feature = "profile-memory")]
+        self.note_object_slots(object, slot + 1);
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn set_memory_allocation_site(&mut self, program: u32, function: u32, pc: usize) {
+        self.memory_profile
+            .set_allocation_site(memory_profile::AllocationSite {
+                program,
+                function,
+                pc,
+            });
+    }
+
+    #[cfg(feature = "profile-memory")]
+    fn profile_allocation(&mut self, index: usize) {
+        let cell = self.slots.get(index).unwrap().cell.as_ref().unwrap();
+        let object_slots = cell
+            .object()
+            .map(|object| self.properties.len(object.properties));
+        self.memory_profile.allocated(index, cell, object_slots);
+    }
+
+    #[cfg(feature = "profile-memory")]
+    fn note_object_slots(&mut self, object: Value, slots: usize) {
+        if let Some(index) = object.heap_index() {
+            self.memory_profile
+                .object_slots_changed(index as usize, slots);
+        }
     }
     fn children(
         owner: Value,
@@ -606,7 +770,11 @@ impl Heap {
             work.push(object.proto);
             object_roots(owner, object.shape(), work);
             work.extend(object.private_names().iter().map(|brand| brand.home));
-            properties.append_live_values(object.properties, work);
+            if let Some(values) = object.inline_properties() {
+                work.extend(values.iter().copied().filter(|value| !value.is_deleted()));
+            } else {
+                properties.append_live_values(object.properties, work);
+            }
             object.visit_stack_data_roots(|value| work.push(value));
         };
         if let Some((value, buffer)) = cell.typed_array_backing() {

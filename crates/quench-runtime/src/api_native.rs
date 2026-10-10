@@ -1,5 +1,5 @@
 use super::Runtime;
-use crate::{vm::Vm, Host, JsError, RootId, RootedError, Value};
+use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
 
 /// Opaque index into the embedding's stable native-operation table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -217,6 +217,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     pub fn host_mut(&mut self) -> &mut H {
         &mut self.vm.host
+    }
+
+    /// Emit a memory census snapshot when this build enables `profile-memory`.
+    #[cfg(feature = "profile-memory")]
+    pub fn profile_memory_checkpoint(&self, phase: &str) {
+        self.vm.report_memory_if_enabled(phase);
     }
 
     pub fn rooted_value(&self, root: RootId) -> Option<Value> {

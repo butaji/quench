@@ -17,6 +17,19 @@ mod virtual_opcode;
 #[cfg(feature = "profile-aggregate")]
 const BINARY_OPERATOR_COUNT: usize = oxc_ast::ast::BinaryOperator::Instanceof as usize + 1;
 
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub(crate) enum BinaryValuePath {
+    Fallback,
+    IntegerFastPath,
+    NumberFastPath,
+}
+
+#[cfg(feature = "profile-aggregate")]
+impl BinaryValuePath {
+    const COUNT: usize = Self::NumberFastPath as usize + 1;
+}
+
 #[cfg(feature = "profile-aggregate")]
 #[derive(Default)]
 pub(crate) struct Profile {
@@ -28,6 +41,8 @@ pub(crate) struct Profile {
     pub last_locations: Vec<Option<(u32, usize, usize)>>,
     pub functions: Vec<u64>,
     pub site_counts: Vec<Vec<u64>>,
+    pub object_literal_site_counts: rustc_hash::FxHashMap<(u32, u32, usize), u64>,
+    pub object_literal_dispatch_counts: rustc_hash::FxHashMap<(u32, usize), u64>,
     pub regional_binary_inputs: rustc_hash::FxHashMap<(u32, u32), [u64; 2]>,
     pub gc_frame_pcs: rustc_hash::FxHashMap<(u32, u32, bool), u64>,
     pub allocations: u64,
@@ -61,6 +76,8 @@ pub(crate) struct Profile {
     pub operand_tags: [u64; crate::bytecode::OperandKind::COUNT],
     pub binary_ops: [u64; BINARY_OPERATOR_COUNT],
     pub binary_operand_modes: Vec<u64>,
+    pub binary_value_paths: [[[[u64; BinaryValuePath::COUNT]; crate::value::ProfileKind::COUNT];
+        crate::value::ProfileKind::COUNT]; BINARY_OPERATOR_COUNT],
     pub method_argc: [u64; 9],
     pub call_sources: [u64; 5],
     pub call_targets: [u64; 3],
@@ -74,6 +91,80 @@ pub(crate) struct Profile {
     pub branch_values: [[u64; 6]; 2],
     #[cfg(feature = "profile-trace")]
     pub trace: Vec<u8>,
+}
+
+#[cfg(feature = "profile-aggregate")]
+struct ObjectLiteralSiteExecution {
+    function: usize,
+    pc: usize,
+    dispatch_op: crate::bytecode::Op,
+    site_op: crate::bytecode::Op,
+    site: usize,
+    key_count: usize,
+    executions: u64,
+}
+
+#[cfg(feature = "profile-aggregate")]
+fn object_literal_site(
+    encoded: crate::bytecode::Instr,
+    function: &crate::bytecode::Function,
+    program: &crate::bytecode::ResidualProgram,
+) -> Option<(crate::bytecode::Op, crate::bytecode::Op, usize)> {
+    use crate::bytecode::Op;
+
+    let (op, site) = if encoded.is_wide() {
+        let instruction = function.wide[encoded.wide_index()];
+        match instruction.op() {
+            Op::MakeObject2 | Op::MakeObjectLiteral => {
+                (instruction.op(), instruction.object_site_index())
+            }
+            Op::SuperConstArrayObject2 => (instruction.op(), instruction.superinstruction_index()),
+            _ => return None,
+        }
+    } else {
+        match encoded.op() {
+            Op::MakeObject2 | Op::MakeObjectLiteral => (encoded.op(), encoded.object_site_index()),
+            Op::SuperConstArrayObject2 => (encoded.op(), encoded.superinstruction_index()),
+            _ => return None,
+        }
+    };
+    let object =
+        (op == Op::SuperConstArrayObject2).then(|| program.superinstructions[site].code[3]);
+    let site_op = object.map_or(op, |instruction| instruction.op());
+    let site = object.map_or(site, |instruction| instruction.object_site_index());
+    Some((op, site_op, site))
+}
+
+#[cfg(feature = "profile-aggregate")]
+fn object_literal_site_executions(
+    profile: &Profile,
+    program_id: u32,
+    program: &crate::bytecode::ResidualProgram,
+) -> Vec<ObjectLiteralSiteExecution> {
+    let mut sites = Vec::new();
+    for (function_id, function) in program.functions.iter().enumerate() {
+        for (pc, encoded) in function.code.iter().copied().enumerate() {
+            let Some((dispatch_op, site_op, site)) =
+                object_literal_site(encoded, function, program)
+            else {
+                continue;
+            };
+            sites.push(ObjectLiteralSiteExecution {
+                function: function_id,
+                pc,
+                dispatch_op,
+                site_op,
+                site,
+                key_count: program.object_sites[site].atoms.len(),
+                executions: profile
+                    .object_literal_site_counts
+                    .get(&(program_id, function_id as u32, pc))
+                    .copied()
+                    .unwrap_or_default(),
+            });
+        }
+    }
+    sites
 }
 
 #[cfg(not(feature = "profile-aggregate"))]
@@ -141,6 +232,93 @@ impl Profile {
         if self.trace.len() < 4_000_000 {
             self.trace.extend_from_slice(&(opcode as u32).to_le_bytes());
         }
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    pub fn object_literal_instruction(
+        &mut self,
+        program_id: u32,
+        function_id: u32,
+        pc: usize,
+        opcode: crate::bytecode::Op,
+    ) {
+        use crate::bytecode::Op;
+
+        if !matches!(
+            opcode,
+            Op::MakeObject2 | Op::MakeObjectLiteral | Op::SuperConstArrayObject2
+        ) {
+            return;
+        }
+        *self
+            .object_literal_site_counts
+            .entry((program_id, function_id, pc))
+            .or_default() += 1;
+        *self
+            .object_literal_dispatch_counts
+            .entry((program_id, opcode as usize))
+            .or_default() += 1;
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    fn report_object_literal_sites_for_program(
+        &self,
+        program_id: u32,
+        program: &crate::bytecode::ResidualProgram,
+    ) {
+        eprint!(
+            "{{\"kind\":\"quench-object-literal-sites\",\"program_id\":{program_id},\"dispatch_counts\":{{"
+        );
+        for (index, opcode) in [
+            crate::bytecode::Op::MakeObject2,
+            crate::bytecode::Op::MakeObjectLiteral,
+            crate::bytecode::Op::SuperConstArrayObject2,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if index > 0 {
+                eprint!(",");
+            }
+            let count = self
+                .object_literal_dispatch_counts
+                .get(&(program_id, opcode as usize))
+                .copied()
+                .unwrap_or_default();
+            eprint!(
+                "\"{}\":{count}",
+                crate::bytecode::Op::NAMES[opcode as usize]
+            );
+        }
+        eprint!("}},\"sites\":[");
+        for (index, site) in object_literal_site_executions(self, program_id, program)
+            .iter()
+            .enumerate()
+        {
+            if index > 0 {
+                eprint!(",");
+            }
+            eprint!(
+                "{{\"function\":{},\"pc\":{},\"dispatch_op\":\"{}\",\"site_op\":\"{}\",\"site\":{},\"key_count\":{},\"executions\":{}}}",
+                site.function,
+                site.pc,
+                crate::bytecode::Op::NAMES[site.dispatch_op as usize],
+                crate::bytecode::Op::NAMES[site.site_op as usize],
+                site.site,
+                site.key_count,
+                site.executions,
+            );
+        }
+        eprintln!("]}}");
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    pub fn report_object_literal_sites(
+        &self,
+        program_id: u32,
+        program: &crate::bytecode::ResidualProgram,
+    ) {
+        self.report_object_literal_sites_for_program(program_id, program);
     }
 
     #[cfg(not(feature = "profile-aggregate"))]
@@ -344,6 +522,18 @@ impl Profile {
         }
         #[cfg(not(feature = "profile-aggregate"))]
         let _ = (op, left, right);
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    #[inline(always)]
+    pub fn binary_value_path(
+        &mut self,
+        op: usize,
+        left: crate::value::ProfileKind,
+        right: crate::value::ProfileKind,
+        path: BinaryValuePath,
+    ) {
+        self.binary_value_paths[op][left as usize][right as usize][path as usize] += 1;
     }
 
     #[inline(always)]
@@ -585,4 +775,21 @@ impl Profile {
 
     #[cfg(not(feature = "profile-aggregate"))]
     pub fn report(&mut self, _: &crate::heap::Heap, _: &crate::bytecode::ResidualProgram) {}
+}
+
+#[cfg(all(test, feature = "profile-aggregate"))]
+mod tests {
+    use super::Profile;
+    use crate::bytecode::Op;
+
+    #[test]
+    fn physical_dispatch_counts_exclude_virtual_fusion_steps() {
+        let mut profile = Profile::default();
+        profile.opcode(Op::NumericAdd as usize, 0, 0, 0);
+        profile.virtual_opcode(Op::Binary as usize);
+
+        assert_eq!(profile.dispatched_opcodes[Op::NumericAdd as usize], 1);
+        assert_eq!(profile.dispatched_opcodes[Op::Binary as usize], 0);
+        assert_eq!(profile.opcodes[Op::Binary as usize], 1);
+    }
 }

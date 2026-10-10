@@ -1,4 +1,6 @@
 use super::*;
+use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 
 impl FunctionCompiler<'_, '_> {
     pub(super) fn object_expression(&mut self, value: &ObjectExpression<'_>) -> Register {
@@ -9,6 +11,8 @@ impl FunctionCompiler<'_, '_> {
         ] = value.properties.as_slice()
             && first.kind == PropertyKind::Init
             && second.kind == PropertyKind::Init
+            && !first.computed
+            && !second.computed
             && !Self::is_object_literal_prototype(first)
             && !Self::is_object_literal_prototype(second)
             && !Self::anonymous_function_definition(&first.value)
@@ -19,9 +23,33 @@ impl FunctionCompiler<'_, '_> {
             let first_value = self.expression(&first.value);
             let second_value = self.expression(&second.value);
             let site = self.owner.object_sites.len() as u32;
-            let atoms = [self.owner.atom(first_key), self.owner.atom(second_key)];
+            let atoms =
+                smallvec::smallvec![self.owner.atom(first_key), self.owner.atom(second_key)];
             self.owner.object_sites.push(ObjectSite { atoms });
             self.emit(Op::MakeObject2, dst, first_value, second_value, site);
+            return dst;
+        }
+        if let Some(properties) = Self::static_object_data_properties(value)
+            && properties.len() > crate::bytecode::INLINE_OBJECT_SITE_ATOMS
+            && u16::try_from(properties.len()).is_ok()
+            && {
+                let mut keys = FxHashSet::default();
+                properties.iter().all(|(_, key)| keys.insert(*key))
+            }
+        {
+            let atoms = properties
+                .iter()
+                .map(|(_, key)| self.owner.atom(key))
+                .collect::<SmallVec<[_; crate::bytecode::INLINE_OBJECT_SITE_ATOMS]>>();
+            let site = self.owner.object_sites.len() as u32;
+            self.owner.object_sites.push(ObjectSite { atoms });
+            let count = properties.len() as u16;
+            let value_registers = (0..count).map(|_| self.reg()).collect::<Vec<_>>();
+            for ((property, _), destination) in properties.into_iter().zip(value_registers.iter()) {
+                let value = self.expression(&property.value);
+                self.emit(Op::Move, *destination, value, 0, 0);
+            }
+            self.emit(Op::MakeObjectLiteral, dst, value_registers[0], count, site);
             return dst;
         }
         self.emit(Op::MakeObject, dst, 0, 0, 0);
@@ -192,6 +220,27 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::DefineField, item, dst, 0, atom);
         }
         dst
+    }
+
+    fn static_object_data_properties<'property, 'ast>(
+        value: &'property ObjectExpression<'ast>,
+    ) -> Option<Vec<(&'property ObjectProperty<'ast>, &'property str)>> {
+        value
+            .properties
+            .iter()
+            .map(|property| match property {
+                ObjectPropertyKind::ObjectProperty(property)
+                    if property.kind == PropertyKind::Init
+                        && !property.method
+                        && !property.computed
+                        && !Self::is_object_literal_prototype(property)
+                        && !Self::anonymous_function_definition(&property.value) =>
+                {
+                    Some((&**property, Self::static_key(&property.key)?))
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     fn is_object_literal_prototype(property: &ObjectProperty<'_>) -> bool {
