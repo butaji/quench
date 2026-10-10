@@ -19,7 +19,7 @@ use std::{
 };
 
 const TRACE_SCHEMA: u64 = 1;
-const TRACE_PATH: &str = "tasks/evidence/task19-node-observation-traces.json";
+const TRACE_PATH: &str = "evidence/task19-node-observation-traces.json";
 const NODE_COMMONJS_ADAPTER: &str = r#"
 const fs = require('node:fs');
 const path = require('node:path');
