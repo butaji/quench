@@ -1602,9 +1602,10 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
   const publicDecrypt = (key, data) => rsaCrypt(true, false, key, data);
   const keyObjectBrand = new WeakMap();
   class KeyObject {
-    constructor(type, pem, der, asymmetricKeyType, pkcs1Pem, pkcs1Der) {
+    constructor(type, pem, der, asymmetricKeyType, pkcs1Pem, pkcs1Der, asymmetricKeyDetails) {
       this.type = type;
       this.asymmetricKeyType = asymmetricKeyType;
+      if (asymmetricKeyDetails !== undefined) this.asymmetricKeyDetails = asymmetricKeyDetails;
       this.key = Buffer.from(pem);
       keyObjectBrand.set(this, { pem: Buffer.from(pem), der: Buffer.from(der), pkcs1Pem: Buffer.from(pkcs1Pem || pem), pkcs1Der: Buffer.from(pkcs1Der || der), asymmetricKeyType });
     }
@@ -1667,8 +1668,9 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     const publicPkcs1Der = Buffer.from(result[6]);
     const privatePkcs1Der = Buffer.from(result[7]);
     const encryptedPrivatePem = Buffer.from(result[8]);
-    const privateKey = new KeyObject("private", privatePem, privateDer, type, privatePkcs1, privatePkcs1Der);
-    const publicKey = new KeyObject("public", publicPem, publicDer, type, publicPkcs1, publicPkcs1Der);
+    const keyDetails = { modulusLength: bits, publicExponent: BigInt(exponent) };
+    const privateKey = new KeyObject("private", privatePem, privateDer, type, privatePkcs1, privatePkcs1Der, keyDetails);
+    const publicKey = new KeyObject("public", publicPem, publicDer, type, publicPkcs1, publicPkcs1Der, keyDetails);
     return {
       publicKey: keyOutput(publicKey, options.publicKeyEncoding, "spki"),
       privateKey: privateEncoding.cipher
