@@ -606,7 +606,68 @@ impl<H: Host> Vm<H> {
     /// A function's own data `prototype`, read without the generic [[Get]]. Functions are
     /// ordinary objects for this key, so an own data slot is exactly the [[Get]] result; any
     /// other receiver or an accessor takes the generic path.
-    fn own_function_prototype_data(&self, constructor: Value, prototype_atom: Atom) -> Option<Value> {
+    /// `new callee(...)` that the general loop may run as an in-loop frame push: an ordinary
+    /// (non-class, non-derived, field-free) user constructor of the executing program and realm,
+    /// whose own data `prototype` is an object. Returns the callee's code and environment
+    /// together with the freshly allocated receiver; any other case keeps `construct_value`.
+    pub(super) fn inline_construct_target(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        callee: Value,
+    ) -> Option<(u32, Value, Value)> {
+        let caller = &self.frames[frame];
+        if frame + 1 != self.frames.len()
+            || caller.function == super::ROOT_FUNCTION_ID
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || self.construct_target.is_some()
+            || self.direct_eval
+            || self.parameter_eval
+            || p.functions.get(caller.function as usize)?.dispatch != DispatchClass::General
+        {
+            return None;
+        }
+        let Some(Cell::Function {
+            kind: FunctionKind::User(program_id, id),
+            env,
+            realm,
+            ..
+        }) = self.heap.get(callee)
+        else {
+            return None;
+        };
+        let (program_id, id, env) = (*program_id, *id, *env);
+        if *realm != self.realm.globals
+            || program_id != caller.program
+            || program_id != self.active_program
+            || id == super::ROOT_FUNCTION_ID
+        {
+            return None;
+        }
+        let function = p.functions.get(id as usize)?;
+        if function.dispatch != DispatchClass::General
+            || !function.constructible
+            || function.is_async
+            || function.is_generator
+            || function.is_class_constructor
+            || function.derived_constructor
+            || function.class_field_initializer
+            || function.parameter_eval_arguments_error
+            || function.instance_initializer.is_some()
+        {
+            return None;
+        }
+        let prototype_atom = self.prototype_atom();
+        let prototype = self.own_function_prototype_data(callee, prototype_atom)?;
+        self.object_data(prototype)?;
+        Some((
+            id,
+            env,
+            self.heap.alloc(Cell::Object(Self::empty_object(prototype))),
+        ))
+    }
+
+    pub(super) fn own_function_prototype_data(&self, constructor: Value, prototype_atom: Atom) -> Option<Value> {
         if !matches!(self.heap.get(constructor), Some(Cell::Function { .. })) {
             return None;
         }

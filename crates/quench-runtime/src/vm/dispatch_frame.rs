@@ -18,6 +18,8 @@ struct PendingGeneralCall {
     caller_cursor: GeneralCodeCursor,
     call_pc: u32,
     destination: Register,
+    /// Set for an in-loop `new`; see `StepResult::PushFrame`.
+    construct_this: Option<Value>,
     stack_guard: crate::stack::StackGuard,
 }
 
@@ -932,6 +934,12 @@ impl<H: Host> Vm<H> {
                             self.persist_global_lexical_bindings(p, &completed_frame);
                             self.pool_frame(completed_frame);
                             frame = pending.caller;
+                            // [[Construct]] of an ordinary constructor yields its returned object,
+                            // otherwise the receiver it allocated.
+                            let value = match pending.construct_this {
+                                Some(this) if !self.is_object_like(value) => this,
+                                _ => value,
+                            };
                             self.write(frame, pending.destination, value);
                             pc = self.frames[frame].pc;
                             cursor = pending.caller_cursor;
@@ -945,12 +953,14 @@ impl<H: Host> Vm<H> {
                     Ok(StepResult::PushFrame {
                         destination,
                         stack_guard,
+                        construct_this,
                     }) => {
                         pending_calls.push(PendingGeneralCall {
                             caller: frame,
                             caller_cursor: cursor,
                             call_pc: instruction_pc as u32,
                             destination,
+                            construct_this,
                             stack_guard,
                         });
                         frame += 1;

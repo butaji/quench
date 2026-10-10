@@ -471,6 +471,8 @@ pub(super) enum StepResult {
     PushFrame {
         destination: Register,
         stack_guard: crate::stack::StackGuard,
+        /// For `new`: the allocated receiver, the result unless the callee returns an object.
+        construct_this: Option<Value>,
     },
     Return(Value),
     Await {

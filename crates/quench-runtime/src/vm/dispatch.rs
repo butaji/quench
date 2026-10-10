@@ -1576,6 +1576,7 @@ impl<H: Host> Vm<H> {
                     return Ok(StepResult::PushFrame {
                         destination: i.result_register(),
                         stack_guard,
+                        construct_this: None,
                     });
                 }
                 if p.kind == crate::bytecode::ProgramKind::Wasm
@@ -1775,6 +1776,33 @@ impl<H: Host> Vm<H> {
             }
             Op::Construct => {
                 self.profile.call_source(4);
+                if allow_inline_calls
+                    && !i.is_super_construct()
+                    && !i.returns_from_frame()
+                    && let crate::bytecode::ConstructArguments::Registers(window) =
+                        i.construct_arguments()
+                {
+                    let callee = self.read(f, i.register_b());
+                    if let Some((id, env, this)) = self.inline_construct_target(p, f, callee) {
+                        let arguments = CallArguments::from_slice(self.register_window(f, window));
+                        self.frames[f].pc = *pc;
+                        self.construct_target = Some(callee);
+                        let pushed = self.push_general_user_frame(
+                            p,
+                            id,
+                            env,
+                            this,
+                            arguments.as_slice(),
+                            CallContext::user_function(id, callee),
+                        );
+                        self.construct_target = None;
+                        return Ok(StepResult::PushFrame {
+                            destination: i.result_register(),
+                            stack_guard: pushed?,
+                            construct_this: Some(this),
+                        });
+                    }
+                }
                 let args = match i.construct_arguments() {
                     crate::bytecode::ConstructArguments::Array(register) => {
                         let array = self.read(f, register);
