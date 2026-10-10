@@ -3,57 +3,133 @@
 use super::{WasmTrap, WasmType, WasmValue};
 use std::ops::Range;
 
-/// One backing store for linear memory. Imports retain the original cell, and
-/// agents sharing the backing store serialize byte access and growth here.
+/// One linear memory's backing store. The memory type decides the variant:
+/// an unshared memory belongs to one agent, so a borrow flag serializes its
+/// accesses; agents sharing a backing store synchronize through its lock.
+/// Imports retain the original cell, so both variants have one owner cell.
 #[derive(Debug)]
-pub struct MemoryStorage(std::sync::Mutex<MemoryState>);
+pub enum MemoryStorage {
+    Unshared(std::cell::RefCell<MemoryState>),
+    Shared(std::sync::Arc<SharedMemory>),
+}
+
+/// A backing store that several agents may access concurrently.
+#[derive(Debug)]
+pub struct SharedMemory(std::sync::Mutex<MemoryState>);
 
 #[derive(Debug)]
-pub(super) struct MemoryState {
+pub struct MemoryState {
     pub(super) bytes: Vec<u8>,
     pub(super) waiters: Vec<super::wait::Waiter>,
 }
 
-pub(crate) struct MemoryGuard<'a>(pub(super) std::sync::MutexGuard<'a, MemoryState>);
+impl MemoryState {
+    fn new(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            waiters: Vec::new(),
+        }
+    }
+}
+
+pub(crate) enum MemoryGuard<'a> {
+    Unshared(std::cell::RefMut<'a, MemoryState>),
+    Shared(std::sync::MutexGuard<'a, MemoryState>),
+}
+
+impl MemoryGuard<'_> {
+    pub(super) fn state(&mut self) -> &mut MemoryState {
+        match self {
+            Self::Unshared(state) => state,
+            Self::Shared(state) => state,
+        }
+    }
+}
 
 impl std::ops::Deref for MemoryGuard<'_> {
     type Target = Vec<u8>;
     fn deref(&self) -> &Vec<u8> {
-        &self.0.bytes
+        match self {
+            Self::Unshared(state) => &state.bytes,
+            Self::Shared(state) => &state.bytes,
+        }
     }
 }
 impl std::ops::DerefMut for MemoryGuard<'_> {
     fn deref_mut(&mut self) -> &mut Vec<u8> {
-        &mut self.0.bytes
+        &mut self.state().bytes
     }
 }
 
 impl MemoryStorage {
-    pub(crate) fn new(bytes: Vec<u8>) -> Self {
-        Self(std::sync::Mutex::new(MemoryState {
-            bytes,
-            waiters: Vec::new(),
-        }))
+    pub(crate) fn new(bytes: Vec<u8>, shared: bool) -> Self {
+        if shared {
+            Self::Shared(std::sync::Arc::new(SharedMemory::new(bytes)))
+        } else {
+            Self::Unshared(std::cell::RefCell::new(MemoryState::new(bytes)))
+        }
     }
 
     pub(crate) fn lock(&self) -> MemoryGuard<'_> {
+        match self {
+            // An unshared memory's accessors never nest, as with the shared lock.
+            Self::Unshared(state) => MemoryGuard::Unshared(state.borrow_mut()),
+            Self::Shared(memory) => memory.lock(),
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Unshared(state) => state.borrow().bytes.len(),
+            Self::Shared(memory) => memory.len(),
+        }
+    }
+
+    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
+    pub(crate) fn capacity(&self) -> usize {
+        let mut guard = self.lock();
+        let state = guard.state();
+        state.bytes.capacity()
+            + state.waiters.capacity() * std::mem::size_of::<super::wait::Waiter>()
+    }
+
+    pub(crate) fn copy_from(&self, source: &Self, input: Range<usize>, output: Range<usize>) {
+        match (self, source) {
+            (Self::Shared(destination), Self::Shared(source)) => {
+                destination.copy_from(source, input, output)
+            }
+            _ if std::ptr::eq(self, source) => {
+                self.lock().copy_within(input, output.start);
+            }
+            // At most one side is shared, so only one lock is taken.
+            _ => {
+                let source = source.lock();
+                self.lock()[output].copy_from_slice(&source[input]);
+            }
+        }
+    }
+}
+
+impl SharedMemory {
+    pub(crate) fn new(bytes: Vec<u8>) -> Self {
+        Self(std::sync::Mutex::new(MemoryState::new(bytes)))
+    }
+
+    pub(crate) fn lock(&self) -> MemoryGuard<'_> {
+        MemoryGuard::Shared(self.state())
+    }
+
+    pub(super) fn state(&self) -> std::sync::MutexGuard<'_, MemoryState> {
         // Guest byte accesses are checked before mutation; poisoning records a
         // Rust unwind, not corruption of the backing Vec's storage.
-        MemoryGuard(
-            self.0
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        )
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     pub(crate) fn len(&self) -> usize {
         let _order = super::atomic::memory_order();
         self.lock().len()
-    }
-    #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
-    pub(crate) fn capacity(&self) -> usize {
-        let state = self.lock();
-        state.capacity() + state.0.waiters.capacity() * std::mem::size_of::<super::wait::Waiter>()
     }
 
     pub(crate) fn copy_from(&self, source: &Self, input: Range<usize>, output: Range<usize>) {
@@ -573,7 +649,7 @@ impl super::Lowering<'_> {
 
 #[cfg(test)]
 mod storage_tests {
-    use super::MemoryStorage;
+    use super::SharedMemory as MemoryStorage;
     use std::sync::{Arc, Barrier};
 
     #[test]
