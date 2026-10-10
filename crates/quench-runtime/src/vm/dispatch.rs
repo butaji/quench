@@ -1712,6 +1712,7 @@ impl<H: Host> Vm<H> {
                     frame.dynamic_bindings.clear();
                     frame.active_iterators.clear();
                     frame.env = Value::NULL;
+                    frame.capture_base = Value::DELETED;
                     frame.this = Value::UNDEFINED;
                     frame.captured = false;
                 }

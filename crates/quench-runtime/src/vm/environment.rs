@@ -1323,6 +1323,11 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn capture_env(&self, frame: usize, depth: u16) -> Option<Value> {
         let frame = &self.frames[frame];
+        Self::capture_env_uncached(self, frame, depth)
+    }
+
+    #[inline(always)]
+    fn capture_env_uncached(&self, frame: &Frame, depth: u16) -> Option<Value> {
         let mut env = if frame.captured {
             match self.heap.get(frame.env)? {
                 Cell::Environment { parent, .. } => *parent,
@@ -1340,6 +1345,31 @@ impl<H: Host> Vm<H> {
             env = self.skip_with_environment_layers(env)?;
         }
         Some(env)
+    }
+
+    #[inline(always)]
+    fn capture_env_for_capture(&mut self, frame: usize, depth: u16) -> Option<Value> {
+        if depth == 0 && self.frames[frame].capture_base != Value::DELETED {
+            return Some(self.frames[frame].capture_base);
+        }
+        let resolved = Self::capture_env_uncached(self, &self.frames[frame], depth)?;
+        if depth == 0 && self.frames[frame].capture_base == Value::DELETED {
+            let frame_ref = &self.frames[frame];
+            let start = if frame_ref.captured {
+                match self.heap.get(frame_ref.env)? {
+                    Cell::Environment { parent, .. } => *parent,
+                    _ => return None,
+                }
+            } else {
+                frame_ref.env
+            };
+            // Skipped with/lexical wrappers can be sensitive to dynamic scope.
+            // Cache only when the generic walk proved that no wrapper was skipped.
+            if resolved == start {
+                self.frames[frame].capture_base = resolved;
+            }
+        }
+        Some(resolved)
     }
 
     fn skip_with_environment_layers(&self, mut env: Value) -> Option<Value> {
@@ -1375,7 +1405,7 @@ impl<H: Host> Vm<H> {
         slot: u16,
     ) -> Result<Value, JsError> {
         let env = self
-            .capture_env(frame, depth)
+            .capture_env_for_capture(frame, depth)
             .ok_or_else(|| JsError("invalid capture environment".into()))?;
         self.load_environment_binding(p, env, slot)
     }
@@ -1462,7 +1492,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let env = self
-            .capture_env(frame, depth)
+            .capture_env_for_capture(frame, depth)
             .ok_or_else(|| JsError("invalid capture environment".into()))?;
         self.store_environment_binding(p, frame, env, slot, value)
     }
