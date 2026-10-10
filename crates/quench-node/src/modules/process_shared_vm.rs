@@ -55,6 +55,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, process, name, function)?;
     }
+    let kill = context.host_function(crate::host::shared_vm::operation("processKillNative"))?;
+    install(context, process, "_kill", kill)?;
     let hrtime_raw = context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
     let hrtime_factory = context.evaluate_script_rooted(
         "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; if (!Array.isArray(previous)) { const received = previous === null ? 'null' : typeof previous === 'number' ? 'type number (' + previous + ')' : typeof previous; const error = new TypeError('The \\\"time\\\" argument must be an instance of Array. Received ' + received); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (previous.length !== 2) { const error = new RangeError('The value of \\\"time\\\" is out of range. It must be 2. Received ' + previous.length); error.code = 'ERR_OUT_OF_RANGE'; throw error; } let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }",
@@ -689,6 +691,48 @@ pub(crate) fn umask(
         .process_control
         .update_umask(parsed);
     Ok(context.number(previous as f64))
+}
+
+pub(crate) fn kill_native(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let pid = integer_argument(context, args.first().copied(), "pid")?;
+    let signal = integer_argument(context, args.get(1).copied(), "signal")?;
+    #[cfg(unix)]
+    let error = if unsafe { libc::kill(pid, signal) } == 0 {
+        0
+    } else {
+        std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::EINVAL)
+    };
+    #[cfg(not(unix))]
+    let error = libc::ENOSYS;
+    Ok(context.number(error as f64))
+}
+
+fn integer_argument(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: Option<RootId>,
+    name: &str,
+) -> Result<i32, RootedError> {
+    let Some(value) = value else {
+        return Err(RootedError::host(format!("missing process.kill {name}")));
+    };
+    if let Some(number) = context
+        .rooted_value(value)
+        .and_then(|value| value.as_number())
+    {
+        return Ok(number as i32);
+    }
+    if let Some(text) = context.string_text(value)? {
+        if let Ok(number) = text.parse::<i32>() {
+            return Ok(number);
+        }
+    }
+    Err(RootedError::host(format!("invalid process.kill {name}")))
 }
 
 /// Run shared-host nextTick callbacks before VM jobs, then emit process exit
