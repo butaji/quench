@@ -330,10 +330,6 @@ fn json_number(value: Option<impl std::fmt::Display>) -> String {
 }
 
 impl Heap {
-    pub(crate) fn collection_count(&self) -> u64 {
-        self.collections
-    }
-
     pub(crate) fn memory_composition(&self) -> HeapMemoryComposition {
         let mut occupied_slots = 0;
         let mut object_headers = 0;

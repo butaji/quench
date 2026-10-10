@@ -106,7 +106,12 @@ fn promoted_local_layout_is_valid(
         .any(|instruction| {
             matches!(
                 instruction.op(),
-                Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::StoreName | Op::DeleteName
+                Op::LoadName
+                    | Op::LoadNameCall
+                    | Op::LoadNameTypeof
+                    | Op::ResolveName
+                    | Op::StoreName
+                    | Op::DeleteName
             ) && promoted.iter().any(|entry| {
                 function.local_atoms.get(usize::from(entry.local)) == Some(&instruction.imm())
             })
@@ -124,11 +129,11 @@ fn promoted_local_layout_is_valid(
         && function.binding_sites.is_empty()
         && !has_dynamic_local_resolution
         && !function.code.iter().any(|instruction| {
-            matches!(instruction.op(), Op::MakeClosure | Op::ResolveName | Op::CallDirectEvalArray)
+            matches!(instruction.op(), Op::MakeClosure | Op::CallDirectEvalArray)
                 || instruction.op() == Op::Call && instruction.direct_eval()
         })
         && !function.wide.iter().any(|instruction| {
-            matches!(instruction.op(), Op::MakeClosure | Op::ResolveName | Op::CallDirectEvalArray)
+            matches!(instruction.op(), Op::MakeClosure | Op::CallDirectEvalArray)
                 || instruction.op() == Op::Call && ImmediateLayout::direct_eval(instruction.imm())
         });
     eligible_function

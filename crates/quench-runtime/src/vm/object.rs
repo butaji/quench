@@ -189,7 +189,7 @@ impl<H: Host> Vm<H> {
         let shape = self.object_data(object)?.shape();
         Some((shape, self.property_shape_slot(shape, key)?))
     }
-    fn shape_attribute(&self, shape: u32, slot: usize) -> Option<PropertyAttributes> {
+    pub(super) fn shape_attribute(&self, shape: u32, slot: usize) -> Option<PropertyAttributes> {
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
             return Some(
                 index
@@ -361,6 +361,8 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn invalidate_field_caches(&mut self) {
         self.field_caches.fill(EMPTY_CACHE);
+        self.global_var_reads
+            .fill(super::field_cache::EMPTY_GLOBAL_VAR_READ);
         self.field_add_caches.clear();
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
         self.megamorphic_fields.clear();
