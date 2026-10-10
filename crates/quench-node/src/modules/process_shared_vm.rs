@@ -1284,7 +1284,14 @@ pub(crate) fn set_uncaught_exception_capture_callback(
         return Err(uncaught_capture_type_error(context, Some(callback))?);
     }
     let value = if is_null { context.undefined() } else { callback };
-    if !context.set_property_rooted(process, current_key, value, process)? {
+    if !context.define_data_property_rooted(
+        process,
+        current_key,
+        value,
+        true,
+        false,
+        true,
+    )? {
         return Err(RootedError::host(
             "cannot set process uncaught-exception capture callback",
         ));
