@@ -141,6 +141,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsRealpathSync" (1) => crate::modules::fs_shared_vm::stat::realpath_sync,
         method "cryptoHash" (2) => crate::modules::crypto_shared_vm::hash,
         method "cryptoHmac" (3) => crate::modules::crypto_shared_vm::hmac,
+        method "cryptoSign" (3) => crate::modules::crypto_shared_vm::sign,
         method "cryptoRandomBytes" (1) => crate::modules::crypto_shared_vm::random_bytes,
         method "asyncResourceInit" (2) => crate::modules::async_hooks_shared_vm::initialize_resource,
         method "asyncResourceRunInAsyncScope" (2) => crate::modules::async_hooks_shared_vm::run_in_async_scope,
