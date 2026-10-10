@@ -143,6 +143,7 @@ mod tests {
             handlers: Vec::new(),
             register_root_offset: 0,
             parameter_registers: None,
+            initial_register: Default::default(),
         }
     }
 

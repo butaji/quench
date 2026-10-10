@@ -270,7 +270,8 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::WasmF32UnaryOperator
         | ImmediateRole::WasmF64BinaryOperator
         | ImmediateRole::WasmF64UnaryOperator
-        | ImmediateRole::JumpTarget => write_scalar_value(output, instruction),
+        | ImmediateRole::JumpTarget
+        | ImmediateRole::BranchTableCases => write_scalar_value(output, instruction),
     }
 }
 
@@ -430,6 +431,7 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
             write!(output, " operator={}", instruction.unary_operator())
         }
         ImmediateRole::JumpTarget => write!(output, " target={}", instruction.jump_target()),
+        ImmediateRole::BranchTableCases => write!(output, " cases={}", instruction.imm()),
         _ => Ok(()),
     }
 }

@@ -322,21 +322,29 @@ impl ProgramStore {
         if let Some(entry) = self.programs.get_mut(id.index()) {
             entry.const_arrays = vec![None; constants.len()];
             entry.constants = constants;
+            // Lane views carry constants, so they derive from the new set.
+            entry
+                .lane_views
+                .iter_mut()
+                .for_each(|view| *view = Default::default());
         }
     }
 
-    /// The lane view of `function`, derived by `derive` on first use. The
-    /// residual is immutable, so the view stays valid for the entry's life.
+    /// The lane view of `function`, derived by `derive` on first use from the
+    /// immutable residual and the program's constants.
     pub(super) fn lane_view(
         &self,
         id: ProgramId,
         function: u32,
-        derive: impl FnOnce(&crate::bytecode::Function) -> Box<[super::dispatch_fast::LaneInstruction]>,
+        derive: impl FnOnce(
+            &crate::bytecode::Function,
+            &[Value],
+        ) -> Box<[super::dispatch_fast::LaneInstruction]>,
     ) -> Option<*const super::dispatch_fast::LaneInstruction> {
         let entry = self.programs.get(id.index())?;
         let code = entry.residual.functions.get(function as usize)?;
         let view = entry.lane_views.get(function as usize)?;
-        Some(view.get_or_init(|| derive(code)).as_ptr())
+        Some(view.get_or_init(|| derive(code, &entry.constants)).as_ptr())
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {

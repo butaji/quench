@@ -12,6 +12,7 @@ mod control_flow;
 mod instruction;
 mod numeric_ops;
 pub(crate) use atoms::AtomTable;
+pub(crate) use control_flow::branch_table_entries;
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
@@ -84,12 +85,34 @@ pub(crate) enum ResultLayout {
     NumericReturnable,
 }
 
+/// The value an activation's registers start with. Wasm functions start at
+/// i32 zero, the default of i32 and f32 locals, so those locals need no
+/// prologue fill; both values are non-references, which collection skips.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum InitialRegister {
+    #[default]
+    Undefined,
+    I32Zero,
+}
+
+impl InitialRegister {
+    pub(crate) fn value(self) -> crate::Value {
+        match self {
+            Self::Undefined => crate::Value::UNDEFINED,
+            Self::I32Zero => crate::Value::integer(0),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ControlFlowLayout {
     Fallthrough,
     Call,
     Jump,
     ConditionalJump,
+    /// Continues at one of the `Jump` entries that follow the instruction;
+    /// the immediate counts the cases before the final default entry.
+    BranchTable,
     Terminal,
 }
 
@@ -214,6 +237,7 @@ pub(crate) enum ImmediateRole {
     TemplateSiteIndex,
     RegExpLiteralSiteIndex,
     JumpTarget,
+    BranchTableCases,
     MethodSiteIndex,
     ObjectSiteIndex,
     SuperinstructionIndex,
@@ -644,6 +668,7 @@ opcodes!(
     WasmSelect => Effect::PURE; layout RegisterPair, @ Register, @ fields(ResultRegister, Register, Register),
     WasmJumpI32Zero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
     WasmJumpI32NonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
+    WasmBranchTable => Effect::CONTROL; layout Scalar; meaning BranchTableCases; flow BranchTable, @ Register, @ fields(Register, Unused, Unused),
     WasmJumpI32Equal => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
     WasmJumpI32NotEqual => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
     WasmJumpI32LessSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
@@ -892,6 +917,8 @@ pub struct Function {
     /// First register of the parameters when the body keeps its locals in
     /// registers; activation then writes arguments there, not into locals.
     pub(crate) parameter_registers: Option<u16>,
+    /// The value every register holds when an activation starts.
+    pub(crate) initial_register: InitialRegister,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1478,7 +1505,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 81;
+    pub const FORMAT_VERSION: u8 = 82;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

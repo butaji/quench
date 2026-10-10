@@ -197,36 +197,7 @@ impl Lowering<'_> {
                 if self.path == Reachability::Live {
                     let index = self.pop()?;
                     self.materialize_aliases()?;
-                    let depth = self.depth;
-                    self.push()?; // Keep the selector live while allocating scratch slots.
-                    let condition = self.push()?;
-                    self.depth = depth;
-                    for (ordinal, target) in targets.targets().enumerate() {
-                        let target = target
-                            .map_err(|e| Diagnostic::unsupported(self.name, e.to_string()))?;
-                        let case = match i16::try_from(ordinal) {
-                            Ok(ordinal) => Condition::ConstantComparison(
-                                I32BinaryOperator::Equal,
-                                index,
-                                ordinal,
-                            ),
-                            Err(_) => {
-                                let ordinal = u32::try_from(ordinal).map_err(|_| {
-                                    self.control_error("Wasm branch table too large")
-                                })?;
-                                self.emit(
-                                    I32BinaryOperator::Equal.immediate_op(),
-                                    condition,
-                                    index,
-                                    0,
-                                    ordinal,
-                                )?;
-                                Condition::Value(condition)
-                            }
-                        };
-                        self.branch_if(target, case)?;
-                    }
-                    self.branch(targets.default())?;
+                    self.branch_table(index, &targets)?;
                     self.make_dead();
                 }
             }
@@ -959,6 +930,38 @@ impl Lowering<'_> {
             self.controls[target.index].exits.push(jump);
             Ok(())
         }
+    }
+
+    /// One `Jump` entry per case and a final default entry follow the table.
+    /// An entry whose label needs value moves jumps to a pad after the
+    /// entries that moves them and branches.
+    fn branch_table(
+        &mut self,
+        index: Register,
+        targets: &wasmparser::BrTable<'_>,
+    ) -> Result<(), Diagnostic> {
+        let labels = targets
+            .targets()
+            .chain(std::iter::once(Ok(targets.default())))
+            .collect::<Result<Vec<u32>, _>>()
+            .map_err(|e| Diagnostic::unsupported(self.name, e.to_string()))?;
+        let cases = u32::try_from(labels.len() - 1)
+            .map_err(|_| self.control_error("Wasm branch table too large"))?;
+        self.emit(Op::WasmBranchTable, index, 0, 0, cases)?;
+        let entries = labels
+            .iter()
+            .map(|_| self.jump(Op::Jump, 0))
+            .collect::<Result<Vec<usize>, _>>()?;
+        for (entry, label) in entries.into_iter().zip(labels) {
+            let target = self.branch_target(label)?;
+            if target.base == target.values || target.arity == 0 {
+                self.bind_branch(target, entry)?;
+            } else {
+                self.patch_jump(entry, self.code.len())?;
+                self.branch(label)?;
+            }
+        }
+        Ok(())
     }
 
     fn branch(&mut self, relative_depth: u32) -> Result<(), Diagnostic> {

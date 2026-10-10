@@ -6,6 +6,8 @@ struct GeneralCodeCursor {
     function: u32,
     code: *const Instr,
     wide: *const WideInstruction,
+    /// The function's lane view, or null where the lane does not run.
+    lane: *const dispatch_fast::LaneInstruction,
 }
 
 impl GeneralCodeCursor {
@@ -16,6 +18,7 @@ impl GeneralCodeCursor {
             function,
             code: function_code.code.as_ptr(),
             wide: function_code.wide.as_ptr(),
+            lane: std::ptr::null(),
         }
     }
 
@@ -38,6 +41,24 @@ impl GeneralCodeCursor {
 }
 
 impl<H: Host> Vm<H> {
+    /// A code cursor for `function`, with its lane view where the lane runs.
+    fn general_cursor(
+        &self,
+        program_id: ProgramId,
+        program: &ResidualProgram,
+        function: u32,
+        lane: bool,
+    ) -> GeneralCodeCursor {
+        GeneralCodeCursor {
+            lane: if lane {
+                self.lane_view(program_id, function)
+            } else {
+                std::ptr::null()
+            },
+            ..GeneralCodeCursor::new(program_id, program, function)
+        }
+    }
+
     pub(super) fn call_this_value(&mut self, this: Value, strict: bool) -> Result<Value, JsError> {
         if strict {
             Ok(this)
@@ -156,11 +177,12 @@ impl<H: Host> Vm<H> {
         let (caller, frame) = self
             .frames
             .activate_after(caller, || Frame::empty(program, with_base));
+        let arguments_base = usize::from(arguments.base);
+        let local_arguments = usize::from(arguments.count.min(function.local_parameter_count()));
         frame.locals.clear();
-        frame.locals.extend(
-            (0..arguments.count.min(function.local_parameter_count()))
-                .map(|offset| caller.registers[usize::from(arguments.base + offset)]),
-        );
+        frame
+            .locals
+            .extend_from_slice(&caller.registers[arguments_base..arguments_base + local_arguments]);
         frame
             .locals
             .resize(usize::from(function.locals), Value::UNDEFINED);
@@ -173,12 +195,12 @@ impl<H: Host> Vm<H> {
         frame.this = Value::UNDEFINED;
         frame.captured = false;
         frame.with_base = with_base;
-        frame.prepare_registers(usize::from(function.registers));
+        frame.prepare_registers(function.registers, function.initial_register);
         if let Some(base) = function.parameter_registers {
-            for offset in 0..arguments.count.min(function.params) {
-                frame.registers[usize::from(base + offset)] =
-                    caller.registers[usize::from(arguments.base + offset)];
-            }
+            let base = usize::from(base);
+            let count = usize::from(arguments.count.min(function.params));
+            frame.registers[base..base + count]
+                .copy_from_slice(&caller.registers[arguments_base..arguments_base + count]);
         }
         Ok(stack_guard)
     }
@@ -314,10 +336,9 @@ impl<H: Host> Vm<H> {
         }
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(&mut frame, arrow, new_target);
-        let register_count = function.registers as usize;
         let run_numeric = numeric_frame_is_safe(function, capture_constructor_this);
         debug_assert!(!push_to_dispatch || !run_numeric);
-        frame.prepare_registers(register_count);
+        frame.prepare_registers(function.registers, function.initial_register);
         frame.bind_register_parameters(function, args);
         self.frames.push(frame);
         let frame_index = self.frames.len() - 1;
@@ -500,8 +521,7 @@ impl<H: Host> Vm<H> {
             .extend(self.captured_with_objects_for_function(parent, function, p.kind));
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(&mut frame, arrow, new_target);
-        let register_count = function.registers as usize;
-        frame.prepare_registers(register_count);
+        frame.prepare_registers(function.registers, function.initial_register);
         frame.bind_register_parameters(function, args);
         self.frames[frame_index] = frame;
         Ok(())
@@ -840,20 +860,14 @@ impl<H: Host> Vm<H> {
         let allow_inline_calls = stop_pc.is_none() && initial_error.is_none();
         let previous_program = std::mem::replace(&mut self.active_program, frame_program);
         let previous_global = self.realm.globals;
-        // Wasm bodies run the loop instance that includes the fast lane;
-        // JavaScript runs the instance without it.
-        let outcome = if p.kind == crate::bytecode::ProgramKind::Wasm {
-            self.run_general_loop::<true>(p, frame, stop_pc, initial_error, allow_inline_calls)
-        } else {
-            self.run_general_loop::<false>(p, frame, stop_pc, initial_error, allow_inline_calls)
-        };
+        let outcome = self.run_general_loop(p, frame, stop_pc, initial_error, allow_inline_calls);
         self.active_program = previous_program;
         self.realm.globals = previous_global;
         outcome
     }
 
     #[inline(always)]
-    fn run_general_loop<const LANE: bool>(
+    fn run_general_loop(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -871,10 +885,21 @@ impl<H: Host> Vm<H> {
         } else {
             self.enter_stack()?
         };
+        // Parameter-initialization stops and instruction profiling observe
+        // every PC, so they run the general path only.
+        let fast_lane = stop_pc.is_none()
+            && !cfg!(any(
+                feature = "profile-aggregate",
+                feature = "profile-memory"
+            ));
         let initial_function = self.frames[frame].function as usize;
         let mut executing_program = self.frames[frame].program;
-        let mut cursor =
-            GeneralCodeCursor::new(executing_program, entry_program, initial_function as u32);
+        let mut cursor = self.general_cursor(
+            executing_program,
+            entry_program,
+            initial_function as u32,
+            fast_lane,
+        );
         let mut pc = self.frames[frame].pc;
         if let Some(error) = initial_error {
             pc = self.exception_handler_target(
@@ -885,23 +910,13 @@ impl<H: Host> Vm<H> {
                 error,
             )?;
         }
-        // Parameter-initialization stops and instruction profiling observe
-        // every PC, so they run the general path only. JavaScript bodies are
-        // dominated by non-lane opcodes, where a lane probe per instruction
-        // measured slower on V8-v7 Richards; Wasm bodies enter the lane.
-        let fast_lane = LANE
-            && stop_pc.is_none()
-            && !cfg!(any(
-                feature = "profile-aggregate",
-                feature = "profile-memory"
-            ));
         loop {
             let p = current_program.as_deref().unwrap_or(p);
-            if fast_lane {
+            if Self::lane_runs(cursor.lane, pc) {
                 pc = self.run_fast_lane(
                     p,
                     cursor.program,
-                    cursor.function,
+                    cursor.lane,
                     &mut frame,
                     pc,
                     &mut pending_calls,
@@ -910,7 +925,12 @@ impl<H: Host> Vm<H> {
                 // Lane calls and returns can leave a different activation,
                 // or a new one in the same frame slot.
                 if self.frames[frame].function != cursor.function {
-                    cursor = GeneralCodeCursor::new(cursor.program, p, self.frames[frame].function);
+                    cursor = self.general_cursor(
+                        cursor.program,
+                        p,
+                        self.frames[frame].function,
+                        fast_lane,
+                    );
                 }
             }
             if stop_pc == Some(pc) {
@@ -950,10 +970,11 @@ impl<H: Host> Vm<H> {
                         frame = pending.caller;
                         self.write(frame, pending.destination, value);
                         pc = self.frames[frame].pc;
-                        cursor = GeneralCodeCursor::new(
+                        cursor = self.general_cursor(
                             executing_program,
                             p,
                             self.frames[frame].function,
+                            fast_lane,
                         );
                         drop(pending.stack_guard);
                     } else {
@@ -976,7 +997,12 @@ impl<H: Host> Vm<H> {
                     pc = self.frames[frame].pc;
                     let callee_program = self.frames[frame].program;
                     debug_assert_eq!(callee_program, executing_program);
-                    cursor = GeneralCodeCursor::new(callee_program, p, self.frames[frame].function);
+                    cursor = self.general_cursor(
+                        callee_program,
+                        p,
+                        self.frames[frame].function,
+                        fast_lane,
+                    );
                 }
                 Ok(StepResult::TailCall) => {
                     let replacement_program = self.frames[frame].program;
@@ -989,10 +1015,11 @@ impl<H: Host> Vm<H> {
                     }
                     executing_program = replacement_program;
                     pc = self.frames[frame].pc;
-                    cursor = GeneralCodeCursor::new(
+                    cursor = self.general_cursor(
                         replacement_program,
                         current_program.as_deref().unwrap_or(entry_program),
                         self.frames[frame].function,
+                        fast_lane,
                     );
                     // The replacement frame publishes all callee roots before this back edge.
                     self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
@@ -1039,10 +1066,11 @@ impl<H: Host> Vm<H> {
                                     self.retire_pending_frame(p);
                                     frame = pending.caller;
                                     pc = self.frames[frame].pc;
-                                    cursor = GeneralCodeCursor::new(
+                                    cursor = self.general_cursor(
                                         executing_program,
                                         p,
                                         self.frames[frame].function,
+                                        fast_lane,
                                     );
                                     throwing_pc = pending.call_pc;
                                     drop(pending.stack_guard);

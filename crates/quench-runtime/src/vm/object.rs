@@ -284,18 +284,24 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
     ) -> Result<Value, JsError> {
+        self.current_this(frame).ok_or_else(|| {
+            self.reference_error(
+                p,
+                "Must call super constructor before accessing 'this'".into(),
+            )
+        })
+    }
+
+    /// The frame's `this`, refreshed from its lexical binding; `None` while
+    /// a derived constructor has not yet initialized it.
+    #[inline(always)]
+    pub(super) fn current_this(&mut self, frame: usize) -> Option<Value> {
         let atom = self.runtime_atoms.lexical_this;
         let value = self
             .dynamic_binding(frame, atom)
             .unwrap_or(self.frames[frame].this);
         self.frames[frame].this = value;
-        if value.is_deleted() {
-            return Err(self.reference_error(
-                p,
-                "Must call super constructor before accessing 'this'".into(),
-            ));
-        }
-        Ok(value)
+        (!value.is_deleted()).then_some(value)
     }
 
     #[inline(always)]
@@ -475,17 +481,7 @@ impl<H: Host> Vm<H> {
             }
             Some(Cell::Proxy { .. }) => FieldCacheRead::Proxy,
             Some(cell) if self.specialized && p.specialized => {
-                let Some(receiver) = self.shape_property_lookup_cell(cell, atom) else {
-                    return self.get_property(p, object, atom);
-                };
-                let site = self.field_cache_index(site);
-                match self
-                    .cached_field_value(site, receiver)
-                    .or_else(|| self.cached_holder_field_value(site, receiver, atom))
-                {
-                    Some(hit) => FieldCacheRead::Hit(hit),
-                    None => FieldCacheRead::Miss(site),
-                }
+                self.object_field_cache_read(cell, atom, site)
             }
             Some(_) | None => FieldCacheRead::Generic,
         };
@@ -508,6 +504,45 @@ impl<H: Host> Vm<H> {
                     .field_cache_hit(usize::from(hit.tier), hit.depth);
                 Ok(hit.value)
             }
+        }
+    }
+
+    /// The field cache's answer for an object cell other than a string or a
+    /// proxy: a hit, a miss at the resolved site, or no cacheable receiver.
+    #[inline(always)]
+    fn object_field_cache_read(&self, cell: &Cell, atom: Atom, site: u16) -> FieldCacheRead {
+        let Some(receiver) = self.shape_property_lookup_cell(cell, atom) else {
+            return FieldCacheRead::Generic;
+        };
+        let site = self.field_cache_index(site);
+        match self
+            .cached_field_value(site, receiver)
+            .or_else(|| self.cached_holder_field_value(site, receiver, atom))
+        {
+            Some(hit) => FieldCacheRead::Hit(hit),
+            None => FieldCacheRead::Miss(site),
+        }
+    }
+
+    /// The value `get_field_cached` reads on a field cache hit, without
+    /// side effects; `None` when it would take any other path.
+    #[inline(always)]
+    pub(super) fn field_cache_hit(
+        &self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+    ) -> Option<Value> {
+        match self.heap.get(object)? {
+            Cell::String(_) | Cell::Proxy { .. } => None,
+            cell if self.specialized && p.specialized => {
+                match self.object_field_cache_read(cell, atom, site) {
+                    FieldCacheRead::Hit(hit) => Some(hit.value),
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 
@@ -1058,6 +1093,9 @@ impl<H: Host> Vm<H> {
         site: u16,
         strict: bool,
     ) -> Result<(), JsError> {
+        if self.set_field_cache_hit(p, object, atom, value, site) {
+            return Ok(());
+        }
         // Assignment to a nullish base is an abrupt completion regardless of
         // strictness. Keep it on the canonical realm-owned TypeError path;
         // the generic object mutator's fallback error is not an ECMAScript
@@ -1107,22 +1145,6 @@ impl<H: Host> Vm<H> {
             } else {
                 Err(self.type_error(p, "cannot assign property on primitive value".into()))
             };
-        }
-        if self.specialized
-            && p.specialized
-            && !self.is_private_name(atom)
-            && let Some(Cell::Object(data)) = self.heap.get(object)
-            && !data.is_module_namespace()
-            && !data.is_arguments_object()
-        {
-            let site = self.field_cache_index(site);
-            let shape = data.shape();
-            if self.try_cached_field_store(object, atom, shape, value, site)
-                || (self.field_cache_atom_eligible(atom)
-                    && self.try_cached_field_add(object, atom, shape, value, site))
-            {
-                return Ok(());
-            }
         }
         let own = self.own_property(object, atom).is_some();
         if !own && self.prototype_chain_contains_proxy(object) {
@@ -1320,6 +1342,33 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(always)]
+    /// Store through the field cache when it covers the write: a plain data
+    /// object whose shape hits the site. Strictness only shapes failures, so
+    /// a hit is the same store either way; a miss changes nothing.
+    pub(super) fn set_field_cache_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+    ) -> bool {
+        if !(self.specialized && p.specialized) || self.is_private_name(atom) {
+            return false;
+        }
+        let Some(Cell::Object(data)) = self.heap.get(object) else {
+            return false;
+        };
+        if data.is_module_namespace() || data.is_arguments_object() {
+            return false;
+        }
+        let site = self.field_cache_index(site);
+        let shape = data.shape();
+        self.try_cached_field_store(object, atom, shape, value, site)
+            || (self.field_cache_atom_eligible(atom)
+                && self.try_cached_field_add(object, atom, shape, value, site))
+    }
+
     fn try_cached_field_store(
         &mut self,
         object: Value,

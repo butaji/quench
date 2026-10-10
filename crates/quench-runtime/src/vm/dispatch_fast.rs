@@ -19,7 +19,7 @@
 
 use super::*;
 use crate::bytecode::{
-    Function, ImmediateLayout, ImmediateRole, InstructionField, WideInstruction,
+    FieldLayout, Function, ImmediateLayout, ImmediateRole, InstructionField, WideInstruction,
 };
 use crate::wasm::integer::{I32BinaryOperator, I32UnaryOperator};
 use crate::wasm::memory::{MemoryLoad, MemoryStorage, MemoryStore};
@@ -29,13 +29,43 @@ use crate::wasm::memory::{MemoryLoad, MemoryStorage, MemoryStore};
 pub(super) struct LaneInstruction {
     /// The opcode's [`Handler`] for the VM that built the view.
     handler: *const (),
-    imm: u32,
-    /// Byte distance from this record to its jump target, for instructions
-    /// whose immediate is a jump target.
-    jump: i32,
+    operand: LaneOperand,
     a: u16,
     b: u16,
     c: u16,
+    /// The general path executes this instruction; `handler` only reports
+    /// that if the lane reaches it.
+    exits: bool,
+}
+
+/// The immediate, resolved by its role: a jump target becomes the byte
+/// distance from the record, a constant index becomes the constant.
+#[derive(Clone, Copy)]
+union LaneOperand {
+    imm: u32,
+    jump: isize,
+    constant: Value,
+}
+
+impl LaneInstruction {
+    #[inline(always)]
+    fn imm(&self) -> u32 {
+        // SAFETY: the view writes `imm` for every role other than a jump
+        // target or constant index, and only those handlers read it.
+        unsafe { self.operand.imm }
+    }
+
+    #[inline(always)]
+    fn jump(&self) -> isize {
+        // SAFETY: the view writes `jump` for every jump-target immediate.
+        unsafe { self.operand.jump }
+    }
+
+    #[inline(always)]
+    fn constant(&self) -> Value {
+        // SAFETY: the view writes `constant` for every constant index.
+        unsafe { self.operand.constant }
+    }
 }
 
 type Ip = *const LaneInstruction;
@@ -106,6 +136,8 @@ struct LaneContext<H: Host> {
     /// lane returns complete exactly as the general loop would.
     pending: *mut Vec<PendingGeneralCall>,
     inline_calls: bool,
+    /// Safepoint jumps left to dispatch before returning to the lane loop.
+    direct_jumps: u32,
     /// The view handlers start from when the lane loop dispatches.
     memory: MemoryView,
 }
@@ -213,11 +245,7 @@ lane_handler! {
 
 lane_handler! {
     fn lane_load_const<>(cx, r, ip, i, view) {
-        let program = unsafe { (*cx).program };
-        let Some(value) = unsafe { vm(cx) }.programs.constant(program, i.imm as usize) else {
-            return exit(ip);
-        };
-        r.set(i.a, value);
+        r.set(i.a, i.constant());
         next!(cx, r, following(ip), view)
     }
 }
@@ -226,15 +254,227 @@ lane_handler! {
     fn lane_load_local_plain<>(cx, r, ip, i, view) {
         // SAFETY: validated bytecode bounds the slot by Function.locals, and
         // frame setup sizes locals to that count.
-        let value = unsafe { vm(cx).read_validated_local((*cx).frame, i.imm as usize) };
+        let value = unsafe { vm(cx).read_validated_local((*cx).frame, i.imm() as usize) };
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
     }
 }
 
+/// Taken safepoint jumps dispatched directly between returns to the lane
+/// loop. Sibling calls keep a lane run in one stack frame; the periodic
+/// return bounds the stack should a build not form one.
+const DIRECT_SAFEPOINT_JUMPS: u32 = 16;
+
+/// The safepoint budget a lane run starts with. A collection can only
+/// become due inside the lane through a lane allocation, which zeroes the
+/// budget, so the heap is consulted only when the budget runs out.
+#[inline(always)]
+fn safepoint_budget<H: Host>(vm: &Vm<H>) -> u32 {
+    if vm.heap.should_collect() {
+        0
+    } else {
+        DIRECT_SAFEPOINT_JUMPS
+    }
+}
+
+/// The PC of the record at `ip` in the active view.
+#[inline(always)]
+fn lane_pc<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> usize {
+    // SAFETY: `ip` is a record of the active view.
+    unsafe { ip.offset_from((*cx).base) as usize }
+}
+
+/// The value of a register or constant operand; other operand kinds take
+/// the general path.
+#[inline(always)]
+fn lane_operand_value<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    encoded: u16,
+) -> Option<Value> {
+    let operand = crate::bytecode::Operand(encoded);
+    match operand.kind()? {
+        crate::bytecode::OperandKind::Register => Some(r.get(operand.payload())),
+        crate::bytecode::OperandKind::Constant => {
+            let program = unsafe { (*cx).program };
+            unsafe { vm(cx) }
+                .programs
+                .constant(program, usize::from(operand.payload()))
+        }
+        _ => None,
+    }
+}
+
+lane_handler! {
+    fn lane_store_local_plain<>(cx, r, ip, i, view) {
+        let value = r.get(i.a);
+        // SAFETY: validated bytecode bounds the slot by Function.locals.
+        unsafe { vm(cx).write_validated_local((*cx).frame, i.imm() as usize, value) };
+        if let Some(register) = i.b.checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS) {
+            r.set(register, value);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    fn lane_load_this<>(cx, r, ip, i, view) {
+        // An uninitialized `this` throws on the general path.
+        let Some(value) = (unsafe { vm(cx).current_this((*cx).frame) }) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// Numbers convert to themselves; other values take the general path.
+    fn lane_to_numeric<>(cx, r, ip, i, view) {
+        let Some(number) = r.get(i.b).as_number() else {
+            return exit(ip);
+        };
+        r.set(i.a, Value::number(number));
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    fn lane_inc_dec<>(cx, r, ip, i, view) {
+        let input = r.get(i.b);
+        let decrement = i.imm() != 0;
+        let value = match input.as_int() {
+            Some(integer) => if decrement { integer.checked_sub(1) } else { integer.checked_add(1) }
+                .map(Value::integer)
+                .unwrap_or_else(|| Value::number(f64::from(integer) + if decrement { -1.0 } else { 1.0 })),
+            None => match input.as_number() {
+                Some(number) => Value::number(number + if decrement { -1.0 } else { 1.0 }),
+                None => return exit(ip),
+            },
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// Numeric operands on the integer fast path; the regional site profile
+    /// records the execution exactly as the general path does.
+    fn lane_binary<>(cx, r, ip, i, view) {
+        let (Some(left), Some(right)) =
+            (lane_operand_value(cx, r, i.b), lane_operand_value(cx, r, i.c))
+        else {
+            return exit(ip);
+        };
+        let operator = i.imm();
+        let vm = unsafe { vm(cx) };
+        let Some(fast) = vm.numeric_binary(operator, left, right) else {
+            return exit(ip);
+        };
+        let frame = unsafe { (*cx).frame };
+        let value = if vm.profile_regional_binary(frame, lane_pc(cx, ip), operator, left, right) {
+            fast
+        } else {
+            // SAFETY: the context's program outlives the lane run.
+            match vm.binary(unsafe { &*(*cx).code }, operator, left, right) {
+                Ok(value) => value,
+                Err(_) => unreachable!("numeric operands have a numeric result"),
+            }
+        };
+        if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
+            let local = usize::from(i.a & crate::bytecode::REGISTER_MASK);
+            // SAFETY: the view admits a numeric local target only below
+            // Function.locals.
+            unsafe { vm.write_validated_local(frame, local, value) };
+        } else {
+            r.set(i.a, value);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// A field read that hits its cache; any other read takes the general
+    /// path, which repeats the side-effect-free lookup.
+    fn lane_get_field<>(cx, r, ip, i, view) {
+        if i.b == crate::bytecode::FieldBase::NESTED {
+            return exit(ip);
+        }
+        let base = crate::bytecode::FieldBase(i.b);
+        let vm = unsafe { vm(cx) };
+        let object = match base.register_index() {
+            Some(register) => r.get(register),
+            None => match vm.current_this(unsafe { (*cx).frame }) {
+                Some(this) => this,
+                None => return exit(ip),
+            },
+        };
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = vm.field_cache_hit(code, object, i.imm(), i.c) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+/// Store through the field cache; any other store takes the general path.
+#[inline(always)]
+fn lane_set_field<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    object: Value,
+    i: &LaneInstruction,
+    view: MemoryView,
+) -> Ip {
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    if !unsafe { vm(cx) }.set_field_cache_hit(code, object, i.imm(), r.get(i.a), i.c) {
+        return exit(ip);
+    }
+    next!(cx, r, following(ip), view)
+}
+
+lane_handler! {
+    /// `SetField` and `SetFieldStrict`.
+    fn lane_set_object_field<>(cx, r, ip, i, view) {
+        lane_set_field(cx, r, ip, r.get(i.b), i, view)
+    }
+}
+
+lane_handler! {
+    /// `SetThisField` and `SetThisFieldStrict`.
+    fn lane_set_this_field<>(cx, r, ip, i, view) {
+        let Some(this) = (unsafe { vm(cx).current_this((*cx).frame) }) else {
+            return exit(ip);
+        };
+        lane_set_field(cx, r, ip, this, i, view)
+    }
+}
+
+lane_handler! {
+    /// Integer relational operands on the general path's fast path.
+    fn lane_jump_binary_false<>(cx, r, ip, i, view) {
+        let (Some(left), Some(right)) =
+            (lane_operand_value(cx, r, i.b), lane_operand_value(cx, r, i.c))
+        else {
+            return exit(ip);
+        };
+        let Some(holds) = super::operations::integer_relation(u32::from(i.a), left, right) else {
+            return exit(ip);
+        };
+        if !holds {
+            return lane_jump(cx, r, ip, false, view);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
 /// A taken jump. Safepoint jumps (every `Jump`, and backward Wasm
-/// conditionals) leave the lane when a collection is due and otherwise
-/// return to the lane loop; forward Wasm conditionals dispatch directly.
+/// conditionals) leave the lane when a collection is due; forward Wasm
+/// conditionals dispatch directly.
 #[inline(always)]
 fn lane_jump<H: Host>(
     cx: *mut LaneContext<H>,
@@ -243,14 +483,20 @@ fn lane_jump<H: Host>(
     safepoint: bool,
     view: MemoryView,
 ) -> Ip {
+    let jump = unsafe { (*ip).jump() };
     // SAFETY: the view records the distance to a validated jump target.
-    let jump = unsafe { (*ip).jump };
-    let target = unsafe { ip.byte_offset(jump as isize) };
+    let target = unsafe { ip.byte_offset(jump) };
     if safepoint || jump <= 0 {
-        if unsafe { vm(cx) }.heap.should_collect() {
-            return exit(ip);
+        let remaining = unsafe { (*cx).direct_jumps };
+        if remaining == 0 {
+            let vm = unsafe { vm(cx) };
+            if vm.heap.should_collect() {
+                return exit(ip);
+            }
+            unsafe { (*cx).direct_jumps = safepoint_budget(vm) };
+            return target;
         }
-        return target;
+        unsafe { (*cx).direct_jumps = remaining - 1 };
     }
     next!(cx, r, target, view)
 }
@@ -263,17 +509,22 @@ lane_handler! {
 
 lane_handler! {
     fn lane_jump_false<>(cx, r, ip, i, view) {
-        let value = r.get(i.a);
-        let truthy = match value.as_int() {
-            Some(integer) => integer != 0,
-            None if value == Value::TRUE => true,
-            None if value == Value::FALSE => false,
-            None => return exit(ip),
-        };
+        let truthy = unsafe { vm(cx) }.truthy(r.get(i.a));
         if !truthy {
             return lane_jump(cx, r, ip, true, view);
         }
         next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// Take the selected entry's jump; the view admits a table only when
+    /// every entry is a lane jump.
+    fn lane_branch_table<>(cx, r, ip, i, view) {
+        let case = r.get(i.a).wasm_bits32().min(i.imm());
+        // SAFETY: validation places `imm + 1` entries after the table.
+        let entry = unsafe { ip.add(1 + case as usize) };
+        lane_jump(cx, r, entry, true, view)
     }
 }
 
@@ -318,7 +569,7 @@ lane_handler! {
     fn lane_instance_binding<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
         let env = vm.frames[unsafe { (*cx).frame }].env;
-        let Some(value) = vm.heap.environment_slot(env, i.imm as usize) else {
+        let Some(value) = vm.heap.environment_slot(env, i.imm() as usize) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -353,7 +604,7 @@ lane_handler! {
 
 lane_handler! {
     fn lane_select<>(cx, r, ip, i, view) {
-        let (condition, _) = ImmediateLayout::register_pair(i.imm);
+        let (condition, _) = ImmediateLayout::register_pair(i.imm());
         let source = if r.i32(condition) != 0 { i.b } else { i.c };
         r.set(i.a, r.get(source));
         next!(cx, r, following(ip), view)
@@ -362,10 +613,7 @@ lane_handler! {
 
 lane_handler! {
     fn lane_fill_registers<>(cx, r, ip, i, view) {
-        let program = unsafe { (*cx).program };
-        let Some(value) = unsafe { vm(cx) }.programs.constant(program, i.imm as usize) else {
-            return exit(ip);
-        };
+        let value = i.constant();
         for offset in 0..i.c {
             r.set(i.b + offset, value);
         }
@@ -375,7 +623,7 @@ lane_handler! {
 
 lane_handler! {
     fn lane_i32_unary<>(cx, r, ip, i, view) {
-        let Some(operator) = I32UnaryOperator::from_tag(i.imm) else {
+        let Some(operator) = I32UnaryOperator::from_tag(i.imm()) else {
             return exit(ip);
         };
         let crate::WasmValue::I32(value) = operator.apply(r.i32(i.b)) else {
@@ -399,7 +647,7 @@ lane_handler! {
                 },
             }
         };
-        let right = if immediate { i.imm as i32 } else { r.i32(i.c) };
+        let right = if immediate { i.imm() as i32 } else { r.i32(i.c) };
         let Ok(value) = operator.evaluate(r.i32(i.b), right) else {
             return exit(ip);
         };
@@ -412,7 +660,7 @@ lane_handler! {
 /// view does not hold the accessed binding.
 #[inline(always)]
 fn lane_address(r: Registers, view: MemoryView, i: &LaneInstruction) -> Option<u64> {
-    (r.get(i.b) == view.binding).then(|| u64::from(r.get(i.c).wasm_bits32()) + u64::from(i.imm))
+    (r.get(i.b) == view.binding).then(|| u64::from(r.get(i.c).wasm_bits32()) + u64::from(i.imm()))
 }
 
 /// Resolve the view for the binding the record at `ip` accesses, then resume
@@ -447,7 +695,11 @@ fn lane_resolve_memory<H: Host>(cx: *mut LaneContext<H>, binding: Value, ip: Ip)
 #[cold]
 #[inline(never)]
 fn lane_box_bits64<H: Host>(cx: *mut LaneContext<H>, bits: u64) -> Value {
-    unsafe { vm(cx) }.heap.alloc(Cell::WasmBits64(bits))
+    let vm = unsafe { vm(cx) };
+    let value = vm.heap.alloc(Cell::WasmBits64(bits));
+    // A due collection waits for the next safepoint, which checks the heap.
+    unsafe { (*cx).direct_jumps = safepoint_budget(vm) };
+    value
 }
 
 #[cold]
@@ -541,7 +793,10 @@ fn lane_enter_frame<H: Host>(
     let vm = unsafe { vm(cx) };
     let function = vm.frames[frame].function;
     let program = unsafe { (*cx).program };
-    let Some(base) = vm.programs.lane_view(program, function, lane_view::<H>) else {
+    let Some(base) = vm
+        .programs
+        .lane_view(program, function, derive_lane_view::<H>)
+    else {
         unreachable!("an inline Wasm frame runs a function of its program");
     };
     let r = Registers(vm.frames[frame].registers.as_mut_ptr());
@@ -569,8 +824,8 @@ lane_handler! {
         let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
         let parent = vm.capture_env(caller, 0).unwrap_or(vm.frames[caller].env);
         let window = crate::bytecode::RegisterWindow {
-            base: ImmediateLayout::call_window_base(i.imm),
-            count: ImmediateLayout::argument_count(i.imm),
+            base: ImmediateLayout::call_window_base(i.imm()),
+            count: ImmediateLayout::argument_count(i.imm()),
         };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
@@ -611,44 +866,54 @@ lane_handler! {
 }
 
 /// The handler serving opcode `OP`, derived from the opcode's semantic
-/// family.
-const fn handler_for<H: Host, const OP: u16>() -> Handler<H> {
+/// family; `None` when the general path executes the opcode.
+const fn handler_for<H: Host, const OP: u16>() -> Option<Handler<H>> {
     let Some(op) = Op::from_index(OP as usize) else {
-        return lane_exit::<H>;
+        return None;
     };
     if I32BinaryOperator::from_register_op(op).is_some()
         || I32BinaryOperator::from_immediate_op(op).is_some()
     {
-        return lane_i32_binary::<H, OP>;
+        return Some(lane_i32_binary::<H, OP>);
     }
     if I32BinaryOperator::from_jump_op(op).is_some()
         || I32BinaryOperator::from_immediate_jump_op(op).is_some()
     {
-        return lane_compare_jump::<H, OP>;
+        return Some(lane_compare_jump::<H, OP>);
     }
     if MemoryLoad::from_direct_op(op).is_some() {
-        return lane_load::<H, OP>;
+        return Some(lane_load::<H, OP>);
     }
     if MemoryStore::from_direct_op(op).is_some() {
-        return lane_store::<H, OP>;
+        return Some(lane_store::<H, OP>);
     }
     match op {
-        Op::Move => lane_move::<H>,
-        Op::LoadConst => lane_load_const::<H>,
-        Op::LoadLocalPlain => lane_load_local_plain::<H>,
-        Op::Jump => lane_jump_always::<H>,
-        Op::JumpFalse => lane_jump_false::<H>,
-        Op::WasmJumpI32Zero => lane_jump_i32_zero::<H, true>,
-        Op::WasmJumpI32NonZero => lane_jump_i32_zero::<H, false>,
-        Op::WasmInstanceBinding => lane_instance_binding::<H>,
-        Op::WasmGlobalGet => lane_global_get::<H>,
-        Op::WasmGlobalSet => lane_global_set::<H>,
-        Op::WasmSelect => lane_select::<H>,
-        Op::WasmFillRegisters => lane_fill_registers::<H>,
-        Op::WasmI32Unary => lane_i32_unary::<H>,
-        Op::CallKnown => lane_call_known::<H>,
-        Op::Return => lane_return::<H>,
-        _ => lane_exit::<H>,
+        Op::Move => Some(lane_move::<H>),
+        Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
+        Op::LoadThis => Some(lane_load_this::<H>),
+        Op::GetField => Some(lane_get_field::<H>),
+        Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field::<H>),
+        Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field::<H>),
+        Op::ToNumeric => Some(lane_to_numeric::<H>),
+        Op::IncDec => Some(lane_inc_dec::<H>),
+        Op::Binary => Some(lane_binary::<H>),
+        Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H>),
+        Op::LoadConst => Some(lane_load_const::<H>),
+        Op::LoadLocalPlain => Some(lane_load_local_plain::<H>),
+        Op::Jump => Some(lane_jump_always::<H>),
+        Op::JumpFalse => Some(lane_jump_false::<H>),
+        Op::WasmBranchTable => Some(lane_branch_table::<H>),
+        Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true>),
+        Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false>),
+        Op::WasmInstanceBinding => Some(lane_instance_binding::<H>),
+        Op::WasmGlobalGet => Some(lane_global_get::<H>),
+        Op::WasmGlobalSet => Some(lane_global_set::<H>),
+        Op::WasmSelect => Some(lane_select::<H>),
+        Op::WasmFillRegisters => Some(lane_fill_registers::<H>),
+        Op::WasmI32Unary => Some(lane_i32_unary::<H>),
+        Op::CallKnown => Some(lane_call_known::<H>),
+        Op::Return => Some(lane_return::<H>),
+        _ => None,
     }
 }
 
@@ -684,9 +949,9 @@ macro_rules! table_row {
 }
 
 const fn flatten_rows<H: Host>(
-    rows: [[Handler<H>; TABLE_ROW as usize]; TABLE_ROWS],
-) -> [Handler<H>; TABLE_SLOTS] {
-    let mut table = [lane_exit::<H> as Handler<H>; TABLE_SLOTS];
+    rows: [[Option<Handler<H>>; TABLE_ROW as usize]; TABLE_ROWS],
+) -> [Option<Handler<H>>; TABLE_SLOTS] {
+    let mut table = [None; TABLE_SLOTS];
     let mut slot = 0;
     while slot < TABLE_SLOTS {
         table[slot] = rows[slot / TABLE_ROW as usize][slot % TABLE_ROW as usize];
@@ -698,7 +963,7 @@ const fn flatten_rows<H: Host>(
 struct LaneTable<H>(std::marker::PhantomData<H>);
 
 impl<H: Host> LaneTable<H> {
-    const HANDLERS: [Handler<H>; TABLE_SLOTS] = flatten_rows([
+    const HANDLERS: [Option<Handler<H>>; TABLE_SLOTS] = flatten_rows([
         table_row!(H, 0),
         table_row!(H, 1),
         table_row!(H, 2),
@@ -720,16 +985,37 @@ impl<H: Host> LaneTable<H> {
 
 /// Whether the lane may run `instruction` from its view record: every
 /// register it names lies inside the register file and carries no flag.
-fn lane_fields_fit(instruction: WideInstruction, registers: u16) -> bool {
+fn lane_fields_fit(instruction: WideInstruction, function: &Function) -> bool {
+    let registers = function.registers;
     let op = instruction.op();
     let fields = [
         (InstructionField::A, instruction.a()),
         (InstructionField::B, instruction.b()),
         (InstructionField::C, instruction.c()),
     ];
+    let numeric_local = instruction.writes_numeric_local()
+        && instruction.a() & crate::bytecode::RETURN_REGISTER == 0
+        && instruction.result_register() < function.locals;
     let registers_fit = fields
         .iter()
-        .all(|&(field, value)| !op.field_layout(field).is_register_field() || value < registers);
+        .all(|&(field, value)| match op.field_layout(field) {
+            FieldLayout::ResultRegister if field == InstructionField::A && numeric_local => true,
+            FieldLayout::FieldBase => {
+                value == crate::bytecode::FieldBase::NESTED
+                    || crate::bytecode::FieldBase(value)
+                        .register_index()
+                        .is_none_or(|register| register < registers)
+            }
+            FieldLayout::OptionalRegister => value
+                .checked_sub(crate::bytecode::OPTIONAL_REGISTER_BIAS)
+                .is_none_or(|register| register < registers),
+            FieldLayout::Operand => {
+                let operand = crate::bytecode::Operand(value);
+                operand.kind() != Some(crate::bytecode::OperandKind::Register)
+                    || operand.payload() < registers
+            }
+            layout => !layout.is_register_field() || value < registers,
+        });
     let window_fits = op != Op::WasmFillRegisters
         || u32::from(instruction.b()) + u32::from(instruction.c()) <= u32::from(registers);
     let pair_fits = op.immediate_layout() != ImmediateLayout::RegisterPair || {
@@ -739,45 +1025,90 @@ fn lane_fields_fit(instruction: WideInstruction, registers: u16) -> bool {
     registers_fit && window_fits && pair_fits
 }
 
-/// Derive a function's lane view from its bytecode.
-fn lane_view<H: Host>(function: &Function) -> Box<[LaneInstruction]> {
+/// The record operand of `instruction` at `pc`, or `None` when its jump or
+/// constant cannot be resolved.
+fn lane_operand(
+    instruction: WideInstruction,
+    pc: usize,
+    constants: &[Value],
+) -> Option<LaneOperand> {
+    let record = std::mem::size_of::<LaneInstruction>() as isize;
+    Some(match instruction.op().immediate_role() {
+        ImmediateRole::JumpTarget => {
+            let distance = isize::try_from(instruction.imm()).ok()? - isize::try_from(pc).ok()?;
+            LaneOperand {
+                jump: distance.checked_mul(record)?,
+            }
+        }
+        ImmediateRole::ConstantIndex => LaneOperand {
+            constant: *constants.get(instruction.imm() as usize)?,
+        },
+        _ => LaneOperand {
+            imm: instruction.imm(),
+        },
+    })
+}
+
+/// Derive a function's lane view from its bytecode and its program's
+/// constants.
+fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> Box<[LaneInstruction]> {
     let handlers = const { &LaneTable::<H>::HANDLERS };
-    let record = std::mem::size_of::<LaneInstruction>() as i64;
-    function
+    let mut view: Box<[LaneInstruction]> = function
         .code
         .iter()
         .enumerate()
         .map(|(pc, packed)| {
-            let instruction = if packed.is_wide() {
-                function.wide[packed.wide_index()]
-            } else {
-                packed.as_wide()
-            };
-            let op = instruction.op();
-            let jump = if op.immediate_role() == ImmediateRole::JumpTarget {
-                i32::try_from((i64::from(instruction.imm()) - pc as i64) * record).ok()
-            } else {
-                Some(0)
-            };
-            let handler = match jump {
-                Some(_) if lane_fields_fit(instruction, function.registers) => {
-                    handlers[op as usize]
-                }
-                _ => lane_exit::<H>,
-            };
+            let instruction = decoded_instruction(function, *packed);
+            let operand = lane_operand(instruction, pc, constants)
+                .filter(|_| lane_fields_fit(instruction, function));
+            let handler = operand.and(handlers[instruction.op() as usize]);
             LaneInstruction {
-                handler: handler as *const (),
-                imm: instruction.imm(),
-                jump: jump.unwrap_or(0),
+                handler: handler.unwrap_or(lane_exit::<H>) as *const (),
+                operand: operand.unwrap_or(LaneOperand { imm: 0 }),
                 a: instruction.a(),
                 b: instruction.b(),
                 c: instruction.c(),
+                exits: handler.is_none(),
             }
         })
-        .collect()
+        .collect();
+    // A table follows its selected entry's jump, so every entry must run in
+    // the lane.
+    for (pc, packed) in function.code.iter().enumerate() {
+        let instruction = decoded_instruction(function, *packed);
+        if instruction.op() == Op::WasmBranchTable
+            && crate::bytecode::branch_table_entries(pc, instruction).any(|entry| view[entry].exits)
+        {
+            view[pc].handler = lane_exit::<H> as Handler<H> as *const ();
+            view[pc].exits = true;
+        }
+    }
+    view
+}
+
+fn decoded_instruction(function: &Function, packed: crate::bytecode::Instr) -> WideInstruction {
+    if packed.is_wide() {
+        function.wide[packed.wide_index()]
+    } else {
+        packed.as_wide()
+    }
 }
 
 impl<H: Host> Vm<H> {
+    /// The lane view of `function`, or null when its program has none.
+    pub(super) fn lane_view(&self, program: ProgramId, function: u32) -> Ip {
+        self.programs
+            .lane_view(program, function, derive_lane_view::<H>)
+            .unwrap_or(std::ptr::null())
+    }
+
+    /// Whether the instruction at `pc` of `view` runs in the lane.
+    #[inline(always)]
+    pub(super) fn lane_runs(view: Ip, pc: usize) -> bool {
+        // SAFETY: a non-null view has a record for every validated PC.
+        !view.is_null() && unsafe { !(*view.add(pc)).exits }
+    }
+
     /// Run lane instructions from `pc` in `frame` and return the PC of the
     /// first one that needs the general path; lane calls and returns update
     /// `frame` and `pending` as the general loop would. Kept out of line so
@@ -789,16 +1120,14 @@ impl<H: Host> Vm<H> {
         &mut self,
         code: &ResidualProgram,
         program: ProgramId,
-        function: u32,
+        base: Ip,
         frame: &mut usize,
         pc: usize,
         pending: &mut Vec<PendingGeneralCall>,
         inline_calls: bool,
     ) -> usize {
-        let Some(base) = self.programs.lane_view(program, function, lane_view::<H>) else {
-            return pc;
-        };
         let registers = Registers(self.frames[*frame].registers.as_mut_ptr());
+        let direct_jumps = safepoint_budget(self);
         let mut cx = LaneContext {
             vm: self,
             code,
@@ -808,6 +1137,7 @@ impl<H: Host> Vm<H> {
             base,
             pending,
             inline_calls: inline_calls && code.kind == crate::bytecode::ProgramKind::Wasm,
+            direct_jumps,
             memory: MemoryView::NONE,
         };
         // SAFETY: the view has one record per instruction, and residual
