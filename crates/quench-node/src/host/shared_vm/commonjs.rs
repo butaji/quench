@@ -228,6 +228,10 @@ pub(super) fn require(
                 )),
             };
         }
+        Some(BuiltinModule::UtilTypes) => {
+            let util = cached_builtin(context, BuiltinModule::Util)?;
+            return get(context, util, "types");
+        }
         Some(BuiltinModule::InternalDgram) => {
             let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
             context.release_root(dgram);
@@ -433,6 +437,7 @@ enum BuiltinModule {
     StringDecoder,
     WorkerThreads,
     Util,
+    UtilTypes,
     Timers,
     TimersPromises,
     NodeTest,
@@ -492,6 +497,7 @@ impl BuiltinModule {
             Self::StringDecoder => Some("string_decoder"),
             Self::WorkerThreads => Some("worker_threads"),
             Self::Util => Some("util"),
+            Self::UtilTypes => Some("util/types"),
             Self::Timers => Some("timers"),
             Self::TimersPromises => Some("timers/promises"),
             Self::NodeTest => Some("node:test"),
@@ -587,6 +593,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:worker_threads", BuiltinModule::WorkerThreads),
     ("util", BuiltinModule::Util),
     ("node:util", BuiltinModule::Util),
+    ("util/types", BuiltinModule::UtilTypes),
+    ("node:util/types", BuiltinModule::UtilTypes),
     ("child_process", BuiltinModule::ChildProcess),
     ("node:child_process", BuiltinModule::ChildProcess),
     ("url", BuiltinModule::Url),
@@ -676,6 +684,10 @@ pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedE
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
+        BuiltinModule::UtilTypes => {
+            let util = cached_builtin(context, BuiltinModule::Util)?;
+            get(context, util, "types")
+        }
         BuiltinModule::FsPromises => {
             let fs = cached_builtin(context, BuiltinModule::Fs)?;
             get(context, fs, "promises")
