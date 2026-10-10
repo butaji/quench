@@ -358,10 +358,15 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
       const state = states.get(this);
       if (state.lifecycle !== "open") throw finalized();
       state.lifecycle = "finalized";
+      const options = key !== null && typeof key === "object" && key.key !== undefined ? key : {};
       const material = key !== null && typeof key === "object" && key.key !== undefined ? key.key : key;
       const pem = typeof material === "string" ? Buffer.from(material) : inputBuffer(material);
+      const passphrase = options.passphrase === undefined ? Buffer.alloc(0) : cryptoBytes(options.passphrase);
+      if (pem.toString("utf8").includes("ENCRYPTED") && passphrase.length === 0) {
+        throw new Error("error:07880109:common libcrypto routines::interrupted or cancelled");
+      }
       try {
-        const signature = Buffer.from(signDigest(state.name, state.chunks.flat(), Array.from(pem)));
+        const signature = Buffer.from(signDigest(state.name, state.chunks.flat(), Array.from(pem), Array.from(passphrase), options.format || "pem", options.type || "pkcs8"));
         return outputEncoding === undefined || outputEncoding === "buffer"
           ? signature
           : signature.toString(outputEncoding);
@@ -419,7 +424,10 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
       const signatureBytes = typeof signature === "string"
         ? Buffer.from(signature, signatureEncoding)
         : inputBuffer(signature);
-      return verifyDigest(state.name, state.chunks.flat(), Array.from(pem), Array.from(signatureBytes));
+      const passphrase = key !== null && typeof key === "object" && key.passphrase !== undefined
+        ? cryptoBytes(key.passphrase) : Buffer.alloc(0);
+      const keyOptions = key !== null && typeof key === "object" ? key : {};
+      return verifyDigest(state.name, state.chunks.flat(), Array.from(pem), Array.from(signatureBytes), Array.from(passphrase), keyOptions.format || "pem", keyOptions.type || "spki");
     }
   }
 
@@ -1582,7 +1590,10 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
   const rsaCrypt = (decrypt, privateKey, key, data) => {
     const material = key && typeof key === "object" && key.key !== undefined ? key.key : key;
     const keyBytes = typeof material === "string" ? Buffer.from(material) : cryptoBytes(material);
-    return Buffer.from(rsaCryptNative(decrypt, privateKey, keyBytes, cryptoBytes(data)));
+    const passphrase = key && typeof key === "object" && key.passphrase !== undefined ? cryptoBytes(key.passphrase) : Buffer.alloc(0);
+    const format = key && typeof key === "object" && key.format || "pem";
+    const type = key && typeof key === "object" && key.type || "spki";
+    return Buffer.from(rsaCryptNative(decrypt, privateKey, keyBytes, cryptoBytes(data), passphrase, format, type));
   };
   const publicEncrypt = (key, data) => rsaCrypt(false, false, key, data);
   const privateDecrypt = (key, data) => rsaCrypt(true, true, key, data);
@@ -1639,7 +1650,13 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     const exponent = options.publicExponent === undefined ? 65537 : options.publicExponent;
     if (!Number.isInteger(bits) || bits < 512 || bits > 16384) throw rangeError("options.modulusLength", bits);
     if (!Number.isSafeInteger(exponent) || exponent < 3 || exponent > 0xffffffff) throw rangeError("options.publicExponent", exponent);
-    const result = generateRsaKeyPairNative(bits, exponent);
+    const privateEncoding = options.privateKeyEncoding || {};
+    const encryptedPassphrase = privateEncoding.passphrase === undefined
+      ? Buffer.alloc(0)
+      : typeof privateEncoding.passphrase === "string"
+        ? Buffer.from(privateEncoding.passphrase)
+        : cryptoBytes(privateEncoding.passphrase);
+    const result = generateRsaKeyPairNative(bits, exponent, privateEncoding.cipher || "", encryptedPassphrase);
     const privatePem = Buffer.from(result[0]);
     const publicPem = Buffer.from(result[1]);
     const privateDer = Buffer.from(result[2]);
@@ -1648,11 +1665,14 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     const privatePkcs1 = Buffer.from(result[5]);
     const publicPkcs1Der = Buffer.from(result[6]);
     const privatePkcs1Der = Buffer.from(result[7]);
+    const encryptedPrivatePem = Buffer.from(result[8]);
     const privateKey = new KeyObject("private", privatePem, privateDer, type, privatePkcs1, privatePkcs1Der);
     const publicKey = new KeyObject("public", publicPem, publicDer, type, publicPkcs1, publicPkcs1Der);
     return {
       publicKey: keyOutput(publicKey, options.publicKeyEncoding, "spki"),
-      privateKey: keyOutput(privateKey, options.privateKeyEncoding, "pkcs8"),
+      privateKey: privateEncoding.cipher
+        ? encryptedPrivatePem.toString(privateEncoding.encoding || "utf8")
+        : keyOutput(privateKey, options.privateKeyEncoding, "pkcs8"),
     };
   };
   const generateKeyPair = (type, options, callback) => {
@@ -1803,6 +1823,50 @@ pub(crate) fn module(
     )
 }
 
+fn private_key_from_pem(
+    pem: &[u8],
+    passphrase: &[u8],
+) -> Result<openssl::pkey::PKey<openssl::pkey::Private>, openssl::error::ErrorStack> {
+    if passphrase.is_empty() {
+        openssl::pkey::PKey::private_key_from_pem(pem)
+            .or_else(|_| openssl::rsa::Rsa::private_key_from_pem(pem).and_then(openssl::pkey::PKey::from_rsa))
+    } else {
+        openssl::pkey::PKey::private_key_from_pem_passphrase(pem, passphrase)
+            .or_else(|_| openssl::rsa::Rsa::private_key_from_pem_passphrase(pem, passphrase).and_then(openssl::pkey::PKey::from_rsa))
+    }
+}
+
+fn private_key_from_data(
+    data: &[u8],
+    passphrase: &[u8],
+    format: &str,
+    key_type: &str,
+) -> Result<openssl::pkey::PKey<openssl::pkey::Private>, openssl::error::ErrorStack> {
+    if format == "der" {
+        if key_type == "pkcs1" {
+            openssl::rsa::Rsa::private_key_from_der(data).and_then(openssl::pkey::PKey::from_rsa)
+        } else {
+            openssl::pkey::PKey::private_key_from_der(data)
+        }
+    } else {
+        private_key_from_pem(data, passphrase)
+    }
+}
+
+fn public_key_from_data(
+    data: &[u8],
+    format: &str,
+    key_type: &str,
+) -> Result<openssl::pkey::PKey<openssl::pkey::Public>, openssl::error::ErrorStack> {
+    if format == "der" && key_type == "pkcs1" {
+        openssl::rsa::Rsa::public_key_from_der_pkcs1(data).and_then(openssl::pkey::PKey::from_rsa)
+    } else if format == "der" {
+        openssl::pkey::PKey::public_key_from_der(data)
+    } else {
+        openssl::pkey::PKey::public_key_from_pem(data)
+    }
+}
+
 pub(crate) fn generate_rsa_key_pair(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -1818,6 +1882,10 @@ pub(crate) fn generate_rsa_key_pair(
         .and_then(|value| value.as_number())
         .filter(|value| value.is_finite() && *value >= 3.0 && *value <= u32::MAX as f64 && value.fract() == 0.0)
         .unwrap_or(65537.0) as u32;
+    let cipher_name = args.get(2).copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .unwrap_or_default();
+    let passphrase = args.get(3).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
     let public_exponent = openssl::bn::BigNum::from_u32(exponent)
         .map_err(|error| RootedError::host(error.to_string()))?;
     let rsa = openssl::rsa::Rsa::generate_with_e(bits, &public_exponent)
@@ -1826,6 +1894,18 @@ pub(crate) fn generate_rsa_key_pair(
         .map_err(|error| RootedError::host(error.to_string()))?;
     let private_pkcs1_pem = rsa.private_key_to_pem()
         .map_err(|error| RootedError::host(error.to_string()))?;
+    let encrypted_private_pem = if cipher_name.is_empty() {
+        private_pkcs1_pem.clone()
+    } else {
+        let cipher = match cipher_name.to_ascii_lowercase().as_str() {
+            "aes-128-cbc" => openssl::symm::Cipher::aes_128_cbc(),
+            "aes-192-cbc" => openssl::symm::Cipher::aes_192_cbc(),
+            "aes-256-cbc" => openssl::symm::Cipher::aes_256_cbc(),
+            _ => return Err(RootedError::host(format!("Unknown cipher: {cipher_name}"))),
+        };
+        rsa.private_key_to_pem_passphrase(cipher, &passphrase)
+            .map_err(|error| RootedError::host(error.to_string()))?
+    };
     let public_pkcs1_der = rsa.public_key_to_der_pkcs1()
         .map_err(|error| RootedError::host(error.to_string()))?;
     let private_pkcs1_der = rsa.private_key_to_der()
@@ -1846,6 +1926,7 @@ pub(crate) fn generate_rsa_key_pair(
     let private_pkcs1_values = private_pkcs1_pem.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
     let public_pkcs1_der_values = public_pkcs1_der.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
     let private_pkcs1_der_values = private_pkcs1_der.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let encrypted_private_values = encrypted_private_pem.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
     let private_der_values = private_der.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
     let public_der_values = public_der.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
     let private = context.array_rooted(&private_values)?;
@@ -1854,9 +1935,10 @@ pub(crate) fn generate_rsa_key_pair(
     let private_pkcs1 = context.array_rooted(&private_pkcs1_values)?;
     let public_pkcs1_der = context.array_rooted(&public_pkcs1_der_values)?;
     let private_pkcs1_der = context.array_rooted(&private_pkcs1_der_values)?;
+    let encrypted_private = context.array_rooted(&encrypted_private_values)?;
     let private_der = context.array_rooted(&private_der_values)?;
     let public_der = context.array_rooted(&public_der_values)?;
-    context.array_rooted(&[private, public, private_der, public_der, public_pkcs1, private_pkcs1, public_pkcs1_der, private_pkcs1_der])
+    context.array_rooted(&[private, public, private_der, public_der, public_pkcs1, private_pkcs1, public_pkcs1_der, private_pkcs1_der, encrypted_private])
 }
 
 pub(crate) fn rsa_crypt(
@@ -1874,8 +1956,11 @@ pub(crate) fn rsa_crypt(
         .unwrap_or(false);
     let key_bytes = byte_array(context, *args.get(2).ok_or_else(|| RootedError::host("RSA key is missing"))?)?;
     let input = byte_array(context, *args.get(3).ok_or_else(|| RootedError::host("RSA input is missing"))?)?;
+    let passphrase = args.get(4).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
+    let format = args.get(5).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "pem".to_owned());
+    let key_type = args.get(6).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "spki".to_owned());
     let output = if decrypt {
-        let key = openssl::pkey::PKey::private_key_from_pem(&key_bytes)
+        let key = private_key_from_data(&key_bytes, &passphrase, &format, &key_type)
             .map_err(|error| RootedError::host(error.to_string()))?;
         let mut operation = openssl::encrypt::Decrypter::new(&key)
             .map_err(|error| RootedError::host(error.to_string()))?;
@@ -1886,7 +1971,7 @@ pub(crate) fn rsa_crypt(
         output.truncate(length);
         output
     } else if private {
-        let key = openssl::pkey::PKey::private_key_from_pem(&key_bytes)
+        let key = private_key_from_data(&key_bytes, &passphrase, &format, &key_type)
             .map_err(|error| RootedError::host(error.to_string()))?;
         let mut operation = openssl::encrypt::Encrypter::new(&key)
             .map_err(|error| RootedError::host(error.to_string()))?;
@@ -1897,10 +1982,10 @@ pub(crate) fn rsa_crypt(
         output.truncate(length);
         output
     } else {
-        let key = match openssl::pkey::PKey::public_key_from_pem(&key_bytes) {
+        let key = match public_key_from_data(&key_bytes, &format, &key_type) {
             Ok(key) => key,
             Err(_) => {
-                let private_key = openssl::pkey::PKey::private_key_from_pem(&key_bytes)
+                let private_key = private_key_from_data(&key_bytes, &passphrase, &format, &key_type)
                     .map_err(|error| RootedError::host(error.to_string()))?;
                 let public_pem = private_key.public_key_to_pem()
                     .map_err(|error| RootedError::host(error.to_string()))?;
@@ -2207,10 +2292,14 @@ pub(crate) fn verify(
     let input = byte_array(context, *args.get(1).ok_or_else(|| RootedError::host("crypto verification input is missing"))?)?;
     let key_bytes = byte_array(context, *args.get(2).ok_or_else(|| RootedError::host("crypto public key is missing"))?)?;
     let signature = byte_array(context, *args.get(3).ok_or_else(|| RootedError::host("crypto signature is missing"))?)?;
-    let key = match openssl::pkey::PKey::public_key_from_pem(&key_bytes) {
+    let passphrase = args.get(4).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
+    let format = args.get(5).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "pem".to_owned());
+    let key_type = args.get(6).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "spki".to_owned());
+    let key = match public_key_from_data(&key_bytes, &format, &key_type) {
         Ok(key) => key,
         Err(_) => {
-            if let Ok(private) = openssl::pkey::PKey::private_key_from_pem(&key_bytes) {
+            let private_key = private_key_from_data(&key_bytes, &passphrase, &format, &key_type);
+            if let Ok(private) = private_key {
                 let public = private.public_key_to_pem()
                     .map_err(|error| RootedError::host(error.to_string()))?;
                 openssl::pkey::PKey::public_key_from_pem(&public)
@@ -2247,7 +2336,10 @@ pub(crate) fn sign(
         .ok_or_else(|| RootedError::host("crypto private key is missing"))?;
     let input = byte_array(context, input_root)?;
     let key_bytes = byte_array(context, key_root)?;
-    let key = openssl::pkey::PKey::private_key_from_pem(&key_bytes)
+    let passphrase = args.get(3).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
+    let format = args.get(4).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "pem".to_owned());
+    let key_type = args.get(5).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "pkcs8".to_owned());
+    let key = private_key_from_data(&key_bytes, &passphrase, &format, &key_type)
         .map_err(|error| RootedError::host(error.to_string()))?;
     let digest = openssl::hash::MessageDigest::from_name(&algorithm)
         .ok_or_else(|| RootedError::host("Digest method not supported"))?;
