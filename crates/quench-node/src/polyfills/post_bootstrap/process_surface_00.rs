@@ -8,6 +8,42 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
       Object.setPrototypeOf(Process.prototype, globalThis.__nodeEventEmitter.prototype);
       Object.setPrototypeOf(globalThis.process, Process.prototype);
     }
+    globalThis.process.kill ||= (pid, signal) => {
+      const numericPid = typeof pid === "number" ? pid :
+        typeof pid === "string" && pid !== "" ? Number(pid) : NaN;
+      if (!Number.isInteger(numericPid) || numericPid < -2147483648 ||
+          numericPid > 2147483647) {
+        const received = pid === null ? "null" : pid === undefined ? "undefined" :
+          typeof pid === "string" ? `type string ('${pid}')` :
+          typeof pid === "number" ? `type number (${String(pid)})` :
+          `an instance of ${pid.constructor?.name || typeof pid}`;
+        const error = new TypeError(`The "pid" argument must be of type number. Received ${received}`);
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      const signalNumbers = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGKILL: 9, SIGTERM: 15 };
+      let number;
+      if (Number.isInteger(signal)) {
+        number = signal;
+      } else {
+        const name = signal || "SIGTERM";
+        number = signalNumbers[name];
+        if (number === undefined) {
+          const error = new TypeError(`Unknown signal: ${name}`);
+          error.code = "ERR_UNKNOWN_SIGNAL";
+          throw error;
+        }
+      }
+      const errorCode = globalThis.process._kill(pid, number);
+      if (errorCode) {
+        const errorNames = { 1: "EPERM", 2: "ENOENT", 3: "ESRCH", 13: "EACCES", 22: "EINVAL" };
+        const code = errorNames[errorCode] || "UNKNOWN";
+        const error = new Error(`kill ${code}`);
+        error.code = code;
+        throw error;
+      }
+      return true;
+    };
     const processEnv = globalThis.process.env;
     if (processEnv) {
       globalThis.process.env = new Proxy(processEnv, {
