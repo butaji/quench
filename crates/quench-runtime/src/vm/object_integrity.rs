@@ -2,6 +2,14 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
 impl<H: Host> Vm<H> {
+    fn is_immutable_prototype_exotic(&self, target: Value) -> bool {
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .iter()
+            .any(|((_, native), prototype)| *native == Native::Object && *prototype == target)
+    }
+
     pub(super) fn delete_name(
         &mut self,
         p: &ResidualProgram,
@@ -353,7 +361,7 @@ impl<H: Host> Vm<H> {
         if self.same_value(current_proto, proto) {
             return Ok(true);
         }
-        if target == self.object_proto || !extensible {
+        if self.is_immutable_prototype_exotic(target) || !extensible {
             return Ok(false);
         }
         let mut cursor = proto;
