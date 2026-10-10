@@ -174,9 +174,11 @@ impl<H: Host> Vm<H> {
         let function = &p.functions[id as usize];
         let program = self.active_program;
         let with_base = self.with_stack.len();
-        let (caller, frame) = self
-            .frames
-            .activate_after(caller, || Frame::empty(program, with_base));
+        let mut frame = self
+            .frame_pool
+            .pop()
+            .unwrap_or_else(|| Frame::empty(program, with_base));
+        let caller = &self.frames[caller];
         let arguments_base = usize::from(arguments.base);
         let local_arguments = usize::from(arguments.count.min(function.local_parameter_count()));
         frame.locals.clear();
@@ -202,6 +204,7 @@ impl<H: Host> Vm<H> {
             frame.registers[base..base + count]
                 .copy_from_slice(&caller.registers[arguments_base..arguments_base + count]);
         }
+        self.frames.push(frame);
         Ok(stack_guard)
     }
 
@@ -246,8 +249,8 @@ impl<H: Host> Vm<H> {
         }
         let function = &p.functions[id as usize];
         let mut frame = self
-            .frames
-            .take_spare()
+            .frame_pool
+            .pop()
             .unwrap_or_else(|| self.empty_frame());
         frame
             .locals
@@ -395,11 +398,11 @@ impl<H: Host> Vm<H> {
                 } else {
                     FrameOutcome::Complete(value)
                 };
-                self.frames.recycle(frame);
+                self.frame_pool.push(Self::recycle_frame(frame));
                 Ok(UserFrameStart::Outcome(outcome))
             }
             FrameOutcome::ConstructComplete { .. } => {
-                self.frames.recycle(frame);
+                self.frame_pool.push(Self::recycle_frame(frame));
                 Err(JsError(
                     "nested constructor completion escaped its activation".into(),
                 ))
@@ -818,25 +821,38 @@ impl<H: Host> Vm<H> {
     }
 
     /// Return from a frame the running loop pushed. Such a frame completes
-    /// or throws, so it releases its `with` scopes and its slot is reused in
-    /// place; a root record still persists its global lexical bindings.
+    /// or throws, so it releases its `with` scopes and returns its storage to
+    /// the pool; a root record still persists its global lexical bindings.
     pub(super) fn retire_pending_frame(&mut self, p: &ResidualProgram) {
-        if self.eval_script_context
-            && self.frames.last().map(|frame| frame.function) == Some(super::ROOT_FUNCTION_ID)
-        {
-            let frame = self.frames.pop().expect("pending frame is active");
-            self.with_stack.truncate(frame.with_base);
-            self.persist_global_lexical_bindings(p, &frame);
-            self.frames.recycle(frame);
-            return;
-        }
-        let frame = self.frames.retire();
+        let frame = self.frames.pop().expect("pending frame is active");
         self.with_stack.truncate(frame.with_base);
-        frame.reset_for_reuse();
+        self.persist_global_lexical_bindings(p, &frame);
+        self.frame_pool.push(Self::recycle_frame(frame));
     }
 
     pub(super) fn recycle_frame(mut frame: Frame) -> Frame {
-        frame.reset_for_reuse();
+        frame.context = CallContext::Internal;
+        frame.original_arguments.clear();
+        frame.with_objects = Vec::new();
+        const RETAINED_VALUES: usize = 256;
+        if frame.original_arguments.capacity() > RETAINED_VALUES {
+            frame.original_arguments.shrink_to(RETAINED_VALUES);
+        }
+        if frame.locals.capacity() > RETAINED_VALUES {
+            frame.locals.clear();
+            frame.locals.shrink_to(RETAINED_VALUES);
+        }
+        if frame.registers.capacity() > RETAINED_VALUES {
+            frame.registers.clear();
+            frame.registers.shrink_to(RETAINED_VALUES);
+        }
+        if frame.dynamic_bindings.capacity() > RETAINED_VALUES {
+            frame.dynamic_bindings.clear();
+            frame.dynamic_bindings.shrink_to(RETAINED_VALUES);
+        } else {
+            frame.dynamic_bindings.clear();
+        }
+        frame.active_iterators.clear();
         frame
     }
 
