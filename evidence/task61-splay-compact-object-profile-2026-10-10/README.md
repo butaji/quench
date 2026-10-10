@@ -139,3 +139,26 @@ candidate binary was built from compact-space worktree base
 The report's source revision therefore identifies the runner checkout, not the
 candidate build source. Candidate compilation and 546 runtime library tests
 passed before pinning.
+
+## Richards legacy GetField cache fast path: rejected
+
+The next hypothesis kept legacy `Cell::Object` cache hits on the pre-space
+property representation: it bypassed `Heap::object`/`ObjectRef` for own-field
+hits and read the cached slot directly from `ValueArena`. The Richards
+fixed-work gate again completed with 11/11 clean pairs and equal output, but
+the path was slower: the paired marginal instruction delta was +30.66%
+(195,702,313 versus 149,782,913 instructions/run; per-pair range +30.65% to
++30.67%), and the paired cycle median was +29.23% (range +26.91% to +31.47%).
+Max work RSS was 19,529,728 B versus 19,972,096 B. The compact-space
+regression therefore remains; this own-property-only fast path is rejected.
+It does not test an inherited-holder cache fast path. Active Splay distances
+remain 1.24x speed / 2.09x RSS.
+
+Raw report: [`richards-legacy-field-cache-fastpath-11.json`](richards-legacy-field-cache-fastpath-11.json).
+Candidate executable SHA-256 is
+`0525552744fefc5d0ac639af2033902e28f13ecae22f77ad8ba4618611f096c6`; it was
+built from worktree base `a03e0646ff216a192d85c6d1d22307855cdb21f2` plus dirty
+diff SHA-256
+`ce85800a2ed7946543bdc38da88029da30ea2ecc921ae45f53078b5aa77a9226`.
+The report's source revision again identifies the clean runner checkout
+(`a352d170f`), not that candidate worktree.
