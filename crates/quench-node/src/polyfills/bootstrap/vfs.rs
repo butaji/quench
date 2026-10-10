@@ -9,17 +9,30 @@ const __quenchVfsNativeFs = Object.fromEntries(
     .map((name) => [name, globalThis.__nodeFs[name].bind(globalThis.__nodeFs)])
 );
 const __quenchVfsNative = {
-  readAll(fd) {
-    const size = Number(__quenchVfsNativeFs.fstatSync(fd).size);
-    const buffer = __quenchVfsBuffer.alloc(size);
-    const bytesRead = __quenchVfsNativeFs.readSync(
-      fd,
-      buffer,
-      0,
-      size,
-      null
-    );
-    return Array.from(buffer.subarray(0, bytesRead));
+  readAll(fd, inspectSize = true) {
+    const size = inspectSize
+      ? Number(
+          [...__quenchVfsMounts].some((vfs) => vfs.__fds.has(fd))
+            ? __quenchVfsNativeFs.fstatSync(fd).size
+            : globalThis.__nodeFs.fstatSync(fd).size
+        )
+      : 0;
+    const chunks = [];
+    let position = 0;
+    while (position < size || size === 0) {
+      const buffer = __quenchVfsBuffer.alloc(64 * 1024);
+      const bytesRead = __quenchVfsNativeFs.readSync(
+        fd,
+        buffer,
+        0,
+        buffer.length,
+        position
+      );
+      if (bytesRead === 0) break;
+      chunks.push(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+    return Array.from(__quenchVfsBuffer.concat(chunks));
   },
   readAt(fd, position, length) {
     const buffer = __quenchVfsBuffer.alloc(length);
@@ -274,10 +287,10 @@ class __QuenchVirtualFileSystem {
               options === "utf8" ? "utf8" : options.encoding
             )
           : __quenchVfsBuffer.from(bytes);
-      const readFileSync = (options) => {
+      const readFileSync = (options, inspectSize = true) => {
         check();
         return decodeReadFile(
-          __quenchVfsNative.readAll(fd),
+          __quenchVfsNative.readAll(fd, inspectSize),
           options
         );
       };
@@ -336,16 +349,19 @@ class __QuenchVirtualFileSystem {
         truncate: async (length) => truncateSync(length),
         readFileSync,
         readFile: async (options) => {
-          const observedFs = globalThis.require?.("fs");
+          const observedFs = globalThis.__nodeFs;
           if (observedFs?.fstat) {
-            try {
-              observedFs.fstat(fd, () => {});
-            } catch (_) {
-              // Descriptor-backed reads remain valid even if the public
-              // metadata observer rejects this provider-local descriptor.
-            }
+            await new Promise((resolve, reject) => {
+              try {
+                observedFs.fstat(fd, (error) => error ? reject(error) : resolve());
+              } catch (error) {
+                // Descriptor-backed reads remain valid if the public metadata
+                // observer rejects this provider-local descriptor.
+                resolve();
+              }
+            });
           }
-          return readFileSync(options);
+          return readFileSync(options, false);
         },
         closeSync: () => {
           if (!closed) {
