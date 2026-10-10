@@ -228,25 +228,29 @@ impl<H: Host> Vm<H> {
         if !with_objects.is_empty() {
             env = self.heap.alloc(Cell::Environment {
                 parent: env,
-                program: None,
-                root_eval_scope: false,
-                binding_site_pc: None,
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
-                dynamic_bindings: Vec::new().into(),
-                with_objects: with_objects.into_boxed_slice(),
+                scope: Box::new(crate::heap::EnvironmentScope {
+                    program: None,
+                    root_eval_scope: false,
+                    binding_site_pc: None,
+                    dynamic_bindings: Vec::new().into(),
+                    with_objects: with_objects.into_boxed_slice(),
+                }),
             });
         }
         if function_plan.is_arrow {
             env = self.heap.alloc(Cell::Environment {
                 parent: env,
-                program: None,
-                root_eval_scope: false,
-                binding_site_pc: None,
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
-                dynamic_bindings: Vec::new().into(),
-                with_objects: Box::default(),
+                scope: Box::new(crate::heap::EnvironmentScope {
+                    program: None,
+                    root_eval_scope: false,
+                    binding_site_pc: None,
+                    dynamic_bindings: Vec::new().into(),
+                    with_objects: Box::default(),
+                }),
             });
         }
         let has_instance_prototype = function_plan.constructible || function_plan.is_generator;
@@ -965,7 +969,7 @@ impl<H: Host> Vm<H> {
                     ProxyKind::Object
                 };
                 Ok(self.heap.alloc(Cell::Proxy {
-                    object: Self::empty_object(self.object_proto),
+                    object: Box::new(Self::empty_object(self.object_proto)),
                     kind,
                     target,
                     handler,

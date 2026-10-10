@@ -5,14 +5,10 @@ use crate::value::Value;
 impl Heap {
     pub(crate) fn environment_binding_owner(&self, environment: Value) -> Option<Value> {
         match self.get(environment)? {
-            Cell::Environment {
-                dynamic_bindings: EnvironmentBindings::Owned(_),
-                ..
-            } => Some(environment),
-            Cell::Environment {
-                dynamic_bindings: EnvironmentBindings::Shared(owner),
-                ..
-            } => Some(*owner),
+            Cell::Environment { scope, .. } => match scope.dynamic_bindings {
+                EnvironmentBindings::Owned(_) => Some(environment),
+                EnvironmentBindings::Shared(owner) => Some(owner),
+            },
             _ => None,
         }
     }
@@ -20,10 +16,10 @@ impl Heap {
     pub(crate) fn environment_bindings(&self, environment: Value) -> Option<&Vec<(Atom, Value)>> {
         let owner = self.environment_binding_owner(environment)?;
         match self.get(owner)? {
-            Cell::Environment {
-                dynamic_bindings: EnvironmentBindings::Owned(bindings),
-                ..
-            } => Some(bindings),
+            Cell::Environment { scope, .. } => match &scope.dynamic_bindings {
+                EnvironmentBindings::Owned(bindings) => Some(bindings),
+                EnvironmentBindings::Shared(_) => None,
+            },
             _ => None,
         }
     }
@@ -34,10 +30,10 @@ impl Heap {
     ) -> Option<&mut Vec<(Atom, Value)>> {
         let owner = self.environment_binding_owner(environment)?;
         match self.get_mut(owner)? {
-            Cell::Environment {
-                dynamic_bindings: EnvironmentBindings::Owned(bindings),
-                ..
-            } => Some(bindings),
+            Cell::Environment { scope, .. } => match &mut scope.dynamic_bindings {
+                EnvironmentBindings::Owned(bindings) => Some(bindings),
+                EnvironmentBindings::Shared(_) => None,
+            },
             _ => None,
         }
     }

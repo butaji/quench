@@ -190,7 +190,7 @@ impl<H: Host> Vm<H> {
             .filter(|prototype| self.object_data(*prototype).is_some())
             .unwrap_or(default_prototype);
         let generator = self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(generator_prototype),
+            object: Box::new(Self::empty_object(generator_prototype)),
             source: Value::NULL,
             next_method: None,
             helper: None,

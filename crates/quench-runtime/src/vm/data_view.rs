@@ -165,7 +165,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .unwrap_or(self.data_view_proto);
         Ok(self.heap.alloc(Cell::DataView {
-            object: Self::empty_object(prototype),
+            object: Box::new(Self::empty_object(prototype)),
             buffer,
             offset,
             length,
