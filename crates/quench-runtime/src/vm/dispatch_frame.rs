@@ -203,7 +203,7 @@ impl<H: Host> Vm<H> {
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                object: self.shapes.empty_object(self.array_prototype_for_realm(self.realm.globals)),
                 elements: Rc::new(elements),
             });
         }
@@ -213,7 +213,7 @@ impl<H: Host> Vm<H> {
         if let Some(slot) = function.arguments_slot {
             let mapped = function.arguments_are_mapped();
             let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.object_proto),
+                object: self.shapes.empty_object(self.object_proto),
                 elements: Rc::new(args.to_vec()),
             });
             frame.locals[usize::from(slot)] = arguments;
@@ -417,7 +417,7 @@ impl<H: Host> Vm<H> {
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                object: self.shapes.empty_object(self.array_prototype_for_realm(self.realm.globals)),
                 elements: Rc::new(elements),
             });
         }
@@ -427,7 +427,7 @@ impl<H: Host> Vm<H> {
         if let Some(slot) = function.arguments_slot {
             let mapped = function.arguments_are_mapped();
             let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.object_proto),
+                object: self.shapes.empty_object(self.object_proto),
                 elements: Rc::new(args.to_vec()),
             });
             frame.locals[usize::from(slot)] = arguments;
@@ -632,14 +632,13 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.object_data(arguments) else {
             return;
         };
-        let proto = object.proto;
         let Some(iterator_method) = self.heap.property_get(object, iterator_slot) else {
             return;
         };
         properties[iterator_slot] = iterator_method;
         let anchor = self
             .heap
-            .alloc_object_with_properties(proto, shape, &properties);
+            .alloc_object_with_properties(shape, &properties);
         self.realm.intrinsics.arguments_objects.insert(
             key,
             ArgumentsObjectTemplate {

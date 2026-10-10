@@ -62,6 +62,34 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn root_shape_for_prototype(&mut self, prototype: Value) -> u32 {
+        self.shapes.root_for_prototype(prototype)
+    }
+
+    pub(super) fn object_prototype(&self, object: Value) -> Value {
+        self.object_data(object)
+            .map(|object| self.shapes[object.shape() as usize].prototype)
+            .unwrap_or(Value::NULL)
+    }
+
+    pub(super) fn prototype_for_data(&self, object: &Object) -> Value {
+        self.shapes[object.shape() as usize].prototype
+    }
+
+    pub(super) fn set_object_prototype(&mut self, value: Value, prototype: Value) {
+        let current_shape = self
+            .object_data(value)
+            .expect("prototype owner is an object")
+            .shape();
+        if self.shapes[current_shape as usize].prototype == prototype {
+            return;
+        }
+        let next_shape = self.rebase_shape_prototype(current_shape, prototype);
+        self.object_data_mut(value)
+            .expect("prototype owner survived shape rebase")
+            .set_shape(next_shape);
+    }
+
     pub(super) fn is_private_name(&self, atom: Atom) -> bool {
         self.atom_name(atom).starts_with(PRIVATE_NAME_PREFIX)
     }
@@ -170,15 +198,65 @@ impl<H: Host> Vm<H> {
             _ => self.shapes[parent as usize].dictionary_trigger,
         };
         let parent_may_have_gc_roots = self.shapes[parent as usize].may_have_gc_roots;
+        let prototype = self.shapes[parent as usize].prototype;
         self.shapes.push(Shape::child(
             Some(parent),
             transition,
             storage_len,
             dictionary_trigger,
             parent_may_have_gc_roots,
+            prototype,
         ));
         self.heap.register_property_shape(next, storage_len);
         next
+    }
+
+    pub(super) fn rebase_shape_prototype(&mut self, shape: u32, prototype: Value) -> u32 {
+        let root = self.root_shape_for_prototype(prototype);
+        let mut next = root;
+        for (slot, entry) in super::gc::active_shape_attributes(&self.shapes, shape)
+            .into_iter()
+            .enumerate()
+        {
+            let slot = u32::try_from(slot).expect("object property index exceeds u32");
+            let storage_len = slot as usize + 1;
+            next = self.transition_shape_kind(next, match entry {
+                Some((key, _)) => ShapeTransition::Add { key, slot },
+                None => ShapeTransition::Vacant,
+            }, storage_len);
+            if let Some((_, attributes)) = entry
+                && attributes != DEFAULT_PROPERTY_ATTRIBUTES
+            {
+                next = self.transition_shape_kind(
+                    next,
+                    ShapeTransition::Descriptor { slot, attributes },
+                    storage_len,
+                );
+            }
+        }
+        if let Some(trigger) = self.shapes[shape as usize].dictionary_trigger {
+            next = self.transition_shape_kind(
+                next,
+                ShapeTransition::Dictionary { trigger },
+                self.shapes[shape as usize].storage_len,
+            );
+        }
+        next
+    }
+
+    fn transition_shape_kind(
+        &mut self,
+        parent: u32,
+        transition: ShapeTransition,
+        storage_len: usize,
+    ) -> u32 {
+        let key = transition.cache_key();
+        if let Some(key) = key
+            && let Some(shape) = self.transitions.get(&(parent, key))
+        {
+            return *shape;
+        }
+        self.append_shape(parent, transition, storage_len)
     }
     pub(super) fn shape_is_dictionary(&self, shape: u32) -> bool {
         self.shapes[shape as usize].dictionary_trigger.is_some()
@@ -381,23 +459,24 @@ impl<H: Host> Vm<H> {
         second: Value,
     ) -> Value {
         let shape = self.object_site_shape(program, site);
-        self.heap
-            .alloc_object_pair(self.object_proto, shape, first, second)
+        self.heap.alloc_object_pair(shape, first, second)
     }
     pub(super) fn object_site_shape(&mut self, program: &ResidualProgram, site: usize) -> u32 {
         let atoms = &program.object_sites[site].atoms;
         if !self.specialized || !program.specialized {
+            let root = self.root_shape_for_prototype(self.object_proto);
             return atoms
                 .iter()
-                .fold(0, |shape, atom| self.transition_shape(shape, *atom));
+                .fold(root, |shape, atom| self.transition_shape(shape, *atom));
         }
         let cache_site = self.object_cache_index(site);
         if self.object_shapes[cache_site] != u32::MAX {
             return self.object_shapes[cache_site];
         }
+        let root = self.root_shape_for_prototype(self.object_proto);
         let shape = atoms
             .iter()
-            .fold(0, |shape, atom| self.transition_shape(shape, *atom));
+            .fold(root, |shape, atom| self.transition_shape(shape, *atom));
         self.object_shapes[cache_site] = shape;
         shape
     }
@@ -551,7 +630,7 @@ impl<H: Host> Vm<H> {
         receiver: &Object,
         atom: Atom,
     ) -> Option<FieldCacheHit> {
-        let holder_value = receiver.proto;
+        let holder_value = self.prototype_for_data(receiver);
         let holder_cell = self.heap.get(holder_value)?;
         let holder = self.shape_property_lookup_cell(holder_cell, atom)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
@@ -672,7 +751,7 @@ impl<H: Host> Vm<H> {
         receiver_value: Value,
         atom: Atom,
     ) -> Option<(u32, usize, Value)> {
-        let holder_value = self.object_data(receiver_value)?.proto;
+        let holder_value = self.object_prototype(receiver_value);
         let holder_cell = self.heap.get(holder_value)?;
         let holder = self.shape_property_lookup_cell(holder_cell, atom)?;
         let holder_shape = holder.shape();
@@ -808,7 +887,7 @@ impl<H: Host> Vm<H> {
             let Some(data) = self.object_data(current) else {
                 break;
             };
-            current = data.proto;
+            current = self.prototype_for_data(data);
             if current.is_null() {
                 break;
             }
@@ -1272,7 +1351,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn field_add_prototype_shapes(&self, object: Value, atom: Atom) -> Option<Vec<u32>> {
-        let mut prototype = self.object_data(object)?.proto;
+        let mut prototype = self.object_prototype(object);
         let key = PropertyKey::string(atom);
         let mut shapes = Vec::new();
         while !prototype.is_null() {
@@ -1293,13 +1372,13 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             shapes.push(shape);
-            prototype = data.proto;
+            prototype = self.prototype_for_data(data);
         }
         Some(shapes)
     }
 
     fn field_add_prototype_chain_matches(&self, object: Value, expected: &[u32]) -> bool {
-        let Some(mut prototype) = self.object_data(object).map(|data| data.proto) else {
+        let Some(mut prototype) = self.object_data(object).map(|data| self.prototype_for_data(data)) else {
             return false;
         };
         for expected_shape in expected {
@@ -1314,7 +1393,7 @@ impl<H: Host> Vm<H> {
             {
                 return false;
             }
-            prototype = data.proto;
+            prototype = self.prototype_for_data(data);
         }
         prototype.is_null()
     }
@@ -1397,29 +1476,29 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn prototype_chain_contains_proxy(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto);
+        let mut current = self.object_data(object).map(|data| self.prototype_for_data(data));
         while let Some(value) = current.filter(|value| !value.is_null()) {
             if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
                 return true;
             }
-            current = self.object_data(value).map(|data| data.proto);
+            current = self.object_data(value).map(|data| self.prototype_for_data(data));
         }
         false
     }
 
     pub(super) fn prototype_chain_has_typed_array(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto);
+        let mut current = self.object_data(object).map(|data| self.prototype_for_data(data));
         while let Some(value) = current.filter(|value| !value.is_null()) {
             if matches!(self.heap.get(value), Some(Cell::TypedArray { .. })) {
                 return true;
             }
-            current = self.object_data(value).map(|data| data.proto);
+            current = self.object_data(value).map(|data| self.prototype_for_data(data));
         }
         false
     }
 
     pub(super) fn prototype_chain_has_indexed_set_exotic(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto);
+        let mut current = self.object_data(object).map(|data| self.prototype_for_data(data));
         while let Some(value) = current.filter(|value| !value.is_null()) {
             if matches!(
                 self.heap.get(value),
@@ -1427,7 +1506,7 @@ impl<H: Host> Vm<H> {
             ) {
                 return true;
             }
-            current = self.object_data(value).map(|data| data.proto);
+            current = self.object_data(value).map(|data| self.prototype_for_data(data));
         }
         false
     }
@@ -1452,7 +1531,7 @@ impl<H: Host> Vm<H> {
             if self.own_property(object, atom).is_some() {
                 return None;
             }
-            object = self.object_data(object)?.proto;
+            object = self.object_prototype(object);
             if object.is_null() {
                 return None;
             }
@@ -1460,12 +1539,12 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn inherited_write_blocked(&self, object: Value, atom: Atom) -> bool {
-        let mut object = self.object_data(object).map(|data| data.proto);
+        let mut object = self.object_data(object).map(|data| self.prototype_for_data(data));
         while let Some(current) = object.filter(|value| !value.is_null()) {
             if let Some(attributes) = self.property_attributes(current, PropertyKey::string(atom)) {
                 return !attributes.accessor && !attributes.writable;
             }
-            object = self.object_data(current).map(|data| data.proto);
+            object = self.object_data(current).map(|data| self.prototype_for_data(data));
         }
         false
     }

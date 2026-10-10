@@ -22,11 +22,11 @@ impl<H: Host> Vm<H> {
         let to_map = native == Native::ArrayGroupToMap;
         let grouped = self.heap.alloc(if to_map {
             Cell::Map {
-                object: Self::empty_object(self.map_proto),
+                object: self.shapes.empty_object(self.map_proto),
                 entries: Vec::new(),
             }
         } else {
-            Cell::Object(Self::empty_object(self.object_proto))
+            Cell::Object(self.shapes.empty_object(self.object_proto))
         });
         for index in 0..length {
             let value = self.array_value_at(this, index);
@@ -60,7 +60,7 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             let bucket = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+                object: self.shapes.empty_object(self.array_proto),
                 elements: Rc::new(vec![value]),
             });
             if let Some(atom) = key_atom {

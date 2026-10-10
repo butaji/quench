@@ -22,7 +22,7 @@ impl<H: Host> Vm<H> {
             .const_array(self.frames[frame].program, start, end - start)
             .ok_or_else(|| JsError::validation("constant array is outside program".into()))?;
         let array_value = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements,
         });
         self.write(frame, array.result_register(), array_value);

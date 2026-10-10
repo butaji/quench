@@ -3,7 +3,7 @@ use crate::value_vec::ValueVec;
 use std::rc::Rc;
 
 fn plain_object() -> Object {
-    Object::new(Value::NULL)
+    Object::new(0)
 }
 
 #[test]
@@ -93,8 +93,7 @@ fn scope_slot_owners_survive_collection_and_release() {
 fn object_storage_keeps_two_values_inline_in_the_cell() {
     assert_eq!(
         size_of::<Object>(),
-        size_of::<Value>()
-            + size_of::<ValueVec>()
+        size_of::<ValueVec>()
             + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
             + size_of::<Option<Box<()>>>()
     );
@@ -377,7 +376,7 @@ fn inline_property_values_are_gc_roots_until_deleted_or_the_owner_dies() {
     heap.register_property_shape(1, INLINE_PROPERTY_COUNT);
     let kept = heap.alloc(Cell::String("kept".into()));
     let deleted = heap.alloc(Cell::String("deleted".into()));
-    let object = heap.alloc_object_pair(Value::NULL, 1, kept, deleted);
+    let object = heap.alloc_object_pair(1, kept, deleted);
     heap.property_set(object, 1, Value::DELETED);
 
     heap.collect([object]);

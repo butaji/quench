@@ -856,9 +856,9 @@ impl<H: Host> Vm<H> {
     fn install_prototypes(&mut self) {
         self.object_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc(Cell::Object(self.shapes.empty_object(Value::NULL)));
         self.function_proto = self.heap.alloc(Cell::Function {
-            object: Box::new(Self::empty_object(self.object_proto)),
+            object: Box::new(self.shapes.empty_object(self.object_proto)),
             kind: FunctionKind::Native(Native::FunctionPrototype),
             env: Value::NULL,
             realm: self.realm.globals,
@@ -872,7 +872,7 @@ impl<H: Host> Vm<H> {
                 .builtin_prototypes
                 .insert((self.realm.globals, native), prototype);
         }
-        self.object_data_mut(self.realm.globals).unwrap().proto = self.object_proto;
+        self.set_object_prototype(self.realm.globals, self.object_proto);
     }
     fn install_console(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let console = self.object();
@@ -885,7 +885,7 @@ impl<H: Host> Vm<H> {
         global: Value,
     ) -> Result<(), JsError> {
         let prototype = self.realm_object_prototype(global);
-        let json = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let json = self.heap.alloc(Cell::Object(self.shapes.empty_object(prototype)));
         self.install_builtin_to_string_tag(json, "JSON")?;
         let realm = (global != self.realm.globals).then_some(global);
         for (name, native) in [
@@ -972,9 +972,6 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    pub(super) fn empty_object(proto: Value) -> Object {
-        Object::new(proto)
-    }
     fn native(&mut self, kind: Native) -> Value {
         self.native_with_env(kind, Value::NULL)
     }
@@ -1022,7 +1019,7 @@ impl<H: Host> Vm<H> {
         Ok(thrower)
     }
     pub(super) fn object(&mut self) -> Value {
-        self.heap.alloc(Cell::Object(Self::empty_object(
+        self.heap.alloc(Cell::Object(self.shapes.empty_object(
             self.realm_object_prototype(self.realm.globals),
         )))
     }

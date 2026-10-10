@@ -34,7 +34,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "Collator")?;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.realm
             .intrinsics
             .intl_collator_prototypes
@@ -117,7 +117,7 @@ impl<H: Host> Vm<H> {
                         overrides,
                     );
 
-                let collator = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                let collator = vm.heap.alloc(Cell::Object(vm.shapes.empty_object(prototype)));
                 vm.set_collator_string(collator, COLLATOR_LOCALE_SLOT, &locale)?;
                 vm.set_collator_string(collator, COLLATOR_USAGE_SLOT, &usage)?;
                 vm.set_collator_string(collator, COLLATOR_SENSITIVITY_SLOT, &sensitivity)?;
@@ -384,7 +384,7 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| self.type_error(p, "not an Intl object".into()))?;
         let result = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.object_proto)));
         for (key, value) in [
             ("locale", self.heap.alloc(Cell::String(locale.into()))),
             (

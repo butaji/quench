@@ -394,7 +394,7 @@ impl<H: Host> Vm<H> {
                 let result = if mode.is_all_settled() {
                     let result = self
                         .heap
-                        .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+                        .alloc(Cell::Object(self.shapes.empty_object(self.object_proto)));
                     let status_atom = self.intern_atom("status");
                     let status = if aggregate_job.rejected {
                         "rejected"

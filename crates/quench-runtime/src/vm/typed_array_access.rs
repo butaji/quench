@@ -187,7 +187,7 @@ impl<H: Host> Vm<H> {
         let key = self.heap.alloc(Cell::String(name.into()));
         let mut current = self
             .object_data(receiver)
-            .map_or(Value::NULL, |data| data.proto);
+            .map_or(Value::NULL, |data| self.prototype_for_data(data));
         let mut visited = std::collections::HashSet::new();
         while !current.is_null() && visited.insert(current) {
             match self.heap.get(current) {

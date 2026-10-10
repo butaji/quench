@@ -533,7 +533,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .regexp_intrinsics
             .get(&self.realm.globals)?;
-        if self.object_data(receiver)?.proto != intrinsics.prototype {
+        if self.object_prototype(receiver) != intrinsics.prototype {
             return None;
         }
         let exec = self.lookup_atom("exec")?;
@@ -994,7 +994,7 @@ impl<H: Host> Vm<H> {
                     )?;
                     let flags = flags.host_string();
                     Ok(vm.heap.alloc(Cell::Iterator {
-                        object: Self::empty_object(vm.regexp_string_iterator_proto),
+                        object: vm.shapes.empty_object(vm.regexp_string_iterator_proto),
                         source: matcher,
                         next_method: None,
                         helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
@@ -1507,7 +1507,7 @@ impl<H: Host> Vm<H> {
         legacy_constructor: crate::heap::RegExpLegacyOwner,
     ) -> Result<Value, JsError> {
         let object = self.heap.alloc(Cell::RegExp {
-            object: Box::new(Self::empty_object(prototype)),
+            object: Box::new(self.shapes.empty_object(prototype)),
             source,
             flags,
             matcher,
@@ -1732,7 +1732,7 @@ impl<H: Host> Vm<H> {
                 })
                 .collect::<Vec<_>>();
             let result = vm.heap.alloc(Cell::Array {
-                object: Self::empty_object(vm.array_proto),
+                object: vm.shapes.empty_object(vm.array_proto),
                 elements: Rc::new(values),
             });
             let named = regexp_named_capture_ranges(&matched);
@@ -1789,7 +1789,7 @@ impl<H: Host> Vm<H> {
         }
         let groups = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc(Cell::Object(self.shapes.empty_object(Value::NULL)));
         for (name, range) in named {
             let atom = self.intern_atom(name);
             let value = range.as_ref().map_or(Value::UNDEFINED, |range| {
@@ -1814,13 +1814,13 @@ impl<H: Host> Vm<H> {
             .map(|range| self.regexp_index_pair(range))
             .collect::<Vec<_>>();
         let indices = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(entries),
         });
         let groups = if !named.is_empty() {
             let groups = self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                .alloc(Cell::Object(self.shapes.empty_object(Value::NULL)));
             for (name, range) in named {
                 let atom = self.intern_atom(name);
                 let pair = self.regexp_index_pair(range.clone());
@@ -1844,7 +1844,7 @@ impl<H: Host> Vm<H> {
             Value::number(range.end as f64),
         ];
         self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(pair.into()),
         })
     }

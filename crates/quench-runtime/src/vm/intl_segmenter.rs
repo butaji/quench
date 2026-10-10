@@ -16,7 +16,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "Segmenter")?;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.realm
             .intrinsics
             .intl_segmenter_prototypes
@@ -35,7 +35,7 @@ impl<H: Host> Vm<H> {
         }
         let segments_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.realm
             .intrinsics
             .intl_segments_prototypes
@@ -44,7 +44,7 @@ impl<H: Host> Vm<H> {
             self.realm.intrinsics.builtin_prototypes[&(global, Native::Iterator)];
         let iterator_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(iterator_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(iterator_prototype)));
         self.realm
             .intrinsics
             .intl_segment_iterator_prototypes
@@ -85,7 +85,7 @@ impl<H: Host> Vm<H> {
                     .unwrap_or_else(|| "en-US".into());
                 let granularity = vm.segmenter_granularity(p, args.get(1).copied())?;
 
-                let segmenter = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                let segmenter = vm.heap.alloc(Cell::Object(vm.shapes.empty_object(prototype)));
                 vm.set_hidden_string(segmenter, SEGMENTER_LOCALE_SLOT, &locale)?;
                 vm.set_hidden_string(segmenter, SEGMENTER_GRANULARITY_SLOT, &granularity)?;
                 Ok(segmenter)
@@ -142,7 +142,7 @@ impl<H: Host> Vm<H> {
                         let prototype =
                             vm.realm.intrinsics.intl_segment_iterator_prototypes[&vm.realm.globals];
                         return Ok(vm.heap.alloc(Cell::Iterator {
-                            object: Self::empty_object(prototype),
+                            object: vm.shapes.empty_object(prototype),
                             source: data,
                             next_method: None,
                             helper: None,
@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
             .hidden_string(this, SEGMENTER_GRANULARITY_SLOT)
             .unwrap_or_else(|| "grapheme".into());
         if native == Native::IntlSegmenterResolvedOptions {
-            let result = self.heap.alloc(Cell::Object(Self::empty_object(
+            let result = self.heap.alloc(Cell::Object(self.shapes.empty_object(
                 self.realm_object_prototype(self.realm.globals),
             )));
             self.set_intl_string_property(result, "locale", &locale)?;
@@ -190,7 +190,7 @@ impl<H: Host> Vm<H> {
             let boundaries = vm.new_array(boundaries);
             let input = vm.heap.alloc(Cell::String(input));
             let prototype = vm.realm.intrinsics.intl_segments_prototypes[&vm.realm.globals];
-            let object = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+            let object = vm.heap.alloc(Cell::Object(vm.shapes.empty_object(prototype)));
             let data = vm.new_array(vec![this, input, boundaries]);
             vm.set_hidden_value(object, SEGMENTS_DATA_SLOT, data)?;
             Ok(object)
@@ -240,7 +240,7 @@ impl<H: Host> Vm<H> {
             .as_deref()
             == Some("word");
         let word_like = text.host_string().chars().any(char::is_alphanumeric);
-        let object = self.heap.alloc(Cell::Object(Self::empty_object(
+        let object = self.heap.alloc(Cell::Object(self.shapes.empty_object(
             self.realm_object_prototype(self.realm.globals),
         )));
         let text = self.heap.alloc(Cell::String(text));

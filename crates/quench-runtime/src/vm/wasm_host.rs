@@ -248,7 +248,7 @@ impl<H: Host> Vm<H> {
                 [] => Value::UNDEFINED,
                 [value] => *value,
                 _ => self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(Value::NULL),
+                    object: self.shapes.empty_object(Value::NULL),
                     elements: values.into(),
                 }),
             })
@@ -413,7 +413,7 @@ mod tests {
         assert!(vm.heap.get(descriptor).is_some());
         let payload = vm
             .heap
-            .alloc(Cell::Object(Vm::<EchoHost>::empty_object(Value::NULL)));
+            .alloc(Cell::Object(vm.shapes.empty_object(Value::NULL)));
         let payload_root = vm.root(payload);
         let args = [
             WasmValue::ExternRef(payload),

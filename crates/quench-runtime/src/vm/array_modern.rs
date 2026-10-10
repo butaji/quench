@@ -65,7 +65,7 @@ impl<H: Host> Vm<H> {
         prototype: Value,
     ) -> Value {
         self.heap.alloc(Cell::Array {
-            object: Self::empty_object(prototype),
+            object: self.shapes.empty_object(prototype),
             elements: Rc::new(values),
         })
     }
@@ -188,7 +188,7 @@ impl<H: Host> Vm<H> {
         }
         let prototype = self.array_prototype_for_realm(self.realm.globals);
         let array = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(prototype),
+            object: self.shapes.empty_object(prototype),
             elements: Rc::new(Vec::new()),
         });
         self.heap.sparse_set_length(array, length);

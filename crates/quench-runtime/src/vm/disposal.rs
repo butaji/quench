@@ -53,7 +53,7 @@ impl<H: Host> Vm<H> {
             let constructor = self.native_with_realm(constructor_native, global, global);
             let prototype = self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(object_prototype)));
+                .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
             self.set_builtin_function_name(constructor, name)?;
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
@@ -308,10 +308,10 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(self.object_proto)
             }
         };
-        let stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let stack = self.heap.alloc(Cell::Object(self.shapes.empty_object(prototype)));
         let root = self.heap.root(stack);
         let entries = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(vec![]),
         });
         let entries_atom = self.intern_atom(ENTRIES);
@@ -572,10 +572,10 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
-        let moved_stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let moved_stack = self.heap.alloc(Cell::Object(self.shapes.empty_object(prototype)));
         let root = self.heap.root(moved_stack);
         let entries = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: moved,
         });
         let entries_atom = self.intern_atom(ENTRIES);
@@ -710,7 +710,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let entries = self.stack_entries(stack)?;
         let entry = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(vec![
                 callback,
                 value,
@@ -852,12 +852,12 @@ impl<H: Host> Vm<H> {
         };
         let resource_count = values.len();
         let resources = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: values,
         });
         let result = self.promise_object();
         let state = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(vec![
                 resources,
                 Value::number(resource_count as f64),

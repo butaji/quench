@@ -33,7 +33,7 @@ impl<H: Host> Vm<H> {
                         return Err(vm.type_error(p, "proxy apply trap is not callable".into()));
                     }
                     let arguments = vm.heap.alloc(Cell::Array {
-                        object: Self::empty_object(vm.array_proto),
+                        object: vm.shapes.empty_object(vm.array_proto),
                         elements: Rc::new(args.to_vec()),
                     });
                     return vm.call_value(p, trap, handler, &[target, this, arguments]);
@@ -78,7 +78,7 @@ impl<H: Host> Vm<H> {
                         return Err(vm.type_error(p, "proxy construct trap is not callable".into()));
                     }
                     let arguments = vm.heap.alloc(Cell::Array {
-                        object: Self::empty_object(vm.array_proto),
+                        object: vm.shapes.empty_object(vm.array_proto),
                         elements: Rc::new(args.to_vec()),
                     });
                     let result =

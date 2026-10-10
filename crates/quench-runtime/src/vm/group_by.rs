@@ -36,9 +36,9 @@ impl<H: Host> Vm<H> {
             let next = self.heap.root(next);
             next_root = Some(next);
             let result = match kind {
-                GroupByKind::Object => Cell::Object(Self::empty_object(Value::NULL)),
+                GroupByKind::Object => Cell::Object(self.shapes.empty_object(Value::NULL)),
                 GroupByKind::Map => Cell::Map {
-                    object: Self::empty_object(
+                    object: self.shapes.empty_object(
                         self.realm
                             .intrinsics
                             .builtin_prototypes
@@ -143,7 +143,7 @@ impl<H: Host> Vm<H> {
             Rc::make_mut(elements).push(value);
         } else {
             let group = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                object: self.shapes.empty_object(self.array_prototype_for_realm(self.realm.globals)),
                 elements: Rc::new(vec![value]),
             });
             match kind {

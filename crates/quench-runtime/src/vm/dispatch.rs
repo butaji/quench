@@ -288,7 +288,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     let value = self
                         .heap
-                        .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                        .alloc(Cell::Object(self.shapes.empty_object(Value::NULL)));
                     self.programs.set_import_meta(program, value);
                     value
                 };
@@ -371,11 +371,8 @@ impl<H: Host> Vm<H> {
                 let window = i.register_window();
                 let start = usize::from(window.base);
                 let end = start + usize::from(window.count);
-                let prototype = self.object_proto;
                 let properties = &self.frames[f].registers[start..end];
-                let object = self
-                    .heap
-                    .alloc_object_with_properties(prototype, shape, properties);
+                let object = self.heap.alloc_object_with_properties(shape, properties);
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(object));
                 }
@@ -388,7 +385,7 @@ impl<H: Host> Vm<H> {
             }
             Op::MakeArray => {
                 let v = self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                    object: self.shapes.empty_object(self.array_prototype_for_realm(self.realm.globals)),
                     elements: Rc::new(vec![Value::DELETED; i.array_length()]),
                 });
                 self.write(f, i.result_register(), v);
@@ -403,7 +400,7 @@ impl<H: Host> Vm<H> {
                         JsError::validation("constant array is outside program".into())
                     })?;
                 let v = self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                    object: self.shapes.empty_object(self.array_prototype_for_realm(self.realm.globals)),
                     elements,
                 });
                 self.write(f, i.result_register(), v);

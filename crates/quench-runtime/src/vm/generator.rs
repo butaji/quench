@@ -102,7 +102,7 @@ impl<H: Host> Vm<H> {
         }
         if function.rest {
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+                object: self.shapes.empty_object(self.array_proto),
                 elements: Rc::new(args.get(fixed..).unwrap_or_default().to_vec()),
             });
         }
@@ -112,7 +112,7 @@ impl<H: Host> Vm<H> {
         if let Some(slot) = function.arguments_slot {
             let mapped = function.arguments_are_mapped();
             let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.object_proto),
+                object: self.shapes.empty_object(self.object_proto),
                 elements: Rc::new(args.to_vec()),
             });
             frame.locals[usize::from(slot)] = arguments;
@@ -189,7 +189,7 @@ impl<H: Host> Vm<H> {
             .filter(|prototype| self.object_data(*prototype).is_some())
             .unwrap_or(default_prototype);
         let generator = self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(generator_prototype),
+            object: self.shapes.empty_object(generator_prototype),
             source: Value::NULL,
             next_method: None,
             helper: None,
@@ -313,7 +313,7 @@ impl<H: Host> Vm<H> {
                     }
                 };
                 let environment = vm.heap.alloc(Cell::Array {
-                    object: Self::empty_object(vm.array_proto),
+                    object: vm.shapes.empty_object(vm.array_proto),
                     elements: Rc::new(vec![
                         generator,
                         iterator,
@@ -344,7 +344,7 @@ impl<H: Host> Vm<H> {
                 }
             };
             let environment = vm.heap.alloc(Cell::Array {
-                object: Self::empty_object(vm.array_proto),
+                object: vm.shapes.empty_object(vm.array_proto),
                 elements: Rc::new(vec![generator, promise]),
             });
             let fulfilled = vm.native_with_env(Native::AsyncGeneratorReturnFulfilled, environment);
@@ -727,7 +727,7 @@ impl<H: Host> Vm<H> {
         }
         let unwrapped = self.async_from_sync_result(p, adapter, result, false)?;
         let env = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(vec![
                 generator,
                 Value::number(f64::from(destination)),
@@ -927,7 +927,7 @@ impl<H: Host> Vm<H> {
             };
             let promise = self.promise_for_value(p, result)?;
             let env = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+                object: self.shapes.empty_object(self.array_proto),
                 elements: Rc::new(vec![
                     generator,
                     Value::number(f64::from(destination)),
