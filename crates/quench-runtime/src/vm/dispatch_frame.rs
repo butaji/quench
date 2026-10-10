@@ -898,7 +898,7 @@ impl<H: Host> Vm<H> {
         loop {
             let p = current_program.as_deref().unwrap_or(p);
             if fast_lane {
-                self.run_fast_lane(cursor.program, frame, cursor.code, cursor.wide, &mut pc);
+                pc = self.run_fast_lane(cursor.program, frame, cursor.code, cursor.wide, pc);
             }
             if stop_pc == Some(pc) {
                 self.frames[frame].pc = pc;
