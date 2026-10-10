@@ -194,3 +194,32 @@ plus profiling-only source diff SHA-256
 `faf16ab6c45a3757f5d234d0432d61090985f616990dab65aaff93d407e7f718` to repair
 two stale profiler-build call sites. The production candidate binaries and
 their previous fixed-work results are unchanged.
+
+## Guarded field-layout cache trial: all-eight guard rejected
+
+The follow-up candidate keeps the compact-object layout and adds a direct
+field-cache accessor guarded by the cached receiver layout. Its Splay-only
+fixed-work run was 11/11 clean with equal output: max work RSS fell from
+122,732,544 B to 99,368,960 B (−19.0%), while marginal cycles were +0.91% and
+instructions +1.83% against the paired trunk binary. The cycle movement
+overlaps the recorded Splay A/A spread. Against the existing Step 0 M4
+references, its provisional fixed-work distances were 1.23x speed and 1.69x
+RSS; this was not a stock-harness qualification.
+
+The all-eight fixed-work guard then completed with at least 10 clean pairs per
+fixture. It rejects this layout candidate because clean cycle intervals show
+regressions on Crypto (+1.57%, 95% interval +0.51% to +2.10%), EarleyBoyer
+(+1.14%, +0.58% to +1.60%) and RegExp (+2.70%, +1.50% to +4.34%). Richards
+is cycle-neutral (+0.13%, interval −0.86% to +0.44%) and its field-cache
+instruction count is −0.66%, confirming the direct-layout path removes the
+prior Richards regression. Splay itself is cycle-neutral (+0.16%, interval
+−0.91% to +0.99%) and keeps the −19.08% RSS result, but retires +1.85%
+instructions. All fixtures reduce RSS; the failure is the three cycle
+regressions, so this candidate is not merged.
+
+The exact all-eight report, resumable checkpoint and classification are
+[`all-eight-guarded-field-layout-11.json`](all-eight-guarded-field-layout-11.json),
+[`all-eight-guarded-field-layout-checkpoint.json`](all-eight-guarded-field-layout-checkpoint.json),
+and [`all-eight-guarded-field-layout-checkpoint.decision.json`](all-eight-guarded-field-layout-checkpoint.decision.json).
+The guarded Splay-only run is
+[`splay-layout-guarded-field-cache-11.json`](splay-layout-guarded-field-cache-11.json).
