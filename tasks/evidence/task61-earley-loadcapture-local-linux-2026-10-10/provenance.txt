@@ -1,0 +1,12 @@
+branch: v2-cloud
+candidate source parent: 94d7665717e0031b2b92f764753a1d399dfb20b8
+baseline source commit: 5a3397e86
+baseline binary sha256: e46537823eb25a37cf5646af793e6873ceaeff1069fb878a96813cae3a86ab32
+candidate binary sha256: e4fb2e4309b184ad52857bbdd938f86ff67dc272907df91a0f8e22056a64f0b3
+fixture sha256: aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b
+Node oracle sha256: b10fc521c1a1e60d01afa68a9a7baf67ebb28ebd94b4689215fa6d1438b9591a
+Node: v24.19.0
+Rust: 1.99.0 (b940084d7 2026-09-28)
+host: Linux-6.18.44-x86_64-with-glibc2.41
+production build: cargo build --locked -p quench-node --profile production
+profile build: cargo build --locked -p quench-node --profile production --features quench-runtime/profile-aggregate

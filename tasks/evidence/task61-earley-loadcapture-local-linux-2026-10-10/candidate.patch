@@ -1,0 +1,291 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 315d451f8..931659633 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -666,6 +666,8 @@ opcodes!(
+     SetThisFieldStrictLocal => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(LocalSlot, Unused, CacheSiteIndex),
+     LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+     StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
++    LoadCaptureLocal => Effect::READS_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(WriteRegister, WriteRegister, LocalSlot),
++    LoadCaptureLocalSkip => Effect::READS_HEAP; layout CaptureDepthAndSlot, @ Register, @ fields(WriteRegister, WriteRegister, LocalSlot),
+ 
+ );
+ 
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index 7378d54b3..109803445 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -625,6 +625,19 @@ impl ResidualProgram {
+                         "function {index} has an unproven plain-local operation"
+                     ));
+                 }
++                if matches!(
++                    instruction.op(),
++                    super::Op::LoadCaptureLocal | super::Op::LoadCaptureLocalSkip
++                )
++                    && !plain_local_slots
++                        .get(usize::from(instruction.c()))
++                        .copied()
++                        .unwrap_or(false)
++                {
++                    return Err(format!(
++                        "function {index} has an unproven plain-local operation"
++                    ));
++                }
+                 if instruction.op() == super::Op::CopyLocalPlain
+                     && !plain_local_slots
+                         .get(instruction.copy_local_source_slot())
+@@ -651,6 +664,8 @@ impl ResidualProgram {
+                         super::Op::LoadLocal
+                             | super::Op::StoreLocal
+                             | super::Op::LoadLocalPlain
++                            | super::Op::LoadCaptureLocal
++                            | super::Op::LoadCaptureLocalSkip
+                             | super::Op::StoreLocalPlain
+                             | super::Op::SetThisFieldStrictLocal
+                             | super::Op::LoadEnvLocal
+@@ -659,6 +674,11 @@ impl ResidualProgram {
+                     .then(|| {
+                         if instruction.op() == super::Op::SetThisFieldStrictLocal {
+                             instruction.local_slot_a()
++                        } else if matches!(
++                            instruction.op(),
++                            super::Op::LoadCaptureLocal | super::Op::LoadCaptureLocalSkip
++                        ) {
++                            usize::from(instruction.c())
+                         } else {
+                             instruction.local_slot()
+                         }
+@@ -850,7 +870,10 @@ impl ResidualProgram {
+             {
+                 if !matches!(
+                     instruction.op(),
+-                    super::Op::LoadCapture | super::Op::StoreCapture
++                    super::Op::LoadCapture
++                        | super::Op::LoadCaptureLocal
++                        | super::Op::LoadCaptureLocalSkip
++                        | super::Op::StoreCapture
+                 ) {
+                     continue;
+                 }
+diff --git a/crates/quench-runtime/src/compile.rs b/crates/quench-runtime/src/compile.rs
+index c58cd5045..f837765f4 100644
+--- a/crates/quench-runtime/src/compile.rs
++++ b/crates/quench-runtime/src/compile.rs
+@@ -2169,6 +2169,9 @@ impl<'a> Compiler<'a> {
+                 );
+                 numeric::apply_plain_local_stores(function, live.as_deref());
+             }
++            if self.mode == SpecializationMode::Enabled && function.wide.is_empty() {
++                rewrite::apply_capture_local_fusion(function, &mut self.superinstructions);
++            }
+         }
+         let register_roots = liveness::derive(
+             &mut functions,
+diff --git a/crates/quench-runtime/src/compile/capture_profile.rs b/crates/quench-runtime/src/compile/capture_profile.rs
+index 0b8245f22..9635bd13b 100644
+--- a/crates/quench-runtime/src/compile/capture_profile.rs
++++ b/crates/quench-runtime/src/compile/capture_profile.rs
+@@ -17,8 +17,11 @@ pub(super) fn report(functions: &[Function]) {
+                 Op::MakeClosure => defining_closures[id] += 1,
+                 Op::LoadEnvLocal => environment_loads += 1,
+                 Op::StoreEnvLocal => environment_stores += 1,
+-                Op::LoadCapture | Op::StoreCapture => {
+-                    capture_loads += usize::from(instruction.op() == Op::LoadCapture);
++                Op::LoadCapture | Op::LoadCaptureLocal | Op::LoadCaptureLocalSkip | Op::StoreCapture => {
++                    capture_loads += usize::from(matches!(
++                        instruction.op(),
++                        Op::LoadCapture | Op::LoadCaptureLocal | Op::LoadCaptureLocalSkip
++                    ));
+                     capture_stores += usize::from(instruction.op() == Op::StoreCapture);
+                     let depth = usize::from(instruction.capture_depth());
+                     max_depth = max_depth.max(depth);
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 44e54a12a..783aa08a3 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -191,18 +191,47 @@ pub(super) fn apply(
+ struct SuperRule {
+     pattern: &'static [Op],
+     fuse: fn(&[Instr], &mut Vec<Superinstruction>) -> Option<Instr>,
++    fuse_protected_suffix: Option<fn(&[Instr], &mut Vec<Superinstruction>) -> Option<Instr>>,
+ }
+ 
+ const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
+-
+-const SUPER_RULES: &[SuperRule] = &[SuperRule {
+-    pattern: &[Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2],
+-    fuse: fuse_const_array_object2,
+-}];
++const LOAD_CAPTURE_LOCAL_PLAIN: [Op; 2] = [Op::LoadCapture, Op::LoadLocalPlain];
++
++const LOAD_CAPTURE_LOCAL_RULE: SuperRule = SuperRule {
++    pattern: &LOAD_CAPTURE_LOCAL_PLAIN,
++    fuse: fuse_load_capture_local,
++    fuse_protected_suffix: Some(fuse_load_capture_local_skip),
++};
++
++const LOAD_CAPTURE_LOCAL_RULES: &[SuperRule] = &[LOAD_CAPTURE_LOCAL_RULE];
++
++const SUPER_RULES: &[SuperRule] = &[
++    LOAD_CAPTURE_LOCAL_RULE,
++    SuperRule {
++        pattern: &CONST_ARRAY_OBJECT2,
++        fuse: fuse_const_array_object2,
++        fuse_protected_suffix: None,
++    },
++];
++
++pub(super) fn apply_capture_local_fusion(
++    function: &mut BcFunction,
++    superinstructions: &mut Vec<Superinstruction>,
++) {
++    while rewrite_super_window_with_rules(function, superinstructions, LOAD_CAPTURE_LOCAL_RULES) {}
++}
+ 
+ fn rewrite_super_window(
+     function: &mut BcFunction,
+     superinstructions: &mut Vec<Superinstruction>,
++) -> bool {
++    rewrite_super_window_with_rules(function, superinstructions, SUPER_RULES)
++}
++
++fn rewrite_super_window_with_rules(
++    function: &mut BcFunction,
++    superinstructions: &mut Vec<Superinstruction>,
++    rules: &[SuperRule],
+ ) -> bool {
+     let old = std::mem::take(&mut function.code);
+     let protected = protected_positions(
+@@ -217,24 +246,40 @@ fn rewrite_super_window(
+     let mut changed = false;
+     while index < old.len() {
+         map[index] = code.len();
+-        let replacement = SUPER_RULES.iter().find_map(|rule| {
++        let replacement = rules.iter().find_map(|rule| {
+             let width = rule.pattern.len();
+             let window = old.get(index..index + width)?;
+-            if (1..width).any(|offset| protected[index + offset])
+-                || window
+-                    .iter()
+-                    .map(|instruction| instruction.op())
+-                    .ne(rule.pattern.iter().copied())
++            if window
++                .iter()
++                .map(|instruction| instruction.op())
++                .ne(rule.pattern.iter().copied())
+             {
+                 return None;
+             }
+-            (rule.fuse)(window, superinstructions).map(|instruction| (instruction, width))
+-        });
+-        if let Some((instruction, width)) = replacement {
+-            for offset in 1..width {
+-                map[index + offset] = code.len();
++            let protected_suffix = (1..width).find(|offset| protected[index + offset]);
++            if let Some(offset) = protected_suffix {
++                // Keep a real instruction at the protected entry. The fused
++                // fallthrough skips it, while relocated jumps/handlers still
++                // enter the original suffix instruction.
++                if width != 2 || offset != 1 {
++                    return None;
++                }
++                return (rule.fuse_protected_suffix?)(window, superinstructions)
++                    .map(|instruction| (instruction, width, true));
+             }
++            (rule.fuse)(window, superinstructions)
++                .map(|instruction| (instruction, width, false))
++        });
++        if let Some((instruction, width, keep_suffix)) = replacement {
+             code.push(instruction);
++            if keep_suffix {
++                map[index + 1] = code.len();
++                code.push(old[index + 1]);
++            } else {
++                for offset in 1..width {
++                    map[index + offset] = code.len() - 1;
++                }
++            }
+             index += width;
+             changed = true;
+         } else {
+@@ -285,6 +330,39 @@ fn fuse_const_array_object2(
+     ))
+ }
+ 
++fn fuse_load_capture_local(
++    window: &[Instr],
++    _superinstructions: &mut Vec<Superinstruction>,
++) -> Option<Instr> {
++    fuse_load_capture_local_with_op(window, Op::LoadCaptureLocal)
++}
++
++fn fuse_load_capture_local_skip(
++    window: &[Instr],
++    _superinstructions: &mut Vec<Superinstruction>,
++) -> Option<Instr> {
++    fuse_load_capture_local_with_op(window, Op::LoadCaptureLocalSkip)
++}
++
++fn fuse_load_capture_local_with_op(window: &[Instr], op: Op) -> Option<Instr> {
++    let code: [Instr; 2] = window.try_into().ok()?;
++    let [capture, local] = code;
++    if code.map(|instruction| instruction.op()) != LOAD_CAPTURE_LOCAL_PLAIN
++        || code.iter().any(|instruction| instruction.result_flags() != 0)
++        || local.numeric_local_store_target().is_some()
++    {
++        return None;
++    }
++    let local_slot = u16::try_from(local.local_slot()).ok()?;
++    Instr::try_new(
++        op,
++        capture.result_register(),
++        local.result_register(),
++        local_slot,
++        capture.imm(),
++    )
++}
++
+ pub(super) fn protected_positions(
+     code: &[Instr],
+     handlers: &[crate::bytecode::Handler],
+@@ -292,10 +370,17 @@ pub(super) fn protected_positions(
+     binding_sites: &[crate::bytecode::BindingSite],
+ ) -> Vec<bool> {
+     let mut protected = vec![false; code.len() + 1];
+-    for instruction in code {
++    for (pc, instruction) in code.iter().enumerate() {
+         if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
+             protected[instruction.jump_target() as usize] = true;
+         }
++        if instruction.op() == Op::LoadCaptureLocalSkip {
++            // The retained suffix is the skip opcode's direct-entry fallback.
++            // Keep it one instruction wide so the skip always lands after it.
++            if pc + 2 <= code.len() {
++                protected[pc + 2] = true;
++            }
++        }
+     }
+     for handler in handlers {
+         protected[handler.start as usize] = true;
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 46ba9a381..0c7dd6509 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -240,6 +240,16 @@ impl<H: Host> Vm<H> {
+                 let v = self.capture(p, f, i.capture_depth(), i.capture_slot())?;
+                 self.write(f, i.result_register(), v);
+             }
++            Op::LoadCaptureLocal | Op::LoadCaptureLocalSkip => {
++                let captured = self.capture(p, f, i.capture_depth(), i.capture_slot())?;
++                self.write(f, i.register_a(), captured);
++                // SAFETY: validation proves this is an un-captured plain-local slot.
++                let local = unsafe { self.read_validated_local(f, usize::from(i.c())) };
++                self.write(f, i.register_b(), local);
++                if i.op() == Op::LoadCaptureLocalSkip {
++                    *pc += 1;
++                }
++            }
+             Op::StoreCapture => self.store_capture(
+                 p,
+                 f,
