@@ -115,7 +115,10 @@ impl<H: Host> Vm<H> {
         } else {
             value
         };
-        if let Some(Cell::BigInt(value)) = self.heap.get(value).cloned() {
+        if matches!(op, 0 | 1 | 3)
+            && let Some(Cell::BigInt(value)) = self.heap.get(value)
+        {
+            let value = value.clone();
             if op == 0 {
                 return Err(self.type_error(p, "Cannot convert BigInt value to number".into()));
             }
@@ -320,14 +323,22 @@ impl<H: Host> Vm<H> {
 
     #[inline(always)]
     pub(super) fn truthy(&self, v: Value) -> bool {
-        !(self.is_html_dda(v)
-            || v.is_null()
-            || v.is_undefined()
-            || v.is_deleted()
-            || v == Value::FALSE
-            || v.as_number().is_some_and(|n| n == 0.0 || n.is_nan())
-            || matches!(self.heap.get(v), Some(Cell::String(text)) if text.units().is_empty())
-            || matches!(self.heap.get(v), Some(Cell::BigInt(value)) if value == "0"))
+        if let Some(n) = v.as_number() {
+            return !(n == 0.0 || n.is_nan());
+        }
+        if v.is_heap() {
+            // One cell read decides every falsy heap value: "", 0n and the IsHTMLDDA object.
+            return match self.heap.get(v) {
+                Some(Cell::String(text)) => !text.units().is_empty(),
+                Some(Cell::BigInt(value)) => value != "0",
+                Some(Cell::Function {
+                    kind: FunctionKind::Native(Native::IsHTMLDDA),
+                    ..
+                }) => false,
+                _ => true,
+            };
+        }
+        !(v.is_null() || v.is_undefined() || v.is_deleted() || v == Value::FALSE)
     }
 
     pub(super) fn is_html_dda(&self, value: Value) -> bool {

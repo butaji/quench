@@ -196,9 +196,7 @@ impl<H: Host> Vm<H> {
         record: &RootedPropertyDescriptor,
     ) -> Result<bool, JsError> {
         let proxy = self.heap.root_value(proxy).unwrap();
-        let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(proxy).cloned()
+        let Some((target, handler)) = self.proxy_parts(proxy)
         else {
             unreachable!("proxy definition dispatch")
         };

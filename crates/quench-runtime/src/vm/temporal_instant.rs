@@ -42,7 +42,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn lock_instant_constructor_prototype(&mut self, constructor: Value) -> Result<(), JsError> {
-        let key = self.intern_atom("prototype");
+        let key = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(key),
@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
         if epoch.unsigned_abs() > MAX_INSTANT_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "epochNanoseconds outside supported range".into()));
         }
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
@@ -182,7 +182,7 @@ impl<H: Host> Vm<H> {
         };
         Ok(self.heap.alloc(Cell::TemporalInstant {
             object: Box::new(Self::empty_object(prototype)),
-            epoch_nanoseconds: epoch,
+            epoch_nanoseconds: Box::new(epoch),
         }))
     }
 
@@ -412,7 +412,7 @@ impl<H: Host> Vm<H> {
         if epoch.unsigned_abs() > MAX_INSTANT_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "epochNanoseconds outside supported range".into()));
         }
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
@@ -421,7 +421,7 @@ impl<H: Host> Vm<H> {
         };
         Ok(self.heap.alloc(Cell::TemporalInstant {
             object: Box::new(Self::empty_object(prototype)),
-            epoch_nanoseconds: epoch,
+            epoch_nanoseconds: Box::new(epoch),
         }))
     }
 
@@ -433,7 +433,7 @@ impl<H: Host> Vm<H> {
         match self.heap.get(value) {
             Some(Cell::TemporalInstant {
                 epoch_nanoseconds, ..
-            }) => Ok(*epoch_nanoseconds),
+            }) => Ok(**epoch_nanoseconds),
             _ => Err(self.type_error(
                 p,
                 "Temporal.Instant method called on incompatible receiver".into(),
@@ -460,13 +460,13 @@ impl<H: Host> Vm<H> {
             epoch_nanoseconds, ..
         }) = self.heap.get(value)
         {
-            return Ok(*epoch_nanoseconds);
+            return Ok(**epoch_nanoseconds);
         }
         if let Some(Cell::TemporalZonedDateTime {
             epoch_nanoseconds, ..
         }) = self.heap.get(value)
         {
-            return Ok(*epoch_nanoseconds);
+            return Ok(**epoch_nanoseconds);
         }
         if value.is_null() || value.is_undefined() {
             return Err(self.type_error(p, "Invalid Instant input".into()));

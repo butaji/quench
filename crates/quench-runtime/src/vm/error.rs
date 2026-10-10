@@ -773,7 +773,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let constructor_atom = self.intern_atom("BigInt");
         let constructor = self
             .active_native_env()
@@ -793,7 +793,7 @@ impl<H: Host> Vm<H> {
         self.global(program, "globalThis", self.realm.globals)?;
         let function = self.native_value(Native::Function);
         self.set_builtin_value_named(function, "prototype", self.function_proto)?;
-        let prototype = self.intern_atom("prototype");
+        let prototype = self.prototype_atom();
         self.set_property_attributes(
             function,
             PropertyKey::string(prototype),
@@ -923,7 +923,7 @@ impl<H: Host> Vm<H> {
         let name = self.heap.alloc(Cell::String("AbstractModuleSource".into()));
         self.set_named(program, constructor, "name", name)?;
         let name_atom = self.intern_atom("name");
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let constructor_atom = self.intern_atom("constructor");
         self.set_property_attributes(
             constructor,
@@ -1331,7 +1331,7 @@ impl<H: Host> Vm<H> {
                 .expect("realm dynamic function")
                 .proto = function;
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
-            let prototype_atom = self.intern_atom("prototype");
+            let prototype_atom = self.prototype_atom();
             self.set_property_attributes(
                 constructor,
                 PropertyKey::string(prototype_atom),
@@ -1348,7 +1348,7 @@ impl<H: Host> Vm<H> {
             if native == Native::GeneratorFunction {
                 self.install_generator_prototype(realm_generator_proto, prototype, Some(global))?;
                 self.set_builtin_value_named(prototype, "prototype", realm_generator_proto)?;
-                let prototype_atom = self.intern_atom("prototype");
+                let prototype_atom = self.prototype_atom();
                 self.set_property_attributes(
                     prototype,
                     PropertyKey::string(prototype_atom),
@@ -1382,7 +1382,7 @@ impl<H: Host> Vm<H> {
             }
             if native == Native::AsyncGeneratorFunction {
                 self.set_builtin_value_named(prototype, "prototype", realm_async_generator_proto)?;
-                let prototype_atom = self.intern_atom("prototype");
+                let prototype_atom = self.prototype_atom();
                 self.set_property_attributes(
                     prototype,
                     PropertyKey::string(prototype_atom),
@@ -1413,7 +1413,7 @@ impl<H: Host> Vm<H> {
             self.install_builtin_to_string_tag(prototype, name)?;
         }
         let async_generator_function_atom = self.intern_atom("AsyncGeneratorFunction");
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let async_generator_function = self
             .own_property(global, async_generator_function_atom)
             .unwrap_or(self.native_value(Native::AsyncGeneratorFunction));
@@ -1499,7 +1499,7 @@ impl<H: Host> Vm<H> {
             .insert((global, Native::Map), map_prototype);
         self.set_builtin_value_named(map, "prototype", map_prototype)?;
         self.set_builtin_value_named(map_prototype, "constructor", map)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             map,
             PropertyKey::string(prototype_atom),
@@ -1775,7 +1775,7 @@ impl<H: Host> Vm<H> {
             .builtin_prototypes
             .insert((global, Native::Function), prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -1986,7 +1986,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .unwrap_or_else(|| {
                 let constructor = self.native_value(native);
-                let atom = self.intern_atom("prototype");
+                let atom = self.prototype_atom();
                 self.own_property(constructor, atom)
                     .unwrap_or(self.object_proto)
             });
