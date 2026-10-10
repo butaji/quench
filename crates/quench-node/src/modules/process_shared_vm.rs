@@ -6,6 +6,8 @@ use quench_runtime::{NativeContext, PromiseRejectionEvent, RootId, RootedError, 
 use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
+use std::sync::OnceLock;
+use std::time::Instant;
 
 struct CallbackFailure {
     exception: Option<RootId>,
@@ -14,6 +16,7 @@ struct CallbackFailure {
 
 const STDOUT_FD: i32 = 1;
 const STDERR_FD: i32 = 2;
+static HRTIME_ORIGIN: OnceLock<Instant> = OnceLock::new();
 const MAX_SAFE_EXIT_CODE: f64 = 9_007_199_254_740_991.0;
 const HOST_WARNING_STACK_OPTION: &str = "\0quench:process-warning-stack";
 const HOST_WARNING_ID_OPTION: &str = "\0quench:process-warning-id";
@@ -30,6 +33,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let function = context.host_function(crate::host::shared_vm::operation("uptime"))?;
     install(context, process, "uptime", function)?;
     install_exit_code(context, process)?;
+    let exit = context.host_function(crate::host::shared_vm::operation("processExit"))?;
+    install(context, process, "exit", exit)?;
     let stdout = create_stream(context, STDOUT_FD)?;
     install(context, process, "stdout", stdout)?;
     let stderr = create_stream(context, STDERR_FD)?;
@@ -40,15 +45,31 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         ("nextTick", "nextTick"),
         ("cwd", "processCwd"),
         ("chdir", "processChdir"),
+        ("getuid", "processGetuid"),
+        ("geteuid", "processGeteuid"),
+        ("getgid", "processGetgid"),
+        ("getegid", "processGetegid"),
         ("umask", "processUmask"),
         ("emitWarning", "processEmitWarning"),
     ] {
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, process, name, function)?;
     }
+    let hrtime_raw = context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
+    let hrtime_factory = context.evaluate_script_rooted(
+        "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; if (!Array.isArray(previous)) { const received = previous === null ? 'null' : typeof previous === 'number' ? 'type number (' + previous + ')' : typeof previous; const error = new TypeError('The \\\"time\\\" argument must be an instance of Array. Received ' + received); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (previous.length !== 2) { const error = new RangeError('The value of \\\"time\\\" is out of range. It must be 2. Received ' + previous.length); error.code = 'ERR_OUT_OF_RANGE'; throw error; } let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }",
+        "node:process/shared-hrtime.js",
+    )?;
+    let undefined = context.undefined();
+    let hrtime = context.call_rooted(hrtime_factory, undefined, &[hrtime_raw])?;
+    install(context, process, "hrtime", hrtime)?;
     let on = context.host_function(crate::host::shared_vm::operation("on"))?;
     install(context, process, "on", on)?;
     install(context, process, "addListener", on)?;
+    let remove_listener =
+        context.host_function(crate::host::shared_vm::operation("processRemoveListener"))?;
+    install(context, process, "removeListener", remove_listener)?;
+    install(context, process, "off", remove_listener)?;
     let once = context.host_function(crate::host::shared_vm::operation("processOnce"))?;
     install(context, process, "once", once)?;
     let emit = context.host_function(crate::host::shared_vm::operation("processEmit"))?;
@@ -58,6 +79,18 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let shared_state = context.host_mut().shared_state();
     let argv = shared_state.borrow().process_argv.clone();
     let exec_argv = shared_state.borrow().exec_argv.clone();
+    let title = exec_argv
+        .iter()
+        .find_map(|argument| argument.strip_prefix("--title="));
+    if let Some(title) = title {
+        let global = context.global_root()?;
+        let key = context.string_rooted("__quench_cli_title");
+        let value = context.string_rooted(title);
+        if !context.set_property_rooted(global, key, value, global)? {
+            return Err(RootedError::host("cannot install CLI process title"));
+        }
+        set_text(context, process, "title", title)?;
+    }
     let env = context.object_rooted()?;
     for (name, value) in std::env::vars() {
         let key = context.string_rooted(&name);
@@ -80,14 +113,36 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     set_text(context, process, "arch", process_state::architecture())?;
     set_text(context, process, "platform", &process_state::platform())?;
+    let executable = std::env::current_exe()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let node_executable = executable
+        .parent()
+        .map(|parent| parent.join(if cfg!(windows) { "quench-node.exe" } else { "quench-node" }))
+        .filter(|path| path.is_file())
+        .unwrap_or(executable);
+    set_text(context, process, "execPath", &node_executable.to_string_lossy())?;
     let pid = context.number(std::process::id() as f64);
     install(context, process, "pid", pid)?;
+    #[cfg(unix)]
+    let ppid = unsafe { libc::getppid() };
+    #[cfg(not(unix))]
+    let ppid = 0;
+    let ppid = context.number(ppid as f64);
+    install(context, process, "ppid", ppid)?;
     let version = format!("v{}", process_state::NODE_VERSION);
     set_text(context, process, "version", &version)?;
+    let global = context.global_root()?;
+    let symbol_key = context.string_rooted("Symbol");
+    let symbol = context.get_property_rooted(global, symbol_key)?;
+    let tag_key = context.string_rooted("toStringTag");
+    let tag = context.get_property_rooted(symbol, tag_key)?;
+    let process_tag = context.string_rooted("process");
+    if !context.set_property_rooted(process, tag, process_tag, process)? {
+        return Err(RootedError::host("cannot set process toStringTag"));
+    }
     install_config(context, process)?;
     install_facts(context, process, "features", process_state::feature_facts())?;
     install_versions(context, process)?;
-    let global = context.global_root()?;
     install(context, global, "global", global)?;
     define_global_process(context, global, process)?;
     let retained = context.retain(process)?;
@@ -187,6 +242,13 @@ fn install_config(
         install(context, variables, name, value)?;
     }
     install(context, config, "variables", variables)?;
+    let freeze = context.evaluate_script_rooted(
+        "(value) => Object.freeze(value)",
+        "node:process/freeze-config.js",
+    )?;
+    let undefined = context.undefined();
+    context.call_rooted(freeze, undefined, &[variables])?;
+    context.call_rooted(freeze, undefined, &[config])?;
     install(context, process, "config", config)
 }
 
@@ -340,6 +402,44 @@ pub(crate) fn exit_code_set(
     Ok(context.undefined())
 }
 
+pub(crate) fn exit(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let process_control = context.host_mut().shared_state().borrow().process_control.clone();
+    let code = match args.first().copied() {
+        None => process_control.exit_code().unwrap_or(0),
+        Some(value_root) => {
+            let value = context
+                .rooted_value(value_root)
+                .ok_or_else(|| RootedError::host("invalid process.exit code value root"))?;
+            let number = if let Some(number) = value.as_number() {
+                Some(number)
+            } else if let Some(string) = context.string_text(value_root)? {
+                let number = parse_exit_code_string(&string);
+                (!number.is_nan()).then_some(number)
+            } else {
+                None
+            };
+            let Some(number) = number else {
+                return invalid_exit_code_type(context);
+            };
+            if !number.is_finite() || number.fract() != 0.0 || number.abs() > MAX_SAFE_EXIT_CODE {
+                return exit_code_range_error(context, number);
+            }
+            number as i64 as i32
+        }
+    };
+    let emit_abort = !process_control.exit_emitting();
+    process_control.request_exit(code);
+    if emit_abort {
+        Err(RootedError::host("process.exit"))
+    } else {
+        Ok(context.undefined())
+    }
+}
+
 fn parse_exit_code_string(value: &str) -> f64 {
     let value = value.trim();
     if value.is_empty() {
@@ -436,6 +536,65 @@ pub(crate) fn cwd(
         .to_string_lossy()
         .into_owned();
     Ok(context.string_rooted(&cwd))
+}
+
+pub(crate) fn getuid(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    #[cfg(unix)]
+    let id = unsafe { libc::getuid() };
+    #[cfg(not(unix))]
+    let id = 0u32;
+    Ok(context.number(id as f64))
+}
+
+pub(crate) fn geteuid(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    #[cfg(unix)]
+    let id = unsafe { libc::geteuid() };
+    #[cfg(not(unix))]
+    let id = 0u32;
+    Ok(context.number(id as f64))
+}
+
+pub(crate) fn getgid(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    #[cfg(unix)]
+    let id = unsafe { libc::getgid() };
+    #[cfg(not(unix))]
+    let id = 0u32;
+    Ok(context.number(id as f64))
+}
+
+pub(crate) fn getegid(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    #[cfg(unix)]
+    let id = unsafe { libc::getegid() };
+    #[cfg(not(unix))]
+    let id = 0u32;
+    Ok(context.number(id as f64))
+}
+
+pub(crate) fn hrtime_now(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let elapsed = HRTIME_ORIGIN.get_or_init(Instant::now).elapsed();
+    let seconds = context.number(elapsed.as_secs() as f64);
+    let nanoseconds = context.number(elapsed.subsec_nanos() as f64);
+    context.array_rooted(&[seconds, nanoseconds])
 }
 
 pub(crate) fn chdir(
@@ -572,6 +731,21 @@ pub(crate) fn finish_after_uncaught_error(
     crate::modules::http_shared_vm::cleanup(runtime, &shared_state);
     emit_exit(runtime, program, 1)?;
     handler_error.map_or(Ok(false), Err)
+}
+
+pub(crate) fn finish_requested_exit(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+) -> Result<(), String> {
+    let process_control = runtime
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .clone();
+    let shared_state = runtime.host_mut().shared_state();
+    crate::modules::http_shared_vm::cleanup(runtime, &shared_state);
+    emit_exit(runtime, program, process_control.exit_code().unwrap_or(0))
 }
 
 fn emit_uncaught_exception(
@@ -758,6 +932,8 @@ fn drain_checkpoint(
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
     crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::http_shared_vm::has_work(shared_state)
+        || !shared_state.borrow().net_sockets.is_empty()
+        || !shared_state.borrow().net_servers.is_empty()
         || shared_state.borrow().scheduler.has_refed_shared_timers()
         || shared_state
             .borrow()
@@ -1421,6 +1597,10 @@ fn emit_exit(
     code: i32,
 ) -> Result<(), String> {
     let shared_state = runtime.host_mut().shared_state();
+    shared_state
+        .borrow()
+        .process_control
+        .begin_exit_emission();
     let listeners = shared_state.borrow_mut().scheduler.begin_shared_exit();
     if let Some(process) = shared_process_root(runtime) {
         let event_count = shared_state.borrow().scheduler.shared_listener_count();
@@ -1582,6 +1762,55 @@ pub(crate) fn once(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     register_process_listener(context, receiver, args, true)
+}
+
+pub(crate) fn remove_listener(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let event_root = args.first().copied().unwrap_or_else(|| context.undefined());
+    let event = process_event_name(context, event_root)?;
+    let Some(callback) = args.get(1).copied() else {
+        return invalid_callback(context, "undefined");
+    };
+    if !context.is_callable_rooted(callback)? {
+        let received = received_type(context, callback)?;
+        return invalid_callback(context, &received);
+    }
+    let callback_value = context
+        .rooted_value(callback)
+        .ok_or_else(|| RootedError::host("invalid process listener callback root"))?;
+    let snapshots = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .scheduler
+        .shared_listener_snapshots(&event);
+    let listener = snapshots
+        .into_iter()
+        .rev()
+        .find(|listener| context.rooted_value(listener.callback) == Some(callback_value));
+    let Some(listener) = listener else {
+        return Ok(receiver);
+    };
+    let removed = context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .scheduler
+        .remove_shared_listener(&event, listener.id);
+    let Some((callback, event_root, event_removed)) = removed else {
+        return Ok(receiver);
+    };
+    release_context_callback(context, callback);
+    if let Some(event_root) = event_root {
+        context.release_root(event_root);
+    }
+    if event_removed {
+        update_process_event_count(context, receiver)?;
+    }
+    Ok(receiver)
 }
 
 fn register_process_listener(

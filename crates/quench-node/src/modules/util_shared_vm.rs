@@ -42,11 +42,26 @@ const UTIL: &str = quench_js_check::checked_js!(
         return current.name ? `[Function: ${current.name}]` : "[Function (anonymous)]";
       }
       if (current instanceof Error) {
+        if (current.name === "SystemError" && current.code === "ERR_SOCKET_BUFFER_SIZE" && current.info) {
+          const { code, message, errno, syscall } = current.info;
+          return `SystemError [ERR_SOCKET_BUFFER_SIZE]: ${current.message}\n` +
+            `  code: 'ERR_SOCKET_BUFFER_SIZE',\n` +
+            `  info: {\n` +
+            `    errno: ${errno},\n` +
+            `    code: '${code}',\n` +
+            `    message: '${message}',\n` +
+            `    syscall: '${syscall}'\n` +
+            `  },\n` +
+            `  errno: [Getter/Setter: ${current.errno}],\n` +
+            `  syscall: [Getter/Setter: '${current.syscall}']\n` +
+            `}`;
+        }
         if (typeof current.stack === "string") return current.stack;
         return `${current.name || "Error"}${current.message ? `: ${current.message}` : ""}`;
       }
-      if (depth > maxDepth) return Array.isArray(current) ? "[Array]" : "[Object]";
-
+      if (depth > maxDepth) {
+        return current?.constructor?.name === "BlockList" ? "[BlockList]" : Array.isArray(current) ? "[Array]" : "[Object]";
+      }
       const customInspect = current[inspect.custom];
       if (settings.customInspect !== false && typeof customInspect === "function") {
         const custom = Reflect.apply(customInspect, current, [depth, settings, inspect]);
@@ -102,6 +117,30 @@ const UTIL: &str = quench_js_check::checked_js!(
     };
 
     return render(value, 0);
+  }
+
+  function format(first, ...args) {
+    if (typeof first !== "string") {
+      return [first, ...args].map((value) => typeof value === "string" ? value : inspect(value)).join(" ");
+    }
+    let index = 0;
+    const output = first.replace(/%[sdifjoOc%]/g, (token) => {
+      if (token === "%%") return "%";
+      if (index >= args.length) return token;
+      const value = args[index++];
+      switch (token) {
+        case "%s": return String(value);
+        case "%d": return String(Number(value));
+        case "%i": return String(Number.parseInt(value, 10));
+        case "%f": return String(Number.parseFloat(value));
+        case "%j": try { return JSON.stringify(value); } catch { return "[Circular]"; }
+        case "%o":
+        case "%O": return typeof value === "string" ? value : inspect(value);
+        case "%c": return "";
+        default: return token;
+      }
+    });
+    return output + args.slice(index).map((value) => typeof value === "string" ? value : inspect(value)).map((value) => ` ${value}`).join("");
   }
 
   inspect.defaultOptions = {
@@ -267,7 +306,40 @@ const UTIL: &str = quench_js_check::checked_js!(
     return promisified;
   };
   promisify.custom = promisifyCustom;
-  return { inspect, getCallSites, inherits, debuglog, deprecate, promisify };
+  const types = {
+    isDate: (value) => value instanceof Date,
+    isPromise: (value) => value instanceof Promise,
+  };
+  const systemErrorNames = new Map([
+    [-9, "EBADF"], [-22, "EINVAL"], [-88, "ENOTSOCK"], [-98, "EADDRINUSE"],
+    [-99, "EADDRNOTAVAIL"], [-111, "ECONNREFUSED"], [-113, "EHOSTUNREACH"],
+    [-101, "ENETUNREACH"], [-110, "ETIMEDOUT"], [-32, "EPIPE"], [-4094, "UNKNOWN"],
+  ]);
+  function getSystemErrorName(errno) {
+    if (typeof errno !== "number") {
+      throw Object.assign(new TypeError('The "err" argument must be of type number'), {
+        code: "ERR_INVALID_ARG_TYPE",
+      });
+    }
+    const name = systemErrorNames.get(errno);
+    if (name) return name;
+    throw Object.assign(new RangeError(`Unknown system error ${errno}`), {
+      code: "ERR_UNKNOWN_SYSTEM_ERROR",
+    });
+  }
+  return {
+    format,
+    inspect,
+    getCallSites,
+    getSystemErrorName,
+    inherits,
+    debuglog,
+    deprecate,
+    promisify,
+    types,
+    TextEncoder: globalThis.TextEncoder,
+    TextDecoder: globalThis.TextDecoder,
+  };
 })()"#
 );
 

@@ -229,6 +229,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm.root_value(root)
     }
 
+    /// Copy the raw bytes from a typed array or DataView without per-index guest property reads.
+    pub fn view_bytes_rooted(&self, root: RootId) -> Option<Vec<u8>> {
+        self.vm
+            .root_value(root)
+            .and_then(|value| self.vm.embedding_view_bytes(value))
+    }
+
     /// Check callability without coercion or invoking guest code.
     pub fn is_callable_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
         self.vm

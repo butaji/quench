@@ -41,6 +41,55 @@ fn is_import_expression_or_member_access_on_import_expression(callee: &Expressio
     }
 }
 
+fn normalize_escaped_backslash_quantifiers(source: &str) -> Option<String> {
+    let bytes = source.as_bytes();
+    let mut normalized = String::with_capacity(source.len());
+    let mut copied_until = 0;
+    let mut index = 0;
+    let mut in_class = false;
+    while index < bytes.len() {
+        if !in_class && bytes.get(index..index + 3) == Some(b"\\\\{") {
+            if let Some(end) = escaped_backslash_quantifier_end(bytes, index + 3) {
+                normalized.push_str(&source[copied_until..index]);
+                normalized.push_str(r"(?:\\)");
+                normalized.push_str(&source[index + 2..end]);
+                copied_until = end;
+                index = end;
+                continue;
+            }
+        }
+        match bytes[index] {
+            b'[' if index == 0 || bytes[index - 1] != b'\\' => in_class = true,
+            b']' if in_class && (index == 0 || bytes[index - 1] != b'\\') => in_class = false,
+            b'\\' => index = (index + 2).min(bytes.len()),
+            _ => index += 1,
+        }
+    }
+    if copied_until == 0 {
+        None
+    } else {
+        normalized.push_str(&source[copied_until..]);
+        Some(normalized)
+    }
+}
+
+fn escaped_backslash_quantifier_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut index = start;
+    if !bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        return None;
+    }
+    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+        index += 1;
+    }
+    if bytes.get(index) == Some(&b',') {
+        index += 1;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+    }
+    (bytes.get(index) == Some(&b'}')).then_some(index + 1)
+}
+
 impl<'a, C: Config> ParserImpl<'a, C> {
     pub(crate) fn parse_paren_expression(&mut self) -> Expression<'a> {
         let opening_span = self.cur_token().span();
@@ -496,6 +545,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         flags: &'a str,
     ) -> Option<ArenaBox<'a, Pattern<'a>>> {
         use oxc_regular_expression::{LiteralParser, Options};
+        let normalized = normalize_escaped_backslash_quantifiers(pattern);
+        let pattern = normalized
+            .as_deref()
+            .map_or(pattern, |source| self.allocator().alloc_str(source));
         match LiteralParser::new(
             self.allocator(),
             pattern,

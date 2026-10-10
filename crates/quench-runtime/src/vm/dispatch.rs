@@ -303,6 +303,13 @@ impl<H: Host> Vm<H> {
                     let value = self
                         .heap
                         .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                    if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
+                    {
+                        let url = self.host.import_meta_url(&source_name);
+                        let url = self.heap.alloc(Cell::String(url.into()));
+                        let url_atom = self.intern_atom("url");
+                        self.set_property(value, url_atom, url)?;
+                    }
                     self.programs.set_import_meta(program, value);
                     value
                 };
@@ -589,7 +596,8 @@ impl<H: Host> Vm<H> {
             }
             Op::SuperCallCheck => self.check_super_call(p)?,
             Op::IteratorClose => {
-                self.iterator_close(p, self.read(f, i.register_b()))?;
+                let result = self.iterator_close(p, self.read(f, i.register_b()))?;
+                self.write(f, i.result_register(), result);
             }
             Op::IteratorCleanupPush => self.frames[f].active_iterators.push(ActiveIterator {
                 iterator: i.register_a(),

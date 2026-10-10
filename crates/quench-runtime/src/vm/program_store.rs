@@ -275,6 +275,10 @@ impl ProgramStore {
         self.programs.get(id.index())?.import_meta
     }
 
+    pub(crate) fn source_name(&self, id: ProgramId) -> Option<&str> {
+        Some(&self.programs.get(id.index())?.residual.source_name)
+    }
+
     pub(crate) fn set_import_meta(&mut self, id: ProgramId, value: Value) {
         if let Some(entry) = self.programs.get_mut(id.index())
             && entry.module
