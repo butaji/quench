@@ -255,6 +255,7 @@ macro_rules! loads {
                 match op { $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
             }
             pub(crate) fn width(self) -> usize { match self { $(Self::$name => std::mem::size_of::<$word>(),)+ } }
+            #[inline(always)]
             pub(crate) fn read(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
                 match self { $(Self::$name => {
                     let range = checked_range(address, std::mem::size_of::<$word>(), bytes.len())?;
@@ -318,6 +319,7 @@ macro_rules! stores {
             pub(crate) fn value_type(self) -> WasmType {
                 match self { $(Self::$name => WasmType::$variant,)+ }
             }
+            #[inline(always)]
             pub(crate) fn write(self, bytes: &mut [u8], address: u64, value: WasmValue) -> Result<(), WasmTrap> {
                 match self { $(Self::$name => {
                     let WasmValue::$variant(word) = value else { unreachable!("decoded store type") };
