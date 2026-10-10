@@ -26,6 +26,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "nextTick" (1) => crate::modules::process_shared_vm::next_tick,
         method "on" (2) => crate::modules::process_shared_vm::on,
         method "processOnce" (2) => crate::modules::process_shared_vm::once,
+        method "processRemoveListener" (2) => crate::modules::process_shared_vm::remove_listener,
         method "processEmit" (2) => crate::modules::process_shared_vm::emit,
         method "processEmitWarning" (2) => crate::modules::process_shared_vm::emit_warning,
         method "processDispatchWarning" (1) => crate::modules::process_shared_vm::dispatch_warning,
