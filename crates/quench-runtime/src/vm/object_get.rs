@@ -334,7 +334,9 @@ impl<H: Host> Vm<H> {
             ));
         }
         if !private_name
-            && matches!(self.atom_name(atom), "caller" | "arguments")
+            && self
+                .atom_class(atom)
+                .contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY)
             && matches!(self.heap.get(object), Some(Cell::Function { .. }))
             && self.own_property(object, atom).is_none()
             && !self.function_caller_is_restricted(object)
@@ -438,7 +440,8 @@ impl<H: Host> Vm<H> {
                     .module_namespace_value(p, object, atom)?
                     .unwrap_or(Value::UNDEFINED));
             }
-            if let Some(index) = super::object_static::array_index(self.atom_name(atom))
+            if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+                && let Some(index) = super::object_static::array_index(self.atom_name(atom))
                 && let Some(Cell::Array { elements, .. }) = self.heap.get(object)
             {
                 let value = elements
@@ -515,9 +518,8 @@ impl<H: Host> Vm<H> {
                 | Some(Cell::TemporalPlainYearMonth { object: x, .. })
                 | Some(Cell::TemporalZonedDateTime { object: x, .. })
                 | Some(Cell::TemporalInstant { object: x, .. }) => object = x.proto,
-                Some(Cell::Object(x))
-                | Some(Cell::Array { object: x, .. })
-                | Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto,
+                Some(Cell::Object(x)) | Some(Cell::Array { object: x, .. }) => object = x.proto,
+                Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto,
                 Some(Cell::RegExp { object: x, .. }) => object = x.proto,
                 Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
                     object = x.proto
@@ -601,12 +603,12 @@ impl<H: Host> Vm<H> {
         let mut homes = Vec::with_capacity(home_atoms.len());
         while let Some(Cell::Environment {
             parent,
-            program,
             function,
             slots,
-            ..
+            scope,
         }) = self.heap.get(environment)
         {
+            let program = &scope.program;
             let dynamic_bindings = self.heap.environment_bindings(environment)?;
             if let Some((_, home)) = dynamic_bindings
                 .iter()

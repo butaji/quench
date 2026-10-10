@@ -167,23 +167,6 @@ class __QuenchRealFSProvider extends __QuenchVirtualProvider {
   get supportsWatch() {
     return true;
   }
-  __realPath(path, syscall) {
-    const relative = String(path).replace(/^[\\/]+/, "");
-    const candidate = globalThis.__nodePath.resolve(this.root, relative);
-    if (
-      candidate !== this.root &&
-      !candidate.startsWith(`${this.root}${globalThis.__nodePath.sep}`)
-    ) {
-      throw __quenchVfsError("ENOENT", syscall, path);
-    }
-    return candidate;
-  }
-  statSync(path, options) {
-    return globalThis.__nodeFs.statSync(this.__realPath(path, "stat"), options);
-  }
-  readFileSync(path, options) {
-    return globalThis.__nodeFs.readFileSync(this.__realPath(path, "open"), options);
-  }
 }
 const __quenchVfsError = (code, syscall, path) => {
   const error = new Error(`${code}: ${syscall}, ${path}`);

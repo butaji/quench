@@ -57,50 +57,9 @@ fusion_recipes! {
             first.set_optional_register_b(Some(second.result_register()));
             Some(first)
         };
-    StoreLoadLocalPlain: [StoreLocalPlain, LoadLocalPlain] =>
-        |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
-            if first.optional_register_b().is_some()
-                || first.local_slot() != second.local_slot()
-                || second.numeric_local_store_target().is_some()
-            {
-                return None;
-            }
-            first.set_optional_register_b(Some(second.result_register()));
-            Some(first)
-        };
-    LoadStoreLocalPlain: [LoadLocalPlain, StoreLocalPlain] =>
-        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
-            if first.numeric_local_store_target().is_some()
-                || second.optional_register_b().is_some()
-                || second.register_a() != first.result_register()
-                || first.local_slot() == second.local_slot()
-            {
-                return None;
-            }
-            let source = u16::try_from(first.local_slot()).ok()?;
-            let destination = u16::try_from(second.local_slot()).ok()?;
-            Instr::try_new(Op::CopyLocalPlain, source, 0, 0, u32::from(destination))
-        };
-    LoadLocalSetThisFieldStrict: [LoadLocalPlain, SetThisFieldStrict] =>
-        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
-            if first.numeric_local_store_target().is_some()
-                || second.register_a() != first.result_register()
-            {
-                return None;
-            }
-            let source = u16::try_from(first.local_slot()).ok()?;
-            let cache_site = u16::try_from(second.cache_site_index()).ok()?;
-            Instr::try_new(
-                Op::SetThisFieldStrictLocal,
-                source,
-                0,
-                cache_site,
-                second.atom_index() as u32,
-            )
-        };
     ProducerMove: [
         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
-        LoadName, Move; Binary, Move; Unary, Move; GetField, Move; Move, Move
+        LoadName, Move; Binary, Move; Unary, Move; GetField, Move
     ] => |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
         if second.register_b() != first.result_register() { return None; }
         first.set_result_register(second.result_register());
@@ -116,20 +75,6 @@ fusion_recipes! {
                 first.operand_c().0,
                 second.jump_target(),
             ))
-        };
-    UnaryJumpFalse: [Unary, JumpFalse] =>
-        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
-            if first.result_register() != second.register_a() {
-                return None;
-            }
-            let operator = u16::try_from(first.unary_operator()).ok()?;
-            Instr::try_new(
-                Op::JumpUnaryFalse,
-                operator,
-                Operand::register(first.register_b()).0,
-                0,
-                second.jump_target(),
-            )
         };
     ReturnResult: [
         Binary, Return; GetField, Return; Call, Return; CallKnown, Return;
@@ -524,55 +469,6 @@ mod tests {
         assert!(apply_recipe(Recipe::BinaryJumpFalse, binary, other, &mut vec![]).is_none());
     }
 
-    #[test]
-    fn fuses_unary_condition_only_when_branch_consumes_result() {
-        let unary = Instr::new(
-            Op::Unary,
-            7,
-            Operand::register(2).0,
-            0,
-            oxc_ast::ast::UnaryOperator::UnaryPlus as u32,
-        );
-        let branch = Instr::new(Op::JumpFalse, 7, 0, 0, 41);
-        let fused = apply_recipe(Recipe::UnaryJumpFalse, unary, branch, &mut vec![]).unwrap();
-        assert_eq!(fused.op(), Op::JumpUnaryFalse);
-        assert_eq!(
-            fused.unary_operator_field(),
-            oxc_ast::ast::UnaryOperator::UnaryPlus as u32
-        );
-        assert_eq!(fused.operand_b(), Operand::register(2));
-        assert_eq!(fused.jump_target(), 41);
-
-        let other = Instr::new(Op::JumpFalse, 8, 0, 0, 41);
-        assert!(apply_recipe(Recipe::UnaryJumpFalse, unary, other, &mut vec![]).is_none());
-    }
-
-    #[test]
-    fn plain_store_load_keeps_value_and_local_order() {
-        let store = Instr::new(Op::StoreLocalPlain, 4, 0, 0, 9);
-        let load = Instr::new(Op::LoadLocalPlain, 5, 0, 0, 9);
-        let fused = apply_recipe(Recipe::StoreLoadLocalPlain, store, load, &mut vec![]).unwrap();
-
-        assert_eq!(fused.op(), Op::StoreLocalPlain);
-        assert_eq!(fused.local_slot(), 9);
-        assert_eq!(fused.register_a(), 4);
-        assert_eq!(fused.optional_register_b(), Some(5));
-
-        let other_local = Instr::new(Op::LoadLocalPlain, 5, 0, 0, 10);
-        assert!(
-            apply_recipe(Recipe::StoreLoadLocalPlain, store, other_local, &mut vec![],).is_none()
-        );
-
-        let mut increment = load;
-        increment.set_numeric_local_store_target(Some(crate::bytecode::NumericLocalStoreTarget {
-            register: 6,
-            decrement: false,
-        }));
-        assert!(
-            apply_recipe(Recipe::StoreLoadLocalPlain, store, increment, &mut vec![],).is_none()
-        );
-    }
-
     fn rewrite_fixture(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
         let mut program = Engine::specialize_unspecialized("", "rewrite-liveness.js").unwrap();
         let function = &mut program.functions[0];
@@ -639,27 +535,6 @@ mod tests {
     }
 
     #[test]
-    fn unary_branch_discards_a_result_only_when_dead_on_every_successor() {
-        let unary = Instr::new(
-            Op::Unary,
-            3,
-            Operand::register(0).0,
-            0,
-            oxc_ast::ast::UnaryOperator::UnaryPlus as u32,
-        );
-        let branch = Instr::new(Op::JumpFalse, 3, 0, 0, 3);
-        let returned = Instr::new(Op::Return, 2, 0, 0, 0);
-        let live_branch = vec![unary, branch, returned, Instr::new(Op::Return, 3, 0, 0, 0)];
-        assert_rewrite_preserves_code(live_branch, 4);
-
-        let dead_branch = vec![unary, branch, returned, returned];
-        let fused = rewrite_fixture(dead_branch.clone(), 4);
-        assert_eq!(fused[0].op(), Op::JumpUnaryFalse);
-        assert_eq!(fused[0].jump_target(), 2);
-        assert_eq!(fused.len(), dead_branch.len() - 1);
-    }
-
-    #[test]
     fn constant_fusion_keeps_a_register_read_after_the_binary() {
         let code = vec![
             Instr::new(Op::LoadConst, 3, 0, 0, 0),
@@ -677,7 +552,7 @@ mod tests {
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 25);
+        assert_eq!(RULES.len(), 23);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));

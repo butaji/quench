@@ -1,7 +1,5 @@
 use crate::value::Value;
 use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
-#[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
-use crate::vm::wtf16::JsString;
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
 mod access;
@@ -20,51 +18,12 @@ use slots::SlotArena;
 
 // Keep implicit holes in dense storage when their one-time allocation is
 // bounded. 256 KiB covers the measured 16,900-slot NavierStokes grids while
-// still routing genuinely large `new Array(length)` allocations to sparse
-// storage. Derive the slot count from the runtime Value representation.
+// still sending genuinely large `new Array(length)` allocations to the sparse
+// representation. The slot limit is derived from Value's representation.
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
 const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
-
-#[derive(Clone, Copy)]
-struct FullCollectionGrowthFactor {
-    numerator: usize,
-    denominator: usize,
-}
-
-impl FullCollectionGrowthFactor {
-    fn allocation_limit(self, live_cells: usize) -> usize {
-        debug_assert!(self.denominator > 0);
-        let whole = live_cells / self.denominator;
-        let remainder = live_cells % self.denominator;
-        whole
-            .saturating_mul(self.numerator)
-            .saturating_add(remainder.saturating_mul(self.numerator) / self.denominator)
-    }
-}
-
-// The major interval bounds total allocations between full collections. The
-// large-heap threshold below may schedule minor collections inside that limit.
-const FULL_COLLECTION_GROWTH: FullCollectionGrowthFactor = FullCollectionGrowthFactor {
-    numerator: 1,
-    denominator: 1,
-};
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum CollectionState {
-    #[default]
-    Idle,
-    MinorMarking,
-    FullMarking,
-    Sweeping,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GcTraceKind {
-    Collection,
-    VerifyFull,
-}
 
 #[derive(Clone, Copy)]
 struct GcHeadroomFactor {
@@ -88,12 +47,50 @@ const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
 };
 // This is the sweep variable for large-heap RSS/Score measurements. A factor
 // of 1/1 allows one live set's worth of new cells before collection (2x total
-// occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x. Minor
-// thresholds are also capped by the remaining full-growth allocation budget.
+// occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x.
 const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
-    numerator: 3,
-    denominator: 4,
+    numerator: 1,
+    denominator: 1,
 };
+
+#[derive(Clone, Copy)]
+struct FullCollectionGrowthFactor {
+    numerator: usize,
+    denominator: usize,
+}
+
+impl FullCollectionGrowthFactor {
+    fn allocation_limit(self, live_cells: usize) -> usize {
+        debug_assert!(self.denominator > 0);
+        let whole = live_cells / self.denominator;
+        let remainder = live_cells % self.denominator;
+        whole
+            .saturating_mul(self.numerator)
+            .saturating_add(remainder.saturating_mul(self.numerator) / self.denominator)
+    }
+}
+
+// Bound total allocations between full collections. Minor collections may
+// run earlier to sweep the young cells.
+const FULL_COLLECTION_GROWTH: FullCollectionGrowthFactor = FullCollectionGrowthFactor {
+    numerator: 1,
+    denominator: 1,
+};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CollectionState {
+    #[default]
+    Idle,
+    MinorMarking,
+    FullMarking,
+    Sweeping,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GcTraceKind {
+    Collection,
+    VerifyFull,
+}
 
 fn gc_allocation_headroom(live_cells: usize) -> usize {
     let factor = if live_cells >= LARGE_HEAP_MINIMUM_LIVE_CELLS {
@@ -445,27 +442,17 @@ impl Heap {
             self.properties.register_shape(shape as u32, length);
         }
     }
-    pub(crate) fn compact_property_arena(&mut self) {
+    /// Slide every live arena range down over released ones, in offset order.
+    /// `objects` holds each live arena owner packed with its range offset.
+    fn compact_property_arena(&mut self, mut objects: Vec<u64>) {
         if !self.properties.has_released_ranges() {
             return;
         }
         #[cfg(feature = "profile-memory")]
         let before = self.properties.stats();
-        let mut objects = self
-            .slots
-            .iter()
-            .enumerate()
-            .filter_map(|(index, slot)| {
-                let object = slot.cell.as_ref()?.object()?;
-                self.properties
-                    .has_compact_range(object.properties)
-                    .then_some(())?;
-                Some((object.properties.start_offset(), index))
-            })
-            .collect::<Vec<_>>();
-        objects.sort_unstable();
+        sort_by_unique_offset(&mut objects);
         let mut target = 0;
-        for (_, index) in objects {
+        for index in objects.into_iter().map(owner_of_packed) {
             let slot = self
                 .slots
                 .get_mut(index)
@@ -492,7 +479,6 @@ impl Heap {
     pub(crate) fn reset(&mut self) {
         self.slots.clear();
         self.marks.clear();
-        self.remembered_marks.clear();
         self.free.clear();
         self.retired_slots = 0;
         self.generations.clear();
@@ -507,12 +493,13 @@ impl Heap {
         self.peak_live = 0;
         self.peak_survivors = 0;
         self.max_threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
+        self.properties.reset();
+        self.remembered_marks.clear();
         self.remembered.clear();
         self.young.clear();
-        self.collection_state = CollectionState::Idle;
-        self.properties.reset();
         self.roots.clear();
         self.sparse_arrays = None;
+        self.collection_state = CollectionState::Idle;
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile = GcProfile::default();
@@ -533,14 +520,7 @@ impl Heap {
         value
             .heap_index()
             .map(|index| index as usize)
-            .is_some_and(|index| {
-                index < self.slots.len()
-                    && self
-                        .slots
-                        .get(index)
-                        .is_some_and(|slot| slot.cell.is_some())
-                    && Self::marked(&self.marks, index)
-            })
+            .is_some_and(|index| self.get(value).is_some() && Self::marked(&self.marks, index))
     }
     pub(crate) fn root(&mut self, value: Value) -> RootId {
         self.roots.insert(value)
@@ -602,23 +582,18 @@ impl Heap {
         {
             let mut ephemerons = weak::EphemeronWork::default();
             if !full {
-                let slots = &self.slots;
                 let properties = &self.properties;
                 let remembered = &self.remembered;
                 for index in remembered.iter().copied() {
                     let value = Value::heap(index);
-                    if let Some(cell) = slots
-                        .get(index as usize)
-                        .and_then(|slot| slot.cell.as_ref())
-                    {
+                    if let Some(cell) = self.get(value) {
                         Self::children(
                             value,
                             cell,
                             properties,
                             &mut work,
-                            &mut |owner, shape, roots| {
-                                object_roots(GcTraceKind::Collection, owner, shape, roots)
-                            },
+                            &mut object_roots,
+                            GcTraceKind::Collection,
                         );
                         if let Some(arrays) = &self.sparse_arrays
                             && let Some(elements) = arrays.get(&index)
@@ -657,83 +632,120 @@ impl Heap {
         let sweep_started = std::time::Instant::now();
         let mut live = 0;
         let properties = &mut self.properties;
-        let external_bytes = &mut self.external_bytes;
-        let free = &mut self.free;
-        let sparse_arrays = &mut self.sparse_arrays;
-        #[cfg(feature = "profile-memory")]
-        let memory_profile = &mut self.memory_profile;
-        #[cfg(feature = "profile-aggregate")]
-        let gc_profile = &mut self.gc_profile;
-        let mut reclaim = |index: usize, cell: Cell| {
-            *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
+        let mut property_owners = Vec::new();
+        {
+            let external_bytes = &mut self.external_bytes;
+            let free = &mut self.free;
+            let sparse_arrays = &mut self.sparse_arrays;
             #[cfg(feature = "profile-memory")]
-            {
-                let object_slots = cell
-                    .object()
-                    .map(|object| properties.len(object.properties));
-                memory_profile.freed(index, &cell, object_slots);
-            }
-            if let Some(object) = cell.object() {
-                properties.release(object.properties);
-            }
-            if let Some(arrays) = sparse_arrays {
-                arrays.remove(&(index as u32));
-            }
-            // Reused slots enter `free` only after their side-table entries are gone.
-            free.push(index as u32);
+            let memory_profile = &mut self.memory_profile;
             #[cfg(feature = "profile-aggregate")]
-            {
-                gc_profile.freed += 1;
-            }
-        };
-        self.collection_state = CollectionState::Sweeping;
-        if full {
-            for (index, slot) in self.slots.iter_mut().enumerate() {
+            let gc_profile = &mut self.gc_profile;
+            let mut reclaim = |properties: &mut ValueArena, index: usize, cell: Cell| {
+                *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
+                #[cfg(feature = "profile-memory")]
+                {
+                    let object_slots = cell
+                        .object()
+                        .map(|object| properties.len(object.properties));
+                    memory_profile.freed(index, &cell, object_slots);
+                }
+                if let Some(object) = cell.object() {
+                    properties.release(object.properties);
+                }
+                if let Some(arrays) = sparse_arrays {
+                    arrays.remove(&(index as u32));
+                }
+                free.push(index as u32);
                 #[cfg(feature = "profile-aggregate")]
                 {
-                    swept_slots += 1;
+                    gc_profile.freed += 1;
                 }
-                if Self::marked(&self.marks, index) {
-                    live += 1;
-                } else if let Some(cell) = slot.cell.take() {
-                    reclaim(index, cell);
+            };
+            self.collection_state = CollectionState::Sweeping;
+            if full {
+                for (base, slab) in self.slots.slabs_mut() {
+                    for (offset, slot) in slab.iter_mut().enumerate() {
+                        let index = base + offset;
+                        #[cfg(feature = "profile-aggregate")]
+                        {
+                            swept_slots += 1;
+                        }
+                        if Self::marked(&self.marks, index) {
+                            live += 1;
+                            if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
+                                && properties.has_compact_range(object.properties)
+                            {
+                                property_owners.push(pack_offset_owner(
+                                    object.properties.start_offset(),
+                                    index,
+                                ));
+                            }
+                        } else if let Some(cell) = slot.cell.take() {
+                            reclaim(properties, index, cell);
+                        }
+                    }
                 }
+            } else {
+                let mut promoted = 0;
+                for index in self.young.iter().copied() {
+                    #[cfg(feature = "profile-aggregate")]
+                    {
+                        swept_slots += 1;
+                    }
+                    let index_usize = index as usize;
+                    let Some(slot) = self.slots.get_mut(index_usize) else {
+                        continue;
+                    };
+                    if Self::marked(&self.marks, index_usize) {
+                        promoted += 1;
+                    } else if let Some(cell) = slot.cell.take() {
+                        reclaim(properties, index_usize, cell);
+                        self.marks[index_usize / 64] &= !(1 << (index_usize % 64));
+                    }
+                }
+                self.young.clear();
+                for index in self.remembered.iter().copied() {
+                    let index = index as usize;
+                    self.remembered_marks[index / 64] &= !(1 << (index % 64));
+                }
+                self.remembered.clear();
+                self.old_live = self.old_live.saturating_add(promoted);
+                live = self.old_live;
             }
-        } else {
-            let mut promoted = 0;
-            for index in self.young.iter().copied() {
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    swept_slots += 1;
-                }
-                let index_usize = index as usize;
-                let Some(slot) = self.slots.get_mut(index_usize) else {
-                    continue;
-                };
-                if Self::marked(&self.marks, index_usize) {
-                    promoted += 1;
-                } else if let Some(cell) = slot.cell.take() {
-                    reclaim(index_usize, cell);
-                    self.marks[index_usize / 64] &= !(1 << (index_usize % 64));
-                }
-            }
-            self.young.clear();
-            for position in 0..self.remembered.len() {
-                let index = self.remembered[position] as usize;
-                self.remembered_marks[index / 64] &= !(1 << (index % 64));
-            }
-            self.remembered.clear();
-            self.old_live = self.old_live.saturating_add(promoted);
-            live = self.old_live;
         }
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.sweep_slots += swept_slots as u64;
         }
+        if full {
+            self.compact_property_arena(property_owners);
+        }
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
+        self.allocations = 0;
+        if full {
+            self.allocations_since_full = 0;
+            self.old_live = live;
+            self.full_collection_growth_limit = FULL_COLLECTION_GROWTH
+                .allocation_limit(live)
+                .max(MINIMUM_GC_ALLOCATION_HEADROOM);
+            self.young.clear();
+            self.remembered.clear();
+            self.remembered_marks.fill(0);
+        }
+        let allocation_headroom = gc_allocation_headroom(live);
+        self.threshold = if full {
+            allocation_headroom
+        } else {
+            let remaining_full_growth = self
+                .full_collection_growth_limit
+                .saturating_sub(self.allocations_since_full)
+                .max(1);
+            allocation_headroom.min(remaining_full_growth)
+        };
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.allocations_between_collections_total +=
@@ -759,29 +771,6 @@ impl Heap {
                 self.gc_profile.survivors_max = self.gc_profile.survivors_max.max(live as u64);
             }
         }
-        self.allocations = 0;
-        if full {
-            self.allocations_since_full = 0;
-            self.old_live = live;
-            self.full_collection_growth_limit = FULL_COLLECTION_GROWTH
-                .allocation_limit(live)
-                .max(MINIMUM_GC_ALLOCATION_HEADROOM);
-            self.young.clear();
-            self.remembered.clear();
-            self.remembered_marks.fill(0);
-        }
-        // `threshold` counts allocations after collection. The selected growth
-        // factor is added to the live set to describe the occupied high-water.
-        let allocation_headroom = gc_allocation_headroom(live);
-        self.threshold = if full {
-            allocation_headroom
-        } else {
-            let remaining_full_growth = self
-                .full_collection_growth_limit
-                .saturating_sub(self.allocations_since_full)
-                .max(1);
-            allocation_headroom.min(remaining_full_growth)
-        };
         self.peak_survivors = self.peak_survivors.max(live);
         self.max_threshold = self.max_threshold.max(self.threshold);
         self.collection_state = CollectionState::Idle;
@@ -798,10 +787,16 @@ impl Heap {
         #[cfg(feature = "profile-aggregate")]
         let profile = self.gc_profile;
         self.marks.fill(0);
+        let mut young_slots = vec![false; self.slots.len()];
+        for index in young.iter().copied() {
+            young_slots[index as usize] = true;
+        }
         let mut work = roots.to_vec();
         work.extend(self.slots.iter().enumerate().filter_map(|(index, slot)| {
-            (slot.cell.is_some() && Self::marked(&minor_marks, index))
-                .then_some(Value::heap(index as u32))
+            (slot.cell.is_some()
+                && !young_slots[index]
+                && Self::marked(&minor_marks, index))
+            .then_some(Value::heap(index as u32))
         }));
         let mut ephemerons = weak::EphemeronWork::default();
         self.collection_state = CollectionState::FullMarking;
@@ -813,11 +808,7 @@ impl Heap {
         );
         for index in young {
             let index = index as usize;
-            if self
-                .slots
-                .get_mut(index)
-                .is_some_and(|slot| slot.cell.is_some())
-            {
+            if self.get(Value::heap(index as u32)).is_some() {
                 assert_eq!(
                     Self::marked(&self.marks, index),
                     Self::marked(&minor_marks, index),
@@ -860,13 +851,7 @@ impl Heap {
                 self.gc_profile.marked += 1;
                 self.gc_profile.marked_kinds[Self::cell_kind(cell) as usize] += 1;
             }
-            Self::children(
-                value,
-                cell,
-                &self.properties,
-                work,
-                &mut |owner, shape, roots| object_roots(trace_kind, owner, shape, roots),
-            );
+            Self::children(value, cell, &self.properties, work, object_roots, trace_kind);
             ephemerons.newly_marked(index as u32, cell, &self.marks, work);
             if let Some(arrays) = self.sparse_arrays.as_ref()
                 && matches!(cell, Cell::Array { .. })
@@ -1085,16 +1070,22 @@ impl Heap {
         cell: &Cell,
         properties: &ValueArena,
         work: &mut Vec<Value>,
-        object_roots: &mut impl FnMut(Value, u32, &mut Vec<Value>),
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+        trace_kind: GcTraceKind,
     ) {
         let mut object = |object: &Object| {
             work.push(object.proto);
-            object_roots(owner, object.shape(), work);
+            object_roots(trace_kind, owner, object.shape(), work);
             work.extend(object.private_names().iter().map(|brand| brand.home));
             if let Some(values) = object.inline_properties() {
-                work.extend(values.iter().copied().filter(|value| !value.is_deleted()));
+                work.extend(
+                    values
+                        .iter()
+                        .copied()
+                        .filter(|value| value.is_heap() && !value.is_deleted()),
+                );
             } else {
-                properties.append_live_values(object.properties, work);
+                properties.append_heap_references(object.properties, work);
             }
             object.visit_stack_data_roots(|value| work.push(value));
         };
@@ -1110,16 +1101,16 @@ impl Heap {
                 elements,
             } => {
                 object(value);
-                work.extend(elements.iter().copied());
+                work.extend(elements.iter().copied().filter(|value| value.is_heap()));
             }
             Cell::ArrayBuffer { object: value, .. } => object(value),
             Cell::RegExp {
                 object: value,
-                legacy_constructor,
+                meta,
                 ..
             } => {
                 object(value);
-                work.push(legacy_constructor.constructor());
+                work.push(meta.legacy_constructor.constructor());
             }
             Cell::DataView {
                 object: value,
@@ -1167,16 +1158,18 @@ impl Heap {
             Cell::Iterator {
                 object: value,
                 source,
-                next_method,
-                helper,
-                generator,
+                ext,
                 ..
             } => {
+                let IteratorExt {
+                    next_method,
+                    helper,
+                    generator,
+                    ..
+                } = &**ext;
                 object(value);
                 work.push(*source);
-                if !next_method.is_deleted() {
-                    work.push(*next_method);
-                }
+                work.extend(*next_method);
                 if let Some(helper) = helper {
                     match helper.as_ref() {
                         IteratorHelper::Map { callback, .. }
@@ -1255,13 +1248,17 @@ impl Heap {
             Cell::Environment {
                 parent,
                 slots,
-                dynamic_bindings,
-                with_objects,
+                scope,
                 ..
             } => {
                 work.push(*parent);
                 work.extend(slots.roots());
-                match dynamic_bindings.as_ref() {
+                let crate::heap::EnvironmentScope {
+                    dynamic_bindings,
+                    with_objects,
+                    ..
+                } = &**scope;
+                match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
                         work.extend(bindings.iter().map(|(_, value)| *value));
                     }
@@ -1269,9 +1266,8 @@ impl Heap {
                 }
                 work.extend(with_objects.iter().copied());
             }
-            Cell::WasmElements(elements) | Cell::WasmTable { elements, .. } => {
-                work.extend(elements.iter().copied())
-            }
+            Cell::WasmElements(elements) => work.extend(elements.iter().copied()),
+            Cell::WasmTable { elements, .. } => work.extend(elements.iter().copied()),
             Cell::WasmGc {
                 fields, descriptor, ..
             } => {
@@ -1360,10 +1356,12 @@ impl Heap {
                 Cell::Object(_)
                 | Cell::ShadowRealm { .. }
                 | Cell::Iterator { .. }
+                | Cell::ArrayFromAsyncState(_)
                 | Cell::Proxy { .. }
                 | Cell::Date { .. }
                 | Cell::PromiseResolvingState { .. }
                 | Cell::BindingReference { .. }
+                | Cell::TemporalDuration { .. }
                 | Cell::TemporalInstant { .. }
                 | Cell::TypedArray { .. }
                 | Cell::DataView { .. }
@@ -1375,15 +1373,13 @@ impl Heap {
                 | Cell::WasmExtern(_)
                 | Cell::WasmTag { .. } => 0,
                 Cell::WasmException { payload, .. } => payload.capacity() * size_of::<Value>(),
-                Cell::ArrayFromAsyncState(_) => size_of::<ArrayFromAsyncState>(),
-                Cell::TemporalDuration { .. } => size_of::<[f64; 10]>(),
                 Cell::WasmHostFunction { signature, .. } => {
                     size_of::<crate::WasmSignature>()
                         + (signature.params.capacity() + signature.results.capacity())
                             * size_of::<crate::WasmType>()
                 }
-                Cell::WasmElements(elements)
-                | Cell::WasmTable { elements, .. }
+                Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
+                Cell::WasmTable { elements, .. }
                 | Cell::WasmGc {
                     fields: elements, ..
                 } => elements.capacity() * size_of::<Value>(),
@@ -1395,27 +1391,19 @@ impl Heap {
                     time_zone,
                     calendar,
                     ..
-                } => size_of::<String>() + time_zone.capacity() + calendar.capacity(),
-                Cell::RegExp { source, flags, .. } => {
-                    size_of::<JsString>() + source.capacity() + flags.capacity()
-                }
+                } => time_zone.capacity() + calendar.capacity(),
+                Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
                 Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
                 Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
                 Cell::Set { entries, .. } => entries.capacity() * size_of::<Value>(),
-                Cell::WeakMap { entries, .. } => {
-                    size_of::<WeakMapEntries>() + entries.allocated_bytes()
-                }
+                Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
                 Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::Function { .. } => size_of::<Object>(),
-                Cell::Environment {
-                    slots,
-                    with_objects,
-                    ..
-                } => {
-                    size_of::<EnvironmentBindings>()
-                        + slots.len() * size_of::<EnvironmentSlot>()
+                Cell::Environment { slots, scope, .. } => {
+                    let with_objects = &scope.with_objects;
+                    slots.len() * size_of::<EnvironmentSlot>()
                         + with_objects.len() * size_of::<Value>()
                 }
                 Cell::String(value) => value.capacity(),
@@ -1439,3 +1427,68 @@ impl Heap {
 }
 #[cfg(test)]
 mod tests;
+
+/// Bits per radix pass when ordering property owners by arena offset.
+const OFFSET_RADIX_BITS: u32 = 16;
+/// An owner key keeps the arena offset in the high half and the slot index in the low half.
+const OWNER_KEY_HALF_BITS: u32 = u32::BITS;
+
+fn pack_offset_owner(offset: usize, owner: usize) -> u64 {
+    debug_assert!(offset <= u32::MAX as usize && owner <= u32::MAX as usize);
+    ((offset as u64) << OWNER_KEY_HALF_BITS) | owner as u64
+}
+
+fn owner_of_packed(key: u64) -> usize {
+    (key & u64::from(u32::MAX)) as usize
+}
+
+/// Orders packed owner keys by arena offset in linear time. Offsets are distinct arena
+/// positions, so two stable 16-bit passes over the offset half give a full ordering.
+fn sort_by_unique_offset(keys: &mut Vec<u64>) {
+    let buckets = 1usize << OFFSET_RADIX_BITS;
+    let mask = (buckets - 1) as u64;
+    let mut scratch = vec![0; keys.len()];
+    let mut counts = vec![0usize; buckets + 1];
+    for pass in 0..2 {
+        let shift = OWNER_KEY_HALF_BITS + pass * OFFSET_RADIX_BITS;
+        counts.fill(0);
+        for key in keys.iter() {
+            counts[((key >> shift) & mask) as usize + 1] += 1;
+        }
+        for bucket in 0..buckets {
+            counts[bucket + 1] += counts[bucket];
+        }
+        for key in keys.iter() {
+            let bucket = ((key >> shift) & mask) as usize;
+            scratch[counts[bucket]] = *key;
+            counts[bucket] += 1;
+        }
+        std::mem::swap(keys, &mut scratch);
+    }
+}
+
+#[cfg(test)]
+mod offset_order_tests {
+    #[test]
+    fn radix_offset_order_matches_comparison_sort() {
+        let mut state = 0x2545_f491_u64;
+        let mut offsets: Vec<usize> = (0..5000)
+            .map(|_| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (state >> 33) as usize
+            })
+            .collect();
+        offsets.sort_unstable();
+        offsets.dedup();
+        let mut keys: Vec<u64> = offsets
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(slot, offset)| super::pack_offset_owner(*offset, slot))
+            .collect();
+        let mut expected = keys.clone();
+        expected.sort_unstable();
+        super::sort_by_unique_offset(&mut keys);
+        assert_eq!(keys, expected);
+    }
+}

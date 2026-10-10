@@ -651,11 +651,7 @@ impl<H: Host> Vm<H> {
                     ..
                 }) => (
                     DateTimeDefaults::TemporalZonedDateTime(ZONED_DATE_TIME_DEFAULTS),
-                    Some((
-                        **epoch_nanoseconds,
-                        time_zone.as_ref().clone(),
-                        calendar.clone(),
-                    )),
+                    Some((**epoch_nanoseconds, time_zone.to_string(), calendar.to_string())),
                 ),
                 _ => return Err(self.type_error(p, "Invalid Temporal value".into())),
             }
@@ -710,7 +706,7 @@ impl<H: Host> Vm<H> {
         locale: String,
         options: (bool, bool, Value),
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, constructor, prototype_atom)?;
         let formatter = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let locale = self
@@ -1609,7 +1605,7 @@ fn temporal_date_time_fields(cell: Option<&Cell>) -> Option<DateTimeFields> {
             fields.month = *month;
             fields.day = *day;
             fields.temporal_kind = Some(TemporalKind::PlainDate);
-            fields.calendar = Some(calendar.clone());
+            fields.calendar = Some(calendar.as_str().to_owned());
         }
         Cell::TemporalPlainDateTime {
             date,
@@ -1626,7 +1622,7 @@ fn temporal_date_time_fields(cell: Option<&Cell>) -> Option<DateTimeFields> {
             ) = (time[0], time[1], time[2], time[3]);
             fields.has_time = true;
             fields.temporal_kind = Some(TemporalKind::PlainDateTime);
-            fields.calendar = Some(calendar.clone());
+            fields.calendar = Some(calendar.as_str().to_owned());
         }
         Cell::TemporalPlainMonthDay {
             month,
@@ -1639,7 +1635,7 @@ fn temporal_date_time_fields(cell: Option<&Cell>) -> Option<DateTimeFields> {
             fields.month = *month;
             fields.day = *day;
             fields.temporal_kind = Some(TemporalKind::PlainMonthDay);
-            fields.calendar = Some(calendar.clone());
+            fields.calendar = Some(calendar.as_str().to_owned());
         }
         Cell::TemporalPlainYearMonth {
             year,
@@ -1652,7 +1648,7 @@ fn temporal_date_time_fields(cell: Option<&Cell>) -> Option<DateTimeFields> {
             fields.month = *month;
             fields.day = *reference_iso_day;
             fields.temporal_kind = Some(TemporalKind::PlainYearMonth);
-            fields.calendar = Some(calendar.clone());
+            fields.calendar = Some(calendar.as_str().to_owned());
         }
         _ => return None,
     }

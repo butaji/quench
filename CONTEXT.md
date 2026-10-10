@@ -7,5 +7,5 @@
   `crates/quench-wasm-test`: conformance discovery and execution.
 - `quench-bench`: measurement fixtures and runners; never a production input.
 
-[The task queue](tasks/index.json) defines the rewrite order and gates.
+[The Linear project](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview) owns backlog, status and lane coordination.
 [Documentation](docs/README.md) indexes stable commands and contracts.

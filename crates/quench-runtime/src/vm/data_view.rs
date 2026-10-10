@@ -65,7 +65,7 @@ impl<H: Host> Vm<H> {
             .builtin_prototypes
             .insert((global, Native::DataView), prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -165,7 +165,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .unwrap_or(self.data_view_proto);
         Ok(self.heap.alloc(Cell::DataView {
-            object: Self::empty_object(prototype),
+            object: Box::new(Self::empty_object(prototype)),
             buffer,
             offset,
             length,

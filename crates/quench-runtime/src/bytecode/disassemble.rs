@@ -87,7 +87,6 @@ fn write_field(
         | FieldLayout::ReadWriteRegister
         | FieldLayout::OptionalRegister
         | FieldLayout::FunctionIndex
-        | FieldLayout::LocalSlot
         | FieldLayout::ElementCount
         | FieldLayout::CacheSiteIndex
         | FieldLayout::WideIndexChunk
@@ -97,9 +96,6 @@ fn write_field(
         }
         FieldLayout::BinaryOperator => {
             write!(output, " operator={}", instruction.binary_operator_field())
-        }
-        FieldLayout::UnaryOperator => {
-            write!(output, " unary-op={}", instruction.unary_operator_field())
         }
         FieldLayout::NumericLocalTarget => {
             write!(
@@ -147,17 +143,8 @@ fn write_scalar_field(
         (InstructionField::B, FieldLayout::FunctionIndex) => {
             write!(output, " b=function:{}", instruction.known_function_index())
         }
-        (InstructionField::A, FieldLayout::LocalSlot) => {
-            write!(output, " source-local={}", instruction.field_value(field))
-        }
-        (InstructionField::B, FieldLayout::LocalSlot) => {
-            write!(output, " b-local={}", instruction.field_value(field))
-        }
         (InstructionField::B, FieldLayout::ElementCount) => {
             write!(output, " elements={}", instruction.element_count())
-        }
-        (InstructionField::A, FieldLayout::UnaryOperator) => {
-            write!(output, " unary-op={}", instruction.field_value(field))
         }
         (InstructionField::C, FieldLayout::CacheSiteIndex) => {
             write!(output, " cache={}", instruction.cache_site_index())

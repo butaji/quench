@@ -81,20 +81,6 @@ impl<H: Host> Vm<H> {
                 let value = unsafe { self.read_validated_local(f, i.local_slot()) };
                 self.write(f, i.result_register(), value);
             }
-            Op::CopyLocalPlain => {
-                // SAFETY: validation bounds both local slots by Function.locals,
-                // and activation setup sizes locals accordingly.
-                let value = unsafe { self.read_validated_local(f, i.copy_local_source_slot()) };
-                // SAFETY: the destination local is bounded by validation too.
-                unsafe { self.write_validated_local(f, i.local_slot(), value) };
-            }
-            Op::SetThisFieldStrictLocal => {
-                // SAFETY: validation bounds this plain-local slot and proves
-                // it is not captured, so the activation owns the value.
-                let value = unsafe { self.read_validated_local(f, i.local_slot_a()) };
-                let this = self.checked_this_binding(p, f)?;
-                self.set_field_cached(p, this, i.atom_index(), value, i.cache_site_index(), true)?;
-            }
             Op::LoadLocal | Op::LoadEnvLocal => {
                 let value = self.load_local_binding(p, f, i.local_slot(), None)?;
                 self.write(f, i.result_register(), value);
@@ -303,13 +289,6 @@ impl<H: Host> Vm<H> {
                     let value = self
                         .heap
                         .alloc(Cell::Object(Self::empty_object(Value::NULL)));
-                    if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
-                    {
-                        let url = self.host.import_meta_url(&source_name);
-                        let url = self.heap.alloc(Cell::String(url.into()));
-                        let url_atom = self.intern_atom("url");
-                        self.set_property(value, url_atom, url)?;
-                    }
                     self.programs.set_import_meta(program, value);
                     value
                 };
@@ -596,8 +575,7 @@ impl<H: Host> Vm<H> {
             }
             Op::SuperCallCheck => self.check_super_call(p)?,
             Op::IteratorClose => {
-                let result = self.iterator_close(p, self.read(f, i.register_b()))?;
-                self.write(f, i.result_register(), result);
+                self.iterator_close(p, self.read(f, i.register_b()))?;
             }
             Op::IteratorCleanupPush => self.frames[f].active_iterators.push(ActiveIterator {
                 iterator: i.register_a(),
@@ -818,27 +796,13 @@ impl<H: Host> Vm<H> {
                     .binary(operator as usize, left_operand.0, right_operand.0);
                 let left = self.resolve_operand(p, f, left_operand)?;
                 let right = self.resolve_operand(p, f, right_operand)?;
-                let site_pc = *pc - 1;
-                let armed = self.profile_regional_binary(f, site_pc, operator, left, right);
-                let v = if armed {
-                    match self.numeric_binary(operator, left, right) {
-                        Some(value) => {
-                            self.record_binary_value_path(
-                                operator,
-                                left,
-                                right,
-                                crate::profile::BinaryValuePath::IntegerFastPath,
-                            );
-                            value
-                        }
-                        None => {
-                            self.deopt_numeric_site(f, site_pc);
-                            self.binary(p, operator, left, right)?
-                        }
-                    }
-                } else {
-                    self.binary(p, operator, left, right)?
-                };
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.regional_binary(
+                    self.frames[f].function,
+                    (*pc - 1) as u32,
+                    self.numeric_binary(operator, left, right).is_some(),
+                );
+                let v = self.binary(p, operator, left, right)?;
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
                 }
@@ -1528,14 +1492,6 @@ impl<H: Host> Vm<H> {
                     *pc = i.jump_target() as usize;
                 }
             }
-            Op::JumpUnaryFalse => {
-                let operator = i.unary_operator_field();
-                let input = self.resolve_operand(p, f, i.operand_b())?;
-                let value = self.unary(p, operator, input)?;
-                if !self.truthy(value) {
-                    *pc = i.jump_target() as usize;
-                }
-            }
             Op::Call | Op::CallDirectEvalArray => {
                 self.profile.call_source(0);
                 let window = i.call_window();
@@ -1543,9 +1499,7 @@ impl<H: Host> Vm<H> {
                     let array = self.read(f, window.base);
                     CallArguments::from_values(self.array_values(array)?)
                 } else {
-                    CallArguments::from_values(
-                        (0..window.count).map(|x| self.read(f, window.base + x)),
-                    )
+                    CallArguments::from_slice(self.register_window(f, window))
                 };
                 let this = self.read(f, i.register_c());
                 let callee = self.read(f, i.register_b());
@@ -1622,18 +1576,16 @@ impl<H: Host> Vm<H> {
                     })
                 {
                     self.profile.call_target(1, args.len());
-                    let result = self.with_call_roots(
-                        [callee, this].into_iter().chain(args.iter().copied()),
-                        |vm| {
-                            vm.push_general_user_frame(
-                                p,
-                                id,
-                                env,
-                                this,
-                                args,
-                                CallContext::user_function(id, callee),
-                            )
-                        },
+                    // Collection happens only at back edges, tail calls and explicit host
+                    // safepoints, none of which can run while a frame is pushed; afterwards the
+                    // new frame itself roots the callee, receiver and arguments.
+                    let result = self.push_general_user_frame(
+                        p,
+                        id,
+                        env,
+                        this,
+                        args,
+                        CallContext::user_function(id, callee),
                     );
                     self.direct_eval = previous_direct_eval;
                     self.parameter_eval = previous_parameter_eval;
@@ -1641,6 +1593,7 @@ impl<H: Host> Vm<H> {
                     return Ok(StepResult::PushFrame {
                         destination: i.result_register(),
                         stack_guard,
+                        construct_this: None,
                     });
                 }
                 if p.kind == crate::bytecode::ProgramKind::Wasm
@@ -1720,8 +1673,8 @@ impl<H: Host> Vm<H> {
                     frame.dynamic_bindings.clear();
                     frame.active_iterators.clear();
                     frame.env = Value::NULL;
-                    frame.capture_base = Value::DELETED;
                     frame.this = Value::UNDEFINED;
+                    frame.fixed_this = false;
                     frame.captured = false;
                 }
                 let called = if discarded_wasm_frame {
@@ -1758,12 +1711,10 @@ impl<H: Host> Vm<H> {
                 self.profile.call_source(1);
                 let window = i.call_window();
                 let function_index = i.known_function_index();
-                let n = window.count;
-                let arguments =
-                    CallArguments::from_values((0..n).map(|x| self.read(f, window.base + x)));
+                let arguments = CallArguments::from_slice(self.register_window(f, window));
                 let args = arguments.as_slice();
                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
-                self.profile.call_target(1, n as usize);
+                self.profile.call_target(1, usize::from(window.count));
                 self.frames[f].pc = *pc;
                 let terminal = i.returns_from_frame()
                     || p.functions[self.frames[f].function as usize]
@@ -1842,6 +1793,33 @@ impl<H: Host> Vm<H> {
             }
             Op::Construct => {
                 self.profile.call_source(4);
+                if allow_inline_calls
+                    && !i.is_super_construct()
+                    && !i.returns_from_frame()
+                    && let crate::bytecode::ConstructArguments::Registers(window) =
+                        i.construct_arguments()
+                {
+                    let callee = self.read(f, i.register_b());
+                    if let Some((id, env, this)) = self.inline_construct_target(p, f, callee) {
+                        let arguments = CallArguments::from_slice(self.register_window(f, window));
+                        self.frames[f].pc = *pc;
+                        self.construct_target = Some(callee);
+                        let pushed = self.push_general_user_frame(
+                            p,
+                            id,
+                            env,
+                            this,
+                            arguments.as_slice(),
+                            CallContext::user_function(id, callee),
+                        );
+                        self.construct_target = None;
+                        return Ok(StepResult::PushFrame {
+                            destination: i.result_register(),
+                            stack_guard: pushed?,
+                            construct_this: Some(this),
+                        });
+                    }
+                }
                 let args = match i.construct_arguments() {
                     crate::bytecode::ConstructArguments::Array(register) => {
                         let array = self.read(f, register);
@@ -1853,10 +1831,7 @@ impl<H: Host> Vm<H> {
                         self.call_argument_list(p, array, false)?
                     }
                     crate::bytecode::ConstructArguments::Registers(window) => {
-                        let arguments = CallArguments::from_values(
-                            (0..window.count).map(|x| self.read(f, window.base + x)),
-                        );
-                        arguments.as_slice().to_vec()
+                        self.register_window(f, window).to_vec()
                     }
                 };
                 self.frames[f].pc = *pc;
@@ -1936,7 +1911,12 @@ impl<H: Host> Vm<H> {
                 self.resolve_field(p, frame, usize::from(operand.payload()))
             }
             Some(crate::bytecode::OperandKind::Local) => {
-                self.load_local_binding(p, frame, operand.payload() as usize, None)
+                let slot = operand.payload() as usize;
+                // A plain slot is exactly what `LoadLocalPlain` reads.
+                if p.functions[self.frames[frame].function as usize].plain_local(&p.atoms, slot) {
+                    return Ok(self.frames[frame].locals[slot]);
+                }
+                self.load_local_binding(p, frame, slot, None)
             }
             None => unreachable!("two-bit operand tag"),
         }

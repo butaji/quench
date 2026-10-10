@@ -1,11 +1,10 @@
 //! Polyfill: `dgram`
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchDgramSharedState = globalThis[Symbol.for("quench.dgram.internals")];
-var __quenchDgramStateSymbol = __quenchDgramSharedState.stateSymbol;
-var __quenchDgramBoundPorts = __quenchDgramSharedState.boundPorts;
-var __quenchDgramClosedPorts = __quenchDgramSharedState.closedPorts;
-var __quenchDgramSockets = __quenchDgramSharedState.sockets;
-var __quenchDgramNextPort = 40000;
+pub const JS: &str = quench_js_check::checked_js!(r#"var __quenchDgramStateSymbol = globalThis.__quenchDgramStateSymbol;
+var __quenchDgramBoundPorts = globalThis.__quenchDgramBoundPorts || new Set();
+var __quenchDgramClosedPorts = globalThis.__quenchDgramClosedPorts || new Set();
+var __quenchDgramSockets = globalThis.__quenchDgramSockets || new Set();
+var __quenchDgramNextPort = globalThis.__quenchDgramNextPort || 40000;
 const __quenchDgramBind = (socket, type, port, address, callback) => {
   if (socket._bound) {
     throw Object.assign(new Error("Socket is already bound"), {
@@ -214,11 +213,7 @@ const __quenchDgramSend = (socket, message, ...args) => {
   const payload = typeof message === "string"
     ? NodeBuffer.from(message)
     : Array.isArray(message)
-    ? NodeBuffer.concat(message.map((chunk) =>
-      ArrayBuffer.isView(chunk)
-        ? NodeBuffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
-        : NodeBuffer.from(chunk)
-    ))
+    ? NodeBuffer.concat(message.map((chunk) => NodeBuffer.from(chunk)))
     : message;
   const bytePayload = payload instanceof NodeBuffer
     ? payload
@@ -459,15 +454,15 @@ const __quenchDgramClose = (socket, callback) => {
   if (socket._closed) return socket;
   socket._closed = true;
   socket._bound = false;
-  __quenchDgramSockets.delete(socket);
+  globalThis.__quenchDgramSockets?.delete(socket);
   if (socket[__quenchDgramStateSymbol]?.handle?.fd !== undefined) {
     globalThis.__quenchDgramActiveFds.delete(
       socket[__quenchDgramStateSymbol].handle.fd,
     );
   }
   if (socket._address) {
-    __quenchDgramBoundPorts.delete(socket._address.port);
-    __quenchDgramClosedPorts.add(socket._address.port);
+    globalThis.__quenchDgramBoundPorts?.delete(socket._address.port);
+    globalThis.__quenchDgramClosedPorts?.add(socket._address.port);
   }
   if (typeof callback === "function") callback();
   queueMicrotask(() => socket.emit("close"));

@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn promoted_parameter_registers_survive_residual_round_trip() {
+    let program = crate::Engine::specialize(
+        "function read(value) { return value + 1; }",
+        "promoted-registers.js",
+    )
+    .unwrap();
+    let path = std::env::temp_dir().join(format!(
+        "quench-promoted-registers-{}",
+        std::process::id()
+    ));
+    program.write_binary(&path).unwrap();
+    let decoded = ResidualProgram::read_binary(&path).unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(
+        decoded.functions[1].local_registers,
+        program.functions[1].local_registers
+    );
+    decoded.validate().unwrap();
+}
+
+#[test]
 fn eval_binding_declarations_survive_residual_round_trip() {
     let source = r#"
     function outer(parameter) {
@@ -126,6 +147,7 @@ fn decoder_rejects_out_of_range_local_load() {
             local_atoms: vec![],
             environment_atoms: vec![],
             selective_capture_slots: None,
+            local_registers: Vec::new(),
             inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
@@ -141,6 +163,8 @@ fn decoder_rejects_out_of_range_local_load() {
             wide: vec![],
             registers: 1,
             dispatch: DispatchClass::General,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
             handlers: vec![],
             register_root_offset: 0,
         }],
@@ -198,6 +222,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             local_atoms: vec![],
             environment_atoms: vec![],
             selective_capture_slots: None,
+            local_registers: Vec::new(),
             inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
@@ -213,6 +238,8 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
             wide: vec![],
             registers: 1,
             dispatch: DispatchClass::General,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
         }],
@@ -398,9 +425,7 @@ fn decoder_rejects_invalid_binding_site_metadata() {
         invalid.write_binary(&path).unwrap();
         let error = ResidualProgram::read_binary(&path).unwrap_err();
         assert!(
-            error.contains("invalid binding sites")
-                || error.contains("invalid name binding")
-                || error.contains("invalid binding-site metadata"),
+            error.contains("invalid binding-site metadata"),
             "unexpected decoder error: {error}"
         );
     }

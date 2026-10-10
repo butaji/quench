@@ -275,10 +275,6 @@ impl ProgramStore {
         self.programs.get(id.index())?.import_meta
     }
 
-    pub(crate) fn source_name(&self, id: ProgramId) -> Option<&str> {
-        Some(&self.programs.get(id.index())?.residual.source_name)
-    }
-
     pub(crate) fn set_import_meta(&mut self, id: ProgramId, value: Value) {
         if let Some(entry) = self.programs.get_mut(id.index())
             && entry.module
@@ -306,6 +302,11 @@ impl ProgramStore {
                 .iter()
                 .find_map(|(local, import)| (*local == slot).then_some(*import))
         })
+    }
+
+    /// Borrows the residual without the reference-count traffic of `get`.
+    pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
+        self.programs.get(id.index()).map(|entry| &*entry.residual)
     }
 
     pub(crate) fn get(&self, id: ProgramId) -> Option<Rc<ResidualProgram>> {

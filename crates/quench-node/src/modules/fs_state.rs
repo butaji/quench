@@ -3,7 +3,7 @@
 
 use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::rc::Rc;
 
 /// A handle to the one host-owned descriptor table shared by Node adapters.
@@ -58,91 +58,14 @@ impl FsState {
         Ok(fd)
     }
 
-    pub(crate) fn write_descriptor(
-        &self,
-        fd: i32,
-        bytes: &[u8],
-        position: Option<u64>,
-    ) -> std::io::Result<usize> {
+    pub(crate) fn write_stream_chunk(&self, fd: i32, bytes: &[u8]) -> std::io::Result<usize> {
         let mut state = self.0.borrow_mut();
         let descriptor = state
             .descriptors
             .get_mut(&fd)
             .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
-        let original = if position.is_some() {
-            Some(descriptor.file.stream_position()?)
-        } else {
-            None
-        };
-        if let Some(position) = position {
-            if let Err(error) = descriptor.file.seek(SeekFrom::Start(position)) {
-                return Err(if position > i32::MAX as u64 {
-                    std::io::Error::from_raw_os_error(libc::EFBIG)
-                } else {
-                    error
-                });
-            }
-        }
-        let result = descriptor.file.write_all(bytes).map(|()| bytes.len());
-        if let Some(original) = original {
-            descriptor.file.seek(SeekFrom::Start(original))?;
-        }
-        result
-    }
-
-    pub(crate) fn sync_descriptor(&self, fd: i32, data_only: bool) -> std::io::Result<()> {
-        let mut state = self.0.borrow_mut();
-        let descriptor = state
-            .descriptors
-            .get_mut(&fd)
-            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
-        if data_only {
-            descriptor.file.sync_data()
-        } else {
-            descriptor.file.sync_all()
-        }
-    }
-
-    pub(crate) fn read_descriptor(
-        &self,
-        fd: i32,
-        size: usize,
-        position: Option<u64>,
-    ) -> std::io::Result<Vec<u8>> {
-        let mut state = self.0.borrow_mut();
-        let descriptor = state
-            .descriptors
-            .get_mut(&fd)
-            .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EBADF))?;
-        let original = if position.is_some() {
-            Some(descriptor.file.stream_position()?)
-        } else {
-            None
-        };
-        if let Some(position) = position {
-            if let Err(error) = descriptor.file.seek(SeekFrom::Start(position)) {
-                return Err(if position > i32::MAX as u64 {
-                    std::io::Error::from_raw_os_error(libc::EFBIG)
-                } else {
-                    error
-                });
-            }
-        }
-        let mut bytes = vec![0; size];
-        let result = descriptor.file.read(&mut bytes).map(|read| {
-            bytes.truncate(read);
-            bytes
-        });
-        let result = match (result, position) {
-            (Err(_), Some(position)) if position > i32::MAX as u64 => {
-                Err(std::io::Error::from_raw_os_error(libc::EFBIG))
-            }
-            (result, _) => result,
-        };
-        if let Some(original) = original {
-            descriptor.file.seek(SeekFrom::Start(original))?;
-        }
-        result
+        descriptor.file.write_all(bytes)?;
+        Ok(bytes.len())
     }
 
     pub(crate) fn close_stream(&self, fd: i32) -> std::io::Result<String> {
