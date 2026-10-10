@@ -1519,6 +1519,14 @@ impl<H: Host> Vm<H> {
                     *pc = i.jump_target() as usize;
                 }
             }
+            Op::JumpUnaryFalse => {
+                let operator = i.unary_operator_field();
+                let input = self.resolve_operand(p, f, i.operand_b())?;
+                let value = self.unary(p, operator, input)?;
+                if !self.truthy(value) {
+                    *pc = i.jump_target() as usize;
+                }
+            }
             Op::Call | Op::CallDirectEvalArray => {
                 self.profile.call_source(0);
                 let window = i.call_window();

@@ -156,6 +156,9 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
             FieldLayout::BinaryOperator => {
                 u32::from(value) <= oxc_ast::ast::BinaryOperator::Instanceof as u32
             }
+            FieldLayout::UnaryOperator => {
+                u32::from(value) <= oxc_ast::ast::UnaryOperator::Void as u32
+            }
             FieldLayout::FieldBase => match instruction.field_lookup() {
                 Some(super::FieldLookup::Site(site)) => site < bounds.field_sites,
                 Some(super::FieldLookup::Atom {
