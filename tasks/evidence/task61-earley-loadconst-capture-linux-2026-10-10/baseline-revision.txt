@@ -1,0 +1,3 @@
+source_revision=5a3397e86
+build_workspace=/workspace/quench
+build_profile=production

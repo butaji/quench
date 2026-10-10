@@ -1,0 +1,104 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 315d451f8..5324cb185 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -666,6 +666,7 @@ opcodes!(
+     SetThisFieldStrictLocal => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(LocalSlot, Unused, CacheSiteIndex),
+     LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+     StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
++    SuperLoadConstCapture => Effect::READS_HEAP; layout Scalar; meaning SuperinstructionIndex, @ Register, @ fields(Unused, Unused, Unused),
+ 
+ );
+ 
+diff --git a/crates/quench-runtime/src/bytecode/binary.rs b/crates/quench-runtime/src/bytecode/binary.rs
+index a89d56748..67bcbe34a 100644
+--- a/crates/quench-runtime/src/bytecode/binary.rs
++++ b/crates/quench-runtime/src/bytecode/binary.rs
+@@ -680,8 +680,9 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
+                         String::from("residual superinstruction exceeds packed domain")
+                     })?;
+         }
+-        if code.map(|instruction| instruction.op())
+-            != [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2]
++        let pattern = code.map(|instruction| instruction.op());
++        if pattern != [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2]
++            && pattern != [Op::LoadConst, Op::LoadCapture, Op::Nop, Op::Nop]
+         {
+             return Err("invalid residual superinstruction pattern".into());
+         }
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 44e54a12a..a16c796ed 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -194,11 +194,18 @@ struct SuperRule {
+ }
+ 
+ const CONST_ARRAY_OBJECT2: [Op; 4] = [Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2];
+-
+-const SUPER_RULES: &[SuperRule] = &[SuperRule {
+-    pattern: &[Op::MakeConstArray, Op::Binary, Op::Binary, Op::MakeObject2],
+-    fuse: fuse_const_array_object2,
+-}];
++const LOAD_CONST_CAPTURE: [Op; 2] = [Op::LoadConst, Op::LoadCapture];
++
++const SUPER_RULES: &[SuperRule] = &[
++    SuperRule {
++        pattern: &LOAD_CONST_CAPTURE,
++        fuse: fuse_load_const_capture,
++    },
++    SuperRule {
++        pattern: &CONST_ARRAY_OBJECT2,
++        fuse: fuse_const_array_object2,
++    },
++];
+ 
+ fn rewrite_super_window(
+     function: &mut BcFunction,
+@@ -285,6 +292,24 @@ fn fuse_const_array_object2(
+     ))
+ }
+ 
++fn fuse_load_const_capture(
++    window: &[Instr],
++    superinstructions: &mut Vec<Superinstruction>,
++) -> Option<Instr> {
++    let code: [Instr; 2] = window.try_into().ok()?;
++    if code.map(|instruction| instruction.op()) != LOAD_CONST_CAPTURE
++        || code.iter().any(|instruction| instruction.result_flags() != 0)
++    {
++        return None;
++    }
++    let site = superinstructions.len() as u32;
++    let nop = Instr::new(Op::Nop, 0, 0, 0, 0);
++    superinstructions.push(Superinstruction {
++        code: [code[0], code[1], nop, nop],
++    });
++    Instr::try_new(Op::SuperLoadConstCapture, 0, 0, 0, site)
++}
++
+ pub(super) fn protected_positions(
+     code: &[Instr],
+     handlers: &[crate::bytecode::Handler],
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 46ba9a381..5f6de34e3 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -400,6 +400,18 @@ impl<H: Host> Vm<H> {
+                     return Ok(StepResult::Return(value));
+                 }
+             }
++            Op::SuperLoadConstCapture => {
++                let [constant, capture, _, _] = p.superinstructions[i.superinstruction_index()].code;
++                let value = self
++                    .programs
++                    .constant(self.frames[f].program, constant.constant_index())
++                    .ok_or_else(|| {
++                        JsError::validation("constant index is outside program".into())
++                    })?;
++                self.write(f, constant.result_register(), value);
++                let value = self.capture(p, f, capture.capture_depth(), capture.capture_slot())?;
++                self.write(f, capture.result_register(), value);
++            }
+             Op::MakeArray => {
+                 let v = self.heap.alloc(Cell::Array {
+                     object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
