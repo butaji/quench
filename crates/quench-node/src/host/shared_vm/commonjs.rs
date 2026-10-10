@@ -110,6 +110,15 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         .map_err(|error| RootedError::host(error.to_string()))?
         .join("tests/node/lib/internal/per_context/primordials.js");
     if node_primordials.is_file() {
+        // Node 24 exposes these well-known disposal symbols before its
+        // primordial snapshot is built. The runtime may not provide them yet,
+        // so seed stable symbols for Node's internal modules first.
+        let seed_disposal_symbols = context.evaluate_script_rooted(
+            "() => { Symbol.dispose ||= Symbol('Symbol.dispose'); Symbol.asyncDispose ||= Symbol('Symbol.asyncDispose'); }",
+            "node:bootstrap/disposal-symbols.js",
+        )?;
+        let undefined = context.undefined();
+        context.call_rooted(seed_disposal_symbols, undefined, &[])?;
         let exports = load(context, &node_primordials, None, EntryGoal::Node)?;
         let retained = context.retain(exports)?;
         roots.borrow_mut().primordials_module = Some(retained);
@@ -257,6 +266,19 @@ pub(super) fn require(
         }
         Some(BuiltinModule::InternalUrl) => {
             return cached_builtin(context, BuiltinModule::Url);
+        }
+        Some(BuiltinModule::InternalVfsFd) => {
+            return context.evaluate_script_rooted(
+                r#"(() => {
+  const openFDs = globalThis.__quenchVfsFdHandles;
+  return {
+    VFS_FD_MASK: 0x40000000,
+    getVirtualFd(fd) { return openFDs.get(fd); },
+    closeVirtualFd(fd) { return openFDs.delete(fd); },
+  };
+})()"#,
+                "internal/vfs/fd.js",
+            );
         }
         Some(BuiltinModule::InternalDgram) => {
             let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
@@ -486,6 +508,7 @@ enum BuiltinModule {
     Dgram,
     InternalDgram,
     InternalUrl,
+    InternalVfsFd,
     InternalTestBinding,
     InternalBlockList,
     InternalSocketAddress,
@@ -562,6 +585,7 @@ impl BuiltinModule {
             | Self::PathPosix
             | Self::PathWin32 => None,
             Self::InternalUrl => None,
+            Self::InternalVfsFd => None,
             Self::InternalDgram
             | Self::InternalTestBinding
             | Self::InternalBlockList
@@ -661,6 +685,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:dgram", BuiltinModule::Dgram),
     ("internal/dgram", BuiltinModule::InternalDgram),
     ("internal/url", BuiltinModule::InternalUrl),
+    ("internal/vfs/fd", BuiltinModule::InternalVfsFd),
     ("internal/test/binding", BuiltinModule::InternalTestBinding),
     ("internal/blocklist", BuiltinModule::InternalBlockList),
     ("internal/socketaddress", BuiltinModule::InternalSocketAddress),
@@ -829,7 +854,8 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         | BuiltinModule::InternalDgram
         | BuiltinModule::InternalTestBinding
         | BuiltinModule::InternalBlockList
-        | BuiltinModule::InternalSocketAddress => Err(RootedError::host(
+        | BuiltinModule::InternalSocketAddress
+        | BuiltinModule::InternalVfsFd => Err(RootedError::host(
             "special builtin passed to generic shared module builder",
         )),
     }
