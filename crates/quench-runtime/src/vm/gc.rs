@@ -529,7 +529,13 @@ impl<H: Host> Vm<H> {
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.
-        let live_shapes = self.heap.live_object_shapes();
+        // Every marked object reports its shape once to the mark callback, so
+        // the rooted shapes are exactly the shapes of live objects.
+        let live_shapes = shape_rooted
+            .iter()
+            .enumerate()
+            .filter_map(|(shape, live)| live.then_some(shape as u32))
+            .collect::<Vec<_>>();
         if self.should_compact_live_shapes(&live_shapes) {
             #[cfg(feature = "profile-aggregate")]
             self.snapshot_method_caches(0);
@@ -549,7 +555,6 @@ impl<H: Host> Vm<H> {
             self.resume_continuation(*id);
         }
         self.prune_function_values();
-        self.heap.compact_property_arena();
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()
@@ -652,7 +657,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         let old_shape_count = old_shapes.len();
         #[cfg(feature = "profile-memory")]
-        let live_object_shape_count = live_shapes.len();
+        let live_shape_count = live_shapes.len();
         let mut mapping = vec![u32::MAX; old_shapes.len()];
         let mut shapes = vec![Shape::root()];
         let mut transitions = FxHashMap::default();
@@ -679,10 +684,10 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY").is_some() {
             eprintln!(
-                "{{\"kind\":\"quench-shape-compaction\",\"before\":{},\"after\":{},\"live_objects\":{}}}",
+                "{{\"kind\":\"quench-shape-compaction\",\"before\":{},\"after\":{},\"live_shapes\":{}}}",
                 old_shape_count,
                 self.shapes.len(),
-                live_object_shape_count
+                live_shape_count
             );
         }
     }

@@ -422,6 +422,9 @@ struct Shape {
     storage_len: usize,
     dictionary_trigger: Option<DictionaryTrigger>,
     lookup_index: OnceCell<Box<ShapeLookupIndex>>,
+    /// Lookups that walked at least `SHAPE_INDEX_WALK_DISTANCE` transitions
+    /// from this shape before it had an index.
+    long_walks: std::cell::Cell<u8>,
 }
 impl Shape {
     fn root() -> Self {
@@ -440,6 +443,7 @@ impl Shape {
             storage_len,
             dictionary_trigger,
             lookup_index: OnceCell::new(),
+            long_walks: std::cell::Cell::new(0),
         }
     }
 }

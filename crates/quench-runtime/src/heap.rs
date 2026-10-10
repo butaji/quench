@@ -297,12 +297,6 @@ impl Heap {
     pub(crate) fn register_property_shape(&mut self, shape: u32, length: usize) {
         self.properties.register_shape(shape, length);
     }
-    pub(crate) fn live_object_shapes(&self) -> Vec<u32> {
-        self.slots
-            .iter()
-            .filter_map(|slot| slot.cell.as_ref()?.object().map(Object::shape))
-            .collect()
-    }
     pub(crate) fn remap_live_object_shapes(&mut self, mapping: &[u32], lengths: &[usize]) {
         for slot in self.slots.iter_mut() {
             let Some(object) = slot.cell.as_mut().and_then(Cell::object_mut) else {
@@ -316,24 +310,14 @@ impl Heap {
             self.properties.register_shape(shape as u32, length);
         }
     }
-    pub(crate) fn compact_property_arena(&mut self) {
+    /// Slide every live arena range down over released ones, in offset order.
+    /// `objects` holds each live arena owner packed with its range offset.
+    fn compact_property_arena(&mut self, mut objects: Vec<u64>) {
         if !self.properties.has_released_ranges() {
             return;
         }
         #[cfg(feature = "profile-memory")]
         let before = self.properties.stats();
-        let mut objects = self
-            .slots
-            .iter()
-            .enumerate()
-            .filter_map(|(index, slot)| {
-                let object = slot.cell.as_ref()?.object()?;
-                self.properties
-                    .has_compact_range(object.properties)
-                    .then_some(())?;
-                Some(pack_offset_owner(object.properties.start_offset(), index))
-            })
-            .collect::<Vec<_>>();
         sort_by_unique_offset(&mut objects);
         let mut target = 0;
         for index in objects.into_iter().map(owner_of_packed) {
@@ -433,26 +417,38 @@ impl Heap {
         {
             self.gc_profile.sweep_slots += self.slots.len() as u64;
         }
-        for (index, slot) in self.slots.iter_mut().enumerate() {
-            if Self::marked(&self.marks, index) {
-                live += 1;
-            } else if let Some(cell) = slot.cell.take() {
-                self.external_bytes = self.external_bytes.saturating_sub(cell.external_bytes());
-                #[cfg(feature = "profile-memory")]
-                self.memory_profile.freed(index, &cell);
-                if let Some(object) = cell.object() {
-                    properties.release(object.properties);
-                }
-                if let Some(arrays) = &mut self.sparse_arrays {
-                    arrays.remove(&(index as u32));
-                }
-                self.free.push(index as u32);
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.freed += 1;
+        // Live arena owners, keyed for the offset-ordered compaction below.
+        let mut property_owners = Vec::new();
+        for (base, slab) in self.slots.slabs_mut() {
+            for (offset, slot) in slab.iter_mut().enumerate() {
+                let index = base + offset;
+                if Self::marked(&self.marks, index) {
+                    live += 1;
+                    if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
+                        && properties.has_compact_range(object.properties)
+                    {
+                        property_owners
+                            .push(pack_offset_owner(object.properties.start_offset(), index));
+                    }
+                } else if let Some(cell) = slot.cell.take() {
+                    self.external_bytes = self.external_bytes.saturating_sub(cell.external_bytes());
+                    #[cfg(feature = "profile-memory")]
+                    self.memory_profile.freed(index, &cell);
+                    if let Some(object) = cell.object() {
+                        properties.release(object.properties);
+                    }
+                    if let Some(arrays) = &mut self.sparse_arrays {
+                        arrays.remove(&(index as u32));
+                    }
+                    self.free.push(index as u32);
+                    #[cfg(feature = "profile-aggregate")]
+                    {
+                        self.gc_profile.freed += 1;
+                    }
                 }
             }
         }
+        self.compact_property_arena(property_owners);
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
