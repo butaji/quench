@@ -638,6 +638,8 @@ opcodes!(
     WasmI32LessEqualUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI32GreaterEqualSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI32GreaterEqualUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmFillRegisters => Effect::PURE; layout Scalar; meaning ConstantIndex, @ Register, @ fields(Unused, RegisterWindowBase, RegisterCount),
+    WasmSelect => Effect::PURE; layout RegisterPair, @ Register, @ fields(ResultRegister, Register, Register),
     WasmJumpI32Zero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
     WasmJumpI32NonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
     WasmJumpI32Equal => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),

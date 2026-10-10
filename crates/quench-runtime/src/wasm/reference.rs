@@ -226,7 +226,7 @@ impl Lowering<'_> {
                             super::integer::I32UnaryOperator::EqualZero as u32,
                         )?;
                     }
-                    self.branch_if(relative_depth, condition)?;
+                    self.branch_if(relative_depth, super::control::Condition::Value(condition))?;
                 }
                 return Ok(true);
             }
