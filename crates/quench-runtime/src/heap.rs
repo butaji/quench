@@ -152,8 +152,14 @@ pub(crate) struct GcProfile {
     pub freed: u64,
     pub sweep_slots: u64,
     pub mark_nanos: u64,
+    pub full_mark_nanos: u64,
+    pub minor_mark_nanos: u64,
     pub sweep_nanos: u64,
     pub mark_clear_nanos: u64,
+    pub full_collections: u64,
+    pub minor_collections: u64,
+    pub remembered_owner_scans: u64,
+    pub young_cells_swept: u64,
     pub allocations_between_collections_total: u64,
     pub allocations_between_collections_min: u64,
     pub allocations_between_collections_max: u64,
@@ -176,8 +182,14 @@ impl Default for GcProfile {
             freed: 0,
             sweep_slots: 0,
             mark_nanos: 0,
+            full_mark_nanos: 0,
+            minor_mark_nanos: 0,
             sweep_nanos: 0,
             mark_clear_nanos: 0,
+            full_collections: 0,
+            minor_collections: 0,
+            remembered_owner_scans: 0,
+            young_cells_swept: 0,
             allocations_between_collections_total: 0,
             allocations_between_collections_min: 0,
             allocations_between_collections_max: 0,
@@ -562,6 +574,14 @@ impl Heap {
         let mark_started = std::time::Instant::now();
         #[cfg(feature = "profile-aggregate")]
         let mark_clear_started = std::time::Instant::now();
+        #[cfg(feature = "profile-aggregate")]
+        if full {
+            self.gc_profile.full_collections += 1;
+        } else {
+            self.gc_profile.minor_collections += 1;
+            self.gc_profile.remembered_owner_scans += self.remembered.len() as u64;
+            self.gc_profile.young_cells_swept += self.young.len() as u64;
+        }
         if full {
             self.marks.fill(0);
             self.remembered.clear();
@@ -625,7 +645,13 @@ impl Heap {
         let finalization_jobs = self.prune_weak_entries(full);
         #[cfg(feature = "profile-aggregate")]
         {
-            self.gc_profile.mark_nanos += mark_started.elapsed().as_nanos() as u64;
+            let mark_nanos = mark_started.elapsed().as_nanos() as u64;
+            self.gc_profile.mark_nanos += mark_nanos;
+            if full {
+                self.gc_profile.full_mark_nanos += mark_nanos;
+            } else {
+                self.gc_profile.minor_mark_nanos += mark_nanos;
+            }
         }
         #[cfg(feature = "profile-aggregate")]
         let sweep_started = std::time::Instant::now();
