@@ -77,6 +77,7 @@ mod tests {
             pc: 0,
             binding_site_pc: None,
             env: Value::NULL,
+            capture_base: Value::DELETED,
             this: Value::UNDEFINED,
             locals: vec![],
             dynamic_bindings: vec![],
