@@ -349,6 +349,23 @@ impl quench_runtime::Host for NodeHost {
         }))
     }
 
+    fn import_meta_url(&mut self, source_name: &str) -> String {
+        if source_name.starts_with("node:") || source_name.starts_with("<") {
+            return source_name.to_owned();
+        }
+        let path = std::path::Path::new(source_name);
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or_else(|_| path.to_path_buf())
+        };
+        url::Url::from_file_path(absolute)
+            .map(|url| url.to_string())
+            .unwrap_or_else(|_| source_name.to_owned())
+    }
+
     fn capture_job_context(&mut self) -> Option<quench_runtime::HostExecutionContext> {
         crate::modules::async_hooks_shared_vm::capture_job_context(&self.shared_state)
             .map(quench_runtime::HostExecutionContext)
