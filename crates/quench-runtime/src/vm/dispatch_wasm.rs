@@ -543,6 +543,21 @@ impl<H: Host> Vm<H> {
             Op::WasmJumpI32GreaterEqualUnsignedImmediate => {
                 self.wasm_i32_constant_jump(p, f, i, pc, I32BinaryOperator::GreaterEqualUnsigned)?;
             }
+            Op::WasmI32ShiftRightUnsignedAndImmediate => {
+                let value = self.read(f, i.register_b()).wasm_bits32() as i32;
+                let fields = crate::wasm::integer::shift_right_unsigned_and(
+                    value,
+                    i32::from(i.c() as i16),
+                    i.imm() as i32,
+                );
+                self.write(f, i.result_register(), Value::integer(fields));
+            }
+            Op::WasmI32AddImmediateJumpNonZero => {
+                let value = self.read(f, i.register_b()).wasm_bits32() as i32;
+                let sum = value.wrapping_add(i32::from(i.c() as i16));
+                self.write(f, i.result_register(), Value::integer(sum));
+                self.wasm_jump(p, f, i, pc, sum != 0);
+            }
             Op::WasmBranchTable => {
                 // `pc` already names the first entry; out-of-range selectors
                 // take the default entry after the cases.

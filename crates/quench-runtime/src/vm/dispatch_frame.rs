@@ -7,7 +7,7 @@ struct GeneralCodeCursor {
     code: *const Instr,
     wide: *const WideInstruction,
     /// The function's lane view, or null where the lane does not run.
-    lane: *const dispatch_fast::LaneInstruction,
+    lane: *const dispatch_fast::LaneView,
 }
 
 impl GeneralCodeCursor {

@@ -14,7 +14,7 @@ struct ProgramEntry {
     module_imports: Vec<(u16, ModuleImport)>,
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
-    lane_views: Vec<std::cell::OnceCell<Box<[super::dispatch_fast::LaneInstruction]>>>,
+    lane_views: Vec<std::cell::OnceCell<super::dispatch_fast::LaneView>>,
 }
 
 #[derive(Clone, Copy)]
@@ -336,15 +336,12 @@ impl ProgramStore {
         &self,
         id: ProgramId,
         function: u32,
-        derive: impl FnOnce(
-            &crate::bytecode::Function,
-            &[Value],
-        ) -> Box<[super::dispatch_fast::LaneInstruction]>,
-    ) -> Option<*const super::dispatch_fast::LaneInstruction> {
+        derive: impl FnOnce(&crate::bytecode::Function, &[Value]) -> super::dispatch_fast::LaneView,
+    ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.programs.get(id.index())?;
         let code = entry.residual.functions.get(function as usize)?;
         let view = entry.lane_views.get(function as usize)?;
-        Some(view.get_or_init(|| derive(code, &entry.constants)).as_ptr())
+        Some(view.get_or_init(|| derive(code, &entry.constants)))
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
