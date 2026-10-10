@@ -158,6 +158,7 @@ impl Compiler<'_> {
             dispatch: DispatchClass::General,
             handlers: function.handlers,
             register_root_offset: u32::MAX,
+            parameter_registers: None,
         };
         self.functions[id as usize] = Some(result);
         id

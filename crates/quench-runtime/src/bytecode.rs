@@ -193,6 +193,7 @@ pub(crate) enum ImmediateRole {
     WasmMemoryLoadOperator,
     WasmMemoryStoreOperator,
     WasmMemoryOffset,
+    WasmInstanceSlot,
     WasmAtomicOperator,
     WasmI32Immediate,
     WasmI32UnaryOperator,
@@ -638,6 +639,7 @@ opcodes!(
     WasmI32LessEqualUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI32GreaterEqualSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI32GreaterEqualUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmInstanceBinding => Effect::READS_HEAP; layout Scalar; meaning WasmInstanceSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
     WasmFillRegisters => Effect::PURE; layout Scalar; meaning ConstantIndex, @ Register, @ fields(Unused, RegisterWindowBase, RegisterCount),
     WasmSelect => Effect::PURE; layout RegisterPair, @ Register, @ fields(ResultRegister, Register, Register),
     WasmJumpI32Zero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
@@ -887,6 +889,9 @@ pub struct Function {
     pub(crate) dispatch: DispatchClass,
     pub(crate) handlers: Vec<Handler>,
     pub(crate) register_root_offset: u32,
+    /// First register of the parameters when the body keeps its locals in
+    /// registers; activation then writes arguments there, not into locals.
+    pub(crate) parameter_registers: Option<u16>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -927,6 +932,15 @@ impl Function {
 
     pub(crate) fn arguments_are_mapped(&self) -> bool {
         !self.is_arrow && !self.strict && self.simple_parameters
+    }
+
+    /// Parameters an activation binds into frame locals.
+    pub(crate) const fn local_parameter_count(&self) -> u16 {
+        if self.parameter_registers.is_some() {
+            0
+        } else {
+            self.params
+        }
     }
 
     pub(crate) fn plain_local_context_is_safe(&self) -> bool {

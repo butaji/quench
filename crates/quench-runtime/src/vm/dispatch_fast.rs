@@ -273,6 +273,12 @@ impl<H: Host> Vm<H> {
             Op::WasmJumpI32GreaterEqualUnsignedImmediate => {
                 return self.lane_constant_jump(r, i, pc, I32BinaryOperator::GreaterEqualUnsigned);
             }
+            Op::WasmInstanceBinding => {
+                let value = self
+                    .heap
+                    .environment_slot(self.frames[f].env, i.imm() as usize)?;
+                r.set(i.a(), value);
+            }
             Op::WasmGlobalGet => {
                 let Some(Cell::WasmGlobal { value, .. }) = self.heap.get(r.get(i.b())) else {
                     return None;
