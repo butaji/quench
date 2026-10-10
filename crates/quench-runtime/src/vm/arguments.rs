@@ -110,28 +110,43 @@ impl<H: Host> Vm<H> {
         else {
             return;
         };
-        let mut updates = Vec::new();
-        for (frame_index, frame) in self.frames.iter().enumerate() {
-            let has_arguments = if frame.captured {
-                self.heap.environment_contains(frame.env, object)
-            } else {
-                frame.locals.contains(&object)
-            };
-            if has_arguments {
-                updates.push((frame_index, slot));
-            }
-        }
-        for (frame_index, slot) in updates {
-            if self.frames[frame_index].captured {
-                if let Some(target) = self
-                    .heap
-                    .environment_slot_mut(self.frames[frame_index].env, slot)
-                {
-                    *target = value;
-                }
-            } else if let Some(target) = self.frames[frame_index].locals.get_mut(slot) {
+        // The mapping belongs to the one activation whose `arguments` binding holds this object.
+        // Writes almost always come from that activation or its callees, so search inward-out.
+        let Some(owner) = self
+            .frames
+            .iter()
+            .rposition(|frame| self.frame_owns_arguments(frame, object))
+        else {
+            return;
+        };
+        if self.frames[owner].captured {
+            if let Some(target) = self
+                .heap
+                .environment_slot_mut(self.frames[owner].env, slot)
+            {
                 *target = value;
             }
+        } else if let Some(target) = self.frames[owner].locals.get_mut(slot) {
+            *target = value;
+        }
+    }
+
+    fn frame_owns_arguments(&self, frame: &Frame, object: Value) -> bool {
+        let Some(function) = self
+            .programs
+            .residual(frame.program)
+            .and_then(|program| program.functions.get(frame.function as usize))
+        else {
+            return false;
+        };
+        let Some(slot) = function.arguments_slot.map(usize::from) else {
+            return false;
+        };
+        if frame.captured {
+            function.local_slot_uses_environment(slot)
+                && self.heap.environment_slot(frame.env, slot) == Some(object)
+        } else {
+            frame.locals.get(slot) == Some(&object)
         }
     }
 

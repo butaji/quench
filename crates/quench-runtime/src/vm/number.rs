@@ -76,7 +76,7 @@ impl<H: Host> Vm<H> {
         let number = self.native_value(Native::Number);
         let prototype = self.object();
         self.set_builtin_value_named(number, "prototype", prototype)?;
-        let prototype_key = self.intern_atom("prototype");
+        let prototype_key = self.prototype_atom();
         self.set_property_attributes(
             number,
             PropertyKey::string(prototype_key),
@@ -159,7 +159,7 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_key = self.intern_atom("prototype");
+        let prototype_key = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_key),

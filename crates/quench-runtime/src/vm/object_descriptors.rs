@@ -563,9 +563,7 @@ impl<H: Host> Vm<H> {
         key: Value,
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(proxy).cloned()
+        let Some((target, handler)) = self.proxy_parts(proxy)
         else {
             unreachable!("Proxy descriptor dispatch")
         };

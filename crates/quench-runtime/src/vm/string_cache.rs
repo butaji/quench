@@ -34,7 +34,9 @@ impl<H: Host> Vm<H> {
         };
         #[cfg(feature = "profile-aggregate")]
         self.profile.concat_cache(false);
-        let value = self.intern_dynamic_value(text);
+        // Concatenation results are fresh strings; string equality compares units, and the
+        // operand-pair cache above already reuses repeated concatenations.
+        let value = self.heap.alloc(Cell::String(text));
         let cache = self.string_concats.get_or_insert_with(|| {
             vec![EMPTY_STRING_CONCAT_CACHE; STRING_CONCAT_CACHE_SIZE].into_boxed_slice()
         });

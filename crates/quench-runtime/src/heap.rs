@@ -363,27 +363,17 @@ impl Heap {
             self.properties.register_shape(shape as u32, length);
         }
     }
-    pub(crate) fn compact_property_arena(&mut self) {
+    /// Slide every live arena range down over released ones, in offset order.
+    /// `objects` holds each live arena owner packed with its range offset.
+    fn compact_property_arena(&mut self, mut objects: Vec<u64>) {
         if !self.properties.has_released_ranges() {
             return;
         }
         #[cfg(feature = "profile-memory")]
         let before = self.properties.stats();
-        let mut objects = self
-            .slots
-            .iter()
-            .enumerate()
-            .filter_map(|(index, slot)| {
-                let object = slot.cell.as_ref()?.object()?;
-                self.properties
-                    .has_compact_range(object.properties)
-                    .then_some(())?;
-                Some((object.properties.start_offset(), index))
-            })
-            .collect::<Vec<_>>();
-        objects.sort_unstable();
+        sort_by_unique_offset(&mut objects);
         let mut target = 0;
-        for (_, index) in objects {
+        for index in objects.into_iter().map(owner_of_packed) {
             let slot = self
                 .slots
                 .get_mut(index)
@@ -480,32 +470,43 @@ impl Heap {
         {
             self.gc_profile.sweep_slots += self.slots.len() as u64;
         }
-        for (index, slot) in self.slots.iter_mut().enumerate() {
-            if Self::marked(&self.marks, index) {
-                live += 1;
-            } else if let Some(cell) = slot.cell.take() {
-                self.external_bytes = self.external_bytes.saturating_sub(cell.external_bytes());
-                #[cfg(feature = "profile-memory")]
-                {
-                    let object_slots = cell
-                        .object()
-                        .map(|object| properties.len(object.properties));
-                    self.memory_profile.freed(index, &cell, object_slots);
-                }
-                if let Some(object) = cell.object() {
-                    properties.release(object.properties);
-                }
-                if let Some(arrays) = &mut self.sparse_arrays {
-                    arrays.remove(&(index as u32));
-                }
-                // Reused slots enter `free` only after their side-table entries are gone.
-                self.free.push(index as u32);
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.freed += 1;
+        // Live arena owners, keyed for the offset-ordered compaction below.
+        let mut property_owners = Vec::new();
+        for (base, slab) in self.slots.slabs_mut() {
+            for (offset, slot) in slab.iter_mut().enumerate() {
+                let index = base + offset;
+                if Self::marked(&self.marks, index) {
+                    live += 1;
+                    if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
+                        && properties.has_compact_range(object.properties)
+                    {
+                        property_owners
+                            .push(pack_offset_owner(object.properties.start_offset(), index));
+                    }
+                } else if let Some(cell) = slot.cell.take() {
+                    self.external_bytes = self.external_bytes.saturating_sub(cell.external_bytes());
+                    #[cfg(feature = "profile-memory")]
+                    {
+                        let object_slots = cell
+                            .object()
+                            .map(|object| properties.len(object.properties));
+                        self.memory_profile.freed(index, &cell, object_slots);
+                    }
+                    if let Some(object) = cell.object() {
+                        properties.release(object.properties);
+                    }
+                    if let Some(arrays) = &mut self.sparse_arrays {
+                        arrays.remove(&(index as u32));
+                    }
+                    self.free.push(index as u32);
+                    #[cfg(feature = "profile-aggregate")]
+                    {
+                        self.gc_profile.freed += 1;
+                    }
                 }
             }
         }
+        self.compact_property_arena(property_owners);
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
@@ -769,9 +770,14 @@ impl Heap {
             object_roots(owner, object.shape(), work);
             work.extend(object.private_names().iter().map(|brand| brand.home));
             if let Some(values) = object.inline_properties() {
-                work.extend(values.iter().copied().filter(|value| !value.is_deleted()));
+                work.extend(
+                    values
+                        .iter()
+                        .copied()
+                        .filter(|value| value.is_heap() && !value.is_deleted()),
+                );
             } else {
-                properties.append_live_values(object.properties, work);
+                properties.append_heap_references(object.properties, work);
             }
             object.visit_stack_data_roots(|value| work.push(value));
         };
@@ -787,16 +793,16 @@ impl Heap {
                 elements,
             } => {
                 object(value);
-                work.extend(elements.iter().copied());
+                work.extend(elements.iter().copied().filter(|value| value.is_heap()));
             }
             Cell::ArrayBuffer { object: value, .. } => object(value),
             Cell::RegExp {
                 object: value,
-                legacy_constructor,
+                meta,
                 ..
             } => {
                 object(value);
-                work.push(legacy_constructor.constructor());
+                work.push(meta.legacy_constructor.constructor());
             }
             Cell::DataView {
                 object: value,
@@ -844,11 +850,15 @@ impl Heap {
             Cell::Iterator {
                 object: value,
                 source,
-                next_method,
-                helper,
-                generator,
+                ext,
                 ..
             } => {
+                let IteratorExt {
+                    next_method,
+                    helper,
+                    generator,
+                    ..
+                } = &**ext;
                 object(value);
                 work.push(*source);
                 work.extend(*next_method);
@@ -930,12 +940,16 @@ impl Heap {
             Cell::Environment {
                 parent,
                 slots,
-                dynamic_bindings,
-                with_objects,
+                scope,
                 ..
             } => {
                 work.push(*parent);
                 work.extend(slots.roots());
+                let crate::heap::EnvironmentScope {
+                    dynamic_bindings,
+                    with_objects,
+                    ..
+                } = &**scope;
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
                         work.extend(bindings.iter().map(|(_, value)| *value));
@@ -944,9 +958,8 @@ impl Heap {
                 }
                 work.extend(with_objects.iter().copied());
             }
-            Cell::WasmElements(elements) | Cell::WasmTable { elements, .. } => {
-                work.extend(elements.iter().copied())
-            }
+            Cell::WasmElements(elements) => work.extend(elements.iter().copied()),
+            Cell::WasmTable { elements, .. } => work.extend(elements.iter().copied()),
             Cell::WasmGc {
                 fields, descriptor, ..
             } => {
@@ -1057,8 +1070,8 @@ impl Heap {
                         + (signature.params.capacity() + signature.results.capacity())
                             * size_of::<crate::WasmType>()
                 }
-                Cell::WasmElements(elements)
-                | Cell::WasmTable { elements, .. }
+                Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
+                Cell::WasmTable { elements, .. }
                 | Cell::WasmGc {
                     fields: elements, ..
                 } => elements.capacity() * size_of::<Value>(),
@@ -1071,7 +1084,7 @@ impl Heap {
                     calendar,
                     ..
                 } => time_zone.capacity() + calendar.capacity(),
-                Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
+                Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
                 Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
@@ -1080,11 +1093,8 @@ impl Heap {
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
                 Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::Function { .. } => size_of::<Object>(),
-                Cell::Environment {
-                    slots,
-                    with_objects,
-                    ..
-                } => {
+                Cell::Environment { slots, scope, .. } => {
+                    let with_objects = &scope.with_objects;
                     slots.len() * size_of::<EnvironmentSlot>()
                         + with_objects.len() * size_of::<Value>()
                 }
@@ -1109,3 +1119,68 @@ impl Heap {
 }
 #[cfg(test)]
 mod tests;
+
+/// Bits per radix pass when ordering property owners by arena offset.
+const OFFSET_RADIX_BITS: u32 = 16;
+/// An owner key keeps the arena offset in the high half and the slot index in the low half.
+const OWNER_KEY_HALF_BITS: u32 = u32::BITS;
+
+fn pack_offset_owner(offset: usize, owner: usize) -> u64 {
+    debug_assert!(offset <= u32::MAX as usize && owner <= u32::MAX as usize);
+    ((offset as u64) << OWNER_KEY_HALF_BITS) | owner as u64
+}
+
+fn owner_of_packed(key: u64) -> usize {
+    (key & u64::from(u32::MAX)) as usize
+}
+
+/// Orders packed owner keys by arena offset in linear time. Offsets are distinct arena
+/// positions, so two stable 16-bit passes over the offset half give a full ordering.
+fn sort_by_unique_offset(keys: &mut Vec<u64>) {
+    let buckets = 1usize << OFFSET_RADIX_BITS;
+    let mask = (buckets - 1) as u64;
+    let mut scratch = vec![0; keys.len()];
+    let mut counts = vec![0usize; buckets + 1];
+    for pass in 0..2 {
+        let shift = OWNER_KEY_HALF_BITS + pass * OFFSET_RADIX_BITS;
+        counts.fill(0);
+        for key in keys.iter() {
+            counts[((key >> shift) & mask) as usize + 1] += 1;
+        }
+        for bucket in 0..buckets {
+            counts[bucket + 1] += counts[bucket];
+        }
+        for key in keys.iter() {
+            let bucket = ((key >> shift) & mask) as usize;
+            scratch[counts[bucket]] = *key;
+            counts[bucket] += 1;
+        }
+        std::mem::swap(keys, &mut scratch);
+    }
+}
+
+#[cfg(test)]
+mod offset_order_tests {
+    #[test]
+    fn radix_offset_order_matches_comparison_sort() {
+        let mut state = 0x2545_f491_u64;
+        let mut offsets: Vec<usize> = (0..5000)
+            .map(|_| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (state >> 33) as usize
+            })
+            .collect();
+        offsets.sort_unstable();
+        offsets.dedup();
+        let mut keys: Vec<u64> = offsets
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(slot, offset)| super::pack_offset_owner(*offset, slot))
+            .collect();
+        let mut expected = keys.clone();
+        expected.sort_unstable();
+        super::sort_by_unique_offset(&mut keys);
+        assert_eq!(keys, expected);
+    }
+}

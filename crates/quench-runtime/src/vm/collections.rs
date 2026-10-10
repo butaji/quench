@@ -1,5 +1,4 @@
 use super::*;
-use crate::heap::WeakMapEntries;
 
 const MAP_ENTRY_KEY_INDEX: usize = 0;
 const MAP_ENTRY_VALUE_INDEX: usize = 1;
@@ -104,7 +103,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.object_data(prototype).is_some() {
             prototype
@@ -128,11 +127,11 @@ impl<H: Host> Vm<H> {
         };
         let cell = match native {
             Native::WeakMap => Cell::WeakMap {
-                object: Self::empty_object(prototype),
-                entries: WeakMapEntries::default(),
+                object: Box::new(Self::empty_object(prototype)),
+                entries: Box::default(),
             },
             Native::WeakSet => Cell::WeakSet {
-                object: Self::empty_object(prototype),
+                object: Box::new(Self::empty_object(prototype)),
                 entries: Vec::new(),
             },
             _ => return Err(JsError("invalid weak collection constructor".into())),
@@ -228,7 +227,7 @@ impl<H: Host> Vm<H> {
             .heap
             .weak_handle(target)
             .ok_or_else(|| self.type_error(p, "WeakRef target is not a live object".into()))?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.object_data(prototype).is_some() {
             prototype
@@ -239,7 +238,7 @@ impl<H: Host> Vm<H> {
             self.get_property(p, constructor, prototype_atom)?
         };
         Ok(self.heap.alloc(Cell::WeakRef {
-            object: Self::empty_object(prototype),
+            object: Box::new(Self::empty_object(prototype)),
             target: Some(target),
         }))
     }
@@ -308,7 +307,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn set_constructor_prototype_attributes(&mut self, constructor: Value) {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -407,7 +406,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_named(program, map, "prototype", self.map_proto)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             map,
             PropertyKey::string(prototype_atom),
@@ -475,7 +474,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(set_proto, "keys", values)?;
         self.set_builtin_value_named(set_proto, "constructor", set)?;
         self.set_named(program, set, "prototype", set_proto)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             set,
             PropertyKey::string(prototype_atom),
@@ -606,7 +605,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.object_data(prototype).is_some() {
             prototype
@@ -627,7 +626,7 @@ impl<H: Host> Vm<H> {
         match native {
             Native::Map => {
                 let map = self.heap.alloc(Cell::Map {
-                    object: Self::empty_object(prototype),
+                    object: Box::new(Self::empty_object(prototype)),
                     entries: Vec::new(),
                 });
                 let Some(iterable) = args
@@ -678,7 +677,7 @@ impl<H: Host> Vm<H> {
             }
             Native::Set => {
                 let set = self.heap.alloc(Cell::Set {
-                    object: Self::empty_object(prototype),
+                    object: Box::new(Self::empty_object(prototype)),
                     entries: Vec::new(),
                 });
                 let Some(iterable) = args

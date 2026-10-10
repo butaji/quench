@@ -252,6 +252,8 @@ mod tests {
             wide: vec![],
             registers: 3,
             dispatch: crate::bytecode::DispatchClass::Numeric,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
         };
@@ -326,6 +328,8 @@ mod tests {
             wide: vec![],
             registers: 3,
             dispatch: crate::bytecode::DispatchClass::Numeric,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
         };
