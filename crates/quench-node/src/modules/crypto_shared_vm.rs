@@ -266,14 +266,14 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
     if (typeof value === "object") return `Received an instance of ${Array.isArray(value) ? "Array" : value.constructor?.name || "Object"}`;
     return `Received type ${typeof value}`;
   };
-  const validateRandomSize = (size) => {
+  const validateRandomSize = (size, name = "size", maximum = 0x7fffffff) => {
     if (typeof size !== "number") {
-      const error = new TypeError(`The "size" argument must be of type number. ${receivedArgument(size)}`);
+      const error = new TypeError(`The "${name}" argument must be of type number. ${receivedArgument(size)}`);
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    if (!Number.isFinite(size) || size < 0 || size > 0x7fffffff) {
-      const error = new RangeError(`The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received ${size}`);
+    if (!Number.isFinite(size) || size < 0 || size > maximum) {
+      const error = new RangeError(`The value of "${name}" is out of range. It must be >= 0 && <= ${maximum}. Received ${size}`);
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
@@ -394,15 +394,18 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    offset = offset === undefined ? 0 : validateRandomSize(offset);
-    size = size === undefined ? view.length - offset : validateRandomSize(size);
-    if (offset + size > view.length) {
-      const error = new RangeError("The value of \"size\" is out of range");
+    const offsetLimit = ArrayBuffer.isView(buffer) ? buffer.length : view.length;
+    offset = offset === undefined ? 0 : validateRandomSize(offset, "offset", offsetLimit);
+    const byteOffset = offset * (ArrayBuffer.isView(buffer) ? (buffer.BYTES_PER_ELEMENT || 1) : 1);
+    size = size === undefined ? view.length - byteOffset : validateRandomSize(size, "size");
+    if (byteOffset + size > view.length) {
+      const total = byteOffset + size;
+      const error = new RangeError(`The value of "size + offset" is out of range. It must be <= ${view.length}. Received ${total}`);
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
     const bytes = randomBytes(size);
-    for (let i = 0; i < size; i++) view[offset + i] = bytes[i];
+    for (let i = 0; i < size; i++) view[byteOffset + i] = bytes[i];
     return buffer;
   };
   const randomFill = (buffer, offset, size, callback) => {
@@ -434,22 +437,64 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
     const hex = bytes.toString("hex");
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   };
+  const randomUUIDv7 = (options) => {
+    if (options !== undefined && (options === null || typeof options !== "object" || Array.isArray(options))) {
+      const error = new TypeError('The "options" argument must be of type object');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (options?.disableEntropyCache !== undefined && typeof options.disableEntropyCache !== "boolean") {
+      const error = new TypeError('The "options.disableEntropyCache" property must be of type boolean');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const bytes = randomBuffer(16);
+    let timestamp = Date.now();
+    for (let index = 5; index >= 0; index--) {
+      bytes[index] = timestamp & 0xff;
+      timestamp = Math.floor(timestamp / 256);
+    }
+    bytes[6] = 0x70 | bytes[6] & 0x0f;
+    bytes[8] = 0x80 | bytes[8] & 0x3f;
+    const hex = bytes.toString("hex");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  };
   const randomInt = (min, max, callback) => {
-    if (typeof max === "function") { callback = max; max = min; min = 0; }
-    if (max === undefined) { max = min; min = 0; }
+    const formatInteger = (value) => Math.abs(value) >= 100000
+      ? value.toLocaleString("en-US").replaceAll(",", "_")
+      : String(value);
+    let shorthand = false;
+    if (typeof max === "function") { callback = max; max = min; min = 0; shorthand = true; }
+    if (max === undefined) { max = min; min = 0; shorthand = true; }
     if (typeof callback !== "undefined" && typeof callback !== "function") {
       const error = new TypeError('The "callback" argument must be of type function');
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max)) {
-      const error = new TypeError('The "min" and "max" arguments must be safe integers');
+    if (!Number.isSafeInteger(min)) {
+      const error = new TypeError(`The "min" argument must be a safe integer. ${receivedArgument(min)}`);
       error.code = "ERR_INVALID_ARG_TYPE";
       throw error;
     }
+    if (!Number.isSafeInteger(max)) {
+      const error = new TypeError(`The "max" argument must be a safe integer. ${receivedArgument(max)}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const maxRange = 0xffffffffffff;
+    if (shorthand && max > maxRange) {
+      const error = new RangeError(`The value of "max" is out of range. It must be <= ${maxRange}. Received ${formatInteger(max)}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
     const range = max - min;
-    if (range <= 0 || range > 0x1000000000000) {
-      const error = new RangeError("The value of \"max - min\" is out of range");
+    if (range <= 0) {
+      const error = new RangeError(`The value of "max" is out of range. It must be greater than the value of "min" (${min}). Received ${max}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (range > maxRange) {
+      const error = new RangeError(`The value of "max - min" is out of range. It must be <= ${maxRange}. Received ${formatInteger(range)}`);
       error.code = "ERR_OUT_OF_RANGE";
       throw error;
     }
@@ -457,7 +502,7 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
     let value = 0;
     for (const byte of bytes) value = value * 256 + byte;
     const result = min + value % range;
-    if (callback) process.nextTick(bindAsyncCallback(callback), result);
+    if (callback) process.nextTick(bindAsyncCallback(callback), null, result);
     else return result;
   };
   const webCrypto = globalThis.crypto || {};
@@ -502,15 +547,16 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
     getFips: () => 0,
     getHashes,
     randomBytes: randomBuffer,
-    pseudoRandomBytes: pseudoRandomBuffer,
     pbkdf2: derivePbkdf2,
     pbkdf2Sync: derivePbkdf2Sync,
     randomFillSync,
     randomFill,
     randomUUID,
+    randomUUIDv7,
     randomInt,
   };
   Object.defineProperties(api, {
+    pseudoRandomBytes: { configurable: true, writable: true, value: pseudoRandomBuffer },
     prng: { configurable: true, value: randomBuffer },
     rng: { configurable: true, value: randomBuffer },
   });
