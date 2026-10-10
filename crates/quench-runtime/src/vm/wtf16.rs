@@ -151,9 +151,13 @@ impl JsString {
     }
 
     pub(crate) fn push_js_string(&mut self, text: &Self) {
-        let mut units = self.units.to_vec();
-        units.extend(text.units.iter().copied());
-        self.units = Rc::from(units);
+        // A chain of slice iterators has an exact length, so this allocates the result once.
+        self.units = self
+            .units
+            .iter()
+            .chain(text.units.iter())
+            .copied()
+            .collect();
         self.host = OnceCell::new();
     }
 
