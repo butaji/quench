@@ -2706,6 +2706,7 @@ impl<'a> Compiler<'a> {
             registers: function.max_reg,
             dispatch: DispatchClass::General,
             decoded: Default::default(),
+            plain_locals: Default::default(),
             handlers: function.handlers,
             register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
         };
@@ -2750,36 +2751,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn specialize_plain_local_operations(function: &mut BcFunction, atoms: &[Rc<str>]) {
-        if !function.plain_local_context_is_safe() {
-            return;
-        }
-
-        let mut tdz_slots = vec![false; usize::from(function.locals)];
-        for instruction in &function.code {
-            if instruction.op() == Op::InitializeTdz
-                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
-            {
-                *slot = true;
-            }
-        }
-        for instruction in &function.wide {
-            if instruction.op() == Op::InitializeTdz
-                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
-            {
-                *slot = true;
-            }
-        }
-
-        let plain_slots: Vec<_> = (0..usize::from(function.locals))
-            .map(|slot| {
-                let Some(atom) = function.local_atoms.get(slot) else {
-                    return false;
-                };
-                atoms.get(*atom as usize).is_some_and(|name| {
-                    function.plain_local_slot_is_safe(slot, name, tdz_slots[slot])
-                })
-            })
-            .collect();
+        let plain_slots =
+            function.plain_local_slots(|atom| atoms.get(atom as usize).map(|name| &**name));
 
         for instruction in &mut function.code {
             match instruction.op() {

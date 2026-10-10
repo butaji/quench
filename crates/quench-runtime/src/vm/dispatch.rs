@@ -1866,7 +1866,12 @@ impl<H: Host> Vm<H> {
                 self.resolve_field(p, frame, usize::from(operand.payload()))
             }
             Some(crate::bytecode::OperandKind::Local) => {
-                self.load_local_binding(p, frame, operand.payload() as usize, None)
+                let slot = operand.payload() as usize;
+                // A plain slot is exactly what `LoadLocalPlain` reads.
+                if p.functions[self.frames[frame].function as usize].plain_local(&p.atoms, slot) {
+                    return Ok(self.frames[frame].locals[slot]);
+                }
+                self.load_local_binding(p, frame, slot, None)
             }
             None => unreachable!("two-bit operand tag"),
         }
