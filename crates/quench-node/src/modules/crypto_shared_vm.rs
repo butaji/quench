@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(hashDigest, hmacDigest, Buffer, randomBytes) => {
+r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   let repeatedHmacDigestWarningEmitted = false;
@@ -43,7 +43,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
   };
 
   class Hash {
-    constructor(algorithm) {
+    constructor(algorithm, options) {
       if (typeof algorithm !== "string") {
         const error = new TypeError('The "algorithm" argument must be of type string');
         error.code = "ERR_INVALID_ARG_TYPE";
@@ -51,7 +51,9 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       }
       const name = algorithm.toLowerCase();
       if (!getHashes().includes(algorithm) && !getHashes().includes(name)) throw unsupportedDigest(algorithm);
-      states.set(this, { name, chunks: [], lifecycle: "open" });
+      const defaultEncoding = options?.defaultEncoding ?? "utf8";
+      states.set(this, { name, chunks: [], lifecycle: "open", listeners: {}, defaultEncoding });
+      this._writableState = { defaultEncoding };
     }
 
     update(data, encoding) {
@@ -60,6 +62,12 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       const bytes = inputBuffer(data, encoding);
       state.chunks.push(Array.from(bytes));
       return this;
+    }
+
+    write(data, encoding) {
+      const state = states.get(this);
+      this.update(data, encoding === undefined ? state.defaultEncoding : encoding);
+      return true;
     }
 
     digest(encoding) {
@@ -81,6 +89,15 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       if (data !== undefined) this.update(data, encoding);
       const state = states.get(this);
       state.streamResult = this.digest();
+      for (const listener of state.listeners.data || []) listener(state.streamResult);
+      for (const listener of state.listeners.end || []) listener();
+      return this;
+    }
+
+    on(event, listener) {
+      const state = states.get(this);
+      if (!state.listeners[event]) state.listeners[event] = [];
+      state.listeners[event].push(listener);
       return this;
     }
 
@@ -161,6 +178,43 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     }
   }
 
+  class Sign {
+    constructor(algorithm) {
+      if (typeof algorithm !== "string") {
+        const error = new TypeError('The "algorithm" argument must be of type string');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      const name = algorithm.toLowerCase();
+      if (!getHashes().includes(algorithm) && !getHashes().includes(name)) throw unsupportedDigest(algorithm);
+      states.set(this, { name, chunks: [], lifecycle: "open" });
+    }
+
+    update(data, encoding) {
+      const state = states.get(this);
+      if (state.lifecycle !== "open") throw finalized();
+      state.chunks.push(Array.from(inputBuffer(data, encoding)));
+      return this;
+    }
+
+    sign(key) {
+      const state = states.get(this);
+      if (state.lifecycle !== "open") throw finalized();
+      state.lifecycle = "finalized";
+      const pem = typeof key === "string" ? Buffer.from(key) : inputBuffer(key);
+      try {
+        return Buffer.from(signDigest(state.name, state.chunks.flat(), Array.from(pem)));
+      } catch (cause) {
+        if (String(cause).includes("digest too big for rsa key")) {
+          const error = new Error("error:02000070:rsa routines::digest too big for rsa key");
+          error.library = "rsa routines";
+          throw error;
+        }
+        throw cause;
+      }
+    }
+  }
+
   const hashNames = Object.freeze([
     "RSA-SHA1", "blake2b512", "blake2s256", "md5", "ripemd160",
     "sha1", "sha224", "sha256", "sha384", "sha512",
@@ -212,8 +266,9 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   };
   return {
-    createHash: (algorithm) => new Hash(algorithm),
+    createHash: (algorithm, options) => new Hash(algorithm, options),
     createHmac: (algorithm, key) => new Hmac(algorithm, key),
+    createSign: (algorithm) => new Sign(algorithm),
     createSecretKey,
     createCipheriv,
     getCipherInfo,
@@ -232,11 +287,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let factory = context.evaluate_script_rooted(CRYPTO_FACTORY, "node:crypto/shared.js")?;
     let hash = context.host_function(crate::host::shared_vm::operation("cryptoHash"))?;
     let hmac = context.host_function(crate::host::shared_vm::operation("cryptoHmac"))?;
+    let sign = context.host_function(crate::host::shared_vm::operation("cryptoSign"))?;
     let random_bytes = context.host_function(crate::host::shared_vm::operation("cryptoRandomBytes"))?;
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[hash, hmac, buffer, random_bytes])
+    context.call_rooted(factory, undefined, &[hash, hmac, sign, buffer, random_bytes])
 }
 
 pub(crate) fn random_bytes(
@@ -343,6 +399,34 @@ pub(crate) fn hmac(
         .map_err(|_| RootedError::host("crypto HMAC update failed"))?;
     let output = signer.sign_to_vec()
         .map_err(|_| RootedError::host("crypto HMAC failed"))?;
+    let values = output.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    context.array_rooted(&values)
+}
+
+pub(crate) fn sign(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let algorithm = args.first().copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .ok_or_else(|| RootedError::host("crypto signature algorithm is not a string"))?;
+    let input_root = args.get(1).copied()
+        .ok_or_else(|| RootedError::host("crypto signature input is missing"))?;
+    let key_root = args.get(2).copied()
+        .ok_or_else(|| RootedError::host("crypto private key is missing"))?;
+    let input = byte_array(context, input_root)?;
+    let key_bytes = byte_array(context, key_root)?;
+    let key = openssl::pkey::PKey::private_key_from_pem(&key_bytes)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let digest = openssl::hash::MessageDigest::from_name(&algorithm)
+        .ok_or_else(|| RootedError::host("Digest method not supported"))?;
+    let mut signer = openssl::sign::Signer::new(digest, &key)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    signer.update(&input)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let output = signer.sign_to_vec()
+        .map_err(|error| RootedError::host(error.to_string()))?;
     let values = output.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
     context.array_rooted(&values)
 }
