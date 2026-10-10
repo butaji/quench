@@ -815,7 +815,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
         .alloc(crate::heap::Cell::Error("original argument".into()));
     let mut registers = vec![Value::UNDEFINED; 65];
     registers[64] = live;
-    vm.frames.push(super::Frame {
+    vm.frames.push(Box::new(super::Frame {
         context: super::activation::CallContext::Internal,
         original_arguments: vec![original],
         program: super::program_store::ProgramId::MAIN,
@@ -831,7 +831,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
         active_iterators: vec![],
         with_objects: Vec::new(),
         with_base: 0,
-    });
+    }));
 
     vm.collect_now(&program);
     assert!(vm.heap.get(live).is_some());
@@ -3841,7 +3841,8 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
     );
     assert_eq!(frame.original_arguments, [Value::heap(14)]);
     frame.context = super::activation::CallContext::Function(Value::heap(15));
-    let recycled = Vm::<SilentHost>::recycle_frame(frame);
+    let mut recycled = frame;
+    Vm::<SilentHost>::recycle_frame(&mut recycled);
     assert_eq!(recycled.context, super::activation::CallContext::Internal);
     assert!(recycled.original_arguments.is_empty());
     assert!(recycled.with_objects.is_empty());

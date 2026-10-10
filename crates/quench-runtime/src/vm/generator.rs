@@ -75,7 +75,7 @@ impl<H: Host> Vm<H> {
             );
         }
         let function = &p.functions[id as usize];
-        let mut frame = self.frame_pool.pop().unwrap_or(Frame {
+        let mut frame = self.frame_pool.pop().unwrap_or_else(|| Box::new(Frame {
             context: CallContext::Internal,
             original_arguments: vec![],
             program: self.active_program,
@@ -91,7 +91,7 @@ impl<H: Host> Vm<H> {
             active_iterators: vec![],
             with_objects: Vec::new(),
             with_base: self.with_stack.len(),
-        });
+        }));
         frame
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
@@ -147,13 +147,13 @@ impl<H: Host> Vm<H> {
             match result {
                 Ok(FrameOutcome::ParameterInitializationComplete) => {}
                 Ok(_) => {
-                    self.frame_pool.push(Self::recycle_frame(frame));
+                    self.pool_frame(frame);
                     return Err(JsError(
                         "generator parameter initialization suspended unexpectedly".into(),
                     ));
                 }
                 Err(error) => {
-                    self.frame_pool.push(Self::recycle_frame(frame));
+                    self.pool_frame(frame);
                     return Err(error);
                 }
             }
@@ -228,7 +228,7 @@ impl<H: Host> Vm<H> {
                 "generator allocation lost its iterator cell".into(),
             ));
         }
-        self.frame_pool.push(Self::recycle_frame(frame));
+        self.pool_frame(frame);
         Ok(generator)
     }
 
@@ -1266,9 +1266,8 @@ impl<H: Host> Vm<H> {
         if matches!(continuation.completion, Completion::GeneratorStart)
             && let Some(error) = initial_error
         {
-            self.frame_pool.push(Self::recycle_frame(
-                continuation.into_frame(self.with_stack.len()),
-            ));
+            let frame = continuation.into_frame(self.with_stack.len());
+            self.pool_frame(frame);
             self.close_generator(generator)?;
             return Err(error);
         }
@@ -1285,7 +1284,7 @@ impl<H: Host> Vm<H> {
             && let Some(register) = resume_register
         {
             if register as usize >= frame.registers.len() {
-                self.frame_pool.push(Self::recycle_frame(frame));
+                self.pool_frame(frame);
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
                     record.done = true;
@@ -1297,6 +1296,7 @@ impl<H: Host> Vm<H> {
         let previous_program = std::mem::replace(&mut self.active_program, frame.program);
         let previous_global = self.switch_realm_global(realm);
         self.activate_frame(&mut frame);
+        let frame = self.adopt_frame(frame);
         self.frames.push(frame);
         let result = self.run_frame_general_with_error(
             &execution_program,
@@ -1310,7 +1310,7 @@ impl<H: Host> Vm<H> {
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {
-                self.frame_pool.push(Self::recycle_frame(frame));
+                self.pool_frame(frame);
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
                     record.done = true;
@@ -1340,7 +1340,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. } => {
-                self.frame_pool.push(Self::recycle_frame(frame));
+                self.pool_frame(frame);
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
                     record.done = true;
@@ -1348,7 +1348,7 @@ impl<H: Host> Vm<H> {
                 self.iterator_result(value, true)
             }
             FrameOutcome::Await { .. } => {
-                self.frame_pool.push(Self::recycle_frame(frame));
+                self.pool_frame(frame);
                 if let Some(record) = self.generator_record_mut(generator) {
                     record.running = false;
                     record.done = true;
@@ -1358,7 +1358,7 @@ impl<H: Host> Vm<H> {
                 ))
             }
             FrameOutcome::ParameterInitializationComplete => {
-                self.frame_pool.push(Self::recycle_frame(frame));
+                self.pool_frame(frame);
                 Err(JsError(
                     "unexpected generator parameter initialization boundary".into(),
                 ))
@@ -1366,7 +1366,7 @@ impl<H: Host> Vm<H> {
             FrameOutcome::Yield {
                 frame: Some(frame), ..
             } => {
-                self.frame_pool.push(Self::recycle_frame(frame));
+                self.pool_frame(frame);
                 Err(JsError("generator frame retained unexpectedly".into()))
             }
         }
@@ -1501,9 +1501,8 @@ impl<H: Host> Vm<H> {
             if matches!(continuation.completion, Completion::GeneratorStart)
                 && let Some(error) = initial_error
             {
-                vm.frame_pool.push(Self::recycle_frame(
-                    continuation.into_frame(vm.with_stack.len()),
-                ));
+                let frame = continuation.into_frame(vm.with_stack.len());
+                vm.pool_frame(frame);
                 vm.fail_async_generator(p, generator, promise, error)?;
                 return Ok(promise);
             }
@@ -1538,6 +1537,7 @@ impl<H: Host> Vm<H> {
             let previous_program = std::mem::replace(&mut vm.active_program, frame.program);
             let previous_global = vm.switch_realm_global(realm);
             vm.activate_frame(&mut frame);
+            let frame = vm.adopt_frame(frame);
             vm.frames.push(frame);
             let result = vm.run_frame_general_with_error(
                 &execution_program,
@@ -1550,13 +1550,13 @@ impl<H: Host> Vm<H> {
             vm.switch_realm_global(previous_global);
             match result {
                 Err(error) => {
-                    vm.frame_pool.push(Self::recycle_frame(frame));
+                    vm.pool_frame(frame);
                     vm.fail_async_generator(p, generator, promise, error)?;
                 }
                 Ok(
                     FrameOutcome::Complete(value) | FrameOutcome::ConstructComplete { value, .. },
                 ) => {
-                    vm.frame_pool.push(Self::recycle_frame(frame));
+                    vm.pool_frame(frame);
                     vm.finish_async_generator(p, generator, promise, value, true)?;
                 }
                 Ok(FrameOutcome::Yield {
@@ -1568,7 +1568,7 @@ impl<H: Host> Vm<H> {
                     p,
                     generator,
                     promise,
-                    frame,
+                    *frame,
                     value,
                     destination,
                     delegated_result.is_some(),
@@ -1588,7 +1588,7 @@ impl<H: Host> Vm<H> {
                     vm.enqueue_async_resume(p, id, promise, Some(generator), value, false)?;
                 }
                 Ok(_) => {
-                    vm.frame_pool.push(Self::recycle_frame(frame));
+                    vm.pool_frame(frame);
                     vm.fail_async_generator(
                         p,
                         generator,

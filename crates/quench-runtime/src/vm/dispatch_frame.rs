@@ -183,7 +183,7 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let mut frame = self.frame_pool.pop().unwrap_or(Frame {
+        let mut frame = self.frame_pool.pop().unwrap_or_else(|| Box::new(Frame {
             context: CallContext::Internal,
             original_arguments: vec![],
             program: self.active_program,
@@ -199,7 +199,7 @@ impl<H: Host> Vm<H> {
             active_iterators: vec![],
             with_objects: Vec::new(),
             with_base: self.with_stack.len(),
-        });
+        }));
         frame
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
@@ -342,11 +342,11 @@ impl<H: Host> Vm<H> {
                 } else {
                     FrameOutcome::Complete(value)
                 };
-                self.frame_pool.push(Self::recycle_frame(frame));
+                self.pool_frame(frame);
                 Ok(UserFrameStart::Outcome(outcome))
             }
             FrameOutcome::ConstructComplete { .. } => {
-                self.frame_pool.push(Self::recycle_frame(frame));
+                self.pool_frame(frame);
                 Err(JsError(
                     "nested constructor completion escaped its activation".into(),
                 ))
@@ -356,7 +356,7 @@ impl<H: Host> Vm<H> {
             } => Ok(UserFrameStart::Outcome(FrameOutcome::Await {
                 value,
                 destination,
-                frame: Some(frame),
+                frame: Some(*frame),
             })),
             FrameOutcome::Yield { .. } => {
                 Err(JsError("yield requires generator continuation".into()))
@@ -388,9 +388,8 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let old = std::mem::replace(
-            &mut self.frames[frame_index],
-            Frame {
+        let placeholder = self.frame_pool.pop().unwrap_or_else(|| {
+            Box::new(Frame {
                 context: CallContext::Internal,
                 original_arguments: vec![],
                 program: self.active_program,
@@ -406,10 +405,12 @@ impl<H: Host> Vm<H> {
                 active_iterators: vec![],
                 with_objects: Vec::new(),
                 with_base: self.with_stack.len(),
-            },
-        );
+            })
+        });
+        let old = std::mem::replace(&mut self.frames[frame_index], placeholder);
         self.with_stack.truncate(old.with_base);
-        let mut frame = Self::recycle_frame(old);
+        let mut frame = old;
+        Self::recycle_frame(&mut frame);
         frame
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
@@ -473,7 +474,8 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(&mut frame, arrow, new_target);
         let register_count = function.registers as usize;
         frame.prepare_registers(register_count);
-        self.frames[frame_index] = frame;
+        let placeholder = std::mem::replace(&mut self.frames[frame_index], frame);
+        self.frame_pool.push(placeholder);
         Ok(())
     }
 
@@ -761,7 +763,25 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn recycle_frame(mut frame: Frame) -> Frame {
+    /// Returns a finished activation's buffers to the pool without copying the frame again.
+    /// Moves a detached activation back into pooled frame storage for the frame stack.
+    pub(super) fn adopt_frame(&mut self, frame: Frame) -> Box<Frame> {
+        match self.frame_pool.pop() {
+            Some(mut slot) => {
+                *slot = frame;
+                slot
+            }
+            None => Box::new(frame),
+        }
+    }
+
+    pub(super) fn pool_frame(&mut self, frame: impl Into<Box<Frame>>) {
+        let mut frame = frame.into();
+        Self::recycle_frame(&mut frame);
+        self.frame_pool.push(frame);
+    }
+
+    pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
         frame.original_arguments.clear();
         frame.with_objects = Vec::new();
@@ -784,7 +804,6 @@ impl<H: Host> Vm<H> {
             frame.dynamic_bindings.clear();
         }
         frame.active_iterators.clear();
-        frame
     }
 
     pub(super) fn run_frame_general(
@@ -872,7 +891,7 @@ impl<H: Host> Vm<H> {
                             let mut completed_frame = self.frames.pop().unwrap();
                             self.deactivate_frame(&mut completed_frame, &result);
                             self.persist_global_lexical_bindings(p, &completed_frame);
-                            self.frame_pool.push(Self::recycle_frame(completed_frame));
+                            self.pool_frame(completed_frame);
                             frame = pending.caller;
                             self.write(frame, pending.destination, value);
                             pc = self.frames[frame].pc;
