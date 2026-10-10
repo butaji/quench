@@ -308,6 +308,7 @@ const UTIL: &str = quench_js_check::checked_js!(
   promisify.custom = promisifyCustom;
   const types = {
     isDate: (value) => value instanceof Date,
+    isPromise: (value) => value instanceof Promise,
   };
   const systemErrorNames = new Map([
     [-9, "EBADF"], [-22, "EINVAL"], [-88, "ENOTSOCK"], [-98, "EADDRINUSE"],
