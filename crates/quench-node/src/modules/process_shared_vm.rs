@@ -66,6 +66,10 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let on = context.host_function(crate::host::shared_vm::operation("on"))?;
     install(context, process, "on", on)?;
     install(context, process, "addListener", on)?;
+    let remove_listener =
+        context.host_function(crate::host::shared_vm::operation("processRemoveListener"))?;
+    install(context, process, "removeListener", remove_listener)?;
+    install(context, process, "off", remove_listener)?;
     let once = context.host_function(crate::host::shared_vm::operation("processOnce"))?;
     install(context, process, "once", once)?;
     let emit = context.host_function(crate::host::shared_vm::operation("processEmit"))?;
@@ -1758,6 +1762,55 @@ pub(crate) fn once(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     register_process_listener(context, receiver, args, true)
+}
+
+pub(crate) fn remove_listener(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let event_root = args.first().copied().unwrap_or_else(|| context.undefined());
+    let event = process_event_name(context, event_root)?;
+    let Some(callback) = args.get(1).copied() else {
+        return invalid_callback(context, "undefined");
+    };
+    if !context.is_callable_rooted(callback)? {
+        let received = received_type(context, callback)?;
+        return invalid_callback(context, &received);
+    }
+    let callback_value = context
+        .rooted_value(callback)
+        .ok_or_else(|| RootedError::host("invalid process listener callback root"))?;
+    let snapshots = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .scheduler
+        .shared_listener_snapshots(&event);
+    let listener = snapshots
+        .into_iter()
+        .rev()
+        .find(|listener| context.rooted_value(listener.callback) == Some(callback_value));
+    let Some(listener) = listener else {
+        return Ok(receiver);
+    };
+    let removed = context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .scheduler
+        .remove_shared_listener(&event, listener.id);
+    let Some((callback, event_root, event_removed)) = removed else {
+        return Ok(receiver);
+    };
+    release_context_callback(context, callback);
+    if let Some(event_root) = event_root {
+        context.release_root(event_root);
+    }
+    if event_removed {
+        update_process_event_count(context, receiver)?;
+    }
+    Ok(receiver)
 }
 
 fn register_process_listener(
