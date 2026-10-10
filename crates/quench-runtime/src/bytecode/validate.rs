@@ -1,7 +1,7 @@
 use super::control_flow::instruction_at;
 use super::{
-    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Operand, OperandKind, REGISTER_MASK,
-    Register, ResidualProgram,
+    FieldBase, FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
+    OperandKind, REGISTER_MASK, Register, ResidualProgram,
 };
 use rustc_hash::FxHashSet;
 
@@ -88,6 +88,117 @@ fn register_window_in_bounds(base: u16, count: u32, registers: u16) -> bool {
     u32::from(base)
         .checked_add(count)
         .is_some_and(|end| end <= u32::from(registers))
+}
+
+fn promoted_local_layout_is_valid(
+    function: &super::Function,
+    atoms: &super::AtomTable,
+) -> bool {
+    let promoted = &function.local_registers;
+    if promoted.is_empty() {
+        return true;
+    }
+    let has_dynamic_local_resolution = function
+        .code
+        .iter()
+        .filter_map(|instruction| instruction_at(function, *instruction))
+        .chain(function.wide.iter().copied())
+        .any(|instruction| {
+            matches!(
+                instruction.op(),
+                Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof | Op::StoreName | Op::DeleteName
+            ) && promoted.iter().any(|entry| {
+                function.local_atoms.get(usize::from(entry.local)) == Some(&instruction.imm())
+            })
+        });
+    let eligible_function = function.parent.is_some()
+        && !function.is_async
+        && !function.is_generator
+        && !function.is_class_constructor
+        && !function.derived_constructor
+        && !function.class_field_initializer
+        && function.simple_parameters
+        && !function.rest
+        && function.arguments_slot.is_none()
+        && !function.inherited_with_scope
+        && function.binding_sites.is_empty()
+        && !has_dynamic_local_resolution
+        && !function.code.iter().any(|instruction| {
+            matches!(instruction.op(), Op::MakeClosure | Op::ResolveName | Op::CallDirectEvalArray)
+                || instruction.op() == Op::Call && instruction.direct_eval()
+        })
+        && !function.wide.iter().any(|instruction| {
+            matches!(instruction.op(), Op::MakeClosure | Op::ResolveName | Op::CallDirectEvalArray)
+                || instruction.op() == Op::Call && ImmediateLayout::direct_eval(instruction.imm())
+        });
+    eligible_function
+        && promoted.iter().enumerate().all(|(index, entry)| {
+            entry.local < function.params
+                && entry.local < function.locals
+                && entry.register == index as u16
+                && entry.register < function.registers
+                && function.local_atoms.get(usize::from(entry.local)).is_some_and(|atom| {
+                    !function.lexical_atoms.contains(atom)
+                        && usize::try_from(*atom).is_ok_and(|atom| atom < atoms.len())
+                        && &atoms[*atom as usize] != "arguments"
+                        && !atoms[*atom as usize].starts_with('\0')
+                        && entry.local != function.self_binding_slot.unwrap_or(u16::MAX)
+                })
+                && function
+                    .selective_capture_slots
+                    .as_ref()
+                    .is_none_or(|slots| slots.binary_search(&entry.local).is_err())
+                && (index == 0 || promoted[index - 1].local < entry.local)
+        })
+}
+
+fn instruction_uses_promoted_local(
+    instruction: super::WideInstruction,
+    function: &super::Function,
+) -> bool {
+    let local_slot = (instruction.op().immediate_role() == ImmediateRole::LocalSlot)
+        .then(|| instruction.local_slot())
+        .and_then(|slot| u16::try_from(slot).ok());
+    local_slot.is_some_and(|slot| function.promoted_register(slot).is_some())
+        || instruction
+            .numeric_local_target()
+            .is_some_and(|slot| function.promoted_register(slot).is_some())
+        || InstructionField::ALL.iter().copied().any(|field| {
+            matches!(
+                instruction.op().field_layout(field),
+                FieldLayout::Operand | FieldLayout::NumericIndexOperand
+            ) && Operand(instruction.field_value(field))
+                .kind()
+                .is_some_and(|kind| kind == OperandKind::Local)
+                && function
+                    .promoted_register(Operand(instruction.field_value(field)).payload())
+                    .is_some()
+        })
+}
+
+fn instruction_writes_promoted_register(
+    instruction: super::WideInstruction,
+    function: &super::Function,
+) -> bool {
+    InstructionField::ALL.iter().copied().any(|field| {
+        let layout = instruction.op().field_layout(field);
+        let register = match layout {
+            FieldLayout::ResultRegister if instruction.numeric_local_target().is_none() => {
+                Some(instruction.result_register())
+            }
+            FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
+                Some(instruction.field_value(field))
+            }
+            FieldLayout::OptionalRegister => instruction.optional_register_b(),
+            _ => None,
+        };
+        register.is_some_and(|register| {
+            function
+                .local_registers
+                .iter()
+                .any(|entry| entry.register == register)
+        })
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -437,6 +548,11 @@ impl ResidualProgram {
                     "function {index} has an ineligible selective capture layout"
                 ));
             }
+            if !promoted_local_layout_is_valid(function, &self.atoms) {
+                return Err(format!(
+                    "function {index} has an invalid promoted-local layout"
+                ));
+            }
             let mut tdz_slots = vec![false; usize::from(function.locals)];
             for instruction in &function.code {
                 if instruction.op() == super::Op::InitializeTdz
@@ -606,6 +722,16 @@ impl ResidualProgram {
                 };
                 if instruction.op().is_wide_marker() {
                     return Err(format!("function {index} contains nested wide instruction"));
+                }
+                if instruction_uses_promoted_local(instruction, function) {
+                    return Err(format!(
+                        "function {index} accesses a promoted binding through its local slot"
+                    ));
+                }
+                if instruction_writes_promoted_register(instruction, function) {
+                    return Err(format!(
+                        "function {index} writes a promoted binding outside frame entry"
+                    ));
                 }
                 if matches!(
                     instruction.op(),
@@ -1067,6 +1193,7 @@ mod tests {
             local_atoms: vec![],
             environment_atoms: vec![],
             selective_capture_slots: None,
+            local_registers: Vec::new(),
             inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],

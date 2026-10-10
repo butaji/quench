@@ -196,7 +196,9 @@ impl<H: Host> Vm<H> {
         frame.locals[function.params as usize..].fill(Value::UNDEFINED);
         let fixed = usize::from(function.params) - usize::from(function.rest);
         for index in 0..fixed {
-            frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
+            if function.promoted_register(index as u16).is_none() {
+                frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
+            }
         }
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
@@ -281,6 +283,7 @@ impl<H: Host> Vm<H> {
         let run_numeric = numeric_frame_is_safe(function, capture_constructor_this);
         debug_assert!(!push_to_dispatch || !run_numeric);
         frame.prepare_registers(register_count);
+        frame.initialize_promoted_registers(function, args);
         self.frames.push(frame);
         let frame_index = self.frames.len() - 1;
         if id == super::ROOT_FUNCTION_ID
@@ -407,7 +410,9 @@ impl<H: Host> Vm<H> {
         frame.locals[function.params as usize..].fill(Value::UNDEFINED);
         let fixed = usize::from(function.params) - usize::from(function.rest);
         for index in 0..fixed {
-            frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
+            if function.promoted_register(index as u16).is_none() {
+                frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
+            }
         }
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
@@ -464,6 +469,7 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(&mut frame, arrow, new_target);
         let register_count = function.registers as usize;
         frame.prepare_registers(register_count);
+        frame.initialize_promoted_registers(function, args);
         self.frames[frame_index] = frame;
         Ok(())
     }
