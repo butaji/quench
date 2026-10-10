@@ -38,7 +38,10 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
       error.code = typeof args[2] === "string" ? "ERR_INVALID_ARG_VALUE" : "ERR_INVALID_ARG_TYPE";
       throw error;
     }
-    const fd = openSync(...args);
+    // VFS replaces these functions after the promises module is initialized.
+    // Keep FileHandles routed through the live fs object.
+    const fs = globalThis.__nodeFs;
+    const fd = fs.openSync(...args);
     let closePromise;
     let closed = false;
     const ensureOpen = (syscall) => {
@@ -79,7 +82,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
       },
       close: () => {
         closePromise ||= Promise.resolve().then(() => {
-          closeSync(fd);
+          fs.closeSync(fd);
           closed = true;
           handle.fd = -1;
           handle.emit("close");
@@ -105,7 +108,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
           length = options.length;
           position = options.position ?? null;
         }
-        const bytesRead = readSync(fd, buffer, offset, length, position);
+        const bytesRead = fs.readSync(fd, buffer, offset, length, position);
         return { bytesRead, buffer };
       }),
       readFile: async (options) => {
@@ -122,7 +125,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
         checkAbort();
         await new Promise((resolve) => setImmediate(resolve));
         checkAbort();
-        const size = fstatSync(fd).size;
+        const size = fs.fstatSync(fd).size;
         if (size > 0x7FFFFFFF) {
           const error = new RangeError('File size is greater than 2 GiB');
           error.code = 'ERR_FS_FILE_TOO_LARGE';
@@ -134,7 +137,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
           checkAbort();
           const remaining = 0x7FFFFFFF - total;
           const buffer = Buffer.alloc(Math.min(64 * 1024, remaining || 1));
-          const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+          const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
           if (bytesRead === 0) break;
           if (bytesRead > remaining) {
             const error = new RangeError('File size is greater than 2 GiB');
@@ -152,7 +155,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
         const settings = typeof options === "string" ? { encoding: options } : { ...(options || {}) };
         settings.fd = fd;
         settings.autoClose = false;
-        return createReadStream(null, settings);
+        return fs.createReadStream(null, settings);
       },
       write: (...writeArgs) => Promise.resolve().then(() => {
         ensureOpen("write");
@@ -175,7 +178,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
           throw error;
         }
         length ??= buffer.byteLength - offset;
-        const bytesWritten = writeSync(fd, buffer, offset, length, position);
+        const bytesWritten = fs.writeSync(fd, buffer, offset, length, position);
         return { bytesWritten, buffer: data };
       }),
       writeFile: async (data, options) => {
@@ -215,7 +218,7 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
           let offset = 0;
           while (offset < buffer.length) {
             checkAbort();
-            const written = writeSync(fd, buffer, offset, buffer.length - offset, null);
+            const written = fs.writeSync(fd, buffer, offset, buffer.length - offset, null);
             if (written === 0) break;
             offset += written;
           }
@@ -223,17 +226,17 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
       },
       appendFile: (...args) => handle.writeFile(...args),
       writev: (buffers, position) => Promise.resolve().then(() => ({
-        bytesWritten: (ensureOpen("writev"), writevSync(fd, buffers, position)),
+        bytesWritten: (ensureOpen("writev"), fs.writevSync(fd, buffers, position)),
         buffers,
       })),
       readv: (buffers, position) => Promise.resolve().then(() => ({
-        bytesRead: (ensureOpen("readv"), readvSync(fd, buffers, position)),
+        bytesRead: (ensureOpen("readv"), fs.readvSync(fd, buffers, position)),
         buffers,
       })),
-      stat: (...statArgs) => Promise.resolve().then(() => (ensureOpen("fstat"), fstatSync(fd, ...statArgs))),
-      chmod: (...chmodArgs) => Promise.resolve().then(() => (ensureOpen("fchmod"), fchmodSync(fd, ...chmodArgs))),
-      sync: () => Promise.resolve().then(() => (ensureOpen("fsync"), fsyncSync(fd))),
-      datasync: () => Promise.resolve().then(() => (ensureOpen("fdatasync"), fdatasyncSync(fd))),
+      stat: (...statArgs) => Promise.resolve().then(() => (ensureOpen("fstat"), fs.fstatSync(fd, ...statArgs))),
+      chmod: (...chmodArgs) => Promise.resolve().then(() => (ensureOpen("fchmod"), fs.fchmodSync(fd, ...chmodArgs))),
+      sync: () => Promise.resolve().then(() => (ensureOpen("fsync"), fs.fsyncSync(fd))),
+      datasync: () => Promise.resolve().then(() => (ensureOpen("fdatasync"), fs.fdatasyncSync(fd))),
     };
     handle[Symbol.asyncDispose] = handle.close;
     handle[Symbol.dispose] = handle.close;
@@ -2244,6 +2247,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let read_stream = get(context, read_stream_api, "ReadStream")?;
     set(context, module, "createReadStream", create_read_stream)?;
     set(context, module, "ReadStream", read_stream)?;
+    let rm_sync = get(context, module, "rmSync")?;
     let promises = promises_module(
         context,
         constants,
@@ -2259,6 +2263,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         append_file_sync,
         mkdir_sync,
         rmdir_sync,
+        rm_sync,
         mkdtemp_sync,
         copy_file_sync,
         readv_sync,
@@ -2362,6 +2367,21 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let chmod_promise = context.call_rooted(chmod_promise_factory, undefined, &[chmod_sync])?;
     set(context, promises, "chmod", chmod_promise)?;
+    let metadata_promise_factory = context.evaluate_script_rooted(
+        "(name) => (...args) => Promise.resolve().then(() => { const sync = globalThis.__nodeFs[`${name}Sync`] || (name === 'lchmod' ? globalThis.__nodeFs.chmodSync : undefined); return sync(...args); })",
+        "node:fs/promises/shared-metadata-mutations.js",
+    )?;
+    for name in ["lchmod", "utimes", "lutimes"] {
+        let name_root = context.string_rooted(name);
+        let promise = context.call_rooted(
+            metadata_promise_factory,
+            undefined,
+            &[name_root],
+        )?;
+        set(context, promises, name, promise)?;
+        context.release_root(name_root);
+        context.release_root(promise);
+    }
     set(context, module, "promises", promises)?;
 
     let streams = crate::host::shared_vm::commonjs::stream_module(context)?;
@@ -2386,6 +2406,7 @@ pub(crate) fn promises_module(
     append_file_sync: RootId,
     mkdir_sync: RootId,
     rmdir_sync: RootId,
+    rm_sync: RootId,
     mkdtemp_sync: RootId,
     copy_file_sync: RootId,
     readv_sync: RootId,
@@ -2438,6 +2459,12 @@ pub(crate) fn promises_module(
     )?;
     let rmdir = context.call_rooted(rmdir_factory, undefined, &[rmdir_sync])?;
     set(context, promises, "rmdir", rmdir)?;
+    let rm_factory = context.evaluate_script_rooted(
+        "(rmSync) => (...args) => Promise.resolve().then(() => rmSync(...args))",
+        "node:fs/promises/shared-rm.js",
+    )?;
+    let rm = context.call_rooted(rm_factory, undefined, &[rm_sync])?;
+    set(context, promises, "rm", rm)?;
     let mkdtemp_factory = context.evaluate_script_rooted(
         "(mkdtempSync) => (...args) => Promise.resolve().then(() => mkdtempSync(...args))",
         "node:fs/promises/shared-mkdtemp.js",
