@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess) => {
+r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   const kHandle = Symbol.for("quench.internal.crypto.kHandle");
@@ -1466,7 +1466,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
           error.code = "ERR_OSSL_DH_MODULUS_TOO_SMALL"; throw error;
         }
         prime = sizeOrKey <= 1024 ? modp2 : generatePrimeValue(sizeOrKey, { safe: true, bigint: true });
-        if (keyEncoding !== undefined) generator = typeof keyEncoding === "number" ? BigInt(keyEncoding) : dhBytesToInt(keyEncoding);
+        if (keyEncoding !== undefined) generator = typeof keyEncoding === "number" ? BigInt(keyEncoding || 2) : dhBytesToInt(keyEncoding);
       } else {
         if (typeof sizeOrKey !== "string" && !(ArrayBuffer.isView(sizeOrKey) || sizeOrKey instanceof ArrayBuffer)) {
           const error = new TypeError(`The "sizeOrKey" argument must be of type number or string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. ${receivedArgument(sizeOrKey)}`);
@@ -1489,7 +1489,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
             const error = new RangeError(`The value of "generator" is out of range. It must be an integer. Received ${generator}`);
             error.code = "ERR_OUT_OF_RANGE"; throw error;
           }
-          generator = BigInt(generator);
+          generator = BigInt(generator || 2);
         } else if (typeof generator === "string" || ArrayBuffer.isView(generator) || generator instanceof ArrayBuffer) {
           generator = dhBytesToInt(generator, generatorEncoding);
         } else {
@@ -1579,7 +1579,50 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
   ECDH.prototype = ECDHImpl.prototype;
   ECDH.prototype.constructor = ECDH;
   const createECDH = (curve) => new ECDH(curve);
-  const generateKeyPairSync = (type, options) => {
+  const rsaCrypt = (decrypt, privateKey, key, data) => {
+    const material = key && typeof key === "object" && key.key !== undefined ? key.key : key;
+    const keyBytes = typeof material === "string" ? Buffer.from(material) : cryptoBytes(material);
+    return Buffer.from(rsaCryptNative(decrypt, privateKey, keyBytes, cryptoBytes(data)));
+  };
+  const publicEncrypt = (key, data) => rsaCrypt(false, false, key, data);
+  const privateDecrypt = (key, data) => rsaCrypt(true, true, key, data);
+  const privateEncrypt = (key, data) => rsaCrypt(false, true, key, data);
+  const publicDecrypt = (key, data) => rsaCrypt(true, false, key, data);
+  const keyObjectBrand = new WeakMap();
+  class KeyObject {
+    constructor(type, pem, der, asymmetricKeyType, pkcs1Pem, pkcs1Der) {
+      this.type = type;
+      this.asymmetricKeyType = asymmetricKeyType;
+      this.key = Buffer.from(pem);
+      keyObjectBrand.set(this, { pem: Buffer.from(pem), der: Buffer.from(der), pkcs1Pem: Buffer.from(pkcs1Pem || pem), pkcs1Der: Buffer.from(pkcs1Der || der), asymmetricKeyType });
+    }
+    export(options = {}) {
+      const state = keyObjectBrand.get(this);
+      if (options.format === "der") {
+        const output = Buffer.from(options.type === "pkcs1" ? state.pkcs1Der : state.der);
+        return options.encoding ? output.toString(options.encoding) : output;
+      }
+      const output = options.type === "pkcs1" ? Buffer.from(state.pkcs1Pem) : Buffer.from(state.pem);
+      return options.encoding ? output.toString(options.encoding) : output;
+    }
+  }
+  const createPrivateKey = (value) => {
+    const material = value && typeof value === "object" && value.key !== undefined ? value.key : value;
+    const pem = typeof material === "string" ? Buffer.from(material) : cryptoBytes(material);
+    return new KeyObject("private", pem, pem, "rsa");
+  };
+  const createPublicKey = (value) => {
+    const material = value && typeof value === "object" && value.key !== undefined ? value.key : value;
+    const pem = typeof material === "string" ? Buffer.from(material) : cryptoBytes(material);
+    return new KeyObject("public", pem, pem, "rsa");
+  };
+  const keyOutput = (key, encoding, fallback) => {
+    if (!encoding) return key;
+    const data = key.export({ format: encoding.format || "pem", type: encoding.type || fallback, encoding: encoding.format === "der" ? undefined : encoding.encoding });
+    if (encoding.format !== "der" && encoding.encoding) return data.toString(encoding.encoding);
+    return encoding.format === "pem" || encoding.format === undefined ? data.toString("utf8") : data;
+  };
+  const generateKeyPairSync = (type, options = {}) => {
     if (typeof type !== "string") {
       const error = new TypeError(`The "type" argument must be of type string. ${receivedArgument(type)}`);
       error.code = "ERR_INVALID_ARG_TYPE"; throw error;
@@ -1588,17 +1631,39 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
       const error = new TypeError(`The "options" argument must be of type object. ${receivedArgument(options)}`);
       error.code = "ERR_INVALID_ARG_TYPE"; throw error;
     }
-    const error = new Error(`Key generation for ${type} keys is not supported`);
-    error.code = "ERR_CRYPTO_OPERATION_FAILED";
-    throw error;
+    if (type !== "rsa" && type !== "rsa-pss") {
+      const error = new Error(`Key generation for ${type} keys is not supported`);
+      error.code = "ERR_CRYPTO_OPERATION_FAILED"; throw error;
+    }
+    const bits = options.modulusLength === undefined ? 2048 : options.modulusLength;
+    const exponent = options.publicExponent === undefined ? 65537 : options.publicExponent;
+    if (!Number.isInteger(bits) || bits < 512 || bits > 16384) throw rangeError("options.modulusLength", bits);
+    if (!Number.isSafeInteger(exponent) || exponent < 3 || exponent > 0xffffffff) throw rangeError("options.publicExponent", exponent);
+    const result = generateRsaKeyPairNative(bits, exponent);
+    const privatePem = Buffer.from(result[0]);
+    const publicPem = Buffer.from(result[1]);
+    const privateDer = Buffer.from(result[2]);
+    const publicDer = Buffer.from(result[3]);
+    const publicPkcs1 = Buffer.from(result[4]);
+    const privatePkcs1 = Buffer.from(result[5]);
+    const publicPkcs1Der = Buffer.from(result[6]);
+    const privatePkcs1Der = Buffer.from(result[7]);
+    const privateKey = new KeyObject("private", privatePem, privateDer, type, privatePkcs1, privatePkcs1Der);
+    const publicKey = new KeyObject("public", publicPem, publicDer, type, publicPkcs1, publicPkcs1Der);
+    return {
+      publicKey: keyOutput(publicKey, options.publicKeyEncoding, "spki"),
+      privateKey: keyOutput(privateKey, options.privateKeyEncoding, "pkcs8"),
+    };
   };
   const generateKeyPair = (type, options, callback) => {
     if (typeof callback !== "function") {
       const error = new TypeError('The "callback" argument must be of type function');
       error.code = "ERR_INVALID_ARG_TYPE"; throw error;
     }
-    try { generateKeyPairSync(type, options); }
-    catch (error) { process.nextTick(bindAsyncCallback(callback), error); }
+    try {
+      const result = generateKeyPairSync(type, options);
+      process.nextTick(bindAsyncCallback(callback), null, result.publicKey, result.privateKey);
+    } catch (error) { process.nextTick(bindAsyncCallback(callback), error); }
   };
   const webCrypto = globalThis.crypto || {};
   if (!globalThis.crypto) {
@@ -1646,6 +1711,9 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     setEngine,
     createSign: (algorithm) => new Sign(algorithm),
     createSecretKey,
+    KeyObject,
+    createPrivateKey,
+    createPublicKey,
     createCipheriv,
     createDecipheriv,
     Cipheriv,
@@ -1662,6 +1730,10 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     createDiffieHellmanGroup,
     ECDH,
     createECDH,
+    publicEncrypt,
+    privateDecrypt,
+    privateEncrypt,
+    publicDecrypt,
     getDiffieHellman,
     generateKeyPair,
     generateKeyPairSync,
@@ -1705,6 +1777,9 @@ pub(crate) fn module(
     let scrypt = context.host_function(crate::host::shared_vm::operation("cryptoScrypt"))?;
     let cipher_process =
         context.host_function(crate::host::shared_vm::operation("cryptoCipherProcess"))?;
+    let generate_rsa_key_pair = context
+        .host_function(crate::host::shared_vm::operation("cryptoGenerateRsaKeyPair"))?;
+    let rsa_crypt = context.host_function(crate::host::shared_vm::operation("cryptoRsaCrypt"))?;
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let undefined = context.undefined();
@@ -1722,8 +1797,128 @@ pub(crate) fn module(
             scrypt,
             transform,
             cipher_process,
+            generate_rsa_key_pair,
+            rsa_crypt,
         ],
     )
+}
+
+pub(crate) fn generate_rsa_key_pair(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let bits = args.get(0)
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(|value| value.as_number())
+        .filter(|value| value.is_finite() && *value >= 512.0 && *value <= 16384.0 && value.fract() == 0.0)
+        .ok_or_else(|| RootedError::host("RSA modulus length is invalid"))? as u32;
+    let exponent = args.get(1)
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(|value| value.as_number())
+        .filter(|value| value.is_finite() && *value >= 3.0 && *value <= u32::MAX as f64 && value.fract() == 0.0)
+        .unwrap_or(65537.0) as u32;
+    let public_exponent = openssl::bn::BigNum::from_u32(exponent)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let rsa = openssl::rsa::Rsa::generate_with_e(bits, &public_exponent)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let public_pkcs1_pem = rsa.public_key_to_pem_pkcs1()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let private_pkcs1_pem = rsa.private_key_to_pem()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let public_pkcs1_der = rsa.public_key_to_der_pkcs1()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let private_pkcs1_der = rsa.private_key_to_der()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let key = openssl::pkey::PKey::from_rsa(rsa)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let private_pem = key.private_key_to_pem_pkcs8()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let public_pem = key.public_key_to_pem()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let private_der = key.private_key_to_der()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let public_der = key.public_key_to_der()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let private_values = private_pem.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let public_values = public_pem.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let public_pkcs1_values = public_pkcs1_pem.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let private_pkcs1_values = private_pkcs1_pem.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let public_pkcs1_der_values = public_pkcs1_der.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let private_pkcs1_der_values = private_pkcs1_der.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let private_der_values = private_der.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let public_der_values = public_der.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let private = context.array_rooted(&private_values)?;
+    let public = context.array_rooted(&public_values)?;
+    let public_pkcs1 = context.array_rooted(&public_pkcs1_values)?;
+    let private_pkcs1 = context.array_rooted(&private_pkcs1_values)?;
+    let public_pkcs1_der = context.array_rooted(&public_pkcs1_der_values)?;
+    let private_pkcs1_der = context.array_rooted(&private_pkcs1_der_values)?;
+    let private_der = context.array_rooted(&private_der_values)?;
+    let public_der = context.array_rooted(&public_der_values)?;
+    context.array_rooted(&[private, public, private_der, public_der, public_pkcs1, private_pkcs1, public_pkcs1_der, private_pkcs1_der])
+}
+
+pub(crate) fn rsa_crypt(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let decrypt = args.get(0)
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let private = args.get(1)
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let key_bytes = byte_array(context, *args.get(2).ok_or_else(|| RootedError::host("RSA key is missing"))?)?;
+    let input = byte_array(context, *args.get(3).ok_or_else(|| RootedError::host("RSA input is missing"))?)?;
+    let output = if decrypt {
+        let key = openssl::pkey::PKey::private_key_from_pem(&key_bytes)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        let mut operation = openssl::encrypt::Decrypter::new(&key)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        operation.set_rsa_padding(openssl::rsa::Padding::PKCS1_OAEP)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        let mut output = vec![0; operation.decrypt_len(&input).map_err(|error| RootedError::host(error.to_string()))?];
+        let length = operation.decrypt(&input, &mut output).map_err(|error| RootedError::host(error.to_string()))?;
+        output.truncate(length);
+        output
+    } else if private {
+        let key = openssl::pkey::PKey::private_key_from_pem(&key_bytes)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        let mut operation = openssl::encrypt::Encrypter::new(&key)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        operation.set_rsa_padding(openssl::rsa::Padding::PKCS1_OAEP)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        let mut output = vec![0; operation.encrypt_len(&input).map_err(|error| RootedError::host(error.to_string()))?];
+        let length = operation.encrypt(&input, &mut output).map_err(|error| RootedError::host(error.to_string()))?;
+        output.truncate(length);
+        output
+    } else {
+        let key = match openssl::pkey::PKey::public_key_from_pem(&key_bytes) {
+            Ok(key) => key,
+            Err(_) => {
+                let private_key = openssl::pkey::PKey::private_key_from_pem(&key_bytes)
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                let public_pem = private_key.public_key_to_pem()
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                openssl::pkey::PKey::public_key_from_pem(&public_pem)
+                    .map_err(|error| RootedError::host(error.to_string()))?
+            }
+        };
+        let mut operation = openssl::encrypt::Encrypter::new(&key)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        operation.set_rsa_padding(openssl::rsa::Padding::PKCS1_OAEP)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        let mut output = vec![0; operation.encrypt_len(&input).map_err(|error| RootedError::host(error.to_string()))?];
+        let length = operation.encrypt(&input, &mut output).map_err(|error| RootedError::host(error.to_string()))?;
+        output.truncate(length);
+        output
+    };
+    let values = output.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    context.array_rooted(&values)
 }
 
 pub(crate) fn random_bytes(
