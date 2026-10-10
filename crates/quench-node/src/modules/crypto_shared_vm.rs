@@ -50,7 +50,8 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
-      const name = algorithm.toLowerCase();
+      const normalizedName = algorithm.toLowerCase();
+      const name = normalizedName === "rsa-sha1" ? "sha1" : normalizedName;
       const outputLength = options?.outputLength;
       if ((name === "shake128" || name === "shake256") && outputLength === undefined) {
         const error = new Error("error:030000D6:digital envelope routines::not XOF or invalid length");
@@ -153,6 +154,55 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
       states.get(copy).chunks = state.chunks.map((chunk) => chunk.slice());
       return copy;
     }
+  }
+
+  function hashOnce(algorithm, data, options) {
+    if (typeof algorithm !== "string") {
+      const error = new TypeError(`The "algorithm" argument must be of type string. ${receivedArgument(algorithm)}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    let outputEncoding = "hex";
+    let outputLength;
+    if (typeof options === "string") {
+      outputEncoding = options;
+    } else if (options !== undefined) {
+      if (options === null || typeof options !== "object" || Array.isArray(options)) {
+        const error = new TypeError('The "options" argument must be of type object or string');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      outputEncoding = options.outputEncoding ?? "hex";
+      outputLength = options.outputLength;
+    }
+    if (outputEncoding !== undefined && ![
+      "buffer", "hex", "base64", "base64url", "latin1", "binary",
+      "ascii", "utf8", "utf-8", "ucs2", "ucs-2", "utf16le",
+    ].includes(String(outputEncoding).toLowerCase())) {
+      const error = new TypeError(`Unknown encoding: ${outputEncoding}`);
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+    if (outputLength !== undefined && typeof outputLength !== "number") {
+      const error = new TypeError('The "outputLength" argument must be of type number');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const normalized = algorithm.toLowerCase();
+    const standardLength = {
+      md5: 16, ripemd160: 20, sha1: 20, "rsa-sha1": 20,
+      sha224: 28, sha256: 32, sha384: 48, sha512: 64,
+      "sha3-224": 28, "sha3-256": 32, "sha3-384": 48, "sha3-512": 64,
+      blake2b512: 64, blake2s256: 32,
+    }[normalized];
+    if (outputLength !== undefined && standardLength !== undefined &&
+        normalized !== "shake128" && normalized !== "shake256" &&
+        outputLength !== standardLength) {
+      throw new Error(`Output length ${outputLength} is invalid for ${normalized}, which does not support XOF`);
+    }
+    const hash = new Hash(algorithm, { outputLength });
+    hash.update(data);
+    return hash.digest(outputEncoding);
   }
 
   let hashConstructorWarningEmitted = false;
@@ -746,6 +796,7 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
   const api = {
     Hash: HashConstructor,
     createHash: (algorithm, options) => new Hash(algorithm, options),
+    hash: hashOnce,
     createHmac: (algorithm, key) => new Hmac(algorithm, key),
     createSign: (algorithm) => new Sign(algorithm),
     createSecretKey,
