@@ -350,12 +350,6 @@ impl Heap {
     pub(crate) fn register_property_shape(&mut self, shape: u32, length: usize) {
         self.properties.register_shape(shape, length);
     }
-    pub(crate) fn live_object_shapes(&self) -> Vec<u32> {
-        self.slots
-            .iter()
-            .filter_map(|slot| slot.cell.as_ref()?.object().map(Object::shape))
-            .collect()
-    }
     pub(crate) fn remap_live_object_shapes(&mut self, mapping: &[u32], lengths: &[usize]) {
         for slot in self.slots.iter_mut() {
             let Some(object) = slot.cell.as_mut().and_then(Cell::object_mut) else {
@@ -554,10 +548,9 @@ impl Heap {
             }
             Self::children(value, cell, &self.properties, work, object_roots);
             ephemerons.newly_marked(index as u32, cell, &self.marks, work);
-            if let Some(elements) = self
-                .sparse_arrays
-                .as_ref()
-                .and_then(|arrays| arrays.get(&(index as u32)))
+            if let Some(arrays) = self.sparse_arrays.as_ref()
+                && matches!(cell, Cell::Array { .. })
+                && let Some(elements) = arrays.get(&(index as u32))
             {
                 work.extend(elements.values.values().copied());
             }
