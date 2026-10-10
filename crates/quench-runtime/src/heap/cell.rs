@@ -13,6 +13,23 @@ pub(crate) struct WeakMapEntries {
     indices: FxHashMap<Value, usize>,
 }
 
+#[cfg(test)]
+mod cell_layout_tests {
+    use super::*;
+
+    /// Every heap slot stores an `Option<Cell>`. The M4 object layout includes
+    /// two inline properties, and arrays add their shared element handle.
+    const CELL_TAG_WORD_BYTES: usize = std::mem::size_of::<Value>();
+    const MAX_CELL_BYTES: usize = std::mem::size_of::<Object>()
+        + std::mem::size_of::<Rc<Vec<Value>>>()
+        + CELL_TAG_WORD_BYTES;
+
+    #[test]
+    fn cells_stay_compact() {
+        assert_eq!(std::mem::size_of::<Option<Cell>>(), MAX_CELL_BYTES);
+    }
+}
+
 impl WeakMapEntries {
     pub(crate) fn get(&self, key: Value) -> Option<Value> {
         self.indices

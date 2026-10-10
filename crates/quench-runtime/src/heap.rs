@@ -232,7 +232,7 @@ impl Heap {
         Self {
             slots: SlotArena::with_small_capacity(),
             marks: Vec::with_capacity(12),
-            free: Vec::with_capacity(MINIMUM_GC_ALLOCATION_HEADROOM),
+            free: Vec::with_capacity(384),
             threshold: MINIMUM_GC_ALLOCATION_HEADROOM,
             max_threshold: MINIMUM_GC_ALLOCATION_HEADROOM,
             ..Self::default()
@@ -810,7 +810,12 @@ impl Heap {
             object_roots(owner, object.shape(), work);
             work.extend(object.private_names().iter().map(|brand| brand.home));
             if let Some(values) = object.inline_properties() {
-                work.extend(values.iter().copied().filter(|value| value.is_heap()));
+                work.extend(
+                    values
+                        .iter()
+                        .copied()
+                        .filter(|value| value.is_heap() && !value.is_deleted()),
+                );
             } else {
                 properties.append_heap_references(object.properties, work);
             }

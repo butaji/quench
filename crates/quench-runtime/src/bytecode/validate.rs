@@ -415,30 +415,6 @@ fn immediate_domains_in_bounds(
     }
 }
 
-fn object_site_instruction_valid(
-    instruction: super::WideInstruction,
-    object_sites: &[super::ObjectSite],
-    registers: u16,
-) -> bool {
-    match instruction.op() {
-        super::Op::MakeObject2 => object_sites
-            .get(instruction.object_site_index())
-            .is_some_and(|site| site.atoms.len() == super::INLINE_OBJECT_SITE_ATOMS),
-        super::Op::MakeObjectLiteral => {
-            let Some(site) = object_sites.get(instruction.object_site_index()) else {
-                return false;
-            };
-            let window = instruction.register_window();
-            let mut atoms = FxHashSet::default();
-            usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS
-                && site.atoms.len() == usize::from(window.count)
-                && site.atoms.iter().all(|atom| atoms.insert(*atom))
-                && register_window_in_bounds(window.base, u32::from(window.count), registers)
-        }
-        _ => true,
-    }
-}
-
 fn packed_layout_domains_in_bounds(
     instruction: super::WideInstruction,
     bounds: ValidationBounds,
@@ -474,6 +450,30 @@ fn packed_layout_domains_in_bounds(
                 && register_in_bounds(second, bounds.registers, 0)
         }
         ImmediateLayout::Scalar => true,
+    }
+}
+
+fn object_site_instruction_valid(
+    instruction: super::WideInstruction,
+    object_sites: &[super::ObjectSite],
+    registers: u16,
+) -> bool {
+    match instruction.op() {
+        Op::MakeObject2 => object_sites
+            .get(instruction.object_site_index())
+            .is_some_and(|site| site.atoms.len() == super::INLINE_OBJECT_SITE_ATOMS),
+        Op::MakeObjectLiteral => {
+            let Some(site) = object_sites.get(instruction.object_site_index()) else {
+                return false;
+            };
+            let window = instruction.register_window();
+            let mut atoms = FxHashSet::default();
+            usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS
+                && site.atoms.len() == usize::from(window.count)
+                && site.atoms.iter().all(|atom| atoms.insert(*atom))
+                && register_window_in_bounds(window.base, u32::from(window.count), registers)
+        }
+        _ => true,
     }
 }
 
@@ -1171,7 +1171,7 @@ mod tests {
             local_atoms: vec![],
             environment_atoms: vec![],
             selective_capture_slots: None,
-            local_registers: Vec::new(),
+            local_registers: vec![],
             inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
