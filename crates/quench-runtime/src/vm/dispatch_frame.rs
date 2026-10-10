@@ -17,7 +17,8 @@ pub(super) struct PendingGeneralCall {
     pub(super) caller: usize,
     /// The caller's cursor, still valid on resume: the residual outlives the loop and a hot
     /// decoding, once built, never moves; a cold caller simply keeps reading packed code.
-    pub(super) caller_cursor: GeneralCodeCursor,
+    /// Lane calls leave it to the general loop, which derives it only if it resumes the caller.
+    pub(super) caller_cursor: Option<GeneralCodeCursor>,
     pub(super) call_pc: u32,
     pub(super) destination: Register,
     /// Set for an in-loop `new`; see `StepResult::PushFrame`.
@@ -187,12 +188,14 @@ impl<H: Host> Vm<H> {
     /// Activate a Wasm function in the running dispatch loop. Wasm bodies
     /// observe only their locals and registers: no receiver, arguments
     /// object, dynamic binding or `with` scope belongs to the activation.
+    /// A known call stays within its instance, and a Wasm frame is never
+    /// captured nor enters a `with` scope, so the callee's environment is
+    /// the caller's: the instance environment.
     pub(super) fn push_wasm_frame(
         &mut self,
         p: &ResidualProgram,
         caller: usize,
         id: u32,
-        parent: Value,
         arguments: crate::bytecode::RegisterWindow,
     ) -> Result<crate::stack::StackGuard, JsError> {
         let stack_guard = crate::stack::StackGuard::enter()
@@ -205,6 +208,7 @@ impl<H: Host> Vm<H> {
             .pop()
             .unwrap_or_else(|| Box::new(Frame::empty(program, with_base)));
         let caller = &self.frames[caller];
+        let parent = caller.env;
         let arguments_base = usize::from(arguments.base);
         let local_arguments = usize::from(arguments.count.min(function.local_parameter_count()));
         frame.locals.clear();
@@ -1041,7 +1045,14 @@ impl<H: Host> Vm<H> {
                             };
                             self.write(frame, pending.destination, value);
                             pc = self.frames[frame].pc;
-                            cursor = pending.caller_cursor;
+                            cursor = pending.caller_cursor.unwrap_or_else(|| {
+                                self.general_cursor(
+                                    executing_program,
+                                    p,
+                                    self.frames[frame].function,
+                                    fast_lane,
+                                )
+                            });
                             drop(pending.stack_guard);
                         } else {
                             self.frames[frame].pc = pc;
@@ -1056,7 +1067,7 @@ impl<H: Host> Vm<H> {
                     }) => {
                         pending_calls.push(PendingGeneralCall {
                             caller: frame,
-                            caller_cursor: cursor,
+                            caller_cursor: Some(cursor),
                             call_pc: instruction_pc as u32,
                             destination,
                             construct_this,
@@ -1139,7 +1150,14 @@ impl<H: Host> Vm<H> {
                                         self.retire_pending_frame(p);
                                         frame = pending.caller;
                                         pc = self.frames[frame].pc;
-                                        cursor = pending.caller_cursor;
+                                        cursor = pending.caller_cursor.unwrap_or_else(|| {
+                                            self.general_cursor(
+                                                executing_program,
+                                                p,
+                                                self.frames[frame].function,
+                                                fast_lane,
+                                            )
+                                        });
                                         throwing_pc = pending.call_pc;
                                         drop(pending.stack_guard);
                                         error = unhandled;
