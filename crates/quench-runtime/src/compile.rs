@@ -2535,6 +2535,54 @@ impl<'a> Compiler<'a> {
             .copied()
             .filter(|atom| function_scope.contains(atom))
             .collect();
+        let dynamic_eval = options
+            .defaults
+            .is_some_and(early::parameters_contain_direct_eval)
+            || early::body_contains_direct_eval(body)
+            || expression_body.is_some_and(early::expression_contains_direct_eval);
+        let simple_parameters = !options.rest_override
+            && options.defaults.is_none_or(|formal| {
+                !FunctionCompiler::has_non_simple_parameters(formal)
+            });
+        let register_local_facts = early::fixed_register_local_facts(body, expression_body);
+        let promote_plain_locals = parent.is_some()
+            && simple_parameters
+            && !options.async_function
+            && !options.generator
+            && !options.class_constructor
+            && !options.derived_constructor
+            && !options.class_field_initializer
+            && !options.implicit_super
+            && options.with_depth == 0
+            && self.eval_context.is_none()
+            && !dynamic_eval
+            && register_local_facts.safe;
+        let arguments_atom = self.atom("arguments");
+        let mut latest_local_slot = FxHashMap::default();
+        for (slot, atom) in locals.iter().copied().enumerate() {
+            if let Ok(slot) = u16::try_from(slot) {
+                latest_local_slot.insert(atom, slot);
+            }
+        }
+        let mut promoted_local_slots = if promote_plain_locals {
+            latest_local_slot
+                .into_iter()
+                .filter_map(|(atom, slot)| {
+                    (function_scope.contains(&atom)
+                        && !lexical_atoms.contains(&atom)
+                        && atom != arguments_atom
+                        && usize::from(slot) < parameter_local_count
+                        && !register_local_facts
+                            .written_names
+                            .contains(self.atoms[atom as usize].as_ref())
+                        && !self.atoms[atom as usize].starts_with('\0'))
+                    .then_some(slot)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        promoted_local_slots.sort_unstable();
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -2548,6 +2596,7 @@ impl<'a> Compiler<'a> {
             parameter_arguments_slot,
             parameter_local_count,
             options.with_depth,
+            &promoted_local_slots,
         );
         if let Some((name, binding)) = name_binding {
             function.push_function_name_binding(name, binding);
@@ -2567,11 +2616,7 @@ impl<'a> Compiler<'a> {
             function.emit(Op::Move, completion, undefined, 0, 0);
             function.statement_completion = StatementCompletion::Track(completion);
         }
-        function.dynamic_eval = options
-            .defaults
-            .is_some_and(early::parameters_contain_direct_eval)
-            || early::body_contains_direct_eval(body)
-            || expression_body.is_some_and(early::expression_contains_direct_eval);
+        function.dynamic_eval = dynamic_eval;
         let mut lexical_slots: Vec<_> = lexical_atoms
             .iter()
             .filter_map(|atom| function.local_slots.get(atom).copied())
@@ -2641,14 +2686,6 @@ impl<'a> Compiler<'a> {
                         && instruction.local_slot() == usize::from(*slot)
                 })
         });
-        let simple_parameters = !options.rest_override
-            && options.defaults.is_none_or(|formal| {
-                formal.rest.is_none()
-                    && formal.items.iter().all(|item| {
-                        item.initializer.is_none()
-                            && matches!(item.pattern, BindingPattern::BindingIdentifier(_))
-                    })
-            });
         let parameter_atoms = options.defaults.map_or_else(Vec::new, |formal| {
             FunctionCompiler::parameter_bound_names(formal)
                 .iter()
@@ -2690,6 +2727,7 @@ impl<'a> Compiler<'a> {
             local_atoms: function.locals.clone(),
             environment_atoms,
             selective_capture_slots: None,
+            local_registers: function.promoted_local_layout(),
             inherited_with_scope: options.with_depth != 0,
             lexical_atoms,
             global_lexical_atoms: Vec::new(),
@@ -2774,6 +2812,9 @@ impl<'a> Compiler<'a> {
                 let Some(atom) = function.local_atoms.get(slot) else {
                     return false;
                 };
+                if function.promoted_register(slot as u16).is_some() {
+                    return false;
+                }
                 atoms.get(*atom as usize).is_some_and(|name| {
                     function.plain_local_slot_is_safe(slot, name, tdz_slots[slot])
                 })

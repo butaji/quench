@@ -767,6 +767,8 @@ pub struct Function {
     /// escapes. `None` retains legacy whole-frame promotion; `Some` is the
     /// selective layout, including an empty set for closure-only activations.
     pub(crate) selective_capture_slots: Option<Vec<u16>>,
+    /// Binding slots assigned stable frame registers by lowering.
+    pub(crate) local_registers: Vec<LocalRegister>,
     /// The function was created while an enclosing `with` scope was active,
     /// so unresolved names in descendants can still observe its outer locals.
     pub(crate) inherited_with_scope: bool,
@@ -788,6 +790,12 @@ pub struct Function {
     pub(crate) dispatch: DispatchClass,
     pub(crate) handlers: Vec<Handler>,
     pub(crate) register_root_offset: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LocalRegister {
+    pub(crate) local: u16,
+    pub(crate) register: Register,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -822,6 +830,13 @@ pub(crate) enum PlainLocalSlotIneligibility {
 }
 
 impl Function {
+    pub(crate) fn promoted_register(&self, local: u16) -> Option<Register> {
+        self.local_registers
+            .binary_search_by_key(&local, |entry| entry.local)
+            .ok()
+            .map(|index| self.local_registers[index].register)
+    }
+
     pub(crate) fn has_restricted_legacy_caller_access(&self) -> bool {
         self.strict || !self.constructible || self.is_class_constructor
     }
@@ -1365,7 +1380,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 80;
+    pub const FORMAT_VERSION: u8 = 81;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
