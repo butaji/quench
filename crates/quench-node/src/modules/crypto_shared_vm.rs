@@ -1593,7 +1593,8 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     const passphrase = key && typeof key === "object" && key.passphrase !== undefined ? cryptoBytes(key.passphrase) : Buffer.alloc(0);
     const format = key && typeof key === "object" && key.format || "pem";
     const type = key && typeof key === "object" && key.type || "spki";
-    return Buffer.from(rsaCryptNative(decrypt, privateKey, keyBytes, cryptoBytes(data), passphrase, format, type));
+    const padding = key && typeof key === "object" && key.padding !== undefined ? key.padding : 1;
+    return Buffer.from(rsaCryptNative(decrypt, privateKey, keyBytes, cryptoBytes(data), passphrase, format, type, padding));
   };
   const publicEncrypt = (key, data) => rsaCrypt(false, false, key, data);
   const privateDecrypt = (key, data) => rsaCrypt(true, true, key, data);
@@ -1773,6 +1774,14 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     randomUUIDv7,
     randomInt,
   };
+  api.constants = Object.freeze({
+    RSA_PKCS1_PADDING: 1,
+    RSA_PKCS1_OAEP_PADDING: 4,
+    RSA_PKCS1_PSS_PADDING: 6,
+    RSA_PSS_SALTLEN_DIGEST: -1,
+    RSA_PSS_SALTLEN_MAX_SIGN: -2,
+    RSA_PSS_SALTLEN_AUTO: -2,
+  });
   Object.defineProperties(api, {
     pseudoRandomBytes: { configurable: true, writable: true, value: pseudoRandomBuffer },
     prng: { configurable: true, value: randomBuffer },
@@ -1864,6 +1873,7 @@ fn public_key_from_data(
         openssl::pkey::PKey::public_key_from_der(data)
     } else {
         openssl::pkey::PKey::public_key_from_pem(data)
+            .or_else(|_| openssl::rsa::Rsa::public_key_from_pem_pkcs1(data).and_then(openssl::pkey::PKey::from_rsa))
     }
 }
 
@@ -1899,6 +1909,7 @@ pub(crate) fn generate_rsa_key_pair(
     } else {
         let cipher = match cipher_name.to_ascii_lowercase().as_str() {
             "aes-128-cbc" => openssl::symm::Cipher::aes_128_cbc(),
+            "aes-128-ecb" => openssl::symm::Cipher::aes_128_ecb(),
             "aes-192-cbc" => openssl::symm::Cipher::aes_192_cbc(),
             "aes-256-cbc" => openssl::symm::Cipher::aes_256_cbc(),
             _ => return Err(RootedError::host(format!("Unknown cipher: {cipher_name}"))),
@@ -1959,12 +1970,21 @@ pub(crate) fn rsa_crypt(
     let passphrase = args.get(4).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
     let format = args.get(5).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "pem".to_owned());
     let key_type = args.get(6).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "spki".to_owned());
+    let padding = args.get(7)
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(|value| value.as_number())
+        .unwrap_or(1.0) as i32;
+    let padding = match padding {
+        1 => openssl::rsa::Padding::PKCS1,
+        4 => openssl::rsa::Padding::PKCS1_OAEP,
+        _ => return Err(RootedError::host("Unsupported RSA padding")),
+    };
     let output = if decrypt {
         let key = private_key_from_data(&key_bytes, &passphrase, &format, &key_type)
             .map_err(|error| RootedError::host(error.to_string()))?;
         let mut operation = openssl::encrypt::Decrypter::new(&key)
             .map_err(|error| RootedError::host(error.to_string()))?;
-        operation.set_rsa_padding(openssl::rsa::Padding::PKCS1_OAEP)
+        operation.set_rsa_padding(padding)
             .map_err(|error| RootedError::host(error.to_string()))?;
         let mut output = vec![0; operation.decrypt_len(&input).map_err(|error| RootedError::host(error.to_string()))?];
         let length = operation.decrypt(&input, &mut output).map_err(|error| RootedError::host(error.to_string()))?;
@@ -1975,7 +1995,7 @@ pub(crate) fn rsa_crypt(
             .map_err(|error| RootedError::host(error.to_string()))?;
         let mut operation = openssl::encrypt::Encrypter::new(&key)
             .map_err(|error| RootedError::host(error.to_string()))?;
-        operation.set_rsa_padding(openssl::rsa::Padding::PKCS1_OAEP)
+        operation.set_rsa_padding(padding)
             .map_err(|error| RootedError::host(error.to_string()))?;
         let mut output = vec![0; operation.encrypt_len(&input).map_err(|error| RootedError::host(error.to_string()))?];
         let length = operation.encrypt(&input, &mut output).map_err(|error| RootedError::host(error.to_string()))?;
@@ -1995,7 +2015,7 @@ pub(crate) fn rsa_crypt(
         };
         let mut operation = openssl::encrypt::Encrypter::new(&key)
             .map_err(|error| RootedError::host(error.to_string()))?;
-        operation.set_rsa_padding(openssl::rsa::Padding::PKCS1_OAEP)
+        operation.set_rsa_padding(padding)
             .map_err(|error| RootedError::host(error.to_string()))?;
         let mut output = vec![0; operation.encrypt_len(&input).map_err(|error| RootedError::host(error.to_string()))?];
         let length = operation.encrypt(&input, &mut output).map_err(|error| RootedError::host(error.to_string()))?;
