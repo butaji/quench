@@ -81,6 +81,13 @@ impl<H: Host> Vm<H> {
                 let value = unsafe { self.read_validated_local(f, i.local_slot()) };
                 self.write(f, i.result_register(), value);
             }
+            Op::CopyLocalPlain => {
+                // SAFETY: validation bounds both local slots by Function.locals,
+                // and activation setup sizes locals accordingly.
+                let value = unsafe { self.read_validated_local(f, i.copy_local_source_slot()) };
+                // SAFETY: the destination local is bounded by validation too.
+                unsafe { self.write_validated_local(f, i.local_slot(), value) };
+            }
             Op::LoadLocal | Op::LoadEnvLocal => {
                 let value = self.load_local_binding(p, f, i.local_slot(), None)?;
                 self.write(f, i.result_register(), value);
