@@ -1532,20 +1532,15 @@ impl<H: Host> Vm<H> {
                 self.parameter_eval = parameter_eval;
                 let previous_this = (direct_eval && !this.is_undefined())
                     .then(|| std::mem::replace(&mut self.frames[f].this, this));
+                let caller_function = &p.functions[self.frames[f].function as usize];
                 let terminal = i.returns_from_frame()
-                    || p.functions[self.frames[f].function as usize]
-                        .code
-                        .get(*pc)
-                        .is_some_and(|packed| {
-                            if packed.is_wide() {
-                                p.functions[self.frames[f].function as usize].wide
-                                    [packed.wide_index()]
-                                .op()
-                                    == Op::Return
-                            } else {
-                                packed.op() == Op::Return
-                            }
-                        });
+                    || caller_function.code.get(*pc).is_some_and(|packed| {
+                        if packed.is_wide() {
+                            caller_function.wide[packed.wide_index()].op() == Op::Return
+                        } else {
+                            packed.op() == Op::Return
+                        }
+                    });
                 if allow_inline_calls
                     && i.op() == Op::Call
                     && !direct_eval
@@ -1555,19 +1550,11 @@ impl<H: Host> Vm<H> {
                     && p.kind != crate::bytecode::ProgramKind::Wasm
                     && f + 1 == self.frames.len()
                     && self.frames[f].function != super::ROOT_FUNCTION_ID
-                    && p.functions
-                        .get(self.frames[f].function as usize)
-                        .is_some_and(|function| {
-                            function.dispatch == DispatchClass::General
-                        })
-                    && let Some(CallTarget::User(program_id, id, env)) =
-                        self.call_target(callee).ok()
+                    && caller_function.dispatch == DispatchClass::General
+                    && let Some((program_id, id, env)) = self.same_realm_user_target(callee)
                     && id != super::ROOT_FUNCTION_ID
                     && program_id == self.frames[f].program
                     && program_id == self.active_program
-                    && self.heap.get(callee).is_some_and(|cell| {
-                        matches!(cell, Cell::Function { realm, .. } if *realm == self.realm.globals)
-                    })
                     && p.functions.get(id as usize).is_some_and(|function| {
                         function.dispatch == DispatchClass::General
                             && !function.is_async
