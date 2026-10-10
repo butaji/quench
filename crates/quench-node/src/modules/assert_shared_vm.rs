@@ -218,8 +218,22 @@ pub(crate) fn not_strict_equal(
     if !context.same_value_rooted(actual, expected)? {
         return Ok(context.undefined());
     }
-    let (message, generated) =
+    let (mut message, generated) =
         assertion_message(context, args.get(2).copied(), ASSERTION_NOT_UNEQUAL)?;
+    if generated {
+        let value = match context.string_text(actual)? {
+            Some(value) => {
+                let quoted = format!("'{value}'");
+                if quoted.len() > 40 {
+                    format!("\n\n{quoted}")
+                } else {
+                    format!(" {quoted}")
+                }
+            }
+            None => format!(" {}", context.to_string(actual)?),
+        };
+        message = format!("Expected \"actual\" to be strictly unequal to:{value}");
+    }
     assertion_error(
         context,
         actual,
