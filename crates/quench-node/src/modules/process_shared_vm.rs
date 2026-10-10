@@ -238,6 +238,13 @@ fn install_config(
         install(context, variables, name, value)?;
     }
     install(context, config, "variables", variables)?;
+    let freeze = context.evaluate_script_rooted(
+        "(value) => Object.freeze(value)",
+        "node:process/freeze-config.js",
+    )?;
+    let undefined = context.undefined();
+    context.call_rooted(freeze, undefined, &[variables])?;
+    context.call_rooted(freeze, undefined, &[config])?;
     install(context, process, "config", config)
 }
 
