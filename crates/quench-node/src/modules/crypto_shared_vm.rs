@@ -1457,10 +1457,21 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     constructor(sizeOrKey, keyEncoding, generator, generatorEncoding) {
       let prime;
       if (typeof sizeOrKey === "number") {
-        if (!Number.isInteger(sizeOrKey) || sizeOrKey <= 0) throw new Error("Initialization failed");
+        if (!Number.isInteger(sizeOrKey)) {
+          const error = new RangeError(`The value of "sizeOrKey" is out of range. It must be an integer. Received ${sizeOrKey}`);
+          error.code = "ERR_OUT_OF_RANGE"; throw error;
+        }
+        if (sizeOrKey <= 1) {
+          const error = new Error("error:0280007E:Diffie-Hellman routines::modulus too small");
+          error.code = "ERR_OSSL_DH_MODULUS_TOO_SMALL"; throw error;
+        }
         prime = sizeOrKey <= 1024 ? modp2 : generatePrimeValue(sizeOrKey, { safe: true, bigint: true });
         if (keyEncoding !== undefined) generator = typeof keyEncoding === "number" ? BigInt(keyEncoding) : dhBytesToInt(keyEncoding);
       } else {
+        if (typeof sizeOrKey !== "string" && !(ArrayBuffer.isView(sizeOrKey) || sizeOrKey instanceof ArrayBuffer)) {
+          const error = new TypeError(`The "sizeOrKey" argument must be of type number or string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. ${receivedArgument(sizeOrKey)}`);
+          error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+        }
         if (typeof keyEncoding === "string" && !["utf8", "utf-8", "hex", "base64", "base64url", "latin1", "binary", "ascii", "ucs2", "ucs-2", "utf16le", "utf-16le", "buffer"].includes(keyEncoding.toLowerCase())) {
           generatorEncoding = generator;
           generator = keyEncoding;
@@ -1472,10 +1483,26 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
         }
         const enc = typeof keyEncoding === "string" ? keyEncoding : "utf8";
         prime = dhBytesToInt(sizeOrKey, enc);
-        if (typeof generator !== "number") generator = generator === undefined ? 2n : dhBytesToInt(generator, generatorEncoding);
+        if (generator === undefined) generator = 2n;
+        else if (typeof generator === "number") {
+          if (!Number.isInteger(generator)) {
+            const error = new RangeError(`The value of "generator" is out of range. It must be an integer. Received ${generator}`);
+            error.code = "ERR_OUT_OF_RANGE"; throw error;
+          }
+          generator = BigInt(generator);
+        } else if (typeof generator === "string" || ArrayBuffer.isView(generator) || generator instanceof ArrayBuffer) {
+          generator = dhBytesToInt(generator, generatorEncoding);
+        } else {
+          const error = new TypeError(`The "generator" argument must be of type number or string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. ${receivedArgument(generator)}`);
+          error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+        }
       }
       this._p = prime;
-      this._g = BigInt(generator || 2);
+      this._g = typeof generator === "bigint" ? generator : BigInt(generator || 2);
+      if (this._g <= 1n) {
+        const error = new Error("error:02800075:Diffie-Hellman routines::bad generator");
+        error.code = "ERR_OSSL_DH_BAD_GENERATOR"; throw error;
+      }
       this._private = undefined;
       this._public = undefined;
       this.verifyError = 0;
@@ -1489,11 +1516,14 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
       return dhEncoding(dhIntToBuffer(this._public), encoding);
     }
     computeSecret(other, inputEncoding, outputEncoding) {
+      if (this._private === undefined) {
+        const error = new Error("Cannot compute shared secret without a private key");
+        error.code = "ERR_CRYPTO_INVALID_STATE"; throw error;
+      }
       const value = dhBytesToInt(other, inputEncoding);
       if (value <= 1n || value >= this._p - 1n) {
         const error = new Error("Supplied key is too small"); error.code = "ERR_CRYPTO_INVALID_KEYTYPE"; throw error;
       }
-      if (this._private === undefined) throw new Error("Private key is not set");
       const secret = dhModPow(value, this._private, this._p);
       const bytes = dhIntToBuffer(secret);
       return dhEncoding(bytes, outputEncoding);
@@ -1520,7 +1550,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     new DiffieHellman(sizeOrKey, keyEncoding, generator, generatorEncoding);
   const getDiffieHellman = (name) => {
     if (typeof name !== "string") { const error = new TypeError('The "name" argument must be of type string'); error.code = "ERR_INVALID_ARG_TYPE"; throw error; }
-    if (!/^modp([1-5]|14)$/i.test(name)) { const error = new TypeError(`Invalid DH group: ${name}`); error.code = "ERR_CRYPTO_INVALID_KEYTYPE"; throw error; }
+    if (!/^modp([1-5]|14)$/i.test(name)) { const error = new Error("Unknown DH group"); error.code = "ERR_CRYPTO_UNKNOWN_DH_GROUP"; throw error; }
     return new DiffieHellmanGroup(name);
   };
   function DiffieHellmanGroup(name) {
