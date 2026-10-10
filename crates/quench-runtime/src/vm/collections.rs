@@ -128,11 +128,11 @@ impl<H: Host> Vm<H> {
         };
         let cell = match native {
             Native::WeakMap => Cell::WeakMap {
-                object: Self::empty_object(prototype),
+                object: self.shapes.empty_object(prototype),
                 entries: WeakMapEntries::default(),
             },
             Native::WeakSet => Cell::WeakSet {
-                object: Self::empty_object(prototype),
+                object: self.shapes.empty_object(prototype),
                 entries: Vec::new(),
             },
             _ => return Err(JsError("invalid weak collection constructor".into())),
@@ -239,7 +239,7 @@ impl<H: Host> Vm<H> {
             self.get_property(p, constructor, prototype_atom)?
         };
         Ok(self.heap.alloc(Cell::WeakRef {
-            object: Self::empty_object(prototype),
+            object: self.shapes.empty_object(prototype),
             target: Some(target),
         }))
     }
@@ -333,7 +333,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(weak_map, "WeakMap")?;
         let weak_map_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.install_weak_map_prototype(program, weak_map, weak_map_prototype)?;
         self.set_builtin_value_named(weak_map, "prototype", weak_map_prototype)?;
         self.set_constructor_prototype_attributes(weak_map);
@@ -343,7 +343,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(weak_set, "WeakSet")?;
         let weak_set_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.set_builtin_value_named(weak_set, "prototype", weak_set_prototype)?;
         self.set_builtin_value_named(weak_set_prototype, "constructor", weak_set)?;
         for (name, native) in [
@@ -360,7 +360,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(weak_ref, "WeakRef")?;
         let weak_ref_prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.install_weak_ref_prototype(program, weak_ref, weak_ref_prototype)?;
         self.install_builtin_to_string_tag(weak_ref_prototype, "WeakRef")?;
         self.set_builtin_value_named(weak_ref, "prototype", weak_ref_prototype)?;
@@ -436,7 +436,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let set_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(prototype_parent)));
+            .alloc(Cell::Object(self.shapes.empty_object(prototype_parent)));
         let size_getter = self.native_value(Native::SetSizeGetter);
         self.set_builtin_function_name(size_getter, "get size")?;
         self.set_named(program, set_proto, "size", size_getter)?;
@@ -541,7 +541,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.map_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.iterator_proto)));
         self.set_builtin_named(
             program,
             self.map_iterator_proto,
@@ -552,7 +552,7 @@ impl<H: Host> Vm<H> {
 
         self.set_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.iterator_proto)));
         self.set_builtin_named(
             program,
             self.set_iterator_proto,
@@ -627,7 +627,7 @@ impl<H: Host> Vm<H> {
         match native {
             Native::Map => {
                 let map = self.heap.alloc(Cell::Map {
-                    object: Self::empty_object(prototype),
+                    object: self.shapes.empty_object(prototype),
                     entries: Vec::new(),
                 });
                 let Some(iterable) = args
@@ -678,7 +678,7 @@ impl<H: Host> Vm<H> {
             }
             Native::Set => {
                 let set = self.heap.alloc(Cell::Set {
-                    object: Self::empty_object(prototype),
+                    object: self.shapes.empty_object(prototype),
                     entries: Vec::new(),
                 });
                 let Some(iterable) = args

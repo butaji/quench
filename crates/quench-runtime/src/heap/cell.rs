@@ -935,7 +935,6 @@ pub(crate) enum IteratorConsumer {
 }
 #[derive(Clone, Debug)]
 pub(crate) struct Object {
-    pub proto: Value,
     // Property names live once in the VM's immutable shape table; objects keep
     // only the data vector selected by that shape.
     pub properties: ValueVec,
@@ -1030,22 +1029,19 @@ impl std::ops::DerefMut for FinalizationEntries {
     }
 }
 impl Object {
-    pub(crate) fn new(proto: Value) -> Self {
+    pub(crate) fn new(shape: u32) -> Self {
         Self {
-            proto,
-            properties: ValueVec::inline_property_storage(0),
+            properties: ValueVec::inline_property_storage(shape),
             inline_properties: [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
             extras: None,
         }
     }
 
     pub(crate) fn with_property_storage(
-        proto: Value,
         properties: ValueVec,
         inline_properties: [Value; INLINE_PROPERTY_COUNT],
     ) -> Self {
         Self {
-            proto,
             properties,
             inline_properties,
             extras: None,
@@ -1082,8 +1078,8 @@ impl Object {
     }
 
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
-    pub(crate) fn error(proto: Value) -> Self {
-        let mut object = Self::new(proto);
+    pub(crate) fn error(shape: u32) -> Self {
+        let mut object = Self::new(shape);
         object.extras_mut().error_data = true;
         object
     }

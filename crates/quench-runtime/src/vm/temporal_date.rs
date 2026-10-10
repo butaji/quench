@@ -226,7 +226,7 @@ impl<H: Host> Vm<H> {
             self.object_proto
         };
         Ok(self.heap.alloc(Cell::TemporalPlainDate {
-            object: Box::new(Self::empty_object(prototype)),
+            object: Box::new(self.shapes.empty_object(prototype)),
             year: date.year,
             month: date.month,
             day: date.day,
@@ -527,7 +527,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "Invalid options".into()));
         }
         Ok(self.heap.alloc(Cell::TemporalPlainDate {
-            object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
+            object: Box::new(self.shapes.empty_object(self.temporal_plain_date_proto)),
             year: date.year,
             month: date.month,
             day: date.day,
@@ -559,7 +559,7 @@ impl<H: Host> Vm<H> {
         let date = checked_iso_date(year, month as i32, day as i32)
             .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
         Ok(self.heap.alloc(Cell::TemporalPlainDate {
-            object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
+            object: Box::new(self.shapes.empty_object(self.temporal_plain_date_proto)),
             year: date.year,
             month: date.month,
             day: date.day,

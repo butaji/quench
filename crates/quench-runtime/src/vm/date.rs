@@ -175,7 +175,7 @@ impl<H: Host> Vm<H> {
         let date = self.native_value(Native::Date);
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.object_proto)));
         self.install_date_for_realm(program, self.realm.globals, date, prototype)
     }
 
@@ -558,7 +558,7 @@ impl<H: Host> Vm<H> {
             .unwrap_or(self.object_proto);
         Ok(self.heap.alloc(Cell::Date {
             milliseconds,
-            object: Box::new(Self::empty_object(prototype)),
+            object: Box::new(self.shapes.empty_object(prototype)),
         }))
     }
 }

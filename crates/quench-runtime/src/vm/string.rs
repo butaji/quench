@@ -274,7 +274,7 @@ impl<H: Host> Vm<H> {
         let empty = self.heap.alloc(Cell::String(JsString::from_str("")));
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_proto)));
         let value_atom = self.intern_atom("\0quench:string-value");
         self.set_property(prototype, value_atom, empty)?;
         self.set_named_constant(program, prototype, "length", Value::number(0.0))?;
@@ -527,7 +527,7 @@ impl<H: Host> Vm<H> {
             }
         };
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.string_iterator_proto),
+            object: self.shapes.empty_object(self.string_iterator_proto),
             source,
             next_method: None,
             helper: None,
@@ -585,7 +585,7 @@ impl<H: Host> Vm<H> {
                 .map(|part| vm.heap.alloc(Cell::String(part)))
                 .collect();
             Ok(vm.heap.alloc(Cell::Array {
-                object: Self::empty_object(vm.array_proto),
+                object: vm.shapes.empty_object(vm.array_proto),
                 elements: Rc::new(values),
             }))
         })

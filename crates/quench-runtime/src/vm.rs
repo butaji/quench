@@ -22,6 +22,7 @@ use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
 use std::hash::{Hash, Hasher};
+use std::ops::Deref;
 use std::rc::Rc;
 
 const DEFAULT_RANDOM_SEED: u64 = 0x4d59_5df4_d0f3_3173;
@@ -448,6 +449,7 @@ impl ShapeLookupIndex {
     }
 }
 struct Shape {
+    prototype: Value,
     parent: Option<u32>,
     transition: ShapeTransition,
     storage_len: usize,
@@ -456,8 +458,8 @@ struct Shape {
     lookup_index: OnceCell<Box<ShapeLookupIndex>>,
 }
 impl Shape {
-    fn root() -> Self {
-        Self::child(None, ShapeTransition::Root, 0, None, false)
+    fn root(prototype: Value) -> Self {
+        Self::child(None, ShapeTransition::Root, 0, None, false, prototype)
     }
 
     fn child(
@@ -466,8 +468,10 @@ impl Shape {
         storage_len: usize,
         dictionary_trigger: Option<DictionaryTrigger>,
         parent_may_have_gc_roots: bool,
+        prototype: Value,
     ) -> Self {
         Self {
+            prototype,
             parent,
             transition,
             storage_len,
@@ -477,6 +481,63 @@ impl Shape {
         }
     }
 }
+
+struct ShapeTable {
+    entries: Vec<Shape>,
+    roots: FxHashMap<Value, u32>,
+}
+
+impl ShapeTable {
+    fn new() -> Self {
+        Self {
+            entries: vec![Shape::root(Value::NULL)],
+            roots: [(Value::NULL, 0)].into_iter().collect(),
+        }
+    }
+
+    fn root_for_prototype(&mut self, prototype: Value) -> u32 {
+        if let Some(shape) = self.roots.get(&prototype) {
+            return *shape;
+        }
+        let shape = u32::try_from(self.entries.len()).expect("object shape table exhausted");
+        self.entries.push(Shape::root(prototype));
+        self.roots.insert(prototype, shape);
+        shape
+    }
+
+    fn empty_object(&mut self, prototype: Value) -> Object {
+        Object::new(self.root_for_prototype(prototype))
+    }
+
+    fn reset(&mut self) {
+        self.entries.truncate(1);
+        self.roots.clear();
+        self.roots.insert(Value::NULL, 0);
+    }
+
+    fn push(&mut self, shape: Shape) {
+        self.entries.push(shape);
+    }
+
+    #[cfg(test)]
+    fn get_mut(&mut self, index: usize) -> Option<&mut Shape> {
+        self.entries.get_mut(index)
+    }
+
+    fn prune_roots(&mut self, mut is_live: impl FnMut(Value) -> bool) {
+        self.roots
+            .retain(|prototype, _| prototype.is_null() || is_live(*prototype));
+    }
+}
+
+impl Deref for ShapeTable {
+    type Target = Vec<Shape>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
+
 const EMPTY_STRING_CONCAT_CACHE: StringConcatCache = StringConcatCache {
     left: Value::UNDEFINED,
     right: Value::UNDEFINED,
@@ -650,7 +711,7 @@ pub(crate) struct Vm<H> {
     active_program: ProgramId,
     profile: Profile,
     numeric_sites: FxHashMap<(u32, u32), NumericSite>,
-    shapes: Vec<Shape>,
+    shapes: ShapeTable,
     transitions: FxHashMap<(u32, ShapeTransitionKey), u32>,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
@@ -1203,7 +1264,7 @@ impl<H: Host> Vm<H> {
         self.construct_target = None;
         self.realm.promise = Default::default();
         self.numeric_sites.clear();
-        self.shapes.truncate(1);
+        self.shapes.reset();
         self.transitions.clear();
         self.atom_text = program.atoms.clone();
         self.atoms.clear();
@@ -1253,7 +1314,7 @@ impl<H: Host> Vm<H> {
         self.random_state = DEFAULT_RANDOM_SEED;
         self.realm.globals = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc(Cell::Object(self.shapes.empty_object(Value::NULL)));
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("vm_shell");
         self.materialize_program_constants(ProgramId::MAIN, program);

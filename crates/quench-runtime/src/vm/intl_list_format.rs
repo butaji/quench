@@ -19,7 +19,7 @@ impl<H: Host> Vm<H> {
         let constructor = self.native_with_realm(Native::IntlListFormat, global, global);
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.realm
             .intrinsics
             .intl_list_format_constructors
@@ -69,7 +69,7 @@ impl<H: Host> Vm<H> {
                 let locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
                 let (style, kind) = vm.list_format_options(p, args.get(1).copied())?;
 
-                let instance = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                let instance = vm.heap.alloc(Cell::Object(vm.shapes.empty_object(prototype)));
                 vm.set_hidden_string(instance, LIST_FORMAT_LOCALE_SLOT, &locale)?;
                 vm.set_hidden_string(instance, LIST_FORMAT_STYLE_SLOT, &style)?;
                 vm.set_hidden_string(instance, LIST_FORMAT_TYPE_SLOT, &kind)?;
@@ -144,7 +144,7 @@ impl<H: Host> Vm<H> {
         }
         let mut values = Vec::with_capacity(parts.len());
         for part in parts {
-            let object = self.heap.alloc(Cell::Object(Self::empty_object(
+            let object = self.heap.alloc(Cell::Object(self.shapes.empty_object(
                 self.realm_object_prototype(self.realm.globals),
             )));
             self.set_intl_string_property(object, "type", part.kind)?;
@@ -154,7 +154,7 @@ impl<H: Host> Vm<H> {
             values.push(object);
         }
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+            object: self.shapes.empty_object(self.array_prototype_for_realm(self.realm.globals)),
             elements: Rc::new(values),
         }))
     }

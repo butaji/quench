@@ -93,7 +93,7 @@ impl<H: Host> Vm<H> {
         self.iterator_proto = self.object();
         self.string_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.iterator_proto)));
         self.set_builtin_named(
             program,
             self.string_iterator_proto,
@@ -102,7 +102,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.regexp_string_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.iterator_proto)));
         self.set_builtin_named(
             program,
             self.regexp_string_iterator_proto,
@@ -111,23 +111,23 @@ impl<H: Host> Vm<H> {
         )?;
         self.generator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.iterator_proto)));
         self.async_iterator_proto = self.object();
         self.async_generator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.async_iterator_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.async_iterator_proto)));
         self.async_from_sync_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.async_iterator_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.async_iterator_proto)));
         let generator_function_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.function_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.function_proto)));
         let async_generator_function_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.function_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.function_proto)));
         let async_function_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.function_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.function_proto)));
         self.set_named(
             program,
             generator_function_proto,
@@ -226,9 +226,7 @@ impl<H: Host> Vm<H> {
                 .insert((self.realm.globals, native), prototype);
             let constructor = self.native_value(native);
             self.set_builtin_function_name(constructor, name)?;
-            self.object_data_mut(constructor)
-                .expect("function constructor")
-                .proto = self.native_value(Native::Function);
+            self.set_object_prototype(constructor, self.native_value(Native::Function));
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
             let prototype_atom = self.intern_atom("prototype");
             self.set_property_attributes(
@@ -262,10 +260,10 @@ impl<H: Host> Vm<H> {
         )?;
         self.iterator_helper_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.iterator_proto)));
         self.wrap_for_valid_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.iterator_proto)));
         self.install_iterator_helper_prototype(self.iterator_helper_proto, None)?;
         self.install_wrap_for_valid_iterator_prototype(self.wrap_for_valid_iterator_proto, None)?;
         self.realm.intrinsics.iterator_prototypes.insert(
@@ -307,7 +305,7 @@ impl<H: Host> Vm<H> {
         )?;
         self.array_iterator_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.iterator_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.iterator_proto)));
         self.set_builtin_named(
             p,
             self.array_iterator_proto,
@@ -717,9 +715,7 @@ impl<H: Host> Vm<H> {
         parent: Value,
         realm: Option<Value>,
     ) -> Result<(), JsError> {
-        self.object_data_mut(prototype)
-            .expect("async iterator prototype is an object")
-            .proto = parent;
+        self.set_object_prototype(prototype, parent);
         for (symbol_name, native, function_name) in [
             (
                 "asyncIterator",
@@ -836,7 +832,7 @@ impl<H: Host> Vm<H> {
             _ => return Err(JsError("collection iterator kind is invalid".into())),
         };
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(prototype),
+            object: self.shapes.empty_object(prototype),
             source,
             next_method: None,
             helper: None,
@@ -882,7 +878,7 @@ impl<H: Host> Vm<H> {
                 _ => return Err(self.type_error(p, "value is not iterable".into())),
             };
             Ok(self.heap.alloc(Cell::Iterator {
-                object: Self::empty_object(self.iterator_proto),
+                object: self.shapes.empty_object(self.iterator_proto),
                 source,
                 next_method: None,
                 helper: None,
@@ -987,7 +983,7 @@ impl<H: Host> Vm<H> {
         let source = self.heap.root_value(source_root).unwrap_or(source);
         let next_method = self.heap.root_value(next_root).unwrap_or(next_method);
         let wrapper = self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(prototype),
+            object: self.shapes.empty_object(prototype),
             source,
             next_method: Some(next_method),
             helper: None,
@@ -1021,7 +1017,7 @@ impl<H: Host> Vm<H> {
             .map(|prototypes| prototypes.helper)
             .unwrap_or(self.iterator_helper_proto);
         let iterator = self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(prototype),
+            object: self.shapes.empty_object(prototype),
             source,
             next_method: None,
             helper: Some(Box::new(helper)),
@@ -2341,7 +2337,7 @@ impl<H: Host> Vm<H> {
             let result = if let Some(keys) = keys {
                 let object = self
                     .heap
-                    .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                    .alloc(Cell::Object(self.shapes.empty_object(Value::NULL)));
                 for (key, value) in keys.into_iter().zip(values) {
                     self.set_index(p, object, key, value)?;
                 }
@@ -2600,7 +2596,7 @@ impl<H: Host> Vm<H> {
         }
         let iterator = self.get_iterator(p, source)?;
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.async_from_sync_iterator_proto),
+            object: self.shapes.empty_object(self.async_from_sync_iterator_proto),
             source: iterator,
             next_method: None,
             helper: None,
@@ -2646,7 +2642,7 @@ impl<H: Host> Vm<H> {
             self.box_object_or_type_error(p, source)?
         };
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.array_iterator_proto),
+            object: self.shapes.empty_object(self.array_iterator_proto),
             source,
             next_method: None,
             helper: None,
@@ -2784,7 +2780,7 @@ impl<H: Host> Vm<H> {
             }
         };
         let env = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(vec![
                 if done { Value::TRUE } else { Value::FALSE },
                 iterator,
@@ -3042,7 +3038,7 @@ impl<H: Host> Vm<H> {
             let item = selected.map(|(value, second)| {
                 second.map_or(value, |second| {
                     vm.heap.alloc(Cell::Array {
-                        object: Self::empty_object(vm.array_proto),
+                        object: vm.shapes.empty_object(vm.array_proto),
                         elements: Rc::new(vec![value, second]),
                     })
                 })
@@ -3107,7 +3103,7 @@ impl<H: Host> Vm<H> {
                 IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
                 IteratorKind::ArrayEntries => {
                     let entry = vm.heap.alloc(Cell::Array {
-                        object: Self::empty_object(vm.array_proto),
+                        object: vm.shapes.empty_object(vm.array_proto),
                         elements: Rc::new(vec![Value::number(index as f64), value]),
                     });
                     Some((entry, None))
@@ -3118,7 +3114,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn iterator_result(&mut self, value: Value, done: bool) -> Result<Value, JsError> {
-        let result = self.heap.alloc(Cell::Object(Self::empty_object(
+        let result = self.heap.alloc(Cell::Object(self.shapes.empty_object(
             self.realm_object_prototype(self.realm.globals),
         )));
         let value_atom = self

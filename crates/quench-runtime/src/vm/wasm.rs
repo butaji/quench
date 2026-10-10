@@ -318,7 +318,7 @@ impl<H: Host> Vm<H> {
             // All segments are available before initialization effects. A later
             // trap can leave functions reachable through an imported table.
             values.push(self.heap.alloc(Cell::ArrayBuffer {
-                object: Self::empty_object(Value::NULL),
+                object: self.shapes.empty_object(Value::NULL),
                 bytes: segment.bytes.clone(),
                 shared: false,
                 detached: false,
@@ -506,7 +506,7 @@ impl<H: Host> Vm<H> {
     pub(crate) fn create_wasm_host_reference(&mut self) -> crate::RootId {
         let value = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc(Cell::Object(self.shapes.empty_object(Value::NULL)));
         self.root(value)
     }
 
@@ -2107,7 +2107,7 @@ mod tests {
         let binding = vm.wasm_global_binding(&first, 0).unwrap();
         let payload = vm
             .heap
-            .alloc(Cell::Object(Vm::<crate::SystemHost>::empty_object(
+            .alloc(Cell::Object(vm.shapes.empty_object(
                 Value::NULL,
             )));
         vm.wasm_global_store(binding, payload).unwrap();
@@ -2127,7 +2127,7 @@ mod tests {
         );
         let replacement = vm
             .heap
-            .alloc(Cell::Object(Vm::<crate::SystemHost>::empty_object(
+            .alloc(Cell::Object(vm.shapes.empty_object(
                 Value::NULL,
             )));
         vm.wasm_global_store(binding, replacement).unwrap();

@@ -59,7 +59,7 @@ impl<H: Host> Vm<H> {
         let constructor = self.native_with_realm(Native::FinalizationRegistry, global, global);
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.set_builtin_function_name(constructor, "FinalizationRegistry")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
@@ -134,7 +134,7 @@ impl<H: Host> Vm<H> {
             }
         };
         Ok(self.heap.alloc(Cell::FinalizationRegistry {
-            object: Self::empty_object(prototype),
+            object: self.shapes.empty_object(prototype),
             callback,
             entries: Box::new(FinalizationEntries::default()),
         }))

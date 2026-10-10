@@ -277,7 +277,7 @@ impl<H: Host> Vm<H> {
             };
             Some(
                 self.heap
-                    .alloc(Cell::Object(Self::empty_object(generator_prototype_parent))),
+                    .alloc(Cell::Object(self.shapes.empty_object(generator_prototype_parent))),
             )
         } else {
             None
@@ -308,7 +308,7 @@ impl<H: Host> Vm<H> {
             self.realm_function_prototype(realm)
         };
         let function = self.heap.alloc(Cell::Function {
-            object: Box::new(Self::empty_object(function_object_prototype)),
+            object: Box::new(self.shapes.empty_object(function_object_prototype)),
             kind: match function_plan.dispatch {
                 DispatchClass::General => FunctionKind::User(self.active_program, id),
                 DispatchClass::Numeric => FunctionKind::NumericUser(self.active_program, id),
@@ -564,7 +564,7 @@ impl<H: Host> Vm<H> {
                     Value::UNDEFINED
                 } else {
                     let proto = vm.prototype_from_constructor(p, new_target)?;
-                    vm.heap.alloc(Cell::Object(Self::empty_object(proto)))
+                    vm.heap.alloc(Cell::Object(vm.shapes.empty_object(proto)))
                 };
                 let previous_target = vm.construct_target;
                 vm.construct_target = Some(new_target);
@@ -886,7 +886,7 @@ impl<H: Host> Vm<H> {
                     ProxyKind::Object
                 };
                 Ok(self.heap.alloc(Cell::Proxy {
-                    object: Self::empty_object(self.object_proto),
+                    object: self.shapes.empty_object(self.object_proto),
                     kind,
                     target,
                     handler,
@@ -1010,7 +1010,7 @@ impl<H: Host> Vm<H> {
                 return Err(self.range_error(p, "Invalid array length".into()));
             }
             let array = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(prototype),
+                object: self.shapes.empty_object(prototype),
                 elements: Rc::new(Vec::new()),
             });
             self.heap.sparse_set_length(array, length as usize);
@@ -1018,7 +1018,7 @@ impl<H: Host> Vm<H> {
         }
 
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(prototype),
+            object: self.shapes.empty_object(prototype),
             elements: Rc::new(args.to_vec()),
         }))
     }

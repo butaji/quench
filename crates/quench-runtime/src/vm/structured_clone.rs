@@ -154,7 +154,7 @@ impl<H: Host> Vm<H> {
                 let source_root = graph.root(self, source);
                 let target = self
                     .heap
-                    .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+                    .alloc(Cell::Object(self.shapes.empty_object(self.object_proto)));
                 let target_root = graph.root(self, target);
                 graph.remember(source, target_root);
                 self.structured_clone_properties(program, source_root, target_root, graph)?;
@@ -165,7 +165,7 @@ impl<H: Host> Vm<H> {
                 let source_root = graph.root(self, source);
                 let prototype = self.array_prototype_for_realm(self.realm.globals);
                 let target = self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(prototype),
+                    object: self.shapes.empty_object(prototype),
                     elements: Rc::new(Vec::new()),
                 });
                 let target_root = graph.root(self, target);
@@ -191,7 +191,7 @@ impl<H: Host> Vm<H> {
                 copied_bytes.extend_from_slice(&bytes);
                 let prototype = self.array_buffer_clone_prototype();
                 let target = self.heap.alloc(Cell::ArrayBuffer {
-                    object: Self::empty_object(prototype),
+                    object: self.shapes.empty_object(prototype),
                     bytes: Rc::new(copied_bytes),
                     shared: false,
                     detached: false,
@@ -278,7 +278,9 @@ impl<H: Host> Vm<H> {
             .construct_error_native(program, Native::Error, &[message_value])
             .unwrap_or_else(|_| {
                 self.heap
-                    .alloc(Cell::Object(Object::error(self.object_proto)))
+                    .alloc(Cell::Object(Object::error(
+                        self.shapes.root_for_prototype(self.object_proto),
+                    )))
             });
         let name = self.heap.alloc(Cell::String("DataCloneError".into()));
         let _ = self.set_builtin_value_named(error, "name", name);

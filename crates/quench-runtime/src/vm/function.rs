@@ -102,7 +102,7 @@ impl<H: Host> Vm<H> {
             .unwrap_or(false);
         let args = Rc::new(frame.original_arguments.clone());
         let arguments = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.realm_object_prototype(self.realm.globals)),
+            object: self.shapes.empty_object(self.realm_object_prototype(self.realm.globals)),
             elements: args.clone(),
         });
         self.with_call_roots([arguments], |vm| {
@@ -131,7 +131,7 @@ impl<H: Host> Vm<H> {
             args.first().copied().unwrap_or(Value::UNDEFINED),
         )?;
         let bound_args = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(args.get(1..).unwrap_or_default().to_vec()),
         });
         self.set_property(env, args_atom, bound_args)?;
@@ -165,9 +165,7 @@ impl<H: Host> Vm<H> {
             .heap
             .root_value(function_root)
             .expect("bound function root remains live");
-        self.object_data_mut(function)
-            .expect("bound function has object storage")
-            .proto = prototype;
+        self.set_object_prototype(function, prototype);
         let target = self
             .heap
             .root_value(target_root)

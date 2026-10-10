@@ -30,13 +30,15 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         self.snapshot_shadowed_method_caches(object, atom);
         let heap = &self.heap;
+        let shapes = &self.shapes;
         for entries in &mut self.method_caches {
             let len = entries.len();
-            retain_unshadowed_entries(heap, entries, len, object, atom);
+            retain_unshadowed_entries(heap, shapes, entries, len, object, atom);
         }
         for set in &mut self.megamorphic_methods {
             set.len = retain_unshadowed_entries(
                 heap,
+                shapes,
                 &mut set.entries,
                 usize::from(set.len),
                 object,
@@ -74,10 +76,11 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "profile-aggregate")]
     fn snapshot_shadowed_method_caches(&mut self, object: Value, atom: Atom) {
         let heap = &self.heap;
+        let shapes = &self.shapes;
         let entries = self
             .all_method_cache_entries()
             .into_iter()
-            .filter(|(_, entry)| method_cache_shadowed_by(heap, *entry, object, atom))
+            .filter(|(_, entry)| method_cache_shadowed_by(heap, shapes, *entry, object, atom))
             .collect();
         self.snapshot_method_cache_entries(entries, 1);
     }
@@ -237,7 +240,7 @@ impl<H: Host> Vm<H> {
             {
                 return None;
             }
-            owner = current.proto;
+            owner = self.prototype_for_data(current);
             if owner.is_null() {
                 return None;
             }
@@ -277,7 +280,7 @@ impl<H: Host> Vm<H> {
             if self.property_attributes(owner, key).is_some() {
                 return None;
             }
-            owner = data.proto;
+            owner = self.prototype_for_data(data);
             if owner.is_null() {
                 return None;
             }
@@ -301,6 +304,7 @@ fn retain_other_atom(entries: &mut [MethodCache], len: usize, atom: Atom) -> usi
 
 fn retain_unshadowed_entries(
     heap: &crate::heap::Heap,
+    shapes: &[Shape],
     entries: &mut [MethodCache],
     len: usize,
     object: Value,
@@ -309,7 +313,7 @@ fn retain_unshadowed_entries(
     let mut retained = 0;
     for index in 0..len {
         let entry = entries[index];
-        if !method_cache_shadowed_by(heap, entry, object, atom) {
+        if !method_cache_shadowed_by(heap, shapes, entry, object, atom) {
             entries[retained] = entry;
             retained += 1;
         }
@@ -320,6 +324,7 @@ fn retain_unshadowed_entries(
 
 fn method_cache_shadowed_by(
     heap: &crate::heap::Heap,
+    shapes: &[Shape],
     entry: MethodCache,
     object: Value,
     atom: Atom,
@@ -335,7 +340,7 @@ fn method_cache_shadowed_by(
         let Some(Cell::Object(data)) = heap.get(prototype) else {
             return false;
         };
-        prototype = data.proto;
+        prototype = shapes[data.shape() as usize].prototype;
     }
     false
 }
@@ -386,7 +391,7 @@ impl<H: Host> Vm<H> {
 
         let (shape, proto) = self
             .object_data(this)
-            .map(|object| (object.shape(), object.proto))
+            .map(|object| (object.shape(), self.prototype_for_data(object)))
             .unwrap_or((u32::MAX - 1, Value::UNDEFINED));
 
         let specialized = self.specialized && p.specialized;

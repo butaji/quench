@@ -164,6 +164,12 @@ impl ValueArena {
         self.shape_lengths[shape] = length as u32;
     }
 
+    pub(crate) fn ensure_empty_shape(&mut self, shape: u32) {
+        if self.shape_lengths.len() <= shape as usize {
+            self.shape_lengths.resize(shape as usize + 1, 0);
+        }
+    }
+
     pub(crate) fn reset_shapes(&mut self) {
         self.shape_lengths.clear();
         self.shape_lengths.push(0);

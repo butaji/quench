@@ -54,7 +54,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let array = self.native_value(Native::Array);
         self.array_proto = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.object_proto),
+            object: self.shapes.empty_object(self.object_proto),
             elements: Rc::new(Vec::new()),
         });
         self.realm
@@ -207,7 +207,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_array_unscopables(&mut self) -> Result<(), JsError> {
         let unscopables = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc(Cell::Object(self.shapes.empty_object(Value::NULL)));
         for name in [
             "at",
             "copyWithin",
