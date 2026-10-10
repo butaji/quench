@@ -439,6 +439,26 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     const material = options === undefined ? key : Object.assign({}, options, { key });
     return verifier.verify(material, signature);
   };
+  const timingSafeEqual = (left, right) => {
+    const bytes = (value, name) => {
+      if (!ArrayBuffer.isView(value)) {
+        const error = new TypeError(`The "${name}" argument must be an instance of Buffer, TypedArray, or DataView`);
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    };
+    const a = bytes(left, "buf1");
+    const b = bytes(right, "buf2");
+    if (a.byteLength !== b.byteLength) {
+      const error = new RangeError("Input buffers must have the same byte length");
+      error.code = "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH";
+      throw error;
+    }
+    let difference = 0;
+    for (let index = 0; index < a.byteLength; index++) difference |= a[index] ^ b[index];
+    return difference === 0;
+  };
 
   const hashNames = Object.freeze([
     "RSA-SHA1", "blake2b512", "blake2s256", "md5", "ripemd160",
@@ -1280,6 +1300,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     Verify: VerifyConstructor,
     sign: signOnce,
     verify: verifyOnce,
+    timingSafeEqual,
     hash: hashOnce,
     createHmac: (algorithm, key) => new Hmac(algorithm, key),
     setEngine,
