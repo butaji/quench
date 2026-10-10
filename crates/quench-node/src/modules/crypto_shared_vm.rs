@@ -143,8 +143,7 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
       const state = states.get(this);
       if (state.lifecycle !== "open") throw finalized();
       if ((state.name === "shake128" || state.name === "shake256") &&
-          (options == null || options.outputLength === undefined) &&
-          state.outputLength === 0) {
+          (options == null || options.outputLength === undefined)) {
         const error = new Error("error:030000D6:digital envelope routines::not XOF or invalid length");
         error.code = "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH";
         throw error;
