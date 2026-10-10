@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
+r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   let repeatedHmacDigestWarningEmitted = false;
@@ -42,18 +42,70 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
     throw error;
   };
 
-  class Hash {
+  class Hash extends Transform {
     constructor(algorithm, options) {
+      super();
       if (typeof algorithm !== "string") {
-        const error = new TypeError('The "algorithm" argument must be of type string');
+        const error = new TypeError(`The "algorithm" argument must be of type string. ${receivedArgument(algorithm)}`);
         error.code = "ERR_INVALID_ARG_TYPE";
         throw error;
       }
       const name = algorithm.toLowerCase();
-      if (!getHashes().includes(algorithm) && !getHashes().includes(name)) throw unsupportedDigest(algorithm);
+      const outputLength = options?.outputLength;
+      if ((name === "shake128" || name === "shake256") && outputLength === undefined) {
+        const error = new Error("error:030000D6:digital envelope routines::not XOF or invalid length");
+        error.code = "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH";
+        throw error;
+      }
+      if (outputLength !== undefined && typeof outputLength !== "number") {
+        const error = new TypeError('The "outputLength" argument must be of type number');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (outputLength !== undefined &&
+          (!Number.isInteger(outputLength) || outputLength < 0 || outputLength > 0x7fffffff)) {
+        const error = new Error("The value of \"outputLength\" is out of range");
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+      const standardLength = {
+        md5: 16, ripemd160: 20, sha1: 20, sha224: 28, sha256: 32,
+        sha384: 48, sha512: 64, "sha3-224": 28, "sha3-256": 32,
+        "sha3-384": 48, "sha3-512": 64, blake2b512: 64, blake2s256: 32,
+      }[name];
+      if (outputLength !== undefined && name !== "shake128" && name !== "shake256" &&
+          standardLength !== undefined && outputLength !== standardLength) {
+        const error = new Error("error:030000D6:digital envelope routines::not XOF or invalid length");
+        error.code = "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH";
+        throw error;
+      }
+      if (!getHashes().includes(algorithm) && !getHashes().includes(name)) {
+        const error = new Error("Digest method not supported");
+        error.code = "ERR_OSSL_EVP_UNSUPPORTED";
+        throw error;
+      }
       const defaultEncoding = options?.defaultEncoding ?? "utf8";
-      states.set(this, { name, chunks: [], lifecycle: "open", listeners: {}, defaultEncoding });
-      this._writableState = { defaultEncoding };
+      const state = { name, chunks: [], lifecycle: "open", defaultEncoding, outputLength };
+      states.set(this, state);
+      this._writableState.defaultEncoding = defaultEncoding;
+      this._transform = (chunk, encoding, callback) => {
+        try {
+          this.update(chunk, encoding);
+          callback();
+        } catch (error) {
+          callback(error);
+        }
+      };
+      this._flush = (callback) => {
+        try {
+          const digest = this.digest();
+          state.streamFinalized = true;
+          state.streamDigest = digest;
+          callback(null, digest);
+        } catch (error) {
+          callback(error);
+        }
+      };
     }
 
     update(data, encoding) {
@@ -64,50 +116,53 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
       return this;
     }
 
-    write(data, encoding) {
-      const state = states.get(this);
-      this.update(data, encoding === undefined ? state.defaultEncoding : encoding);
-      return true;
-    }
-
     digest(encoding) {
       const state = states.get(this);
-      if (state.lifecycle !== "open") throw finalized();
+      if (state.lifecycle !== "open") {
+        if (state.streamFinalized) return state.streamDigest;
+        throw finalized();
+      }
       const outputEncoding = encoding === undefined || encoding === "buffer"
         ? undefined
         : String(encoding);
       state.lifecycle = "finalized";
       const input = state.chunks.flat();
       state.chunks = [];
-      const bytes = Buffer.from(hashDigest(state.name, input));
+      const bytes = Buffer.from(hashDigest(state.name, input, state.outputLength ?? 0));
       return outputEncoding === undefined
         ? bytes
         : bytes.toString(outputEncoding);
     }
 
-    end(data, encoding) {
-      if (data !== undefined) this.update(data, encoding);
+    copy(options) {
       const state = states.get(this);
-      state.streamResult = this.digest();
-      for (const listener of state.listeners.data || []) listener(state.streamResult);
-      for (const listener of state.listeners.end || []) listener();
-      return this;
-    }
-
-    on(event, listener) {
-      const state = states.get(this);
-      if (!state.listeners[event]) state.listeners[event] = [];
-      state.listeners[event].push(listener);
-      return this;
-    }
-
-    read() {
-      const state = states.get(this);
-      const result = state.streamResult;
-      state.streamResult = undefined;
-      return result;
+      if (state.lifecycle !== "open") throw finalized();
+      if ((state.name === "shake128" || state.name === "shake256") &&
+          (options == null || options.outputLength === undefined) &&
+          state.outputLength === 0) {
+        const error = new Error("error:030000D6:digital envelope routines::not XOF or invalid length");
+        error.code = "ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH";
+        throw error;
+      }
+      const outputLength = options?.outputLength ?? state.outputLength;
+      const copy = new Hash(state.name, { defaultEncoding: state.defaultEncoding, outputLength });
+      states.get(copy).chunks = state.chunks.map((chunk) => chunk.slice());
+      return copy;
     }
   }
+
+  let hashConstructorWarningEmitted = false;
+  function HashConstructor(algorithm, options) {
+    if (!new.target && !hashConstructorWarningEmitted) {
+      hashConstructorWarningEmitted = true;
+      process.emitWarning("crypto.Hash constructor is deprecated.", {
+        type: "DeprecationWarning",
+        code: "DEP0179",
+      });
+    }
+    return new Hash(algorithm, options);
+  }
+  HashConstructor.prototype = Hash.prototype;
 
   class Hmac {
     constructor(algorithm, key) {
@@ -217,7 +272,7 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
 
   const hashNames = Object.freeze([
     "RSA-SHA1", "blake2b512", "blake2s256", "md5", "ripemd160",
-    "sha1", "sha224", "sha256", "sha384", "sha512",
+    "sha1", "sha224", "sha256", "sha384", "sha512", "shake128", "shake256",
     "sha3-224", "sha3-256", "sha3-384", "sha3-512",
   ].sort());
   const cipherNames = Object.freeze([
@@ -536,6 +591,7 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
     };
   }
   const api = {
+    Hash: HashConstructor,
     createHash: (algorithm, options) => new Hash(algorithm, options),
     createHmac: (algorithm, key) => new Hmac(algorithm, key),
     createSign: (algorithm) => new Sign(algorithm),
@@ -564,7 +620,10 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
 }"#
 );
 
-pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn module(
+    context: &mut NativeContext<'_, NodeHost>,
+    transform: RootId,
+) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(CRYPTO_FACTORY, "node:crypto/shared.js")?;
     let hash = context.host_function(crate::host::shared_vm::operation("cryptoHash"))?;
     let hmac = context.host_function(crate::host::shared_vm::operation("cryptoHmac"))?;
@@ -575,7 +634,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[hash, hmac, sign, buffer, random_bytes, pbkdf2])
+    context.call_rooted(
+        factory,
+        undefined,
+        &[hash, hmac, sign, buffer, random_bytes, pbkdf2, transform],
+    )
 }
 
 pub(crate) fn random_bytes(
@@ -646,49 +709,39 @@ pub(crate) fn hash(
         .and_then(|root| context.string_text(root).ok().flatten())
         .ok_or_else(|| RootedError::host("crypto hash algorithm is not a string"))?;
     let Some(input) = args.get(1).copied() else {
-        return Err(type_error(
-            context,
-            "The hash input must be an array of bytes",
-        )?);
+        return Err(type_error(context, "The hash input must be an array of bytes")?);
     };
-    let length = get(context, input, "length")?;
-    let Some(length) = context
-        .rooted_value(length)
+    let bytes = byte_array(context, input)?;
+    let output_length = args
+        .get(2)
+        .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_number())
         .filter(|length| length.is_finite() && *length >= 0.0 && length.fract() == 0.0)
-    else {
-        return Err(type_error(
-            context,
-            "The hash input must be an array of bytes",
-        )?);
-    };
-    let Ok(length) = usize::try_from(length as u64) else {
-        return Err(type_error(context, "The hash input is too large")?);
-    };
-    let mut bytes = Vec::with_capacity(length);
-    for index in 0..length {
-        let byte = get(context, input, &index.to_string())?;
-        let Some(byte) = context
-            .rooted_value(byte)
-            .and_then(|value| value.as_number())
-            .filter(|byte| byte.is_finite() && *byte >= 0.0 && *byte <= f64::from(u8::MAX))
-        else {
-            return Err(type_error(
-                context,
-                "The hash input must contain byte values",
-            )?);
-        };
-        bytes.push(byte as u8);
-    }
-
-    let digest = if algorithm.eq_ignore_ascii_case("sha1") {
-        crate::modules::crypto_sha1::digest(&bytes)
-    } else {
-        let algorithm = openssl::hash::MessageDigest::from_name(&algorithm)
-            .ok_or_else(|| RootedError::host("Digest method not supported"))?;
-        openssl::hash::hash(algorithm, &bytes)
-            .map_err(|_| RootedError::host("crypto digest failed"))?
-            .to_vec()
+        .unwrap_or(0.0) as usize;
+    let digest = match algorithm.to_ascii_lowercase().as_str() {
+        "shake128" | "shake256" => {
+            let algorithm = if algorithm.eq_ignore_ascii_case("shake128") {
+                openssl::hash::MessageDigest::shake_128()
+            } else {
+                openssl::hash::MessageDigest::shake_256()
+            };
+            let mut hasher = openssl::hash::Hasher::new(algorithm)
+                .map_err(|_| RootedError::host("crypto digest initialization failed"))?;
+            hasher.update(&bytes)
+                .map_err(|_| RootedError::host("crypto digest update failed"))?;
+            let mut output = vec![0; output_length];
+            hasher.finish_xof(&mut output)
+                .map_err(|_| RootedError::host("crypto digest failed"))?;
+            output
+        }
+        "sha1" => crate::modules::crypto_sha1::digest(&bytes),
+        _ => {
+            let algorithm = openssl::hash::MessageDigest::from_name(&algorithm)
+                .ok_or_else(|| RootedError::host("Digest method not supported"))?;
+            openssl::hash::hash(algorithm, &bytes)
+                .map_err(|_| RootedError::host("crypto digest failed"))?
+                .to_vec()
+        }
     };
     let values = digest
         .iter()
