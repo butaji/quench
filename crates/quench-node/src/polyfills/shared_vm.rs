@@ -69,8 +69,24 @@ pub const ABORT: &str = quench_js_check::checked_js!(
     }
   };
 
-  const dispatchAbort = (signal, state) => {
-    dispatchListeners(signal, state, abortEvent(signal));
+  const abortSignal = (signal, reason) => {
+    const pending = [{ signal, reason }];
+    const aborted = [];
+    for (let index = 0; index < pending.length; index++) {
+      const item = pending[index];
+      const state = signalStates.get(item.signal);
+      if (state.aborted) continue;
+      state.aborted = true;
+      state.reason = item.reason;
+      item.signal.aborted = true;
+      aborted.push(item.signal);
+      for (const dependent of state.dependents) {
+        pending.push({ signal: dependent, reason: item.reason });
+      }
+    }
+    for (const value of aborted) {
+      dispatchListeners(value, signalStates.get(value), abortEvent(value));
+    }
   };
 
   const removeAbortListener = (state, listener) => {
@@ -89,6 +105,7 @@ pub const ABORT: &str = quench_js_check::checked_js!(
         reason: undefined,
         onabort: null,
         listeners: [],
+        dependents: [],
       });
       Object.defineProperty(this, "aborted", {
         configurable: true,
@@ -147,18 +164,29 @@ pub const ABORT: &str = quench_js_check::checked_js!(
     }
 
     static any(signals) {
+      const invalidArgument = (message) => Object.assign(new TypeError(message), {
+        code: "ERR_INVALID_ARG_TYPE",
+      });
       if (signals == null || typeof signals[Symbol.iterator] !== "function") {
-        throw new TypeError("The \"signals\" argument must be an iterable of AbortSignals");
+        throw invalidArgument('The "signals" argument must be an instance of Array');
+      }
+      const values = [];
+      let index = 0;
+      for (const signal of signals) {
+        if (!signalStates.has(signal)) {
+          throw invalidArgument(`signals[${index}] is not of type AbortSignal.`);
+        }
+        values.push(signal);
+        index++;
       }
       const controller = new AbortController();
-      for (const signal of signals) {
-        const state = signalStates.get(signal);
-        if (!state) throw new TypeError("Each signal must be an AbortSignal");
-        if (state.aborted) {
-          controller.abort(state.reason);
-          break;
+      const aborted = values.find((signal) => signalStates.get(signal).aborted);
+      if (aborted) {
+        controller.abort(aborted.reason);
+      } else {
+        for (const signal of values) {
+          signalStates.get(signal).dependents.push(controller.signal);
         }
-        signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
       }
       return controller.signal;
     }
@@ -191,10 +219,7 @@ pub const ABORT: &str = quench_js_check::checked_js!(
       const signal = this.signal;
       const state = signalState(signal, "abort");
       if (state.aborted) return;
-      state.aborted = true;
-      signal.aborted = true;
-      state.reason = reason;
-      dispatchAbort(signal, state);
+      abortSignal(signal, reason);
     }
   }
 
