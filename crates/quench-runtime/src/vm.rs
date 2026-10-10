@@ -210,6 +210,7 @@ impl Frame {
     }
 
     /// Arguments for a body that keeps its parameters in registers.
+    #[inline(always)]
     fn bind_register_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
         if let Some(base) = function.parameter_registers {
             for offset in 0..function.params {
@@ -221,6 +222,7 @@ impl Frame {
         }
     }
 
+    #[inline(always)]
     fn prepare_registers(&mut self, count: u16, initial: crate::bytecode::InitialRegister) {
         self.registers.clear();
         self.registers.resize(usize::from(count), initial.value());

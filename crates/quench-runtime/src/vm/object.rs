@@ -568,15 +568,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
-        // A site is only populated after the atom and a non-dictionary receiver shape passed
-        // `shape_property_lookup_cell`, and an ordinary object is eligible whenever those hold,
-        // so a monomorphic own-shape hit needs no further eligibility probe.
-        if self.specialized
-            && p.specialized
-            && let Some(Cell::Object(receiver)) = self.heap.get(object)
-            && !receiver.is_module_namespace()
-            && let Some(hit) = self.cached_field_value(self.field_cache_index(site), receiver)
-        {
+        if let Some(hit) = self.own_shape_field_hit(p, object, site) {
             self.profile
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return Ok(hit.value);
@@ -643,6 +635,29 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// A monomorphic own-shape hit for an ordinary object. A site is only populated after the
+    /// atom and a non-dictionary receiver shape passed `shape_property_lookup_cell`, and an
+    /// ordinary object is eligible whenever those hold, so this hit needs no further
+    /// eligibility probe.
+    #[inline(always)]
+    fn own_shape_field_hit(
+        &self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<FieldCacheHit> {
+        if !(self.specialized && p.specialized) {
+            return None;
+        }
+        let Some(Cell::Object(receiver)) = self.heap.get(object) else {
+            return None;
+        };
+        if receiver.is_module_namespace() {
+            return None;
+        }
+        self.cached_field_value(self.field_cache_index(site), receiver)
+    }
+
     /// The value `get_field_cached` reads on a field cache hit, without
     /// side effects; `None` when it would take any other path.
     #[inline(always)]
@@ -653,6 +668,9 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Option<Value> {
+        if let Some(hit) = self.own_shape_field_hit(p, object, site) {
+            return Some(hit.value);
+        }
         match self.heap.get(object)? {
             Cell::String(_) | Cell::Proxy { .. } => None,
             cell if self.specialized && p.specialized => {
