@@ -205,6 +205,45 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     });
     globalThis.process.memoryUsage.rss ||= () =>
       globalThis.process.memoryUsage().rss;
+    const cpuUsage = (previous) => {
+      const usage = { user: 0, system: 0 };
+      if (previous === undefined) return usage;
+      if (previous === null || typeof previous !== "object" || Array.isArray(previous)) {
+        const received = previous === null ? "Received null" :
+          typeof previous === "string" ? `Received type string (${previous})` :
+          typeof previous === "number" ? `Received type number (${previous})` :
+          typeof previous === "boolean" ? `Received type boolean (${previous})` :
+          Array.isArray(previous) ? "Received an instance of Array" :
+          `Received type ${typeof previous}`;
+        throw Object.assign(
+          new TypeError(`The "prevValue" argument must be of type object. ${received}`),
+          { code: "ERR_INVALID_ARG_TYPE" }
+        );
+      }
+      for (const field of ["user", "system"]) {
+        if (typeof previous[field] !== "number") {
+          const value = previous[field];
+          const received = value === undefined ? "Received undefined" :
+            value === null ? "Received null" :
+            typeof value === "object" ? `Received an instance of ${Array.isArray(value) ? "Array" : "Object"}` :
+            `Received type ${typeof value} (${typeof value === "string" ? `'${value}'` : String(value)})`;
+          throw Object.assign(
+            new TypeError(`The "prevValue.${field}" property must be of type number. ${received}`),
+            { code: "ERR_INVALID_ARG_TYPE" }
+          );
+        }
+        if (!Number.isFinite(previous[field]) || previous[field] < 0) {
+          throw Object.assign(
+            new RangeError(`The property 'prevValue.${field}' is invalid. Received ${previous[field]}`),
+            { code: "ERR_INVALID_ARG_VALUE" }
+          );
+        }
+        usage[field] = Math.max(0, usage[field] - previous[field]);
+      }
+      return usage;
+    };
+    globalThis.process.cpuUsage ||= cpuUsage;
+    globalThis.process.threadCpuUsage ||= cpuUsage;
   }
 }
 "#);
