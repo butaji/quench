@@ -335,5 +335,73 @@
       "url": "https://doi.org/10.1145/773039.512452",
       "finding": "The paper compares inline, out-of-line, and partially inlined remembered-set barriers; the interpreter's direct old-to-young check measured slower in the Splay screen."
     }
-  ]
+  ],
+  "old_space_growth_trigger_screen": {
+    "motivation": "Linear TOD-10 suggested triggering full collections from old-space growth rather than total allocations.",
+    "source_revision": "8cd482028ffb713d7e2a5e2ef49d435b8dfbd615",
+    "source_dirty": true,
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "full_collection_growth_factor": "1/1 of last full live cells, counted as cells promoted in minor collections",
+    "threshold_cap": "minor threshold capped by remaining old-promotion budget",
+    "decision": "rejected: both variants were output-equal but paired wall medians regressed; the 1/1-headroom interval was wholly positive and RSS increased in both variants",
+    "minor_headroom_3_4": {
+      "candidate_binary_sha256": "a92164a77937ea22acb96226f957c4b2c6cc09b708cbbf88c244fc3686d112cc",
+      "fixed_work": {
+        "rounds": 11,
+        "valid_rounds": 11,
+        "output_equal": true,
+        "clean_rounds": 0,
+        "baseline_median_marginal_wall_ns": 2231308709,
+        "candidate_median_marginal_wall_ns": 2442831781,
+        "paired_median_delta_ns": 532524748,
+        "paired_median_delta_percent": 23.866027405892225,
+        "paired_median_bootstrap_95_percentile_ns": [
+          -477266453,
+          1117267940
+        ],
+        "bootstrap": "100,000 resamples of the 11 paired marginal deltas; Python random seed 940510; percentile indices 2.5% and 97.5%",
+        "median_work_max_rss_bytes": {
+          "baseline": 275046400,
+          "candidate": 278953984
+        },
+        "median_setup_only_max_rss_bytes": {
+          "baseline": 188796928,
+          "candidate": 190349312
+        },
+        "report_path": "target/collector-splay-old-growth-pairs-11.json",
+        "report_sha256": "f0ca959287a8e01d17c8e6008f3e33bb24fab4051259b3861bfa21c4d29d8872"
+      },
+      "reproduction": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --fixed-work --quench target/pinned/gc-stageb-baseline-6507/quench-node --quench-peer target/production/quench-node-gc-old-growth --runs 11 --timeout-ms 300000 --out target/collector-splay-old-growth-pairs-11.json"
+    },
+    "minor_headroom_1_1": {
+      "candidate_binary_sha256": "2ed49861b015f9829ffdbdc210fd9941c0e8c5add28d107e3f2a036edbf9fff2",
+      "fixed_work": {
+        "rounds": 11,
+        "valid_rounds": 11,
+        "output_equal": true,
+        "clean_rounds": 0,
+        "baseline_median_marginal_wall_ns": 1822102443,
+        "candidate_median_marginal_wall_ns": 2189656901,
+        "paired_median_delta_ns": 300865353,
+        "paired_median_delta_percent": 16.511988892602567,
+        "paired_median_bootstrap_95_percentile_ns": [
+          227012774,
+          542414176
+        ],
+        "bootstrap": "100,000 resamples of the 11 paired marginal deltas; Python random seed 940510; percentile indices 2.5% and 97.5%",
+        "median_work_max_rss_bytes": {
+          "baseline": 275013632,
+          "candidate": 282451968
+        },
+        "median_setup_only_max_rss_bytes": {
+          "baseline": 188764160,
+          "candidate": 190550016
+        },
+        "report_path": "target/collector-splay-old-growth-headroom-1_0-pairs-11.json",
+        "report_sha256": "ab718cb4882d08cf3d72ce5810b7159130086576f19db6cfd9afee2be498b40b"
+      },
+      "reproduction": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --fixed-work --quench target/pinned/gc-stageb-baseline-6507/quench-node --quench-peer target/production/quench-node-gc-old-growth-headroom-1_0 --runs 11 --timeout-ms 300000 --out target/collector-splay-old-growth-headroom-1_0-pairs-11.json"
+    },
+    "interpretation": "The old-growth trigger does not compensate for the remembered-set/minor-collection cost in these screens. The 1/1 threshold increased minor headroom but remained clearly slower and used more RSS. No stock Score run was warranted after these fixed-work rejections."
+  }
 }
