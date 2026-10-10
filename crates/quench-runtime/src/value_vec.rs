@@ -8,7 +8,9 @@ const DICTIONARY_STORAGE: u32 = 1 << 31;
 const SHAPE_MASK: u32 = !DICTIONARY_STORAGE;
 const EMPTY_START: u32 = START_MASK;
 const MAX_ARENA_START: usize = EMPTY_START as usize;
-const MIN_CAPACITY: usize = 4;
+/// Smallest property range. Two values hold the common two-property literal exactly;
+/// larger objects still grow by power-of-two buckets.
+const MIN_CAPACITY: usize = 2;
 const BUCKETS: usize = 32;
 const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
 const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
