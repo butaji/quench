@@ -114,3 +114,28 @@ pairs were contention-clean. Marginal instructions changed by +0.07% and
 marginal cycles by −0.07%, so this does not explain or recover the compact
 candidate's broader regression. The source-only fast path was reverted; the
 report is [`heap-index-followup-splay-11.json`](heap-index-followup-splay-11.json).
+
+## Richards legacy-slot reuse follow-up: regression remains
+
+The first narrow follow-up reused the `HeapRef` index in `Heap::object` and
+`Heap::object_mut` instead of decoding the `Value` again through `get`/
+`get_mut`. A fresh Richards fixed-work comparison against the pinned trunk
+baseline completed with 11/11 clean pairs, valid output and identical results.
+The candidate still regressed marginal instructions by 29.99% and cycles by
+28.32%: 194,700,642 versus 149,782,816 instructions per run, and 29,909,853
+versus 23,309,261 cycles per run. Work RSS was 19,415,040 B versus
+20,054,016 B. Thus reusing the decoded index does not account for the shared
+property-path regression; this candidate remains rejected and the active Splay
+distances stay at 1.24x speed / 2.09x RSS.
+
+The report is [`richards-handle-reuse-11.json`](richards-handle-reuse-11.json).
+It records the exact M4 paired samples and executable hashes: trunk baseline
+`127b3fdc659ba5944bf03658d5f2e2f85b5971a4b91121e40a7e66dc00649543`,
+candidate `30c7eccb286aac96d9d46fb4cad8803ebac04e73629478e5a49ef3f36f9c599d`.
+The runner's `source_revision` is the clean trunk checkout (`a352d170f`); the
+candidate binary was built from compact-space worktree base
+`a03e0646ff216a192d85c6d1d22307855cdb21f2` plus dirty diff SHA-256
+`c5e61c1173015c93f785b7a7b9b9932c4248420432b7e53a3be71385a4ad85dd`.
+The report's source revision therefore identifies the runner checkout, not the
+candidate build source. Candidate compilation and 546 runtime library tests
+passed before pinning.
