@@ -449,6 +449,10 @@ impl Heap {
     pub(crate) fn release_root(&mut self, root: RootId) -> bool {
         self.roots.remove(root)
     }
+    /// Completed collections; cell identities are stable between two increments.
+    pub(crate) fn collection_count(&self) -> u64 {
+        self.collections
+    }
     #[cfg(test)]
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
         self.collect_with_object_roots(roots, |_, _, _| {})

@@ -674,6 +674,7 @@ pub(crate) struct Vm<H> {
     well_known_symbols: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
     field_caches: Vec<FieldCache>,
+    global_var_reads: [field_cache::GlobalVarRead; field_cache::GLOBAL_VAR_READ_ENTRIES],
     field_add_caches: FxHashMap<usize, Vec<FieldAddCache>>,
     megamorphic_field_indices: Vec<u32>,
     megamorphic_fields: Vec<FieldCacheSet>,
