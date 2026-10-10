@@ -1410,10 +1410,10 @@ class __QuenchVirtualFileSystem {
         const chunk = bytes.subarray(start, Math.min(end, bytes.length));
         if (options.encoding) stream.setEncoding(options.encoding);
         if (chunk.length) {
+          stream.bytesRead = chunk.length;
           stream.push(
             options.encoding ? chunk.toString(options.encoding) : chunk
           );
-          stream.bytesRead = chunk.length;
         }
         stream.push(null);
         if (options.autoClose !== false && options.fd === undefined) {
@@ -1436,7 +1436,7 @@ class __QuenchVirtualFileSystem {
     const suppliedFd = typeof options.fd === "number";
     const autoClose = options.autoClose !== false;
     let closed = false;
-    const closeDescriptor = () => {
+    const closeDescriptor = (emitClose = true) => {
       if (closed || stream.fd === null) return;
       const fd = stream.fd;
       if (autoClose || explicitClose) {
@@ -1447,7 +1447,7 @@ class __QuenchVirtualFileSystem {
         stream.fd = null;
         closed = true;
         stream.closed = true;
-        stream.emit("close");
+        if (emitClose) stream.emit("close");
       }
     };
     let explicitClose = false;
@@ -1494,7 +1494,7 @@ class __QuenchVirtualFileSystem {
       return stream;
     };
     stream.once("finish", () => {
-      if (autoClose) closeDescriptor();
+      if (autoClose) closeDescriptor(false);
     });
     setTimeout(() => {
       try {
