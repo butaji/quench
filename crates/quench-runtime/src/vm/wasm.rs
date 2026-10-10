@@ -342,9 +342,9 @@ impl<H: Host> Vm<H> {
             elements.resize(length, Value::NULL);
             values.push(self.heap.alloc(Cell::WasmTable {
                 table64: table.ty.table64,
-                elements,
+                elements: Box::new(elements),
                 element_type: table.ty.element_type,
-                declarations: module.signatures.declarations.clone(),
+                declarations: Box::new(module.signatures.declarations.clone()),
                 maximum: table.ty.maximum,
             }));
         }

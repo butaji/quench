@@ -1248,6 +1248,18 @@ impl From<Vec<(Atom, Value)>> for EnvironmentBindings {
     }
 }
 
+/// An iterator's protocol caches, helper state and generator record: needed by
+/// helpers, wrapped iterators and generators, while built-in stepping only reads
+/// `source`, `kind`, `index` and `done`.
+#[derive(Debug, Clone)]
+pub(crate) struct IteratorExt {
+    pub(crate) next_method: Option<Value>,
+    pub(crate) helper: Option<Box<IteratorHelper>>,
+    pub(crate) helper_running: bool,
+    pub(crate) helper_started: bool,
+    pub(crate) generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
+}
+
 /// A RegExp's source text, flags and legacy-constructor owner: read when a pattern is
 /// recompiled, reflected or matched through legacy statics, not on every match.
 #[derive(Clone, Debug)]
@@ -1336,14 +1348,10 @@ pub(crate) enum Cell {
     Iterator {
         object: Box<Object>,
         source: Value,
-        next_method: Option<Value>,
-        helper: Option<Box<IteratorHelper>>,
-        helper_running: bool,
-        helper_started: bool,
         kind: IteratorKind,
         index: usize,
         done: bool,
-        generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
+        ext: Box<IteratorExt>,
     },
     ArrayFromAsyncState(Box<ArrayFromAsyncState>),
     Proxy {
@@ -1379,7 +1387,7 @@ pub(crate) enum Cell {
     /// A tag retains its original declaration; identity is independent of type equality.
     WasmTag { declarations: crate::WasmTypes, ty: u32 },
     /// GC object identity owns its original declaration and traced field values.
-    WasmGc { declarations: crate::WasmTypes, ty: u32, fields: Vec<Value>, descriptor: Option<Value> },
+    WasmGc { declarations: Box<crate::WasmTypes>, ty: u32, fields: Box<Vec<Value>>, descriptor: Option<Value> },
     /// The native callable's immutable host operation and structural signature.
     WasmHostFunction {
         id: crate::WasmHostFunctionId,
@@ -1393,9 +1401,9 @@ pub(crate) enum Cell {
     /// Typed references owned by a Wasm instance, traced like other heap edges.
     WasmTable {
         table64: bool,
-        elements: Vec<Value>,
+        elements: Box<Vec<Value>>,
         element_type: wasmparser::RefType,
-        declarations: crate::WasmTypes,
+        declarations: Box<crate::WasmTypes>,
         maximum: Option<u64>,
     },
     String(JsString), BigInt(String),
@@ -1460,7 +1468,7 @@ mod cell_layout_tests {
 
     /// Every heap slot holds one `Cell`, so its size multiplies by the live-cell count.
     /// Large variant payloads are boxed to keep it at this bound.
-    const MAX_CELL_BYTES: usize = 64;
+    const MAX_CELL_BYTES: usize = 40;
 
     #[test]
     fn cells_stay_compact() {

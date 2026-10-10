@@ -529,14 +529,16 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::Iterator {
             object: Box::new(Self::empty_object(self.string_iterator_proto)),
             source,
-            next_method: None,
-            helper: None,
-            helper_running: false,
-            helper_started: false,
             kind: IteratorKind::String,
             index: 0,
             done: false,
-            generator: None,
+            ext: Box::new(crate::heap::IteratorExt {
+                next_method: None,
+                helper: None,
+                helper_running: false,
+                helper_started: false,
+                generator: None,
+            }),
         }))
     }
 

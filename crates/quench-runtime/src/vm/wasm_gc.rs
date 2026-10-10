@@ -84,9 +84,9 @@ impl<H: Host> Vm<H> {
             *value = self.wasm_storage_value(*value, field.element_type, &declarations)?;
         }
         Ok(self.heap.alloc(Cell::WasmGc {
-            declarations,
+            declarations: Box::new(declarations),
             ty: index,
-            fields: values,
+            fields: Box::new(values),
             descriptor,
         }))
     }
@@ -303,9 +303,9 @@ impl<H: Host> Vm<H> {
             }
         };
         Ok(self.heap.alloc(Cell::WasmGc {
-            declarations: declarations.clone(),
+            declarations: Box::new(declarations.clone()),
             ty: index,
-            fields,
+            fields: Box::new(fields),
             descriptor: None,
         }))
     }

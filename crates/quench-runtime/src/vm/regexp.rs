@@ -1025,18 +1025,20 @@ impl<H: Host> Vm<H> {
                     Ok(vm.heap.alloc(Cell::Iterator {
                         object: Box::new(Self::empty_object(vm.regexp_string_iterator_proto)),
                         source: matcher,
-                        next_method: None,
-                        helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
+                        kind: IteratorKind::RegExpStringMatchAll,
+                        index: 0,
+                        done: false,
+                        ext: Box::new(crate::heap::IteratorExt {
+                            next_method: None,
+                            helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
                             input,
                             global: flags.contains('g'),
                             unicode: flags.contains('u') || flags.contains('v'),
                         })),
-                        helper_running: false,
-                        helper_started: false,
-                        kind: IteratorKind::RegExpStringMatchAll,
-                        index: 0,
-                        done: false,
-                        generator: None,
+                            helper_running: false,
+                            helper_started: false,
+                            generator: None,
+                        }),
                     }))
                 })
             },

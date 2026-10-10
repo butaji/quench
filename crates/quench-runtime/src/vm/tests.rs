@@ -6073,14 +6073,15 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 let value = vm.heap.alloc(super::Cell::Iterator {
                     object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
                     source: Value::NULL,
-                    next_method: None,
-                    helper: None,
-                    helper_running: false,
-                    helper_started: false,
                     kind: super::IteratorKind::AsyncGenerator,
                     index: 0,
                     done: false,
-                    generator: Some(Box::new(GeneratorRecord {
+                    ext: Box::new(crate::heap::IteratorExt {
+                        next_method: None,
+                        helper: None,
+                        helper_running: false,
+                        helper_started: false,
+                        generator: Some(Box::new(GeneratorRecord {
                         continuation: Some(continuation),
                         realm,
                         done: false,
@@ -6092,6 +6093,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                         }]
                         .into(),
                     })),
+                    }),
                 });
                 owner = Some(vm.heap.root(value));
             } else {
@@ -6113,10 +6115,13 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             } else {
                 let value = vm.heap.root_value(owner.unwrap()).unwrap();
                 match vm.heap.get_mut(value) {
-                    Some(super::Cell::Iterator {
-                        generator: Some(record),
-                        ..
-                    }) => record.continuation.take().unwrap(),
+                    Some(super::Cell::Iterator { ext, .. }) => ext
+                        .generator
+                        .as_mut()
+                        .expect("generator owner")
+                        .continuation
+                        .take()
+                        .unwrap(),
                     _ => panic!("generator owner"),
                 }
             };
@@ -6412,14 +6417,16 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
                     _ => vm.heap.alloc(super::Cell::Iterator {
                         object: Box::new(Vm::<Test262Host>::empty_object(vm.async_from_sync_iterator_proto)),
                         source,
-                        next_method: None,
-                        helper: None,
-                        helper_running: false,
-                        helper_started: false,
                         kind: super::IteratorKind::AsyncFromSync,
                         index: 0,
                         done: false,
-                        generator: None,
+                        ext: Box::new(crate::heap::IteratorExt {
+                            next_method: None,
+                            helper: None,
+                            helper_running: false,
+                            helper_started: false,
+                            generator: None,
+                        }),
                     }),
                 };
                 let handles = [source, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
@@ -6615,20 +6622,22 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                 let iterator = vm.heap.alloc(super::Cell::Iterator {
                     object: Box::new(Vm::<Test262Host>::empty_object(vm.regexp_string_iterator_proto)),
                     source: matcher,
-                    next_method: None,
-                    helper: Some(Box::new(
+                    kind: super::IteratorKind::RegExpStringMatchAll,
+                    index: 0,
+                    done: false,
+                    ext: Box::new(crate::heap::IteratorExt {
+                        next_method: None,
+                        helper: Some(Box::new(
                         crate::heap::IteratorHelper::RegExpStringMatchAll {
                             input: JsString::from_units(if full { &[0xd800, 97] } else { &[97] }),
                             global: true,
                             unicode: true,
                         },
                     )),
-                    helper_running: false,
-                    helper_started: false,
-                    kind: super::IteratorKind::RegExpStringMatchAll,
-                    index: 0,
-                    done: false,
-                    generator: None,
+                        helper_running: false,
+                        helper_started: false,
+                        generator: None,
+                    }),
                 });
                 let handles = [matcher, iterator].map(|v| vm.heap.weak_handle(v).unwrap());
                 let roots = vm.heap.root_count_for_test();

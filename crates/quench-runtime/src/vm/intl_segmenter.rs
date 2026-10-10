@@ -144,14 +144,16 @@ impl<H: Host> Vm<H> {
                         return Ok(vm.heap.alloc(Cell::Iterator {
                             object: Box::new(Self::empty_object(prototype)),
                             source: data,
-                            next_method: None,
-                            helper: None,
-                            helper_running: false,
-                            helper_started: false,
                             kind: IteratorKind::IntlSegments,
                             index: 0,
                             done: false,
-                            generator: None,
+                            ext: Box::new(crate::heap::IteratorExt {
+                                next_method: None,
+                                helper: None,
+                                helper_running: false,
+                                helper_started: false,
+                                generator: None,
+                            }),
                         }));
                     }
                     let index =
