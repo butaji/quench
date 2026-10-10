@@ -336,7 +336,7 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
     "sha3-224", "sha3-256", "sha3-384", "sha3-512",
   ].sort());
   const cipherNames = Object.freeze([
-    "aes-128-cbc", "aes-128-ecb", "des-ede3-cbc",
+    "aes-128-cbc", "aes-128-ecb", "aes-256-cbc", "des-ede3-cbc",
   ].sort());
   const curveNames = Object.freeze([
     "prime192v1", "secp224r1", "secp256k1", "secp256r1",
@@ -348,6 +348,7 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
   const cipherInfoRecords = [
     { name: "aes-128-cbc", nid: 419, blockSize: 16, ivLength: 16, keyLength: 16, mode: "cbc" },
     { name: "aes-128-ecb", nid: 418, blockSize: 16, ivLength: 0, keyLength: 16, mode: "ecb" },
+    { name: "aes-256-cbc", nid: 427, blockSize: 16, ivLength: 16, keyLength: 32, mode: "cbc" },
     { name: "des-ede3-cbc", nid: 44, blockSize: 8, ivLength: 8, keyLength: 24, mode: "cbc" },
     { name: "aes-128-gcm", nid: 895, blockSize: 1, ivLength: 12, keyLength: 16, mode: "gcm" },
     { name: "aes-128-ccm", nid: 896, blockSize: 1, ivLength: 12, keyLength: 16, mode: "ccm" },
@@ -403,6 +404,8 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
       this._cipherBytesEmitted = 0;
       this._cipherFinalized = false;
       this._autoPadding = true;
+      this._cipherInputEncoding = undefined;
+      this._cipherOutputEncoding = undefined;
       this._transform = (chunk, encoding, callback) => {
         try { callback(null, this.update(chunk)); }
         catch (error) { callback(error); }
@@ -436,6 +439,29 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
     }
     update(data, inputEncoding, outputEncoding) {
       if (this._cipherFinalized) throw finalized();
+      const normalizeEncoding = (encoding) => {
+        if (encoding === undefined) return undefined;
+        const value = String(encoding).toLowerCase();
+        const normalized = value === "utf-8" ? "utf8" : value === "binary" ? "latin1" : value;
+        if (!["utf8", "hex", "base64", "base64url", "latin1", "ascii", "ucs2", "ucs-2", "utf16le", "buffer"].includes(normalized)) {
+          const error = new TypeError(`Unknown encoding: ${encoding}`);
+          error.code = "ERR_UNKNOWN_ENCODING";
+          throw error;
+        }
+        return normalized;
+      };
+      const checkEncoding = (field, supplied) => {
+        if (supplied === undefined) return;
+        const normalized = normalizeEncoding(supplied);
+        if (this[field] !== undefined && normalized !== this[field]) {
+          const error = new TypeError(`The encoding cannot be changed from '${this[field]}'`);
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        this[field] = normalized;
+      };
+      checkEncoding("_cipherInputEncoding", inputEncoding);
+      checkEncoding("_cipherOutputEncoding", outputEncoding);
       const inputLength = data?.byteLength ?? data?.length;
       if (typeof inputLength === "number" && inputLength > 0x7fffffff - 16) {
         const error = new RangeError("The data exceeds the maximum supported size");
@@ -450,6 +476,21 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
     }
     final(outputEncoding) {
       if (this._cipherFinalized) throw finalized();
+      if (outputEncoding !== undefined) {
+        const value = String(outputEncoding).toLowerCase();
+        const normalized = value === "utf-8" ? "utf8" : value === "binary" ? "latin1" : value;
+        if (!["utf8", "hex", "base64", "base64url", "latin1", "ascii", "ucs2", "ucs-2", "utf16le", "buffer"].includes(normalized)) {
+          const error = new TypeError(`Unknown encoding: ${outputEncoding}`);
+          error.code = "ERR_UNKNOWN_ENCODING";
+          throw error;
+        }
+        if (this._cipherOutputEncoding !== undefined && normalized !== this._cipherOutputEncoding) {
+          const error = new TypeError(`The encoding cannot be changed from '${this._cipherOutputEncoding}'`);
+          error.code = "ERR_INVALID_ARG_VALUE";
+          throw error;
+        }
+        this._cipherOutputEncoding = normalized;
+      }
       this._cipherFinalized = true;
       const result = this._process(true);
       return outputEncoding === undefined || outputEncoding === "buffer"
@@ -976,6 +1017,7 @@ pub(crate) fn cipher_process(
     let cipher = match algorithm.to_ascii_lowercase().as_str() {
         "aes-128-cbc" => openssl::symm::Cipher::aes_128_cbc(),
         "aes-128-ecb" => openssl::symm::Cipher::aes_128_ecb(),
+        "aes-256-cbc" => openssl::symm::Cipher::aes_256_cbc(),
         "des-ede3-cbc" => openssl::symm::Cipher::des_ede3_cbc(),
         _ => {
         return Err(RootedError::host(format!("Unknown cipher: {algorithm}")));
