@@ -130,6 +130,10 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "env", env)?;
     let load_env_file = context.host_function(crate::host::shared_vm::operation("processLoadEnvFile"))?;
     install(context, process, "loadEnvFile", load_env_file)?;
+    let set_env = context.host_function(crate::host::shared_vm::operation("processSetEnv"))?;
+    install(context, process, "__quenchSetEnv", set_env)?;
+    let delete_env = context.host_function(crate::host::shared_vm::operation("processDeleteEnv"))?;
+    install(context, process, "__quenchDeleteEnv", delete_env)?;
     for (name, values) in [
         ("argv", argv.as_slice()),
         ("execArgv", exec_argv.as_slice()),
@@ -1366,6 +1370,47 @@ fn uncaught_capture_type_error(
         "ERR_INVALID_ARG_TYPE",
         true,
     )
+}
+
+pub(crate) fn set_env(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(key_root) = args.first().copied() else {
+        return Err(RootedError::host("process.env setter is missing a key"));
+    };
+    let Some(value_root) = args.get(1).copied() else {
+        return Err(RootedError::host("process.env setter is missing a value"));
+    };
+    let key = context.string_text(key_root)?.unwrap_or_default();
+    let value = context.string_text(value_root)?.unwrap_or_default();
+    if key.contains('=') || key.contains('\0') || value.contains('\0') {
+        let error = context.type_error_rooted("Invalid process.env key or value")?;
+        return Err(context.throw(error));
+    }
+    // SAFETY: the shared VM serializes host environment reads and writes for
+    // this process, matching Node's process.env behavior.
+    unsafe { std::env::set_var(key, value) };
+    Ok(context.undefined())
+}
+
+pub(crate) fn delete_env(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(key_root) = args.first().copied() else {
+        return Err(RootedError::host("process.env deleter is missing a key"));
+    };
+    let key = context.string_text(key_root)?.unwrap_or_default();
+    if key.contains('=') || key.contains('\0') {
+        let error = context.type_error_rooted("Invalid process.env key")?;
+        return Err(context.throw(error));
+    }
+    // SAFETY: see `set_env`; this is the matching process.env deletion path.
+    unsafe { std::env::remove_var(key) };
+    Ok(context.undefined())
 }
 
 pub(crate) fn load_env_file(
