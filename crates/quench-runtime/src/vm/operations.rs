@@ -1196,6 +1196,13 @@ impl<H: Host> Vm<H> {
                     right,
                     crate::profile::BinaryValuePath::Fallback,
                 );
+                // ToPrimitive of a string is the string itself and concatenation never
+                // collects, so string + string needs neither coercion nor extra roots.
+                if matches!(self.heap.get(left), Some(Cell::String(_)))
+                    && matches!(self.heap.get(right), Some(Cell::String(_)))
+                {
+                    return self.binary_slow(p, op, left, right);
+                }
                 return self.with_coerced_operands(
                     p,
                     OperandCoercion::PrimitiveDefault,
