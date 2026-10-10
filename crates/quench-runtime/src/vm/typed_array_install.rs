@@ -99,7 +99,7 @@ impl<H: Host> Vm<H> {
                 .builtin_prototypes
                 .insert((global, native), prototype);
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
-            let prototype_atom = self.intern_atom("prototype");
+            let prototype_atom = self.prototype_atom();
             self.set_property_attributes(
                 constructor,
                 PropertyKey::string(prototype_atom),
@@ -155,7 +155,7 @@ impl<H: Host> Vm<H> {
             .builtin_prototypes
             .insert((self.realm.globals, native), proto);
         self.set_named(program, constructor, "prototype", proto)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),

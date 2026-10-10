@@ -18,6 +18,7 @@
 //! run length even if a sibling call is not formed.
 
 use super::*;
+use super::dispatch_frame::PendingGeneralCall;
 use crate::bytecode::{
     FieldLayout, Function, ImmediateLayout, ImmediateRole, InstructionField, WideInstruction,
 };
@@ -313,13 +314,6 @@ fn safepoint_budget<H: Host>(vm: &Vm<H>) -> u32 {
     }
 }
 
-/// The PC of the record at `ip` in the active view.
-#[inline(always)]
-fn lane_pc<H: Host>(cx: *mut LaneContext<H>, ip: Ip) -> usize {
-    // SAFETY: `ip` is a record of the active view.
-    unsafe { ip.offset_from((*cx).base) as usize }
-}
-
 /// The value of a register or constant operand; other operand kinds take
 /// the general path.
 #[inline(always)]
@@ -404,24 +398,14 @@ lane_handler! {
         };
         let operator = i.imm();
         let vm = unsafe { vm(cx) };
-        let Some(fast) = vm.numeric_binary(operator, left, right) else {
+        let Some(value) = vm.numeric_binary(operator, left, right) else {
             return exit(ip);
-        };
-        let frame = unsafe { (*cx).frame };
-        let value = if vm.profile_regional_binary(frame, lane_pc(cx, ip), operator, left, right) {
-            fast
-        } else {
-            // SAFETY: the context's program outlives the lane run.
-            match vm.binary(unsafe { &*(*cx).code }, operator, left, right) {
-                Ok(value) => value,
-                Err(_) => unreachable!("numeric operands have a numeric result"),
-            }
         };
         if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
             let local = usize::from(i.a & crate::bytecode::REGISTER_MASK);
             // SAFETY: the view admits a numeric local target only below
             // Function.locals.
-            unsafe { vm.write_validated_local(frame, local, value) };
+            unsafe { vm.write_validated_local((*cx).frame, local, value) };
         } else {
             r.set(i.a, value);
         }
@@ -900,10 +884,14 @@ lane_handler! {
             return exit(ip);
         };
         vm.frames[caller].pc = call_pc + 1;
+        let caller_cursor =
+            vm.general_cursor(unsafe { (*cx).program }, code, vm.frames[caller].function, true);
         unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
             caller,
+            caller_cursor,
             call_pc: call_pc as u32,
             destination: i.a,
+            construct_this: None,
             stack_guard,
         });
         lane_enter_frame(cx, caller + 1, 0)
@@ -915,7 +903,11 @@ lane_handler! {
     /// entry frame belongs to the general loop.
     fn lane_return<>(cx, r, ip, i, view) {
         let pending = unsafe { &mut *(*cx).pending };
-        if !unsafe { (*cx).inline_calls } || pending.is_empty() {
+        // An in-loop `new` substitutes its receiver for a non-object result;
+        // the general path owns that [[Construct]] step.
+        if !unsafe { (*cx).inline_calls }
+            || pending.last().is_none_or(|call| call.construct_this.is_some())
+        {
             return exit(ip);
         }
         let value = r.get(i.a);

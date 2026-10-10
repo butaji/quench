@@ -228,25 +228,29 @@ impl<H: Host> Vm<H> {
         if !with_objects.is_empty() {
             env = self.heap.alloc(Cell::Environment {
                 parent: env,
-                program: None,
-                root_eval_scope: false,
-                binding_site_pc: None,
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
-                dynamic_bindings: Vec::new().into(),
-                with_objects: with_objects.into_boxed_slice(),
+                scope: Box::new(crate::heap::EnvironmentScope {
+                    program: None,
+                    root_eval_scope: false,
+                    binding_site_pc: None,
+                    dynamic_bindings: Vec::new().into(),
+                    with_objects: with_objects.into_boxed_slice(),
+                }),
             });
         }
         if function_plan.is_arrow {
             env = self.heap.alloc(Cell::Environment {
                 parent: env,
-                program: None,
-                root_eval_scope: false,
-                binding_site_pc: None,
                 function: u32::MAX,
                 slots: Vec::<Value>::new().into_boxed_slice().into(),
-                dynamic_bindings: Vec::new().into(),
-                with_objects: Box::default(),
+                scope: Box::new(crate::heap::EnvironmentScope {
+                    program: None,
+                    root_eval_scope: false,
+                    binding_site_pc: None,
+                    dynamic_bindings: Vec::new().into(),
+                    with_objects: Box::default(),
+                }),
             });
         }
         let has_instance_prototype = function_plan.constructible || function_plan.is_generator;
@@ -254,7 +258,7 @@ impl<H: Host> Vm<H> {
             let generator_prototype_parent = if function_plan.is_async && function_plan.is_generator
             {
                 let constructor_atom = self.intern_atom("AsyncGeneratorFunction");
-                let prototype_atom = self.intern_atom("prototype");
+                let prototype_atom = self.prototype_atom();
                 self.own_property(realm, constructor_atom)
                     .and_then(|constructor| self.own_property(constructor, prototype_atom))
                     .and_then(|function_prototype| {
@@ -264,7 +268,7 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(self.async_generator_proto)
             } else if function_plan.is_generator {
                 let constructor_atom = self.intern_atom("GeneratorFunction");
-                let prototype_atom = self.intern_atom("prototype");
+                let prototype_atom = self.prototype_atom();
                 self.own_property(realm, constructor_atom)
                     .and_then(|constructor| self.own_property(constructor, prototype_atom))
                     .and_then(|function_prototype| {
@@ -282,7 +286,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        let function_prototype_atom = self.intern_atom("prototype");
+        let function_prototype_atom = self.prototype_atom();
         let intrinsic = match (function_plan.is_async, function_plan.is_generator) {
             (true, true) => Some(Native::AsyncGeneratorFunction),
             (false, true) => Some(Native::GeneratorFunction),
@@ -370,7 +374,7 @@ impl<H: Host> Vm<H> {
             },
         );
         if let Some(prototype) = prototype
-            && let Some(atom) = self.lookup_atom("prototype")
+            && let Some(atom) = self.known_prototype_atom()
         {
             self.set_property(function, atom, prototype)?;
             self.set_property_attributes(
@@ -499,7 +503,7 @@ impl<H: Host> Vm<H> {
                         return Err(JsError("generator function is not a constructor".into()));
                     }
                     if vm
-                        .lookup_atom("prototype")
+                        .known_prototype_atom()
                         .is_some_and(|atom| vm.own_property(callee, atom).is_none())
                     {
                         return Err(JsError("arrow function is not a constructor".into()));
@@ -603,13 +607,92 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    /// A function's own data `prototype`, read without the generic [[Get]]. Functions are
+    /// ordinary objects for this key, so an own data slot is exactly the [[Get]] result; any
+    /// other receiver or an accessor takes the generic path.
+    /// `new callee(...)` that the general loop may run as an in-loop frame push: an ordinary
+    /// (non-class, non-derived, field-free) user constructor of the executing program and realm,
+    /// whose own data `prototype` is an object. Returns the callee's code and environment
+    /// together with the freshly allocated receiver; any other case keeps `construct_value`.
+    pub(super) fn inline_construct_target(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        callee: Value,
+    ) -> Option<(u32, Value, Value)> {
+        let caller = &self.frames[frame];
+        if frame + 1 != self.frames.len()
+            || caller.function == super::ROOT_FUNCTION_ID
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || self.construct_target.is_some()
+            || self.direct_eval
+            || self.parameter_eval
+            || p.functions.get(caller.function as usize)?.dispatch != DispatchClass::General
+        {
+            return None;
+        }
+        let Some(Cell::Function {
+            kind: FunctionKind::User(program_id, id),
+            env,
+            realm,
+            ..
+        }) = self.heap.get(callee)
+        else {
+            return None;
+        };
+        let (program_id, id, env) = (*program_id, *id, *env);
+        if *realm != self.realm.globals
+            || program_id != caller.program
+            || program_id != self.active_program
+            || id == super::ROOT_FUNCTION_ID
+        {
+            return None;
+        }
+        let function = p.functions.get(id as usize)?;
+        if function.dispatch != DispatchClass::General
+            || !function.constructible
+            || function.is_async
+            || function.is_generator
+            || function.is_class_constructor
+            || function.derived_constructor
+            || function.class_field_initializer
+            || function.parameter_eval_arguments_error
+            || function.instance_initializer.is_some()
+        {
+            return None;
+        }
+        let prototype_atom = self.prototype_atom();
+        let prototype = self.own_function_prototype_data(callee, prototype_atom)?;
+        self.object_data(prototype)?;
+        Some((
+            id,
+            env,
+            self.heap.alloc(Cell::Object(Self::empty_object(prototype))),
+        ))
+    }
+
+    pub(super) fn own_function_prototype_data(&self, constructor: Value, prototype_atom: Atom) -> Option<Value> {
+        if !matches!(self.heap.get(constructor), Some(Cell::Function { .. })) {
+            return None;
+        }
+        let attributes =
+            self.property_attributes(constructor, PropertyKey::string(prototype_atom))?;
+        if attributes.accessor {
+            return None;
+        }
+        self.own_property(constructor, prototype_atom)
+    }
+
     fn prototype_from_constructor(
         &mut self,
         p: &ResidualProgram,
         constructor: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
-        let prototype = self.get_property(p, constructor, prototype_atom)?;
+        let prototype_atom = self.prototype_atom();
+        let prototype = match self.own_function_prototype_data(constructor, prototype_atom) {
+            Some(prototype) => prototype,
+            None => self.get_property(p, constructor, prototype_atom)?,
+        };
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
@@ -628,7 +711,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
@@ -651,7 +734,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         new_target: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
@@ -725,7 +808,7 @@ impl<H: Host> Vm<H> {
         new_target: Value,
         native: Native,
     ) -> Result<Option<Value>, JsError> {
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if prototype.is_null() || self.object_data(prototype).is_none() {
             let Some(intrinsic) = TYPED_ARRAY_INSTALLS
@@ -886,7 +969,7 @@ impl<H: Host> Vm<H> {
                     ProxyKind::Object
                 };
                 Ok(self.heap.alloc(Cell::Proxy {
-                    object: Self::empty_object(self.object_proto),
+                    object: Box::new(Self::empty_object(self.object_proto)),
                     kind,
                     target,
                     handler,

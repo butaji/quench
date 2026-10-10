@@ -62,7 +62,7 @@ pub(super) fn to_time_with_options<H: Host>(
         ..
     }) = vm.heap.get(value)
     {
-        let (epoch_nanoseconds, time_zone) = (*epoch_nanoseconds, time_zone.clone());
+        let (epoch_nanoseconds, time_zone) = (**epoch_nanoseconds, time_zone.to_string());
         validate_overflow_options_type(vm, p, options)?;
         let local =
             super::temporal_zoned_date_time::zoned_date_time_fields(epoch_nanoseconds, &time_zone)

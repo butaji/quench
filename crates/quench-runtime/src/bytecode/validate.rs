@@ -413,30 +413,6 @@ fn immediate_domains_in_bounds(
     }
 }
 
-fn object_site_instruction_valid(
-    instruction: super::WideInstruction,
-    object_sites: &[super::ObjectSite],
-    registers: u16,
-) -> bool {
-    match instruction.op() {
-        super::Op::MakeObject2 => object_sites
-            .get(instruction.object_site_index())
-            .is_some_and(|site| site.atoms.len() == super::INLINE_OBJECT_SITE_ATOMS),
-        super::Op::MakeObjectLiteral => {
-            let Some(site) = object_sites.get(instruction.object_site_index()) else {
-                return false;
-            };
-            let window = instruction.register_window();
-            let mut atoms = FxHashSet::default();
-            usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS
-                && site.atoms.len() == usize::from(window.count)
-                && site.atoms.iter().all(|atom| atoms.insert(*atom))
-                && register_window_in_bounds(window.base, u32::from(window.count), registers)
-        }
-        _ => true,
-    }
-}
-
 fn packed_layout_domains_in_bounds(
     instruction: super::WideInstruction,
     bounds: ValidationBounds,
@@ -472,6 +448,30 @@ fn packed_layout_domains_in_bounds(
                 && register_in_bounds(second, bounds.registers, 0)
         }
         ImmediateLayout::Scalar => true,
+    }
+}
+
+fn object_site_instruction_valid(
+    instruction: super::WideInstruction,
+    object_sites: &[super::ObjectSite],
+    registers: u16,
+) -> bool {
+    match instruction.op() {
+        Op::MakeObject2 => object_sites
+            .get(instruction.object_site_index())
+            .is_some_and(|site| site.atoms.len() == super::INLINE_OBJECT_SITE_ATOMS),
+        Op::MakeObjectLiteral => {
+            let Some(site) = object_sites.get(instruction.object_site_index()) else {
+                return false;
+            };
+            let window = instruction.register_window();
+            let mut atoms = FxHashSet::default();
+            usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS
+                && site.atoms.len() == usize::from(window.count)
+                && site.atoms.iter().all(|atom| atoms.insert(*atom))
+                && register_window_in_bounds(window.base, u32::from(window.count), registers)
+        }
+        _ => true,
     }
 }
 
@@ -556,42 +556,18 @@ impl ResidualProgram {
                     "function {index} has an invalid promoted-local layout"
                 ));
             }
-            let mut tdz_slots = vec![false; usize::from(function.locals)];
-            for instruction in &function.code {
-                if instruction.op() == super::Op::InitializeTdz
-                    && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
-                {
-                    *slot = true;
-                }
-            }
-            for instruction in &function.wide {
-                if instruction.op() == super::Op::InitializeTdz
-                    && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
-                {
-                    *slot = true;
-                }
-            }
-            let plain_local_context_safe = function.plain_local_context_is_safe();
             // Wasm locals are frame slots by construction: no environment
             // capture, TDZ, or name binding can observe them.
-            let wasm = self.kind == super::ProgramKind::Wasm;
-            let plain_local_slots: Vec<_> = (0..usize::from(function.locals))
-                .map(|slot| {
-                    wasm || function
-                        .local_atoms
-                        .get(slot)
-                        .and_then(|atom| usize::try_from(*atom).ok())
+            let plain_local_slots = if self.kind == super::ProgramKind::Wasm {
+                vec![true; usize::from(function.locals)]
+            } else {
+                function.plain_local_slots(|atom| {
+                    usize::try_from(atom)
+                        .ok()
                         .filter(|atom| *atom < self.atoms.len())
-                        .is_some_and(|atom| {
-                            plain_local_context_safe
-                                && function.plain_local_slot_is_safe(
-                                    slot,
-                                    &self.atoms[atom],
-                                    tdz_slots[slot],
-                                )
-                        })
+                        .map(|atom| &self.atoms[atom])
                 })
-                .collect();
+            };
             if let Some(initializer) = function.instance_initializer {
                 let valid = self
                     .functions
@@ -1199,7 +1175,7 @@ mod tests {
             local_atoms: vec![],
             environment_atoms: vec![],
             selective_capture_slots: None,
-            local_registers: Vec::new(),
+            local_registers: vec![],
             inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
@@ -1215,6 +1191,8 @@ mod tests {
             wide: vec![],
             registers,
             dispatch: DispatchClass::General,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
             handlers: vec![],
             register_root_offset: root,
             parameter_registers: None,

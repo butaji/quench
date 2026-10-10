@@ -658,6 +658,8 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             wide,
             registers,
             dispatch,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
             handlers,
             register_root_offset,
             parameter_registers,

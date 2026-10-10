@@ -39,7 +39,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "PlainDateTime")?;
         let prototype = self.object();
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -189,7 +189,7 @@ impl<H: Host> Vm<H> {
         super::temporal_plain_date_time_conversion::validate_bounds(
             self, p, date.year, date.month, date.day, time,
         )?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.is_object_like(prototype) {
             prototype
@@ -199,8 +199,8 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::TemporalPlainDateTime {
             object: Box::new(Self::empty_object(prototype)),
             date: (date.year, date.month, date.day),
-            time: time.map(|value| value as u32),
-            calendar,
+            time: Box::new(time.map(|value| value as u32)),
+            calendar: Box::new(calendar),
         }))
     }
 
@@ -797,7 +797,7 @@ impl<H: Host> Vm<H> {
                     day: date.2,
                 },
                 time.map(|value| value as u32),
-                calendar.clone(),
+                calendar.to_string(),
             )),
             _ => Err(self.type_error(
                 p,
@@ -1164,7 +1164,7 @@ impl<H: Host> Vm<H> {
                 | Cell::TemporalPlainMonthDay { calendar, .. }
                 | Cell::TemporalPlainYearMonth { calendar, .. }
                 | Cell::TemporalZonedDateTime { calendar, .. },
-            ) => calendar.clone(),
+            ) => calendar.to_string(),
             _ => return Err(self.type_error(p, "Invalid calendar".into())),
         };
         let constructor = self.temporal_plain_date_time_constructor(p)?;

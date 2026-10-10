@@ -1271,7 +1271,7 @@ impl<H: Host> Vm<H> {
             .insert((global, Native::Promise), prototype);
         self.set_builtin_function_name(promise, "Promise")?;
         self.set_builtin_value_named(promise, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             promise,
             property_key::PropertyKey::string(prototype_atom),
@@ -2106,7 +2106,7 @@ impl<H: Host> Vm<H> {
                 let length = bytes.len();
                 let kind = crate::heap::TypedArrayKind::Uint8;
                 let buffer = self.heap.alloc(Cell::ArrayBuffer {
-                    object: Self::empty_object(self.array_buffer_proto),
+                    object: Box::new(Self::empty_object(self.array_buffer_proto)),
                     bytes: std::rc::Rc::new(bytes),
                     shared: false,
                     detached: false,
@@ -2116,7 +2116,7 @@ impl<H: Host> Vm<H> {
                 });
                 let value = self.heap.alloc(Cell::TypedArray {
                     kind,
-                    object: Self::empty_object(self.typed_array_proto(kind)),
+                    object: Box::new(Self::empty_object(self.typed_array_proto(kind))),
                     buffer,
                     offset: 0,
                     length,
@@ -2156,7 +2156,7 @@ impl<H: Host> Vm<H> {
         if let Some(value) = self.realm.promise.module_sources.get(&identity) {
             return Ok(*value);
         }
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let constructor = self.native_value(Native::AbstractModuleSource);
         let prototype = self
             .own_property(constructor, prototype_atom)
@@ -2626,13 +2626,15 @@ impl<H: Host> Vm<H> {
         }
         let environment = self.heap.alloc(Cell::Environment {
             parent: Value::NULL,
-            program: Some(ProgramId::MAIN.raw()),
-            root_eval_scope: false,
-            binding_site_pc: None,
             function: super::ROOT_FUNCTION_ID,
             slots: slots.into_boxed_slice().into(),
-            dynamic_bindings: Vec::new().into(),
-            with_objects: Box::default(),
+            scope: Box::new(crate::heap::EnvironmentScope {
+                program: Some(ProgramId::MAIN.raw()),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: Vec::new().into(),
+                with_objects: Box::default(),
+            }),
         });
         self.programs
             .set_module_environment(ProgramId::MAIN, environment);

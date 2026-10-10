@@ -314,14 +314,14 @@ impl<H: Host> Vm<H> {
                     bytes,
                     memory.ty.shared,
                 )),
-                ty: memory.ty,
+                ty: Box::new(memory.ty),
             }));
         }
         for segment in module.data.iter() {
             // All segments are available before initialization effects. A later
             // trap can leave functions reachable through an imported table.
             values.push(self.heap.alloc(Cell::ArrayBuffer {
-                object: Self::empty_object(Value::NULL),
+                object: Box::new(Self::empty_object(Value::NULL)),
                 bytes: segment.bytes.clone(),
                 shared: false,
                 detached: false,
@@ -345,9 +345,9 @@ impl<H: Host> Vm<H> {
             elements.resize(length, Value::NULL);
             values.push(self.heap.alloc(Cell::WasmTable {
                 table64: table.ty.table64,
-                elements,
+                elements: Box::new(elements),
                 element_type: table.ty.element_type,
-                declarations: module.signatures.declarations.clone(),
+                declarations: Box::new(module.signatures.declarations.clone()),
                 maximum: table.ty.maximum,
             }));
         }
@@ -364,13 +364,15 @@ impl<H: Host> Vm<H> {
         values.extend(functions);
         let environment = self.heap.alloc(Cell::Environment {
             parent: Value::NULL,
-            program: Some(id.raw()),
-            root_eval_scope: false,
-            binding_site_pc: None,
             function: 0,
             slots: values.into_boxed_slice().into(),
-            dynamic_bindings: crate::heap::EnvironmentBindings::Owned(vec![]),
-            with_objects: Box::default(),
+            scope: Box::new(crate::heap::EnvironmentScope {
+                program: Some(id.raw()),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: crate::heap::EnvironmentBindings::Owned(vec![]),
+                with_objects: Box::default(),
+            }),
         });
         let root = self.root(environment);
         let previous = std::mem::replace(&mut self.active_program, id);
@@ -954,7 +956,7 @@ impl<H: Host> Vm<H> {
         memory: Value,
     ) -> Result<wasmparser::MemoryType, JsError> {
         match self.heap.get(memory) {
-            Some(Cell::WasmMemory { ty, .. }) => Ok(*ty),
+            Some(Cell::WasmMemory { ty, .. }) => Ok(**ty),
             _ => Err(JsError::validation("invalid Wasm memory binding".into())),
         }
     }
@@ -1735,13 +1737,7 @@ mod tests {
             assert!(vm.heap.get(owner_env).is_none());
             assert!(matches!(
                 vm.heap.get(memory),
-                Some(Cell::WasmMemory {
-                    ty: wasmparser::MemoryType {
-                        maximum: Some(3),
-                        ..
-                    },
-                    ..
-                })
+                Some(Cell::WasmMemory { ty, .. }) if ty.maximum == Some(3)
             ));
             vm.wasm_memory_store(
                 memory,

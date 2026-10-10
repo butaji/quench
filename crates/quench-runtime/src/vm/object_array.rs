@@ -2,6 +2,10 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
 
+/// Cost of probing one array index (format, atom lookup, descriptor lookup) relative to examining
+/// one descriptor-table entry.
+const INDEX_PROBE_COST_RATIO: usize = 8;
+
 // Three decimal digits per byte safely cover the largest `usize` value.
 const ARRAY_INDEX_TEXT_CAPACITY: usize = std::mem::size_of::<usize>() * 3;
 
@@ -84,24 +88,11 @@ impl<H: Host> Vm<H> {
                 return Ok(false);
             }
             if next_len < current_len {
-                let blocked_index = self
-                    .descriptors
+                let tail = self.array_descriptors_from(target, next_len, current_len);
+                let blocked_index = tail
                     .iter()
-                    .filter_map(|((object, key), attributes)| {
-                        (*object == target
-                            && matches!(key, PropertyKey::String(atom)
-                            if *atom != self.length_atom
-                                && self.atom_name(*atom).parse::<usize>().is_ok_and(|index| {
-                                    index >= next_len && !attributes.configurable
-                                })))
-                        .then(|| match key {
-                            PropertyKey::String(atom) => {
-                                self.atom_name(*atom).parse::<usize>().ok()
-                            }
-                            PropertyKey::Symbol(_) | PropertyKey::Private(_) => None,
-                        })
-                        .flatten()
-                    })
+                    .filter(|(_, _, attributes)| !attributes.configurable)
+                    .map(|(_, index, _)| *index)
                     .max();
                 if let Some(blocked_index) = blocked_index {
                     let partial_len = blocked_index + 1;
@@ -109,23 +100,15 @@ impl<H: Host> Vm<H> {
                         Rc::make_mut(elements).truncate(partial_len);
                     }
                     self.heap.sparse_set_length(target, partial_len);
-                    let removed = self
-                    .descriptors
-                    .keys()
-                    .filter_map(|(object, key)| {
-                        (*object == target
-                            && matches!(key, PropertyKey::String(atom)
-                                if *atom != self.length_atom
-                                    && self.atom_name(*atom).parse::<usize>().is_ok_and(|index| index > blocked_index)))
-                        .then_some((*object, *key))
-                    })
-                    .collect::<Vec<_>>();
-                    for key in removed {
-                        self.descriptors.remove(&key);
+                    for (atom, index, _) in &tail {
+                        if *index > blocked_index {
+                            self.descriptors.remove(&(target, PropertyKey::string(*atom)));
+                        }
                     }
                     if !writable {
-                        self.descriptors.insert(
-                            (target, PropertyKey::string(self.length_atom)),
+                        self.insert_descriptor(
+                            target,
+                            PropertyKey::string(self.length_atom),
                             PropertyAttributes {
                                 writable: false,
                                 ..ARRAY_LENGTH_ATTRIBUTES
@@ -137,24 +120,14 @@ impl<H: Host> Vm<H> {
                 if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target) {
                     Rc::make_mut(elements).truncate(next_len);
                 }
-                let removed = self
-                .descriptors
-                .keys()
-                .filter_map(|(object, key)| {
-                    (*object == target
-                        && matches!(key, PropertyKey::String(atom)
-                            if *atom != self.length_atom
-                                && self.atom_name(*atom).parse::<usize>().is_ok_and(|index| index >= next_len)))
-                    .then_some((*object, *key))
-                })
-                .collect::<Vec<_>>();
-                for key in removed {
-                    self.descriptors.remove(&key);
+                for (atom, _, _) in &tail {
+                    self.descriptors.remove(&(target, PropertyKey::string(*atom)));
                 }
             }
             self.heap.sparse_set_length(target, next_len);
-            self.descriptors.insert(
-                (target, PropertyKey::string(self.length_atom)),
+            self.insert_descriptor(
+                target,
+                PropertyKey::string(self.length_atom),
                 PropertyAttributes {
                     writable,
                     ..ARRAY_LENGTH_ATTRIBUTES
@@ -174,6 +147,38 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<bool, JsError> {
         self.define_array_length(p, target, PropertyDescriptorRecord::value(value))
+    }
+
+    /// Descriptor entries of `target` at indices from `from` up to `length`. A short tail is probed
+    /// index by index; a long one scans the VM-wide descriptor table instead, which costs about
+    /// `INDEX_PROBE_COST_RATIO` times less per examined entry.
+    fn array_descriptors_from(
+        &self,
+        target: Value,
+        from: usize,
+        length: usize,
+    ) -> Vec<(Atom, usize, PropertyAttributes)> {
+        if length.saturating_sub(from) <= self.descriptors.len() / INDEX_PROBE_COST_RATIO {
+            return (from..length)
+                .filter_map(|index| {
+                    let (atom, attributes) = self.array_descriptor_entry(target, index)?;
+                    Some((atom, index, attributes))
+                })
+                .collect();
+        }
+        self.descriptors
+            .iter()
+            .filter_map(|((object, key), attributes)| {
+                let PropertyKey::String(atom) = *key else {
+                    return None;
+                };
+                if *object != target || atom == self.length_atom {
+                    return None;
+                }
+                let index = super::object_static::array_index(self.atom_name(atom))? as usize;
+                (index >= from).then_some((atom, index, *attributes))
+            })
+            .collect()
     }
 
     pub(super) fn array_present_indices(&self, target: Value) -> Vec<usize> {
@@ -347,22 +352,20 @@ impl<H: Host> Vm<H> {
             return Ok(false);
         }
         let descriptor_value = descriptor.value;
-        let descriptor_accessor = descriptor.has_accessor_fields();
-        if descriptor_accessor {
+        // A generic descriptor over an accessor keeps it an accessor, and accessors are holes.
+        if attributes.accessor {
             self.unmap_argument_index(target, index);
             if !self.set_array_element(target, index, Value::DELETED) {
                 return Ok(false);
             }
-            self.descriptors
-                .insert((target, PropertyKey::string(atom)), attributes);
+            self.insert_descriptor(target, PropertyKey::string(atom), attributes);
             return Ok(true);
         }
         let next = descriptor_value.or(existing).unwrap_or(Value::UNDEFINED);
         if !self.set_array_element(target, index, next) {
             return Ok(false);
         }
-        self.descriptors
-            .insert((target, PropertyKey::string(atom)), attributes);
+        self.insert_descriptor(target, PropertyKey::string(atom), attributes);
         if !attributes.writable {
             self.unmap_argument_index(target, index);
         }
