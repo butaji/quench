@@ -16,6 +16,7 @@ pub(crate) mod console_source;
 pub(crate) mod crypto_sha1;
 pub(crate) mod crypto_shared_vm;
 pub(crate) mod diagnostics_channel_shared_vm;
+pub(crate) mod domain_shared_vm;
 pub(crate) mod dns_shared_vm;
 pub(crate) mod events_shared_vm;
 pub(crate) mod fetch_shared_vm;
