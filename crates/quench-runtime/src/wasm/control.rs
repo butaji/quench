@@ -204,16 +204,27 @@ impl Lowering<'_> {
                     for (ordinal, target) in targets.targets().enumerate() {
                         let target = target
                             .map_err(|e| Diagnostic::unsupported(self.name, e.to_string()))?;
-                        let ordinal = u32::try_from(ordinal)
-                            .map_err(|_| self.control_error("Wasm branch table too large"))?;
-                        self.emit(
-                            I32BinaryOperator::Equal.immediate_op(),
-                            condition,
-                            index,
-                            0,
-                            ordinal,
-                        )?;
-                        self.branch_if(target, Condition::Value(condition))?;
+                        let case = match i16::try_from(ordinal) {
+                            Ok(ordinal) => Condition::ConstantComparison(
+                                I32BinaryOperator::Equal,
+                                index,
+                                ordinal,
+                            ),
+                            Err(_) => {
+                                let ordinal = u32::try_from(ordinal).map_err(|_| {
+                                    self.control_error("Wasm branch table too large")
+                                })?;
+                                self.emit(
+                                    I32BinaryOperator::Equal.immediate_op(),
+                                    condition,
+                                    index,
+                                    0,
+                                    ordinal,
+                                )?;
+                                Condition::Value(condition)
+                            }
+                        };
+                        self.branch_if(target, case)?;
                     }
                     self.branch(targets.default())?;
                     self.make_dead();
@@ -319,13 +330,13 @@ impl Lowering<'_> {
 
     fn exception_slot(&mut self) -> Result<u16, Diagnostic> {
         let slot = self
-            .locals
+            .temporary_base
             .checked_add(self.temporary_locals)
             .ok_or_else(|| self.control_error("too many Wasm exception locals"))?;
         self.temporary_locals = self
             .temporary_locals
             .checked_add(1)
-            .filter(|temporary| self.locals.checked_add(*temporary).is_some())
+            .filter(|temporary| self.temporary_base.checked_add(*temporary).is_some())
             .ok_or_else(|| self.control_error("too many Wasm exception locals"))?;
         Ok(slot)
     }
@@ -666,7 +677,7 @@ impl Lowering<'_> {
         // their operand registers. Hidden frame locals preserve those inputs.
         let saved_inputs =
             if matches!(kind, Kind::If(_)) && params != 0 && self.path == Reachability::Live {
-                let first = self.locals + self.temporary_locals;
+                let first = self.temporary_base + self.temporary_locals;
                 first
                     .checked_add(params)
                     .ok_or_else(|| self.control_error("too many Wasm locals"))?;

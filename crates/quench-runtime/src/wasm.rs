@@ -726,6 +726,7 @@ impl Engine {
             let mut lowering = Lowering {
                 name,
                 locals: local_count,
+                temporary_base: if local_base.is_some() { 0 } else { local_count },
                 temporary_locals: 0,
                 memory_registers,
                 global_registers,
@@ -750,18 +751,6 @@ impl Engine {
                 controls: vec![Control::function(reserved, results)],
                 path: Reachability::Live,
             };
-            // Register locals receive their arguments from the parameter slots.
-            if let Some(base) = local_base {
-                for parameter in 0..params {
-                    lowering.emit(
-                        Op::LoadLocalPlain,
-                        base + parameter,
-                        0,
-                        0,
-                        u32::from(parameter),
-                    )?;
-                }
-            }
             // Defaultable locals get residual defaults; others remain uninitialized.
             // The frontend proves assignment before non-defaultable local reads.
             if let Some(base) = local_base {
@@ -787,13 +776,7 @@ impl Engine {
                 .filter_map(|(slot, register)| Some((slot, register?)))
                 .collect();
             for (slot, register) in bindings {
-                lowering.emit(
-                    Op::LoadCapture,
-                    register,
-                    0,
-                    0,
-                    crate::bytecode::ImmediateLayout::capture_immediate(0, slot as u16),
-                )?;
+                lowering.emit(Op::WasmInstanceBinding, register, 0, 0, slot as u32)?;
             }
             for operator in operators {
                 if lowering.controls.is_empty() {
@@ -827,7 +810,7 @@ impl Engine {
                 arguments_slot: None,
                 simple_parameters: true,
                 strict: true,
-                locals: lowering.locals + lowering.temporary_locals,
+                locals: lowering.temporary_base + lowering.temporary_locals,
                 local_atoms: vec![],
                 environment_atoms: vec![],
                 selective_capture_slots: None,
@@ -848,6 +831,7 @@ impl Engine {
                 dispatch: DispatchClass::General,
                 handlers: lowering.handlers,
                 register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
+                parameter_registers: lowering.local_base,
             };
             functions.push(function);
             constants = lowering.constants;
@@ -1308,6 +1292,9 @@ struct Lowering<'a> {
     handlers: Vec<crate::bytecode::Handler>,
     name: &'a str,
     locals: u16,
+    // Frame slots for exception payloads and saved block inputs start here:
+    // after the Wasm locals, or at zero when those live in registers.
+    temporary_base: u16,
     temporary_locals: u16,
     // Prologue-loaded binding register per memory used by direct accesses.
     memory_registers: Vec<Option<Register>>,

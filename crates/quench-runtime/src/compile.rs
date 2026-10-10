@@ -2707,6 +2707,7 @@ impl<'a> Compiler<'a> {
             dispatch: DispatchClass::General,
             handlers: function.handlers,
             register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
+            parameter_registers: None,
         };
         self.functions[id as usize] = Some(result);
         id
