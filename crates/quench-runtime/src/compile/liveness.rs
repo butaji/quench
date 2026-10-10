@@ -319,6 +319,7 @@ mod tests {
             registers: 2,
             dispatch: crate::bytecode::DispatchClass::General,
             decoded: Default::default(),
+            plain_locals: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
         };
