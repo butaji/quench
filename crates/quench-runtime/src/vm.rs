@@ -11,8 +11,8 @@ use crate::bytecode::{
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    CallSiteRecord, Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind,
-    Native, Object, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
+    CallSiteRecord, Cell, FunctionKind, GcTraceKind, Heap, IteratorConsumer, IteratorHelper,
+    IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
