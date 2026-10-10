@@ -119,7 +119,11 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
     digest(encoding) {
       const state = states.get(this);
       if (state.lifecycle !== "open") {
-        if (state.streamFinalized) return state.streamDigest;
+        if (state.streamFinalized) {
+          return encoding === undefined || encoding === "buffer"
+            ? state.streamDigest
+            : state.streamDigest.toString(String(encoding));
+        }
         throw finalized();
       }
       const outputEncoding = encoding === undefined || encoding === "buffer"
