@@ -78,6 +78,62 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
 }
 
 #[test]
+fn shape_roots_keep_symbols_and_active_accessors_alive() {
+    use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
+    use crate::heap::Cell;
+
+    let program = Engine::specialize("", "shape-roots.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    let symbol = vm.heap.alloc(Cell::Symbol(None));
+    let symbol_weak = vm.heap.weak_handle(symbol).unwrap();
+    let symbol_shape = vm.transition_property_shape(0, PropertyKey::symbol(symbol));
+    let first =
+        vm.heap
+            .alloc_object_with_properties(Value::NULL, symbol_shape, &[Value::UNDEFINED]);
+    let second =
+        vm.heap
+            .alloc_object_with_properties(Value::NULL, symbol_shape, &[Value::UNDEFINED]);
+    let first_root = vm.heap.root(first);
+    let second_root = vm.heap.root(second);
+
+    vm.collect_now(&program);
+    assert_eq!(vm.heap.weak_value(symbol_weak), Some(symbol));
+    assert!(vm.heap.release_root(first_root));
+    assert!(vm.heap.release_root(second_root));
+    vm.collect_now(&program);
+    assert!(vm.heap.weak_value(symbol_weak).is_none());
+
+    let atom = vm.intern_atom("field");
+    let data_shape = vm.transition_shape(0, atom);
+    let owner = vm
+        .heap
+        .alloc_object_with_properties(Value::NULL, data_shape, &[Value::UNDEFINED]);
+    let getter = vm.heap.alloc(Cell::String("getter".into()));
+    let getter_weak = vm.heap.weak_handle(getter).unwrap();
+    vm.set_property_attributes(
+        owner,
+        PropertyKey::string(atom),
+        super::PropertyAttributes {
+            accessor: true,
+            getter: Some(getter),
+            ..DEFAULT_PROPERTY_ATTRIBUTES
+        },
+    );
+    let owner_root = vm.heap.root(owner);
+    vm.collect_now(&program);
+    assert_eq!(vm.heap.weak_value(getter_weak), Some(getter));
+
+    vm.set_property_attributes(
+        owner,
+        PropertyKey::string(atom),
+        DEFAULT_PROPERTY_ATTRIBUTES,
+    );
+    vm.collect_now(&program);
+    assert!(vm.heap.weak_value(getter_weak).is_none());
+    assert!(vm.heap.release_root(owner_root));
+}
+
+#[test]
 fn equivalent_data_descriptor_transitions_share_one_shape() {
     use super::property_key::PropertyKey;
 

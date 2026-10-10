@@ -3,6 +3,7 @@ use super::{
     FieldBase, FieldLayout, ImmediateLayout, InstructionField, Operand, OperandKind, REGISTER_MASK,
     Register, ResidualProgram,
 };
+use rustc_hash::FxHashSet;
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
     register & !(REGISTER_MASK | flags) == 0 && register & REGISTER_MASK < limit
@@ -295,6 +296,30 @@ fn immediate_domains_in_bounds(
         | super::ImmediateRole::TemplateSiteIndex
         | super::ImmediateRole::Unused
         | super::ImmediateRole::WideInstructionIndex => true,
+    }
+}
+
+fn object_site_instruction_valid(
+    instruction: super::WideInstruction,
+    object_sites: &[super::ObjectSite],
+    registers: u16,
+) -> bool {
+    match instruction.op() {
+        super::Op::MakeObject2 => object_sites
+            .get(instruction.object_site_index())
+            .is_some_and(|site| site.atoms.len() == super::INLINE_OBJECT_SITE_ATOMS),
+        super::Op::MakeObjectLiteral => {
+            let Some(site) = object_sites.get(instruction.object_site_index()) else {
+                return false;
+            };
+            let window = instruction.register_window();
+            let mut atoms = FxHashSet::default();
+            usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS
+                && site.atoms.len() == usize::from(window.count)
+                && site.atoms.iter().all(|atom| atoms.insert(*atom))
+                && register_window_in_bounds(window.base, u32::from(window.count), registers)
+        }
+        _ => true,
     }
 }
 
@@ -637,6 +662,11 @@ impl ResidualProgram {
                 if !field_domains_in_bounds(instruction, bounds)
                     || !immediate_domains_in_bounds(instruction, bounds)
                     || !packed_layout_domains_in_bounds(instruction, bounds)
+                    || !object_site_instruction_valid(
+                        instruction,
+                        &self.object_sites,
+                        function.registers,
+                    )
                 {
                     return Err(format!(
                         "function {index} {:?} has an out-of-domain operand",
