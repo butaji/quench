@@ -661,6 +661,20 @@ impl Profile {
             .count();
         let binary_dependencies = dependencies::binary_pairs(&self.pair_sites, program_id, program);
         regional::report(self, program_id, program);
+        eprintln!(
+            "{{\"kind\":\"quench-gc-breakdown\",\"collections\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"allocations_between_collections\":{{\"total\":{},\"min\":{},\"max\":{}}},\"survivors\":{{\"total\":{},\"min\":{},\"max\":{}}},\"sweep_slots\":{}}}",
+            heap_stats.1,
+            gc.mark_nanos,
+            gc.sweep_nanos,
+            gc.mark_clear_nanos,
+            gc.allocations_between_collections_total,
+            gc.allocations_between_collections_min,
+            gc.allocations_between_collections_max,
+            gc.survivors_total,
+            gc.survivors_min,
+            gc.survivors_max,
+            gc.sweep_slots,
+        );
         eprint!(
             "{{\"kind\":\"quench-profile\",\"allocations\":{},\"allocation_kinds\":{{\"names\":[\"object\",\"array\",\"map\",\"set\",\"iterator\",\"weak_map\",\"weak_set\",\"weak_ref\",\"function\",\"environment\",\"string\",\"bigint\",\"symbol\",\"date\",\"error\"],\"size_buckets\":[0,7,15,31,63,127,255,null],\"counts\":{:?},\"payload_bytes\":{:?},\"bucket_counts\":{:?}}},\"collections\":{},\"peak_live\":{},\"peak_survivors\":{},\"max_gc_threshold\":{},\"gc\":{{\"roots\":{},\"work_items\":{},\"max_worklist\":{},\"marked\":{},\"freed\":{},\"sweep_slots\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"marked_kinds\":{:?}}},\"shape_transitions\":{{\"hits\":{},\"misses\":{}}},\"dictionary_transitions\":{{\"names\":[\"property_count\",\"deletion_pattern\",\"prototype_use\"],\"counts\":{:?}}},\"field_cache\":{{\"hits\":{},\"misses\":{},\"tiers\":{:?},\"depths\":{:?}}},\"method_cache\":{{\"hits\":{},\"misses\":{},\"tiers\":{:?},\"refill_names\":[\"first\",\"post_gc\",\"post_mutation\"],\"refills\":{:?},\"same_target_names\":[\"gc\",\"mutation\"],\"same_targets\":{:?},\"invalidation_names\":[\"gc_candidates\",\"mutation_cleared\"],\"invalidation_entries\":{:?},\"dead_after_gc\":{}}},\"dynamic_atoms\":{},\"dynamic_strings\":{{\"hits\":{},\"misses\":{}}},\"string_concats\":{{\"coercing\":{},\"both_strings\":{},\"cache_hits\":{},\"cache_misses\":{},\"size_buckets\":{:?},\"max_bytes\":{}}},\"operand_tags\":{:?},\"binary_ops\":{:?},\"numeric_binary_paths\":{{\"names\":[\"fast_hit\",\"integer_operator_miss\",\"type_miss\"],\"counts\":{:?}}},\"branch_values\":{{\"names\":[\"undefined\",\"null\",\"boolean\",\"integer\",\"double\",\"heap\"],\"outcome_names\":[\"falsey\",\"truthy\"],\"counts\":{:?}}},\"method_argc\":{:?},\"calls\":{{\"source_names\":[\"dynamic\",\"known\",\"method\",\"this_method\",\"construct\"],\"sources\":{:?},\"target_names\":[\"native\",\"user\",\"numeric_user\"],\"targets\":{:?},\"target_argc\":{:?}}},\"terminal_calls\":{:?},\"indexed_access\":{{\"get_names\":[\"int_dense\",\"int_sparse\",\"int_missing\",\"wide_dense\",\"wide_sparse\",\"wide_missing\",\"numeric_non_array\",\"property\"],\"gets\":{:?},\"set_names\":[\"int_replace\",\"int_grow\",\"int_sparse\",\"wide_replace\",\"wide_grow\",\"wide_sparse\",\"numeric_non_array\",\"property\"],\"sets\":{:?},\"dispatch_names\":[\"get_general\",\"get_numeric\",\"set_general\",\"set_numeric\"],\"dispatches\":{:?}}},\"array_writes\":{{\"names\":[\"unique\",\"shared\"],\"counts\":{:?}}},\"dispatch_classes\":[{},{}],\"opcodes\":{{",
             self.allocations,
