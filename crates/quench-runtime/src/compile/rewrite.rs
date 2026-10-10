@@ -57,6 +57,19 @@ fusion_recipes! {
             first.set_optional_register_b(Some(second.result_register()));
             Some(first)
         };
+    LoadStoreLocalPlain: [LoadLocalPlain, StoreLocalPlain] =>
+        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+            if first.numeric_local_store_target().is_some()
+                || second.optional_register_b().is_some()
+                || second.register_a() != first.result_register()
+                || first.local_slot() == second.local_slot()
+            {
+                return None;
+            }
+            let source = u16::try_from(first.local_slot()).ok()?;
+            let destination = u16::try_from(second.local_slot()).ok()?;
+            Instr::try_new(Op::CopyLocalPlain, source, 0, 0, u32::from(destination))
+        };
     ProducerMove: [
         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
         LoadName, Move; Binary, Move; Unary, Move; GetField, Move
@@ -552,7 +565,7 @@ mod tests {
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 23);
+        assert_eq!(RULES.len(), 24);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));

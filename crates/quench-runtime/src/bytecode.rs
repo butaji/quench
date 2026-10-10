@@ -109,6 +109,7 @@ pub(crate) enum FieldLayout {
     RegisterWindowBase,
     RegisterCount,
     FieldBase,
+    LocalSlot,
     CacheSiteIndex,
     FieldLookupCacheSiteIndex,
     WideIndexChunk,
@@ -659,6 +660,7 @@ opcodes!(
 
     WasmAtomicAccess => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmAtomicOperator, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmAtomicFence => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
+    CopyLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(LocalSlot, Unused, Unused),
     LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
     StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
 
@@ -1352,20 +1354,26 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
     code.iter().all(|instruction| {
         !matches!(
             instruction.op(),
-            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreEnvLocal
-        )
-            || instruction.local_slot() < usize::from(locals)
+            Op::LoadLocal
+                | Op::LoadLocalPlain
+                | Op::LoadEnvLocal
+                | Op::StoreEnvLocal
+                | Op::CopyLocalPlain
+        ) || instruction.local_slot() < usize::from(locals)
     }) && wide.iter().all(|instruction| {
         !matches!(
             instruction.op(),
-            Op::LoadLocal | Op::LoadLocalPlain | Op::LoadEnvLocal | Op::StoreEnvLocal
-        )
-            || instruction.local_slot() < usize::from(locals)
+            Op::LoadLocal
+                | Op::LoadLocalPlain
+                | Op::LoadEnvLocal
+                | Op::StoreEnvLocal
+                | Op::CopyLocalPlain
+        ) || instruction.local_slot() < usize::from(locals)
     })
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 80;
+    pub const FORMAT_VERSION: u8 = 81;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
