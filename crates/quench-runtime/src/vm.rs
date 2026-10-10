@@ -179,6 +179,10 @@ pub(super) struct Frame {
     // Empty while active; owns the transferred scope stack while detached.
     with_objects: Vec<Value>,
     with_base: usize,
+    /// The frame pushed its own `this` binding with a live value. Only `super()` rebinds
+    /// `this`, and only in derived constructors, whose binding starts deleted; so for these
+    /// frames `this` is authoritative and the binding lookup can be skipped.
+    fixed_this: bool,
 }
 impl Frame {
     fn prepare_registers(&mut self, register_count: usize) {

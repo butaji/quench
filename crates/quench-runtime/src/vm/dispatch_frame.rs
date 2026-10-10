@@ -91,6 +91,7 @@ impl<H: Host> Vm<H> {
             let atom = self.runtime_atoms.lexical_this;
             frame.dynamic_bindings.push((atom, frame.this));
         }
+        frame.fixed_this = !inherits_this && !frame.this.is_deleted();
     }
 
     #[inline(never)]
@@ -210,6 +211,7 @@ impl<H: Host> Vm<H> {
             active_iterators: vec![],
             with_objects: Vec::new(),
             with_base: self.with_stack.len(),
+            fixed_this: false,
         }));
         frame
             .locals
@@ -416,6 +418,7 @@ impl<H: Host> Vm<H> {
                 active_iterators: vec![],
                 with_objects: Vec::new(),
                 with_base: self.with_stack.len(),
+                fixed_this: false,
             })
         });
         let old = std::mem::replace(&mut self.frames[frame_index], placeholder);
@@ -815,6 +818,7 @@ impl<H: Host> Vm<H> {
             frame.dynamic_bindings.clear();
         }
         frame.active_iterators.clear();
+        frame.fixed_this = false;
     }
 
     pub(super) fn run_frame_general(

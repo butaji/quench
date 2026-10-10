@@ -376,6 +376,9 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         frame: usize,
     ) -> Result<Value, JsError> {
+        if self.frames[frame].fixed_this {
+            return Ok(self.frames[frame].this);
+        }
         let atom = self.runtime_atoms.lexical_this;
         let value = self
             .dynamic_binding(frame, atom)

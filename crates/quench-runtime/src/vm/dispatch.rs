@@ -1656,6 +1656,7 @@ impl<H: Host> Vm<H> {
                     frame.active_iterators.clear();
                     frame.env = Value::NULL;
                     frame.this = Value::UNDEFINED;
+                    frame.fixed_this = false;
                     frame.captured = false;
                 }
                 let called = if discarded_wasm_frame {
