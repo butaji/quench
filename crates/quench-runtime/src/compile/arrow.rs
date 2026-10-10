@@ -71,6 +71,7 @@ impl Compiler<'_> {
             None,
             parameter_local_count,
             with_depth,
+            &[],
         );
         function.strict = strict;
         function.super_static = super_static;
@@ -141,6 +142,7 @@ impl Compiler<'_> {
             local_atoms: function.locals.clone(),
             environment_atoms,
             selective_capture_slots: None,
+            local_registers: Vec::new(),
             inherited_with_scope: with_depth != 0,
             lexical_atoms,
             global_lexical_atoms: Vec::new(),

@@ -1,6 +1,7 @@
 use super::{
     AtomTable, BindingSite, Constant, DispatchClass, EvalBinding, EvalBindingDeclaration,
     EvalBindingLocation, FieldBase, FieldSite, Function, Handler, Instr, LexicalBindingKind,
+    LocalRegister,
     MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleLinkPlan,
     ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase, ObjectSite, Op,
     RegExpLiteralSite, SourcePosition, Superinstruction, WideInstruction,
@@ -193,6 +194,11 @@ pub(super) fn write_program(
         out.u32(function.local_atoms.len() as u32);
         for atom in &function.local_atoms {
             out.u32(*atom);
+        }
+        out.u32(function.local_registers.len() as u32);
+        for local_register in &function.local_registers {
+            out.u16(local_register.local);
+            out.u16(local_register.register);
         }
         out.u32(function.environment_atoms.len() as u32);
         for atom in &function.environment_atoms {
@@ -498,6 +504,12 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         };
         let locals = input.u16()?;
         let local_atoms = input.list(|input| input.u32())?;
+        let local_registers = input.list(|input| {
+            Ok(LocalRegister {
+                local: input.u16()?,
+                register: input.u16()?,
+            })
+        })?;
         let environment_atoms = input.list(|input| input.u32())?;
         let name_bindings = input.list(read_eval_binding)?;
         let environment_clones = input.list(|input| input.list(|input| input.u16()))?;
@@ -614,6 +626,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             strict,
             locals,
             local_atoms,
+            local_registers,
             environment_atoms,
             selective_capture_slots,
             inherited_with_scope,
