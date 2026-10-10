@@ -88,6 +88,7 @@ impl<H: Host> Vm<H> {
             well_known_symbols: FxHashMap::default(),
             string_concats: None,
             field_caches: vec![],
+            field_add_caches: FxHashMap::default(),
             megamorphic_field_indices: vec![],
             megamorphic_fields: vec![],
             length_atom: u32::MAX,

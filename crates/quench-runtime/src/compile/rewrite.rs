@@ -79,7 +79,7 @@ fusion_recipes! {
     ReturnResult: [
         Binary, Return; GetField, Return; Call, Return; CallKnown, Return;
         CallMethod, Return; CallThisMethod, Return; Construct, Return;
-        MakeObject2, Return; SuperConstArrayObject2, Return
+        MakeObject2, Return; MakeObjectLiteral, Return; SuperConstArrayObject2, Return
     ] => |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
         if first.result_register() != second.register_a() { return None; }
         first.set_returns_from_frame();
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 22);
+        assert_eq!(RULES.len(), 23);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));

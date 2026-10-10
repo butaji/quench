@@ -3,6 +3,7 @@ use super::{
     FieldBase, FieldLayout, ImmediateLayout, InstructionField, Operand, OperandKind, REGISTER_MASK,
     Register, ResidualProgram,
 };
+use rustc_hash::FxHashSet;
 
 fn register_in_bounds(register: u16, limit: u16, flags: u16) -> bool {
     register & !(REGISTER_MASK | flags) == 0 && register & REGISTER_MASK < limit
@@ -298,6 +299,30 @@ fn immediate_domains_in_bounds(
     }
 }
 
+fn object_site_instruction_valid(
+    instruction: super::WideInstruction,
+    object_sites: &[super::ObjectSite],
+    registers: u16,
+) -> bool {
+    match instruction.op() {
+        super::Op::MakeObject2 => object_sites
+            .get(instruction.object_site_index())
+            .is_some_and(|site| site.atoms.len() == super::INLINE_OBJECT_SITE_ATOMS),
+        super::Op::MakeObjectLiteral => {
+            let Some(site) = object_sites.get(instruction.object_site_index()) else {
+                return false;
+            };
+            let window = instruction.register_window();
+            let mut atoms = FxHashSet::default();
+            usize::from(window.count) > super::INLINE_OBJECT_SITE_ATOMS
+                && site.atoms.len() == usize::from(window.count)
+                && site.atoms.iter().all(|atom| atoms.insert(*atom))
+                && register_window_in_bounds(window.base, u32::from(window.count), registers)
+        }
+        _ => true,
+    }
+}
+
 fn packed_layout_domains_in_bounds(
     instruction: super::WideInstruction,
     bounds: ValidationBounds,
@@ -500,11 +525,18 @@ impl ResidualProgram {
                             .windows(2)
                             .any(|pair| pair[0].atom >= pair[1].atom)
                         || site.bindings.iter().any(|binding| {
-                            !eval_binding_is_valid(binding, function, &self.functions, self.atoms.len())
+                            !eval_binding_is_valid(
+                                binding,
+                                function,
+                                &self.functions,
+                                self.atoms.len(),
+                            )
                         })
                 })
             {
-                return Err(format!("function {index} has invalid binding-site metadata"));
+                return Err(format!(
+                    "function {index} has invalid binding-site metadata"
+                ));
             }
 
             if function.environment_clones.iter().any(|slots| {
@@ -588,15 +620,24 @@ impl ResidualProgram {
                     ));
                 }
                 if let Some(captured) = &function.selective_capture_slots {
-                    let slot = instruction.local_slot();
+                    let local_slot = matches!(
+                        instruction.op(),
+                        super::Op::LoadLocal
+                            | super::Op::StoreLocal
+                            | super::Op::LoadLocalPlain
+                            | super::Op::StoreLocalPlain
+                            | super::Op::LoadEnvLocal
+                            | super::Op::StoreEnvLocal
+                    )
+                    .then(|| instruction.local_slot());
+                    let slot_is_captured = local_slot.is_some_and(|slot| {
+                        u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
+                    });
                     let environment_op = matches!(
                         instruction.op(),
                         super::Op::LoadEnvLocal | super::Op::StoreEnvLocal
                     );
-                    if environment_op
-                        && !u16::try_from(slot)
-                            .is_ok_and(|slot| captured.binary_search(&slot).is_ok())
-                    {
+                    if environment_op && !slot_is_captured {
                         return Err(format!(
                             "function {index} has an environment-local operation for an uncaptured slot"
                         ));
@@ -605,13 +646,10 @@ impl ResidualProgram {
                         .numeric_local_target()
                         .is_some_and(|target| captured.binary_search(&target).is_ok())
                         || function.dispatch == super::DispatchClass::Numeric
-                            && ((instruction.op() == super::Op::StoreLocal
-                                && u16::try_from(slot)
-                                    .is_ok_and(|slot| captured.binary_search(&slot).is_ok()))
+                            && ((instruction.op() == super::Op::StoreLocal && slot_is_captured)
                                 || instruction.op() == super::Op::LoadLocal
                                     && instruction.numeric_local_store_target().is_some()
-                                    && u16::try_from(slot)
-                                        .is_ok_and(|slot| captured.binary_search(&slot).is_ok()))
+                                    && slot_is_captured)
                         || function.dispatch == super::DispatchClass::Numeric
                             && instruction.op() == super::Op::GetIndex
                             && [instruction.operand_b(), instruction.operand_c()]
@@ -651,6 +689,11 @@ impl ResidualProgram {
                 if !field_domains_in_bounds(instruction, bounds)
                     || !immediate_domains_in_bounds(instruction, bounds)
                     || !packed_layout_domains_in_bounds(instruction, bounds)
+                    || !object_site_instruction_valid(
+                        instruction,
+                        &self.object_sites,
+                        function.registers,
+                    )
                 {
                     return Err(format!(
                         "function {index} {:?} has an out-of-domain operand",

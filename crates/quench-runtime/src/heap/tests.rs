@@ -3,7 +3,44 @@ use crate::value_vec::ValueVec;
 use std::rc::Rc;
 
 fn plain_object() -> Object {
-    Object::new(Value::NULL, ValueVec::new())
+    Object::new(Value::NULL)
+}
+
+#[test]
+fn gc_headroom_factors_scale_live_cells_without_overflow() {
+    let live = 781_054usize;
+    assert_eq!(
+        GcHeadroomFactor {
+            numerator: 1,
+            denominator: 2,
+        }
+        .allocation_headroom(live),
+        390_527
+    );
+    assert_eq!(
+        GcHeadroomFactor {
+            numerator: 3,
+            denominator: 4,
+        }
+        .allocation_headroom(live),
+        585_790
+    );
+    assert_eq!(
+        GcHeadroomFactor {
+            numerator: 1,
+            denominator: 1,
+        }
+        .allocation_headroom(live),
+        live
+    );
+    assert_eq!(
+        gc_allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS - 1),
+        32_767
+    );
+    assert_eq!(
+        gc_allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS),
+        65_536
+    );
 }
 
 #[test]
@@ -53,10 +90,13 @@ fn scope_slot_owners_survive_collection_and_release() {
 }
 
 #[test]
-fn object_side_metadata_is_out_of_line() {
+fn object_storage_keeps_two_values_inline_in_the_cell() {
     assert_eq!(
         size_of::<Object>(),
-        size_of::<Value>() + size_of::<ValueVec>() + size_of::<Option<Box<()>>>()
+        size_of::<Value>()
+            + size_of::<ValueVec>()
+            + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
+            + size_of::<Option<Box<()>>>()
     );
     assert_eq!(size_of::<Cell>(), size_of::<Slot>());
 }
@@ -202,6 +242,29 @@ fn stale_weak_handles_cannot_resolve_reused_slots() {
 }
 
 #[test]
+fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
+    let mut heap = Heap::new();
+    let array = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::new(Vec::new()),
+    });
+    let slot = array.heap_index().unwrap();
+    let index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
+    heap.sparse_set(array, index, Value::number(7.0));
+    assert_eq!(heap.sparse_get(array, index), Some(Value::number(7.0)));
+
+    heap.collect([]);
+
+    let reused = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::new(Vec::new()),
+    });
+    assert_eq!(reused.heap_index(), Some(slot));
+    assert_eq!(heap.sparse_get(reused, index), None);
+    assert_eq!(heap.sparse_length(reused), None);
+}
+
+#[test]
 fn object_integrity_metadata_survives_collection() {
     let mut heap = Heap::new();
     let object = heap.alloc(Cell::Object(plain_object()));
@@ -243,39 +306,90 @@ fn out_of_line_private_brand_keeps_its_home_alive() {
 #[test]
 fn object_property_storage_migration_preserves_writes_and_gc_roots() {
     let mut heap = Heap::new();
-    heap.register_property_shape(1, 2);
+    heap.register_property_shape(1, 1);
+    heap.register_property_shape(2, 2);
+    heap.register_property_shape(3, 3);
     let first = heap.alloc(Cell::String("first".into()));
     let replaced = heap.alloc(Cell::String("replaced".into()));
     let replacement = heap.alloc(Cell::String("replacement".into()));
-    let object = heap.alloc_object_pair(Value::NULL, 1, first, replaced);
+    let third = heap.alloc(Cell::String("third".into()));
+    let object = heap.alloc(Cell::Object(plain_object()));
+    assert!(
+        heap.get(object)
+            .unwrap()
+            .object()
+            .unwrap()
+            .inline_properties()
+            .is_some()
+    );
     heap.get_mut(object)
         .and_then(Cell::object_mut)
         .unwrap()
         .set_extensible(false);
-
-    let mut properties = heap.get(object).unwrap().object().unwrap().properties;
-    heap.properties
-        .migrate_to_dictionary_for_test(&mut properties);
+    heap.property_push(object, first);
     heap.get_mut(object)
         .and_then(Cell::object_mut)
         .unwrap()
-        .properties = properties;
+        .set_shape(1);
+    heap.property_push(object, replaced);
+    heap.get_mut(object)
+        .and_then(Cell::object_mut)
+        .unwrap()
+        .set_shape(2);
+    assert!(
+        heap.get(object)
+            .unwrap()
+            .object()
+            .unwrap()
+            .inline_properties()
+            .is_some()
+    );
     heap.property_set(object, 1, replacement);
+    heap.property_push(object, third);
+    heap.get_mut(object)
+        .and_then(Cell::object_mut)
+        .unwrap()
+        .set_shape(3);
 
     heap.collect([object]);
     let data = heap.get(object).unwrap().object().unwrap();
-    assert_eq!(data.shape(), 1);
+    assert_eq!(data.shape(), 3);
+    assert!(data.inline_properties().is_none());
     assert!(!data.is_extensible());
     assert_eq!(heap.property_get(data, 0), Some(first));
     assert_eq!(heap.property_get(data, 1), Some(replacement));
+    assert_eq!(heap.property_get(data, 2), Some(third));
     assert!(heap.get(first).is_some());
     assert!(heap.get(replaced).is_none());
     assert!(heap.get(replacement).is_some());
+    assert!(heap.get(third).is_some());
 
     heap.collect([]);
     assert!(heap.get(object).is_none());
     assert!(heap.get(first).is_none());
     assert!(heap.get(replacement).is_none());
+    assert!(heap.get(third).is_none());
+}
+
+#[test]
+fn inline_property_values_are_gc_roots_until_deleted_or_the_owner_dies() {
+    let mut heap = Heap::new();
+    heap.register_property_shape(1, INLINE_PROPERTY_COUNT);
+    let kept = heap.alloc(Cell::String("kept".into()));
+    let deleted = heap.alloc(Cell::String("deleted".into()));
+    let object = heap.alloc_object_pair(Value::NULL, 1, kept, deleted);
+    heap.property_set(object, 1, Value::DELETED);
+
+    heap.collect([object]);
+
+    assert!(heap.get(object).is_some());
+    assert!(heap.get(kept).is_some());
+    assert!(heap.get(deleted).is_none());
+
+    heap.collect([]);
+
+    assert!(heap.get(object).is_none());
+    assert!(heap.get(kept).is_none());
 }
 
 #[cfg(feature = "profile-memory")]
