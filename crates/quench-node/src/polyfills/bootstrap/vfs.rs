@@ -934,6 +934,13 @@ class __QuenchVirtualFileSystem {
   readFileSync(path, options) {
     const buffer = __quenchVfsBuffer;
     if (
+      typeof path === "number" &&
+      !(this.provider instanceof __QuenchRealFSProvider) &&
+      !this.__fds.has(path)
+    ) {
+      throw __quenchVfsError("EBADF", "read", path);
+    }
+    if (
       this.provider instanceof __QuenchRealFSProvider &&
       typeof path === "number"
     ) {
