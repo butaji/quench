@@ -142,7 +142,7 @@ impl<H: Host> Vm<H> {
                         let prototype =
                             vm.realm.intrinsics.intl_segment_iterator_prototypes[&vm.realm.globals];
                         return Ok(vm.heap.alloc(Cell::Iterator {
-                            object: Self::empty_object(prototype),
+                            object: Box::new(Self::empty_object(prototype)),
                             source: data,
                             next_method: None,
                             helper: None,

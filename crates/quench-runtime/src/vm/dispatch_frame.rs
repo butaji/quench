@@ -704,13 +704,15 @@ impl<H: Host> Vm<H> {
         };
         let env = self.heap.alloc(Cell::Environment {
             parent,
-            program: Some(self.frames[frame].program.raw()),
-            root_eval_scope: false,
-            binding_site_pc: None,
             function: self.frames[frame].function,
             slots: slots.into_boxed_slice().into(),
-            dynamic_bindings: std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
-            with_objects: Box::default(),
+            scope: Box::new(crate::heap::EnvironmentScope {
+                program: Some(self.frames[frame].program.raw()),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
+                with_objects: Box::default(),
+            }),
         });
         self.frames[frame].env = env;
         self.frames[frame].captured = true;
@@ -736,11 +738,8 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("invalid environment clone owner".into()))?;
         let Some(Cell::Environment {
             parent,
-            program,
-            root_eval_scope,
-            binding_site_pc,
             function,
-            with_objects,
+            scope,
             ..
         }) = self.heap.get(source)
         else {
@@ -748,13 +747,15 @@ impl<H: Host> Vm<H> {
         };
         let environment = Cell::Environment {
             parent: *parent,
-            program: *program,
-            root_eval_scope: *root_eval_scope,
-            binding_site_pc: *binding_site_pc,
             function: *function,
             slots,
-            dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
-            with_objects: with_objects.clone(),
+            scope: Box::new(crate::heap::EnvironmentScope {
+                program: scope.program,
+                root_eval_scope: scope.root_eval_scope,
+                binding_site_pc: scope.binding_site_pc,
+                dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
+                with_objects: scope.with_objects.clone(),
+            }),
         };
         let env = self.heap.alloc(environment);
         self.frames[frame].env = env;
@@ -1098,14 +1099,9 @@ impl<H: Host> Vm<H> {
             return Vec::new();
         }
         let mut layers = Vec::new();
-        while let Some(Cell::Environment {
-            parent,
-            with_objects,
-            ..
-        }) = self.heap.get(env)
-        {
-            if !with_objects.is_empty() {
-                layers.push(with_objects.to_vec());
+        while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(env) {
+            if !scope.with_objects.is_empty() {
+                layers.push(scope.with_objects.to_vec());
             }
             env = *parent;
             if env.is_null() {

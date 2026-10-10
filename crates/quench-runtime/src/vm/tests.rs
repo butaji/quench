@@ -31,7 +31,7 @@ impl Host for RecordingHost {
 #[test]
 fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
-    use crate::heap::{Cell, WeakMapEntries};
+    use crate::heap::Cell;
     let program = Engine::specialize("", "descriptor-owner.js").unwrap();
     let mut vm = Vm::new(SilentHost);
     let owner = vm.heap.alloc(Cell::Array {
@@ -57,8 +57,8 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     assert_eq!(vm.heap.weak_value(setter_weak), Some(setter));
     assert!(vm.heap.release_root(root));
     let map = vm.heap.alloc(Cell::WeakMap {
-        object: Vm::<SilentHost>::empty_object(Value::NULL),
-        entries: WeakMapEntries::default(),
+        object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
+        entries: Box::default(),
     });
     let map_key = vm.object();
     if let Some(Cell::WeakMap { entries, .. }) = vm.heap.get_mut(map) {
@@ -907,23 +907,27 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
     let mut vm = Vm::new(SilentHost);
     let live = vm.heap.alloc(crate::heap::Cell::Environment {
         parent: crate::Value::NULL,
-        program: None,
-        root_eval_scope: false,
-        binding_site_pc: None,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        dynamic_bindings: vec![].into(),
-        with_objects: Box::default(),
+        scope: Box::new(crate::heap::EnvironmentScope {
+            program: None,
+            root_eval_scope: false,
+            binding_site_pc: None,
+            dynamic_bindings: vec![].into(),
+            with_objects: Box::default(),
+        }),
     });
     let dead = vm.heap.alloc(crate::heap::Cell::Environment {
         parent: crate::Value::NULL,
-        program: None,
-        root_eval_scope: false,
-        binding_site_pc: None,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        dynamic_bindings: vec![].into(),
-        with_objects: Box::default(),
+        scope: Box::new(crate::heap::EnvironmentScope {
+            program: None,
+            root_eval_scope: false,
+            binding_site_pc: None,
+            dynamic_bindings: vec![].into(),
+            with_objects: Box::default(),
+        }),
     });
     vm.method_caches.push([
         MethodCache {
@@ -961,13 +965,15 @@ fn method_cache_gc_retains_live_and_rejects_reused_handles() {
 
     let reused = vm.heap.alloc(crate::heap::Cell::Environment {
         parent: crate::Value::NULL,
-        program: None,
-        root_eval_scope: false,
-        binding_site_pc: None,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        dynamic_bindings: vec![].into(),
-        with_objects: Box::default(),
+        scope: Box::new(crate::heap::EnvironmentScope {
+            program: None,
+            root_eval_scope: false,
+            binding_site_pc: None,
+            dynamic_bindings: vec![].into(),
+            with_objects: Box::default(),
+        }),
     });
     assert_eq!(reused, dead);
     assert!(vm.method_caches[0][1].target.is_none());
@@ -2148,15 +2154,17 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 .unwrap();
             let environment = vm.heap.alloc(crate::heap::Cell::Environment {
                 parent: Value::NULL,
-                program: Some(super::program_store::ProgramId::MAIN.raw()),
-                root_eval_scope: false,
-                binding_site_pc: None,
                 function: super::ROOT_FUNCTION_ID,
                 slots: vec![Value::DELETED; program.functions[0].local_atoms.len()]
                     .into_boxed_slice()
                     .into(),
-                dynamic_bindings: vec![].into(),
-                with_objects: Box::default(),
+                scope: Box::new(crate::heap::EnvironmentScope {
+                    program: Some(super::program_store::ProgramId::MAIN.raw()),
+                    root_eval_scope: false,
+                    binding_site_pc: None,
+                    dynamic_bindings: vec![].into(),
+                    with_objects: Box::default(),
+                }),
             });
             vm.programs
                 .set_module_environment(super::program_store::ProgramId::MAIN, environment);
@@ -3721,13 +3729,15 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
     vm.initialize(&program).unwrap();
     let live = vm.heap.alloc(crate::heap::Cell::Environment {
         parent: Value::NULL,
-        program: None,
-        root_eval_scope: false,
-        binding_site_pc: None,
         function: u32::MAX,
         slots: Vec::<Value>::new().into_boxed_slice().into(),
-        dynamic_bindings: vec![].into(),
-        with_objects: Box::default(),
+        scope: Box::new(crate::heap::EnvironmentScope {
+            program: None,
+            root_eval_scope: false,
+            binding_site_pc: None,
+            dynamic_bindings: vec![].into(),
+            with_objects: Box::default(),
+        }),
     });
     let held = vm
         .heap
@@ -6061,7 +6071,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             let mut token = None;
             if generator {
                 let value = vm.heap.alloc(super::Cell::Iterator {
-                    object: Vm::<SilentHost>::empty_object(Value::NULL),
+                    object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
                     source: Value::NULL,
                     next_method: None,
                     helper: None,
@@ -6400,7 +6410,7 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
                     "raw" => source,
                     "protocol" => vm.iterator_from(&program, &[source]).unwrap(),
                     _ => vm.heap.alloc(super::Cell::Iterator {
-                        object: Vm::<Test262Host>::empty_object(vm.async_from_sync_iterator_proto),
+                        object: Box::new(Vm::<Test262Host>::empty_object(vm.async_from_sync_iterator_proto)),
                         source,
                         next_method: None,
                         helper: None,
@@ -6603,7 +6613,7 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let iterator = vm.heap.alloc(super::Cell::Iterator {
-                    object: Vm::<Test262Host>::empty_object(vm.regexp_string_iterator_proto),
+                    object: Box::new(Vm::<Test262Host>::empty_object(vm.regexp_string_iterator_proto)),
                     source: matcher,
                     next_method: None,
                     helper: Some(Box::new(
@@ -7070,7 +7080,7 @@ fn string_match_search_fallback_roots_converted_input_and_fresh_matcher() {
                             let atom = vm.intern_atom("matcher");
                             let matcher = vm.own_property(value, atom).unwrap();
                             assert!(
-                                matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{source,..})if source.host_string()=="a")
+                                matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{meta,..})if meta.source.host_string()=="a")
                             );
                             let atom = vm.intern_atom("input");
                             let input = vm.own_property(value, atom).unwrap();
@@ -7225,7 +7235,7 @@ fn string_match_all_fallback_roots_input_and_intrinsic_matcher() {
                             let atom = vm.intern_atom("matcher");
                             let matcher = vm.own_property(value, atom).unwrap();
                             assert!(
-                                matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{source,flags,..})if source.host_string()=="a"&&flags=="g")
+                                matches!(vm.heap.get(matcher),Some(super::Cell::RegExp{meta,..})if meta.source.host_string()=="a"&&meta.flags=="g")
                             );
                             let atom = vm.intern_atom("input");
                             let input = vm.own_property(value, atom).unwrap();
@@ -7722,15 +7732,11 @@ fn regexp_construction_roots_protocol_inputs_and_initialization_projections() {
                         Ok(value) => {
                             let owner = vm.heap.root(value);
                             vm.collect_now(&program);
-                            let Some(super::Cell::RegExp {
-                                object,
-                                source,
-                                flags,
-                                ..
-                            }) = vm.heap.get(value)
+                            let Some(super::Cell::RegExp { object, meta, .. }) = vm.heap.get(value)
                             else {
                                 panic!("constructor returns RegExp");
                             };
+                            let (source, flags) = (&meta.source, &meta.flags);
                             assert_eq!(source.units(), &[u16::from(b'a')]);
                             assert_eq!(flags, "i");
                             if construct {
@@ -7858,11 +7864,12 @@ fn regexp_entrypoints_root_receivers_and_arguments_through_callbacks() {
                             match kind {
                                 "compile" => {
                                     assert_eq!(value, values[0]);
-                                    let Some(super::Cell::RegExp { source, flags, .. }) =
+                                    let Some(super::Cell::RegExp { meta, .. }) =
                                         vm.heap.get(value)
                                     else {
                                         panic!("compiled receiver retained");
                                     };
+                                    let (source, flags) = (&meta.source, &meta.flags);
                                     assert_eq!(source.units(), &[u16::from(b'a')]);
                                     assert_eq!(flags, "g");
                                 }

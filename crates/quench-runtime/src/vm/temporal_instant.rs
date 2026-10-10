@@ -182,7 +182,7 @@ impl<H: Host> Vm<H> {
         };
         Ok(self.heap.alloc(Cell::TemporalInstant {
             object: Box::new(Self::empty_object(prototype)),
-            epoch_nanoseconds: epoch,
+            epoch_nanoseconds: Box::new(epoch),
         }))
     }
 
@@ -421,7 +421,7 @@ impl<H: Host> Vm<H> {
         };
         Ok(self.heap.alloc(Cell::TemporalInstant {
             object: Box::new(Self::empty_object(prototype)),
-            epoch_nanoseconds: epoch,
+            epoch_nanoseconds: Box::new(epoch),
         }))
     }
 
@@ -433,7 +433,7 @@ impl<H: Host> Vm<H> {
         match self.heap.get(value) {
             Some(Cell::TemporalInstant {
                 epoch_nanoseconds, ..
-            }) => Ok(*epoch_nanoseconds),
+            }) => Ok(**epoch_nanoseconds),
             _ => Err(self.type_error(
                 p,
                 "Temporal.Instant method called on incompatible receiver".into(),
@@ -460,13 +460,13 @@ impl<H: Host> Vm<H> {
             epoch_nanoseconds, ..
         }) = self.heap.get(value)
         {
-            return Ok(*epoch_nanoseconds);
+            return Ok(**epoch_nanoseconds);
         }
         if let Some(Cell::TemporalZonedDateTime {
             epoch_nanoseconds, ..
         }) = self.heap.get(value)
         {
-            return Ok(*epoch_nanoseconds);
+            return Ok(**epoch_nanoseconds);
         }
         if value.is_null() || value.is_undefined() {
             return Err(self.type_error(p, "Invalid Instant input".into()));

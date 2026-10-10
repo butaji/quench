@@ -215,7 +215,7 @@ impl<H: Host> Vm<H> {
             object: Box::new(Self::empty_object(prototype)),
             month: month as u32,
             day: day as u32,
-            calendar,
+            calendar: Box::new(calendar),
             reference_iso_year: year,
         }))
     }
@@ -243,7 +243,7 @@ impl<H: Host> Vm<H> {
             object: Box::new(Self::empty_object(prototype)),
             year,
             month: month as u32,
-            calendar,
+            calendar: Box::new(calendar),
             reference_iso_day: reference,
         }))
     }
@@ -319,7 +319,7 @@ impl<H: Host> Vm<H> {
                 ..
             }) if is_plain_month_day_native(native) => {
                 let (month, day, calendar, reference_iso_year) =
-                    (*month, *day, calendar.clone(), *reference_iso_year);
+                    (*month, *day, calendar.to_string(), *reference_iso_year);
                 return self.temporal_plain_month_day_native(
                     p,
                     native,
@@ -335,7 +335,7 @@ impl<H: Host> Vm<H> {
                 ..
             }) if is_plain_year_month_native(native) => {
                 let (year, month, calendar, reference_iso_day) =
-                    (*year, *month, calendar.clone(), *reference_iso_day);
+                    (*year, *month, calendar.to_string(), *reference_iso_day);
                 return self.temporal_plain_year_month_native(
                     p,
                     native,
@@ -457,7 +457,7 @@ impl<H: Host> Vm<H> {
                         ..
                     }) if *other_month == month
                         && *other_day == day
-                        && *other_calendar == calendar
+                        && *other_calendar == Box::new(calendar)
                         && *other_year == reference_year =>
                     {
                         Value::TRUE
@@ -503,7 +503,7 @@ impl<H: Host> Vm<H> {
                     year: date.year,
                     month: date.month,
                     day: date.day,
-                    calendar,
+                    calendar: Box::new(calendar),
                 }))
             }
             Native::TemporalPlainMonthDayWith => {
@@ -784,7 +784,7 @@ impl<H: Host> Vm<H> {
                         ..
                     }) if *other_year == year
                         && *other_month == month
-                        && *other_calendar == calendar
+                        && *other_calendar == Box::new(calendar)
                         && *other_day == reference_day =>
                     {
                         Value::TRUE
@@ -858,7 +858,7 @@ impl<H: Host> Vm<H> {
                     year: date.year,
                     month: date.month,
                     day: date.day,
-                    calendar,
+                    calendar: Box::new(calendar),
                 }))
             }
             Native::TemporalPlainYearMonthValueOf => {
@@ -905,7 +905,7 @@ impl<H: Host> Vm<H> {
             object: Box::new(Self::empty_object(self.temporal_plain_year_month_proto)),
             year: result.0,
             month: result.1,
-            calendar,
+            calendar: Box::new(calendar),
             reference_iso_day: result.2,
         }))
     }
@@ -1034,7 +1034,7 @@ impl<H: Host> Vm<H> {
                     calendar,
                     reference_iso_day,
                     ..
-                }) => (*year, *month, *reference_iso_day, calendar.clone()),
+                }) => (*year, *month, *reference_iso_day, calendar.to_string()),
                 _ => return Err(self.type_error(p, "Invalid PlainYearMonth".into())),
             };
         if calendar != other_calendar {
@@ -1119,7 +1119,7 @@ impl<H: Host> Vm<H> {
         }) = self.heap.get(value)
         {
             let (month, day, calendar, year) =
-                (*month, *day, calendar.clone(), *reference_iso_year);
+                (*month, *day, calendar.to_string(), *reference_iso_year);
             let _ = self.plain_date_overflow(p, options)?;
             return self.make_plain_month_day(p, constructor, month, day, calendar, year);
         }
@@ -1395,7 +1395,7 @@ impl<H: Host> Vm<H> {
         }) = self.heap.get(value)
         {
             let (year, month, calendar, day) =
-                (*year, *month, calendar.clone(), *reference_iso_day);
+                (*year, *month, calendar.to_string(), *reference_iso_day);
             let _ = self.plain_date_overflow(p, options)?;
             return self.make_plain_year_month(p, constructor, year, month, calendar, day);
         }
@@ -1566,7 +1566,7 @@ impl<H: Host> Vm<H> {
             | Some(Cell::TemporalPlainDateTime { calendar, .. })
             | Some(Cell::TemporalPlainMonthDay { calendar, .. })
             | Some(Cell::TemporalPlainYearMonth { calendar, .. })
-            | Some(Cell::TemporalZonedDateTime { calendar, .. }) => Ok(calendar.clone()),
+            | Some(Cell::TemporalZonedDateTime { calendar, .. }) => Ok(calendar.to_string()),
             _ => Err(self.type_error(p, "Invalid calendar".into())),
         }
     }
@@ -1850,7 +1850,7 @@ pub(super) fn to_plain_year_month<H: Host>(
         object: Box::new(Vm::<H>::empty_object(vm.temporal_plain_year_month_proto)),
         year,
         month,
-        calendar,
+        calendar: Box::new(calendar),
         reference_iso_day,
     }))
 }
@@ -1952,7 +1952,7 @@ pub(super) fn native<H: Host>(
         ..
     }) = vm.heap.get(this)
     {
-        let (month, day, calendar, year) = (*month, *day, calendar.clone(), *reference_iso_year);
+        let (month, day, calendar, year) = (*month, *day, calendar.to_string(), *reference_iso_year);
         let text = vm.temporal_plain_date_to_string(p, year, month, day, &calendar, options)?;
         let text = if calendar == "iso8601" && !text.contains('[') {
             format!("{month:02}-{day:02}")
@@ -1969,7 +1969,7 @@ pub(super) fn native<H: Host>(
         ..
     }) = vm.heap.get(this)
     {
-        let (year, month, calendar, day) = (*year, *month, calendar.clone(), *reference_iso_day);
+        let (year, month, calendar, day) = (*year, *month, calendar.to_string(), *reference_iso_day);
         let text = vm.temporal_plain_date_to_string(p, year, month, day, &calendar, options)?;
         let (date, annotation) = text.split_once('[').unwrap_or((&text, ""));
         let month_end = if annotation.is_empty() && calendar == "iso8601" {

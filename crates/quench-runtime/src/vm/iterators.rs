@@ -836,7 +836,7 @@ impl<H: Host> Vm<H> {
             _ => return Err(JsError("collection iterator kind is invalid".into())),
         };
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(prototype),
+            object: Box::new(Self::empty_object(prototype)),
             source,
             next_method: None,
             helper: None,
@@ -882,7 +882,7 @@ impl<H: Host> Vm<H> {
                 _ => return Err(self.type_error(p, "value is not iterable".into())),
             };
             Ok(self.heap.alloc(Cell::Iterator {
-                object: Self::empty_object(self.iterator_proto),
+                object: Box::new(Self::empty_object(self.iterator_proto)),
                 source,
                 next_method: None,
                 helper: None,
@@ -987,7 +987,7 @@ impl<H: Host> Vm<H> {
         let source = self.heap.root_value(source_root).unwrap_or(source);
         let next_method = self.heap.root_value(next_root).unwrap_or(next_method);
         let wrapper = self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(prototype),
+            object: Box::new(Self::empty_object(prototype)),
             source,
             next_method: Some(next_method),
             helper: None,
@@ -1021,7 +1021,7 @@ impl<H: Host> Vm<H> {
             .map(|prototypes| prototypes.helper)
             .unwrap_or(self.iterator_helper_proto);
         let iterator = self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(prototype),
+            object: Box::new(Self::empty_object(prototype)),
             source,
             next_method: None,
             helper: Some(Box::new(helper)),
@@ -2600,7 +2600,7 @@ impl<H: Host> Vm<H> {
         }
         let iterator = self.get_iterator(p, source)?;
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.async_from_sync_iterator_proto),
+            object: Box::new(Self::empty_object(self.async_from_sync_iterator_proto)),
             source: iterator,
             next_method: None,
             helper: None,
@@ -2646,7 +2646,7 @@ impl<H: Host> Vm<H> {
             self.box_object_or_type_error(p, source)?
         };
         Ok(self.heap.alloc(Cell::Iterator {
-            object: Self::empty_object(self.array_iterator_proto),
+            object: Box::new(Self::empty_object(self.array_iterator_proto)),
             source,
             next_method: None,
             helper: None,
