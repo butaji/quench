@@ -976,7 +976,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn empty_object(proto: Value) -> Object {
-        Object::new(proto, ValueVec::new())
+        Object::new(proto)
     }
     fn native(&mut self, kind: Native) -> Value {
         self.native_with_env(kind, Value::NULL)

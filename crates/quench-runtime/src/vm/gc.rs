@@ -77,11 +77,13 @@ fn append_compacted_shape(
         ShapeTransition::Dictionary { trigger } => Some(trigger),
         _ => shapes[parent as usize].dictionary_trigger,
     };
+    let parent_may_have_gc_roots = shapes[parent as usize].may_have_gc_roots;
     shapes.push(Shape::child(
         Some(parent),
         transition,
         storage_len,
         dictionary_trigger,
+        parent_may_have_gc_roots,
     ));
     if let Some(key) = cache_key {
         transitions.insert((parent, key), shape);
@@ -154,6 +156,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
+                frame.program.raw(),
                 frame.function,
                 frame.pc as u32,
                 index + 1 == self.frames.len(),
@@ -513,28 +516,42 @@ impl<H: Host> Vm<H> {
                         },
                     ))
             }));
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
+            let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
+            self.report_memory_snapshot(&phase);
+        }
+        // Every marked object reports its shape to the mark callback. The first
+        // report of a shape records it as live and, only when the shape can hold
+        // symbol or accessor roots, appends those fixed roots once.
         let shapes = &self.shapes;
-        // A shape's symbol and accessor roots are fixed, so each shape contributes them once.
-        let mut shape_rooted = vec![false; shapes.len()];
+        let mut live_shape_bits = vec![0_u64; shapes.len().div_ceil(u64::BITS as usize)];
         let finalization_jobs =
             self.heap
                 .collect_with_object_roots(roots, |owner, shape, roots| {
-                    if !std::mem::replace(&mut shape_rooted[shape as usize], true) {
-                        append_shape_roots(shapes, shape, roots);
+                    let shape_index = shape as usize;
+                    let word = shape_index / u64::BITS as usize;
+                    let mask = 1_u64 << (shape_index % u64::BITS as usize);
+                    if live_shape_bits[word] & mask == 0 {
+                        live_shape_bits[word] |= mask;
+                        if shapes[shape_index].may_have_gc_roots {
+                            append_shape_roots(shapes, shape, roots);
+                        }
                     }
-                    if let Some(edges) = owned_roots.get(&owner) {
+                    if !owned_roots.is_empty()
+                        && let Some(edges) = owned_roots.get(&owner)
+                    {
                         roots.extend(edges.iter().copied());
                     }
                 });
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.
-        // Every marked object reports its shape once to the mark callback, so
-        // the rooted shapes are exactly the shapes of live objects.
-        let live_shapes = shape_rooted
-            .iter()
-            .enumerate()
-            .filter_map(|(shape, live)| live.then_some(shape as u32))
+        let live_shapes = (0..self.shapes.len())
+            .filter(|&shape| {
+                live_shape_bits[shape / u64::BITS as usize] & (1 << (shape % u64::BITS as usize)) != 0
+            })
+            .map(|shape| shape as u32)
             .collect::<Vec<_>>();
         if self.should_compact_live_shapes(&live_shapes) {
             #[cfg(feature = "profile-aggregate")]
@@ -627,6 +644,11 @@ impl<H: Host> Vm<H> {
         }
         if let Some(concats) = &mut self.string_concats {
             concats.fill(EMPTY_STRING_CONCAT_CACHE);
+        }
+        #[cfg(feature = "profile-memory")]
+        if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
+            let phase = format!("gc_{}_after", self.heap.collection_count());
+            self.report_memory_snapshot(&phase);
         }
     }
 
@@ -771,6 +793,11 @@ impl<H: Host> Vm<H> {
 #[cfg(test)]
 mod tests {
     use super::shape_reclaim_threshold_met;
+    use crate::value::Value;
+    use crate::vm::{
+        DEFAULT_PROPERTY_ATTRIBUTES, DictionaryTrigger, PropertyAttributes, Shape, ShapeTransition,
+        property_key::PropertyKey,
+    };
 
     #[test]
     fn shape_compaction_waits_until_reclaim_is_material() {
@@ -778,5 +805,62 @@ mod tests {
         assert!(!shape_reclaim_threshold_met(1_000, 200));
         assert!(!shape_reclaim_threshold_met(1_000, 499));
         assert!(shape_reclaim_threshold_met(1_000, 500));
+    }
+
+    #[test]
+    fn shape_gc_root_fact_is_inherited_from_symbol_and_accessor_transitions() {
+        let root = Shape::root();
+        assert!(!root.may_have_gc_roots);
+        let string_key = Shape::child(
+            Some(0),
+            ShapeTransition::Add {
+                key: PropertyKey::string(0),
+                slot: 0,
+            },
+            1,
+            None,
+            root.may_have_gc_roots,
+        );
+        assert!(!string_key.may_have_gc_roots);
+
+        let symbol_key = PropertyKey::symbol(Value::heap(1));
+        let symbol_shape = Shape::child(
+            Some(0),
+            ShapeTransition::Add {
+                key: symbol_key,
+                slot: 0,
+            },
+            1,
+            None,
+            root.may_have_gc_roots,
+        );
+        assert!(symbol_shape.may_have_gc_roots);
+        let deleted_symbol_shape = Shape::child(
+            Some(1),
+            ShapeTransition::Delete {
+                key: symbol_key,
+                slot: 0,
+            },
+            1,
+            None,
+            symbol_shape.may_have_gc_roots,
+        );
+        assert!(deleted_symbol_shape.may_have_gc_roots);
+
+        let attributes = PropertyAttributes {
+            getter: Some(Value::heap(2)),
+            ..DEFAULT_PROPERTY_ATTRIBUTES
+        };
+        let accessor_shape = Shape::child(
+            Some(1),
+            ShapeTransition::Descriptor {
+                slot: 0,
+                attributes,
+            },
+            1,
+            Some(DictionaryTrigger::PropertyCount),
+            string_key.may_have_gc_roots,
+        );
+        assert!(accessor_shape.may_have_gc_roots);
     }
 }

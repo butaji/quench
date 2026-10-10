@@ -2,12 +2,12 @@ use super::Profile;
 
 impl Profile {
     #[inline(always)]
-    pub(crate) fn virtual_opcode(&mut self, opcode: usize) {
+    pub(crate) fn virtual_opcode(&mut self, program: u32, opcode: usize) {
         #[cfg(feature = "profile-aggregate")]
         {
-            self.opcodes[opcode] = self.opcodes[opcode].saturating_add(1);
+            super::increment_program_counter(&mut self.opcodes, program, opcode);
         }
         #[cfg(not(feature = "profile-aggregate"))]
-        let _ = opcode;
+        let _ = (program, opcode);
     }
 }

@@ -1,4 +1,5 @@
 mod analysis;
+mod contention;
 
 use serde::{Deserialize, Serialize};
 use std::{
@@ -25,6 +26,63 @@ const FIXTURES: &[&str] = &[
 const MIN_QUALIFYING_ROUNDS: usize = 11;
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 const MEASUREMENT_ENV: &[&str] = &["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"];
+const FIXED_WORK_REPORT_SCHEMA: u32 = 4;
+const FIXED_WORK_MEASUREMENT_MODE: &str = "fixed_work_diagnostic";
+const FIXED_WORK_MARKER_PREFIX: &str = "__quenchFixedWork:";
+const FIXED_WORK_SUITE_COUNT: usize = 1;
+const FIXED_WORK_MARKER_COUNT: usize = 1;
+const FIXED_WORK_SAMPLE_ORDER_PERIOD: usize = 2;
+const HOST_CPU_CONSUMER_LIMIT: usize = 5;
+const FIXED_WORK_PLANS: &[FixedWorkPlan] = &[
+    FixedWorkPlan {
+        fixture: "crypto.js",
+        suite: "Crypto",
+        benchmark_count: 2,
+        iterations_per_benchmark: 4,
+    },
+    FixedWorkPlan {
+        fixture: "deltablue.js",
+        suite: "DeltaBlue",
+        benchmark_count: 1,
+        iterations_per_benchmark: 40,
+    },
+    FixedWorkPlan {
+        fixture: "earley-boyer.js",
+        suite: "EarleyBoyer",
+        benchmark_count: 2,
+        iterations_per_benchmark: 3,
+    },
+    FixedWorkPlan {
+        fixture: "navier-stokes.js",
+        suite: "NavierStokes",
+        benchmark_count: 1,
+        iterations_per_benchmark: 5,
+    },
+    FixedWorkPlan {
+        fixture: "raytrace.js",
+        suite: "RayTrace",
+        benchmark_count: 1,
+        iterations_per_benchmark: 10,
+    },
+    FixedWorkPlan {
+        fixture: "regexp.js",
+        suite: "RegExp",
+        benchmark_count: 1,
+        iterations_per_benchmark: 1,
+    },
+    FixedWorkPlan {
+        fixture: "richards.js",
+        suite: "Richards",
+        benchmark_count: 1,
+        iterations_per_benchmark: 100,
+    },
+    FixedWorkPlan {
+        fixture: "splay.js",
+        suite: "Splay",
+        benchmark_count: 1,
+        iterations_per_benchmark: 300,
+    },
+];
 const RUNNER: &str = r#"
 let __quenchBenchSucceeded = true;
 const __quenchBenchPrint = typeof console !== "undefined" && typeof console.log === "function"
@@ -97,8 +155,37 @@ struct Sample {
     page_faults: Option<u64>,
     page_reclaims: Option<u64>,
     involuntary_context_switches: Option<u64>,
+    #[serde(default)]
+    host_before: Option<HostSnapshot>,
+    #[serde(default)]
+    host_after: Option<HostSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    contention: Option<contention::Assessment>,
     stdout: String,
     stderr: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct HostSnapshot {
+    captured_unix_ns: u128,
+    load_average: Option<LoadAverage>,
+    load_average_error: Option<String>,
+    top_cpu_consumers: Vec<CpuConsumer>,
+    process_list_error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+struct LoadAverage {
+    one_minute: f64,
+    five_minutes: f64,
+    fifteen_minutes: f64,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct CpuConsumer {
+    pid: u32,
+    cpu_percent: f64,
+    command: String,
 }
 
 impl Sample {
@@ -107,6 +194,21 @@ impl Sample {
             && !self.timed_out
             && self.score.is_some_and(f64::is_finite)
             && self.peak_rss_bytes.is_some_and(|rss| rss > 0)
+    }
+
+    fn valid_fixed_work(&self, plan: FixedWorkPlan, iterations: usize) -> bool {
+        let marker = fixed_work_marker(plan, iterations);
+        let marker_count = self
+            .stdout
+            .lines()
+            .filter(|line| line.starts_with(FIXED_WORK_MARKER_PREFIX))
+            .count();
+        self.status == 0
+            && !self.timed_out
+            && self.score.is_none()
+            && self.peak_rss_bytes.is_some_and(|rss| rss > 0)
+            && marker_count == FIXED_WORK_MARKER_COUNT
+            && self.stdout.lines().any(|line| line == marker)
     }
 }
 
@@ -159,7 +261,114 @@ struct HostRecord {
     memory_bytes: Option<u64>,
     memory_limit_bytes: Option<u64>,
     cpu_quota: Option<String>,
+    #[serde(default)]
+    logical_cpus: Option<usize>,
     process_metrics_backend: String,
+}
+
+#[derive(Clone, Copy, Serialize)]
+struct FixedWorkPlan {
+    fixture: &'static str,
+    suite: &'static str,
+    benchmark_count: usize,
+    iterations_per_benchmark: usize,
+}
+
+impl FixedWorkPlan {
+    fn total_run_calls(self) -> usize {
+        self.benchmark_count * self.iterations_per_benchmark
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct FixedWorkSummary {
+    work: FixedWorkProcessSummary,
+    setup_only: FixedWorkProcessSummary,
+    marginal_per_run: FixedWorkPerRunSummary,
+}
+
+#[derive(Clone, Serialize)]
+struct FixedWorkProcessSummary {
+    median_wall_ns: Option<u128>,
+    median_cycles: Option<u64>,
+    median_instructions: Option<u64>,
+    median_max_rss_bytes: Option<u64>,
+    valid_samples: usize,
+    clean_samples: usize,
+}
+
+#[derive(Clone, Serialize)]
+struct FixedWorkPerRunSummary {
+    median_wall_ns: Option<f64>,
+    median_cycles: Option<f64>,
+    median_instructions: Option<f64>,
+    paired_samples: usize,
+    clean_paired_samples: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum FixedWorkSampleKind {
+    Work,
+    SetupOnly,
+}
+
+#[derive(Clone, Serialize)]
+struct FixedWorkExecution {
+    engine: String,
+    sample: FixedWorkSampleKind,
+}
+
+#[derive(Clone, Serialize)]
+struct FixedWorkRound {
+    round: usize,
+    execution_order: Vec<FixedWorkExecution>,
+    #[serde(default)]
+    rejected_attempts: Vec<FixedWorkRoundAttempt>,
+    selected_attempt: usize,
+    samples: BTreeMap<String, Sample>,
+    setup_only_samples: BTreeMap<String, Sample>,
+}
+
+#[derive(Clone, Serialize)]
+struct FixedWorkRoundAttempt {
+    attempt: usize,
+    execution_order: Vec<FixedWorkExecution>,
+    samples: BTreeMap<String, Sample>,
+    setup_only_samples: BTreeMap<String, Sample>,
+}
+
+#[derive(Clone, Serialize)]
+struct FixedWorkFixtureRecord {
+    source: Artifact,
+    materialized_source: Artifact,
+    setup_only_source: Artifact,
+    plan: FixedWorkPlan,
+    valid: bool,
+    output_equal: bool,
+    clean_rounds: usize,
+    summaries: BTreeMap<String, FixedWorkSummary>,
+    rounds: Vec<FixedWorkRound>,
+}
+
+#[derive(Clone, Serialize)]
+struct FixedWorkReport {
+    schema: u32,
+    measurement_mode: String,
+    created_unix_ns: u128,
+    rounds_requested: usize,
+    timeout_ms: u64,
+    source_revision: String,
+    source_dirty: bool,
+    corpus: CorpusRecord,
+    host: HostRecord,
+    contention_policy: contention::Policy,
+    measurement_runner: Artifact,
+    engines: Vec<EngineRecord>,
+    suite_inputs: Vec<Artifact>,
+    fixtures: BTreeMap<String, FixedWorkFixtureRecord>,
+    complete: bool,
+    qualification_ready: bool,
 }
 
 struct Options {
@@ -170,7 +379,9 @@ struct Options {
     bun: PathBuf,
     qjs: PathBuf,
     quench: PathBuf,
+    quench_peer: Option<PathBuf>,
     rounds: usize,
+    fixed_work: bool,
     timeout_ms: u64,
     output: Option<PathBuf>,
     checkpoint: Option<PathBuf>,
@@ -190,7 +401,11 @@ fn main() {
     if env::var_os("QUENCH_EXEC_TRACE").is_some() {
         fail("scored runs must not inherit QUENCH_EXEC_TRACE");
     }
-    let engines = prepare_engines(&options);
+    let engines = if options.fixed_work && options.quench_peer.is_some() {
+        prepare_quench_pair(&options)
+    } else {
+        prepare_engines(&options)
+    };
     let engine_records = engines.iter().map(EngineSpec::record).collect::<Vec<_>>();
     if options.preflight_only {
         println!("{}", serde_json::to_string_pretty(&engine_records).unwrap());
@@ -199,6 +414,28 @@ fn main() {
 
     let files = selected_fixtures(&options);
     let (source_revision, source_dirty) = source_identity();
+    if options.fixed_work {
+        let report = run_fixed_work_report(
+            &options,
+            &files,
+            &engines,
+            engine_records,
+            source_revision,
+            source_dirty,
+        );
+        let bytes = serde_json::to_vec_pretty(&report).unwrap();
+        if let Some(path) = options.output {
+            write_new_report(&path, &bytes);
+            println!("wrote {}", path.display());
+        } else {
+            println!("{}", String::from_utf8(bytes).unwrap());
+        }
+        if !report.complete {
+            std::process::exit(1);
+        }
+        return;
+    }
+
     let mut report = SuiteRecord {
         schema: 5,
         created_unix_ns: now_ns(),
@@ -282,12 +519,7 @@ fn main() {
     }
     let bytes = serde_json::to_vec_pretty(&report).unwrap();
     if let Some(path) = options.output {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .unwrap_or_else(|error| fail(&format!("cannot create {}: {error}", path.display())));
-        file.write_all(&bytes).expect("write benchmark report");
+        write_new_report(&path, &bytes);
         println!("wrote {}", path.display());
     } else {
         println!("{}", String::from_utf8(bytes).unwrap());
@@ -348,6 +580,15 @@ fn write_checkpoint(path: &Path, report: &SuiteRecord) {
     }
 }
 
+fn write_new_report(path: &Path, bytes: &[u8]) {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .unwrap_or_else(|error| fail(&format!("cannot create {}: {error}", path.display())));
+    file.write_all(bytes).expect("write benchmark report");
+}
+
 fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf]) {
     let metadata_matches = saved.schema == expected.schema
         && saved.rounds_requested == expected.rounds_requested
@@ -359,7 +600,9 @@ fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf
         && same_json(&saved.engines, &expected.engines)
         && same_json(&saved.suite_inputs, &expected.suite_inputs);
     if !metadata_matches {
-        fail("checkpoint provenance does not match this source, host, corpus, engines, rounds, or timeout");
+        fail(
+            "checkpoint provenance does not match this source, host, corpus, engines, rounds, or timeout",
+        );
     }
     if saved.source_dirty {
         fail("cannot resume a checkpoint recorded from a dirty source tree");
@@ -428,7 +671,9 @@ fn parse_options() -> Options {
         bun: "bun".into(),
         qjs: "qjs".into(),
         quench: "target/production/quench-node".into(),
+        quench_peer: None,
         rounds: MIN_QUALIFYING_ROUNDS,
+        fixed_work: false,
         timeout_ms: DEFAULT_TIMEOUT_MS,
         output: None,
         checkpoint: None,
@@ -443,6 +688,10 @@ fn parse_options() -> Options {
             "--bun" => options.bun = required_path(&mut args, "--bun"),
             "--qjs" => options.qjs = required_path(&mut args, "--qjs"),
             "--quench" => options.quench = required_path(&mut args, "--quench"),
+            "--quench-peer" => {
+                options.quench_peer = Some(required_path(&mut args, "--quench-peer"))
+            }
+            "--fixed-work" => options.fixed_work = true,
             "--runs" => {
                 options.rounds = usize::try_from(required_number(&mut args, "--runs"))
                     .unwrap_or_else(|_| usage("--runs is too large"));
@@ -474,6 +723,14 @@ fn parse_options() -> Options {
     }
     if options.preflight_only && (options.checkpoint.is_some() || options.resume.is_some()) {
         usage("--preflight-only cannot use checkpoints");
+    }
+    if options.quench_peer.is_some() && !options.fixed_work {
+        usage("--quench-peer requires --fixed-work");
+    }
+    if options.fixed_work
+        && (options.preflight_only || options.checkpoint.is_some() || options.resume.is_some())
+    {
+        usage("--fixed-work cannot use preflight or checkpoints");
     }
     if let (Some(checkpoint), Some(output)) = (
         options.checkpoint.as_ref().or(options.resume.as_ref()),
@@ -560,6 +817,28 @@ fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
         "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled".into();
 
     vec![quench, qjs, bun, node]
+}
+
+fn prepare_quench_pair(options: &Options) -> Vec<EngineSpec> {
+    let mut baseline = spec("quench_baseline", &options.quench, vec![], BTreeMap::new());
+    let mut candidate = spec(
+        "quench_candidate",
+        options.quench_peer.as_ref().expect("pair mode has a peer"),
+        vec![],
+        BTreeMap::new(),
+    );
+    let version = format!(
+        "Quench shared-VM interpreter build; package {}",
+        env!("CARGO_PKG_VERSION")
+    );
+    for engine in [&mut baseline, &mut candidate] {
+        engine.version = version.clone();
+        engine.jit_proof_command = vec![engine.executable.display().to_string()];
+        engine.jit_proof =
+            "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+                .into();
+    }
+    vec![baseline, candidate]
 }
 
 fn spec(
@@ -683,6 +962,468 @@ fn selected_fixtures(options: &Options) -> Vec<PathBuf> {
     vec![options.fixture.clone().unwrap()]
 }
 
+fn fixed_work_plan(file: &Path) -> FixedWorkPlan {
+    let Some(plan) = file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| FIXED_WORK_PLANS.iter().find(|plan| plan.fixture == name))
+        .copied()
+    else {
+        fail(&format!("no fixed-work plan for {}", file.display()));
+    };
+    let expected = Path::new(SUITE_DIR).join(plan.fixture);
+    let selected_path = file.canonicalize().unwrap_or_else(|error| {
+        fail(&format!(
+            "cannot resolve fixed-work fixture {}: {error}",
+            file.display()
+        ))
+    });
+    let expected_path = expected.canonicalize().unwrap_or_else(|error| {
+        fail(&format!(
+            "cannot resolve fixed-work corpus input {}: {error}",
+            expected.display()
+        ))
+    });
+    if selected_path != expected_path {
+        fail("fixed-work plans are restricted to the pinned V8-v7 fixtures");
+    }
+    plan
+}
+
+fn fixed_work_runner(plan: FixedWorkPlan, iterations: usize) -> String {
+    format!(
+        r#"
+var __quenchFixedSuites = BenchmarkSuite.suites;
+var __quenchFixedPrint = typeof console !== "undefined" && typeof console.log === "function"
+  ? console.log.bind(console)
+  : print;
+if (__quenchFixedSuites.length !== {suite_count}) throw new Error("fixed-work suite count mismatch");
+var __quenchFixedSuite = __quenchFixedSuites[0];
+if (__quenchFixedSuite.name !== "{suite}") throw new Error("fixed-work suite name mismatch");
+if (__quenchFixedSuite.benchmarks.length !== {benchmark_count}) throw new Error("fixed-work benchmark count mismatch");
+for (var __quenchFixedIndex = 0; __quenchFixedIndex < __quenchFixedSuite.benchmarks.length; __quenchFixedIndex++) {{
+  var __quenchFixedBenchmark = __quenchFixedSuite.benchmarks[__quenchFixedIndex];
+  __quenchFixedBenchmark.Setup();
+  try {{
+    for (var __quenchFixedRun = 0; __quenchFixedRun < {iterations}; __quenchFixedRun++) {{
+      __quenchFixedBenchmark.run();
+    }}
+  }} finally {{
+    __quenchFixedBenchmark.TearDown();
+  }}
+}}
+__quenchFixedPrint("{marker_prefix}{suite}:{benchmark_count}:{iterations}");
+"#,
+        suite = plan.suite,
+        suite_count = FIXED_WORK_SUITE_COUNT,
+        marker_prefix = FIXED_WORK_MARKER_PREFIX,
+        benchmark_count = plan.benchmark_count,
+        iterations = iterations,
+    )
+}
+
+fn fixed_work_marker(plan: FixedWorkPlan, iterations: usize) -> String {
+    format!(
+        "{}{}:{}:{}",
+        FIXED_WORK_MARKER_PREFIX, plan.suite, plan.benchmark_count, iterations
+    )
+}
+
+fn run_fixed_work_report(
+    options: &Options,
+    files: &[PathBuf],
+    engines: &[EngineSpec],
+    engine_records: Vec<EngineRecord>,
+    source_revision: String,
+    source_dirty: bool,
+) -> FixedWorkReport {
+    let host = host_identity();
+    let mut fixtures = BTreeMap::new();
+    for file in files {
+        let key = file.display().to_string();
+        let plan = fixed_work_plan(file);
+        let record = run_fixed_work_fixture(
+            file,
+            plan,
+            engines,
+            options.rounds,
+            options.timeout_ms,
+            &host,
+        );
+        eprintln!(
+            "{}: fixed work {} ({}/{} valid rounds, {}/{} clean rounds, {} iterations per benchmark)",
+            file.display(),
+            if record.valid && record.output_equal {
+                "valid"
+            } else {
+                "invalid"
+            },
+            record
+                .rounds
+                .iter()
+                .filter(|round| { fixed_work_round_is_valid(round, plan) })
+                .count(),
+            options.rounds,
+            record.clean_rounds,
+            options.rounds,
+            plan.iterations_per_benchmark,
+        );
+        fixtures.insert(key, record);
+    }
+    let complete = !fixtures.is_empty()
+        && fixtures
+            .values()
+            .all(|fixture| fixture.valid && fixture.output_equal);
+    FixedWorkReport {
+        schema: FIXED_WORK_REPORT_SCHEMA,
+        measurement_mode: FIXED_WORK_MEASUREMENT_MODE.into(),
+        created_unix_ns: now_ns(),
+        rounds_requested: options.rounds,
+        timeout_ms: options.timeout_ms,
+        source_revision,
+        source_dirty,
+        corpus: corpus_record(files),
+        host,
+        contention_policy: contention::POLICY,
+        measurement_runner: artifact(&env::current_exe().expect("current benchmark executable")),
+        engines: engine_records,
+        suite_inputs: corpus_inputs(),
+        fixtures,
+        complete,
+        qualification_ready: false,
+    }
+}
+
+fn run_fixed_work_fixture(
+    file: &Path,
+    plan: FixedWorkPlan,
+    engines: &[EngineSpec],
+    rounds: usize,
+    timeout_ms: u64,
+    host: &HostRecord,
+) -> FixedWorkFixtureRecord {
+    let runner = fixed_work_runner(plan, plan.iterations_per_benchmark);
+    let setup_only_runner = fixed_work_runner(plan, 0);
+    let temporary = materialize_with_runner(file, runner.as_bytes());
+    let setup_only_temporary = materialize_with_runner(file, setup_only_runner.as_bytes());
+    let materialized_source = artifact(&temporary);
+    let setup_only_source = artifact(&setup_only_temporary);
+    let mut results = Vec::with_capacity(rounds);
+    for round in 0..rounds {
+        let attempt = run_fixed_work_attempt(
+            &temporary,
+            &setup_only_temporary,
+            engines,
+            round,
+            0,
+            timeout_ms,
+        );
+        results.push(FixedWorkRound {
+            round,
+            execution_order: attempt.execution_order,
+            rejected_attempts: Vec::new(),
+            selected_attempt: 0,
+            samples: attempt.samples,
+            setup_only_samples: attempt.setup_only_samples,
+        });
+        if !fixed_work_round_is_valid(results.last().unwrap(), plan) {
+            break;
+        }
+    }
+    let references = contention::assess_rounds(&mut results, engines, plan, host);
+    retry_contended_rounds(
+        &mut results,
+        &temporary,
+        &setup_only_temporary,
+        engines,
+        plan,
+        timeout_ms,
+        host,
+        &references,
+    );
+    let _ = fs::remove_file(temporary);
+    let _ = fs::remove_file(setup_only_temporary);
+    let valid = results.len() == rounds
+        && results
+            .iter()
+            .all(|round| fixed_work_round_is_valid(round, plan));
+    let output_equal = fixed_work_outputs_equal(&results, engines);
+    let clean_rounds = results
+        .iter()
+        .filter(|round| contention::round_is_clean(round))
+        .count();
+    let summaries = engines
+        .iter()
+        .map(|engine| {
+            (
+                engine.name.to_string(),
+                fixed_work_summary(&results, engine.name, plan),
+            )
+        })
+        .collect();
+    FixedWorkFixtureRecord {
+        source: artifact(file),
+        materialized_source,
+        setup_only_source,
+        plan,
+        valid,
+        output_equal,
+        clean_rounds,
+        summaries,
+        rounds: results,
+    }
+}
+
+fn fixed_work_outputs_equal(rounds: &[FixedWorkRound], engines: &[EngineSpec]) -> bool {
+    rounds.iter().all(|round| {
+        fixed_work_sample_outputs_equal(&round.samples, engines)
+            && fixed_work_sample_outputs_equal(&round.setup_only_samples, engines)
+    })
+}
+
+fn fixed_work_round_is_valid(round: &FixedWorkRound, plan: FixedWorkPlan) -> bool {
+    !round.samples.is_empty()
+        && round.samples.len() == round.setup_only_samples.len()
+        && round
+            .samples
+            .values()
+            .all(|sample| sample.valid_fixed_work(plan, plan.iterations_per_benchmark))
+        && round
+            .setup_only_samples
+            .values()
+            .all(|sample| sample.valid_fixed_work(plan, 0))
+}
+
+fn run_fixed_work_attempt(
+    work_source: &Path,
+    setup_only_source: &Path,
+    engines: &[EngineSpec],
+    round: usize,
+    attempt: usize,
+    timeout_ms: u64,
+) -> FixedWorkRoundAttempt {
+    let order = rotated_order(engines, round + attempt);
+    let mut samples = BTreeMap::new();
+    let mut setup_only_samples = BTreeMap::new();
+    let mut execution_order = Vec::with_capacity(engines.len() * 2);
+    for engine in &order {
+        let work_first = (round + attempt) % FIXED_WORK_SAMPLE_ORDER_PERIOD == 0;
+        let sample_order = if work_first {
+            [FixedWorkSampleKind::Work, FixedWorkSampleKind::SetupOnly]
+        } else {
+            [FixedWorkSampleKind::SetupOnly, FixedWorkSampleKind::Work]
+        };
+        for kind in sample_order {
+            let source = match kind {
+                FixedWorkSampleKind::Work => work_source,
+                FixedWorkSampleKind::SetupOnly => setup_only_source,
+            };
+            let sample = run(engine, source, timeout_ms);
+            execution_order.push(FixedWorkExecution {
+                engine: engine.name.to_string(),
+                sample: kind,
+            });
+            match kind {
+                FixedWorkSampleKind::Work => {
+                    samples.insert(engine.name.to_string(), sample);
+                }
+                FixedWorkSampleKind::SetupOnly => {
+                    setup_only_samples.insert(engine.name.to_string(), sample);
+                }
+            }
+        }
+    }
+    FixedWorkRoundAttempt {
+        attempt,
+        execution_order,
+        samples,
+        setup_only_samples,
+    }
+}
+
+fn retry_contended_rounds(
+    rounds: &mut [FixedWorkRound],
+    work_source: &Path,
+    setup_only_source: &Path,
+    engines: &[EngineSpec],
+    plan: FixedWorkPlan,
+    timeout_ms: u64,
+    host: &HostRecord,
+    references: &contention::References,
+) {
+    for round in rounds {
+        for attempt_index in 1..=contention::MAX_RETRIES {
+            if !contention::round_needs_retry(round) {
+                break;
+            }
+            let mut attempt = run_fixed_work_attempt(
+                work_source,
+                setup_only_source,
+                engines,
+                round.round,
+                attempt_index,
+                timeout_ms,
+            );
+            contention::assess_attempt(&mut attempt, engines, references, host);
+            if !fixed_work_attempt_is_valid(&attempt, engines, plan) {
+                round.rejected_attempts.push(attempt);
+                continue;
+            }
+            if contention::attempt_is_clean(&attempt) {
+                if round.selected_attempt == 0 {
+                    round.rejected_attempts.push(FixedWorkRoundAttempt {
+                        attempt: 0,
+                        execution_order: round.execution_order.clone(),
+                        samples: round.samples.clone(),
+                        setup_only_samples: round.setup_only_samples.clone(),
+                    });
+                }
+                round.selected_attempt = attempt_index;
+                round.execution_order = attempt.execution_order.clone();
+                round.samples = attempt.samples;
+                round.setup_only_samples = attempt.setup_only_samples;
+                break;
+            }
+            round.rejected_attempts.push(attempt);
+        }
+        round
+            .rejected_attempts
+            .sort_by_key(|attempt| attempt.attempt);
+    }
+}
+
+fn fixed_work_attempt_is_valid(
+    attempt: &FixedWorkRoundAttempt,
+    engines: &[EngineSpec],
+    plan: FixedWorkPlan,
+) -> bool {
+    !attempt.samples.is_empty()
+        && attempt.samples.len() == attempt.setup_only_samples.len()
+        && attempt
+            .samples
+            .values()
+            .all(|sample| sample.valid_fixed_work(plan, plan.iterations_per_benchmark))
+        && attempt
+            .setup_only_samples
+            .values()
+            .all(|sample| sample.valid_fixed_work(plan, 0))
+        && fixed_work_sample_outputs_equal(&attempt.samples, engines)
+        && fixed_work_sample_outputs_equal(&attempt.setup_only_samples, engines)
+}
+
+fn fixed_work_sample_outputs_equal(
+    samples: &BTreeMap<String, Sample>,
+    engines: &[EngineSpec],
+) -> bool {
+    let Some(first) = engines.first().and_then(|engine| samples.get(engine.name)) else {
+        return false;
+    };
+    engines.iter().all(|engine| {
+        samples.get(engine.name).is_some_and(|sample| {
+            sample.status == first.status
+                && semantic_output(&sample.stdout) == semantic_output(&first.stdout)
+        })
+    })
+}
+
+fn fixed_work_summary(
+    rounds: &[FixedWorkRound],
+    engine: &str,
+    plan: FixedWorkPlan,
+) -> FixedWorkSummary {
+    let work_samples = rounds
+        .iter()
+        .filter_map(|round| round.samples.get(engine))
+        .filter(|sample| sample.valid_fixed_work(plan, plan.iterations_per_benchmark))
+        .collect::<Vec<_>>();
+    let setup_only_samples = rounds
+        .iter()
+        .filter_map(|round| round.setup_only_samples.get(engine))
+        .filter(|sample| sample.valid_fixed_work(plan, 0))
+        .collect::<Vec<_>>();
+    let marginal_per_run = fixed_work_marginal_summary(rounds, engine, plan);
+    FixedWorkSummary {
+        work: fixed_work_process_summary(&work_samples),
+        setup_only: fixed_work_process_summary(&setup_only_samples),
+        marginal_per_run,
+    }
+}
+
+fn fixed_work_process_summary(samples: &[&Sample]) -> FixedWorkProcessSummary {
+    let clean_samples = samples
+        .iter()
+        .copied()
+        .filter(|sample| contention::sample_is_clean(sample))
+        .collect::<Vec<_>>();
+    FixedWorkProcessSummary {
+        median_wall_ns: median_u128(clean_samples.iter().map(|sample| sample.wall_ns).collect()),
+        median_cycles: median_u64(
+            clean_samples
+                .iter()
+                .filter_map(|sample| sample.cycles)
+                .collect(),
+        ),
+        median_instructions: median_u64(
+            clean_samples
+                .iter()
+                .filter_map(|sample| sample.instructions)
+                .collect(),
+        ),
+        median_max_rss_bytes: median_u64(
+            samples
+                .iter()
+                .filter_map(|sample| sample.peak_rss_bytes)
+                .collect(),
+        ),
+        valid_samples: samples.len(),
+        clean_samples: clean_samples.len(),
+    }
+}
+
+fn fixed_work_marginal_summary(
+    rounds: &[FixedWorkRound],
+    engine: &str,
+    plan: FixedWorkPlan,
+) -> FixedWorkPerRunSummary {
+    let work_calls = plan.total_run_calls() as f64;
+    let mut wall_deltas = Vec::new();
+    let mut cycle_deltas = Vec::new();
+    let mut instruction_deltas = Vec::new();
+    let mut paired_samples = 0;
+    for round in rounds {
+        let (Some(work), Some(setup_only)) = (
+            round.samples.get(engine),
+            round.setup_only_samples.get(engine),
+        ) else {
+            continue;
+        };
+        if !work.valid_fixed_work(plan, plan.iterations_per_benchmark)
+            || !setup_only.valid_fixed_work(plan, 0)
+        {
+            continue;
+        }
+        paired_samples += 1;
+        if !contention::sample_is_clean(work) || !contention::sample_is_clean(setup_only) {
+            continue;
+        }
+        wall_deltas.push((work.wall_ns as f64 - setup_only.wall_ns as f64) / work_calls);
+        if let (Some(work), Some(setup)) = (work.cycles, setup_only.cycles) {
+            cycle_deltas.push((work as f64 - setup as f64) / work_calls);
+        }
+        if let (Some(work), Some(setup)) = (work.instructions, setup_only.instructions) {
+            instruction_deltas.push((work as f64 - setup as f64) / work_calls);
+        }
+    }
+    let clean_paired_samples = wall_deltas.len();
+    FixedWorkPerRunSummary {
+        median_wall_ns: median_f64(wall_deltas),
+        median_cycles: median_f64(cycle_deltas),
+        median_instructions: median_f64(instruction_deltas),
+        paired_samples,
+        clean_paired_samples,
+    }
+}
+
 fn run_fixture(
     file: &Path,
     engines: &[EngineSpec],
@@ -748,8 +1489,16 @@ fn outputs_equal(rounds: &[RoundRecord], engines: &[EngineSpec]) -> bool {
     })
 }
 
-#[cfg(target_os = "macos")]
 fn run(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
+    let host_before = host_snapshot();
+    let mut sample = run_measured(engine, source, timeout_ms);
+    sample.host_before = Some(host_before);
+    sample.host_after = Some(host_snapshot());
+    sample
+}
+
+#[cfg(target_os = "macos")]
+fn run_measured(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
     let started = Instant::now();
     let timeout_seconds = format!("{:.3}", timeout_ms as f64 / 1000.0);
     let output = Command::new("timeout")
@@ -790,13 +1539,16 @@ fn run(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
         page_faults: time_metric(&stderr, "page faults"),
         page_reclaims: time_metric(&stderr, "page reclaims"),
         involuntary_context_switches: time_metric(&stderr, "involuntary context switches"),
+        host_before: None,
+        host_after: None,
+        contention: None,
         stdout,
         stderr,
     }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn run(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
+fn run_measured(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
     run_wait4(engine, source, timeout_ms)
 }
 
@@ -864,6 +1616,9 @@ fn run_wait4(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
         page_faults: Some(usage.page_faults),
         page_reclaims: Some(usage.page_reclaims),
         involuntary_context_switches: Some(usage.involuntary_context_switches),
+        host_before: None,
+        host_after: None,
+        contention: None,
         stdout,
         stderr,
     }
@@ -976,6 +1731,9 @@ fn invalid_sample(started: Instant, error: String) -> Sample {
         page_faults: None,
         page_reclaims: None,
         involuntary_context_switches: None,
+        host_before: None,
+        host_after: None,
+        contention: None,
         stdout: String::new(),
         stderr: error,
     }
@@ -1021,7 +1779,16 @@ fn median_u64(mut values: Vec<u64>) -> Option<u64> {
     values.get(values.len() / 2).copied()
 }
 
+fn median_u128(mut values: Vec<u128>) -> Option<u128> {
+    values.sort_unstable();
+    values.get(values.len() / 2).copied()
+}
+
 fn materialize(file: &Path) -> PathBuf {
+    materialize_with_runner(file, RUNNER.as_bytes())
+}
+
+fn materialize_with_runner(file: &Path, runner: &[u8]) -> PathBuf {
     let nonce = now_ns();
     let name = file.file_name().unwrap_or_default().to_string_lossy();
     let path = Path::new("/tmp").join(format!(
@@ -1031,12 +1798,12 @@ fn materialize(file: &Path) -> PathBuf {
     let base = fs::read(Path::new(SUITE_DIR).join("base.js"))
         .unwrap_or_else(|error| fail(&error.to_string()));
     let fixture = fs::read(file).unwrap_or_else(|error| fail(&error.to_string()));
-    let mut source = Vec::with_capacity(base.len() + fixture.len() + RUNNER.len() + 2);
+    let mut source = Vec::with_capacity(base.len() + fixture.len() + runner.len() + 2);
     source.extend_from_slice(&base);
     source.push(b'\n');
     source.extend_from_slice(&fixture);
     source.push(b'\n');
-    source.extend_from_slice(RUNNER.as_bytes());
+    source.extend_from_slice(runner);
     fs::write(&path, source).unwrap_or_else(|error| fail(&error.to_string()));
     path
 }
@@ -1048,9 +1815,128 @@ fn semantic_output(stdout: &str) -> String {
             !line.starts_with("Score: ")
                 && *line != "----"
                 && !line.starts_with("__quenchBenchResult: ")
+                && !line.starts_with("__quenchFixedWork:")
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn host_snapshot() -> HostSnapshot {
+    let (load_average, load_average_error) = capture_load_average();
+    let (top_cpu_consumers, process_list_error) = capture_cpu_consumers();
+    HostSnapshot {
+        captured_unix_ns: now_ns(),
+        load_average,
+        load_average_error,
+        top_cpu_consumers,
+        process_list_error,
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn capture_load_average() -> (Option<LoadAverage>, Option<String>) {
+    let output = Command::new("sysctl").args(["-n", "vm.loadavg"]).output();
+    match output {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            match parse_load_average(&text) {
+                Some(load) => (Some(load), None),
+                None => (None, Some(format!("cannot parse sysctl output: {text}"))),
+            }
+        }
+        Ok(output) => (None, Some(command_failure("sysctl", &output))),
+        Err(error) => (None, Some(error.to_string())),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn capture_load_average() -> (Option<LoadAverage>, Option<String>) {
+    match fs::read_to_string("/proc/loadavg") {
+        Ok(text) => match parse_load_average(&text) {
+            Some(load) => (Some(load), None),
+            None => (None, Some("cannot parse /proc/loadavg".to_string())),
+        },
+        Err(error) => (None, Some(error.to_string())),
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn capture_load_average() -> (Option<LoadAverage>, Option<String>) {
+    (
+        None,
+        Some("load average capture is unsupported on this platform".into()),
+    )
+}
+
+fn parse_load_average(text: &str) -> Option<LoadAverage> {
+    let values = text
+        .split(|character: char| {
+            !character.is_ascii_digit() && character != '.' && character != '-'
+        })
+        .filter(|value| !value.is_empty())
+        .take(3)
+        .map(str::parse::<f64>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    let [one_minute, five_minutes, fifteen_minutes]: [f64; 3] = values.try_into().ok()?;
+    [one_minute, five_minutes, fifteen_minutes]
+        .iter()
+        .all(|value| value.is_finite() && *value >= 0.0)
+        .then_some(LoadAverage {
+            one_minute,
+            five_minutes,
+            fifteen_minutes,
+        })
+}
+
+fn capture_cpu_consumers() -> (Vec<CpuConsumer>, Option<String>) {
+    let output = Command::new("ps")
+        .args(["-A", "-o", "pid=,pcpu=,comm="])
+        .output();
+    match output {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            (parse_cpu_consumers(&text), None)
+        }
+        Ok(output) => (Vec::new(), Some(command_failure("ps", &output))),
+        Err(error) => (Vec::new(), Some(error.to_string())),
+    }
+}
+
+fn command_failure(command: &str, output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        format!("{command} exited with {}", output.status)
+    } else {
+        stderr
+    }
+}
+
+fn parse_cpu_consumers(text: &str) -> Vec<CpuConsumer> {
+    let mut consumers = text
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next()?.parse().ok()?;
+            let cpu_percent = fields.next()?.parse::<f64>().ok()?;
+            let command = fields.collect::<Vec<_>>().join(" ");
+            (!command.is_empty() && cpu_percent.is_finite() && cpu_percent >= 0.0).then_some(
+                CpuConsumer {
+                    pid,
+                    cpu_percent,
+                    command,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    consumers.sort_unstable_by(|left, right| {
+        right
+            .cpu_percent
+            .total_cmp(&left.cpu_percent)
+            .then_with(|| left.pid.cmp(&right.pid))
+    });
+    consumers.truncate(HOST_CPU_CONSUMER_LIMIT);
+    consumers
 }
 
 fn corpus_inputs() -> Vec<Artifact> {
@@ -1134,6 +2020,7 @@ fn host_identity() -> HostRecord {
         cpu_quota: fs::read_to_string("/sys/fs/cgroup/cpu.max")
             .ok()
             .map(|value| value.trim().to_string()),
+        logical_cpus: std::thread::available_parallelism().ok().map(usize::from),
         process_metrics_backend: if cfg!(target_os = "macos") {
             "macOS /usr/bin/time -l".into()
         } else if cfg!(target_os = "linux") {
@@ -1223,7 +2110,7 @@ pub(crate) fn now_ns() -> u128 {
 
 fn usage(message: &str) -> ! {
     eprintln!(
-        "{message}\nusage: quench-bench <fixture.js>|--all [--quench PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
+        "{message}\nusage: quench-bench <fixture.js>|--all [--fixed-work] [--quench PATH] [--quench-peer PATH] [--qjs PATH] [--bun PATH] [--node PATH] [--runs N] [--timeout-ms N] [--checkpoint PATH|--resume PATH] [--out PATH]\n       quench-bench --preflight-only [engine options]\n       quench-bench --analyze REPORT [--out JSON]"
     );
     std::process::exit(2)
 }
@@ -1231,6 +2118,217 @@ fn usage(message: &str) -> ! {
 fn fail(message: &str) -> ! {
     eprintln!("{message}");
     std::process::exit(2)
+}
+
+#[cfg(test)]
+mod fixed_work_tests {
+    use super::{
+        contention, fixed_work_marker, fixed_work_runner, parse_cpu_consumers, parse_load_average,
+        FixedWorkPlan, HostSnapshot, LoadAverage, Sample, FIXED_WORK_PLANS, FIXTURES,
+    };
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn fixed_work_plan_covers_each_fixture_once_with_positive_work() {
+        let planned = FIXED_WORK_PLANS
+            .iter()
+            .map(|plan| plan.fixture)
+            .collect::<Vec<_>>();
+        assert_eq!(planned, FIXTURES);
+        assert!(FIXED_WORK_PLANS.iter().all(|plan| {
+            !plan.suite.is_empty()
+                && plan.benchmark_count > 0
+                && plan.iterations_per_benchmark > 0
+                && plan.total_run_calls() > 0
+        }));
+    }
+
+    #[test]
+    fn fixed_work_runner_keeps_setup_run_and_teardown_order_explicit() {
+        let plan = *FIXED_WORK_PLANS
+            .iter()
+            .find(|plan| plan.fixture == "splay.js")
+            .unwrap();
+        let runner = fixed_work_runner(plan, plan.iterations_per_benchmark);
+        let setup = runner.find("__quenchFixedBenchmark.Setup();").unwrap();
+        let iterations = format!("__quenchFixedRun < {}", plan.iterations_per_benchmark);
+        let run_loop = runner.find(&iterations).unwrap();
+        let run_call = runner.find("__quenchFixedBenchmark.run();").unwrap();
+        let teardown = runner.find("__quenchFixedBenchmark.TearDown();").unwrap();
+        let marker = runner
+            .find(&fixed_work_marker(plan, plan.iterations_per_benchmark))
+            .unwrap();
+        assert!(
+            setup < run_loop && run_loop < run_call && run_call < teardown && teardown < marker
+        );
+        assert!(runner.contains("finally"));
+        assert!(!runner.contains("RunSuites"));
+        assert!(!runner.contains("Date"));
+
+        let setup_only = fixed_work_runner(plan, 0);
+        assert!(setup_only.contains("__quenchFixedRun < 0"));
+        assert!(setup_only.contains(&fixed_work_marker(plan, 0)));
+    }
+
+    #[test]
+    fn fixed_work_summary_uses_paired_setup_only_differences() {
+        let plan = FixedWorkPlan {
+            fixture: "crypto.js",
+            suite: "Crypto",
+            benchmark_count: 2,
+            iterations_per_benchmark: 5,
+        };
+        let rounds = [(100, 99), (220, 100), (160, 159)]
+            .into_iter()
+            .enumerate()
+            .map(
+                |(round, (work_cycles, setup_cycles))| super::FixedWorkRound {
+                    round,
+                    execution_order: Vec::new(),
+                    rejected_attempts: Vec::new(),
+                    selected_attempt: 0,
+                    samples: BTreeMap::from([(
+                        "quench".into(),
+                        fixed_work_sample(plan, 5, work_cycles),
+                    )]),
+                    setup_only_samples: BTreeMap::from([(
+                        "quench".into(),
+                        fixed_work_sample(plan, 0, setup_cycles),
+                    )]),
+                },
+            )
+            .collect::<Vec<_>>();
+
+        let summary = super::fixed_work_summary(&rounds, "quench", plan);
+
+        assert_eq!(summary.marginal_per_run.median_cycles, Some(0.1));
+        assert_eq!(summary.marginal_per_run.median_instructions, Some(0.1));
+        assert_eq!(summary.marginal_per_run.paired_samples, 3);
+        assert_eq!(summary.work.median_cycles, Some(160));
+        assert_eq!(summary.setup_only.median_cycles, Some(100));
+    }
+
+    #[test]
+    fn fixed_work_sample_requires_completion_marker_without_a_score() {
+        let plan = FixedWorkPlan {
+            fixture: "crypto.js",
+            suite: "Crypto",
+            benchmark_count: 2,
+            iterations_per_benchmark: 10,
+        };
+        let sample = Sample {
+            status: 0,
+            timed_out: false,
+            wall_ns: 1,
+            peak_rss_bytes: Some(1),
+            score: None,
+            instructions: Some(2),
+            cycles: Some(3),
+            page_faults: None,
+            page_reclaims: None,
+            involuntary_context_switches: None,
+            host_before: None,
+            host_after: None,
+            contention: None,
+            stdout: format!(
+                "{}\n",
+                fixed_work_marker(plan, plan.iterations_per_benchmark)
+            ),
+            stderr: String::new(),
+        };
+        assert!(sample.valid_fixed_work(plan, plan.iterations_per_benchmark));
+
+        let scored_sample = Sample {
+            score: Some(1.0),
+            ..sample.clone()
+        };
+        assert!(!scored_sample.valid_fixed_work(plan, plan.iterations_per_benchmark));
+        let mut wrong_plan = plan;
+        wrong_plan.iterations_per_benchmark += 1;
+        let wrong_marker = Sample {
+            stdout: format!(
+                "{}\n",
+                fixed_work_marker(wrong_plan, wrong_plan.iterations_per_benchmark)
+            ),
+            ..sample
+        };
+        assert!(!wrong_marker.valid_fixed_work(plan, plan.iterations_per_benchmark));
+    }
+
+    fn fixed_work_sample(plan: FixedWorkPlan, iterations: usize, cycles: u64) -> Sample {
+        Sample {
+            status: 0,
+            timed_out: false,
+            wall_ns: cycles as u128,
+            peak_rss_bytes: Some(1),
+            score: None,
+            instructions: Some(cycles),
+            cycles: Some(cycles),
+            page_faults: None,
+            page_reclaims: None,
+            involuntary_context_switches: Some(1),
+            host_before: Some(HostSnapshot {
+                captured_unix_ns: 0,
+                load_average: Some(LoadAverage {
+                    one_minute: 0.0,
+                    five_minutes: 0.0,
+                    fifteen_minutes: 0.0,
+                }),
+                load_average_error: None,
+                top_cpu_consumers: Vec::new(),
+                process_list_error: None,
+            }),
+            host_after: Some(HostSnapshot {
+                captured_unix_ns: 1,
+                load_average: Some(LoadAverage {
+                    one_minute: 0.0,
+                    five_minutes: 0.0,
+                    fifteen_minutes: 0.0,
+                }),
+                load_average_error: None,
+                top_cpu_consumers: Vec::new(),
+                process_list_error: None,
+            }),
+            contention: Some(contention::verified_clean_assessment()),
+            stdout: format!("{}\n", fixed_work_marker(plan, iterations)),
+            stderr: String::new(),
+        }
+    }
+
+    #[test]
+    fn load_average_parser_accepts_sysctl_and_proc_formats() {
+        assert_eq!(
+            parse_load_average("{ 1.25 2.50 3.75 }\n"),
+            Some(LoadAverage {
+                one_minute: 1.25,
+                five_minutes: 2.50,
+                fifteen_minutes: 3.75,
+            })
+        );
+        assert_eq!(
+            parse_load_average("1.25 2.50 3.75 2/100 1234\n"),
+            Some(LoadAverage {
+                one_minute: 1.25,
+                five_minutes: 2.50,
+                fifteen_minutes: 3.75,
+            })
+        );
+        assert_eq!(parse_load_average("1.25 2.50"), None);
+        assert_eq!(parse_load_average("NaN 2 3"), None);
+    }
+
+    #[test]
+    fn cpu_process_parser_keeps_the_sorted_top_five() {
+        let input = (1..=7)
+            .rev()
+            .map(|pid| format!("{pid} {pid}.0 process-{pid}\n"))
+            .collect::<String>();
+        let consumers = parse_cpu_consumers(&input);
+        assert_eq!(consumers.len(), 5);
+        assert_eq!(consumers[0].pid, 7);
+        assert_eq!(consumers[0].cpu_percent, 7.0);
+        assert_eq!(consumers[0].command, "process-7");
+    }
 }
 
 #[cfg(all(test, unix, not(target_os = "macos")))]
@@ -1309,6 +2407,7 @@ mod tests {
                 memory_bytes: Some(1),
                 memory_limit_bytes: Some(1),
                 cpu_quota: Some("400000 100000".into()),
+                logical_cpus: Some(4),
                 process_metrics_backend: "wait4 test".into(),
             },
             engines: Vec::new(),

@@ -365,6 +365,22 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), v);
             }
+            Op::MakeObjectLiteral => {
+                let site = i.object_site_index();
+                let shape = self.object_site_shape(p, site);
+                let window = i.register_window();
+                let start = usize::from(window.base);
+                let end = start + usize::from(window.count);
+                let prototype = self.object_proto;
+                let properties = &self.frames[f].registers[start..end];
+                let object = self
+                    .heap
+                    .alloc_object_with_properties(prototype, shape, properties);
+                if i.returns_from_frame() {
+                    return Ok(StepResult::Return(object));
+                }
+                self.write(f, i.result_register(), object);
+            }
             Op::SuperConstArrayObject2 => {
                 if let Some(value) = self.execute_const_array_object2(p, f, i)? {
                     return Ok(StepResult::Return(value));
@@ -782,6 +798,7 @@ impl<H: Host> Vm<H> {
                 let right = self.resolve_operand(p, f, right_operand)?;
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.regional_binary(
+                    self.frames[f].program.raw(),
                     self.frames[f].function,
                     (*pc - 1) as u32,
                     self.numeric_binary(operator, left, right).is_some(),
@@ -792,7 +809,8 @@ impl<H: Host> Vm<H> {
                 }
                 if let Some(local) = i.numeric_local_target() {
                     self.frames[f].locals[local as usize] = v;
-                    self.profile.virtual_opcode(Op::StoreLocalPlain as usize);
+                    self.profile
+                        .virtual_opcode(self.frames[f].program.raw(), Op::StoreLocalPlain as usize);
                 } else {
                     self.write(f, i.result_register(), v);
                 }

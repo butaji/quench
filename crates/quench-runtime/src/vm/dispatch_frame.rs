@@ -191,7 +191,8 @@ impl<H: Host> Vm<H> {
         capture_constructor_this: bool,
         push_to_dispatch: bool,
     ) -> Result<UserFrameStart, JsError> {
-        self.profile.function(id as usize);
+        self.profile
+            .function(self.active_program.raw(), id as usize);
         if p.functions[id as usize].parameter_eval_arguments_error {
             return Err(self
                 .syntax_error_result(p, "arguments binding is not allowed in function parameters")
@@ -397,7 +398,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<(), JsError> {
-        self.profile.function(id as usize);
+        self.profile
+            .function(self.active_program.raw(), id as usize);
         if p.functions[id as usize].parameter_eval_arguments_error {
             return Err(self
                 .syntax_error_result(p, "arguments binding is not allowed in function parameters")
@@ -679,21 +681,19 @@ impl<H: Host> Vm<H> {
         }
         let parent = self.frames[frame].env;
         let function = self.frames[frame].function as usize;
-        let selective_capture_slots = self
-            .programs
-            .get(self.frames[frame].program)
-            .and_then(|program| {
-                program
-                    .functions
-                    .get(function)
-                    .and_then(|function| function.selective_capture_slots.clone())
-            });
+        let selective_capture_slots =
+            self.programs
+                .get(self.frames[frame].program)
+                .and_then(|program| {
+                    program
+                        .functions
+                        .get(function)
+                        .and_then(|function| function.selective_capture_slots.clone())
+                });
         let slots = if let Some(captured) = selective_capture_slots {
             let mut slots = self.frames[frame].locals.clone();
             for slot in 0..slots.len() {
-                if u16::try_from(slot)
-                    .is_ok_and(|slot| captured.binary_search(&slot).is_ok())
-                {
+                if u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok()) {
                     self.frames[frame].locals[slot] = Value::DELETED;
                 } else {
                     slots[slot] = Value::DELETED;
@@ -889,14 +889,28 @@ impl<H: Host> Vm<H> {
                 debug_assert_eq!(cursor.program, self.frames[frame].program);
                 debug_assert_eq!(cursor.function, self.frames[frame].function);
                 let instruction_pc = pc;
+                #[cfg(feature = "profile-memory")]
+                self.heap.set_memory_allocation_site(
+                    cursor.program.raw(),
+                    cursor.function,
+                    instruction_pc,
+                );
                 let ins = cursor.instruction(pc);
                 pc += 1;
                 #[cfg(feature = "profile-aggregate")]
                 self.profile.opcode(
                     ins.op() as usize,
                     frame,
+                    cursor.program.raw(),
                     cursor.function,
                     instruction_pc,
+                );
+                #[cfg(feature = "profile-aggregate")]
+                self.profile.object_literal_instruction(
+                    cursor.program.raw(),
+                    cursor.function,
+                    instruction_pc,
+                    ins.op(),
                 );
                 #[cfg(not(feature = "profile-aggregate"))]
                 self.profile.opcode(ins.op() as usize);
