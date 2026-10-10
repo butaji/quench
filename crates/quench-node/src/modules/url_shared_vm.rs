@@ -363,6 +363,7 @@ pub(crate) fn path_to_file_url(
         .transpose()?
         .flatten()
         .ok_or_else(|| invalid_path_argument(context))?;
+    let path = crate::modules::fs_path::resolve_fixture_path(path);
     let windows = windows_option(context, args)?;
     let href = if windows {
         windows_path_to_url(&path)
