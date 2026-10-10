@@ -499,7 +499,7 @@ impl<H: Host> Vm<H> {
                         return Err(JsError("generator function is not a constructor".into()));
                     }
                     if vm
-                        .lookup_atom("prototype")
+                        .known_prototype_atom()
                         .is_some_and(|atom| vm.own_property(callee, atom).is_none())
                     {
                         return Err(JsError("arrow function is not a constructor".into()));
@@ -603,13 +603,31 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    /// A function's own data `prototype`, read without the generic [[Get]]. Functions are
+    /// ordinary objects for this key, so an own data slot is exactly the [[Get]] result; any
+    /// other receiver or an accessor takes the generic path.
+    fn own_function_prototype_data(&self, constructor: Value, prototype_atom: Atom) -> Option<Value> {
+        if !matches!(self.heap.get(constructor), Some(Cell::Function { .. })) {
+            return None;
+        }
+        let attributes =
+            self.property_attributes(constructor, PropertyKey::string(prototype_atom))?;
+        if attributes.accessor {
+            return None;
+        }
+        self.own_property(constructor, prototype_atom)
+    }
+
     fn prototype_from_constructor(
         &mut self,
         p: &ResidualProgram,
         constructor: Value,
     ) -> Result<Value, JsError> {
         let prototype_atom = self.prototype_atom();
-        let prototype = self.get_property(p, constructor, prototype_atom)?;
+        let prototype = match self.own_function_prototype_data(constructor, prototype_atom) {
+            Some(prototype) => prototype,
+            None => self.get_property(p, constructor, prototype_atom)?,
+        };
         if self.object_data(prototype).is_some() {
             return Ok(prototype);
         }
