@@ -331,12 +331,12 @@ impl Heap {
                 self.properties
                     .has_compact_range(object.properties)
                     .then_some(())?;
-                Some((object.properties.start_offset(), index))
+                Some(pack_offset_owner(object.properties.start_offset(), index))
             })
             .collect::<Vec<_>>();
-        objects.sort_unstable();
+        sort_by_unique_offset(&mut objects);
         let mut target = 0;
-        for (_, index) in objects {
+        for index in objects.into_iter().map(owner_of_packed) {
             let slot = self
                 .slots
                 .get_mut(index)
@@ -972,3 +972,68 @@ impl Heap {
 }
 #[cfg(test)]
 mod tests;
+
+/// Bits per radix pass when ordering property owners by arena offset.
+const OFFSET_RADIX_BITS: u32 = 16;
+/// An owner key keeps the arena offset in the high half and the slot index in the low half.
+const OWNER_KEY_HALF_BITS: u32 = u32::BITS;
+
+fn pack_offset_owner(offset: usize, owner: usize) -> u64 {
+    debug_assert!(offset <= u32::MAX as usize && owner <= u32::MAX as usize);
+    ((offset as u64) << OWNER_KEY_HALF_BITS) | owner as u64
+}
+
+fn owner_of_packed(key: u64) -> usize {
+    (key & u64::from(u32::MAX)) as usize
+}
+
+/// Orders packed owner keys by arena offset in linear time. Offsets are distinct arena
+/// positions, so two stable 16-bit passes over the offset half give a full ordering.
+fn sort_by_unique_offset(keys: &mut Vec<u64>) {
+    let buckets = 1usize << OFFSET_RADIX_BITS;
+    let mask = (buckets - 1) as u64;
+    let mut scratch = vec![0; keys.len()];
+    let mut counts = vec![0usize; buckets + 1];
+    for pass in 0..2 {
+        let shift = OWNER_KEY_HALF_BITS + pass * OFFSET_RADIX_BITS;
+        counts.fill(0);
+        for key in keys.iter() {
+            counts[((key >> shift) & mask) as usize + 1] += 1;
+        }
+        for bucket in 0..buckets {
+            counts[bucket + 1] += counts[bucket];
+        }
+        for key in keys.iter() {
+            let bucket = ((key >> shift) & mask) as usize;
+            scratch[counts[bucket]] = *key;
+            counts[bucket] += 1;
+        }
+        std::mem::swap(keys, &mut scratch);
+    }
+}
+
+#[cfg(test)]
+mod offset_order_tests {
+    #[test]
+    fn radix_offset_order_matches_comparison_sort() {
+        let mut state = 0x2545_f491_u64;
+        let mut offsets: Vec<usize> = (0..5000)
+            .map(|_| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (state >> 33) as usize
+            })
+            .collect();
+        offsets.sort_unstable();
+        offsets.dedup();
+        let mut keys: Vec<u64> = offsets
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(slot, offset)| super::pack_offset_owner(*offset, slot))
+            .collect();
+        let mut expected = keys.clone();
+        expected.sort_unstable();
+        super::sort_by_unique_offset(&mut keys);
+        assert_eq!(keys, expected);
+    }
+}
