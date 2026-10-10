@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform) => {
+r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, cipherProcess) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   let repeatedHmacDigestWarningEmitted = false;
@@ -276,7 +276,7 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform) 
     "sha3-224", "sha3-256", "sha3-384", "sha3-512",
   ].sort());
   const cipherNames = Object.freeze([
-    "aes-128-cbc",
+    "aes-128-cbc", "aes-128-ecb", "des-ede3-cbc",
   ].sort());
   const curveNames = Object.freeze([
     "prime192v1", "secp224r1", "secp256k1", "secp256r1",
@@ -286,15 +286,164 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform) 
   function getCiphers() { return cipherNames.slice(); }
   function getCurves() { return curveNames.slice(); }
   function getCipherInfo(name) {
-    return name === "aes-128-cbc"
-      ? { name, ivLength: 16, keyLength: 16, mode: "cbc" }
-      : undefined;
+    const normalized = String(name).toLowerCase();
+    if (normalized === "aes-128-cbc") return { name: normalized, ivLength: 16, keyLength: 16, mode: "cbc" };
+    if (normalized === "aes-128-ecb") return { name: normalized, ivLength: 0, keyLength: 16, mode: "ecb" };
+    if (normalized === "aes-128-gcm") return { name: normalized, ivLength: 12, keyLength: 16, mode: "gcm" };
+    if (normalized === "des-ede3-cbc") return { name: normalized, ivLength: 8, keyLength: 24, mode: "cbc" };
+    return undefined;
+  }
+  class CipherBase extends Transform {
+    constructor(name, key, iv, decrypt) {
+      super();
+      this._cipherName = name;
+      this._cipherKey = Buffer.from(secretKeys.has(key) ? secretKeys.get(key) : key);
+      this._cipherIv = Buffer.from(iv);
+      this._cipherDecrypt = decrypt;
+      this._cipherChunks = [];
+      this._cipherBytesEmitted = 0;
+      this._cipherFinalized = false;
+      this._autoPadding = true;
+      this._transform = (chunk, encoding, callback) => {
+        try { callback(null, this.update(chunk)); }
+        catch (error) { callback(error); }
+      };
+      this._flush = (callback) => {
+        try { callback(null, this.final()); }
+        catch (error) { callback(error); }
+      };
+    }
+    _process(finalBlock) {
+      const input = Buffer.concat(this._cipherChunks);
+      let output;
+      try {
+        output = Buffer.from(cipherProcess(
+          this._cipherName, this._cipherKey, this._cipherIv, input,
+          finalBlock, this._cipherDecrypt,
+        ));
+      } catch (cause) {
+        if (this._cipherDecrypt && finalBlock) {
+          const error = new Error("error:1C800064:Provider routines::bad decrypt");
+          error.library = "Provider routines";
+          error.reason = "bad decrypt";
+          error.code = "ERR_OSSL_BAD_DECRYPT";
+          throw error;
+        }
+        throw cause;
+      }
+      const result = output.subarray(this._cipherBytesEmitted);
+      this._cipherBytesEmitted = output.length;
+      return result;
+    }
+    update(data, inputEncoding, outputEncoding) {
+      if (this._cipherFinalized) throw finalized();
+      const inputLength = data?.byteLength ?? data?.length;
+      if (typeof inputLength === "number" && inputLength > 0x7fffffff - 16) {
+        const error = new RangeError("The data exceeds the maximum supported size");
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+      this._cipherChunks.push(inputBuffer(data, inputEncoding));
+      const result = this._process(false);
+      return outputEncoding === undefined || outputEncoding === "buffer"
+        ? result
+        : result.toString(outputEncoding);
+    }
+    final(outputEncoding) {
+      if (this._cipherFinalized) throw finalized();
+      this._cipherFinalized = true;
+      const result = this._process(true);
+      return outputEncoding === undefined || outputEncoding === "buffer"
+        ? result
+        : result.toString(outputEncoding);
+    }
+    setAutoPadding(autoPadding = true) {
+      this._autoPadding = Boolean(autoPadding);
+      return this;
+    }
   }
   function createCipheriv(name, key, iv) {
-    if (getCipherInfo(name) === undefined) throw new Error(`Unknown cipher: ${name}`);
-    if (key.length !== 16 || iv.length !== 16) throw new TypeError("Invalid key or IV length");
-    return { update() { return Buffer.alloc(0); }, final() { return Buffer.alloc(0); } };
+    if (typeof name !== "string") {
+      const error = new TypeError(`The "cipher" argument must be of type string. ${receivedArgument(name)}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const info = getCipherInfo(name);
+    if (info === undefined) {
+      const error = new Error("Unknown cipher");
+      error.code = "ERR_CRYPTO_UNKNOWN_CIPHER";
+      throw error;
+    }
+    const bytesLike = (value) => typeof value === "string" || secretKeys.has(value) ||
+      ArrayBuffer.isView(value) || value instanceof ArrayBuffer ||
+      typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer;
+    if (!bytesLike(key)) {
+      const error = new TypeError('The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const keyBytes = Buffer.from(secretKeys.has(key) ? secretKeys.get(key) : key);
+    if (keyBytes.length !== info.keyLength) throw new TypeError("Invalid key length");
+    if (iv === undefined) {
+      const error = new TypeError('The "iv" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (iv !== null && !bytesLike(iv)) {
+      const error = new TypeError('The "iv" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (iv === null && info.ivLength !== 0) throw new Error("Invalid initialization vector");
+    const ivBytes = iv === null && info.ivLength === 0 ? Buffer.alloc(0) : Buffer.from(iv);
+    if (info.mode === "gcm" ? ivBytes.length === 0 : ivBytes.length !== info.ivLength) {
+      throw new Error("Invalid initialization vector");
+    }
+    return new CipherBase(info.name, keyBytes, ivBytes, false);
   }
+  function createDecipheriv(name, key, iv) {
+    if (typeof name !== "string") {
+      const error = new TypeError(`The "cipher" argument must be of type string. ${receivedArgument(name)}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const info = getCipherInfo(name);
+    if (info === undefined) {
+      const error = new Error("Unknown cipher");
+      error.code = "ERR_CRYPTO_UNKNOWN_CIPHER";
+      throw error;
+    }
+    const bytesLike = (value) => typeof value === "string" || secretKeys.has(value) ||
+      ArrayBuffer.isView(value) || value instanceof ArrayBuffer ||
+      typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer;
+    if (!bytesLike(key)) {
+      const error = new TypeError('The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const keyBytes = Buffer.from(secretKeys.has(key) ? secretKeys.get(key) : key);
+    if (keyBytes.length !== info.keyLength) throw new TypeError("Invalid key length");
+    if (iv === undefined) {
+      const error = new TypeError('The "iv" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (iv !== null && !bytesLike(iv)) {
+      const error = new TypeError('The "iv" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (iv === null && info.ivLength !== 0) throw new Error("Invalid initialization vector");
+    const ivBytes = iv === null && info.ivLength === 0 ? Buffer.alloc(0) : Buffer.from(iv);
+    if (info.mode === "gcm" ? ivBytes.length === 0 : ivBytes.length !== info.ivLength) {
+      throw new Error("Invalid initialization vector");
+    }
+    return new CipherBase(info.name, keyBytes, ivBytes, true);
+  }
+  function Cipheriv(name, key, iv) { return createCipheriv(name, key, iv); }
+  function Decipheriv(name, key, iv) { return createDecipheriv(name, key, iv); }
+  Cipheriv.prototype = CipherBase.prototype;
+  Decipheriv.prototype = CipherBase.prototype;
   function createSecretKey(key) {
     const bytes = Buffer.from(key);
     const result = Object.create(null);
@@ -597,6 +746,9 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform) 
     createSign: (algorithm) => new Sign(algorithm),
     createSecretKey,
     createCipheriv,
+    createDecipheriv,
+    Cipheriv,
+    Decipheriv,
     getCipherInfo,
     getCiphers,
     getCurves,
@@ -631,13 +783,24 @@ pub(crate) fn module(
     let random_bytes = context
         .host_function(crate::host::shared_vm::operation("cryptoRandomBytes"))?;
     let pbkdf2 = context.host_function(crate::host::shared_vm::operation("cryptoPbkdf2"))?;
+    let cipher_process =
+        context.host_function(crate::host::shared_vm::operation("cryptoCipherProcess"))?;
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let undefined = context.undefined();
     context.call_rooted(
         factory,
         undefined,
-        &[hash, hmac, sign, buffer, random_bytes, pbkdf2, transform],
+        &[
+            hash,
+            hmac,
+            sign,
+            buffer,
+            random_bytes,
+            pbkdf2,
+            transform,
+            cipher_process,
+        ],
     )
 }
 
@@ -693,6 +856,71 @@ pub(crate) fn pbkdf2(
     let mut output = vec![0; key_length];
     openssl::pkcs5::pbkdf2_hmac(&password, &salt, iterations, digest, &mut output)
         .map_err(|error| RootedError::host(format!("crypto PBKDF2 failed: {error}")))?;
+    let values = output
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
+    context.array_rooted(&values)
+}
+
+pub(crate) fn cipher_process(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let algorithm = args
+        .first()
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .ok_or_else(|| RootedError::host("crypto cipher algorithm is not a string"))?;
+    let cipher = match algorithm.to_ascii_lowercase().as_str() {
+        "aes-128-cbc" => openssl::symm::Cipher::aes_128_cbc(),
+        "aes-128-ecb" => openssl::symm::Cipher::aes_128_ecb(),
+        "des-ede3-cbc" => openssl::symm::Cipher::des_ede3_cbc(),
+        _ => {
+        return Err(RootedError::host(format!("Unknown cipher: {algorithm}")));
+        }
+    };
+    let key = byte_array(
+        context,
+        *args.get(1).ok_or_else(|| RootedError::host("cipher key is missing"))?,
+    )?;
+    let iv = byte_array(
+        context,
+        *args.get(2).ok_or_else(|| RootedError::host("cipher IV is missing"))?,
+    )?;
+    let input = byte_array(
+        context,
+        *args.get(3).ok_or_else(|| RootedError::host("cipher input is missing"))?,
+    )?;
+    let final_block = args
+        .get(4)
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let decrypt = args
+        .get(5)
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let mode = if decrypt {
+        openssl::symm::Mode::Decrypt
+    } else {
+        openssl::symm::Mode::Encrypt
+    };
+    let iv = if cipher.iv_len() == Some(0) { None } else { Some(iv.as_slice()) };
+    let mut crypter = openssl::symm::Crypter::new(cipher, mode, &key, iv)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let mut output = vec![0; input.len() + cipher.block_size()];
+    let mut written = crypter
+        .update(&input, &mut output)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    if final_block {
+        written += crypter
+            .finalize(&mut output[written..])
+            .map_err(|error| RootedError::host(error.to_string()))?;
+    }
+    output.truncate(written);
     let values = output
         .iter()
         .map(|byte| context.number(f64::from(*byte)))
