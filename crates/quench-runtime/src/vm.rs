@@ -247,6 +247,24 @@ impl Frame {
         self.registers.clear();
         self.registers.resize(usize::from(count), initial.value());
     }
+
+    fn initialize_promoted_registers(
+        &mut self,
+        function: &crate::bytecode::Function,
+        args: &[Value],
+    ) {
+        for entry in &function.local_registers {
+            let initial = if entry.local < function.params {
+                args.get(usize::from(entry.local))
+                    .copied()
+                    .unwrap_or(Value::UNDEFINED)
+            } else {
+                Value::UNDEFINED
+            };
+            self.locals[usize::from(entry.local)] = Value::UNDEFINED;
+            self.registers[usize::from(entry.register)] = initial;
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ActiveIterator {
