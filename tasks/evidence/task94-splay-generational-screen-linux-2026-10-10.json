@@ -2,7 +2,7 @@
   "schema": 1,
   "task": "94",
   "experiment": "Splay sticky-mark minor collector and major-growth threshold screen",
-  "decision": "not a Splay win; the uncapped 3/2 full-growth interval inflated RSS, and capped 1/1-major candidates were slower while remaining far above the Bun RSS bar",
+  "decision": "not a Splay win; all measured policy and barrier variants miss the speed and RSS bars, while setup-only footprint remains dominated by the unmerged compact-record layout",
   "source": {
     "base_revision": "fc933993defd0eaf3ba9f41d19d9a16a0f4dfdd5",
     "candidate_revision": "fc933993defd0eaf3ba9f41d19d9a16a0f4dfdd5",
@@ -127,7 +127,8 @@
       "cargo_check_runtime": "passed with warnings denied",
       "focused_remaining_growth_threshold_test": "passed with 3/4 minor headroom",
       "test262_stage_47_finalization_registry": "47/47 passed with 3/4 minor headroom",
-      "test262_stages_79_81_weak_map_ref_set": "255/255 passed with 3/4 minor headroom"
+      "test262_stages_79_81_weak_map_ref_set": "255/255 passed with 3/4 minor headroom",
+      "precise_barrier_screen": "rejected and reverted after 11-round output-equal screen"
     }
   },
   "conclusion": "A 1.5x major interval has an inconclusive paired wall-time signal and adds about 105 MB median work-process RSS over the pinned full-collection binary. A 1.0x interval returns RSS close to baseline but removes the intended large-heap minor interval. The Splay setup-only candidate remains about 189.8 MB versus Bun no-JIT at about 60.1 MB; the live-tree compact-record work owned by Task 61 is needed before this lane can evaluate a low-RSS generational policy.",
@@ -137,7 +138,10 @@
     "production_build": "source /workspace/quench-build-env.sh && cargo build --locked --offline --profile production -p quench-node --bin quench-node -p quench-bench --bin quench-bench",
     "fixed_work_pair_headroom_1_2": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --fixed-work --quench target/pinned/gc-stageb-baseline-6507/quench-node --quench-peer target/production/quench-node-gc-half --runs 11 --timeout-ms 300000 --out target/collector-splay-growth-1_0-headroom-0_5-pairs-11.json",
     "stock_headroom_1_2": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --quench target/production/quench-node-gc-half --qjs target/stageb-tools/qjs/quickjs-2026-06-04/qjs --bun target/stageb-tools/bun/bun-linux-x64/bun --node target/stageb-tools/node/node-v26.10.0-linux-x64/bin/node --runs 11 --timeout-ms 300000 --out target/collector-splay-growth-1_0-headroom-0_5-stock-11.json",
-    "fixed_work_pair_headroom_3_4": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --fixed-work --quench target/pinned/gc-stageb-baseline-6507/quench-node --quench-peer target/production/quench-node-gc-threequarters --runs 11 --timeout-ms 300000 --out target/collector-splay-growth-1_0-headroom-0_75-pairs-11.json"
+    "fixed_work_pair_headroom_3_4": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --fixed-work --quench target/pinned/gc-stageb-baseline-6507/quench-node --quench-peer target/production/quench-node-gc-threequarters --runs 11 --timeout-ms 300000 --out target/collector-splay-growth-1_0-headroom-0_75-pairs-11.json",
+    "fixed_work_pair_major_3_2_capped": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --fixed-work --quench target/pinned/gc-stageb-baseline-6507/quench-node --quench-peer target/production/quench-node-growth-1_5-cap --runs 11 --timeout-ms 300000 --out target/collector-splay-growth-1_5-headroom-0_75-capped-pairs-11.json",
+    "fixed_work_pair_precise_property_barrier": "target/production/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js --fixed-work --quench target/pinned/gc-stageb-baseline-6507/quench-node --quench-peer target/production/quench-node-precise-property-barrier --runs 11 --timeout-ms 300000 --out target/collector-splay-growth-1_0-headroom-0_75-precise-property-barrier-pairs-11.json",
+    "profile_aggregate_note": "The profile-aggregate build exposed an existing compile error at crates/quench-runtime/src/vm/wtf16.rs:221 (`&str` has no `capacity`). A narrow temporary correction to the profile-only capacity calculation was restored immediately after building the diagnostic binary; no wtf16.rs change is retained."
   },
   "threshold_capped_screens": {
     "policy": {
@@ -226,6 +230,110 @@
         "report_sha256": "a90430981a6e5f806100acf8a40f0b31f300c034e8f3cc86afdc541109e3cc07"
       }
     },
-    "conclusion": "Both capped 1/1-major candidates keep work RSS near the pinned full-GC baseline, but paired wall intervals include a tie and their medians are slower; the 1/2 stock score and RSS both miss the Splay bars. The setup tree remains roughly 189 MB versus Bun no-JIT around 60 MB."
-  }
+    "conclusion": "Both capped 1/1-major candidates keep work RSS near the pinned full-GC baseline, but paired wall intervals include a tie and their medians are slower; the 1/2 stock score and RSS both miss the Splay bars. The setup tree remains roughly 189 MB versus Bun no-JIT around 60 MB.",
+    "major_growth_3_2_capped": {
+      "candidate_binary_sha256": "4e2f112fb7b817ad16d42972d8b6aba9afa1387482a8f33169f2499312a7abba",
+      "fixed_work": {
+        "rounds": 11,
+        "valid_rounds": 11,
+        "output_equal": true,
+        "clean_rounds": 0,
+        "baseline_median_marginal_ns_per_run": 6709351,
+        "candidate_median_marginal_ns_per_run": 8230048,
+        "paired_median_delta_ns_per_run": 2072871,
+        "paired_median_delta_percent": 30.895256796622494,
+        "paired_median_bootstrap_95_percentile_ns_per_run": [
+          118241,
+          2756049
+        ],
+        "bootstrap": "100,000 resamples of the 11 paired marginal deltas; Python random seed 940510; percentile indices 2.5% and 97.5%",
+        "median_work_max_rss_bytes": {
+          "baseline": 275046400,
+          "candidate": 313020416
+        },
+        "median_setup_only_max_rss_bytes": {
+          "baseline": 188801024,
+          "candidate": 190386176
+        },
+        "report_path": "target/collector-splay-growth-1_5-headroom-0_75-capped-pairs-11.json",
+        "report_sha256": "a585ab805374eae5d3925443997ae60e0dc410aac9c377ed754735805c46c864"
+      },
+      "decision": "rejected: paired median wall regression is positive outside the 95% interval and max RSS is 38 MB above baseline"
+    }
+  },
+  "barrier_placement_screen": {
+    "candidate": "record a remembered owner only for old-to-young values on ordinary property stores, property pushes, and sparse-array stores; bypass the conservative get_mut barrier only for those exact paths",
+    "decision": "rejected and reverted: checking target age on each property write slowed the fixed-work median and saved less than 2 MB RSS",
+    "candidate_binary_sha256": "7a74de23ed4b505150308567f7087ce236faaccb2c5715d337eac5545a89c312",
+    "fixed_work": {
+      "rounds": 11,
+      "valid_rounds": 11,
+      "output_equal": true,
+      "clean_rounds": 0,
+      "baseline_median_marginal_ns_per_run": 5997062,
+      "candidate_median_marginal_ns_per_run": 6736015,
+      "paired_median_delta_ns_per_run": 910411,
+      "paired_median_delta_percent": 15.180957335018544,
+      "paired_median_bootstrap_95_percentile_ns_per_run": [
+        -3761,
+        1240187
+      ],
+      "bootstrap": "100,000 resamples of the 11 paired marginal deltas; Python random seed 940510; percentile indices 2.5% and 97.5%",
+      "median_work_max_rss_bytes": {
+        "baseline": 275034112,
+        "candidate": 273309696
+      },
+      "median_setup_only_max_rss_bytes": {
+        "baseline": 188837888,
+        "candidate": 189911040
+      },
+      "report_path": "target/collector-splay-growth-1_0-headroom-0_75-precise-property-barrier-pairs-11.json",
+      "report_sha256": "192097051c97acd4e287e0da60aac5bc541fadea895582217c18ff70b4716e8d"
+    }
+  },
+  "profile_breakdown": {
+    "candidate_binary_sha256": "683d8c6d753b6df8a216e9a855a482933885703b95c3dfea284a66be9a4a1a05",
+    "report_path": "target/collector-splay-profile-remembered-one.json",
+    "report_sha256": "97aa5e59d0d0277e94769f3210c90a36c8a7ca5e189cb94b08f4baba5139b00a",
+    "fixed_work": {
+      "rounds": 1,
+      "valid_rounds": 1,
+      "output_equal": true,
+      "iterations": 300
+    },
+    "collections": {
+      "total": 32,
+      "full": 17,
+      "minor": 15
+    },
+    "remembered_owner_scans": 26953,
+    "young_cells_swept": 2265674,
+    "mark_nanos": 764866642,
+    "full_mark_nanos": 591045828,
+    "minor_mark_nanos": 173820814,
+    "sweep_nanos": 132847252,
+    "note": "The 15 minor collections averaged 1,797 remembered-owner scans and 151,045 young cells swept. This is an instrumented attribution run, not Score/RSS evidence."
+  },
+  "research": [
+    {
+      "source": "V8 garbage collection documentation",
+      "url": "https://github.com/v8/v8/blob/main/docs/heap/garbage-collection.md",
+      "finding": "V8 records old-to-young edges in a remembered set and avoids barriers for immediate values and initializing stores."
+    },
+    {
+      "source": "V8 write barrier implementation notes",
+      "url": "https://chromium.googlesource.com/v8/v8/+/HEAD/src/heap/WRITE_BARRIER.md",
+      "finding": "V8 barriers are attached to heap stores, have fast and deferred paths, and omit barriers for Smi and safe initialization stores."
+    },
+    {
+      "source": "V8 Orinoco young-generation design",
+      "url": "https://v8.dev/blog/orinoco-parallel-scavenger",
+      "finding": "Old-to-young references form the young collection roots; V8 uses per-page remembered sets and a copying scavenger."
+    },
+    {
+      "source": "In or out?: putting write barriers in their place",
+      "url": "https://doi.org/10.1145/773039.512452",
+      "finding": "The paper compares inline, out-of-line, and partially inlined remembered-set barriers; the interpreter's direct old-to-young check measured slower in the Splay screen."
+    }
+  ]
 }

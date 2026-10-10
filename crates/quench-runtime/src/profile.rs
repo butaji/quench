@@ -662,9 +662,15 @@ impl Profile {
         let binary_dependencies = dependencies::binary_pairs(&self.pair_sites, program_id, program);
         regional::report(self, program_id, program);
         eprintln!(
-            "{{\"kind\":\"quench-gc-breakdown\",\"collections\":{},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"allocations_between_collections\":{{\"total\":{},\"min\":{},\"max\":{}}},\"survivors\":{{\"total\":{},\"min\":{},\"max\":{}}},\"sweep_slots\":{}}}",
+            "{{\"kind\":\"quench-gc-breakdown\",\"collections\":{},\"full_collections\":{},\"minor_collections\":{},\"remembered_owner_scans\":{},\"young_cells_swept\":{},\"mark_nanos\":{},\"full_mark_nanos\":{},\"minor_mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{},\"allocations_between_collections\":{{\"total\":{},\"min\":{},\"max\":{}}},\"survivors\":{{\"total\":{},\"min\":{},\"max\":{}}},\"sweep_slots\":{}}}",
             heap_stats.1,
+            gc.full_collections,
+            gc.minor_collections,
+            gc.remembered_owner_scans,
+            gc.young_cells_swept,
             gc.mark_nanos,
+            gc.full_mark_nanos,
+            gc.minor_mark_nanos,
             gc.sweep_nanos,
             gc.mark_clear_nanos,
             gc.allocations_between_collections_total,
