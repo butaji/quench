@@ -1,0 +1,57 @@
+{
+  "task": "91",
+  "kind": "wasm-coremark-baseline",
+  "date": "2026-10-10",
+  "quench_commit": "f7d24f6",
+  "quench_binary": "target/production/coremark (cargo build --profile production -p quench-wasm-test --bin coremark)",
+  "benchmark": {
+    "name": "CoreMark 1.0 (wasm-coremark-rs minimal MVP module)",
+    "repository": "https://github.com/wasmi-labs/wasm-coremark-rs",
+    "commit": "0b0e28b1591c56a4d1d016c312c65c76813dc06c",
+    "module": "coremark-minimal-mvp.wasm",
+    "module_sha256": "9fcda04480553b4e4fc63be892328d15f01c8aa4d84d30dc0485aea525659567",
+    "host_contract": "import env.clock_ms: () -> i32; export run: () -> f32 (score, higher is better)"
+  },
+  "host": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz (cloud VM)",
+    "vcpus": 4,
+    "memory_gib": 15,
+    "os": "Linux 6.18.44 x86_64",
+    "rustc": "1.97.0 (2d8144b78 2026-07-07)",
+    "note": "Shared cloud host, not the Apple M4 Stage B host. Scores are comparable only within this run."
+  },
+  "comparator_command": "cargo build --release -F pulley,wamr && ./target/release/bm",
+  "comparators_interpreter": {
+    "Wasmi v2 (2.0.0-beta.10)": 2724.4246,
+    "Stitch (0.1.0)": 2075.6936,
+    "Wasm3 (0.5.0)": 1943.7605,
+    "WAMR fast interpreter (wamr-sys 1.0.0)": 1824.8175,
+    "Pulley (wasmtime 47.0.3)": 1392.5637,
+    "Wasmi v1 (1.1.0)": 1287.6642,
+    "Tinywasm (0.10.0)": 620.52234
+  },
+  "excluded_jit_context_only": {
+    "Wasmtime Cranelift (47.0.3)": 19142.42
+  },
+  "quench_runs": [49.533558, 46.71078, 48.100048],
+  "quench_median": 48.100048,
+  "gap_to_wasmi_v2": 56.6,
+  "profile": {
+    "tool": "valgrind callgrind 3.22.0 on a production build with STRIP=false DEBUG=line-tables-only",
+    "total_instructions": 5505109093,
+    "inclusive_shares_percent": {
+      "gc_collect_slow": 26.7,
+      "instance_binding_loads (capture + load_local_binding + load_environment_binding)": 15.0,
+      "encode_wasm_value (64-bit cell allocation)": 3.1,
+      "dispatch loop self cost, approximate sum of exclusive lines (instruction decode, register access, operator selectors)": 40.0
+    },
+    "observations": [
+      "Every memory access lowers to LoadCapture(memory) + WasmMemoryAddress + WasmMemoryLoad/Store; WasmMemoryAddress boxes the effective address as a heap Cell::WasmBits64.",
+      "Every 64-bit scalar result allocates Cell::WasmBits64, which drives the GC share.",
+      "Each memory access locks the MemoryStorage mutex, including unshared memories.",
+      "Wasm-to-Wasm calls recurse through call_user / call_user_maybe_async because inline frame push is disabled for ProgramKind::Wasm.",
+      "Numeric operators dispatch twice: the opcode (WasmI32Binary) and then an operator tag decoded from the immediate.",
+      "local.get/local.set lower to LoadLocal/StoreLocal copies into operand-stack registers."
+    ]
+  }
+}

@@ -37,7 +37,7 @@
     "semantics": [],
     "conformance": [],
     "host": [],
-    "performance": [],
+    "performance": ["91"],
     "specializers": [],
     "gates": ["48"],
     "deferred": [
@@ -715,6 +715,13 @@
       "title": "Derive frame slot representation from static types",
       "status": "pending",
       "depends_on": ["37", "40"]
+    },
+    {
+      "id": "91",
+      "file": "91.md",
+      "title": "Lead no-JIT Wasm interpreters on CoreMark",
+      "status": "in_progress",
+      "depends_on": ["23"]
     }
   ]
 }

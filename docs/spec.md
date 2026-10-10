@@ -54,3 +54,12 @@ Run the pinned Wasm suite through the shared VM with:
 ```sh
 WASM_FILE_TIMEOUT_MS=60000 cargo run --profile iteration -p quench-wasm-test --bin run -- --report target/iteration/wasm-shared.json crates/quench-wasm-test/testsuite
 ```
+
+Score CoreMark on the shared VM against the pinned
+[wasm-coremark-rs](https://github.com/wasmi-labs/wasm-coremark-rs) module
+([task 91](../tasks/91.md) owns comparators and evidence):
+
+```sh
+cargo build --profile production -p quench-wasm-test --bin coremark
+target/production/coremark path/to/coremark-minimal-mvp.wasm
+```
