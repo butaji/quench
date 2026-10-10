@@ -56,7 +56,6 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
             throw new TypeError("Cannot convert a Symbol value to a string");
           }
           if (key === "") return true;
-          const text = String(value);
           if (typeof value !== "string" && typeof value !== "number" &&
               typeof value !== "boolean" &&
               globalThis.process.execArgv.includes("--pending-deprecation")) {
@@ -65,6 +64,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
               { type: "DeprecationWarning", code: "DEP0104" }
             );
           }
+          const text = String(value);
           const result = Reflect.set(target, key, text, target);
           if (result && typeof key !== "symbol") setEnv(String(key), text);
           return result;
