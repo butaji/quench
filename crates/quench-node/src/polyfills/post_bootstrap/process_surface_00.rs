@@ -70,7 +70,20 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     ];
     globalThis.process.availableMemory = () => Number.MAX_SAFE_INTEGER;
     globalThis.process.constrainedMemory ||= () => Number.MAX_SAFE_INTEGER;
-    globalThis.process.setSourceMapsEnabled = () => undefined;
+    globalThis.process.setSourceMapsEnabled = (enabled) => {
+      if (typeof enabled !== "boolean") {
+        const received = enabled === null ? "Received null" :
+          enabled === undefined ? "Received undefined" :
+          typeof enabled === "object" ? `Received an instance of ${Array.isArray(enabled) ? "Array" : "Object"}` :
+          `Received type ${typeof enabled} (${String(enabled)})`;
+        throw Object.assign(
+          new TypeError(`[ERR_INVALID_ARG_TYPE] The "enabled" argument must be of type boolean. ${received}`),
+          { code: "ERR_INVALID_ARG_TYPE" }
+        );
+      }
+      globalThis.process.sourceMapsEnabled = enabled;
+    };
+    globalThis.process.abort ||= () => globalThis.process.exit(134);
     globalThis.process.sourceMapsEnabled = false;
     globalThis.process.debugPort = 9229;
     globalThis.process.release = {
