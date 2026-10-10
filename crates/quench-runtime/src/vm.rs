@@ -58,6 +58,7 @@ mod construction;
 mod data_view;
 mod date;
 mod dispatch;
+mod dispatch_fast;
 mod dispatch_frame;
 mod dispatch_numeric;
 mod dynamic_strings;

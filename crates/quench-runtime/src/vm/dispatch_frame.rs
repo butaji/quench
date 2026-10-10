@@ -829,8 +829,21 @@ impl<H: Host> Vm<H> {
                     error,
                 )?;
             }
+            // Parameter-initialization stops and instruction profiling observe
+            // every PC, so they run the general path only. JavaScript bodies are
+            // dominated by non-lane opcodes, where a lane probe per instruction
+            // measured slower on V8-v7 Richards; Wasm bodies enter the lane.
+            let fast_lane = stop_pc.is_none()
+                && p.kind == crate::bytecode::ProgramKind::Wasm
+                && !cfg!(any(
+                    feature = "profile-aggregate",
+                    feature = "profile-memory"
+                ));
             loop {
                 let p = current_program.as_deref().unwrap_or(p);
+                if fast_lane {
+                    self.run_fast_lane(cursor.program, frame, cursor.code, cursor.wide, &mut pc);
+                }
                 if stop_pc == Some(pc) {
                     self.frames[frame].pc = pc;
                     return Ok(FrameOutcome::ParameterInitializationComplete);

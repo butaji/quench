@@ -879,8 +879,36 @@ impl Instr {
                 u16::MAX
             };
         }
+        Self::unpack_plain_field(packed)
+    }
+
+    const fn unpack_plain_field(packed: u16) -> u16 {
+        let packed = packed & Self::FIELD_MASK as u16;
         (packed & Self::FIELD_PAYLOAD_MASK)
             | ((packed >> Self::FIELD_PACKED_HIGH_SHIFT) << Self::FIELD_SOURCE_HIGH_SHIFT)
+    }
+
+    /// Fields of a narrow instruction whose opcode has neither a FieldBase
+    /// sentinel nor a packed-pair immediate: the general decode minus its
+    /// layout-dependent cases.
+    #[inline(always)]
+    pub(crate) const fn plain_a(self) -> u16 {
+        Self::unpack_plain_field((self.0 >> Self::A_SHIFT) as u16)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn plain_b(self) -> u16 {
+        Self::unpack_plain_field((self.0 >> Self::B_SHIFT) as u16)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn plain_c(self) -> u16 {
+        Self::unpack_plain_field((self.0 >> Self::C_SHIFT) as u16)
+    }
+
+    #[inline(always)]
+    pub(crate) const fn plain_imm(self) -> u32 {
+        (self.0 >> Self::IMM_SHIFT) as u32
     }
 
     const fn pack_immediate(op: Op, value: u32) -> Option<u16> {
