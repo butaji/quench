@@ -25,9 +25,10 @@ Against baseline SHA-256
   delta −380,928 bytes; 95% interval [−573,440, −327,680]. Candidate RSS was
   lower in all 11 pairs.
 - Candidate Score was higher in 8 pairs, tied in 2, and lower in 1; the paired
-  interval includes no negative values. Keep the change as a measured
-  EarleyBoyer memory improvement for cumulative tuning, not as a Score or
-  Stage B win.
+  interval includes no negative values. The RSS reduction is repeatable in
+  these runs, but profiling shows the dynamic fusion count is tiny. Keep the
+  low-risk fusion without attributing that RSS delta to dispatch reduction;
+  this is neither a proven Score win nor a Stage B win.
 - Candidate binary SHA-256:
   `ef44efdbab5c74177f23b610c72e65395a97f42627c5d9e088f9c7b757d8339f`.
 - Fixture SHA-256:
@@ -39,6 +40,17 @@ The full 11-pair report is [paired-11.json](paired-11.json), with individual
 pairs in [paired-11.jsonl](paired-11.jsonl). The initial directional screen is
 [screen-3.json](screen-3.json). `raw/` preserves stdout/stderr for all measured
 runs. The runners and Node probe are included here.
+
+## Follow-up profile check
+
+A profile build after this measurement showed 15,934,989 dynamic
+`Unary → JumpFalse` pairs but only 850 `JumpUnaryFalse` dispatches. A prototype
+that preserved the unary result still produced 850 such dispatches. Thus this
+rewrite handles very few of the hot dynamic pairs; protected control-flow entry
+points and available liveness facts limit fusion. The paired RSS reduction is
+real in this sample but its cause is not established, and should not be
+attributed to eliminating millions of dispatches. See
+[profile-after-result-preserving.json](profile-after-result-preserving.json).
 
 ## Method and host
 
