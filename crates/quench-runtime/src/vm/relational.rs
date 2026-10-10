@@ -219,7 +219,14 @@ impl<H: Host> Vm<H> {
                         let current = vm
                             .root_value(current_root)
                             .expect("rooted instanceof traversal object");
-                        let next = vm.object_get_prototype_of(p, current)?;
+                        // Ordinary [[GetPrototypeOf]] is just the prototype
+                        // stored in the object header. Preserve the generic
+                        // path for proxies, whose trap is observable.
+                        let next = vm
+                            .heap
+                            .get(current)
+                            .and_then(Cell::ordinary_prototype)
+                            .map_or_else(|| vm.object_get_prototype_of(p, current), Ok)?;
                         vm.heap.update_root(current_root, next);
                         if next.is_null() {
                             return Ok(false);
