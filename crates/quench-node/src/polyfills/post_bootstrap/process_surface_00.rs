@@ -3,6 +3,43 @@
 pub const JS: &str = quench_js_check::checked_js!(r#"{
   if (globalThis.process) {
     globalThis.process[Symbol.toStringTag] ||= "process";
+    const processEnv = globalThis.process.env;
+    if (processEnv) {
+      globalThis.process.env = new Proxy(processEnv, {
+        set(target, key, value) {
+          if (typeof key === "symbol" || typeof value === "symbol") {
+            throw new TypeError("Cannot convert a Symbol value to a string");
+          }
+          if (key === "") return true;
+          return Reflect.set(target, key, String(value), target);
+        },
+        defineProperty(target, key, descriptor) {
+          const invalid = (message) => {
+            const error = new TypeError(message);
+            error.code = "ERR_INVALID_OBJECT_DEFINE_PROPERTY";
+            return error;
+          };
+          if (typeof key === "symbol") {
+            throw invalid("'process.env' does not accept symbol properties");
+          }
+          if ("get" in descriptor || "set" in descriptor) {
+            throw invalid("'process.env' does not accept an accessor(getter/setter) descriptor");
+          }
+          if (descriptor.configurable !== true || descriptor.writable !== true || descriptor.enumerable !== true) {
+            throw invalid("'process.env' only accepts a configurable, writable, and enumerable data descriptor");
+          }
+          if (typeof descriptor.value === "symbol") {
+            throw new TypeError("Cannot convert a Symbol value to a string");
+          }
+          return Reflect.defineProperty(target, key, {
+            value: String(descriptor.value),
+            configurable: true,
+            writable: true,
+            enumerable: true
+          });
+        }
+      });
+    }
     globalThis.gc ||= () => undefined;
     const activeTimers = new Map();
     const originalSetTimeout = globalThis.setTimeout;
