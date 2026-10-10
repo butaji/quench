@@ -144,7 +144,10 @@ fn validate_braced_quantifier(pattern: &str) -> Result<(), String> {
             index = brace + 1;
             continue;
         }
-        if brace == 0 || is_atom_terminator(bytes[brace - 1]) {
+        let quantifies_escaped_backslash = brace >= 2
+            && bytes[brace - 1] == b'\\'
+            && bytes[brace - 2] == b'\\';
+        if brace == 0 || (is_atom_terminator(bytes[brace - 1]) && !quantifies_escaped_backslash) {
             if bytes[brace..].contains(&b'}') {
                 return Err(invalid_pattern());
             }
