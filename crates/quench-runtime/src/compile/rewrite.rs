@@ -70,6 +70,23 @@ fusion_recipes! {
             let destination = u16::try_from(second.local_slot()).ok()?;
             Instr::try_new(Op::CopyLocalPlain, source, 0, 0, u32::from(destination))
         };
+    LoadLocalSetThisFieldStrict: [LoadLocalPlain, SetThisFieldStrict] =>
+        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+            if first.numeric_local_store_target().is_some()
+                || second.register_a() != first.result_register()
+            {
+                return None;
+            }
+            let source = u16::try_from(first.local_slot()).ok()?;
+            let cache_site = u16::try_from(second.cache_site_index()).ok()?;
+            Instr::try_new(
+                Op::SetThisFieldStrictLocal,
+                source,
+                0,
+                cache_site,
+                second.atom_index() as u32,
+            )
+        };
     ProducerMove: [
         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
         LoadName, Move; Binary, Move; Unary, Move; GetField, Move; Move, Move

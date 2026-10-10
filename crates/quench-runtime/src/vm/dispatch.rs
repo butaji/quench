@@ -88,6 +88,13 @@ impl<H: Host> Vm<H> {
                 // SAFETY: the destination local is bounded by validation too.
                 unsafe { self.write_validated_local(f, i.local_slot(), value) };
             }
+            Op::SetThisFieldStrictLocal => {
+                // SAFETY: validation bounds this plain-local slot and proves
+                // it is not captured, so the activation owns the value.
+                let value = unsafe { self.read_validated_local(f, i.local_slot_a()) };
+                let this = self.checked_this_binding(p, f)?;
+                self.set_field_cached(p, this, i.atom_index(), value, i.cache_site_index(), true)?;
+            }
             Op::LoadLocal | Op::LoadEnvLocal => {
                 let value = self.load_local_binding(p, f, i.local_slot(), None)?;
                 self.write(f, i.result_register(), value);

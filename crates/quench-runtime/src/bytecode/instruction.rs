@@ -572,6 +572,15 @@ macro_rules! layout_accessors {
             }
 
             #[allow(dead_code)]
+            pub(crate) fn local_slot_a(self) -> usize {
+                debug_assert_eq!(
+                    self.op().field_layout(InstructionField::A),
+                    FieldLayout::LocalSlot
+                );
+                self.a() as usize
+            }
+
+            #[allow(dead_code)]
             pub(crate) fn jump_target(self) -> u32 {
                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::JumpTarget);
                 self.imm()
