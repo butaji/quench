@@ -304,8 +304,10 @@ pub(super) fn write_program(
     }
     out.u32(program.object_sites.len() as u32);
     for site in &program.object_sites {
-        out.u32(site.atoms[0]);
-        out.u32(site.atoms[1]);
+        out.u32(site.atoms.len() as u32);
+        for atom in &site.atoms {
+            out.u32(*atom);
+        }
     }
     out.u32(program.regexp_literal_sites.len() as u32);
     for site in &program.regexp_literal_sites {
@@ -656,7 +658,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     })?;
     let object_sites = input.list(|input| {
         Ok(ObjectSite {
-            atoms: [input.u32()?, input.u32()?],
+            atoms: input.list(|input| input.u32())?.into(),
         })
     })?;
     let regexp_literal_sites = input.list(|input| {

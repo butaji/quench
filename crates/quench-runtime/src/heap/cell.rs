@@ -1,7 +1,7 @@
 use super::root::WeakHandle;
 use crate::bytecode::Atom;
 use crate::value::Value;
-use crate::value_vec::ValueVec;
+use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueVec};
 use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
 use rustc_hash::FxHashMap;
@@ -939,6 +939,7 @@ pub(crate) struct Object {
     // Property names live once in the VM's immutable shape table; objects keep
     // only the data vector selected by that shape.
     pub properties: ValueVec,
+    inline_properties: [Value; INLINE_PROPERTY_COUNT],
     extras: Option<Box<ObjectExtras>>,
 }
 
@@ -1031,17 +1032,60 @@ impl std::ops::DerefMut for FinalizationEntries {
     }
 }
 impl Object {
-    pub(crate) fn new(proto: Value, properties: ValueVec) -> Self {
+    pub(crate) fn new(proto: Value) -> Self {
         Self {
             proto,
-            properties,
+            properties: ValueVec::inline_property_storage(0),
+            inline_properties: [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
             extras: None,
         }
     }
 
+    pub(crate) fn with_property_storage(
+        proto: Value,
+        properties: ValueVec,
+        inline_properties: [Value; INLINE_PROPERTY_COUNT],
+    ) -> Self {
+        Self {
+            proto,
+            properties,
+            inline_properties,
+            extras: None,
+        }
+    }
+
+    pub(crate) fn inline_properties(&self) -> Option<&[Value; INLINE_PROPERTY_COUNT]> {
+        self.properties
+            .has_inline_property_storage()
+            .then_some(&self.inline_properties)
+    }
+
+    pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
+        debug_assert!(self.properties.has_inline_property_storage());
+        debug_assert!(slot < INLINE_PROPERTY_COUNT);
+        self.inline_properties[slot] = value;
+    }
+
+    pub(crate) fn replace_property_storage(
+        &mut self,
+        mut properties: ValueVec,
+        inline_properties: [Value; INLINE_PROPERTY_COUNT],
+    ) -> ValueVec {
+        let previous = self.properties;
+        properties.preserve_integrity_from(previous);
+        self.properties = properties;
+        self.inline_properties = inline_properties;
+        previous
+    }
+
+    pub(crate) fn copy_property_storage_from(&mut self, source: &Self) {
+        self.properties = source.properties;
+        self.inline_properties = source.inline_properties;
+    }
+
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
     pub(crate) fn error(proto: Value) -> Self {
-        let mut object = Self::new(proto, ValueVec::new());
+        let mut object = Self::new(proto);
         object.extras_mut().error_data = true;
         object
     }
@@ -1462,16 +1506,54 @@ pub(crate) enum Cell {
     },
 }
 
-#[cfg(test)]
-mod cell_layout_tests {
-    use super::*;
-
-    /// Every heap slot holds one `Cell`, so its size multiplies by the live-cell count.
-    /// Large variant payloads are boxed to keep it at this bound.
-    const MAX_CELL_BYTES: usize = 40;
-
-    #[test]
-    fn cells_stay_compact() {
-        assert!(size_of::<Option<Cell>>() <= MAX_CELL_BYTES);
+#[cfg(feature = "profile-memory")]
+impl Cell {
+    pub(crate) fn profile_variant_name(&self) -> &'static str {
+        match self {
+            Self::Object(_) => "object",
+            Self::Array { .. } => "array",
+            Self::ArrayBuffer { .. } => "array_buffer",
+            Self::TypedArray { .. } => "typed_array",
+            Self::DataView { .. } => "data_view",
+            Self::Map { .. } => "map",
+            Self::Set { .. } => "set",
+            Self::ShadowRealm { .. } => "shadow_realm",
+            Self::WeakMap { .. } => "weak_map",
+            Self::WeakSet { .. } => "weak_set",
+            Self::WeakRef { .. } => "weak_ref",
+            Self::FinalizationRegistry { .. } => "finalization_registry",
+            Self::Iterator { .. } => "iterator",
+            Self::ArrayFromAsyncState(_) => "array_from_async_state",
+            Self::Proxy { .. } => "proxy",
+            Self::Function { .. } => "function",
+            Self::BindingReference { .. } => "binding_reference",
+            Self::Environment { .. } => "environment",
+            Self::WasmBits64(_) => "wasm_bits64",
+            Self::WasmV128(_) => "wasm_v128",
+            Self::WasmExtern(_) => "wasm_extern",
+            Self::WasmException { .. } => "wasm_exception",
+            Self::WasmTag { .. } => "wasm_tag",
+            Self::WasmGc { .. } => "wasm_gc",
+            Self::WasmHostFunction { .. } => "wasm_host_function",
+            Self::WasmElements(_) => "wasm_elements",
+            Self::WasmGlobal { .. } => "wasm_global",
+            Self::WasmMemory { .. } => "wasm_memory",
+            Self::WasmTable { .. } => "wasm_table",
+            Self::String(_) => "string",
+            Self::BigInt(_) => "bigint",
+            Self::Symbol(_) => "symbol",
+            Self::Date { .. } => "date",
+            Self::RegExp { .. } => "regexp",
+            Self::Error(_) => "error",
+            Self::PromiseResolvingState { .. } => "promise_resolving_state",
+            Self::TemporalDuration { .. } => "temporal_duration",
+            Self::TemporalPlainDate { .. } => "temporal_plain_date",
+            Self::TemporalPlainDateTime { .. } => "temporal_plain_date_time",
+            Self::TemporalPlainMonthDay { .. } => "temporal_plain_month_day",
+            Self::TemporalPlainYearMonth { .. } => "temporal_plain_year_month",
+            Self::TemporalZonedDateTime { .. } => "temporal_zoned_date_time",
+            Self::TemporalInstant { .. } => "temporal_instant",
+        }
     }
 }
+

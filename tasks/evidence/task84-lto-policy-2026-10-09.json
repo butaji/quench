@@ -1,0 +1,986 @@
+{
+  "schema": 1,
+  "task": "84 / 61",
+  "date": "2026-10-09",
+  "experiment": "M4 Cargo profile override audit and matched thin-versus-fat LTO comparison",
+  "decision": "Use explicit thin LTO for the M4 production and benchmark profiles for subsequent Stage B measurements. This favors measured cycles and one-round V8-v7 Score; fat LTO remains lower in retired instructions and max RSS. This is a host-specific working policy, not Task 61 qualification.",
+  "host": {
+    "platform": "macOS 26.5 ARM64, Darwin 25.5",
+    "model": "Apple M4 Mac16,10",
+    "memory_bytes": 17179869184,
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "llvm": "23.1.2",
+    "counter": "/usr/bin/time -l instructions, cycles, RSS"
+  },
+  "configuration_discovery": {
+    "before_manifest_policy": {
+      "profile.release_lto": "fat",
+      "profile.production": "inherits release without lto key",
+      "effective_m4_lto": "thin from user-level Cargo profile override"
+    },
+    "warning_policy": "The host target-specific rustflags replaced build.rustflags, so the repo build-level -D warnings policy was absent. Repo .cargo/config.toml now also sets -D warnings for aarch64-apple-darwin.",
+    "host_config_untouched": true,
+    "post_change_effective_quench_node_flags": [
+      "-C opt-level=3",
+      "-C panic=abort",
+      "-C lto=thin",
+      "-C codegen-units=1",
+      "-C strip=symbols",
+      "-D warnings",
+      "-C link-arg=-mmacosx-version-min=15.0"
+    ],
+    "post_change_build_log": "tasks/evidence/task84-lto-effective-rustc-2026-10-09.txt",
+    "post_change_build_sha256": "222a4c1d2e20848a80724149d6428f5328857228fdb11e845cd2c717b96b29b6",
+    "post_change_binary_sha256": "e8e1a46cc2f6676912c57a053c5e6574c8b53631b47e0ef74f0ac14a87dee96d",
+    "post_change_build_binary_sha256": "e8e1a46cc2f6676912c57a053c5e6574c8b53631b47e0ef74f0ac14a87dee96d"
+  },
+  "production_profile": {
+    "opt_level": 3,
+    "debug": 0,
+    "debug_assertions": false,
+    "overflow_checks": false,
+    "incremental": false,
+    "strip": "symbols",
+    "panic": "abort",
+    "lto": "thin",
+    "codegen_units": 1,
+    "rpath": false,
+    "bench_throughput_inherits": "production"
+  },
+  "source": {
+    "baseline_revision": "9cf65fa61c36ac7e46623af6451adf26ff9c7d27",
+    "candidate_base_revision": "9cf65fa61c36ac7e46623af6451adf26ff9c7d27",
+    "candidate_runtime_patch_sha256": "057ba2afc00df07bcffe2e035886f900cc97f17c342ea393158e2da9a13ac0bc",
+    "candidate_source_dirty": true
+  },
+  "binaries": {
+    "clean_baseline_thin": {
+      "path": "target/pinned/2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7/quench-node",
+      "sha256": "2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7",
+      "size_bytes": 12022224
+    },
+    "clean_baseline_fat": {
+      "path": "target/pinned/d98950e39f4f6372a1f4aba0eca2aedec7e6b641f03879fbec024b5b6d04d36d/quench-node",
+      "sha256": "d98950e39f4f6372a1f4aba0eca2aedec7e6b641f03879fbec024b5b6d04d36d",
+      "size_bytes": 11453728
+    },
+    "candidate_thin": {
+      "path": "target/pinned/e8e1a46cc2f6676912c57a053c5e6574c8b53631b47e0ef74f0ac14a87dee96d/quench-node",
+      "sha256": "e8e1a46cc2f6676912c57a053c5e6574c8b53631b47e0ef74f0ac14a87dee96d",
+      "size_bytes": 12022224
+    },
+    "candidate_fat": {
+      "path": "target/pinned/cb2bd6145b60702a99476884ddfa03ceee72629ea06bf09981b793dda792a30e/quench-node",
+      "sha256": "cb2bd6145b60702a99476884ddfa03ceee72629ea06bf09981b793dda792a30e",
+      "size_bytes": 11453728
+    }
+  },
+  "paired_control": {
+    "workload": "tasks/evidence/task61-dispatch-executing-program-local-store-10m-2026-10-08.cjs",
+    "workload_sha256": "cbb15d2006c400cea5393e55234cdc5952998f9c194f74e830bc60b2c854366e",
+    "iterations": 10000000,
+    "shape": "CJS module file; local store loop",
+    "pairs_per_source": 11,
+    "order": "Alternating thin/fat order; same pair index; /usr/bin/time -l; sanitized environment",
+    "bootstrap": {
+      "method": "paired percentile bootstrap of median per-pair fat/thin percentage deltas (and RSS byte deltas)",
+      "replicates": 100000,
+      "seed": 84061009,
+      "interval": "95%"
+    },
+    "results": {
+      "clean-baseline": {
+        "pairs": 11,
+        "fat_minus_thin": {
+          "instructions_retired_percent": {
+            "median": -2.302575713901678,
+            "percentile_95_ci": [
+              -2.303957873611784,
+              -2.294951736208506
+            ],
+            "lower_pairs": 11,
+            "n": 11
+          },
+          "cycles_elapsed_percent": {
+            "median": 15.803373304192192,
+            "percentile_95_ci": [
+              14.527798904629696,
+              18.40182628863627
+            ],
+            "lower_pairs": 0,
+            "n": 11
+          },
+          "max_rss_percent": {
+            "median": -5.072463768115942,
+            "percentile_95_ci": [
+              -5.334538878842676,
+              -4.537205081669693
+            ],
+            "lower_pairs": 11,
+            "n": 11
+          },
+          "max_rss_bytes": {
+            "median": -917504,
+            "percentile_95_ci": [
+              -966656,
+              -819200
+            ],
+            "lower_pairs": 11,
+            "n": 11
+          }
+        },
+        "fat_higher_cycle_pairs": 11,
+        "fat_lower_instruction_pairs": 11,
+        "fat_lower_rss_pairs": 11
+      },
+      "well-known-atoms-candidate": {
+        "pairs": 11,
+        "fat_minus_thin": {
+          "instructions_retired_percent": {
+            "median": -2.3154344131741444,
+            "percentile_95_ci": [
+              -2.3170947286909493,
+              -2.3141531867720277
+            ],
+            "lower_pairs": 11,
+            "n": 11
+          },
+          "cycles_elapsed_percent": {
+            "median": 15.972957271042842,
+            "percentile_95_ci": [
+              13.569567596296528,
+              18.6792246079289
+            ],
+            "lower_pairs": 0,
+            "n": 11
+          },
+          "max_rss_percent": {
+            "median": -5.2488687782805465,
+            "percentile_95_ci": [
+              -5.786618444846292,
+              -4.627949183303082
+            ],
+            "lower_pairs": 11,
+            "n": 11
+          },
+          "max_rss_bytes": {
+            "median": -950272,
+            "percentile_95_ci": [
+              -1048576,
+              -835584
+            ],
+            "lower_pairs": 11,
+            "n": 11
+          }
+        },
+        "fat_higher_cycle_pairs": 11,
+        "fat_lower_instruction_pairs": 11,
+        "fat_lower_rss_pairs": 11
+      }
+    },
+    "raw_pairs": [
+      {
+        "source": "clean-baseline",
+        "pair": 1,
+        "fat_minus_thin": {
+          "instructions_retired": -211333222,
+          "instructions_retired_percent": -2.3233295774909957,
+          "cycles_elapsed": 181968336,
+          "cycles_elapsed_percent": 17.37130375033935,
+          "max_rss_bytes": -655360,
+          "max_rss_percent": -3.649635036496346,
+          "elapsed_seconds_percent": -9.459459459459453
+        },
+        "thin": {
+          "source": "clean-baseline",
+          "pair": 1,
+          "lto": "thin",
+          "instructions_retired": 9096136168,
+          "cycles_elapsed": 1047522619,
+          "max_rss_bytes": 17956864,
+          "elapsed_seconds": 0.74
+        },
+        "fat": {
+          "source": "clean-baseline",
+          "pair": 1,
+          "lto": "fat",
+          "instructions_retired": 8884802946,
+          "cycles_elapsed": 1229490955,
+          "max_rss_bytes": 17301504,
+          "elapsed_seconds": 0.67
+        }
+      },
+      {
+        "source": "clean-baseline",
+        "pair": 2,
+        "fat_minus_thin": {
+          "instructions_retired": -208450983,
+          "instructions_retired_percent": -2.294951736208506,
+          "cycles_elapsed": 91808642,
+          "cycles_elapsed_percent": 8.94987299878023,
+          "max_rss_bytes": -917504,
+          "max_rss_percent": -5.072463768115942,
+          "elapsed_seconds_percent": 8.000000000000007
+        },
+        "thin": {
+          "source": "clean-baseline",
+          "pair": 2,
+          "lto": "thin",
+          "instructions_retired": 9083022519,
+          "cycles_elapsed": 1025809439,
+          "max_rss_bytes": 18087936,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "clean-baseline",
+          "pair": 2,
+          "lto": "fat",
+          "instructions_retired": 8874571536,
+          "cycles_elapsed": 1117618081,
+          "max_rss_bytes": 17170432,
+          "elapsed_seconds": 0.27
+        }
+      },
+      {
+        "source": "clean-baseline",
+        "pair": 3,
+        "fat_minus_thin": {
+          "instructions_retired": -210882552,
+          "instructions_retired_percent": -2.3214680381368202,
+          "cycles_elapsed": 203130907,
+          "cycles_elapsed_percent": 19.82769785052385,
+          "max_rss_bytes": -868352,
+          "max_rss_percent": -4.796380090497743,
+          "elapsed_seconds_percent": 19.999999999999996
+        },
+        "thin": {
+          "source": "clean-baseline",
+          "pair": 3,
+          "lto": "thin",
+          "instructions_retired": 9084017033,
+          "cycles_elapsed": 1024480545,
+          "max_rss_bytes": 18104320,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "clean-baseline",
+          "pair": 3,
+          "lto": "fat",
+          "instructions_retired": 8873134481,
+          "cycles_elapsed": 1227611452,
+          "max_rss_bytes": 17235968,
+          "elapsed_seconds": 0.3
+        }
+      },
+      {
+        "source": "clean-baseline",
+        "pair": 4,
+        "fat_minus_thin": {
+          "instructions_retired": -209274164,
+          "instructions_retired_percent": -2.303957873611784,
+          "cycles_elapsed": 189528846,
+          "cycles_elapsed_percent": 18.40182628863627,
+          "max_rss_bytes": -966656,
+          "max_rss_percent": -5.334538878842676,
+          "elapsed_seconds_percent": 19.999999999999996
+        },
+        "thin": {
+          "source": "clean-baseline",
+          "pair": 4,
+          "lto": "thin",
+          "instructions_retired": 9083246113,
+          "cycles_elapsed": 1029945849,
+          "max_rss_bytes": 18120704,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "clean-baseline",
+          "pair": 4,
+          "lto": "fat",
+          "instructions_retired": 8873971949,
+          "cycles_elapsed": 1219474695,
+          "max_rss_bytes": 17154048,
+          "elapsed_seconds": 0.3
+        }
+      },
+      {
+        "source": "clean-baseline",
+        "pair": 5,
+        "fat_minus_thin": {
+          "instructions_retired": -209181139,
+          "instructions_retired_percent": -2.303037356279425,
+          "cycles_elapsed": 150708738,
+          "cycles_elapsed_percent": 14.527798904629696,
+          "max_rss_bytes": -983040,
+          "max_rss_percent": -5.449591280653953,
+          "elapsed_seconds_percent": 15.999999999999993
+        },
+        "thin": {
+          "source": "clean-baseline",
+          "pair": 5,
+          "lto": "thin",
+          "instructions_retired": 9082837429,
+          "cycles_elapsed": 1037381774,
+          "max_rss_bytes": 18038784,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "clean-baseline",
+          "pair": 5,
+          "lto": "fat",
+          "instructions_retired": 8873656290,
+          "cycles_elapsed": 1188090512,
+          "max_rss_bytes": 17055744,
+          "elapsed_seconds": 0.29
+        }
+      },
+      {
+        "source": "clean-baseline",
+        "pair": 6,
+        "fat_minus_thin": {
+          "instructions_retired": -209145729,
+          "instructions_retired_percent": -2.302575713901678,
+          "cycles_elapsed": 161974045,
+          "cycles_elapsed_percent": 15.803373304192192,
+          "max_rss_bytes": -819200,
+          "max_rss_percent": -4.537205081669693,
+          "elapsed_seconds_percent": 15.999999999999993
+        },
+        "thin": {
+          "source": "clean-baseline",
+          "pair": 6,
+          "lto": "thin",
+          "instructions_retired": 9083120600,
+          "cycles_elapsed": 1024933360,
+          "max_rss_bytes": 18055168,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "clean-baseline",
+          "pair": 6,
+          "lto": "fat",
+          "instructions_retired": 8873974871,
+          "cycles_elapsed": 1186907405,
+          "max_rss_bytes": 17235968,
+          "elapsed_seconds": 0.29
+        }
+      },
+      {
+        "source": "clean-baseline",
+        "pair": 7,
+        "fat_minus_thin": {
+          "instructions_retired": -208554336,
+          "instructions_retired_percent": -2.296130816259334,
+          "cycles_elapsed": 176586340,
+          "cycles_elapsed_percent": 17.081530825609192,
+          "max_rss_bytes": -868352,
+          "max_rss_percent": -4.8357664233576685,
+          "elapsed_seconds_percent": 19.999999999999996
+        },
+        "thin": {
+          "source": "clean-baseline",
+          "pair": 7,
+          "lto": "thin",
+          "instructions_retired": 9082859501,
+          "cycles_elapsed": 1033785214,
+          "max_rss_bytes": 17956864,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "clean-baseline",
+          "pair": 7,
+          "lto": "fat",
+          "instructions_retired": 8874305165,
+          "cycles_elapsed": 1210371554,
+          "max_rss_bytes": 17088512,
+          "elapsed_seconds": 0.3
+        }
+      },
+      {
+        "source": "clean-baseline",
+        "pair": 8,
+        "fat_minus_thin": {
+          "instructions_retired": -209227000,
+          "instructions_retired_percent": -2.3034220037670528,
+          "cycles_elapsed": 155788532,
+          "cycles_elapsed_percent": 15.137171780047387,
+          "max_rss_bytes": -1081344,
+          "max_rss_percent": -5.994550408719346,
+          "elapsed_seconds_percent": 15.999999999999993
+        },
+        "thin": {
+          "source": "clean-baseline",
+          "pair": 8,
+          "lto": "thin",
+          "instructions_retired": 9083311684,
+          "cycles_elapsed": 1029178596,
+          "max_rss_bytes": 18038784,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "clean-baseline",
+          "pair": 8,
+          "lto": "fat",
+          "instructions_retired": 8874084684,
+          "cycles_elapsed": 1184967128,
+          "max_rss_bytes": 16957440,
+          "elapsed_seconds": 0.29
+        }
+      },
+      {
+        "source": "clean-baseline",
+        "pair": 9,
+        "fat_minus_thin": {
+          "instructions_retired": -208260976,
+          "instructions_retired_percent": -2.292878731932557,
+          "cycles_elapsed": 193273594,
+          "cycles_elapsed_percent": 18.779646320160936,
+          "max_rss_bytes": -704512,
+          "max_rss_percent": -3.934126258005488,
+          "elapsed_seconds_percent": 19.999999999999996
+        },
+        "thin": {
+          "source": "clean-baseline",
+          "pair": 9,
+          "lto": "thin",
+          "instructions_retired": 9082947698,
+          "cycles_elapsed": 1029165250,
+          "max_rss_bytes": 17907712,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "clean-baseline",
+          "pair": 9,
+          "lto": "fat",
+          "instructions_retired": 8874686722,
+          "cycles_elapsed": 1222438844,
+          "max_rss_bytes": 17203200,
+          "elapsed_seconds": 0.3
+        }
+      },
+      {
+        "source": "clean-baseline",
+        "pair": 10,
+        "fat_minus_thin": {
+          "instructions_retired": -208171727,
+          "instructions_retired_percent": -2.2919712253775204,
+          "cycles_elapsed": 152253868,
+          "cycles_elapsed_percent": 14.815846316792136,
+          "max_rss_bytes": -917504,
+          "max_rss_percent": -5.128205128205132,
+          "elapsed_seconds_percent": 15.999999999999993
+        },
+        "thin": {
+          "source": "clean-baseline",
+          "pair": 10,
+          "lto": "thin",
+          "instructions_retired": 9082650109,
+          "cycles_elapsed": 1027642058,
+          "max_rss_bytes": 17891328,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "clean-baseline",
+          "pair": 10,
+          "lto": "fat",
+          "instructions_retired": 8874478382,
+          "cycles_elapsed": 1179895926,
+          "max_rss_bytes": 16973824,
+          "elapsed_seconds": 0.29
+        }
+      },
+      {
+        "source": "clean-baseline",
+        "pair": 11,
+        "fat_minus_thin": {
+          "instructions_retired": -208607697,
+          "instructions_retired_percent": -2.29670683562897,
+          "cycles_elapsed": 145146206,
+          "cycles_elapsed_percent": 14.116136685680836,
+          "max_rss_bytes": -933888,
+          "max_rss_percent": -5.167724388032635,
+          "elapsed_seconds_percent": 15.999999999999993
+        },
+        "thin": {
+          "source": "clean-baseline",
+          "pair": 11,
+          "lto": "thin",
+          "instructions_retired": 9082904869,
+          "cycles_elapsed": 1028228964,
+          "max_rss_bytes": 18071552,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "clean-baseline",
+          "pair": 11,
+          "lto": "fat",
+          "instructions_retired": 8874297172,
+          "cycles_elapsed": 1173375170,
+          "max_rss_bytes": 17137664,
+          "elapsed_seconds": 0.29
+        }
+      },
+      {
+        "source": "well-known-atoms-candidate",
+        "pair": 1,
+        "fat_minus_thin": {
+          "instructions_retired": -212133801,
+          "instructions_retired_percent": -2.335247568863885,
+          "cycles_elapsed": 132570056,
+          "cycles_elapsed_percent": 12.844626900961353,
+          "max_rss_bytes": -1048576,
+          "max_rss_percent": -5.786618444846292,
+          "elapsed_seconds_percent": 3.703703703703698
+        },
+        "thin": {
+          "source": "well-known-atoms-candidate",
+          "pair": 1,
+          "lto": "thin",
+          "instructions_retired": 9083996225,
+          "cycles_elapsed": 1032105152,
+          "max_rss_bytes": 18120704,
+          "elapsed_seconds": 0.27
+        },
+        "fat": {
+          "source": "well-known-atoms-candidate",
+          "pair": 1,
+          "lto": "fat",
+          "instructions_retired": 8871862424,
+          "cycles_elapsed": 1164675208,
+          "max_rss_bytes": 17072128,
+          "elapsed_seconds": 0.28
+        }
+      },
+      {
+        "source": "well-known-atoms-candidate",
+        "pair": 2,
+        "fat_minus_thin": {
+          "instructions_retired": -210466336,
+          "instructions_retired_percent": -2.3170947286909493,
+          "cycles_elapsed": 202887706,
+          "cycles_elapsed_percent": 19.66996733432891,
+          "max_rss_bytes": -1114112,
+          "max_rss_percent": -6.165004533091567,
+          "elapsed_seconds_percent": 19.999999999999996
+        },
+        "thin": {
+          "source": "well-known-atoms-candidate",
+          "pair": 2,
+          "lto": "thin",
+          "instructions_retired": 9083199465,
+          "cycles_elapsed": 1031459293,
+          "max_rss_bytes": 18071552,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "well-known-atoms-candidate",
+          "pair": 2,
+          "lto": "fat",
+          "instructions_retired": 8872733129,
+          "cycles_elapsed": 1234346999,
+          "max_rss_bytes": 16957440,
+          "elapsed_seconds": 0.3
+        }
+      },
+      {
+        "source": "well-known-atoms-candidate",
+        "pair": 3,
+        "fat_minus_thin": {
+          "instructions_retired": -210172276,
+          "instructions_retired_percent": -2.3138140481914315,
+          "cycles_elapsed": 164855353,
+          "cycles_elapsed_percent": 15.972957271042842,
+          "max_rss_bytes": -901120,
+          "max_rss_percent": -4.995458673932784,
+          "elapsed_seconds_percent": 15.999999999999993
+        },
+        "thin": {
+          "source": "well-known-atoms-candidate",
+          "pair": 3,
+          "lto": "thin",
+          "instructions_retired": 9083369347,
+          "cycles_elapsed": 1032090365,
+          "max_rss_bytes": 18038784,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "well-known-atoms-candidate",
+          "pair": 3,
+          "lto": "fat",
+          "instructions_retired": 8873197071,
+          "cycles_elapsed": 1196945718,
+          "max_rss_bytes": 17137664,
+          "elapsed_seconds": 0.29
+        }
+      },
+      {
+        "source": "well-known-atoms-candidate",
+        "pair": 4,
+        "fat_minus_thin": {
+          "instructions_retired": -210333155,
+          "instructions_retired_percent": -2.315618707056788,
+          "cycles_elapsed": 151193999,
+          "cycles_elapsed_percent": 14.666232015500613,
+          "max_rss_bytes": -966656,
+          "max_rss_percent": -5.353901996370237,
+          "elapsed_seconds_percent": 15.999999999999993
+        },
+        "thin": {
+          "source": "well-known-atoms-candidate",
+          "pair": 4,
+          "lto": "thin",
+          "instructions_retired": 9083237856,
+          "cycles_elapsed": 1030898726,
+          "max_rss_bytes": 18055168,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "well-known-atoms-candidate",
+          "pair": 4,
+          "lto": "fat",
+          "instructions_retired": 8872904701,
+          "cycles_elapsed": 1182092725,
+          "max_rss_bytes": 17088512,
+          "elapsed_seconds": 0.29
+        }
+      },
+      {
+        "source": "well-known-atoms-candidate",
+        "pair": 5,
+        "fat_minus_thin": {
+          "instructions_retired": -210241280,
+          "instructions_retired_percent": -2.314568897851854,
+          "cycles_elapsed": 139347009,
+          "cycles_elapsed_percent": 13.569567596296528,
+          "max_rss_bytes": -819200,
+          "max_rss_percent": -4.545454545454541,
+          "elapsed_seconds_percent": 12.00000000000001
+        },
+        "thin": {
+          "source": "well-known-atoms-candidate",
+          "pair": 5,
+          "lto": "thin",
+          "instructions_retired": 9083388280,
+          "cycles_elapsed": 1026908249,
+          "max_rss_bytes": 18022400,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "well-known-atoms-candidate",
+          "pair": 5,
+          "lto": "fat",
+          "instructions_retired": 8873147000,
+          "cycles_elapsed": 1166255258,
+          "max_rss_bytes": 17203200,
+          "elapsed_seconds": 0.28
+        }
+      },
+      {
+        "source": "well-known-atoms-candidate",
+        "pair": 6,
+        "fat_minus_thin": {
+          "instructions_retired": -210442468,
+          "instructions_retired_percent": -2.3167368778181263,
+          "cycles_elapsed": 179357890,
+          "cycles_elapsed_percent": 17.40805035771844,
+          "max_rss_bytes": -704512,
+          "max_rss_percent": -3.9305301645338186,
+          "elapsed_seconds_percent": 15.999999999999993
+        },
+        "thin": {
+          "source": "well-known-atoms-candidate",
+          "pair": 6,
+          "lto": "thin",
+          "instructions_retired": 9083572244,
+          "cycles_elapsed": 1030315781,
+          "max_rss_bytes": 17924096,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "well-known-atoms-candidate",
+          "pair": 6,
+          "lto": "fat",
+          "instructions_retired": 8873129776,
+          "cycles_elapsed": 1209673671,
+          "max_rss_bytes": 17219584,
+          "elapsed_seconds": 0.29
+        }
+      },
+      {
+        "source": "well-known-atoms-candidate",
+        "pair": 7,
+        "fat_minus_thin": {
+          "instructions_retired": -210229023,
+          "instructions_retired_percent": -2.3145014886590376,
+          "cycles_elapsed": 207594975,
+          "cycles_elapsed_percent": 20.174418934390715,
+          "max_rss_bytes": -1097728,
+          "max_rss_percent": -6.052393857271909,
+          "elapsed_seconds_percent": 19.999999999999996
+        },
+        "thin": {
+          "source": "well-known-atoms-candidate",
+          "pair": 7,
+          "lto": "thin",
+          "instructions_retired": 9083123257,
+          "cycles_elapsed": 1029001012,
+          "max_rss_bytes": 18137088,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "well-known-atoms-candidate",
+          "pair": 7,
+          "lto": "fat",
+          "instructions_retired": 8872894234,
+          "cycles_elapsed": 1236595987,
+          "max_rss_bytes": 17039360,
+          "elapsed_seconds": 0.3
+        }
+      },
+      {
+        "source": "well-known-atoms-candidate",
+        "pair": 8,
+        "fat_minus_thin": {
+          "instructions_retired": -210317643,
+          "instructions_retired_percent": -2.3154344131741444,
+          "cycles_elapsed": 111057419,
+          "cycles_elapsed_percent": 10.881565193211706,
+          "max_rss_bytes": -999424,
+          "max_rss_percent": -5.520361990950229,
+          "elapsed_seconds_percent": 12.00000000000001
+        },
+        "thin": {
+          "source": "well-known-atoms-candidate",
+          "pair": 8,
+          "lto": "thin",
+          "instructions_retired": 9083290885,
+          "cycles_elapsed": 1020601513,
+          "max_rss_bytes": 18104320,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "well-known-atoms-candidate",
+          "pair": 8,
+          "lto": "fat",
+          "instructions_retired": 8872973242,
+          "cycles_elapsed": 1131658932,
+          "max_rss_bytes": 17104896,
+          "elapsed_seconds": 0.28
+        }
+      },
+      {
+        "source": "well-known-atoms-candidate",
+        "pair": 9,
+        "fat_minus_thin": {
+          "instructions_retired": -210200350,
+          "instructions_retired_percent": -2.3141531867720277,
+          "cycles_elapsed": 164994835,
+          "cycles_elapsed_percent": 16.020017076746495,
+          "max_rss_bytes": -950272,
+          "max_rss_percent": -5.2488687782805465,
+          "elapsed_seconds_percent": 15.999999999999993
+        },
+        "thin": {
+          "source": "well-known-atoms-candidate",
+          "pair": 9,
+          "lto": "thin",
+          "instructions_retired": 9083251325,
+          "cycles_elapsed": 1029929208,
+          "max_rss_bytes": 18104320,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "well-known-atoms-candidate",
+          "pair": 9,
+          "lto": "fat",
+          "instructions_retired": 8873050975,
+          "cycles_elapsed": 1194924043,
+          "max_rss_bytes": 17154048,
+          "elapsed_seconds": 0.29
+        }
+      },
+      {
+        "source": "well-known-atoms-candidate",
+        "pair": 10,
+        "fat_minus_thin": {
+          "instructions_retired": -209984355,
+          "instructions_retired_percent": -2.311775257022053,
+          "cycles_elapsed": 158615931,
+          "cycles_elapsed_percent": 15.474550150935862,
+          "max_rss_bytes": -835584,
+          "max_rss_percent": -4.627949183303082,
+          "elapsed_seconds_percent": 15.999999999999993
+        },
+        "thin": {
+          "source": "well-known-atoms-candidate",
+          "pair": 10,
+          "lto": "thin",
+          "instructions_retired": 9083251253,
+          "cycles_elapsed": 1025011580,
+          "max_rss_bytes": 18055168,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "well-known-atoms-candidate",
+          "pair": 10,
+          "lto": "fat",
+          "instructions_retired": 8873266898,
+          "cycles_elapsed": 1183627511,
+          "max_rss_bytes": 17219584,
+          "elapsed_seconds": 0.29
+        }
+      },
+      {
+        "source": "well-known-atoms-candidate",
+        "pair": 11,
+        "fat_minus_thin": {
+          "instructions_retired": -210865711,
+          "instructions_retired_percent": -2.3214067416949535,
+          "cycles_elapsed": 191166421,
+          "cycles_elapsed_percent": 18.6792246079289,
+          "max_rss_bytes": -884736,
+          "max_rss_percent": -4.93150684931507,
+          "elapsed_seconds_percent": 15.999999999999993
+        },
+        "thin": {
+          "source": "well-known-atoms-candidate",
+          "pair": 11,
+          "lto": "thin",
+          "instructions_retired": 9083531430,
+          "cycles_elapsed": 1023417326,
+          "max_rss_bytes": 17940480,
+          "elapsed_seconds": 0.25
+        },
+        "fat": {
+          "source": "well-known-atoms-candidate",
+          "pair": 11,
+          "lto": "fat",
+          "instructions_retired": 8872665719,
+          "cycles_elapsed": 1214583747,
+          "max_rss_bytes": 17055744,
+          "elapsed_seconds": 0.29
+        }
+      }
+    ],
+    "pair_logs": [
+      {
+        "path": "tasks/evidence/task84-lto-local-store-pairs-2026-10-09.csv",
+        "sha256": "68a3ddfc03b9870a09c608b2580e1cccd49866a3692da66c9709f0c840629c7d"
+      }
+    ]
+  },
+  "all_eight_diagnostic": {
+    "rounds": 1,
+    "engines": "Quench thin/fat only; each diagnostic report ran four engines for one round",
+    "thin_vs_fat": {
+      "thin": {
+        "report_path": "tasks/evidence/task84-lto-thin-all-eight-diagnostic-2026-10-09.json",
+        "report_sha256": "fec6ef821b7633c0d1a1e23966eef6e256fefbf789ad65978aeba75bd770a5a9",
+        "binary_sha256": "e8e1a46cc2f6676912c57a053c5e6574c8b53631b47e0ef74f0ac14a87dee96d",
+        "rounds": 1,
+        "source_revision": "9cf65fa61c36ac7e46623af6451adf26ff9c7d27",
+        "source_dirty": true,
+        "output_equal_all_fixtures": true,
+        "fixtures": {
+          "crypto": {
+            "score": 425.0,
+            "max_rss_bytes": 21430272
+          },
+          "deltablue": {
+            "score": 224.0,
+            "max_rss_bytes": 19955712
+          },
+          "earley-boyer": {
+            "score": 516.0,
+            "max_rss_bytes": 48922624
+          },
+          "navier-stokes": {
+            "score": 554.0,
+            "max_rss_bytes": 20643840
+          },
+          "raytrace": {
+            "score": 728.0,
+            "max_rss_bytes": 19759104
+          },
+          "regexp": {
+            "score": 134.0,
+            "max_rss_bytes": 39796736
+          },
+          "richards": {
+            "score": 435.0,
+            "max_rss_bytes": 18923520
+          },
+          "splay": {
+            "score": 2883.0,
+            "max_rss_bytes": 342196224
+          }
+        }
+      },
+      "fat": {
+        "report_path": "tasks/evidence/task84-lto-fat-all-eight-diagnostic-2026-10-09.json",
+        "report_sha256": "11bbb03cf9f6147461f3cc32c8c81c0e5c3768aded31ff90818edb085b5dc135",
+        "binary_sha256": "cb2bd6145b60702a99476884ddfa03ceee72629ea06bf09981b793dda792a30e",
+        "rounds": 1,
+        "source_revision": "9cf65fa61c36ac7e46623af6451adf26ff9c7d27",
+        "source_dirty": true,
+        "output_equal_all_fixtures": true,
+        "fixtures": {
+          "crypto": {
+            "score": 392.0,
+            "max_rss_bytes": 20905984
+          },
+          "deltablue": {
+            "score": 217.0,
+            "max_rss_bytes": 19087360
+          },
+          "earley-boyer": {
+            "score": 508.0,
+            "max_rss_bytes": 48447488
+          },
+          "navier-stokes": {
+            "score": 552.0,
+            "max_rss_bytes": 19890176
+          },
+          "raytrace": {
+            "score": 727.0,
+            "max_rss_bytes": 19038208
+          },
+          "regexp": {
+            "score": 127.0,
+            "max_rss_bytes": 38518784
+          },
+          "richards": {
+            "score": 435.0,
+            "max_rss_bytes": 18137088
+          },
+          "splay": {
+            "score": 2876.0,
+            "max_rss_bytes": 341196800
+          }
+        }
+      }
+    },
+    "interpretation": "Thin scored higher on seven fixtures and tied on Richards; fat RSS was lower on all eight. One-round directional evidence only; not qualification.",
+    "evidence_artifacts": [
+      {
+        "path": "tasks/evidence/task84-lto-thin-all-eight-diagnostic-2026-10-09.json",
+        "sha256": "fec6ef821b7633c0d1a1e23966eef6e256fefbf789ad65978aeba75bd770a5a9"
+      },
+      {
+        "path": "tasks/evidence/task84-lto-fat-all-eight-diagnostic-2026-10-09.json",
+        "sha256": "11bbb03cf9f6147461f3cc32c8c81c0e5c3768aded31ff90818edb085b5dc135"
+      },
+      {
+        "path": "tasks/evidence/task84-lto-effective-rustc-2026-10-09.txt",
+        "sha256": "222a4c1d2e20848a80724149d6428f5328857228fdb11e845cd2c717b96b29b6"
+      }
+    ]
+  },
+  "binary_layout": {
+    "thin_text_segment_bytes": 10403840,
+    "fat_text_segment_bytes": 10027008,
+    "fat_minus_thin_text_segment_bytes": -376832
+  },
+  "correctness": "Both all-eight reports had valid runs and output_equal=true for all fixtures. The compiler-policy change does not alter guest semantics; this record does not replace the required correctness gates for runtime changes.",
+  "remaining": "The full eleven-round all-eight four-engine Task 61 qualification is still open. Revisit this production policy if a matched M4 corpus gate reverses the Score/cycle direction or task-level RSS tradeoff."
+}

@@ -1,0 +1,169 @@
+{
+  "schema": "quench.task61.experiment.v1",
+  "task": 61,
+  "experiment": "WellKnownAtoms literal replacements, RegExp V8-v7 fixture gate",
+  "decision": "rejected",
+  "reason": "No fixture-level Score gain; the candidate median max RSS increase exceeds the 0.5% per-change budget. Aggregate instructions/cycles are attribution only because V8-v7 benchmarks repeat each case until a one-second minimum, so process totals include different dynamic iteration counts.",
+  "source_revision": "cf4410ef54dc95a5248db5c68c4be5fa9494bf2a",
+  "candidate_source_diff_sha256": "057ba2afc00df07bcffe2e035886f900cc97f17c342ea393158e2da9a13ac0bc",
+  "candidate_source_diff": "tasks/evidence/task61-well-known-atoms-regexp-rejected-2026-10-09.patch",
+  "candidate_source_patch_bytes": 45501,
+  "host": {
+    "platform": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "model": "Mac16,10",
+    "processor": "Apple M4",
+    "memory_bytes": 17179869184
+  },
+  "build": {
+    "profile": "production",
+    "lto": "thin",
+    "baseline_sha256": "2854be3031531d0e71cbdd4098ae8bdfb64079aff34831a6e9c28bce4113f7b7",
+    "candidate_sha256": "e8e1a46cc2f6676912c57a053c5e6574c8b53631b47e0ef74f0ac14a87dee96d"
+  },
+  "input": {
+    "regexp.js": {
+      "source_sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+      "materialized_sha256": "2ec05d15bfdece58aea94cd92b47dcd60ea605787c81f6e50db0c2830f3cbb16",
+      "materialized_path": "tasks/evidence/task61-well-known-atoms-regexp-pairs-2026-10-09/materialized-regexp.js"
+    }
+  },
+  "pairs": {
+    "count": 11,
+    "alternating_order": true,
+    "all_exit_zero": true,
+    "observable_outputs_matched": 11,
+    "raw": "tasks/evidence/task61-well-known-atoms-regexp-pairs-2026-10-09.json",
+    "runner": "tasks/evidence/task61-well-known-atoms-regexp-pairs-2026-10-09.py",
+    "runner_sha256": "b457fcebd5ec75544d20a7b4d4a45c0c2275ce2c557d9dee0937c51fb297c893"
+  },
+  "results": {
+    "score": {
+      "baseline_median": 128.0,
+      "candidate_median": 128.0,
+      "median_paired_change_percent": 0.0,
+      "paired_bootstrap_95_percentile_ci_percent": [
+        -9.090909090909092,
+        3.90625
+      ],
+      "candidate_better_pairs": 5,
+      "pair_changes_percent": [
+        2.2058823529411766,
+        -9.090909090909092,
+        -7.142857142857142,
+        -71.96850393700788,
+        -69.82142857142858,
+        3.90625,
+        2.307692307692308,
+        0.0,
+        120.39473684210526,
+        382.7586206896552,
+        -1.5384615384615385
+      ],
+      "higher_is_better": true
+    },
+    "instructions_retired": {
+      "baseline_median": 554439660460,
+      "candidate_median": 541059401849,
+      "median_paired_change_percent": -2.415475340720818,
+      "paired_bootstrap_95_percentile_ci_percent": [
+        -2.5131240462041666,
+        0.04837792469889509
+      ],
+      "candidate_better_pairs": 8,
+      "pair_changes_percent": [
+        -2.407155396076029,
+        0.38496511511348097,
+        0.39965981683961377,
+        -4.996087741243733,
+        -5.011688220904649,
+        -2.392337615432046,
+        -2.418884020828007,
+        -2.415475340720818,
+        -2.5131240462041666,
+        0.04837792469889509,
+        -2.434704460595985
+      ],
+      "higher_is_better": false
+    },
+    "cycles_elapsed": {
+      "baseline_median": 99792561931,
+      "candidate_median": 98287425253,
+      "median_paired_change_percent": -0.5807820371592715,
+      "paired_bootstrap_95_percentile_ci_percent": [
+        -3.030419206083705,
+        3.0679520041891886
+      ],
+      "candidate_better_pairs": 7,
+      "pair_changes_percent": [
+        -2.049608691497967,
+        3.0679520041891886,
+        2.9282677239087485,
+        17.041300726188656,
+        14.358227964762538,
+        -3.030419206083705,
+        -1.9662536773286812,
+        -0.5807820371592715,
+        -12.342083902376778,
+        -22.880171726399205,
+        -0.026521683281905663
+      ],
+      "higher_is_better": false
+    },
+    "maximum_rss_bytes": {
+      "baseline_median": 39600128,
+      "candidate_median": 39829504,
+      "median_paired_change_percent": 0.7468879668049793,
+      "paired_bootstrap_95_percentile_ci_percent": [
+        -0.28653295128939826,
+        1.120331950207469
+      ],
+      "candidate_better_pairs": 3,
+      "pair_changes_percent": [
+        0.8274720728175424,
+        0.8267879288962381,
+        -0.28653295128939826,
+        0.7468879668049793,
+        -10.099337748344372,
+        0.20669698222405952,
+        -0.9376273950264982,
+        0.5792304509722797,
+        1.2063227953410982,
+        8.151447661469934,
+        1.120331950207469
+      ],
+      "higher_is_better": false
+    },
+    "elapsed_seconds": {
+      "baseline_median": 25.19,
+      "candidate_median": 25.12,
+      "median_paired_change_percent": 0.08196721311476692,
+      "paired_bootstrap_95_percentile_ci_percent": [
+        -3.969829297340214,
+        12.118713932399
+      ],
+      "candidate_better_pairs": 5,
+      "pair_changes_percent": [
+        -2.6694915254237395,
+        12.118713932399,
+        7.057920981971614,
+        224.9036237471087,
+        222.35333782872556,
+        -3.969829297340214,
+        -2.0731707317073234,
+        0.08196721311476692,
+        -52.342037073948575,
+        -78.88870541611625,
+        1.8653690186536935
+      ],
+      "higher_is_better": false
+    }
+  },
+  "gate": {
+    "score": "median score equal (128 vs 128); candidate higher in 5/11 paired runs",
+    "rss_budget_percent": 0.5,
+    "median_maximum_rss_change_percent": 0.7468879668049793,
+    "rss_gate": "failed",
+    "correctness": "stdout/exit behavior matched in all 11 fixture pairs. No additional Test262 or Node-oracle campaign was run for this rejected candidate."
+  }
+}

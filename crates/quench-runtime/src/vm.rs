@@ -8,6 +8,8 @@ use crate::bytecode::{
     Atom, AtomTable, Constant, DispatchClass, FieldBase, Instr, LEXICAL_THIS_BINDING,
     NEW_TARGET_BINDING, Op, Operand, Register, ResidualProgram, WideInstruction,
 };
+#[cfg(feature = "profile-memory")]
+use crate::heap::CellKind;
 use crate::heap::{
     CallSiteRecord, Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind,
     Native, Object, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
@@ -15,7 +17,6 @@ use crate::heap::{
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
 use crate::value::number_to_u32;
-use crate::value_vec::ValueVec;
 use activation::CallContext;
 use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -361,6 +362,16 @@ struct CachedPropertyAttributes {
     accessor: bool,
 }
 impl ShapeTransition {
+    fn introduces_gc_roots(self) -> bool {
+        match self {
+            Self::Add { key, .. } => key.symbol_value().is_some(),
+            Self::Descriptor { attributes, .. } => {
+                attributes.getter.is_some() || attributes.setter.is_some()
+            }
+            Self::Root | Self::Delete { .. } | Self::Vacant | Self::Dictionary { .. } => false,
+        }
+    }
+
     fn cache_key(self) -> Option<ShapeTransitionKey> {
         match self {
             Self::Add {
@@ -428,6 +439,7 @@ struct Shape {
     transition: ShapeTransition,
     storage_len: usize,
     dictionary_trigger: Option<DictionaryTrigger>,
+    may_have_gc_roots: bool,
     lookup_index: OnceCell<Box<ShapeLookupIndex>>,
     /// Lookups that walked at least `SHAPE_INDEX_WALK_DISTANCE` transitions
     /// from this shape before it had an index.
@@ -435,7 +447,7 @@ struct Shape {
 }
 impl Shape {
     fn root() -> Self {
-        Self::child(None, ShapeTransition::Root, 0, None)
+        Self::child(None, ShapeTransition::Root, 0, None, false)
     }
 
     fn child(
@@ -443,12 +455,14 @@ impl Shape {
         transition: ShapeTransition,
         storage_len: usize,
         dictionary_trigger: Option<DictionaryTrigger>,
+        parent_may_have_gc_roots: bool,
     ) -> Self {
         Self {
             parent,
             transition,
             storage_len,
             dictionary_trigger,
+            may_have_gc_roots: parent_may_have_gc_roots || transition.introduces_gc_roots(),
             lookup_index: OnceCell::new(),
             long_walks: std::cell::Cell::new(0),
         }
@@ -968,12 +982,18 @@ impl<H: Host> Vm<H> {
 
     fn report_execution(&mut self, program: &ResidualProgram) {
         #[cfg(feature = "profile-aggregate")]
-        if self.profile.report_dispatch_census_if_enabled() {
+        if self
+            .profile
+            .report_dispatch_census_if_enabled(ProgramId::MAIN.raw())
+        {
+            self.profile
+                .report_object_literal_sites(ProgramId::MAIN.raw(), program);
             #[cfg(feature = "profile-memory")]
             self.report_memory_if_enabled("complete");
             return;
         }
-        self.profile.report(&self.heap, program);
+        self.profile
+            .report(&self.heap, ProgramId::MAIN.raw(), program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("complete");
     }
@@ -1056,7 +1076,111 @@ impl<H: Host> Vm<H> {
         );
         self.heap
             .memory_profile()
-            .report(phase, cell_counts, live_payload_bytes);
+            .report(phase, cell_counts, live_payload_bytes, &self.heap);
+        self.report_memory_snapshot(phase);
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn report_memory_snapshot(&self, phase: &str) {
+        let heap = self.heap.memory_composition();
+        let shape_table_bytes = self.shapes.capacity() * size_of::<Shape>();
+        let shape_lookup_bytes = self
+            .shapes
+            .iter()
+            .filter_map(|shape| shape.lookup_index.get())
+            .map(|index| index.payload_capacity_bytes())
+            .sum::<usize>();
+        let transition_table_bytes =
+            self.transitions.capacity() * size_of::<((u32, ShapeTransitionKey), u32)>();
+        let descriptor_side_table_bytes = self.descriptors.capacity()
+            * size_of::<((Value, property_key::PropertyKey), PropertyAttributes)>();
+        let cache_side_table_bytes = self.field_caches.capacity() * size_of::<FieldCache>()
+            + self.megamorphic_field_indices.capacity() * size_of::<u32>()
+            + self.field_add_caches.capacity() * size_of::<(usize, FieldAddCache)>()
+            + self.method_caches.capacity() * size_of::<[MethodCache; 2]>();
+        let atom_side_table_bytes = self.atoms.capacity() * size_of::<(u64, Atom)>()
+            + self.atom_collisions.capacity() * size_of::<(u64, Vec<Atom>)>()
+            + self
+                .atom_collisions
+                .values()
+                .map(|atoms| atoms.capacity() * size_of::<Atom>())
+                .sum::<usize>()
+            + self.dynamic_atoms.capacity() * size_of::<JsString>()
+            + self
+                .dynamic_atoms
+                .iter()
+                .map(JsString::capacity)
+                .sum::<usize>();
+        let frame_bytes = self
+            .frames
+            .iter()
+            .chain(&self.frame_pool)
+            .map(|frame| {
+                frame.locals.capacity() * size_of::<Value>()
+                    + frame.registers.capacity() * size_of::<Value>()
+                    + frame.original_arguments.capacity() * size_of::<Value>()
+            })
+            .sum::<usize>();
+        let property_arena_bytes =
+            heap.property_arena_values_bytes + heap.property_arena_metadata_bytes;
+        let vm_metadata_bytes = shape_table_bytes
+            + shape_lookup_bytes
+            + transition_table_bytes
+            + descriptor_side_table_bytes
+            + cache_side_table_bytes
+            + atom_side_table_bytes
+            + frame_bytes;
+        let accounted_runtime_bytes = heap.slot_arena_reserved_bytes
+            + property_arena_bytes
+            + heap.cell_payload_bytes
+            + heap.boxed_object_header_bytes
+            + heap.sparse_array_sidecar_bytes
+            + vm_metadata_bytes;
+        eprintln!(
+            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"slot_arena_reserved_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+            self.heap.collection_count(),
+            CellKind::NAMES,
+            heap.cell_counts,
+            heap.cell_variant_names,
+            heap.cell_variant_counts,
+            heap.occupied_slots,
+            heap.slot_arena_reserved_bytes,
+            heap.object_headers,
+            heap.embedded_object_headers,
+            heap.boxed_object_headers,
+            heap.boxed_object_header_bytes,
+            heap.object_property_counts_by_width,
+            heap.inline_property_attribution_bytes,
+            heap.object_header_size_bytes,
+            heap.cell_size_bytes,
+            heap.slot_size_bytes,
+            heap.property_arena_values_bytes,
+            heap.property_arena_metadata_bytes,
+            heap.property_arena_used_values,
+            heap.property_arena_capacity_values,
+            heap.live_property_used_values,
+            heap.live_property_capacity_values,
+            heap.live_property_used_values_by_width,
+            heap.live_property_capacity_values_by_width,
+            heap.dense_array_elements_bytes,
+            heap.dense_array_headers_bytes,
+            heap.dense_array_backing_count,
+            heap.sparse_array_sidecar_bytes,
+            heap.string_buffers_bytes,
+            heap.string_buffer_count,
+            heap.other_cell_payload_bytes,
+            heap.cell_payload_bytes,
+            shape_table_bytes,
+            shape_lookup_bytes,
+            transition_table_bytes,
+            descriptor_side_table_bytes,
+            cache_side_table_bytes,
+            atom_side_table_bytes,
+            frame_bytes,
+            heap.profile_instrumentation_bytes,
+            accounted_runtime_bytes,
+            accounted_runtime_bytes + heap.profile_instrumentation_bytes,
+        );
         crate::report_allocator_memory(phase);
     }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {

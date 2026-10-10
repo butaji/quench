@@ -67,13 +67,23 @@ incremental = true
 
 [profile.production]
 inherits = "release"
-# Alias the release contract for explicit score invocations. The optimizer
-# policy itself lives only in `profile.release`.
+# Keep qualification builds independent of user-level profile overrides. On
+# the M4 qualification host, thin LTO won the matched local-loop cycle runs
+# and the one-round V8-v7 Score screen. Fat LTO used fewer instructions and
+# less RSS but more cycles. This is an M4 policy choice, not a universal claim.
+opt-level = 3
+debug = 0
+debug-assertions = false
+overflow-checks = false
+incremental = false
+strip = "symbols"
+panic = "abort"
+lto = "thin"
+codegen-units = 1
+rpath = false
 
 [profile.bench-throughput]
 inherits = "production"
-debug = 0
-strip = "symbols"
 
 # Optimized measurements with full address-to-source attribution. DWARF makes
 # samples explainable; operation counts still come from explicit counters.
