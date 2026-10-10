@@ -399,7 +399,7 @@ pub(crate) fn exit_code_set(
         None
     };
     let Some(number) = number else {
-        return invalid_exit_code_type(context);
+        return invalid_exit_code_type(context, value_root);
     };
     if !number.is_finite() || number.fract() != 0.0 || number.abs() > MAX_SAFE_EXIT_CODE {
         return exit_code_range_error(context, number);
@@ -434,7 +434,7 @@ pub(crate) fn exit(
                 None
             };
             let Some(number) = number else {
-                return invalid_exit_code_type(context);
+                return invalid_exit_code_type(context, value_root);
             };
             if !number.is_finite() || number.fract() != 0.0 || number.abs() > MAX_SAFE_EXIT_CODE {
                 return exit_code_range_error(context, number);
@@ -465,8 +465,23 @@ fn parse_exit_code_string(value: &str) -> f64 {
 
 fn invalid_exit_code_type(
     context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
 ) -> Result<RootId, RootedError> {
-    let error = context.type_error_rooted("The \"code\" argument must be of type number")?;
+    let received = context.evaluate_script_rooted(
+        "(value) => value === null ? 'null' : value === undefined ? 'undefined' : typeof value === 'string' ? `type string ('${value}')` : typeof value === 'number' ? `type number (${String(value)})` : typeof value === 'boolean' ? `type boolean (${value})` : typeof value === 'bigint' ? `type bigint (${String(value)}n)` : Array.isArray(value) ? 'an instance of Array' : 'an instance of Object'",
+        "node:process/exit-code-error.js",
+    )?;
+    let undefined = context.undefined();
+    let received_value = context.call_rooted(received, undefined, &[value]);
+    context.release_root(received);
+    let received_value = received_value?;
+    let received = context
+        .string_text(received_value)?
+        .unwrap_or_else(|| "an unknown value".to_owned());
+    context.release_root(received_value);
+    let error = context.type_error_rooted(&format!(
+        "The \"code\" argument must be of type number. Received {received}"
+    ))?;
     Err(throw_with_code(context, error, "ERR_INVALID_ARG_TYPE"))
 }
 
@@ -474,9 +489,16 @@ fn exit_code_range_error(
     context: &mut NativeContext<'_, NodeHost>,
     number: f64,
 ) -> Result<RootId, RootedError> {
-    let message = format!(
-        "The value of \"code\" is out of range. It must be a safe integer. Received {number}"
-    );
+    let received = if number.is_nan() {
+        "NaN".to_owned()
+    } else if number == f64::INFINITY {
+        "Infinity".to_owned()
+    } else if number == f64::NEG_INFINITY {
+        "-Infinity".to_owned()
+    } else {
+        number.to_string()
+    };
+    let message = format!("The value of \"code\" is out of range. It must be a safe integer. Received {received}");
     let error = context.range_error_rooted(&message)?;
     Err(throw_with_code(context, error, "ERR_OUT_OF_RANGE"))
 }
