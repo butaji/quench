@@ -109,6 +109,17 @@ integer_unary_operators! { Signed, value;
     @i64 ExtendSigned32, I64Extend32S => NumericResult::Value(value as i32 as Signed);
 }
 
+/// Wide arithmetic has its own multi-register lowering ahead of scalar operators.
+pub(super) fn wide_integer(op: &wasmparser::Operator<'_>) -> bool {
+    matches!(
+        op,
+        wasmparser::Operator::I64Add128
+            | wasmparser::Operator::I64Sub128
+            | wasmparser::Operator::I64MulWideS
+            | wasmparser::Operator::I64MulWideU
+    )
+}
+
 impl super::Lowering<'_> {
     /// Wide results are two ordinary stack values, not a separate numeric payload.
     pub(super) fn wide_integer_operator(

@@ -454,9 +454,12 @@ impl ResidualProgram {
                 }
             }
             let plain_local_context_safe = function.plain_local_context_is_safe();
+            // Wasm locals are frame slots by construction: no environment
+            // capture, TDZ, or name binding can observe them.
+            let wasm = self.kind == super::ProgramKind::Wasm;
             let plain_local_slots: Vec<_> = (0..usize::from(function.locals))
                 .map(|slot| {
-                    function
+                    wasm || function
                         .local_atoms
                         .get(slot)
                         .and_then(|atom| usize::try_from(*atom).ok())
