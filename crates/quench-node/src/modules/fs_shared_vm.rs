@@ -1333,6 +1333,17 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
     throw error;
   };
   const normalizePath = (path) => path instanceof URL ? decodeURIComponent(path.pathname) : Buffer.isBuffer(path) ? path.toString() : path;
+  const validatePathLength = (path) => {
+    const value = String(path);
+    const tooLong = Buffer.byteLength(value) > 4096 || value.split(/[\\/]/).some(part => Buffer.byteLength(part) > 255);
+    if (!tooLong) return;
+    const error = new Error(`ENAMETOOLONG: name too long, stat '${value}'`);
+    error.code = 'ENAMETOOLONG';
+    error.errno = -36;
+    error.syscall = 'stat';
+    error.path = value;
+    throw error;
+  };
   const validateOptions = (options) => {
     if (options == null || typeof options !== 'object') {
       const error = new TypeError('The "options" argument must be of type object.');
@@ -1400,6 +1411,8 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
       }
       if (accepted === false) return undefined;
     }
+    validatePathLength(source);
+    validatePathLength(destination);
     if (options.dereference === true && options.verbatimSymlinks === true) {
       fail('ERR_INCOMPATIBLE_OPTION_PAIR', "Option 'dereference' and 'verbatimSymlinks' cannot be used together");
     }
@@ -1431,7 +1444,7 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
     const sourceStats = statSync(source);
     if (sourceStats.isDirectory()) {
       if (exists(destination) && !statSync(destination).isDirectory()) {
-        fail('ERR_FS_CP_DIR_TO_NON_DIR', `Cannot overwrite non-directory '${destination}' with directory '${source}'`);
+        fail('ERR_FS_CP_DIR_TO_NON_DIR', `Cannot overwrite non-directory ${destination} with directory ${source}`);
       }
       if (exists(destination) && options.errorOnExist === true && options.force === false) {
         fail('ERR_FS_CP_EEXIST', `Target already exists: ${destination}`, destination);
@@ -1506,16 +1519,18 @@ const CP_API: &str = r#"(existsSync, statSync, lstatSync, readdirSync, mkdirSync
     }
     const copy = async (src, dest, opts) => {
       validateOptions(opts);
+      if (typeof opts.filter === 'function' && await opts.filter(src, dest) === false) return;
+      validatePathLength(src);
+      validatePathLength(dest);
       const invalidTarget = invalidCopyTarget(src, dest, opts.dereference === true);
       if (invalidTarget) fail(invalidTarget, `Cannot copy '${src}' to a subdirectory of self '${dest}'`, dest);
-      if (typeof opts.filter === 'function' && await opts.filter(src, dest) === false) return;
       const stats = opts.dereference === true ? statSync(src) : lstatSync(src);
       if (stats.isSymbolicLink() && opts.dereference !== true) {
         cpSync(src, dest, { ...opts, filter: undefined });
         return;
       }
       if (stats.isDirectory()) {
-        if (exists(dest) && !statSync(dest).isDirectory()) fail('ERR_FS_CP_DIR_TO_NON_DIR', `Cannot overwrite non-directory '${dest}' with directory '${src}'`);
+        if (exists(dest) && !statSync(dest).isDirectory()) fail('ERR_FS_CP_DIR_TO_NON_DIR', `Cannot overwrite non-directory ${dest} with directory ${src}`);
         if (exists(dest) && opts.errorOnExist === true && opts.force === false) fail('ERR_FS_CP_EEXIST', `Target already exists: ${dest}`, dest);
         if (opts.recursive !== true) fail('ERR_FS_EISDIR', `Recursive option not enabled, cannot copy a directory: ${src}`);
         mkdirSync(dest, { recursive: true });
