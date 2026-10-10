@@ -2794,6 +2794,50 @@ mod tests {
     }
 
     #[test]
+    fn counted_loop_steps_once_when_its_safepoint_leaves_the_lane() {
+        // loop: count += 1; n -= 1 (local.tee) ; br_if loop. The step and test
+        // lower to one fused counter-jump, whose safepoint may hand the jump to
+        // the general path; the step must still apply exactly once.
+        let function = crate::Engine::lower_wasm_i32_function(
+            "counted-loop-safepoint",
+            1,
+            1,
+            true,
+            [
+                Operator::Loop {
+                    blockty: wasmparser::BlockType::Empty,
+                },
+                Operator::LocalGet { local_index: 1 },
+                Operator::I32Const { value: 1 },
+                Operator::I32Add,
+                Operator::LocalSet { local_index: 1 },
+                Operator::LocalGet { local_index: 0 },
+                Operator::I32Const { value: -1 },
+                Operator::I32Add,
+                Operator::LocalTee { local_index: 0 },
+                Operator::BrIf { relative_depth: 0 },
+                Operator::End,
+                Operator::LocalGet { local_index: 1 },
+                Operator::End,
+            ]
+            .into_iter()
+            .map(Ok),
+        )
+        .unwrap();
+        assert!(
+            function
+                .residual()
+                .disassemble()
+                .contains("WasmI32AddImmediateJumpNonZero")
+        );
+        let mut vm = Vm::new(crate::SystemHost);
+        let script = crate::Engine::specialize("void 0", "counted-loop-host.js").unwrap();
+        vm.execute(&script).unwrap();
+        vm.heap.make_collection_due_for_test();
+        assert_eq!(vm.execute_wasm_i32(&function, &[5]).unwrap(), Some(5));
+    }
+
+    #[test]
     fn unreachable_trap_unwinds_the_shared_activation() {
         let function = crate::Engine::lower_wasm_i32_function(
             "unreachable-unwind",
