@@ -146,7 +146,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoRandomBytes" (1) => crate::modules::crypto_shared_vm::random_bytes,
         method "cryptoPbkdf2" (5) => crate::modules::crypto_shared_vm::pbkdf2,
         method "cryptoScrypt" (7) => crate::modules::crypto_shared_vm::scrypt,
-        method "cryptoCipherProcess" (9) => crate::modules::crypto_shared_vm::cipher_process,
+        method "cryptoCipherProcess" (10) => crate::modules::crypto_shared_vm::cipher_process,
         method "asyncResourceInit" (2) => crate::modules::async_hooks_shared_vm::initialize_resource,
         method "asyncResourceRunInAsyncScope" (2) => crate::modules::async_hooks_shared_vm::run_in_async_scope,
         method "asyncResourceEmitDestroy" (0) => crate::modules::async_hooks_shared_vm::emit_destroy,

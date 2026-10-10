@@ -419,7 +419,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     "sha3-224", "sha3-256", "sha3-384", "sha3-512",
   ].sort());
   const cipherNames = Object.freeze([
-    "aes-128-cbc", "aes-128-ecb", "aes-128-gcm", "aes-192-gcm", "aes-256-cbc", "aes-256-gcm", "chacha20-poly1305", "des-ede3-cbc",
+    "aes-128-cbc", "aes-128-ecb", "aes-128-gcm", "aes-192-gcm", "aes-256-cbc", "aes-256-gcm", "aes256", "chacha20-poly1305", "des-ede3-cbc",
   ].sort());
   const curveNames = Object.freeze([
     "prime192v1", "secp224r1", "secp256k1", "secp256r1",
@@ -459,7 +459,8 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     let info;
     if (typeof nameOrNid === "string") {
       if (!nameOrNid) return undefined;
-      const name = nameOrNid.toLowerCase();
+      const requested = nameOrNid.toLowerCase();
+      const name = requested === "aes256" ? "aes-256-cbc" : requested;
       info = cipherInfoRecords.find(record => record.name === name);
     } else if (typeof nameOrNid === "number") {
       if (!Number.isInteger(nameOrNid) || nameOrNid < 1 || nameOrNid > 0x7fffffff) return undefined;
@@ -516,7 +517,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
         const processed = cipherProcess(
           this._cipherName, this._cipherKey, this._cipherIv, input,
           finalBlock, this._cipherDecrypt, this._cipherAad,
-          this._authTag ?? Buffer.alloc(0), this._authTagLength,
+          this._authTag ?? Buffer.alloc(0), this._authTagLength, this._autoPadding,
         );
         output = Buffer.from(processed.output);
         if (finalBlock && (this._cipherMode === "gcm" || this._cipherName === "chacha20-poly1305") && !this._cipherDecrypt)
@@ -532,6 +533,13 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
           error.library = "Provider routines";
           error.reason = "bad decrypt";
           error.code = "ERR_OSSL_BAD_DECRYPT";
+          throw error;
+        }
+        if (!this._cipherDecrypt && finalBlock && !this._autoPadding) {
+          const error = new Error("error:1C80006B:Provider routines::wrong final block length");
+          error.library = "Provider routines";
+          error.reason = "wrong final block length";
+          error.code = "ERR_OSSL_WRONG_FINAL_BLOCK_LENGTH";
           throw error;
         }
         throw cause;
@@ -1457,6 +1465,10 @@ pub(crate) fn cipher_process(
         .and_then(|value| value.as_number())
         .filter(|length| length.is_finite() && *length >= 0.0 && length.fract() == 0.0)
         .unwrap_or(16.0) as usize;
+    let auto_padding = args.get(9)
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
     let is_gcm = algorithm.to_ascii_lowercase().ends_with("-gcm");
     let is_aead = is_gcm || algorithm.eq_ignore_ascii_case("chacha20-poly1305");
     let mode = if decrypt {
@@ -1467,6 +1479,7 @@ pub(crate) fn cipher_process(
     let iv = if cipher.iv_len() == Some(0) { None } else { Some(iv.as_slice()) };
     let mut crypter = openssl::symm::Crypter::new(cipher, mode, &key, iv)
         .map_err(|error| RootedError::host(error.to_string()))?;
+    crypter.pad(auto_padding);
     if is_aead {
         if !aad.is_empty() {
             crypter.aad_update(&aad).map_err(|error| RootedError::host(error.to_string()))?;
