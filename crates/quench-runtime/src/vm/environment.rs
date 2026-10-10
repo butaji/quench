@@ -1426,6 +1426,15 @@ impl<H: Host> Vm<H> {
             return Err(JsError("invalid capture".into()));
         };
         let slot = usize::from(slot);
+        if *function != super::ROOT_FUNCTION_ID {
+            let value = self
+                .heap
+                .environment_slot(env, slot)
+                .ok_or_else(|| JsError("invalid capture slot".into()))?;
+            if !value.is_deleted() {
+                return Ok(value);
+            }
+        }
         let owner_id = program
             .map(super::ProgramId::from_raw)
             .unwrap_or(self.active_program);
