@@ -335,6 +335,7 @@ impl Heap {
         }
         self.allocations += 1;
         self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        let track_young = self.tracks_young_cells();
         self.total_allocations += 1;
         self.external_bytes += cell.external_bytes();
         while let Some(index) = self.free.pop() {
@@ -344,7 +345,9 @@ impl Heap {
             };
             self.generations[index as usize] = generation;
             self.slots.get_mut(index as usize).unwrap().cell = Some(cell);
-            self.young.push(index);
+            if track_young {
+                self.young.push(index);
+            }
             #[cfg(feature = "profile-memory")]
             self.profile_allocation(index as usize);
             self.peak_live = self
@@ -358,10 +361,11 @@ impl Heap {
         self.profile_allocation(index);
         if index / 64 == self.marks.len() {
             self.marks.push(0);
-            self.remembered_marks.push(0);
         }
         self.generations.push(1);
-        self.young.push(index as u32);
+        if track_young {
+            self.young.push(index as u32);
+        }
         self.peak_live = self
             .peak_live
             .max(self.slots.len() - self.free.len() - self.retired_slots);
@@ -515,6 +519,15 @@ impl Heap {
     pub(crate) fn should_full_collect(&self) -> bool {
         self.full_collection_growth_limit == 0
             || self.allocations_since_full >= self.full_collection_growth_limit
+    }
+    fn minor_collection_scheduled(&self) -> bool {
+        let allocations_to_threshold = self.threshold.saturating_sub(self.allocations);
+        self.allocations_since_full
+            .saturating_add(allocations_to_threshold)
+            < self.full_collection_growth_limit
+    }
+    fn tracks_young_cells(&self) -> bool {
+        cfg!(test) || self.minor_collection_scheduled()
     }
     pub(crate) fn is_old(&self, value: Value) -> bool {
         value

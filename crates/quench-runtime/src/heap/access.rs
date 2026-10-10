@@ -116,10 +116,14 @@ impl Heap {
     }
 
     pub(super) fn remember(&mut self, index: usize) {
-        if index >= self.slots.len()
+        if !self.tracks_young_cells()
+            || index >= self.slots.len()
             || !Heap::marked(&self.marks, index)
-            || self.remembered_marks[index / 64] & (1 << (index % 64)) != 0
         {
+            return;
+        }
+        self.remembered_marks.resize(self.marks.len(), 0);
+        if self.remembered_marks[index / 64] & (1 << (index % 64)) != 0 {
             return;
         }
         self.remembered_marks[index / 64] |= 1 << (index % 64);

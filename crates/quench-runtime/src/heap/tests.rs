@@ -126,6 +126,27 @@ fn gc_headroom_factors_scale_live_cells_without_overflow() {
 }
 
 #[test]
+fn minor_tracking_matches_the_next_collection_boundary() {
+    let mut heap = Heap::new();
+    heap.full_collection_growth_limit = 1_000;
+    heap.threshold = 500;
+    assert!(heap.minor_collection_scheduled());
+
+    heap.allocations = 200;
+    heap.allocations_since_full = 200;
+    heap.threshold = 800;
+    assert!(heap.minor_collection_scheduled());
+
+    heap.allocations = 700;
+    heap.allocations_since_full = 700;
+    heap.threshold = 500;
+    assert!(heap.minor_collection_scheduled());
+
+    heap.threshold = 1_000;
+    assert!(!heap.minor_collection_scheduled());
+}
+
+#[test]
 fn scope_slot_owners_survive_collection_and_release() {
     let mut heap = Heap::new();
     let kept = heap.alloc(Cell::String("kept".into()));
