@@ -727,6 +727,87 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
     pbkdf2Arguments(password, salt, iterations, keylen, digest);
     return Buffer.from(pbkdf2(cryptoBytes(password), cryptoBytes(salt), iterations, keylen, digest));
   };
+  const hkdfInputs = (digest, ikm, salt, info, length) => {
+    if (typeof digest !== "string") {
+      const error = new TypeError('The "digest" argument must be of type string');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const bytes = (value, name) => {
+      if (!(typeof value === "string" || secretKeys.has(value) || ArrayBuffer.isView(value) ||
+          value instanceof ArrayBuffer || typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer)) {
+        const error = new TypeError(`The "${name}" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView`);
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (secretKeys.has(value)) return Buffer.from(secretKeys.get(value));
+      if (typeof value === "string") return Buffer.from(value);
+      if (ArrayBuffer.isView(value)) return Buffer.from(new Uint8Array(value.buffer, value.byteOffset, value.byteLength));
+      return Buffer.from(new Uint8Array(value));
+    };
+    const inputKey = bytes(ikm, "ikm");
+    const inputSalt = bytes(salt, "salt");
+    const inputInfo = bytes(info, "info");
+    if (inputInfo.length > 1024) {
+      const error = new RangeError('The "info" argument must be less than or equal to 1024 bytes');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (typeof length !== "number") {
+      const error = new TypeError('The "length" argument must be of type number');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const maximum = Buffer.constants?.MAX_LENGTH ?? 0x7fffffff;
+    if (!Number.isInteger(length) || length < 0 || length > maximum) {
+      const error = new RangeError('The "length" argument is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const normalizedDigest = digest.toLowerCase();
+    if (!getHashes().includes(normalizedDigest)) {
+      const error = new Error("Invalid digest: " + digest);
+      error.code = "ERR_CRYPTO_INVALID_DIGEST";
+      throw error;
+    }
+    const digestLength = ({ md5: 16, ripemd160: 20, sha1: 20, sha224: 28, sha256: 32,
+      sha384: 48, sha512: 64, "sha3-224": 28, "sha3-256": 32,
+      "sha3-384": 48, "sha3-512": 64 })[normalizedDigest];
+    if (digestLength === undefined) {
+      const error = new Error("Invalid digest: " + digest);
+      error.code = "ERR_CRYPTO_INVALID_DIGEST";
+      throw error;
+    }
+    if (length > digestLength * 255) {
+      const error = new RangeError("Invalid key length");
+      error.code = "ERR_CRYPTO_INVALID_KEYLEN";
+      throw error;
+    }
+    return { digest: normalizedDigest, ikm: inputKey, salt: inputSalt, info: inputInfo, length, digestLength };
+  };
+  const hkdfResult = ({ digest, ikm, salt, info, length, digestLength }) => {
+    const prk = Buffer.from(hmacDigest(digest, Array.from(salt), Array.from(ikm)));
+    const output = Buffer.alloc(length);
+    let previous = Buffer.alloc(0);
+    let offset = 0;
+    for (let counter = 1; offset < length; counter++) {
+      previous = Buffer.from(hmacDigest(digest, Array.from(prk), [...previous, ...info, counter]));
+      const count = Math.min(digestLength, length - offset);
+      previous.copy(output, offset, 0, count);
+      offset += count;
+    }
+    return output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength);
+  };
+  const hkdfSync = (digest, ikm, salt, info, length) => hkdfResult(hkdfInputs(digest, ikm, salt, info, length));
+  const hkdf = (digest, ikm, salt, info, length, callback) => {
+    const params = hkdfInputs(digest, ikm, salt, info, length);
+    if (typeof callback !== "function") {
+      const error = new TypeError('The "callback" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    process.nextTick(bindAsyncCallback(callback), null, hkdfResult(params));
+  };
   const randomFillSync = (buffer, offset, size) => {
     const view = ArrayBuffer.isView(buffer)
       ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
@@ -898,6 +979,8 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
     randomBytes: randomBuffer,
     pbkdf2: derivePbkdf2,
     pbkdf2Sync: derivePbkdf2Sync,
+    hkdf,
+    hkdfSync,
     randomFillSync,
     randomFill,
     randomUUID,
