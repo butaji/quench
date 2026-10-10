@@ -1324,16 +1324,18 @@ impl<H: Host> Vm<H> {
                 && !self.shape_is_dictionary(shape)
                 && let Some(prototype_shapes) = add_prototype_shapes
             {
-                self.field_add_caches.insert(
-                    site,
-                    FieldAddCache {
-                        atom,
-                        source_shape: shape,
-                        target_shape: data_shape,
-                        slot: slot as u16,
-                        prototype_shapes,
-                    },
-                );
+                let caches = self.field_add_caches.entry(site).or_default();
+                caches.retain(|cache| cache.source_shape != shape || cache.atom != atom);
+                if caches.len() == FIELD_ADD_CACHE_WAYS {
+                    caches.remove(0);
+                }
+                caches.push(FieldAddCache {
+                    atom,
+                    source_shape: shape,
+                    target_shape: data_shape,
+                    slot: slot as u16,
+                    prototype_shapes,
+                });
             }
             self.record_field_cache(
                 site,
@@ -1355,12 +1357,14 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: usize,
     ) -> bool {
-        let Some(cache) = self.field_add_caches.get(&site) else {
+        let Some(cache) = self.field_add_caches.get(&site).and_then(|caches| {
+            caches
+                .iter()
+                .find(|cache| cache.source_shape == shape && cache.atom == atom)
+        }) else {
             return false;
         };
-        if cache.atom != atom
-            || cache.source_shape != shape
-            || self.shape_is_dictionary(shape)
+        if self.shape_is_dictionary(shape)
             || !self.object_data(object).is_some_and(Object::is_extensible)
             || !self.field_add_prototype_chain_matches(object, &cache.prototype_shapes)
         {
