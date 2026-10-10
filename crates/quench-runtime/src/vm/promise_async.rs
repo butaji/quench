@@ -229,7 +229,7 @@ impl<H: Host> Vm<H> {
         let result = match result {
             Ok(result) => result,
             Err(error) => {
-                self.frames.recycle(frame);
+                self.frame_pool.push(Self::recycle_frame(frame));
                 if let Some(generator) = resume.generator {
                     self.fail_async_generator(p, generator, resume.promise, error)?;
                 } else {
@@ -244,7 +244,7 @@ impl<H: Host> Vm<H> {
         match result {
             super::FrameOutcome::Complete(value)
             | super::FrameOutcome::ConstructComplete { value, .. } => {
-                self.frames.recycle(frame);
+                self.frame_pool.push(Self::recycle_frame(frame));
                 if let Some(generator) = resume.generator {
                     self.finish_async_generator(p, generator, resume.promise, value, true)?;
                 } else {
@@ -268,7 +268,7 @@ impl<H: Host> Vm<H> {
             super::FrameOutcome::Await {
                 frame: Some(frame), ..
             } => {
-                self.frames.recycle(frame);
+                self.frame_pool.push(Self::recycle_frame(frame));
                 if let Some(generator) = resume.generator {
                     self.fail_async_generator(
                         p,
@@ -283,7 +283,7 @@ impl<H: Host> Vm<H> {
             super::FrameOutcome::Yield {
                 frame: Some(frame), ..
             } => {
-                self.frames.recycle(frame);
+                self.frame_pool.push(Self::recycle_frame(frame));
                 if let Some(generator) = resume.generator {
                     self.fail_async_generator(
                         p,
@@ -296,7 +296,7 @@ impl<H: Host> Vm<H> {
                 }
             }
             super::FrameOutcome::ParameterInitializationComplete => {
-                self.frames.recycle(frame);
+                self.frame_pool.push(Self::recycle_frame(frame));
                 return Err(JsError(
                     "unexpected generator parameter initialization boundary".into(),
                 ));
@@ -318,7 +318,7 @@ impl<H: Host> Vm<H> {
                         delegated_result.is_some(),
                     )?;
                 } else {
-                    self.frames.recycle(frame);
+                    self.frame_pool.push(Self::recycle_frame(frame));
                     return Err(JsError("yield is not valid in an async function".into()));
                 }
             }

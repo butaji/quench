@@ -70,7 +70,6 @@ mod error;
 mod eval;
 mod field_cache;
 mod finalization;
-mod frame_stack;
 mod function;
 mod function_cache;
 mod gc;
@@ -205,30 +204,6 @@ impl Frame {
             with_objects: Vec::new(),
             with_base,
         }
-    }
-
-    /// Clear per-activation state and bound retained storage before reuse.
-    fn reset_for_reuse(&mut self) {
-        const RETAINED_VALUES: usize = 256;
-        self.context = CallContext::Internal;
-        self.original_arguments.clear();
-        self.with_objects = Vec::new();
-        if self.original_arguments.capacity() > RETAINED_VALUES {
-            self.original_arguments.shrink_to(RETAINED_VALUES);
-        }
-        if self.locals.capacity() > RETAINED_VALUES {
-            self.locals.clear();
-            self.locals.shrink_to(RETAINED_VALUES);
-        }
-        if self.registers.capacity() > RETAINED_VALUES {
-            self.registers.clear();
-            self.registers.shrink_to(RETAINED_VALUES);
-        }
-        self.dynamic_bindings.clear();
-        if self.dynamic_bindings.capacity() > RETAINED_VALUES {
-            self.dynamic_bindings.shrink_to(RETAINED_VALUES);
-        }
-        self.active_iterators.clear();
     }
 
     /// Arguments for a body that keeps its parameters in registers.
@@ -697,7 +672,8 @@ pub(crate) struct Vm<H> {
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
     natives: Vec<(Native, Value)>,
-    frames: frame_stack::FrameStack,
+    frames: Vec<Frame>,
+    frame_pool: Vec<Frame>,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     suspended: Vec<SuspendedEntry>,
@@ -1102,8 +1078,8 @@ impl<H: Host> Vm<H> {
             .unwrap_or(0);
         let frame_bytes: usize = self
             .frames
-            .slots()
             .iter()
+            .chain(&self.frame_pool)
             .map(|frame| {
                 frame.locals.capacity() * size_of::<Value>()
                     + frame.registers.capacity() * size_of::<Value>()
@@ -1168,8 +1144,8 @@ impl<H: Host> Vm<H> {
                 .sum::<usize>();
         let frame_bytes = self
             .frames
-            .slots()
             .iter()
+            .chain(&self.frame_pool)
             .map(|frame| {
                 frame.locals.capacity() * size_of::<Value>()
                     + frame.registers.capacity() * size_of::<Value>()
@@ -1247,6 +1223,7 @@ impl<H: Host> Vm<H> {
         self.heap.reset();
         self.natives.clear();
         self.frames.clear();
+        self.frame_pool.clear();
         self.realm.jobs.clear();
         self.realm.global_lexical_declarations.clear();
         self.realm.global_lexical_bindings.clear();
