@@ -243,9 +243,9 @@ impl Frame {
         }
     }
 
-    fn prepare_registers(&mut self, register_count: usize) {
-        self.registers.resize(register_count, Value::UNDEFINED);
-        self.registers.fill(Value::UNDEFINED);
+    fn prepare_registers(&mut self, count: u16, initial: crate::bytecode::InitialRegister) {
+        self.registers.clear();
+        self.registers.resize(usize::from(count), initial.value());
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

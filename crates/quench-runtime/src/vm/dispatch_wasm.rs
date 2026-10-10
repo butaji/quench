@@ -543,6 +543,12 @@ impl<H: Host> Vm<H> {
             Op::WasmJumpI32GreaterEqualUnsignedImmediate => {
                 self.wasm_i32_constant_jump(p, f, i, pc, I32BinaryOperator::GreaterEqualUnsigned)?;
             }
+            Op::WasmBranchTable => {
+                // `pc` already names the first entry; out-of-range selectors
+                // take the default entry after the cases.
+                let case = self.read(f, i.register_a()).wasm_bits32().min(i.imm());
+                *pc += case as usize;
+            }
             Op::WasmJumpI32Zero => {
                 let taken = self.read(f, i.register_a()).wasm_bits32() == 0;
                 self.wasm_jump(p, f, i, pc, taken);

@@ -290,6 +290,8 @@ fn immediate_domains_in_bounds(
             (instruction.superinstruction_index() as usize) < bounds.superinstructions
         }
         super::ImmediateRole::JumpTarget => instruction.jump_target() < bounds.code_len,
+        // Control-flow validation bounds the entries and checks that each is a jump.
+        super::ImmediateRole::BranchTableCases => true,
         super::ImmediateRole::FieldLookup
         | super::ImmediateRole::WasmSignatureIndex
         | super::ImmediateRole::WasmFunctionIndex
@@ -1089,6 +1091,7 @@ mod tests {
             handlers: vec![],
             register_root_offset: root,
             parameter_registers: None,
+            initial_register: Default::default(),
         }
     }
 
