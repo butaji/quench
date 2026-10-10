@@ -644,6 +644,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("worker_threads", BuiltinModule::WorkerThreads),
     ("node:worker_threads", BuiltinModule::WorkerThreads),
     ("util", BuiltinModule::Util),
+    // Node keeps the deprecated `sys` specifier as an alias of `util`.
+    ("sys", BuiltinModule::Util),
     ("node:util", BuiltinModule::Util),
     ("util/types", BuiltinModule::UtilTypes),
     ("node:util/types", BuiltinModule::UtilTypes),
