@@ -54,6 +54,8 @@ enum IfArm {
 pub(super) enum Condition {
     Value(Register),
     Comparison(I32BinaryOperator, Register, Register),
+    /// A comparison with a constant that fits the jump's signed field.
+    ConstantComparison(I32BinaryOperator, Register, i16),
     Zero(Register),
 }
 
@@ -837,6 +839,17 @@ impl Lowering<'_> {
                 instruction.c(),
             ));
         }
+        if let Some(comparison) = I32BinaryOperator::from_immediate_op(instruction.op())
+            && comparison.immediate_jump_op().is_some()
+            && let Ok(constant) = i16::try_from(instruction.imm() as i32)
+        {
+            self.code.pop();
+            return Ok(Condition::ConstantComparison(
+                comparison,
+                instruction.b(),
+                constant,
+            ));
+        }
         if instruction.op() == Op::WasmI32Unary
             && I32UnaryOperator::from_tag(instruction.imm()) == Some(I32UnaryOperator::EqualZero)
         {
@@ -864,6 +877,19 @@ impl Lowering<'_> {
                 };
                 let op = comparison.jump_op().expect("fusable comparison has a jump");
                 self.emit(op, left, right, 0, 0)?;
+            }
+            Condition::ConstantComparison(comparison, left, constant) => {
+                let comparison = if when {
+                    comparison
+                } else {
+                    comparison
+                        .negated_comparison()
+                        .expect("fusable comparison has a negation")
+                };
+                let op = comparison
+                    .immediate_jump_op()
+                    .expect("fusable comparison has a constant jump");
+                self.emit(op, left, constant as u16, 0, 0)?;
             }
             Condition::Zero(value) => {
                 let op = if when {

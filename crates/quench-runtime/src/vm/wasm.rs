@@ -1044,6 +1044,25 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    #[inline(always)]
+    pub(super) fn wasm_i32_constant_jump(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+        pc: &mut usize,
+        comparison: crate::wasm::integer::I32BinaryOperator,
+    ) -> Result<(), JsError> {
+        let left = self.read(f, i.register_a()).wasm_bits32() as i32;
+        let right = i32::from(i.b() as i16);
+        let taken = comparison
+            .evaluate(left, right)
+            .map_err(JsError::wasm_trap_error)?
+            != 0;
+        self.wasm_jump(p, f, i, pc, taken);
+        Ok(())
+    }
+
     /// Take a Wasm conditional jump. Backward edges are collection safepoints,
     /// like the unconditional `Jump` that closes every loop iteration.
     #[inline(always)]
@@ -1324,7 +1343,9 @@ impl<H: Host> Vm<H> {
         };
         self.active_program = previous;
         #[cfg(feature = "profile-aggregate")]
-        self.profile.report_dispatch_census_if_enabled();
+        if !self.profile.report_dispatch_census_if_enabled() {
+            self.profile.report(&self.heap, program);
+        }
         result
     }
 
