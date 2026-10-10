@@ -19,7 +19,7 @@ pub struct SharedMemory(std::sync::Mutex<MemoryState>);
 
 #[derive(Debug)]
 pub struct MemoryState {
-    pub(super) bytes: Vec<u8>,
+    pub(crate) bytes: Vec<u8>,
     pub(super) waiters: Vec<super::wait::Waiter>,
 }
 
