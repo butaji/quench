@@ -150,6 +150,12 @@ fn install_vfs_globals(
     let path = crate::modules::path_shared_vm::module(context)?;
     let stream = cached_builtin(context, BuiltinModule::Stream)?;
     let buffer = get(context, buffer_module, "Buffer")?;
+    let install_missing_fs_methods = context.evaluate_script_rooted(
+        "(fs) => { for (const name of ['utimesSync', 'lutimesSync', 'futimesSync', 'utimes', 'lutimes', 'futimes', 'rm', 'write']) { if (typeof fs[name] === 'function') continue; Object.defineProperty(fs, name, { configurable: true, writable: true, value() { const error = new Error(`${name} is unavailable outside a mounted VFS`); error.code = 'ENOSYS'; throw error; } }); } }",
+        "node:bootstrap/vfs-fs-methods.js",
+    )?;
+    let undefined = context.undefined();
+    context.call_rooted(install_missing_fs_methods, undefined, &[fs])?;
     let install = context.evaluate_script_rooted(
         "(buffer, fs, path, stream) => Object.defineProperties(globalThis, { NodeBuffer: { configurable: true, value: buffer }, __nodeFs: { configurable: true, value: fs }, __nodePath: { configurable: true, value: path }, __nodeStream: { configurable: true, value: stream }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
         "node:bootstrap/vfs-globals.js",
@@ -215,7 +221,11 @@ pub(super) fn require(
     compileForInternalLoader() {{ return this.exports; }}
     compileForPublicLoader() {{ return this.exports; }}
   }}
-  return {{ BuiltinModule, internalBinding: () => ({{}}), require: () => {{ throw new Error("builtin source loading is unavailable"); }} }};
+  const internalBinding = (name) => {{
+    if (name === "constants") return {{ fs: require("fs").constants }};
+    return {{}};
+  }};
+  return {{ BuiltinModule, internalBinding, require: () => {{ throw new Error("builtin source loading is unavailable"); }} }};
 }})()"#
         );
         return context.evaluate_script_rooted(&source, "internal/bootstrap/realm.js");
