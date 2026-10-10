@@ -61,6 +61,7 @@ mod dispatch;
 mod dispatch_fast;
 mod dispatch_frame;
 mod dispatch_numeric;
+mod dispatch_wasm;
 mod dynamic_strings;
 mod embedding;
 mod environment;

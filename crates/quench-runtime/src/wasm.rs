@@ -702,12 +702,21 @@ impl Engine {
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Diagnostic::unsupported(name, e.to_string()))?;
-            let mut memory_registers = Vec::with_capacity(memories.len());
+            // Instance bindings the body uses get registers loaded once per call.
             let mut reserved: Register = 0;
-            for used in memory::direct_access_memories(memories, &operators) {
-                memory_registers.push(used.then_some(reserved));
+            let mut reserve = |used: bool| {
+                let register = used.then_some(reserved);
                 reserved += Register::from(used);
-            }
+                register
+            };
+            let memory_registers: Vec<_> = memory::direct_access_memories(memories, &operators)
+                .into_iter()
+                .map(&mut reserve)
+                .collect();
+            let global_registers: Vec<_> = accessed_globals(globals.len(), &operators)
+                .into_iter()
+                .map(&mut reserve)
+                .collect();
             let local_base = (usize::from(reserved) + usize::from(local_count)
                 <= MAX_REGISTER_LOCALS)
                 .then_some(reserved);
@@ -719,6 +728,7 @@ impl Engine {
                 locals: local_count,
                 temporary_locals: 0,
                 memory_registers,
+                global_registers,
                 local_base,
                 aliases: Vec::new(),
                 producer: None,
@@ -765,17 +775,25 @@ impl Engine {
                     }
                 }
             }
-            for (memory, register) in lowering.memory_registers.clone().into_iter().enumerate() {
-                if let Some(register) = register {
-                    let slot = lowering.globals.len() + memory;
-                    lowering.emit(
-                        Op::LoadCapture,
-                        register,
-                        0,
-                        0,
-                        crate::bytecode::ImmediateLayout::capture_immediate(0, slot as u16),
-                    )?;
-                }
+            let global_slots = lowering.global_registers.iter().copied().enumerate();
+            let memory_slots = lowering
+                .memory_registers
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(memory, register)| (lowering.globals.len() + memory, register));
+            let bindings: Vec<_> = global_slots
+                .chain(memory_slots)
+                .filter_map(|(slot, register)| Some((slot, register?)))
+                .collect();
+            for (slot, register) in bindings {
+                lowering.emit(
+                    Op::LoadCapture,
+                    register,
+                    0,
+                    0,
+                    crate::bytecode::ImmediateLayout::capture_immediate(0, slot as u16),
+                )?;
             }
             for operator in operators {
                 if lowering.controls.is_empty() {
@@ -1293,6 +1311,8 @@ struct Lowering<'a> {
     temporary_locals: u16,
     // Prologue-loaded binding register per memory used by direct accesses.
     memory_registers: Vec<Option<Register>>,
+    // Prologue-loaded binding register per global the body reads or writes.
+    global_registers: Vec<Option<Register>>,
     // First register of the Wasm locals when they live in frame registers.
     local_base: Option<Register>,
     // Operand-stack positions whose value is still a local register or a
@@ -1349,6 +1369,20 @@ fn first_use_assigns(params: u16, declared: usize, operators: &[Operator<'_>]) -
         }
     }
     assigned
+}
+
+/// Globals the body reads or writes, by global index.
+fn accessed_globals(count: usize, operators: &[Operator<'_>]) -> Vec<bool> {
+    let mut used = vec![false; count];
+    for operator in operators {
+        if let Operator::GlobalGet { global_index } | Operator::GlobalSet { global_index } =
+            operator
+            && let Some(global) = used.get_mut(*global_index as usize)
+        {
+            *global = true;
+        }
+    }
+    used
 }
 
 /// Locals live in frame registers while the whole register file stays small.
@@ -1509,6 +1543,10 @@ impl Lowering<'_> {
                 | Operator::BrTable { .. }
                 | Operator::Select
                 | Operator::TypedSelect { .. }
+        ) || matches!(
+            operator,
+            Operator::GlobalGet { global_index } | Operator::GlobalSet { global_index }
+                if matches!(self.global_registers.get(*global_index as usize), Some(Some(_)))
         ) || (numeric_operator(operator).is_some() && !integer::wide_integer(operator))
             || memory::direct_access(operator).is_some_and(|(_, memarg)| {
                 matches!(
@@ -1862,6 +1900,16 @@ impl Lowering<'_> {
                     ));
                 }
                 if self.path == Reachability::Dead {
+                    return Ok(());
+                }
+                if let Some(&Some(binding)) = self.global_registers.get(global_index as usize) {
+                    if write {
+                        let value = self.pop()?;
+                        return self.emit(Op::WasmGlobalSet, value, binding, 0, 0);
+                    }
+                    let result = self.push()?;
+                    self.emit(Op::WasmGlobalGet, result, binding, 0, 0)?;
+                    self.produced(result);
                     return Ok(());
                 }
                 let register = if write { self.pop()? } else { self.push()? };

@@ -235,6 +235,9 @@ macro_rules! i32_direct_operators {
             pub(crate) const fn from_register_op(op: crate::bytecode::Op) -> Option<Self> {
                 match op { $(crate::bytecode::Op::$register => Some(Self::$name),)+ _ => None }
             }
+            pub(crate) const fn from_immediate_op(op: crate::bytecode::Op) -> Option<Self> {
+                match op { $(crate::bytecode::Op::$immediate => Some(Self::$name),)+ _ => None }
+            }
         }
     };
 }
@@ -268,10 +271,13 @@ i32_direct_operators! {
 
 // A comparison and the conditional jump taken when it holds, with its negation.
 macro_rules! i32_comparison_jumps {
-    ($($name:ident => $jump:ident, $negation:ident;)+) => {
+    ($($name:ident => $jump:ident, $immediate:ident, $negation:ident;)+) => {
         impl I32BinaryOperator {
             pub(crate) const fn jump_op(self) -> Option<crate::bytecode::Op> {
                 match self { $(Self::$name => Some(crate::bytecode::Op::$jump),)+ _ => None }
+            }
+            pub(crate) const fn immediate_jump_op(self) -> Option<crate::bytecode::Op> {
+                match self { $(Self::$name => Some(crate::bytecode::Op::$immediate),)+ _ => None }
             }
             pub(crate) const fn negated_comparison(self) -> Option<Self> {
                 match self { $(Self::$name => Some(Self::$negation),)+ _ => None }
@@ -280,14 +286,14 @@ macro_rules! i32_comparison_jumps {
     };
 }
 i32_comparison_jumps! {
-    Equal => WasmJumpI32Equal, NotEqual;
-    NotEqual => WasmJumpI32NotEqual, Equal;
-    LessSigned => WasmJumpI32LessSigned, GreaterEqualSigned;
-    LessUnsigned => WasmJumpI32LessUnsigned, GreaterEqualUnsigned;
-    GreaterSigned => WasmJumpI32GreaterSigned, LessEqualSigned;
-    GreaterUnsigned => WasmJumpI32GreaterUnsigned, LessEqualUnsigned;
-    LessEqualSigned => WasmJumpI32LessEqualSigned, GreaterSigned;
-    LessEqualUnsigned => WasmJumpI32LessEqualUnsigned, GreaterUnsigned;
-    GreaterEqualSigned => WasmJumpI32GreaterEqualSigned, LessSigned;
-    GreaterEqualUnsigned => WasmJumpI32GreaterEqualUnsigned, LessUnsigned;
+    Equal => WasmJumpI32Equal, WasmJumpI32EqualImmediate, NotEqual;
+    NotEqual => WasmJumpI32NotEqual, WasmJumpI32NotEqualImmediate, Equal;
+    LessSigned => WasmJumpI32LessSigned, WasmJumpI32LessSignedImmediate, GreaterEqualSigned;
+    LessUnsigned => WasmJumpI32LessUnsigned, WasmJumpI32LessUnsignedImmediate, GreaterEqualUnsigned;
+    GreaterSigned => WasmJumpI32GreaterSigned, WasmJumpI32GreaterSignedImmediate, LessEqualSigned;
+    GreaterUnsigned => WasmJumpI32GreaterUnsigned, WasmJumpI32GreaterUnsignedImmediate, LessEqualUnsigned;
+    LessEqualSigned => WasmJumpI32LessEqualSigned, WasmJumpI32LessEqualSignedImmediate, GreaterSigned;
+    LessEqualUnsigned => WasmJumpI32LessEqualUnsigned, WasmJumpI32LessEqualUnsignedImmediate, GreaterUnsigned;
+    GreaterEqualSigned => WasmJumpI32GreaterEqualSigned, WasmJumpI32GreaterEqualSignedImmediate, LessSigned;
+    GreaterEqualUnsigned => WasmJumpI32GreaterEqualUnsigned, WasmJumpI32GreaterEqualUnsignedImmediate, LessUnsigned;
 }
