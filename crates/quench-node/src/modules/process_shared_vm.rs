@@ -69,6 +69,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     let kill = context.host_function(crate::host::shared_vm::operation("processKillNative"))?;
     install(context, process, "_kill", kill)?;
+    let raw_debug = context.host_function(crate::host::shared_vm::operation("processRawDebug"))?;
+    install(context, process, "_rawDebug", raw_debug)?;
     let hrtime_raw = context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
     let hrtime_factory = context.evaluate_script_rooted(
         "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; if (!Array.isArray(previous)) { const received = previous === null ? 'null' : typeof previous === 'number' ? 'type number (' + previous + ')' : typeof previous; const error = new TypeError('The \\\"time\\\" argument must be an instance of Array. Received ' + received); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (previous.length !== 2) { const error = new RangeError('The value of \\\"time\\\" is out of range. It must be 2. Received ' + previous.length); error.code = 'ERR_OUT_OF_RANGE'; throw error; } let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }",
@@ -1232,6 +1234,63 @@ pub(crate) fn kill_native(
     #[cfg(not(unix))]
     let error = libc::ENOSYS;
     Ok(context.number(error as f64))
+}
+
+pub(crate) fn raw_debug(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let message = format_raw_debug(context, args)?;
+    let mut stderr = std::io::stderr().lock();
+    stderr
+        .write_all(message.as_bytes())
+        .and_then(|()| stderr.write_all(b"\n"))
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    Ok(context.undefined())
+}
+
+fn format_raw_debug(
+    context: &mut NativeContext<'_, NodeHost>,
+    args: &[RootId],
+) -> Result<String, RootedError> {
+    let Some((&first, rest)) = args.split_first() else {
+        return Ok(String::new());
+    };
+    let format = context.to_string(first)?;
+    let mut output = String::with_capacity(format.len());
+    let mut rest = rest.iter().copied();
+    let mut chars = format.chars();
+    while let Some(character) = chars.next() {
+        if character != '%' {
+            output.push(character);
+            continue;
+        }
+        let Some(specifier) = chars.next() else {
+            output.push('%');
+            break;
+        };
+        if specifier == '%' {
+            output.push('%');
+            continue;
+        }
+        if matches!(specifier, 's' | 'd' | 'i' | 'f' | 'j' | 'o' | 'O') {
+            if let Some(value) = rest.next() {
+                output.push_str(&context.to_string(value)?);
+            } else {
+                output.push('%');
+                output.push(specifier);
+            }
+        } else {
+            output.push('%');
+            output.push(specifier);
+        }
+    }
+    for value in rest {
+        output.push(' ');
+        output.push_str(&context.to_string(value)?);
+    }
+    Ok(output)
 }
 
 fn integer_argument(
