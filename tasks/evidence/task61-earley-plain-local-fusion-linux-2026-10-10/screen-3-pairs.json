@@ -1,0 +1,59 @@
+{
+  "experiment": "fuse same-slot StoreLocalPlain -> LoadLocalPlain on EarleyBoyer",
+  "baseline_sha256": "f3940bcc9cff03f9bf3c6888864e3d96586d4991f4c56df4cc1e87d829e9fe00",
+  "candidate_sha256": "6ea17b8d6f3d9ff8babb09f00ccabca9857a228b13463f112cca889130bacfb7",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 353.0,
+      "candidate_score": 352.0,
+      "score_delta": -1.0,
+      "baseline_rss_bytes": 42835968,
+      "candidate_rss_bytes": 42577920,
+      "rss_delta_bytes": -258048,
+      "baseline_wall_ns": 25640557103,
+      "candidate_wall_ns": 26305588733
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 364.0,
+      "candidate_score": 358.0,
+      "score_delta": -6.0,
+      "baseline_rss_bytes": 42483712,
+      "candidate_rss_bytes": 42692608,
+      "rss_delta_bytes": 208896,
+      "baseline_wall_ns": 25606672162,
+      "candidate_wall_ns": 26247838818
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 384.0,
+      "candidate_score": 377.0,
+      "score_delta": -7.0,
+      "baseline_rss_bytes": 42663936,
+      "candidate_rss_bytes": 42901504,
+      "rss_delta_bytes": 237568,
+      "baseline_wall_ns": 24145488551,
+      "candidate_wall_ns": 24838801549
+    }
+  ]
+}

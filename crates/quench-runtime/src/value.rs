@@ -25,8 +25,6 @@ pub(crate) enum ProfileKind {
 #[cfg(feature = "profile-aggregate")]
 impl ProfileKind {
     pub(crate) const COUNT: usize = Self::Heap as usize + 1;
-    pub(crate) const NAMES: [&'static str; Self::COUNT] =
-        ["undefined", "null", "boolean", "integer", "double", "heap"];
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

@@ -1,0 +1,391 @@
+{
+  "census": {
+    "kind": "quench-dispatch-opcode-census",
+    "total": 747368668,
+    "dispatch_sites": 747368668,
+    "counts": {
+      "Nop": 0,
+      "CloneEnv": 127,
+      "Wide": 0,
+      "LoadConst": 64206387,
+      "LoadLocal": 56,
+      "StoreLocal": 51,
+      "StoreVarBinding": 0,
+      "LoadEnvLocal": 2970924,
+      "StoreEnvLocal": 1870511,
+      "LoadCapture": 51877782,
+      "StoreCapture": 7181655,
+      "LoadName": 20601,
+      "LoadNameCall": 15,
+      "LoadNameTypeof": 11,
+      "ResolveName": 0,
+      "LoadResolvedName": 0,
+      "DeleteName": 0,
+      "StoreName": 155,
+      "StoreResolvedName": 0,
+      "LoadThis": 111,
+      "LoadImportMeta": 0,
+      "MakeClosure": 196416,
+      "MakeArray": 3106,
+      "MakeConstArray": 12,
+      "MakeObject": 61,
+      "MakeObject2": 12,
+      "MakeObjectLiteral": 22,
+      "SuperConstArrayObject2": 0,
+      "GetIterator": 37,
+      "GetAsyncIterator": 0,
+      "CreateRegExpLiteral": 0,
+      "IteratorClose": 23,
+      "SpreadToArray": 1,
+      "RequireObjectCoercible": 9,
+      "RequireIteratorResult": 145,
+      "SuperCallCheck": 0,
+      "IteratorCleanupPush": 108,
+      "IteratorCleanupPop": 108,
+      "SetFunctionName": 195651,
+      "SetFunctionNameKey": 4,
+      "InitializeTdz": 178,
+      "Await": 0,
+      "Yield": 0,
+      "YieldStar": 0,
+      "GetField": 62642375,
+      "GetIndex": 4200351,
+      "ToPropertyKey": 4,
+      "ToNumeric": 3590859,
+      "CopyDataProperties": 13,
+      "MarkPrivateName": 0,
+      "SetField": 3,
+      "DefineComputedField": 0,
+      "SetThisField": 0,
+      "SetIndex": 123580,
+      "DefineArrayElement": 6881,
+      "Binary": 53342654,
+      "IncDec": 3590859,
+      "Unary": 17212832,
+      "Delete": 0,
+      "CheckPrivate": 0,
+      "PrivateIn": 0,
+      "Move": 56119789,
+      "Call": 17775453,
+      "CallDirectEvalArray": 0,
+      "CallKnown": 0,
+      "CallMethod": 0,
+      "CallThisMethod": 0,
+      "Construct": 9149545,
+      "Jump": 12050805,
+      "JumpFalse": 62966717,
+      "JumpBinaryFalse": 8772313,
+      "Return": 23842484,
+      "Throw": 0,
+      "NumericAdd": 0,
+      "NumericMultiply": 0,
+      "InitializeThis": 0,
+      "CacheTemplateObject": 0,
+      "LoadCachedTemplateObject": 0,
+      "DefineField": 166,
+      "ValidateClassHeritage": 5,
+      "SetFieldStrict": 111830,
+      "SetThisFieldStrict": 18288475,
+      "WasmI32Binary": 0,
+      "WasmI32Unary": 0,
+      "WasmI64Binary": 0,
+      "WasmI64Unary": 0,
+      "WasmScalarConvert": 0,
+      "WasmF32Binary": 0,
+      "WasmF32Unary": 0,
+      "WasmF64Binary": 0,
+      "WasmF64Unary": 0,
+      "WasmTableInit": 0,
+      "WasmIndirectTarget": 0,
+      "WasmGlobalGet": 0,
+      "WasmGlobalSet": 0,
+      "WasmRefFunc": 0,
+      "WasmRefIsNull": 0,
+      "WasmTableSize": 0,
+      "WasmTableGet": 0,
+      "WasmTableSet": 0,
+      "WasmTableGrow": 0,
+      "WasmTableFill": 0,
+      "WasmTableCopy": 0,
+      "WasmMemoryInit": 0,
+      "WasmMemoryCopy": 0,
+      "WasmMemoryFill": 0,
+      "WasmMemoryAddress": 0,
+      "WasmMemoryLoad": 0,
+      "WasmMemoryStore": 0,
+      "WasmMemorySize": 0,
+      "WasmMemoryGrow": 0,
+      "WasmUnreachable": 0,
+      "WasmSimd": 0,
+      "WasmSimdShuffle": 0,
+      "DefinePropertyRecord": 128,
+      "WasmRefAsNonNull": 0,
+      "WasmI31": 0,
+      "WasmRefTest": 0,
+      "WasmRefCast": 0,
+      "WasmRefEq": 0,
+      "WasmStructNew": 0,
+      "WasmStructNewDefault": 0,
+      "WasmStructGet": 0,
+      "WasmStructGetS": 0,
+      "WasmStructGetU": 0,
+      "WasmStructSet": 0,
+      "WasmArrayNew": 0,
+      "WasmArrayNewDefault": 0,
+      "WasmArrayNewFixed": 0,
+      "WasmArrayLen": 0,
+      "WasmArrayGet": 0,
+      "WasmArrayGetS": 0,
+      "WasmArrayGetU": 0,
+      "WasmArraySet": 0,
+      "WasmExternalConversion": 0,
+      "WasmArrayFill": 0,
+      "WasmArrayCopy": 0,
+      "WasmArrayNewData": 0,
+      "WasmArrayNewElem": 0,
+      "WasmArrayInitData": 0,
+      "WasmArrayInitElem": 0,
+      "WasmExceptionNew": 0,
+      "WasmExceptionMatch": 0,
+      "WasmExceptionPayload": 0,
+      "WasmThrowRef": 0,
+      "WasmStructNewDesc": 0,
+      "WasmStructNewDefaultDesc": 0,
+      "WasmRefGetDesc": 0,
+      "WasmDescriptorTest": 0,
+      "WasmDescriptorCast": 0,
+      "WasmAtomicAccess": 0,
+      "WasmAtomicFence": 0,
+      "LoadLocalPlain": 185744906,
+      "StoreLocalPlain": 79311362
+    },
+    "top_profile_pairs": [
+      [
+        "StoreLocalPlain",
+        "LoadLocalPlain",
+        54861046
+      ],
+      [
+        "LoadLocalPlain",
+        "GetField",
+        53987860
+      ],
+      [
+        "LoadLocalPlain",
+        "StoreLocalPlain",
+        46418376
+      ],
+      [
+        "Binary",
+        "JumpFalse",
+        34267593
+      ],
+      [
+        "GetField",
+        "StoreLocalPlain",
+        23588682
+      ],
+      [
+        "Move",
+        "Move",
+        23056575
+      ],
+      [
+        "LoadLocalPlain",
+        "Binary",
+        22742896
+      ],
+      [
+        "LoadCapture",
+        "LoadLocalPlain",
+        21568755
+      ],
+      [
+        "LoadLocalPlain",
+        "LoadCapture",
+        18303942
+      ],
+      [
+        "LoadLocalPlain",
+        "SetThisFieldStrict",
+        18288463
+      ],
+      [
+        "JumpFalse",
+        "LoadLocalPlain",
+        18161644
+      ],
+      [
+        "LoadConst",
+        "LoadCapture",
+        17776382
+      ],
+      [
+        "Move",
+        "Call",
+        17567971
+      ],
+      [
+        "LoadCapture",
+        "Binary",
+        17085876
+      ],
+      [
+        "LoadConst",
+        "Return",
+        16935116
+      ],
+      [
+        "Unary",
+        "JumpFalse",
+        15935839
+      ],
+      [
+        "Binary",
+        "Unary",
+        15935752
+      ],
+      [
+        "StoreLocalPlain",
+        "LoadConst",
+        11774261
+      ],
+      [
+        "GetField",
+        "Move",
+        10500279
+      ],
+      [
+        "LoadConst",
+        "JumpFalse",
+        10260550
+      ],
+      [
+        "LoadConst",
+        "LoadLocalPlain",
+        9785636
+      ],
+      [
+        "SetThisFieldStrict",
+        "LoadLocalPlain",
+        9144237
+      ],
+      [
+        "SetThisFieldStrict",
+        "LoadConst",
+        9144232
+      ],
+      [
+        "Move",
+        "Construct",
+        9144231
+      ],
+      [
+        "GetField",
+        "LoadLocalPlain",
+        9136766
+      ],
+      [
+        "GetField",
+        "GetField",
+        8206602
+      ],
+      [
+        "LoadLocalPlain",
+        "Move",
+        7132895
+      ],
+      [
+        "Call",
+        "Binary",
+        6930036
+      ],
+      [
+        "StoreLocalPlain",
+        "Jump",
+        6768370
+      ],
+      [
+        "LoadLocalPlain",
+        "LoadLocalPlain",
+        6169688
+      ],
+      [
+        "JumpFalse",
+        "LoadConst",
+        5843109
+      ],
+      [
+        "LoadLocalPlain",
+        "JumpBinaryFalse",
+        5020294
+      ]
+    ]
+  },
+  "complete_memory_snapshot": {
+    "kind": "quench-memory",
+    "phase": "complete",
+    "heap_slots": 142042,
+    "slot_bytes": 13762560,
+    "free_bytes": 786432,
+    "cell_bytes": 1295612,
+    "cell_counts": [
+      86426,
+      114,
+      0,
+      0,
+      16,
+      4,
+      0,
+      0,
+      1863,
+      188,
+      8044,
+      0,
+      38,
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "property_values": 8632,
+    "property_capacity": 32768,
+    "property_free_ranges": 0,
+    "live_property_values": 179378,
+    "live_property_capacity": 8632,
+    "array_elements": 220,
+    "array_capacity": 230,
+    "shapes": 2935,
+    "shape_capacity": 4096,
+    "max_shape_width": 226,
+    "shape_bytes": 327680,
+    "shape_lookup_index_payload_bytes": 44616,
+    "transitions": 2605,
+    "transition_bytes": 57344,
+    "frame_bytes": 42736,
+    "field_cache_bytes": 81312,
+    "megamorphic_field_sites": 0,
+    "megamorphic_field_entries": 0,
+    "max_megamorphic_field_entries": 0,
+    "method_cache_bytes": 0,
+    "megamorphic_method_sites": 0
+  }
+}
