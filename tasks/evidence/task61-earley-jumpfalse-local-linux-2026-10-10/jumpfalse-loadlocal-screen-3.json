@@ -1,0 +1,70 @@
+{
+  "experiment": "EarleyBoyer JumpFalse -> LoadLocalPlain fallthrough fusion",
+  "baseline_sha256": "e46537823eb25a37cf5646af793e6873ceaeff1069fb878a96813cae3a86ab32",
+  "candidate_sha256": "c3c776a03216bf8809156798e32d6b527f46b1f702af64ad14363d2803f9a805",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "node_oracle_sha256": "20c9b3bc47b74367ae98e56a7adcd367f22965d14db5404fdd130f5c65ef25e1",
+  "node_oracle_match": true,
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_score": 421.0,
+      "candidate_score": 410.0,
+      "score_delta": -11.0,
+      "baseline_rss_bytes": 41893888,
+      "candidate_rss_bytes": 41791488,
+      "rss_delta_bytes": -102400,
+      "output_equal": true,
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "valid": true
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_score": 427.0,
+      "candidate_score": 407.0,
+      "score_delta": -20.0,
+      "baseline_rss_bytes": 41779200,
+      "candidate_rss_bytes": 41795584,
+      "rss_delta_bytes": 16384,
+      "output_equal": true,
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "valid": true
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_score": 425.0,
+      "candidate_score": 408.0,
+      "score_delta": -17.0,
+      "baseline_rss_bytes": 41725952,
+      "candidate_rss_bytes": 41791488,
+      "rss_delta_bytes": 65536,
+      "output_equal": true,
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "valid": true
+    }
+  ],
+  "baseline_score_median": 425.0,
+  "candidate_score_median": 408.0,
+  "score_delta_median": -17.0,
+  "baseline_maximum_rss_median_bytes": 41779200,
+  "candidate_maximum_rss_median_bytes": 41791488,
+  "maximum_rss_delta_median_bytes": 16384,
+  "valid": true,
+  "output_equal": true,
+  "qualification_ready": false
+}
