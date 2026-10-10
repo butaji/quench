@@ -20,6 +20,7 @@ static HRTIME_ORIGIN: OnceLock<Instant> = OnceLock::new();
 const MAX_SAFE_EXIT_CODE: f64 = 9_007_199_254_740_991.0;
 const HOST_WARNING_STACK_OPTION: &str = "\0quench:process-warning-stack";
 const HOST_WARNING_ID_OPTION: &str = "\0quench:process-warning-id";
+const HOST_CAPTURE_CALLBACK_PROPERTY: &str = "\0quench:process-capture-callback";
 const UNHANDLED_REJECTION_CLI_GUIDANCE: &str = "To terminate the node process on unhandled promise rejection, use the CLI flag `--unhandled-rejections=strict` (see https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode).";
 
 pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
@@ -71,6 +72,10 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "_kill", kill)?;
     let raw_debug = context.host_function(crate::host::shared_vm::operation("processRawDebug"))?;
     install(context, process, "_rawDebug", raw_debug)?;
+    let set_capture = context.host_function(crate::host::shared_vm::operation("processSetUncaughtExceptionCaptureCallback"))?;
+    install(context, process, "setUncaughtExceptionCaptureCallback", set_capture)?;
+    let has_capture = context.host_function(crate::host::shared_vm::operation("processHasUncaughtExceptionCaptureCallback"))?;
+    install(context, process, "hasUncaughtExceptionCaptureCallback", has_capture)?;
     let hrtime_raw = context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
     let hrtime_factory = context.evaluate_script_rooted(
         "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; if (!Array.isArray(previous)) { const received = previous === null ? 'null' : typeof previous === 'number' ? 'type number (' + previous + ')' : typeof previous; const error = new TypeError('The \\\"time\\\" argument must be an instance of Array. Received ' + received); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (previous.length !== 2) { const error = new RangeError('The value of \\\"time\\\" is out of range. It must be 2. Received ' + previous.length); error.code = 'ERR_OUT_OF_RANGE'; throw error; } let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }",
@@ -1252,6 +1257,68 @@ pub(crate) fn raw_debug(
     Ok(context.undefined())
 }
 
+pub(crate) fn set_uncaught_exception_capture_callback(
+    context: &mut NativeContext<'_, NodeHost>,
+    process: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(callback) = args.first().copied() else {
+        return Err(uncaught_capture_type_error(context, None)?);
+    };
+    let current_key = context.string_rooted(HOST_CAPTURE_CALLBACK_PROPERTY);
+    let current = context.get_property_rooted(process, current_key)?;
+    if context.is_callable_rooted(current)? {
+        let error = context.error_rooted(
+            "setupUncaughtExceptionCapture() called while a capture callback is already set",
+        )?;
+        return Err(throw_with_code(
+            context,
+            error,
+            "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET",
+        ));
+    }
+    let is_null = context
+        .rooted_value(callback)
+        .is_some_and(Value::is_null);
+    if !is_null && !context.is_callable_rooted(callback)? {
+        return Err(uncaught_capture_type_error(context, Some(callback))?);
+    }
+    let value = if is_null { context.undefined() } else { callback };
+    if !context.set_property_rooted(process, current_key, value, process)? {
+        return Err(RootedError::host(
+            "cannot set process uncaught-exception capture callback",
+        ));
+    }
+    Ok(context.undefined())
+}
+
+pub(crate) fn has_uncaught_exception_capture_callback(
+    context: &mut NativeContext<'_, NodeHost>,
+    process: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let key = context.string_rooted(HOST_CAPTURE_CALLBACK_PROPERTY);
+    let callback = context.get_property_rooted(process, key)?;
+    let has_callback = context.is_callable_rooted(callback)?;
+    Ok(context.boolean(has_callback))
+}
+
+fn uncaught_capture_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: Option<RootId>,
+) -> Result<RootedError, RootedError> {
+    let received = value.map_or_else(
+        || Ok("undefined".to_owned()),
+        |value| received_type(context, value),
+    )?;
+    throw_process_error(
+        context,
+        &format!("The \"fn\" argument must be of type function or null. Received {received}"),
+        "ERR_INVALID_ARG_TYPE",
+        true,
+    )
+}
+
 pub(crate) fn load_env_file(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -1546,6 +1613,40 @@ pub(crate) fn route_uncaught_exception_value(
     let Some(process) = shared_process_root(runtime) else {
         return Ok(false);
     };
+    let capture_key = runtime.string_rooted(HOST_CAPTURE_CALLBACK_PROPERTY);
+    let capture = runtime.get_property_rooted(process, capture_key);
+    runtime.release_root(capture_key);
+    let capture = match capture {
+        Ok(capture) => capture,
+        Err(error) => {
+            let message = runtime.format_error(program, &error.error);
+            if let Some(exception) = error.exception {
+                runtime.release_root(exception);
+            }
+            return Err(message);
+        }
+    };
+    let has_capture = runtime
+        .rooted_value(capture)
+        .is_some_and(|value| !value.is_undefined() && !value.is_null());
+    if has_capture {
+        let captured = runtime.call_rooted(capture, process, &[exception]);
+        runtime.release_root(capture);
+        return match captured {
+            Ok(result) => {
+                runtime.release_root(result);
+                Ok(true)
+            }
+            Err(error) => {
+                let message = runtime.format_error(program, &error.error);
+                if let Some(exception) = error.exception {
+                    runtime.release_root(exception);
+                }
+                Err(message)
+            }
+        };
+    }
+    runtime.release_root(capture);
     let origin = runtime.string_rooted(origin);
     let event = runtime.string_rooted("uncaughtException");
     let emit_name = runtime.string_rooted("emit");
