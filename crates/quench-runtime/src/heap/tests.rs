@@ -6,6 +6,88 @@ fn plain_object() -> Object {
     Object::new(Value::NULL)
 }
 
+fn collect_minor(heap: &mut Heap, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
+    heap.collect_with_object_roots(roots, |_, _, _, _| {}, false)
+}
+
+#[test]
+fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
+    let mut heap = Heap::new();
+    let owner = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::new(vec![Value::UNDEFINED]),
+    });
+    let sparse = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::new(Vec::new()),
+    });
+    heap.collect([owner, sparse]);
+
+    let child = heap.alloc(Cell::String("dense child".into()));
+    if let Some(Cell::Array { elements, .. }) = heap.get_mut(owner) {
+        Rc::make_mut(elements)[0] = child;
+    }
+    let sparse_child = heap.alloc(Cell::String("sparse child".into()));
+    let sparse_index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
+    heap.sparse_set(sparse, sparse_index, sparse_child);
+    let garbage = heap.alloc(Cell::String("unreachable young".into()));
+
+    collect_minor(&mut heap, [owner, sparse]);
+    assert!(heap.get(child).is_some());
+    assert_eq!(heap.sparse_get(sparse, sparse_index), Some(sparse_child));
+    assert!(heap.get(sparse_child).is_some());
+    assert!(heap.get(garbage).is_none());
+
+    if let Some(Cell::Array { elements, .. }) = heap.get_mut(owner) {
+        Rc::make_mut(elements)[0] = Value::UNDEFINED;
+    }
+    heap.collect([owner, sparse]);
+    assert!(heap.get(child).is_none());
+}
+
+#[test]
+fn minor_collection_handles_old_weak_maps_and_weak_refs() {
+    let mut heap = Heap::new();
+    let old_key = heap.alloc(Cell::Object(plain_object()));
+    let old_value = heap.alloc(Cell::Object(plain_object()));
+    let mut entries = WeakMapEntries::default();
+    entries.insert(old_key, old_value);
+    let map = heap.alloc(Cell::WeakMap {
+        object: plain_object(),
+        entries: Box::new(entries),
+    });
+    let weak_ref = heap.alloc(Cell::WeakRef {
+        object: plain_object(),
+        target: None,
+    });
+    heap.collect([map, old_key, weak_ref]);
+
+    let key = heap.alloc(Cell::Object(plain_object()));
+    let value = heap.alloc(Cell::Object(plain_object()));
+    if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
+        entries.insert(key, value);
+    }
+    let referent = heap.alloc(Cell::Object(plain_object()));
+    let target = heap.weak_handle(referent).unwrap();
+    if let Some(Cell::WeakRef { target: slot, .. }) = heap.get_mut(weak_ref) {
+        *slot = Some(target);
+    }
+
+    collect_minor(&mut heap, [map, key, weak_ref]);
+    assert!(heap.get(value).is_some());
+    assert!(matches!(
+        heap.get(weak_ref),
+        Some(Cell::WeakRef { target: None, .. })
+    ));
+    assert!(heap.get(referent).is_none());
+
+    heap.collect([map, weak_ref]);
+    assert!(heap.get(key).is_none());
+    assert!(heap.get(value).is_none());
+    assert!(heap.get(old_key).is_none());
+    assert!(heap.get(old_value).is_none());
+}
+
 #[test]
 fn gc_headroom_factors_scale_live_cells_without_overflow() {
     let live = 781_054usize;
@@ -39,8 +121,31 @@ fn gc_headroom_factors_scale_live_cells_without_overflow() {
     );
     assert_eq!(
         gc_allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS),
-        65_536
+        49_152
     );
+}
+
+#[test]
+fn full_collection_growth_factor_uses_named_ratio_without_overflow() {
+    let growth = FullCollectionGrowthFactor {
+        numerator: 3,
+        denominator: 2,
+    };
+    assert_eq!(FULL_COLLECTION_GROWTH.allocation_limit(781_054), 781_054);
+    assert_eq!(growth.allocation_limit(781_054), 1_171_581);
+    assert_eq!(growth.allocation_limit(usize::MAX), usize::MAX);
+}
+
+#[test]
+fn minor_collection_threshold_respects_remaining_full_growth() {
+    let mut heap = Heap::new();
+    heap.old_live = 1_000;
+    heap.full_collection_growth_limit = 1_000;
+    heap.allocations_since_full = 800;
+
+    collect_minor(&mut heap, []);
+
+    assert_eq!(heap.threshold, 200);
 }
 
 #[test]
