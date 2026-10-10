@@ -75,6 +75,11 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let process_surface = context.evaluate_script_rooted(
+        crate::polyfills::post_bootstrap::process_surface_00::JS,
+        "node:bootstrap/process-surface.js",
+    )?;
+    context.release_root(process_surface);
     let roots = context.host_mut().shared_state();
     if let Some(root) = roots.borrow_mut().primordials_module.take() {
         context.release_root(root);
