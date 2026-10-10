@@ -139,6 +139,51 @@ AssertionError"#
     set(context, assert, "ifError", if_error)?;
     set(context, assert, "rejects", rejects)?;
     set(context, assert, "AssertionError", assertion_error)?;
+    let assert_factory = context.evaluate_script_rooted(
+        r#"(assert, strict) => {
+  function Assert(options = {}) {
+    if (!new.target) {
+      const error = new TypeError('Class constructor Assert cannot be invoked without \'new\'');
+      error.code = 'ERR_CONSTRUCT_CALL_REQUIRED';
+      throw error;
+    }
+    if (options === null || typeof options !== 'object') {
+      const error = new TypeError('The "options" argument must be of type object');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    const diff = options.diff === undefined ? 'simple' : options.diff;
+    if (diff !== 'simple' && diff !== 'full') {
+      const error = new TypeError(`The property 'options.diff' must be one of: 'simple', 'full'. Received '${diff}'`);
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    }
+    const selected = options.strict === false ? assert : strict;
+    const wrap = (fn) => function(...args) {
+      try { return fn(...args); }
+      catch (error) {
+        if (error && error.code === 'ERR_ASSERTION') error.diff = diff;
+        throw error;
+      }
+    };
+    for (const name of ['fail', 'ok', 'strictEqual', 'notStrictEqual',
+      'deepStrictEqual', 'notDeepStrictEqual', 'partialDeepStrictEqual',
+      'match', 'doesNotMatch', 'throws', 'doesNotThrow', 'ifError', 'rejects']) {
+      this[name] = wrap(selected[name]);
+    }
+    this.AssertionError = assert.AssertionError;
+    this.equal = options.strict === false ? wrap(assert.equal) : this.strictEqual;
+    this.notEqual = options.strict === false ? wrap(assert.notEqual) : this.notStrictEqual;
+    this.deepEqual = options.strict === false ? wrap(assert.deepEqual) : this.deepStrictEqual;
+    this.notDeepEqual = options.strict === false ? wrap(assert.notDeepEqual) : this.notDeepStrictEqual;
+  }
+  return Assert;
+}"#,
+        "node:assert/Assert.js",
+    )?;
+    let strict_module = get(context, assert, "strict")?;
+    let assert_constructor = context.call_rooted(assert_factory, undefined, &[assert, strict_module])?;
+    set(context, assert, "Assert", assert_constructor)?;
     set(context, strict, "ok", ok)?;
     set(context, strict, "strictEqual", strict_equal)?;
     set(context, strict, "notStrictEqual", not_strict_equal)?;
@@ -155,6 +200,7 @@ AssertionError"#
     set(context, strict, "ifError", if_error)?;
     set(context, strict, "rejects", rejects)?;
     set(context, strict, "AssertionError", assertion_error)?;
+    set(context, strict, "Assert", assert_constructor)?;
 
     let retained = context.retain(assert)?;
     context.host_mut().shared_state().borrow_mut().assert_module = Some(retained);
@@ -304,8 +350,13 @@ pub(crate) fn match_string(
         return missing_assert_arguments(context);
     }
     let (actual, expected) = (args[0], args[1]);
+    if !is_regexp(context, expected)? {
+        return invalid_regexp(context, expected);
+    }
     if context.string_text(actual)?.is_none() {
         let error = context.type_error_rooted("The \"string\" argument must be of type string")?;
+        let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+        set(context, error, "code", code)?;
         return Err(context.throw(error));
     }
     let matched = regexp_match(context, expected, actual)?;
@@ -336,8 +387,13 @@ pub(crate) fn does_not_match(
         return missing_assert_arguments(context);
     }
     let (actual, expected) = (args[0], args[1]);
+    if !is_regexp(context, expected)? {
+        return invalid_regexp(context, expected);
+    }
     if context.string_text(actual)?.is_none() {
         let error = context.type_error_rooted("The \"string\" argument must be of type string")?;
+        let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+        set(context, error, "code", code)?;
         return Err(context.throw(error));
     }
     match regexp_match(context, expected, actual)? {
@@ -598,18 +654,66 @@ pub(crate) fn does_not_throw(
     let undefined = context.undefined();
     match context.call_rooted(callback, undefined, &[]) {
         Ok(_) => Ok(undefined),
-        Err(error) => match error.exception {
-            Some(exception) => assertion_error(
+        Err(error) => {
+            let Some(exception) = error.exception else {
+                return Err(error);
+            };
+            if let Some(expected) = args.get(1).copied() {
+                if !expected_error_matches(context, expected, exception)? {
+                    return Err(context.throw(exception));
+                }
+            }
+            let (message, generated) =
+                assertion_message(context, args.get(2).copied(), "Got unwanted exception.")?;
+            assertion_error(
                 context,
                 exception,
                 undefined,
                 "doesNotThrow",
-                "Got unwanted exception.",
-                true,
-            ),
-            None => Err(error),
-        },
+                &message,
+                generated,
+            )
+        }
     }
+}
+
+fn expected_error_matches(
+    context: &mut NativeContext<'_, NodeHost>,
+    expected: RootId,
+    thrown: RootId,
+) -> Result<bool, RootedError> {
+    if context.is_callable_rooted(expected)? {
+        let prototype = get(context, expected, "prototype")?;
+        if context.is_object_rooted(prototype)? {
+            let global = context.global_root()?;
+            let error = get(context, global, "Error")?;
+            let error_prototype = get(context, error, "prototype")?;
+            let object = get(context, global, "Object")?;
+            let object_prototype = get(context, object, "prototype")?;
+            let is_prototype_of = get(context, object_prototype, "isPrototypeOf")?;
+            let inherits_error =
+                context.call_rooted(is_prototype_of, error_prototype, &[prototype])?;
+            let error_constructor = context.same_value_rooted(prototype, error_prototype)?
+                || context.truthy_rooted(inherits_error)?;
+            if error_constructor {
+                let matched = context.call_rooted(is_prototype_of, prototype, &[thrown])?;
+                return context.truthy_rooted(matched);
+            }
+        }
+        let undefined = context.undefined();
+        let result = context.call_rooted(expected, undefined, &[thrown])?;
+        return context.truthy_rooted(result);
+    }
+    if let Some(matches) = regexp_match(context, expected, thrown)? {
+        return Ok(matches);
+    }
+    if context.is_object_rooted(expected)? {
+        let keys = object_keys(context, expected)?;
+        if !keys.is_empty() {
+            return expected_matches_object(context, thrown, expected, &keys);
+        }
+    }
+    Ok(false)
 }
 
 fn regexp_match(
@@ -617,17 +721,9 @@ fn regexp_match(
     expected: RootId,
     thrown: RootId,
 ) -> Result<Option<bool>, RootedError> {
-    let global = context.global_root()?;
-    let object = get(context, global, "Object")?;
-    let object_prototype = get(context, object, "prototype")?;
-    let is_prototype_of = get(context, object_prototype, "isPrototypeOf")?;
-    let regexp = get(context, global, "RegExp")?;
-    let regexp_prototype = get(context, regexp, "prototype")?;
-    let inherits_regexp = context.call_rooted(is_prototype_of, regexp_prototype, &[expected])?;
-    if !context.truthy_rooted(inherits_regexp)? {
+    if !is_regexp(context, expected)? {
         return Ok(None);
     }
-
     let actual = context.to_string(thrown)?;
     let input = context.string_rooted(&actual);
     let test = get(context, expected, "test")?;
@@ -637,23 +733,53 @@ fn regexp_match(
         .and_then(|value| value.as_bool()))
 }
 
+fn is_regexp(
+    context: &mut NativeContext<'_, NodeHost>,
+    expected: RootId,
+) -> Result<bool, RootedError> {
+    let global = context.global_root()?;
+    let object = get(context, global, "Object")?;
+    let object_prototype = get(context, object, "prototype")?;
+    let is_prototype_of = get(context, object_prototype, "isPrototypeOf")?;
+    let regexp = get(context, global, "RegExp")?;
+    let regexp_prototype = get(context, regexp, "prototype")?;
+    let inherits_regexp = context.call_rooted(is_prototype_of, regexp_prototype, &[expected])?;
+    context.truthy_rooted(inherits_regexp)
+}
+
+fn invalid_regexp(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<RootId, RootedError> {
+    let received = match context.string_text(value)? {
+        Some(value) => format!("type string ('{value}')"),
+        None => "an instance of Object".to_owned(),
+    };
+    let error = context.type_error_rooted(&format!(
+        "The \"regexp\" argument must be an instance of RegExp. Received {received}"
+    ))?;
+    let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+    set(context, error, "code", code)?;
+    Err(context.throw(error))
+}
+
 pub(crate) fn fail(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let message = match args.first().copied() {
+    let (message, generated) = match args.first().copied() {
         Some(message)
             if !context
                 .rooted_value(message)
                 .is_some_and(|value| value.is_undefined()) =>
         {
-            context.to_string(message)?
+            (context.to_string(message)?, false)
         }
-        _ => "Failed".to_owned(),
+        _ => ("Failed".to_owned(), true),
     };
     let undefined = context.undefined();
-    assertion_error(context, undefined, undefined, "fail", &message, false)
+    assertion_error(context, undefined, undefined, "fail", &message, generated)
 }
 
 pub(crate) fn if_error(
