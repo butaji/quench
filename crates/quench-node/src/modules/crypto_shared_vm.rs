@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, cipherProcess) => {
+r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   const kHandle = Symbol.for("quench.internal.crypto.kHandle");
@@ -727,6 +727,121 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
     pbkdf2Arguments(password, salt, iterations, keylen, digest);
     return Buffer.from(pbkdf2(cryptoBytes(password), cryptoBytes(salt), iterations, keylen, digest));
   };
+  const scryptBytes = (value, name) => {
+    const bytesLike = typeof value === "string" || secretKeys.has(value) ||
+      value instanceof ArrayBuffer || typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer ||
+      ArrayBuffer.isView(value);
+    if (!bytesLike) {
+      const error = new TypeError(`The "${name}" argument must be a string or an ArrayBuffer view`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return secretKeys.has(value) ? Buffer.from(secretKeys.get(value)) : cryptoBytes(value);
+  };
+  const scryptArgs = (password, salt, keylen, options) => {
+    const pass = scryptBytes(password, "password");
+    const saltBytes = scryptBytes(salt, "salt");
+    if (typeof keylen !== "number") {
+      const error = new TypeError('The "keylen" argument must be of type number');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!Number.isSafeInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
+      const error = new RangeError('The "keylen" argument is out of range');
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    let N = options.N;
+    let cost = options.cost;
+    let r = options.r;
+    let blockSize = options.blockSize;
+    let p = options.p;
+    let parallelization = options.parallelization;
+    let maxmem = options.maxmem;
+    if (N !== undefined && cost !== undefined) {
+      const error = new TypeError('Option "N" cannot be used in combination with option "cost"');
+      error.code = "ERR_INCOMPATIBLE_OPTION_PAIR";
+      throw error;
+    }
+    if (p !== undefined && parallelization !== undefined) {
+      const error = new TypeError('Option "p" cannot be used in combination with option "parallelization"');
+      error.code = "ERR_INCOMPATIBLE_OPTION_PAIR";
+      throw error;
+    }
+    if (r !== undefined && blockSize !== undefined) {
+      const error = new TypeError('Option "r" cannot be used in combination with option "blockSize"');
+      error.code = "ERR_INCOMPATIBLE_OPTION_PAIR";
+      throw error;
+    }
+    N = N ?? cost ?? 16384;
+    r = r ?? blockSize ?? 8;
+    p = p ?? parallelization ?? 1;
+    maxmem = maxmem ?? 32 * 1024 * 1024;
+    const integerOption = (value, name, max = Number.MAX_SAFE_INTEGER) => {
+      if (typeof value !== "number") {
+        const error = new TypeError(`The "${name}" argument must be of type number`);
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (!Number.isSafeInteger(value) || value < 0 || value > max) {
+        const error = new RangeError(`The "${name}" argument is out of range`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+      return value;
+    };
+    N = integerOption(N, "N");
+    r = integerOption(r, "r");
+    p = integerOption(p, "p");
+    maxmem = integerOption(maxmem, "maxmem");
+    if (N < 2 || (N & (N - 1)) !== 0 || r === 0 || p === 0 ||
+        N >= 2 ** (r * 16) || p > (2 ** 30 - 1) / r) {
+      const error = new Error("Invalid scrypt params: memory limit exceeded");
+      error.code = "ERR_CRYPTO_INVALID_SCRYPT_PARAMS";
+      throw error;
+    }
+    const requiredMemory = 128 * N * r + 128 * r * p + 256 * r;
+    if (requiredMemory > maxmem) {
+      const error = new Error("Invalid scrypt params: memory limit exceeded");
+      error.code = "ERR_CRYPTO_INVALID_SCRYPT_PARAMS";
+      throw error;
+    }
+    return { password: pass, salt: saltBytes, keylen, N, r, p, maxmem };
+  };
+  const scryptResult = (args) => {
+    try {
+      return Buffer.from(scryptNative(args.password, args.salt, args.N, args.r, args.p, args.maxmem, args.keylen));
+    } catch (cause) {
+      const error = new Error(`Invalid scrypt params: ${cause?.message || cause}`);
+      error.code = "ERR_CRYPTO_INVALID_SCRYPT_PARAMS";
+      throw error;
+    }
+  };
+  const scryptSync = (password, salt, keylen, options) => {
+    if (options === undefined) options = {};
+    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+      const error = new TypeError('The "options" argument must be of type object');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return scryptResult(scryptArgs(password, salt, keylen, options));
+  };
+  const scrypt = (password, salt, keylen, options, callback) => {
+    if (typeof options === "function") { callback = options; options = {}; }
+    if (options === undefined) options = {};
+    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+      const error = new TypeError('The "options" argument must be of type object');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const args = scryptArgs(password, salt, keylen, options);
+    if (typeof callback !== "function") {
+      const error = new TypeError('The "callback" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    process.nextTick(bindAsyncCallback(callback), null, scryptResult(args));
+  };
   const hkdfInputs = (digest, ikm, salt, info, length) => {
     if (typeof digest !== "string") {
       const error = new TypeError('The "digest" argument must be of type string');
@@ -979,6 +1094,8 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2, Transform, 
     randomBytes: randomBuffer,
     pbkdf2: derivePbkdf2,
     pbkdf2Sync: derivePbkdf2Sync,
+    scrypt,
+    scryptSync,
     hkdf,
     hkdfSync,
     randomFillSync,
@@ -1007,6 +1124,7 @@ pub(crate) fn module(
     let random_bytes = context
         .host_function(crate::host::shared_vm::operation("cryptoRandomBytes"))?;
     let pbkdf2 = context.host_function(crate::host::shared_vm::operation("cryptoPbkdf2"))?;
+    let scrypt = context.host_function(crate::host::shared_vm::operation("cryptoScrypt"))?;
     let cipher_process =
         context.host_function(crate::host::shared_vm::operation("cryptoCipherProcess"))?;
     let global = context.global_root()?;
@@ -1022,6 +1140,7 @@ pub(crate) fn module(
             buffer,
             random_bytes,
             pbkdf2,
+            scrypt,
             transform,
             cipher_process,
         ],
@@ -1080,6 +1199,37 @@ pub(crate) fn pbkdf2(
     let mut output = vec![0; key_length];
     openssl::pkcs5::pbkdf2_hmac(&password, &salt, iterations, digest, &mut output)
         .map_err(|error| RootedError::host(format!("crypto PBKDF2 failed: {error}")))?;
+    let values = output
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
+    context.array_rooted(&values)
+}
+
+pub(crate) fn scrypt(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let password = byte_array(context, *args.first().ok_or_else(|| RootedError::host("scrypt password missing"))?)?;
+    let salt = byte_array(context, *args.get(1).ok_or_else(|| RootedError::host("scrypt salt missing"))?)?;
+    let number = |index: usize, name: &str| -> Result<u64, RootedError> {
+        args.get(index)
+            .and_then(|root| context.rooted_value(*root))
+            .and_then(|value| value.as_number())
+            .filter(|value| value.is_finite() && *value >= 0.0 && value.fract() == 0.0)
+            .map(|value| value as u64)
+            .ok_or_else(|| RootedError::host(format!("scrypt {name} is invalid")))
+    };
+    let n = number(2, "N")?;
+    let r = number(3, "r")?;
+    let p = number(4, "p")?;
+    let maxmem = number(5, "maxmem")?;
+    let key_length = usize::try_from(number(6, "key length")?)
+        .map_err(|_| RootedError::host("scrypt key length is invalid"))?;
+    let mut output = vec![0; key_length];
+    openssl::pkcs5::scrypt(&password, &salt, n, r, p, maxmem, &mut output)
+        .map_err(|error| RootedError::host(format!("Invalid scrypt params: {error}")))?;
     let values = output
         .iter()
         .map(|byte| context.number(f64::from(*byte)))
