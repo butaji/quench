@@ -1391,6 +1391,10 @@ impl<H: Host> Vm<H> {
         {
             return Ok(value);
         }
+        if let Some(value) = self.cached_global_var(env, slot) {
+            return Ok(value);
+        }
+        let environment_slot = slot;
         let Cell::Environment {
             function, scope, ..
         } = self
@@ -1409,7 +1413,9 @@ impl<H: Host> Vm<H> {
         let owner = owner_program.as_deref().unwrap_or(p);
         let atom = self.root_global_var_atom(owner, owner_id, *function, slot);
         if let Some(atom) = atom {
-            return self.get_property(p, self.realm.globals, atom);
+            let value = self.get_property(p, self.realm.globals, atom)?;
+            self.remember_global_var(env, environment_slot, atom);
+            return Ok(value);
         }
         let lexical_atom = self.root_global_lexical_atom(owner, *function, slot);
         if self.eval_script_context
