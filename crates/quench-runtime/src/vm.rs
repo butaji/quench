@@ -674,7 +674,6 @@ pub(crate) struct Vm<H> {
     well_known_symbols: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
     field_caches: Vec<FieldCache>,
-    global_var_reads: [field_cache::GlobalVarRead; field_cache::GLOBAL_VAR_READ_ENTRIES],
     field_add_caches: FxHashMap<usize, Vec<FieldAddCache>>,
     megamorphic_field_indices: Vec<u32>,
     megamorphic_fields: Vec<FieldCacheSet>,
@@ -914,19 +913,14 @@ impl<H: Host> Vm<H> {
             self.realm.global_lexical_bindings.insert(atom, value);
         }
     }
-    #[inline(always)]
     pub(super) fn persist_global_lexical_bindings(
         &mut self,
         program: &ResidualProgram,
         frame: &Frame,
     ) {
-        if self.eval_script_context && frame.function == ROOT_FUNCTION_ID {
-            self.persist_root_global_lexical_bindings(program, frame);
+        if !self.eval_script_context || frame.function != ROOT_FUNCTION_ID {
+            return;
         }
-    }
-    #[cold]
-    #[inline(never)]
-    fn persist_root_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
         let metadata = &program.functions[ROOT_FUNCTION_ID as usize];
         let bindings = metadata
             .global_lexical_atoms
