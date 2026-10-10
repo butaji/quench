@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative) => {
+r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   const kHandle = Symbol.for("quench.internal.crypto.kHandle");
@@ -477,7 +477,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     "aes-128-cbc", "aes-128-ecb", "aes-128-gcm", "aes-192-gcm", "aes-256-cbc", "aes-256-gcm", "aes256", "chacha20-poly1305", "des-ede3-cbc",
   ].sort());
   const curveNames = Object.freeze([
-    "prime192v1", "secp224r1", "secp256k1", "secp256r1",
+    "prime192v1", "secp224r1", "secp256k1", "secp256r1", "prime256v1",
     "secp384r1", "secp521r1",
   ].sort());
   function getHashes() { return hashNames.slice(); }
@@ -1507,20 +1507,28 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
       }
       this._p = prime;
       this._g = typeof generator === "bigint" ? generator : BigInt(generator || 2);
-      if (this._g <= 1n) {
+      if (this._g <= 1n || (this._p > 3n && this._g >= this._p - 1n)) {
         const error = new Error("error:02800075:Diffie-Hellman routines::bad generator");
         error.code = "ERR_OSSL_DH_BAD_GENERATOR"; throw error;
       }
       this._private = undefined;
       this._public = undefined;
+      this._publicOutdated = false;
       this.verifyError = 0;
+      if (!isPrimeValue(this._p)) this.verifyError |= 1;
+      else if (this._p > 3n && !isPrimeValue((this._p - 1n) / 2n)) this.verifyError |= 2;
+      if (this._p.toString(2).length < 512) this.verifyError |= 4;
+      if (this._g < 2n || this._g > this._p - 2n) this.verifyError |= 8;
     }
     generateKeys(encoding) {
       if (this._private === undefined) {
         const bits = this._p.toString(2).length;
         this._private = dhBytesToInt(randomBuffer(Math.ceil(bits / 8))) % (this._p - 3n) + 2n;
       }
-      if (this._public === undefined) this._public = dhModPow(this._g, this._private, this._p);
+      if (this._public === undefined || this._publicOutdated) {
+        this._public = dhModPow(this._g, this._private, this._p);
+        this._publicOutdated = false;
+      }
       return dhEncoding(dhIntToBuffer(this._public), encoding);
     }
     computeSecret(other, inputEncoding, outputEncoding) {
@@ -1530,7 +1538,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
       }
       const value = dhBytesToInt(other, inputEncoding);
       if (value <= 1n || value >= this._p - 1n) {
-        const error = new Error("Supplied key is too small"); error.code = "ERR_CRYPTO_INVALID_KEYTYPE"; throw error;
+        const error = new Error(value <= 1n ? "Supplied key is too small" : "Supplied key is too large"); error.code = "ERR_CRYPTO_INVALID_KEYLEN"; throw error;
       }
       const secret = dhModPow(value, this._private, this._p);
       const bytes = dhIntToBuffer(secret);
@@ -1547,7 +1555,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
       return dhEncoding(dhIntToBuffer(this._private), encoding);
     }
     setPublicKey(key, encoding) { this._public = dhBytesToInt(key, encoding); return dhEncoding(dhIntToBuffer(this._public), encoding); }
-    setPrivateKey(key, encoding) { this._private = dhBytesToInt(key, encoding); return dhEncoding(dhIntToBuffer(this._private), encoding); }
+    setPrivateKey(key, encoding) { this._private = dhBytesToInt(key, encoding); this._publicOutdated = this._public !== undefined; return dhEncoding(dhIntToBuffer(this._private), encoding); }
   }
   function DiffieHellman(sizeOrKey, keyEncoding, generator, generatorEncoding) {
     return new DiffieHellmanImpl(sizeOrKey, keyEncoding, generator, generatorEncoding);
@@ -1573,19 +1581,105 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     setPublicKey: { value: undefined, writable: true, configurable: true },
   });
   const createDiffieHellmanGroup = (name) => new DiffieHellmanGroup(name);
+  const ecdhStates = new WeakMap();
+  const ecdhCurveSymbol = Symbol("ecdhCurve");
+  const ecdhPublicOwners = Object.create(null);
+  const ecdhBytes = (value, encoding) => typeof value === "string" ? Buffer.from(value, encoding || "utf8") : cryptoBytes(value);
+  const ecdhEncode = (value, encoding) => encoding === undefined || encoding === "buffer" ? Buffer.from(value) : Buffer.from(value).toString(encoding);
   class ECDHImpl {
     constructor(curve) {
       if (typeof curve !== "string") {
         const error = new TypeError(`The "curve" argument must be of type string. ${receivedArgument(curve)}`);
         error.code = "ERR_INVALID_ARG_TYPE"; throw error;
       }
+      if (!getCurves().includes(curve.toLowerCase())) {
+        const error = new Error(`Invalid curve name: ${curve}`); error.code = "ERR_CRYPTO_INVALID_CURVE"; throw error;
+      }
       this.curve = curve;
+      ecdhStates.set(this, { privateKey: undefined, publicKey: undefined });
     }
-    generateKeys() { const error = new Error("ECDH key operations are not supported"); error.code = "ERR_CRYPTO_OPERATION_FAILED"; throw error; }
+    generateKeys(encoding, format) {
+      const state = ecdhStates.get(this);
+      if (format !== undefined && !["compressed", "uncompressed", "hybrid"].includes(format)) {
+        const error = new TypeError(`Invalid ECDH format: ${String(format)}`); error.code = "ERR_CRYPTO_ECDH_INVALID_FORMAT"; throw error;
+      }
+      const pair = ecdhNative("generate", this.curve, [], [], format || "uncompressed");
+      state.privateKey = Buffer.from(pair[0]); state.publicKey = Buffer.from(pair[1]);
+      const output = ecdhEncode(state.publicKey, encoding);
+      if (output && typeof output === "object") Object.defineProperty(output, ecdhCurveSymbol, { value: this.curve.toLowerCase() });
+      ecdhPublicOwners[state.publicKey.toString("hex")] = this.curve.toLowerCase();
+      return output;
+    }
+    computeSecret(other, inputEncoding, outputEncoding) {
+      if (other && typeof other === "object" && other[ecdhCurveSymbol] !== undefined && other[ecdhCurveSymbol] !== this.curve.toLowerCase()) {
+        const error = new Error("Public key is not valid for specified curve"); error.code = "ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY"; throw error;
+      }
+      const state = ecdhStates.get(this);
+      if (!state || !state.privateKey) { const error = new Error("ECDH key is not initialized"); error.code = "ERR_CRYPTO_INVALID_STATE"; throw error; }
+      const peerBytes = ecdhBytes(other, inputEncoding);
+      const owner = ecdhPublicOwners[Buffer.from(peerBytes).toString("hex")];
+      if (owner !== undefined && owner !== this.curve.toLowerCase()) {
+        const error = new Error("Public key is not valid for specified curve"); error.code = "ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY"; throw error;
+      }
+      const currentPair = ecdhNative("private", this.curve, state.privateKey, [], "uncompressed");
+      if (!currentPair || currentPair[1] === undefined || !state.publicKey) { const error = new Error("ECDH key state is invalid"); error.code = "ERR_CRYPTO_INVALID_STATE"; throw error; }
+      if (Buffer.from(currentPair[1]).toString("hex") !== state.publicKey.toString("hex")) throw new Error("Invalid key pair");
+      try { return ecdhEncode(ecdhNative("secret", this.curve, state.privateKey, peerBytes, "uncompressed"), outputEncoding); }
+      catch (_) { const error = new Error("Public key is not valid for specified curve"); error.code = "ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY"; throw error; }
+    }
+    getPrivateKey(encoding) {
+      const state = ecdhStates.get(this);
+      if (!state.privateKey) { const error = new Error("Failed to get ECDH private key"); error.code = "ERR_CRYPTO_INVALID_STATE"; throw error; }
+      return ecdhEncode(state.privateKey, encoding);
+    }
+    getPublicKey(encoding, format) {
+      const state = ecdhStates.get(this);
+      if (format !== undefined && !["compressed", "uncompressed", "hybrid"].includes(format)) {
+        const error = new TypeError(`Invalid ECDH format: ${String(format)}`); error.code = "ERR_CRYPTO_ECDH_INVALID_FORMAT"; throw error;
+      }
+      if (!state.publicKey) { const error = new Error("Failed to get ECDH public key"); error.code = "ERR_CRYPTO_INVALID_STATE"; throw error; }
+      const output = ecdhEncode(ecdhNative("format", this.curve, [], state.publicKey, format || "uncompressed"), encoding);
+      if (output && typeof output === "object") Object.defineProperty(output, ecdhCurveSymbol, { value: this.curve.toLowerCase() });
+      ecdhPublicOwners[Buffer.from(output).toString("hex")] = this.curve.toLowerCase();
+      return output;
+    }
+    setPrivateKey(key, encoding) {
+      const state = ecdhStates.get(this);
+      let pair;
+      try { pair = ecdhNative("private", this.curve, ecdhBytes(key, encoding), [], "uncompressed"); }
+      catch (_) { throw new Error("Private key is not valid for specified curve"); }
+      state.privateKey = Buffer.from(pair[0]); state.publicKey = Buffer.from(pair[1]);
+      return ecdhEncode(state.privateKey, encoding);
+    }
+    setPublicKey(key, encoding) {
+      const state = ecdhStates.get(this);
+      process.emitWarning("ecdh.setPublicKey() is deprecated.", { type: "DeprecationWarning", code: "DEP0031" });
+      try { state.publicKey = Buffer.from(ecdhNative("public", this.curve, [], ecdhBytes(key, encoding), "uncompressed")); }
+      catch (_) { const error = new Error("Failed to convert Buffer to EC_POINT"); error.code = "ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY"; throw error; }
+      return ecdhEncode(state.publicKey, encoding);
+    }
   }
   function ECDH(curve) { return new ECDHImpl(curve); }
   ECDH.prototype = ECDHImpl.prototype;
   ECDH.prototype.constructor = ECDH;
+  ECDH.convertKey = (key, curve, inputEncoding, outputEncoding, format = "uncompressed") => {
+    if (key === undefined || key === null) {
+      const error = new TypeError('The "key" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView'); error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+    }
+    if (typeof curve !== "string") {
+      const error = new TypeError('The "curve" argument must be of type string'); error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+    }
+    if (!getCurves().includes(curve.toLowerCase())) throw new TypeError("Invalid EC curve name");
+    if (!["compressed", "uncompressed", "hybrid"].includes(format)) {
+      const error = new TypeError(`Invalid ECDH format: ${String(format)}`); error.code = "ERR_CRYPTO_ECDH_INVALID_FORMAT"; throw error;
+    }
+    try {
+      const result = ecdhNative("format", curve, [], ecdhBytes(key, inputEncoding), format);
+      return ecdhEncode(result, outputEncoding);
+    } catch (_) {
+      throw new Error("Failed to convert Buffer to EC_POINT");
+    }
+  };
   const createECDH = (curve) => new ECDH(curve);
   const rsaCrypt = (decrypt, privateKey, key, data) => {
     const material = key && typeof key === "object" && key.key !== undefined ? key.key : key;
@@ -1783,6 +1877,10 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     RSA_PSS_SALTLEN_DIGEST: -1,
     RSA_PSS_SALTLEN_MAX_SIGN: -2,
     RSA_PSS_SALTLEN_AUTO: -2,
+    DH_CHECK_P_NOT_PRIME: 1,
+    DH_CHECK_P_NOT_SAFE_PRIME: 2,
+    DH_UNABLE_TO_CHECK_GENERATOR: 4,
+    DH_NOT_SUITABLE_GENERATOR: 8,
   });
   Object.defineProperties(api, {
     pseudoRandomBytes: { configurable: true, writable: true, value: pseudoRandomBuffer },
@@ -1811,6 +1909,7 @@ pub(crate) fn module(
     let generate_rsa_key_pair = context
         .host_function(crate::host::shared_vm::operation("cryptoGenerateRsaKeyPair"))?;
     let rsa_crypt = context.host_function(crate::host::shared_vm::operation("cryptoRsaCrypt"))?;
+    let ecdh = context.host_function(crate::host::shared_vm::operation("cryptoEcdh"))?;
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let undefined = context.undefined();
@@ -1830,6 +1929,7 @@ pub(crate) fn module(
             cipher_process,
             generate_rsa_key_pair,
             rsa_crypt,
+            ecdh,
         ],
     )
 }
@@ -2023,6 +2123,137 @@ pub(crate) fn rsa_crypt(
         let length = operation.encrypt(&input, &mut output).map_err(|error| RootedError::host(error.to_string()))?;
         output.truncate(length);
         output
+    };
+    let values = output.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    context.array_rooted(&values)
+}
+
+pub(crate) fn ecdh(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let text_arg = |context: &mut NativeContext<'_, NodeHost>, index: usize, fallback: &str| {
+        args.get(index)
+            .and_then(|root| context.string_text(*root).ok().flatten())
+            .unwrap_or_else(|| fallback.to_owned())
+    };
+    let action = text_arg(context, 0, "");
+    let curve = text_arg(context, 1, "");
+    let nid = match curve.to_ascii_lowercase().as_str() {
+        "prime256v1" | "secp256r1" => openssl::nid::Nid::X9_62_PRIME256V1,
+        "secp256k1" => openssl::nid::Nid::SECP256K1,
+        "secp384r1" => openssl::nid::Nid::SECP384R1,
+        "secp521r1" => openssl::nid::Nid::SECP521R1,
+        "secp224r1" => openssl::nid::Nid::SECP224R1,
+        "prime192v1" => openssl::nid::Nid::X9_62_PRIME192V1,
+        _ => return Err(RootedError::host(format!("Invalid curve name: {curve}"))),
+    };
+    let group = openssl::ec::EcGroup::from_curve_name(nid)
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let mut ctx = openssl::bn::BigNumContext::new()
+        .map_err(|error| RootedError::host(error.to_string()))?;
+    let format = text_arg(context, 4, "uncompressed");
+    let form = match format.as_str() {
+        "compressed" => openssl::ec::PointConversionForm::COMPRESSED,
+        "hybrid" => openssl::ec::PointConversionForm::HYBRID,
+        _ => openssl::ec::PointConversionForm::UNCOMPRESSED,
+    };
+    let private_bytes = args.get(2).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
+    let public_bytes = args.get(3).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
+    let point_bytes = |point: &openssl::ec::EcPointRef,
+                       group: &openssl::ec::EcGroupRef,
+                       ctx: &mut openssl::bn::BigNumContextRef,
+                       form| {
+        point.to_bytes(group, form, ctx)
+            .map_err(|error| RootedError::host(error.to_string()))
+    };
+    let output = match action.as_str() {
+        "generate" => {
+            let key = openssl::ec::EcKey::generate(&group)
+                .map_err(|error| RootedError::host(error.to_string()))?;
+            let private = key.private_key().to_vec();
+            let public = point_bytes(key.public_key(), &group, &mut ctx, form)?;
+            let private = private.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+            let public = public.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+            let private = context.array_rooted(&private)?;
+            let public = context.array_rooted(&public)?;
+            return context.array_rooted(&[private, public]);
+        }
+        "private" | "format" | "secret" | "public" => {
+            let private = if action != "public" && action != "format" {
+                let private = openssl::bn::BigNum::from_slice(&private_bytes)
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                let mut order = openssl::bn::BigNum::new()
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                group.order(&mut order, &mut ctx)
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                if private.num_bits() == 0 || private.ucmp(&order) != std::cmp::Ordering::Less {
+                    return Err(RootedError::host("Private key is not valid for specified curve"));
+                }
+                Some(private)
+            } else { None };
+            let public = if action == "public" || action == "format" || action == "secret" {
+                let point = openssl::ec::EcPoint::from_bytes(&group, &public_bytes, &mut ctx)
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                if !point.is_on_curve(&group, &mut ctx)
+                    .map_err(|error| RootedError::host(error.to_string()))? {
+                    return Err(RootedError::host("Public key is not valid for specified curve"));
+                }
+                Some(point)
+            } else { None };
+            if action == "secret" {
+                let private = private.as_ref().expect("private scalar parsed");
+                let public = public.as_ref().expect("public point parsed");
+                let private_point = {
+                    let mut point = openssl::ec::EcPoint::new(&group)
+                        .map_err(|error| RootedError::host(error.to_string()))?;
+                    point.mul_generator2(&group, private, &mut ctx)
+                        .map_err(|error| RootedError::host(error.to_string()))?;
+                    point
+                };
+                let private_key = openssl::ec::EcKey::from_private_components(&group, private, &private_point)
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                let public_key = openssl::ec::EcKey::from_public_key(&group, public)
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                let private_key = openssl::pkey::PKey::from_ec_key(private_key)
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                let public_key = openssl::pkey::PKey::from_ec_key(public_key)
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                let mut deriver = openssl::derive::Deriver::new(&private_key)
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                deriver.set_peer(&public_key)
+                    .map_err(|error| RootedError::host(error.to_string()))?;
+                deriver.derive_to_vec()
+                    .map_err(|error| RootedError::host(error.to_string()))?
+            } else {
+                let point = if let Some(private) = private.as_ref() {
+                    let mut point = openssl::ec::EcPoint::new(&group)
+                        .map_err(|error| RootedError::host(error.to_string()))?;
+                    point.mul_generator2(&group, private, &mut ctx)
+                        .map_err(|error| RootedError::host(error.to_string()))?;
+                    point
+                } else {
+                    public.expect("public point parsed")
+                };
+                if action == "format" || action == "public" {
+                    point_bytes(&point, &group, &mut ctx, form)?
+                } else {
+                    let private = private.expect("private scalar parsed");
+                    let key = openssl::ec::EcKey::from_private_components(&group, &private, &point)
+                        .map_err(|error| RootedError::host(error.to_string()))?;
+                    key.check_key().map_err(|error| RootedError::host(error.to_string()))?;
+                    let private = key.private_key().to_vec();
+                    let public = point_bytes(key.public_key(), &group, &mut ctx, form)?;
+                    let private = private.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+                    let public = public.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+                    let private = context.array_rooted(&private)?;
+                    let public = context.array_rooted(&public)?;
+                    return context.array_rooted(&[private, public]);
+                }
+            }
+        }
+        _ => return Err(RootedError::host(format!("Unknown ECDH operation: {action}"))),
     };
     let values = output.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
     context.array_rooted(&values)
