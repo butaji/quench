@@ -2002,17 +2002,15 @@ class __QuenchVirtualFileSystem {
     }
     this.mountPoint = mountPoint;
     __quenchVfsMounts.add(this);
-    if (globalThis.__quenchVfsState) {
-      globalThis.__quenchVfsState.handlers ||= {};
-    }
+    const state = globalThis["\0quench:vfsState"];
+    if (state) state.handlers ||= {};
     return this;
   }
   unmount() {
     __quenchVfsMounts.delete(this);
     this.mountPoint = null;
-    if (globalThis.__quenchVfsState && __quenchVfsMounts.size === 0) {
-      globalThis.__quenchVfsState.handlers = null;
-    }
+    const state = globalThis["\0quench:vfsState"];
+    if (state && __quenchVfsMounts.size === 0) state.handlers = null;
   }
   get mounted() {
     return this.mountPoint !== null;
