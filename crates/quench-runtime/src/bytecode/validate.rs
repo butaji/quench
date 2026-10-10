@@ -137,6 +137,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),
             FieldLayout::CacheSiteIndex => cache_in_bounds(value, bounds.cache_sites),
+            FieldLayout::LocalSlot => value < bounds.locals,
             FieldLayout::FieldLookupCacheSiteIndex => true,
             FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
             FieldLayout::FunctionIndex => usize::from(value) < bounds.functions,
@@ -609,7 +610,9 @@ impl ResidualProgram {
                 }
                 if matches!(
                     instruction.op(),
-                    super::Op::LoadLocalPlain | super::Op::StoreLocalPlain
+                    super::Op::LoadLocalPlain
+                        | super::Op::StoreLocalPlain
+                        | super::Op::CopyLocalPlain
                 ) && !plain_local_slots
                     .get(instruction.local_slot())
                     .copied()
@@ -617,6 +620,16 @@ impl ResidualProgram {
                 {
                     return Err(format!(
                         "function {index} has an unproven plain-local operation"
+                    ));
+                }
+                if instruction.op() == super::Op::CopyLocalPlain
+                    && !plain_local_slots
+                        .get(instruction.copy_local_source_slot())
+                        .copied()
+                        .unwrap_or(false)
+                {
+                    return Err(format!(
+                        "function {index} copies from an unproven plain-local slot"
                     ));
                 }
                 if let Some(captured) = &function.selective_capture_slots {
