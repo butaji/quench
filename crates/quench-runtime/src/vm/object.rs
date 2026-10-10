@@ -169,11 +169,13 @@ impl<H: Host> Vm<H> {
             ShapeTransition::Dictionary { trigger } => Some(trigger),
             _ => self.shapes[parent as usize].dictionary_trigger,
         };
+        let parent_may_have_gc_roots = self.shapes[parent as usize].may_have_gc_roots;
         self.shapes.push(Shape::child(
             Some(parent),
             transition,
             storage_len,
             dictionary_trigger,
+            parent_may_have_gc_roots,
         ));
         self.heap.register_property_shape(next, storage_len);
         next
