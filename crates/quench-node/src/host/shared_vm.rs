@@ -2,6 +2,8 @@
 
 use super::NodeHost;
 use quench_runtime::{HostFunction, HostFunctionId, NativeContext, RootedError, SystemHost};
+use regex::Regex;
+use std::sync::OnceLock;
 
 pub(crate) mod commonjs;
 pub(crate) use commonjs::source_kind;
@@ -322,9 +324,19 @@ impl quench_runtime::Host for NodeHost {
                     .map_err(|error| format!("module {} is not UTF-8: {error}", path.display()))?
             } else {
                 let filename = serde_json::to_string(&name).map_err(|error| error.to_string())?;
-                format!(
+                let mut source = format!(
                     "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
-                )
+                );
+                for export in commonjs_named_exports(&String::from_utf8_lossy(&bytes)) {
+                    source.push_str("export const ");
+                    source.push_str(&export);
+                    source.push_str(" = __quenchModule[");
+                    source.push_str(
+                        &serde_json::to_string(&export).map_err(|error| error.to_string())?,
+                    );
+                    source.push_str("];\n");
+                }
+                source
             }
         };
         // Keep original bytes for import.meta/source APIs while compiling the
@@ -390,4 +402,52 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::text_decoder_shared_vm::install_global(context)?;
         commonjs::initialize(context)
     }
+}
+
+fn commonjs_named_exports(source: &str) -> Vec<String> {
+    static EXPORT_OBJECT: OnceLock<Regex> = OnceLock::new();
+    static EXPORT_ASSIGNMENT: OnceLock<Regex> = OnceLock::new();
+    static IDENTIFIER: OnceLock<Regex> = OnceLock::new();
+    let object_pattern = EXPORT_OBJECT.get_or_init(|| {
+        Regex::new(r"(?s)module\s*\.\s*exports\s*=\s*\{([^{}]*)\}")
+            .expect("valid CommonJS export object pattern")
+    });
+    let assignment_pattern = EXPORT_ASSIGNMENT.get_or_init(|| {
+        Regex::new(r"(?m)(?:module\s*\.\s*exports|exports)\s*\.\s*([A-Za-z_$][\w$]*)\s*=")
+            .expect("valid CommonJS named export assignment pattern")
+    });
+    let identifier = IDENTIFIER.get_or_init(|| {
+        Regex::new(r"^[A-Za-z_$][\w$]*$").expect("valid JavaScript identifier pattern")
+    });
+    let reserved = [
+        "await", "break", "case", "catch", "class", "const", "continue", "debugger",
+        "default", "delete", "do", "else", "enum", "export", "extends", "false", "finally",
+        "for", "function", "if", "import", "in", "instanceof", "new", "null", "return",
+        "super", "switch", "this", "throw", "true", "try", "typeof", "var", "void",
+        "while", "with", "yield",
+    ];
+    let mut names = std::collections::BTreeSet::new();
+    for captures in object_pattern.captures_iter(source) {
+        let Some(properties) = captures.get(1) else {
+            continue;
+        };
+        for property in properties.as_str().split(',') {
+            let property = property.trim();
+            let name = property
+                .split_once(':')
+                .map_or(property, |(name, _)| name)
+                .trim();
+            if identifier.is_match(name) && !reserved.contains(&name) {
+                names.insert(name.to_owned());
+            }
+        }
+    }
+    for captures in assignment_pattern.captures_iter(source) {
+        if let Some(name) = captures.get(1).map(|name| name.as_str()) {
+            if !reserved.contains(&name) {
+                names.insert(name.to_owned());
+            }
+        }
+    }
+    names.into_iter().collect()
 }
