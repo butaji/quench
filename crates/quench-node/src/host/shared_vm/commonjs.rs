@@ -306,6 +306,9 @@ pub(super) fn require(
         Some(BuiltinModule::Crypto) => {
             return cached_builtin(context, BuiltinModule::Crypto);
         }
+        Some(BuiltinModule::Domain) => {
+            return cached_builtin(context, BuiltinModule::Domain);
+        }
         Some(BuiltinModule::Tls) => {
             return cached_builtin(context, BuiltinModule::Tls);
         }
@@ -415,6 +418,7 @@ enum BuiltinModule {
     Console,
     Tty,
     Crypto,
+    Domain,
     Tls,
     V8,
     Module,
@@ -472,6 +476,7 @@ impl BuiltinModule {
             Self::Console => Some("console"),
             Self::Tty => Some("tty"),
             Self::Crypto => Some("crypto"),
+            Self::Domain => Some("domain"),
             Self::Tls => Some("tls"),
             Self::V8 => Some("v8"),
             Self::Module => Some("module"),
@@ -568,6 +573,8 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:tty", BuiltinModule::Tty),
     ("crypto", BuiltinModule::Crypto),
     ("node:crypto", BuiltinModule::Crypto),
+    ("domain", BuiltinModule::Domain),
+    ("node:domain", BuiltinModule::Domain),
     ("tls", BuiltinModule::Tls),
     ("node:tls", BuiltinModule::Tls),
     ("v8", BuiltinModule::V8),
@@ -705,6 +712,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             crate::modules::zlib_shared_vm::module(context, stream)
         }
         BuiltinModule::Crypto => crate::modules::crypto_shared_vm::module(context),
+        BuiltinModule::Domain => crate::modules::domain_shared_vm::module(context),
         BuiltinModule::Tls => crate::modules::tls_shared_vm::module(context),
         BuiltinModule::V8 => crate::modules::v8_shared_vm::module(context),
         BuiltinModule::Module => crate::modules::module_shared_vm::module(context),

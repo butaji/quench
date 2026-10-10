@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes) => {
+r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   let repeatedHmacDigestWarningEmitted = false;
@@ -252,7 +252,29 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes) => {
     return result;
   }
 
-  const randomBuffer = (size) => Buffer.from(randomBytes(size));
+  const bindAsyncCallback = (callback) => {
+    if (typeof callback !== "function") return callback;
+    const domain = process.domain;
+    return domain ? domain.bind(callback) : callback;
+  };
+  const randomBuffer = (size, callback) => {
+    const bytes = Buffer.from(randomBytes(size));
+    if (callback === undefined) return bytes;
+    if (typeof callback !== "function") {
+      throw new TypeError("The callback argument must be of type function");
+    }
+    process.nextTick(bindAsyncCallback(callback), null, bytes);
+    return undefined;
+  };
+  const derivePbkdf2 = (password, salt, iterations, keylen, digest, callback) => {
+    if (typeof callback !== "function") {
+      throw new TypeError("The callback argument must be of type function");
+    }
+    const key = Buffer.from(pbkdf2(
+      Buffer.from(password), Buffer.from(salt), iterations, keylen, digest,
+    ));
+    process.nextTick(bindAsyncCallback(callback), null, key);
+  };
   const randomFillSync = (buffer, offset = 0, size = buffer.length - offset) => {
     const bytes = randomBytes(size);
     for (let i = 0; i < size; i++) buffer[offset + i] = bytes[i];
@@ -277,6 +299,11 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes) => {
     getFips: () => 0,
     getHashes,
     randomBytes: randomBuffer,
+    pseudoRandomBytes: randomBuffer,
+    pbkdf2: derivePbkdf2,
+    pbkdf2Sync: (password, salt, iterations, keylen, digest) => Buffer.from(pbkdf2(
+      Buffer.from(password), Buffer.from(salt), iterations, keylen, digest,
+    )),
     randomFillSync,
     randomUUID,
   };
@@ -288,11 +315,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let hash = context.host_function(crate::host::shared_vm::operation("cryptoHash"))?;
     let hmac = context.host_function(crate::host::shared_vm::operation("cryptoHmac"))?;
     let sign = context.host_function(crate::host::shared_vm::operation("cryptoSign"))?;
-    let random_bytes = context.host_function(crate::host::shared_vm::operation("cryptoRandomBytes"))?;
+    let random_bytes = context
+        .host_function(crate::host::shared_vm::operation("cryptoRandomBytes"))?;
+    let pbkdf2 = context.host_function(crate::host::shared_vm::operation("cryptoPbkdf2"))?;
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[hash, hmac, sign, buffer, random_bytes])
+    context.call_rooted(factory, undefined, &[hash, hmac, sign, buffer, random_bytes, pbkdf2])
 }
 
 pub(crate) fn random_bytes(
@@ -309,6 +338,48 @@ pub(crate) fn random_bytes(
     let mut bytes = vec![0_u8; size as usize];
     openssl::rand::rand_bytes(&mut bytes).map_err(|_| RootedError::host("crypto random generation failed"))?;
     let values = bytes.into_iter().map(|byte| context.number(f64::from(byte))).collect::<Vec<_>>();
+    context.array_rooted(&values)
+}
+
+pub(crate) fn pbkdf2(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let password = args
+        .first()
+        .copied()
+        .ok_or_else(|| RootedError::host("crypto PBKDF2 password is missing"))?;
+    let salt = args
+        .get(1)
+        .copied()
+        .ok_or_else(|| RootedError::host("crypto PBKDF2 salt is missing"))?;
+    let iterations = args.get(2).copied()
+        .and_then(|root| context.rooted_value(root))
+        .and_then(|value| value.as_number())
+        .filter(|value| value.is_finite() && *value >= 1.0 && value.fract() == 0.0)
+        .ok_or_else(|| RootedError::host("crypto PBKDF2 iterations are invalid"))? as usize;
+    let key_length = args.get(3).copied()
+        .and_then(|root| context.rooted_value(root))
+        .and_then(|value| value.as_number())
+        .filter(|value| value.is_finite() && *value >= 0.0 && value.fract() == 0.0)
+        .ok_or_else(|| RootedError::host("crypto PBKDF2 key length is invalid"))? as usize;
+    let digest_name = args
+        .get(4)
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .ok_or_else(|| RootedError::host("crypto PBKDF2 digest is not a string"))?;
+    let digest = openssl::hash::MessageDigest::from_name(&digest_name)
+        .ok_or_else(|| RootedError::host("Digest method not supported"))?;
+    let password = byte_array(context, password)?;
+    let salt = byte_array(context, salt)?;
+    let mut output = vec![0; key_length];
+    openssl::pkcs5::pbkdf2_hmac(&password, &salt, iterations, digest, &mut output)
+        .map_err(|error| RootedError::host(format!("crypto PBKDF2 failed: {error}")))?;
+    let values = output
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
     context.array_rooted(&values)
 }
 
