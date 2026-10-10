@@ -11,6 +11,14 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
             throw new TypeError("Cannot convert a Symbol value to a string");
           }
           if (key === "") return true;
+          if (typeof value !== "string" && typeof value !== "number" &&
+              typeof value !== "boolean" &&
+              globalThis.process.execArgv.includes("--pending-deprecation")) {
+            globalThis.process.emitWarning(
+              "Assigning any value other than a string, number, or boolean to a process.env property is deprecated. Please make sure to convert the value to a string before setting process.env with it.",
+              { type: "DeprecationWarning", code: "DEP0104" }
+            );
+          }
           return Reflect.set(target, key, String(value), target);
         },
         defineProperty(target, key, descriptor) {
@@ -39,6 +47,45 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
           });
         }
       });
+    }
+    if (typeof globalThis.process.emitWarning === "function") {
+      const emitWarning = globalThis.process.emitWarning.bind(globalThis.process);
+      globalThis.process.emitWarning = (warning, type, code) => {
+        let message;
+        let options = {};
+        if (typeof warning === "string") {
+          message = warning;
+        } else if (warning instanceof Error) {
+          message = warning.message;
+          options.type = warning.name;
+          if (typeof warning.code === "string") options.code = warning.code;
+          if (typeof warning.detail === "string") options.detail = warning.detail;
+        } else {
+          const received = warning === undefined ? "undefined" :
+            warning === null ? "null" : `an instance of ${warning?.constructor?.name || typeof warning}`;
+          const error = new TypeError(`The "warning" argument must be of type string or an instance of Error. Received ${received}`);
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        if (typeof type === "string") {
+          options.type = type;
+          if (typeof code === "string") options.code = code;
+          else if (code !== undefined && typeof code !== "function") {
+            const error = new TypeError('The "code" argument must be of type string.');
+            error.code = "ERR_INVALID_ARG_TYPE";
+            throw error;
+          }
+        } else if (typeof type === "function") {
+          options.type = type.name;
+        } else if (type && typeof type === "object" && !Array.isArray(type)) {
+          options = type;
+        } else if (type !== undefined) {
+          const error = new TypeError('The "type" argument must be of type string or an object.');
+          error.code = "ERR_INVALID_ARG_TYPE";
+          throw error;
+        }
+        return emitWarning(message, options);
+      };
     }
     globalThis.gc ||= () => undefined;
     const activeTimers = new Map();
