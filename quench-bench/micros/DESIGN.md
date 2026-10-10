@@ -7,7 +7,7 @@ describe evidence needed to interpret a result, not mandatory implementation
 steps. A collector, JIT, inline cache, or allocation may legitimately not exist
 or disappear through optimization. Diagnostic availability never changes the
 qualification verdict. The harness measures existing artifacts; runtime changes
-are tracked in [the task queue](../../tasks/index.json).
+are tracked in [the Linear project](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview).
 
 ## ADR 2 — Separate measured outcomes from explanations
 

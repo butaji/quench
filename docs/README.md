@@ -1,8 +1,8 @@
 # Documentation
 
 - [Repository rules and Lisp mindset](../AGENTS.md)
-- [Active rewrite queue](../tasks/index.json)
-- [Task execution contract](../tasks/README.md)
+- [Backlog, status and lanes (Linear)](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview)
+- [Measurement evidence](../evidence/)
 - [Pinned v2 design decisions](v2/architecture.md) (copied from `../v2` at the indexed reference commit; binding for the next core)
 - [Wasm boundary](spec.md)
 - [Test262 stages](STAGES.md) and [Node stages](../STAGES.md)
@@ -10,7 +10,7 @@
 - [Benchmark micros](../quench-bench/micros/README.md)
 
 Documentation records stable contracts and reproducible commands. Current work
-and status live only in `tasks/index.json` and the numbered task files. Build
+and status live only in the Linear project. Build
 and measurement artifacts belong under ignored `target/` directories and must
 record their source revisions and commands.
 
@@ -21,10 +21,10 @@ conformance gates are every Node-adjudicated pinned Test262 case, every pinned
 Wasm directive, every upstream Node fixture tagged `framework-core` in
 `parallel.txt`, and the pinned Express, Koa and Fastify scenarios. Direct
 Test262 conflicts follow the local Node-oracle rule recorded in
-[task 20](../tasks/20.md#current-conflict-resolution); contradicted raw outcomes
+the task 20 resolution (git history: `tasks/20.md`); contradicted raw outcomes
 remain visible as explicit waivers and never count as passes. The broader Node
 inventory is diagnostic only.
-The two-stage scope and completion rules live in [tasks/README.md](../tasks/README.md).
+The two-stage scope and completion rules live in the [Linear project](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview).
 
 The rewrite gate uses Quench's shared runtime. Test262 progress uses affected
 stages with canonical `run-stages` plus saved-report comparison for ordinary
@@ -77,11 +77,11 @@ The broader inventory and owner audits remain diagnostic and do not add gate
 cases.
 
 Node inventory review uses implementation owners and per-case obligations in
-`tasks/node-compat-inventory.json`. Run from the repository root:
+`evidence/node-compat-inventory.json`. Run from the repository root:
 
 ```sh
 cargo run --profile iteration -p quench-node-test --bin run-compat -- \
-  --inventory tasks/node-compat-inventory.json --list
+  --inventory evidence/node-compat-inventory.json --list
 ```
 
 This lists the diagnostic broad Node inventory and validates every input hash,
@@ -200,7 +200,7 @@ CommonJS files and eval retain their respective scopes. Production cutover
 remains task 27; task 24 owns integrated qualification of the selected Node
 gate together with Test262 and Wasm.
 See
-[task 21 qualification](../tasks/evidence/task21-shared-commonjs-loader.json).
+[task 21 qualification](../evidence/task21-shared-commonjs-loader.json).
 
 Run the selected upstream Node `test/parallel` profile against the shared VM
 with the canonical `run-parallel` worker. Profile membership
@@ -348,24 +348,24 @@ follow the [core global contract](https://webassembly.github.io/spec/core/exec/i
 `Runtime::wasm_global` reads its typed value; `Runtime::wasm_global_binding`
 projects the identity to root for imports. Mixed global/memory/table declaration
 order derives from one import-name projection
-([qualification](../tasks/evidence/task37-wasm-global-imports.json)).
+([qualification](../evidence/task37-wasm-global-imports.json)).
 Wasm function imports and re-exports retain the original function cell and its
 captured instance. Canonical signatures distinguish source function indices
 from residual body indices; imports generate no forwarding bodies. Direct
 imported calls, starts and function references use the same shared ABI and
 [instantiation contract](https://webassembly.github.io/spec/core/exec/modules.html#exec-instantiation).
 `Runtime::wasm_function` projects that identity to root for imports
-([qualification](../tasks/evidence/task37-wasm-function-imports.json)).
+([qualification](../evidence/task37-wasm-function-imports.json)).
 Exact-function imports retain exactness in the canonical import fact. Linking
 checks the original dynamic callable declaration for equivalence, including
 through inexact re-exports; ordinary imports admit subtypes. Static `ref.func`
 projections are exact only for definitions and exact imports. Initializer
 admission uses that same reference subtype operation
 ([proposal](https://github.com/WebAssembly/custom-descriptors/blob/main/proposals/custom-descriptors/Overview.md),
-[qualification](../tasks/evidence/task37-wasm-exact-imports.json)).
+[qualification](../evidence/task37-wasm-exact-imports.json)).
 Normal and tail reference calls share the null-function trap selector; explicit
 `ref.as_non_null` retains its generic null-reference contract
-([qualification](../tasks/evidence/task37-wasm-null-calls.json)).
+([qualification](../evidence/task37-wasm-null-calls.json)).
 Exception tag declarations allocate distinct identities in the shared heap;
 imports/re-exports retain the original cell. Tag linking compares exact closed
 declaration types, including recursive-group identity, before initialization
@@ -373,25 +373,25 @@ effects. Root exported handles before subsequent VM work and release import
 roots after instantiation. `Runtime::wasm_tag` projects that identity. Tag
 bindings precede the final imported-function suffix in the instance layout
 ([core allocation](https://webassembly.github.io/spec/core/exec/modules.html#alloc-tag),
-[qualification](../tasks/evidence/task37-wasm-tags.json)).
+[qualification](../evidence/task37-wasm-tags.json)).
 Modern `try_table`, `throw` and `throw_ref` use one traced exception cell owning
 the original tag and payload. Static regions derive catch trampolines and existing
 activation handlers; typed error transport preserves reference identity across
 rethrows. Traps bypass catches; null exception references raise a typed trap.
 Root transported exception references before further VM work. Start exceptions
 remain distinct from link errors and traps in the suite adapter
-([qualification](../tasks/evidence/task37-wasm-exceptions.json)).
+([qualification](../evidence/task37-wasm-exceptions.json)).
 Legacy `try`, `catch`, `catch_all` and lexical `rethrow` lower to the same
 exception operations. Only the try body is protected; exceptions from catch arms
 propagate outward, while rethrow retains the original caught reference. Modern
 and legacy lowering share tag matching and payload projection
-([qualification](../tasks/evidence/task37-wasm-legacy-catches.json)).
+([qualification](../evidence/task37-wasm-legacy-catches.json)).
 Legacy `delegate` resolves outer labels during lowering. PC-bounded handlers
 write the original exception to a destination frame slot and jump to its lexical
 rethrow continuation. Normal results bypass that continuation, branch exits end
 protection, and tail transfer discards the replaced frame's handlers. Forward
 jump facts remain lowering-only; runtime handler selection is unchanged
-([qualification](../tasks/evidence/task37-wasm-delegate.json)). Shared tags and
+([qualification](../evidence/task37-wasm-delegate.json)). Shared tags and
 JavaScript/foreign-host exception embedding remain unfinished.
 Custom descriptor constructors share the regular struct construction model.
 The original type graph derives exact descriptor types; the existing GC cell
@@ -401,27 +401,27 @@ the final descriptor input. `ref.get_desc` projects that same reference;
 null descriptors trap separately from null source references. Initializer traps
 retain typed transport. Format68 admits the appended operations without changing
 packed operand widths
-([qualification](../tasks/evidence/task37-wasm-descriptors.json)).
+([qualification](../evidence/task37-wasm-descriptors.json)).
 Descriptor casts and branch-casts share one stored-identity predicate. Descriptor
 input types derive from target exactness and the original graph; null descriptors
 trap before nullable-source admission. Branches carry the original reference and
 other branch payloads. Module admission rejects missing descriptor relationships
 before execution. Format69 admits the cast/test operations without new cells or
 allocation; JavaScript prototype reflection remains unfinished
-([qualification](../tasks/evidence/task37-wasm-descriptor-casts.json)).
+([qualification](../evidence/task37-wasm-descriptor-casts.json)).
 Initializer expressions retain one admitted representation: known values fold
 inline, unresolved immutable globals remain symbolic. Global initializers,
 active segment offsets and nullable func/extern reference initializers evaluate
 against actual instance bindings through the same scalar operations; no imported
 value is substituted during lowering
-([qualification](../tasks/evidence/task37-wasm-initializer-expressions.json)).
+([qualification](../evidence/task37-wasm-initializer-expressions.json)).
 `ref.func` is a symbolic dependency in that same expression model. Instantiation
 roots its environment before installing defined globals in declaration order;
 then table/segment effects and start execution proceed. Function references use
 the original function cache/import identity and captured environment. No
 placeholder globals or forwarding functions are constructed. Frontend reference
 initializers share expression lowering
-([qualification](../tasks/evidence/task37-wasm-function-initializers.json)).
+([qualification](../evidence/task37-wasm-function-initializers.json)).
 `Runtime::wasm_host_function` creates a rooted typed native callable. Its native
 environment owns the immutable signature and embedding operation ID. Linking,
 function-reference validation and indirect calls use one signature projection;
@@ -433,7 +433,7 @@ roots remain caller-owned. `Runtime::invoke_wasm_host_function` and imported cal
 use the same guarded native boundary and result decoder. Host creation initializes
 the VM before publishing its first root. The shared Wast provider installs
 spectest signatures explicitly and records real print effects
-([qualification](../tasks/evidence/task37-wasm-host-functions.json)).
+([qualification](../evidence/task37-wasm-host-functions.json)).
 Original declaration graphs own concrete/exact function and GC reference types
 across callable, global and table boundaries. Unshared i31 values, struct objects
 and arrays use the same Value/root transport; tests, casts, cast branches and
