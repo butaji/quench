@@ -257,37 +257,234 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
     const domain = process.domain;
     return domain ? domain.bind(callback) : callback;
   };
+  const receivedArgument = (value) => {
+    if (value === null) return "Received null";
+    if (value === undefined) return "Received undefined";
+    if (typeof value === "string") return `Received type string ('${value}')`;
+    if (typeof value === "number") return `Received type number (${value})`;
+    if (typeof value === "boolean") return `Received type boolean (${value})`;
+    if (typeof value === "object") return `Received an instance of ${Array.isArray(value) ? "Array" : value.constructor?.name || "Object"}`;
+    return `Received type ${typeof value}`;
+  };
+  const validateRandomSize = (size) => {
+    if (typeof size !== "number") {
+      const error = new TypeError(`The "size" argument must be of type number. ${receivedArgument(size)}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!Number.isFinite(size) || size < 0 || size > 0x7fffffff) {
+      const error = new RangeError(`The value of "size" is out of range. It must be >= 0 && <= 2147483647. Received ${size}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    return Math.floor(size);
+  };
+  const argumentTypeError = (name, value) => {
+    let detail;
+    if (value === null || value === undefined) detail = ` Received ${value}`;
+    else if (typeof value === "object") {
+      const type = Array.isArray(value) ? "Array" : value.constructor?.name;
+      detail = type ? ` Received an instance of ${type}` : " Received an object";
+    } else if (typeof value === "function") {
+      detail = ` Received function ${value.name}`;
+    } else {
+      const inspected = typeof value === "string" ? `'${value}'` : String(value);
+      detail = ` Received type ${typeof value} (${inspected})`;
+    }
+    const error = new TypeError(`The "${name}" argument must be of type number.${detail}`);
+    error.code = "ERR_INVALID_ARG_TYPE";
+    return error;
+  };
+  const rangeError = (name, value) => {
+    const detail = !Number.isInteger(value)
+      ? ` It must be an integer. Received ${value}`
+      : ` Received ${value}`;
+    const error = new RangeError(`The value of "${name}" is out of range.${detail}`);
+    error.code = "ERR_OUT_OF_RANGE";
+    return error;
+  };
+  const invalidDigest = (digest) => {
+    const error = new TypeError(`Invalid digest: ${digest}`);
+    error.code = "ERR_CRYPTO_INVALID_DIGEST";
+    return error;
+  };
+  const cryptoBytes = (value) => typeof value === "string"
+    ? Buffer.from(value)
+    : ArrayBuffer.isView(value)
+    ? Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+    : Buffer.from(value);
+  const pbkdf2Arguments = (password, salt, iterations, keylen, digest) => {
+    const bytesLike = (value) => typeof value === "string" ||
+      value instanceof ArrayBuffer || ArrayBuffer.isView(value);
+    if (!bytesLike(password) || !bytesLike(salt)) {
+      const error = new TypeError('The "password" and "salt" arguments must be strings or ArrayBuffer views');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (typeof iterations !== "number") throw argumentTypeError("iterations", iterations);
+    if (typeof keylen !== "number") throw argumentTypeError("keylen", keylen);
+    if (!Number.isInteger(iterations) || iterations < 1 || iterations > 0x7fffffff) {
+      throw rangeError("iterations", iterations);
+    }
+    if (!Number.isInteger(keylen) || keylen < 0 || keylen > 0x7fffffff) {
+      throw rangeError("keylen", keylen);
+    }
+    if (typeof digest !== "string") {
+      const error = new TypeError(`The "digest" argument must be of type string. Received ${digest === null ? "null" : String(digest)}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!getHashes().includes(digest) && !getHashes().includes(digest.toLowerCase())) {
+      throw invalidDigest(digest);
+    }
+  };
   const randomBuffer = (size, callback) => {
+    size = validateRandomSize(size);
     const bytes = Buffer.from(randomBytes(size));
     if (callback === undefined) return bytes;
     if (typeof callback !== "function") {
-      throw new TypeError("The callback argument must be of type function");
+      const error = new TypeError('The "callback" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
     }
     process.nextTick(bindAsyncCallback(callback), null, bytes);
     return undefined;
   };
+  let pseudoRandomWarningEmitted = false;
+  const pseudoRandomBuffer = (size, callback) => {
+    if (!pseudoRandomWarningEmitted) {
+      pseudoRandomWarningEmitted = true;
+      process.emitWarning("crypto.pseudoRandomBytes is deprecated.", {
+        type: "DeprecationWarning",
+        code: "DEP0115",
+      });
+    }
+    return randomBuffer(size, callback);
+  };
   const derivePbkdf2 = (password, salt, iterations, keylen, digest, callback) => {
     if (typeof callback !== "function") {
-      throw new TypeError("The callback argument must be of type function");
+      const error = new TypeError('The "callback" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
     }
+    pbkdf2Arguments(password, salt, iterations, keylen, digest);
     const key = Buffer.from(pbkdf2(
-      Buffer.from(password), Buffer.from(salt), iterations, keylen, digest,
+      cryptoBytes(password), cryptoBytes(salt), iterations, keylen, digest,
     ));
     process.nextTick(bindAsyncCallback(callback), null, key);
   };
-  const randomFillSync = (buffer, offset = 0, size = buffer.length - offset) => {
+  const derivePbkdf2Sync = (password, salt, iterations, keylen, digest) => {
+    pbkdf2Arguments(password, salt, iterations, keylen, digest);
+    return Buffer.from(pbkdf2(cryptoBytes(password), cryptoBytes(salt), iterations, keylen, digest));
+  };
+  const randomFillSync = (buffer, offset, size) => {
+    const view = ArrayBuffer.isView(buffer)
+      ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+      : buffer instanceof ArrayBuffer || typeof SharedArrayBuffer !== "undefined" && buffer instanceof SharedArrayBuffer
+      ? new Uint8Array(buffer)
+      : undefined;
+    if (!view) {
+      const error = new TypeError('The "buffer" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    offset = offset === undefined ? 0 : validateRandomSize(offset);
+    size = size === undefined ? view.length - offset : validateRandomSize(size);
+    if (offset + size > view.length) {
+      const error = new RangeError("The value of \"size\" is out of range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
     const bytes = randomBytes(size);
-    for (let i = 0; i < size; i++) buffer[offset + i] = bytes[i];
+    for (let i = 0; i < size; i++) view[offset + i] = bytes[i];
     return buffer;
   };
-  const randomUUID = () => {
+  const randomFill = (buffer, offset, size, callback) => {
+    if (typeof offset === "function") { callback = offset; offset = 0; size = undefined; }
+    else if (typeof size === "function") { callback = size; size = undefined; }
+    if (typeof callback !== "function") {
+      const error = new TypeError('The "callback" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    randomFillSync(buffer, offset, size);
+    process.nextTick(bindAsyncCallback(callback), null, buffer);
+    return undefined;
+  };
+  const randomUUID = (options) => {
+    if (options !== undefined && (options === null || typeof options !== "object" || Array.isArray(options))) {
+      const error = new TypeError('The "options" argument must be of type object');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (options?.disableEntropyCache !== undefined && typeof options.disableEntropyCache !== "boolean") {
+      const error = new TypeError('The "options.disableEntropyCache" property must be of type boolean');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
     const bytes = randomBuffer(16);
     bytes[6] = bytes[6] & 0x0f | 0x40;
     bytes[8] = bytes[8] & 0x3f | 0x80;
     const hex = bytes.toString("hex");
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   };
-  return {
+  const randomInt = (min, max, callback) => {
+    if (typeof max === "function") { callback = max; max = min; min = 0; }
+    if (max === undefined) { max = min; min = 0; }
+    if (typeof callback !== "undefined" && typeof callback !== "function") {
+      const error = new TypeError('The "callback" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max)) {
+      const error = new TypeError('The "min" and "max" arguments must be safe integers');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const range = max - min;
+    if (range <= 0 || range > 0x1000000000000) {
+      const error = new RangeError("The value of \"max - min\" is out of range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const bytes = randomBytes(6);
+    let value = 0;
+    for (const byte of bytes) value = value * 256 + byte;
+    const result = min + value % range;
+    if (callback) process.nextTick(bindAsyncCallback(callback), result);
+    else return result;
+  };
+  const webCrypto = globalThis.crypto || {};
+  if (!globalThis.crypto) {
+    Object.defineProperty(globalThis, "crypto", {
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: webCrypto,
+    });
+  }
+  if (webCrypto) {
+    webCrypto.getRandomValues = function(values) {
+      if (this !== webCrypto) {
+        const error = new TypeError("Illegal invocation");
+        error.code = "ERR_INVALID_THIS";
+        throw error;
+      }
+      if (!ArrayBuffer.isView(values) || values instanceof DataView ||
+          values instanceof Float32Array || values instanceof Float64Array) {
+        const error = new TypeError("The data argument must be an integer-based TypedArray");
+        error.name = "TypeMismatchError";
+        throw error;
+      }
+      if (values.byteLength > 65536) {
+        const error = new DOMException("The requested length exceeds 65,536 bytes", "QuotaExceededError");
+        throw error;
+      }
+      randomFillSync(values);
+      return values;
+    };
+  }
+  const api = {
     createHash: (algorithm, options) => new Hash(algorithm, options),
     createHmac: (algorithm, key) => new Hmac(algorithm, key),
     createSign: (algorithm) => new Sign(algorithm),
@@ -299,14 +496,19 @@ r#"(hashDigest, hmacDigest, signDigest, Buffer, randomBytes, pbkdf2) => {
     getFips: () => 0,
     getHashes,
     randomBytes: randomBuffer,
-    pseudoRandomBytes: randomBuffer,
+    pseudoRandomBytes: pseudoRandomBuffer,
     pbkdf2: derivePbkdf2,
-    pbkdf2Sync: (password, salt, iterations, keylen, digest) => Buffer.from(pbkdf2(
-      Buffer.from(password), Buffer.from(salt), iterations, keylen, digest,
-    )),
+    pbkdf2Sync: derivePbkdf2Sync,
     randomFillSync,
+    randomFill,
     randomUUID,
+    randomInt,
   };
+  Object.defineProperties(api, {
+    prng: { configurable: true, value: randomBuffer },
+    rng: { configurable: true, value: randomBuffer },
+  });
+  return api;
 }"#
 );
 
