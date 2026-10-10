@@ -56,6 +56,55 @@ the 56 B trunk stride and overstated the incremental ArrayRecord benefit.
 Implementing ArrayRecord remains deferred until the compact-object speed
 regression has a measured explanation and a passing guard.
 
+## Richards attribution of the speed regression
+
+The all-eight guard showed a clean +29.52% instruction delta on Richards for
+the compact-object candidate. Richards is useful here because it exercises
+the shared property path with a small heap, so full-process Callgrind fits in
+the aarch64 Linux VM. These profiles are attribution evidence only; the M4
+gate remains authoritative.
+
+The two binaries share base commit `a03e0646ff216a192d85c6d1d22307855cdb21f2`.
+The baseline executable SHA-256 is
+`ec65a4e93b7db01de2acbf0b67a1ec357a21ae33472153a23615961834b5e326`; the
+candidate executable SHA-256 is
+`e3321d6d06cac1552f15f9e45d2d36e87ed693b9ef8cff4b408da22af1d115fc`, built
+with candidate source diff SHA-256
+`a9597d2046b32a98a99eda0f0fa1a1221ccdbb3c8fc76d89c31454504826200a`.
+The harness inputs are `base.js` + `richards.js` + the same fixed-work runner,
+with `Setup`, K calls to `run()`, then `TearDown`; K is 0 or 1. Both inputs
+validate and print their expected marker. Input hashes and raw profile totals
+are in [`callgrind-richards-attribution.json`](callgrind-richards-attribution.json).
+Compressed raw profiles and exact inputs are retained beside it. The parser
+resolves function names defined by either `fn=` or `cfn=`, excludes inclusive
+call-edge costs from self counts, and asserts that self-Ir sums to each file's
+summary before writing the report.
+
+On Rust 1.99.0 / Debian Bookworm aarch64 with Valgrind 3.19.0, baseline
+K=1−K=0 was 145,490,912 Ir; candidate K=1−K=0 was 190,143,949 Ir (+30.69%).
+The largest candidate-minus-baseline self-Ir changes were:
+
+| Function | Self-Ir delta |
+| --- | ---: |
+| `Heap::object` | +22,066,060 |
+| `Vm::object_property_slot` | +8,775,013 |
+| `Vm::get_field_miss` | +6,721,403 |
+| `Vm::immediate_prototype_data_field` | +6,211,764 |
+| `Vm::shape_property_lookup` | +4,294,081 |
+| `Vm::shape_attribute` | +3,996,865 |
+| `Heap::object_mut` | +2,031,400 |
+
+Callgraph counts attribute 555,311 candidate calls to `Heap::object` per
+Richards run (39.7 self-Ir/call) and 50,785 calls to `Heap::object_mut`
+(40.0 self-Ir/call). The candidate's `Heap::object` first decodes a `HeapRef`
+and branches on its space; its legacy branch then calls `get(value)`, which
+decodes the same `Value` again, and wraps the result in `ObjectRef`. This
+space/view path is new relative to the baseline's direct `heap.get(value)` +
+`Cell::object()` path. The accompanying increases in field lookup functions
+show that the regression is distributed across the shared property path, not
+compact-object allocation. This confirms the M4 regression signal and gives a
+specific path to remove before re-gating the candidate.
+
 ## Legacy-index decode follow-up: neutral
 
 A second Splay-only 11-round diagnostic compared the rejected compact-object
