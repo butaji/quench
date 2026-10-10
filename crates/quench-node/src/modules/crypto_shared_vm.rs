@@ -1260,6 +1260,178 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     if (callback) process.nextTick(bindAsyncCallback(callback), null, result);
     else return result;
   };
+  const primeModPow = (base, exponent, modulus) => {
+    let result = 1n;
+    base %= modulus;
+    while (exponent > 0n) {
+      if (exponent & 1n) result = result * base % modulus;
+      exponent >>= 1n;
+      base = base * base % modulus;
+    }
+    return result;
+  };
+  const isPrimeValue = (value) => {
+    if (value < 2n) return false;
+    const bases = [2n, 3n, 5n, 7n, 11n, 13n, 17n, 19n, 23n, 29n, 31n, 37n];
+    for (const base of bases) {
+      if (value === base) return true;
+      if (value % base === 0n) return false;
+    }
+    let d = value - 1n;
+    let s = 0;
+    while ((d & 1n) === 0n) { d >>= 1n; s++; }
+    for (const base of bases) {
+      let x = primeModPow(base % (value - 3n) + 2n, d, value);
+      if (x === 1n || x === value - 1n) continue;
+      let passed = false;
+      for (let round = 1; round < s; round++) {
+        x = x * x % value;
+        if (x === value - 1n) { passed = true; break; }
+      }
+      if (!passed) return false;
+    }
+    return true;
+  };
+  const unsignedBigInt = (value, name) => {
+    if (typeof value === "bigint") {
+      if (value < 0n) {
+        const error = new RangeError(`The value of "${name}" is out of range. It must be >= 0. Received ${value}n`);
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+      return value;
+    }
+    if (value === null || !(ArrayBuffer.isView(value) || value instanceof ArrayBuffer)) {
+      const error = new TypeError(`The "${name}" argument must be an instance of ArrayBuffer, TypedArray, Buffer, DataView, or bigint. ${receivedArgument(value)}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    return BigInt(`0x${cryptoBytes(value).toString("hex") || "0"}`);
+  };
+  const primeInput = (candidate) => {
+    if (typeof candidate !== "bigint" && candidate.byteLength > 0x3ffffff) {
+      const error = new Error("error: BIGNUM routines: bignum too long");
+      error.code = "ERR_OSSL_BN_BIGNUM_TOO_LONG";
+      throw error;
+    }
+    return unsignedBigInt(candidate, "candidate");
+  };
+  const checkPrimeSync = (candidate, options = {}) => {
+    const value = primeInput(candidate);
+    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+      const error = new TypeError('The "options" argument must be of type object');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const checks = options.checks === undefined ? 0 : options.checks;
+    if (typeof checks !== "number") {
+      const error = new TypeError(`The "options.checks" property must be of type number. ${receivedArgument(checks)}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!Number.isInteger(checks) || checks < 0 || checks > 0x7fffffff) {
+      const error = new RangeError(`The value of "options.checks" is out of range. It must be >= 0 && <= 2147483647. Received ${checks}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    return isPrimeValue(value);
+  };
+  const checkPrime = (candidate, options, callback) => {
+    if (typeof options === "function") { callback = options; options = {}; }
+    if (callback === undefined || typeof callback !== "function") {
+      const error = new TypeError('The "callback" argument must be of type function');
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const result = checkPrimeSync(candidate, options === undefined ? {} : options);
+    process.nextTick(bindAsyncCallback(callback), null, result);
+  };
+  const generatePrimeValue = (size, options = {}) => {
+    if (typeof size !== "number") {
+      const error = new TypeError(`The "size" argument must be of type number. ${receivedArgument(size)}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    if (!Number.isInteger(size) || size < 1 || size > 0x7fffffff) {
+      const error = new RangeError(`The value of "size" is out of range. It must be >= 1 && <= 2147483647. Received ${size}`);
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+      const error = new TypeError(`The "options" argument must be of type object. ${receivedArgument(options)}`);
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    for (const name of ["safe", "bigint"]) {
+      if (options[name] !== undefined && typeof options[name] !== "boolean") {
+        const error = new TypeError(`The "options.${name}" property must be of type boolean. ${receivedArgument(options[name])}`);
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+    }
+    const add = options.add === undefined ? undefined : unsignedBigInt(options.add, "options.add");
+    const rem = options.rem === undefined ? undefined : unsignedBigInt(options.rem, "options.rem");
+    if (size > 8192) throw new RangeError("The requested prime size is too large");
+    const limit = (1n << BigInt(size)) - 1n;
+    const floor = 1n << BigInt(size - 1);
+    for (;;) {
+      const bytes = randomBuffer(Math.ceil(size / 8));
+      let n = BigInt(`0x${bytes.toString("hex") || "0"}`) & limit;
+      n |= floor;
+      if (size > 2) n |= 1n << BigInt(size - 2);
+      n |= 1n;
+      if (add !== undefined) {
+        const residue = rem === undefined ? (options.safe ? 3n : 1n) : rem;
+        if (rem !== undefined && rem >= add) {
+          const error = new RangeError("invalid options.rem"); error.code = "ERR_OUT_OF_RANGE"; throw error;
+        }
+        if (add >= (1n << BigInt(size))) {
+          const error = new RangeError("invalid options.add"); error.code = "ERR_OUT_OF_RANGE"; throw error;
+        }
+        n += (residue - n % add + add) % add;
+      }
+      if (n <= limit && n >= floor && isPrimeValue(n) && (!options.safe || isPrimeValue((n - 1n) / 2n))) {
+        if (options.bigint) return n;
+        let hex = n.toString(16); if (hex.length & 1) hex = `0${hex}`;
+        const out = Buffer.alloc(Math.ceil(size / 8)); Buffer.from(hex, "hex").copy(out, Math.max(0, out.length - Math.ceil(hex.length / 2))); return out;
+      }
+    }
+  };
+  const generatePrimeSync = (size, options) => generatePrimeValue(size, options === undefined ? {} : options);
+  const generatePrime = (size, options, callback) => {
+    if (typeof options === "function") { callback = options; options = {}; }
+    if (typeof size !== "number") {
+      const error = new TypeError(`The "size" argument must be of type number. ${receivedArgument(size)}`);
+      error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+    }
+    if (!Number.isInteger(size) || size < 1 || size > 0x7fffffff) {
+      const error = new RangeError(`The value of "size" is out of range. It must be >= 1 && <= 2147483647. Received ${size}`);
+      error.code = "ERR_OUT_OF_RANGE"; throw error;
+    }
+    if (options === null || options === undefined) options = {};
+    if (typeof options !== "object" || Array.isArray(options)) {
+      const error = new TypeError(`The "options" argument must be of type object. ${receivedArgument(options)}`);
+      error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+    }
+    for (const name of ["safe", "bigint"]) {
+      if (options[name] !== undefined && typeof options[name] !== "boolean") {
+        const error = new TypeError(`The "options.${name}" property must be of type boolean. ${receivedArgument(options[name])}`);
+        error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+      }
+    }
+    for (const name of ["add", "rem"]) {
+      const value = options[name];
+      if (value !== undefined && typeof value !== "bigint" && !(ArrayBuffer.isView(value) || value instanceof ArrayBuffer)) {
+        const error = new TypeError(`The "options.${name}" argument must be an instance of ArrayBuffer, TypedArray, Buffer, DataView, or bigint. ${receivedArgument(value)}`);
+        error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+      }
+      if (typeof value === "bigint" && value < 0n) unsignedBigInt(value, `options.${name}`);
+    }
+    if (callback === undefined || typeof callback !== "function") {
+      const error = new TypeError('The "callback" argument must be of type function'); error.code = "ERR_INVALID_ARG_TYPE"; throw error;
+    }
+    setImmediate(() => { try { callback(null, generatePrimeValue(size, options === undefined ? {} : options)); } catch (error) { callback(error); } });
+  };
   const webCrypto = globalThis.crypto || {};
   if (!globalThis.crypto) {
     Object.defineProperty(globalThis, "crypto", {
@@ -1316,6 +1488,10 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
     getFips: () => 0,
     getHashes,
     randomBytes: randomBuffer,
+    checkPrime,
+    checkPrimeSync,
+    generatePrime,
+    generatePrimeSync,
     pbkdf2: derivePbkdf2,
     pbkdf2Sync: derivePbkdf2Sync,
     scrypt,
