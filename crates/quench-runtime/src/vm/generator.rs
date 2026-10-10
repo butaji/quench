@@ -91,6 +91,7 @@ impl<H: Host> Vm<H> {
             active_iterators: vec![],
             with_objects: Vec::new(),
             with_base: self.with_stack.len(),
+            fixed_this: false,
         }));
         frame
             .locals
