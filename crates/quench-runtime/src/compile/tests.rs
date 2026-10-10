@@ -68,6 +68,52 @@ fn scalar_constants_preserve_signed_zero_bits() {
 }
 
 #[test]
+fn fixed_register_parameter_promotion_excludes_mutation_and_dynamic_name_ops() {
+    for body in [
+        "value = 2;",
+        "value += 2;",
+        "value++;",
+        "for (value of [2]) {}",
+        "({ field: value } = { field: 2 });",
+        "delete value;",
+    ] {
+        let source = format!("function update(value) {{ {body} return value; }}");
+        let program = Engine::specialize(&source, "mutable-parameter.js").unwrap();
+        assert!(
+            program.functions[1].local_registers.is_empty(),
+            "write should keep parameter in its local slot: {body}"
+        );
+        program.validate().unwrap();
+    }
+
+    let program = Engine::specialize(
+        "function read(value) { var other = 2; return value + other; }",
+        "immutable-parameter.js",
+    )
+    .unwrap();
+    assert_eq!(program.functions[1].local_registers.len(), 1);
+    program.validate().unwrap();
+}
+
+#[test]
+fn validator_rejects_bytecode_that_overwrites_a_promoted_parameter() {
+    let mut program = Engine::specialize(
+        "function read(value) { return value + 1; }",
+        "promoted-register-validation.js",
+    )
+    .unwrap();
+    let function = &mut program.functions[1];
+    let binary = function
+        .code
+        .iter_mut()
+        .find(|instruction| instruction.op() == Op::Binary)
+        .unwrap();
+    binary.set_result_register(0);
+    assert!(program.validate().is_err());
+}
+
+
+#[test]
 fn constant_runs_remain_fresh_and_contiguous() {
     let mut compiler = Compiler::new_with_mode(
         "test.js",

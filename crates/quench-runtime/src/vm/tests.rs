@@ -29,6 +29,39 @@ impl Host for RecordingHost {
 }
 
 #[test]
+fn promoted_immutable_parameters_preserve_order_and_survive_collection() {
+    let source = r#"
+      function read(value) {
+        var index = 0;
+        while (index < 5000) {
+          var discarded = {};
+          index++;
+        }
+        return value.answer;
+      }
+      function ordered(value) { return value - (value = 2); }
+      function destructured(value) {
+        ({ field: value } = { field: 3 });
+        return value;
+      }
+      print(read({ answer: 42 }));
+      print(ordered(5));
+      print(destructured(9));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "promoted-parameter.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["42", "3", "3"]);
+
+    let read = &program.functions[1];
+    assert_eq!(read.local_registers.len(), 1);
+    assert!(program.functions[2].local_registers.is_empty());
+    assert!(program.functions[3].local_registers.is_empty());
+}
+
+
+#[test]
 fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
     use crate::heap::{Cell, WeakMapEntries};
