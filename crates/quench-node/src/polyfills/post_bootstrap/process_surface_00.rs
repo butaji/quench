@@ -202,7 +202,11 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     }
     globalThis.process.getActiveResourcesInfo = () => [
       ...activeTimers.values(),
-      ...globalThis.process.__quenchGetActiveNetworkResources()
+      ...globalThis.process.__quenchGetActiveNetworkResources(),
+      ...Array.from(
+        globalThis.process.__quenchActiveRequests || [],
+        () => "FSReqCallback"
+      )
     ];
     globalThis.process._getActiveRequests = () =>
       globalThis.process.__quenchActiveRequests || [];
