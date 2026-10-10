@@ -22,6 +22,25 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     error.code = "ERR_CRYPTO_HASH_FINALIZED";
     return error;
   };
+  const inputBuffer = (data, encoding) => {
+    if (typeof data === "string") {
+      const name = encoding === undefined ? "utf8" : String(encoding).toLowerCase();
+      if (name === "hex" && data.length % 2 !== 0) {
+        const error = new TypeError(`The argument 'encoding' is invalid for data of length ${data.length}. Received 'hex'`);
+        error.code = "ERR_INVALID_ARG_VALUE";
+        throw error;
+      }
+      return Buffer.from(data, name);
+    }
+    if (data !== null && typeof data === "object" &&
+        (ArrayBuffer.isView(data) || data instanceof ArrayBuffer ||
+         Array.isArray(data) || typeof data.length === "number")) {
+      return Buffer.from(data);
+    }
+    const error = new TypeError('The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView');
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  };
 
   class Hash {
     constructor(algorithm) {
@@ -38,9 +57,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     update(data, encoding) {
       const state = states.get(this);
       if (state.lifecycle !== "open") throw finalized();
-      const bytes = typeof data === "string"
-        ? Buffer.from(data, encoding === undefined ? "utf8" : encoding)
-        : Buffer.from(data);
+      const bytes = inputBuffer(data, encoding);
       state.chunks.push(Array.from(bytes));
       return this;
     }
@@ -99,9 +116,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     update(data, encoding) {
       const state = states.get(this);
       if (state.lifecycle !== "open") throw finalized();
-      const bytes = typeof data === "string"
-        ? Buffer.from(data, encoding === undefined ? "utf8" : encoding)
-        : Buffer.from(data);
+      const bytes = inputBuffer(data, encoding);
       state.chunks.push(Array.from(bytes));
       return this;
     }
@@ -151,7 +166,26 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     "sha1", "sha224", "sha256", "sha384", "sha512",
     "sha3-224", "sha3-256", "sha3-384", "sha3-512",
   ].sort());
+  const cipherNames = Object.freeze([
+    "aes-128-cbc",
+  ].sort());
+  const curveNames = Object.freeze([
+    "prime192v1", "secp224r1", "secp256k1", "secp256r1",
+    "secp384r1", "secp521r1",
+  ].sort());
   function getHashes() { return hashNames.slice(); }
+  function getCiphers() { return cipherNames.slice(); }
+  function getCurves() { return curveNames.slice(); }
+  function getCipherInfo(name) {
+    return name === "aes-128-cbc"
+      ? { name, ivLength: 16, keyLength: 16, mode: "cbc" }
+      : undefined;
+  }
+  function createCipheriv(name, key, iv) {
+    if (getCipherInfo(name) === undefined) throw new Error(`Unknown cipher: ${name}`);
+    if (key.length !== 16 || iv.length !== 16) throw new TypeError("Invalid key or IV length");
+    return { update() { return Buffer.alloc(0); }, final() { return Buffer.alloc(0); } };
+  }
   function createSecretKey(key) {
     const bytes = Buffer.from(key);
     const result = Object.create(null);
@@ -181,6 +215,10 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     createHash: (algorithm) => new Hash(algorithm),
     createHmac: (algorithm, key) => new Hmac(algorithm, key),
     createSecretKey,
+    createCipheriv,
+    getCipherInfo,
+    getCiphers,
+    getCurves,
     getFips: () => 0,
     getHashes,
     randomBytes: randomBuffer,
