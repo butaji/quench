@@ -222,7 +222,19 @@ pub(super) fn require(
     compileForPublicLoader() {{ return this.exports; }}
   }}
   const internalBinding = (name) => {{
-    if (name === "constants") return {{ fs: require("fs").constants }};
+    if (name === "constants") return {{
+      fs: Object.assign({{ UV_DIRENT_UNKNOWN: 0, UV_DIRENT_FILE: 1, UV_DIRENT_DIR: 2, UV_DIRENT_LINK: 3, UV_DIRENT_FIFO: 4, UV_DIRENT_SOCKET: 5, UV_DIRENT_CHAR: 6, UV_DIRENT_BLOCK: 7 }}, globalThis["\0quench:require"]("fs").constants),
+      os: {{ errno: {{ EISDIR: -21 }}, signals: {{}} }}
+    }};
+    if (name === "types") return {{ isNativeError: (value) => value instanceof Error, isPromise: (value) => value instanceof Promise }};
+    if (name === "string_decoder") return {{ encodings: ["ascii", "utf8", "utf-8", "utf16le", "ucs2", "ucs-2", "base64", "base64url", "latin1", "binary", "hex"] }};
+    if (name === "util") return {{
+      constructSharedArrayBuffer: () => {{ throw new Error("SharedArrayBuffer construction is unavailable"); }},
+      guessHandleType: () => "UNKNOWN",
+      defineLazyProperties: (target, properties) => {{ for (const [key, getter] of Object.entries(properties)) Object.defineProperty(target, key, {{ configurable: true, get: getter }}); }},
+      privateSymbols: {{ arrow_message_private_symbol: Symbol("arrow_message"), decorated_private_symbol: Symbol("decorated") }},
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    }};
     return {{}};
   }};
   return {{ BuiltinModule, internalBinding, require: () => {{ throw new Error("builtin source loading is unavailable"); }} }};
@@ -242,6 +254,9 @@ pub(super) fn require(
         Some(BuiltinModule::UtilTypes) => {
             let util = cached_builtin(context, BuiltinModule::Util)?;
             return get(context, util, "types");
+        }
+        Some(BuiltinModule::InternalUrl) => {
+            return cached_builtin(context, BuiltinModule::Url);
         }
         Some(BuiltinModule::InternalDgram) => {
             let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
@@ -470,6 +485,7 @@ enum BuiltinModule {
     Dns,
     Dgram,
     InternalDgram,
+    InternalUrl,
     InternalTestBinding,
     InternalBlockList,
     InternalSocketAddress,
@@ -545,6 +561,7 @@ impl BuiltinModule {
             | Self::Path
             | Self::PathPosix
             | Self::PathWin32 => None,
+            Self::InternalUrl => None,
             Self::InternalDgram
             | Self::InternalTestBinding
             | Self::InternalBlockList
@@ -643,6 +660,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("dgram", BuiltinModule::Dgram),
     ("node:dgram", BuiltinModule::Dgram),
     ("internal/dgram", BuiltinModule::InternalDgram),
+    ("internal/url", BuiltinModule::InternalUrl),
     ("internal/test/binding", BuiltinModule::InternalTestBinding),
     ("internal/blocklist", BuiltinModule::InternalBlockList),
     ("internal/socketaddress", BuiltinModule::InternalSocketAddress),
@@ -695,6 +713,7 @@ pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedE
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
+        BuiltinModule::InternalUrl => cached_builtin(context, BuiltinModule::Url),
         BuiltinModule::UtilTypes => {
             let util = cached_builtin(context, BuiltinModule::Util)?;
             get(context, util, "types")
@@ -1142,12 +1161,14 @@ const getLinkedBinding = () => ({});
       defineLazyProperties: () => undefined,
       sleep: () => undefined,
     });
-    case "types": return require("util").types || {
-      isNativeError: (value) => value instanceof Error,
-      isPromise: (value) => value instanceof Promise,
-    };
+    case "types": return require("internal/util/types");
     case "constants": return {
-      os: { signals: (require("os").constants || {}).signals || {} },
+      fs: Object.assign({
+        UV_DIRENT_UNKNOWN: 0, UV_DIRENT_FILE: 1, UV_DIRENT_DIR: 2,
+        UV_DIRENT_LINK: 3, UV_DIRENT_FIFO: 4, UV_DIRENT_SOCKET: 5,
+        UV_DIRENT_CHAR: 6, UV_DIRENT_BLOCK: 7,
+      }, require("fs").constants),
+      os: { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
       crypto: { ENGINE_METHOD_ALL: 0xffffffff },
     };
     case "string_decoder": return { encodings: ["hex", "utf8", "ascii", "binary", "base64", "base64url", "latin1", "ucs2", "utf16le"] };
