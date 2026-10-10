@@ -100,6 +100,36 @@ AssertionError"#
     set(context, assert, "notStrictEqual", not_strict_equal)?;
     set(context, assert, "deepStrictEqual", deep_strict_equal)?;
     set(context, assert, "notDeepStrictEqual", not_deep_strict_equal)?;
+    let partial_factory = context.evaluate_script_rooted(
+        r#"(deepStrictEqual) => function partialDeepStrictEqual(actual, expected, message) {
+  const compare = (actualValue, expectedValue) => {
+    if (expectedValue === null || typeof expectedValue !== "object") {
+      deepStrictEqual(actualValue, expectedValue, message);
+      return;
+    }
+    if (actualValue === null || typeof actualValue !== "object") {
+      deepStrictEqual(actualValue, expectedValue, message);
+      return;
+    }
+    if (Array.isArray(expectedValue)) {
+      if (!Array.isArray(actualValue) || actualValue.length !== expectedValue.length) {
+        deepStrictEqual(actualValue, expectedValue, message);
+      }
+      for (let i = 0; i < expectedValue.length; i++) compare(actualValue[i], expectedValue[i]);
+      return;
+    }
+    for (const key of Reflect.ownKeys(expectedValue)) {
+      if (!Reflect.has(actualValue, key)) deepStrictEqual(undefined, expectedValue[key], message);
+      compare(actualValue[key], expectedValue[key]);
+    }
+  };
+  compare(actual, expected);
+}"#,
+        "node:assert/partial-deep-strict-equal.js",
+    )?;
+    let partial_deep_strict_equal =
+        context.call_rooted(partial_factory, undefined, &[deep_strict_equal])?;
+    set(context, assert, "partialDeepStrictEqual", partial_deep_strict_equal)?;
     set(context, assert, "match", match_string)?;
     set(context, assert, "doesNotMatch", does_not_match)?;
     set(context, assert, "fail", fail)?;
@@ -113,6 +143,7 @@ AssertionError"#
     set(context, strict, "strictEqual", strict_equal)?;
     set(context, strict, "notStrictEqual", not_strict_equal)?;
     set(context, strict, "deepStrictEqual", deep_strict_equal)?;
+    set(context, strict, "partialDeepStrictEqual", partial_deep_strict_equal)?;
     set(context, strict, "notDeepStrictEqual", not_deep_strict_equal)?;
     set(context, strict, "match", match_string)?;
     set(context, strict, "doesNotMatch", does_not_match)?;
