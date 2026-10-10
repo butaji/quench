@@ -711,7 +711,13 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             let stream = cached_builtin(context, BuiltinModule::Stream)?;
             crate::modules::zlib_shared_vm::module(context, stream)
         }
-        BuiltinModule::Crypto => crate::modules::crypto_shared_vm::module(context),
+        BuiltinModule::Crypto => {
+            let string_decoder = crate::modules::string_decoder_shared_vm::module(context)?;
+            let stream = crate::modules::stream_shared_vm::module(context, string_decoder)?;
+            let transform_key = context.string_rooted("Transform");
+            let transform = context.get_property_rooted(stream, transform_key)?;
+            crate::modules::crypto_shared_vm::module(context, transform)
+        }
         BuiltinModule::Domain => crate::modules::domain_shared_vm::module(context),
         BuiltinModule::Tls => crate::modules::tls_shared_vm::module(context),
         BuiltinModule::V8 => crate::modules::v8_shared_vm::module(context),

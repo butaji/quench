@@ -139,7 +139,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsReaddirSync" (1) => crate::modules::fs_shared_vm::stat::read_dir_sync,
         method "fsReadlinkSync" (1) => crate::modules::fs_shared_vm::stat::read_link_sync,
         method "fsRealpathSync" (1) => crate::modules::fs_shared_vm::stat::realpath_sync,
-        method "cryptoHash" (2) => crate::modules::crypto_shared_vm::hash,
+        method "cryptoHash" (3) => crate::modules::crypto_shared_vm::hash,
         method "cryptoHmac" (3) => crate::modules::crypto_shared_vm::hmac,
         method "cryptoSign" (3) => crate::modules::crypto_shared_vm::sign,
         method "cryptoRandomBytes" (1) => crate::modules::crypto_shared_vm::random_bytes,
