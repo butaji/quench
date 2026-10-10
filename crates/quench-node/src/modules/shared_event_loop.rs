@@ -436,6 +436,32 @@ impl SharedEventLoop {
         Some((listener.callback, event_root, true))
     }
 
+    pub fn remove_all_shared_listeners(
+        &mut self,
+        event: Option<&SharedEventKey>,
+    ) -> (Vec<SharedCallback>, Vec<quench_runtime::RootId>) {
+        let listeners: Vec<(SharedEventKey, Vec<SharedProcessListener>)> = match event {
+            Some(event) => self
+                .shared
+                .listeners
+                .remove_entry(event)
+                .into_iter()
+                .collect(),
+            None => std::mem::take(&mut self.shared.listeners)
+                .into_iter()
+                .collect(),
+        };
+        let mut callbacks = Vec::new();
+        let mut event_roots = Vec::new();
+        for (event, listeners) in listeners {
+            if let SharedEventKey::Symbol { root, .. } = event {
+                event_roots.push(root);
+            }
+            callbacks.extend(listeners.into_iter().map(|listener| listener.callback));
+        }
+        (callbacks, event_roots)
+    }
+
     pub fn shared_listener_count(&self) -> usize {
         self.shared.listeners.len()
     }

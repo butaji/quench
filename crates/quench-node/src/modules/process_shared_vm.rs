@@ -70,6 +70,9 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         context.host_function(crate::host::shared_vm::operation("processRemoveListener"))?;
     install(context, process, "removeListener", remove_listener)?;
     install(context, process, "off", remove_listener)?;
+    let remove_all_listeners = context
+        .host_function(crate::host::shared_vm::operation("processRemoveAllListeners"))?;
+    install(context, process, "removeAllListeners", remove_all_listeners)?;
     let once = context.host_function(crate::host::shared_vm::operation("processOnce"))?;
     install(context, process, "once", once)?;
     let emit = context.host_function(crate::host::shared_vm::operation("processEmit"))?;
@@ -1810,6 +1813,37 @@ pub(crate) fn remove_listener(
     if event_removed {
         update_process_event_count(context, receiver)?;
     }
+    Ok(receiver)
+}
+
+pub(crate) fn remove_all_listeners(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let event = match args.first().copied() {
+        Some(value)
+            if !context
+                .rooted_value(value)
+                .is_some_and(quench_runtime::Value::is_undefined) =>
+        {
+            Some(process_event_name(context, value)?)
+        }
+        _ => None,
+    };
+    let (callbacks, event_roots) = context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .scheduler
+        .remove_all_shared_listeners(event.as_ref());
+    for callback in callbacks {
+        release_context_callback(context, callback);
+    }
+    for root in event_roots {
+        context.release_root(root);
+    }
+    update_process_event_count(context, receiver)?;
     Ok(receiver)
 }
 
