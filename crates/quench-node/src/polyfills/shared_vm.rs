@@ -5,6 +5,12 @@ pub const ABORT: &str = quench_js_check::checked_js!(
 (() => {
   const signalStates = new WeakMap();
   const controllerSignals = new WeakMap();
+  const dependantSignals = Symbol("kDependantSignals");
+  const dependantFinalizer = new FinalizationRegistry((entry) => {
+    const source = entry.source.deref();
+    const dependant = entry.dependant.deref();
+    if (source && dependant) signalStates.get(source).children.delete(entry.dependant);
+  });
   const constructorToken = Symbol("AbortSignal constructor");
 
   const invalidReceiver = (name) => {
@@ -61,7 +67,7 @@ pub const ABORT: &str = quench_js_check::checked_js!(
   const dispatchListeners = (signal, state, event) => {
     for (const entry of state.listeners.slice()) {
       if (event.__stopped) break;
-      if (entry.once) removeAbortListener(state, entry.listener);
+      if (entry.once) removeAbortListener(signal, state, entry.listener);
       invokeListener(entry.listener, signal, event);
     }
     if (!event.__stopped && typeof state.onabort === "function") {
@@ -80,17 +86,39 @@ pub const ABORT: &str = quench_js_check::checked_js!(
       state.reason = item.reason;
       item.signal.aborted = true;
       aborted.push(item.signal);
-      for (const dependent of state.dependents) {
-        pending.push({ signal: dependent, reason: item.reason });
+      for (const dependent of state.children) {
+        const value = dependent.deref();
+        if (value) pending.push({ signal: value, reason: item.reason });
       }
     }
     for (const value of aborted) {
-      dispatchListeners(value, signalStates.get(value), abortEvent(value));
+      const state = signalStates.get(value);
+      settleDependents(value, state);
+      dispatchListeners(value, state, abortEvent(value));
     }
   };
 
-  const removeAbortListener = (state, listener) => {
+  const refreshDependents = (signal, state) => {
+    const observed = state.listeners.length > 0 || state.onabort !== null;
+    for (const source of state.parents) {
+      const dependents = signalStates.get(source).dependents;
+      if (observed) dependents.add(signal);
+      else dependents.delete(signal);
+    }
+  };
+
+  const settleDependents = (signal, state) => {
+    dependantFinalizer.unregister(signal);
+    for (const source of state.parents) {
+      const sourceState = signalStates.get(source);
+      sourceState.children.delete(state.childReferences.get(source));
+      sourceState.dependents.delete(signal);
+    }
+  };
+
+  const removeAbortListener = (signal, state, listener) => {
     state.listeners = state.listeners.filter((entry) => entry.listener !== listener);
+    refreshDependents(signal, state);
   };
 
   class AbortSignal {
@@ -105,7 +133,15 @@ pub const ABORT: &str = quench_js_check::checked_js!(
         reason: undefined,
         onabort: null,
         listeners: [],
-        dependents: [],
+        dependents: new Set(),
+        children: new Set(),
+        parents: [],
+        childReferences: new Map(),
+      });
+      Object.defineProperty(this, dependantSignals, {
+        configurable: false,
+        enumerable: false,
+        value: signalStates.get(this).dependents,
       });
       Object.defineProperty(this, "aborted", {
         configurable: true,
@@ -121,11 +157,12 @@ pub const ABORT: &str = quench_js_check::checked_js!(
       const callback = typeof listener === "function" || typeof listener.handleEvent === "function";
       if (!callback || state.listeners.some((entry) => entry.listener === listener)) return;
       state.listeners.push({ listener, once: Boolean(options?.once) });
+      refreshDependents(this, state);
     }
 
     removeEventListener(type, listener) {
       const state = signalState(this, "removeEventListener");
-      if (type === "abort") removeAbortListener(state, listener);
+      if (type === "abort") removeAbortListener(this, state, listener);
     }
 
     dispatchEvent(event) {
@@ -154,7 +191,9 @@ pub const ABORT: &str = quench_js_check::checked_js!(
     }
 
     set onabort(callback) {
-      signalState(this, "onabort").onabort = callback;
+      const state = signalState(this, "onabort");
+      state.onabort = callback;
+      refreshDependents(this, state);
     }
 
     static abort(reason = makeAbortReason()) {
@@ -184,8 +223,22 @@ pub const ABORT: &str = quench_js_check::checked_js!(
       if (aborted) {
         controller.abort(aborted.reason);
       } else {
+        const state = signalStates.get(controller.signal);
+        const sources = new Set();
         for (const signal of values) {
-          signalStates.get(signal).dependents.push(controller.signal);
+          sources.add(signal);
+          for (const source of signalStates.get(signal).parents) sources.add(source);
+        }
+        for (const signal of sources) {
+          const sourceState = signalStates.get(signal);
+          const reference = new WeakRef(controller.signal);
+          sourceState.children.add(reference);
+          state.parents.push(signal);
+          state.childReferences.set(signal, reference);
+          dependantFinalizer.register(controller.signal, {
+            source: new WeakRef(signal),
+            dependant: reference,
+          }, controller.signal);
         }
       }
       return controller.signal;
