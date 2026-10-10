@@ -1,0 +1,26 @@
+{
+  "fixture": "EarleyBoyer",
+  "pairs": 11,
+  "output_equal": true,
+  "baseline_sha256": "c00031392bbe312d5d1261c869ee1a221de987a59e5df2d7eb8e38967365a4e7",
+  "candidate_sha256": "4ded213432923b1dc2707a3d9a4860cf696b325e7c57238992f63ecdb5c3e56f",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "baseline_median_score": 422.0,
+  "candidate_median_score": 408.0,
+  "score_delta_median": -13.0,
+  "score_delta_bootstrap_95": [
+    -16.0,
+    -11.0
+  ],
+  "baseline_median_rss_bytes": 41746432,
+  "candidate_median_rss_bytes": 39256064,
+  "rss_delta_median_bytes": -2433024,
+  "rss_delta_bootstrap_95": [
+    -2564096,
+    -2322432
+  ],
+  "score_candidate_lower_pairs": 11,
+  "rss_candidate_lower_pairs": 11,
+  "bootstrap_replicates": 100000,
+  "interval_statistic": "median paired delta"
+}

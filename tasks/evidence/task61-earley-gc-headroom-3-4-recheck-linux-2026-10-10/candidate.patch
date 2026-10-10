@@ -1,0 +1,15 @@
+diff --git a/crates/quench-runtime/src/heap.rs b/crates/quench-runtime/src/heap.rs
+index f6994c018..ef44b9231 100644
+--- a/crates/quench-runtime/src/heap.rs
++++ b/crates/quench-runtime/src/heap.rs
+@@ -51,8 +51,8 @@ const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
+ // of 1/1 allows one live set's worth of new cells before collection (2x total
+ // occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x.
+ const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
+-    numerator: 1,
+-    denominator: 1,
++    numerator: 3,
++    denominator: 4,
+ };
+ 
+ fn gc_allocation_headroom(live_cells: usize) -> usize {
