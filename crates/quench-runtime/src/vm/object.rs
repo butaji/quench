@@ -1450,7 +1450,7 @@ impl<H: Host> Vm<H> {
         } else {
             return false;
         };
-        let invalidates_method = self.callable_write(object, cache.slot as usize, value);
+        let invalidates_method = self.cached_store_is_callable(object, cache.slot as usize, value);
         // SAFETY: a matching immutable shape proves the cached slot layout.
         unsafe {
             self.heap
@@ -1582,6 +1582,20 @@ impl<H: Host> Vm<H> {
             object = self.object_data(current).map(|data| data.proto);
         }
         false
+    }
+    /// `callable_write` for a slot a matching cached shape proved present: an ordinary
+    /// object's old value is read in place rather than through `object_data`.
+    #[inline(always)]
+    fn cached_store_is_callable(&self, object: Value, slot: usize, value: Value) -> bool {
+        if self.is_function(value) {
+            return true;
+        }
+        let Some(Cell::Object(data)) = self.heap.get(object) else {
+            return self.callable_write(object, slot, value);
+        };
+        // SAFETY: the matching cached shape proves the slot lies within the object's storage.
+        let old = unsafe { self.heap.property_get_unchecked(data, slot) };
+        self.is_function(old)
     }
     fn callable_write(&self, object: Value, slot: usize, value: Value) -> bool {
         self.is_function(value)
