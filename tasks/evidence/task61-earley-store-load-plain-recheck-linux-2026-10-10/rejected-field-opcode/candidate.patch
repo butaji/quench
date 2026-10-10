@@ -1,0 +1,211 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index b89d651d0..66698428d 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -549,6 +549,7 @@ opcodes!(
+     Yield => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
+     GetField => READ_THROW; layout Scalar; meaning FieldLookup, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
++    GetFieldStoreLocalPlain => READ_THROW; layout Scalar; meaning FieldLookup, @ Register, @ fields(LocalSlot, FieldBase, FieldLookupCacheSiteIndex),
+     GetIndex => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
+     ToPropertyKey => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     ToNumeric => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+@@ -1374,7 +1375,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16)
+ }
+ 
+ impl ResidualProgram {
+-    pub const FORMAT_VERSION: u8 = 82;
++    pub const FORMAT_VERSION: u8 = 83;
+     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
+         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
+         const FORMAT_VERSION_SHIFT: u32 = 16;
+diff --git a/crates/quench-runtime/src/bytecode/disassemble.rs b/crates/quench-runtime/src/bytecode/disassemble.rs
+index 281fd6e8b..09a2334a4 100644
+--- a/crates/quench-runtime/src/bytecode/disassemble.rs
++++ b/crates/quench-runtime/src/bytecode/disassemble.rs
+@@ -145,7 +145,15 @@ fn write_scalar_field(
+             write!(output, " b=function:{}", instruction.known_function_index())
+         }
+         (InstructionField::A, FieldLayout::LocalSlot) => {
+-            write!(output, " source-local={}", instruction.field_value(field))
++            if instruction.op() == super::Op::GetFieldStoreLocalPlain {
++                write!(
++                    output,
++                    " destination-local={}",
++                    instruction.field_value(field)
++                )
++            } else {
++                write!(output, " source-local={}", instruction.field_value(field))
++            }
+         }
+         (InstructionField::B, FieldLayout::LocalSlot) => {
+             write!(output, " b-local={}", instruction.field_value(field))
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index 1a31261d7..3290f2df4 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -613,8 +613,13 @@ impl ResidualProgram {
+                     super::Op::LoadLocalPlain
+                         | super::Op::StoreLocalPlain
+                         | super::Op::CopyLocalPlain
++                        | super::Op::GetFieldStoreLocalPlain
+                 ) && !plain_local_slots
+-                    .get(instruction.local_slot())
++                    .get(if instruction.op() == super::Op::GetFieldStoreLocalPlain {
++                        instruction.local_slot_a()
++                    } else {
++                        instruction.local_slot()
++                    })
+                     .copied()
+                     .unwrap_or(false)
+                 {
+@@ -650,11 +655,15 @@ impl ResidualProgram {
+                             | super::Op::LoadLocalPlain
+                             | super::Op::StoreLocalPlain
+                             | super::Op::SetThisFieldStrictLocal
++                            | super::Op::GetFieldStoreLocalPlain
+                             | super::Op::LoadEnvLocal
+                             | super::Op::StoreEnvLocal
+                     )
+                     .then(|| {
+-                        if instruction.op() == super::Op::SetThisFieldStrictLocal {
++                        if matches!(
++                            instruction.op(),
++                            super::Op::SetThisFieldStrictLocal | super::Op::GetFieldStoreLocalPlain
++                        ) {
+                             instruction.local_slot_a()
+                         } else {
+                             instruction.local_slot()
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 24feb3586..e94ef03e6 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -87,6 +87,23 @@ fusion_recipes! {
+                 second.atom_index() as u32,
+             )
+         };
++    GetFieldStoreLocalPlain: [GetField, StoreLocalPlain] =>
++        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
++            if first.result_flags() != 0
++                || second.register_a() != first.result_register()
++                || second.optional_register_b().is_some()
++            {
++                return None;
++            }
++            let destination = u16::try_from(second.local_slot()).ok()?;
++            Instr::try_new(
++                Op::GetFieldStoreLocalPlain,
++                destination,
++                first.b(),
++                first.c(),
++                first.imm(),
++            )
++        };
+     ProducerMove: [
+         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
+         LoadName, Move; Binary, Move; Unary, Move; GetField, Move; Move, Move
+@@ -499,6 +516,41 @@ mod tests {
+         assert!(apply_recipe(Recipe::BinaryJumpFalse, binary, other, &mut vec![]).is_none());
+     }
+ 
++    #[test]
++    fn field_read_store_fusion_preserves_lookup_and_plain_destination() {
++        let field = Instr::new(Op::GetField, 2, 3, 5, 17);
++        let store = Instr::new(Op::StoreLocalPlain, 2, 0, 0, 9);
++        let fused = apply_recipe(
++            Recipe::GetFieldStoreLocalPlain,
++            field,
++            store,
++            &mut vec![],
++        )
++        .unwrap();
++
++        assert_eq!(fused.op(), Op::GetFieldStoreLocalPlain);
++        assert_eq!((fused.a(), fused.b(), fused.c(), fused.imm()), (9, 3, 5, 17));
++
++        let mismatched = Instr::new(Op::StoreLocalPlain, 4, 0, 0, 9);
++        assert!(apply_recipe(
++            Recipe::GetFieldStoreLocalPlain,
++            field,
++            mismatched,
++            &mut vec![],
++        )
++        .is_none());
++
++        let mut this_sink = field;
++        this_sink.set_this_result();
++        assert!(apply_recipe(
++            Recipe::GetFieldStoreLocalPlain,
++            this_sink,
++            store,
++            &mut vec![],
++        )
++        .is_none());
++    }
++
+     fn rewrite_fixture(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
+         let mut program = Engine::specialize_unspecialized("", "rewrite-liveness.js").unwrap();
+         let function = &mut program.functions[0];
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 23a8b92db..1cb90ce1a 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -95,6 +95,15 @@ impl<H: Host> Vm<H> {
+                 let this = self.checked_this_binding(p, f)?;
+                 self.set_field_cached(p, this, i.atom_index(), value, i.cache_site_index(), true)?;
+             }
++            Op::GetFieldStoreLocalPlain => {
++                let lookup = i.field_lookup().ok_or_else(|| {
++                    JsError::validation("invalid nested field lookup encoding".into())
++                })?;
++                let value = self.get_field_lookup(p, f, lookup)?;
++                // SAFETY: validation proves this destination is an uncaptured
++                // plain local and bounds it by Function.locals.
++                unsafe { self.write_validated_local(f, i.local_slot_a(), value) };
++            }
+             Op::LoadLocal | Op::LoadEnvLocal => {
+                 let value = self.load_local_binding(p, f, i.local_slot(), None)?;
+                 self.write(f, i.result_register(), value);
+@@ -426,17 +435,7 @@ impl<H: Host> Vm<H> {
+                 let lookup = i.field_lookup().ok_or_else(|| {
+                     JsError::validation("invalid nested field lookup encoding".into())
+                 })?;
+-                let v = match lookup {
+-                    crate::bytecode::FieldLookup::Site(site) => self.resolve_field(p, f, site)?,
+-                    crate::bytecode::FieldLookup::Atom {
+-                        atom,
+-                        base,
+-                        cache_site,
+-                    } => {
+-                        let base = self.resolve_field_base(p, f, base)?;
+-                        self.get_field_cached(p, base, atom, cache_site)?
+-                    }
+-                };
++                let v = self.get_field_lookup(p, f, lookup)?;
+                 if i.writes_current_this() {
+                     let crate::bytecode::FieldLookup::Site(site) = lookup else {
+                         unreachable!("field sink is only attached to nested field lookup")
+@@ -1938,4 +1937,23 @@ impl<H: Host> Vm<H> {
+             None => Ok(value),
+         }
+     }
++
++    fn get_field_lookup(
++        &mut self,
++        p: &ResidualProgram,
++        frame: usize,
++        lookup: crate::bytecode::FieldLookup,
++    ) -> Result<Value, JsError> {
++        match lookup {
++            crate::bytecode::FieldLookup::Site(site) => self.resolve_field(p, frame, site),
++            crate::bytecode::FieldLookup::Atom {
++                atom,
++                base,
++                cache_site,
++            } => {
++                let base = self.resolve_field_base(p, frame, base)?;
++                self.get_field_cached(p, base, atom, cache_site)
++            }
++        }
++    }
+ }

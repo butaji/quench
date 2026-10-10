@@ -1,0 +1,55 @@
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 24feb3586..97a9efb92 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -57,6 +57,17 @@ fusion_recipes! {
+             first.set_optional_register_b(Some(second.result_register()));
+             Some(first)
+         };
++    StoreLoadLocalPlain: [StoreLocalPlain, LoadLocalPlain] =>
++        |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
++            if first.optional_register_b().is_some()
++                || first.local_slot() != second.local_slot()
++                || second.numeric_local_store_target().is_some()
++            {
++                return None;
++            }
++            first.set_optional_register_b(Some(second.result_register()));
++            Some(first)
++        };
+     LoadStoreLocalPlain: [LoadLocalPlain, StoreLocalPlain] =>
+         |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+             if first.numeric_local_store_target().is_some()
+@@ -499,6 +510,32 @@ mod tests {
+         assert!(apply_recipe(Recipe::BinaryJumpFalse, binary, other, &mut vec![]).is_none());
+     }
+ 
++    #[test]
++    fn plain_store_load_keeps_value_and_local_order() {
++        let store = Instr::new(Op::StoreLocalPlain, 4, 0, 0, 9);
++        let load = Instr::new(Op::LoadLocalPlain, 5, 0, 0, 9);
++        let fused = apply_recipe(Recipe::StoreLoadLocalPlain, store, load, &mut vec![]).unwrap();
++
++        assert_eq!(fused.op(), Op::StoreLocalPlain);
++        assert_eq!(fused.local_slot(), 9);
++        assert_eq!(fused.register_a(), 4);
++        assert_eq!(fused.optional_register_b(), Some(5));
++
++        let other_local = Instr::new(Op::LoadLocalPlain, 5, 0, 0, 10);
++        assert!(
++            apply_recipe(Recipe::StoreLoadLocalPlain, store, other_local, &mut vec![],).is_none()
++        );
++
++        let mut increment = load;
++        increment.set_numeric_local_store_target(Some(crate::bytecode::NumericLocalStoreTarget {
++            register: 6,
++            decrement: false,
++        }));
++        assert!(
++            apply_recipe(Recipe::StoreLoadLocalPlain, store, increment, &mut vec![],).is_none()
++        );
++    }
++
+     fn rewrite_fixture(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
+         let mut program = Engine::specialize_unspecialized("", "rewrite-liveness.js").unwrap();
+         let function = &mut program.functions[0];
