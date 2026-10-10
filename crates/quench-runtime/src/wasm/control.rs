@@ -882,6 +882,10 @@ impl Lowering<'_> {
                 self.emit(op, value, 0, 0, 0)?;
             }
             Condition::Value(value) => {
+                if when && let Some((step, source, addend)) = self.take_counter_step(value) {
+                    self.emit(Op::WasmI32AddImmediateJumpNonZero, value, source, addend, 0)?;
+                    return Ok(step);
+                }
                 let op = if when {
                     Op::WasmJumpI32NonZero
                 } else {
@@ -891,6 +895,25 @@ impl Lowering<'_> {
             }
         }
         Ok(pc)
+    }
+
+    /// A counted loop's step `value = source ± k`, emitted last, that the
+    /// branch on `value` can absorb: its position, source and addend.
+    fn take_counter_step(&mut self, value: Register) -> Option<(usize, Register, u16)> {
+        let (pc, step) = self.fusable_last()?;
+        if step.a() != value {
+            return None;
+        }
+        let addend = if step.op() == I32BinaryOperator::Add.immediate_op() {
+            step.imm() as i32
+        } else if step.op() == I32BinaryOperator::Subtract.immediate_op() {
+            (step.imm() as i32).checked_neg()?
+        } else {
+            return None;
+        };
+        let addend = i16::try_from(addend).ok()?;
+        self.code.pop();
+        Some((pc, step.b(), addend as u16))
     }
 
     fn branch_target(&self, relative_depth: u32) -> Result<BranchTarget, Diagnostic> {

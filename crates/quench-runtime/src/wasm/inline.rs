@@ -16,6 +16,11 @@ use super::{WasmSignatures, WasmType};
 /// budget bounds code growth per call site; larger callees keep their call.
 const INLINE_LEAF_OPERATORS: usize = 512;
 
+/// Inlining rounds. A function that only called leaves is call-free after a
+/// round and may be inlined in the next, so code grows by at most this many
+/// nested budgets per call site.
+const INLINE_ROUNDS: usize = 2;
+
 /// A callee that can replace its call sites.
 #[derive(Clone)]
 pub(super) struct Leaf {
@@ -59,7 +64,7 @@ fn disqualifies(operator: &Operator<'_>) -> bool {
 }
 
 /// The inlinable leaves among the defined functions, by defined index.
-pub(super) fn leaves(
+fn leaves(
     bodies: &[(Vec<ValType>, Vec<Operator<'_>>)],
     signatures: &WasmSignatures,
 ) -> Vec<Option<Leaf>> {
@@ -111,9 +116,41 @@ fn default_value<'a>(ty: ValType) -> Operator<'a> {
     }
 }
 
+/// Inline leaf calls throughout a module's bodies, by defined index.
+pub(super) fn inline_leaf_calls<'a>(
+    mut bodies: Vec<(Vec<ValType>, Vec<Operator<'a>>)>,
+    signatures: &WasmSignatures,
+) -> Option<Vec<(Vec<ValType>, Vec<Operator<'a>>)>> {
+    for _ in 0..INLINE_ROUNDS {
+        let leaves = leaves(&bodies, signatures);
+        if leaves.iter().all(Option::is_none) {
+            break;
+        }
+        bodies = bodies
+            .iter()
+            .enumerate()
+            .map(|(index, (locals, operators))| {
+                let params = signatures.defined_signature(index as u32)?.params.len();
+                let mut locals = locals.clone();
+                let operators = inline_body(
+                    index,
+                    params,
+                    &mut locals,
+                    operators,
+                    &bodies,
+                    &leaves,
+                    signatures,
+                )?;
+                Some((locals, operators))
+            })
+            .collect::<Option<_>>()?;
+    }
+    Some(bodies)
+}
+
 /// Inline every call to a leaf other than `caller` itself, appending the
 /// callees' locals to `locals` after the caller's `params` and locals.
-pub(super) fn inline_leaf_calls<'a>(
+fn inline_body<'a>(
     caller: usize,
     params: usize,
     locals: &mut Vec<ValType>,
