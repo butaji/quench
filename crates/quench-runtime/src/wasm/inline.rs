@@ -140,10 +140,17 @@ pub(super) fn inline_leaf_calls<'a>(
         if leaves.iter().all(Option::is_none) {
             break;
         }
-        bodies = bodies
+        // Only bodies that call a leaf are rebuilt; the rest stay in place.
+        let rebuilt = bodies
             .iter()
             .enumerate()
             .map(|(index, (locals, operators))| {
+                if !operators
+                    .iter()
+                    .any(|operator| leaf_call(operator, index, &leaves, signatures).is_some())
+                {
+                    return Some(None);
+                }
                 let params = signatures.defined_signature(index as u32)?.params.len();
                 let mut locals = locals.clone();
                 let operators = inline_body(
@@ -155,11 +162,39 @@ pub(super) fn inline_leaf_calls<'a>(
                     &leaves,
                     signatures,
                 )?;
-                Some((locals, operators))
+                Some(Some((locals, operators)))
             })
-            .collect::<Option<_>>()?;
+            .collect::<Option<Vec<_>>>()?;
+        for (body, rebuilt) in bodies.iter_mut().zip(rebuilt) {
+            if let Some(rebuilt) = rebuilt {
+                *body = rebuilt;
+            }
+        }
     }
     Some(bodies)
+}
+
+/// The leaf `operator` calls from `caller`, if it is a call to one.
+fn leaf_call<'l>(
+    operator: &Operator<'_>,
+    caller: usize,
+    leaves: &'l [Option<Leaf>],
+    signatures: &WasmSignatures,
+) -> Option<(usize, &'l Leaf)> {
+    let Operator::Call { function_index } = operator else {
+        return None;
+    };
+    let callee = signatures.defined_index(*function_index)? as usize;
+    (callee != caller).then_some(())?;
+    Some((callee, leaves.get(callee)?.as_ref()?))
+}
+
+/// Operators an inlined call to `leaf`, whose body is `body`, expands to:
+/// the parameter stores, the resets of locals not assigned first, the
+/// block, and the body itself (one operator per callee operator).
+fn inlined_length(leaf: &Leaf, body: &[Operator<'_>]) -> usize {
+    let resets = leaf.assigned_first.iter().filter(|assigned| !**assigned).count();
+    leaf.params.len() + 2 * resets + 1 + body.len()
 }
 
 /// Inline every call to a leaf other than `caller` itself, appending the
@@ -173,18 +208,20 @@ fn inline_body<'a>(
     leaves: &[Option<Leaf>],
     signatures: &WasmSignatures,
 ) -> Option<Vec<Operator<'a>>> {
-    let mut inlined = Vec::with_capacity(operators.len());
+    // The exact length: growing by doubling would hold up to three
+    // copies' worth of the body at once.
+    let length = operators
+        .iter()
+        .map(
+            |operator| match leaf_call(operator, caller, leaves, signatures) {
+                Some((callee, leaf)) => inlined_length(leaf, &bodies[callee].1),
+                None => 1,
+            },
+        )
+        .sum();
+    let mut inlined = Vec::with_capacity(length);
     for operator in operators {
-        let callee = match operator {
-            Operator::Call { function_index } => signatures
-                .defined_index(*function_index)
-                .map(|index| index as usize)
-                .filter(|index| *index != caller),
-            _ => None,
-        };
-        let Some((callee, leaf)) =
-            callee.and_then(|callee| Some((callee, leaves.get(callee)?.as_ref()?)))
-        else {
+        let Some((callee, leaf)) = leaf_call(operator, caller, leaves, signatures) else {
             inlined.push(operator.clone());
             continue;
         };
