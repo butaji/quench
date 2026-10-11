@@ -1222,6 +1222,17 @@ pub(crate) struct RegExpLiteralSite {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Superinstruction {
     pub code: [Instr; 4],
+    /// `code` expanded once for dispatch, which reads every operand of every part.
+    pub wide: [WideInstruction; 4],
+}
+
+impl Superinstruction {
+    pub(crate) fn new(code: [Instr; 4]) -> Self {
+        Self {
+            code,
+            wide: code.map(Instr::as_wide),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
