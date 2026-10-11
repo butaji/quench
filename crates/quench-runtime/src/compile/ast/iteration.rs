@@ -37,6 +37,14 @@ fn iteration_may_capture_bindings(
 }
 
 impl FunctionCompiler<'_, '_> {
+    pub(super) fn close_iterator(&mut self, iterator: Register) -> Register {
+        // IteratorClose produces a result even when a synchronous caller
+        // discards it. Register zero may hold a promoted parameter/local.
+        let result = self.reg();
+        self.emit(Op::IteratorClose, result, iterator, 0, 0);
+        result
+    }
+
     pub(super) fn for_of_statement(&mut self, item: &ForOfStatement<'_>) {
         self.for_of_statement_labeled(item, None);
     }
@@ -338,8 +346,7 @@ impl FunctionCompiler<'_, '_> {
             self.emit(Op::IteratorCleanupPop, 0, 0, 0, 0);
         }
         let close_iterator = self.load_atom(iterator);
-        let close_result = self.reg();
-        let _ = self.emit(Op::IteratorClose, close_result, close_iterator, 0, 0);
+        let close_result = self.close_iterator(close_iterator);
         if await_values {
             let awaited = self.reg();
             self.emit(Op::Await, awaited, close_result, 0, 0);
