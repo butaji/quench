@@ -311,7 +311,7 @@ const UTIL: &str = quench_js_check::checked_js!(
     isPromise: (value) => value instanceof Promise,
   };
   const systemErrorNames = new Map([
-    [-9, "EBADF"], [-22, "EINVAL"], [-88, "ENOTSOCK"], [-98, "EADDRINUSE"],
+    [-2, "ENOENT"], [-8, "ENOEXEC"], [-9, "EBADF"], [-13, "EACCES"], [-22, "EINVAL"], [-88, "ENOTSOCK"], [-98, "EADDRINUSE"],
     [-99, "EADDRNOTAVAIL"], [-111, "ECONNREFUSED"], [-113, "EHOSTUNREACH"],
     [-101, "ENETUNREACH"], [-110, "ETIMEDOUT"], [-32, "EPIPE"], [-4094, "UNKNOWN"],
   ]);
