@@ -223,38 +223,69 @@ fn weak_ref_target_is_cleared_after_collection() {
 }
 
 #[test]
-fn exhausted_heap_generations_retire_slots_without_weak_handle_aliasing() {
+fn weak_ref_owner_clears_its_handle_before_slot_reuse() {
     let mut heap = Heap::new();
-    let target = heap.alloc(Cell::String("old".into()));
-    let slot = target.heap_index().unwrap() as usize;
-    heap.generations[slot] = u32::MAX;
-    let stale = heap.weak_handle(target).unwrap();
+    let target = heap.alloc(Cell::String("target".into()));
+    let target_slot = target.heap_index().unwrap();
+    let target_handle = heap.weak_handle(target).unwrap();
+    let reference = heap.alloc(Cell::WeakRef {
+        object: Box::new(plain_object()),
+        target: Some(target_handle),
+    });
+    let reference_root = heap.root(reference);
 
     heap.collect([]);
-    assert!(heap.get(target).is_none());
-    assert_eq!(heap.weak_value(stale), None);
+    assert!(heap.weak_value(target_handle).is_none());
+    assert!(matches!(
+        heap.get(reference),
+        Some(Cell::WeakRef { target: None, .. })
+    ));
 
-    let replacement = heap.alloc(Cell::String("new".into()));
-    assert_ne!(replacement.heap_index(), Some(slot as u32));
-    assert_eq!(heap.weak_value(stale), None);
-    assert_eq!(heap.retired_slots, 1);
-
-    let next = heap.alloc(Cell::String("next".into()));
-    assert_ne!(next.heap_index(), Some(slot as u32));
-    assert_eq!(heap.retired_slots, 1);
+    let replacement = heap.alloc(Cell::String("replacement".into()));
+    assert_eq!(replacement.heap_index(), Some(target_slot));
+    assert!(matches!(
+        heap.get(reference),
+        Some(Cell::WeakRef { target: None, .. })
+    ));
+    assert!(heap.release_root(reference_root));
 }
 
 #[test]
-fn stale_weak_handles_cannot_resolve_reused_slots() {
+fn finalization_registry_clears_dead_tokens_before_slot_reuse() {
     let mut heap = Heap::new();
-    let first = heap.alloc(Cell::String("first".into()));
-    let stale = heap.weak_handle(first).unwrap();
-    heap.collect([]);
-    let replacement = heap.alloc(Cell::String("replacement".into()));
-    assert_eq!(first.heap_index(), replacement.heap_index());
-    assert!(heap.weak_value(stale).is_none());
-    let current = heap.weak_handle(replacement).unwrap();
-    assert_eq!(heap.weak_value(current), Some(replacement));
+    let target = heap.alloc(Cell::Object(plain_object()));
+    let token = heap.alloc(Cell::Object(plain_object()));
+    let token_slot = token.heap_index().unwrap();
+    let target_handle = heap.weak_handle(target).unwrap();
+    let token_handle = heap.weak_handle(token).unwrap();
+    let registry = heap.alloc(Cell::FinalizationRegistry {
+        object: Box::new(plain_object()),
+        callback: Value::UNDEFINED,
+        entries: Box::new(FinalizationEntries(vec![FinalizationEntry {
+            target: target_handle,
+            held: Value::number(1.0),
+            token: Some(token_handle),
+        }])),
+    });
+    let target_root = heap.root(target);
+    let registry_root = heap.root(registry);
+
+    assert!(heap.collect([]).is_empty());
+    let Some(Cell::FinalizationRegistry { entries, .. }) = heap.get(registry) else {
+        panic!("registry remains live");
+    };
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].token, None);
+    assert_eq!(heap.weak_value(target_handle), Some(target));
+
+    let replacement = heap.alloc(Cell::Object(plain_object()));
+    assert_eq!(replacement.heap_index(), Some(token_slot));
+    let Some(Cell::FinalizationRegistry { entries, .. }) = heap.get(registry) else {
+        panic!("registry remains live");
+    };
+    assert_eq!(entries[0].token, None);
+    assert!(heap.release_root(target_root));
+    assert!(heap.release_root(registry_root));
 }
 
 #[test]
