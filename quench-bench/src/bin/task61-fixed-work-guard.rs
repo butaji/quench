@@ -672,7 +672,11 @@ fn validate_report(report: &Value, expected: Option<&Checkpoint>) -> Result<(), 
     if fixture_names.len() != fixtures.len() {
         return Err("report contains an unknown fixture key".into());
     }
-    let expected_fixtures = suite_fixture_names(report)?;
+    let expected_fixtures = if expected.is_some() {
+        suite_fixture_names_from_inputs(report)?
+    } else {
+        suite_fixture_names(report)?
+    };
     if expected.is_none() && fixture_names != expected_fixtures {
         return Err("initial report must contain exactly the eight V8-v7 fixtures".into());
     }
@@ -785,7 +789,9 @@ fn validate_report_provenance(report: &Value, expected: &Checkpoint) -> Result<(
     }
     if required_string(report, "source_revision")? != expected.source_revision
         || report.get("source_dirty").and_then(Value::as_bool) != Some(expected.source_dirty)
-        || report.get("corpus") != Some(&expected.corpus)
+        || !report
+            .get("corpus")
+            .is_some_and(|corpus| same_corpus_checkout(corpus, &expected.corpus))
         || report.get("suite_inputs") != Some(&expected.suite_inputs)
     {
         return Err("source or corpus provenance changed between report batches".into());
@@ -832,6 +838,10 @@ fn suite_fixture_names(report: &Value) -> Result<BTreeSet<String>, String> {
     {
         return Err("report does not cover the pinned V8-v7 fixture set".into());
     }
+    suite_fixture_names_from_inputs(report)
+}
+
+fn suite_fixture_names_from_inputs(report: &Value) -> Result<BTreeSet<String>, String> {
     let suite_inputs = report
         .get("suite_inputs")
         .and_then(Value::as_array)
@@ -850,6 +860,12 @@ fn suite_fixture_names(report: &Value) -> Result<BTreeSet<String>, String> {
         return Err("suite input list has no benchmark fixtures".into());
     }
     Ok(fixtures)
+}
+
+fn same_corpus_checkout(actual: &Value, expected: &Value) -> bool {
+    ["pinned_revision", "checkout_revision", "checkout_clean"]
+        .iter()
+        .all(|field| actual.get(*field) == expected.get(*field))
 }
 
 fn fixture_record<'a>(report: &'a Value, fixture_name: &str) -> Option<&'a Value> {
@@ -1078,7 +1094,8 @@ fn usage(message: &str) -> ! {
 #[cfg(test)]
 mod tests {
     use super::{
-        bootstrap_interval, decide_fixture, fixture_needs_top_up, ChangeKind, Checkpoint, Pair,
+        bootstrap_interval, decide_fixture, fixture_needs_top_up, same_corpus_checkout,
+        suite_fixture_names, suite_fixture_names_from_inputs, ChangeKind, Checkpoint, Pair,
     };
 
     fn state(change_kind: ChangeKind) -> Checkpoint {
@@ -1115,6 +1132,48 @@ mod tests {
             },
             top_up_batches: Vec::new(),
         }
+    }
+
+    #[test]
+    fn top_up_fixture_set_is_derived_without_the_full_suite_flag() {
+        let report = serde_json::json!({
+            "corpus": {"fixture_set_matches": false},
+            "suite_inputs": [
+                {"path": "v8-v7/base.js"},
+                {"path": "v8-v7/deltablue.js"}
+            ]
+        });
+
+        assert_eq!(
+            suite_fixture_names_from_inputs(&report).unwrap(),
+            ["deltablue.js".to_string()].into_iter().collect()
+        );
+        assert!(suite_fixture_names(&report).is_err());
+    }
+
+    #[test]
+    fn corpus_fixture_subset_is_not_checkout_identity() {
+        let expected = serde_json::json!({
+            "pinned_revision": "corpus-revision",
+            "checkout_revision": "checkout-revision",
+            "checkout_clean": true,
+            "fixture_set_matches": true
+        });
+        let subset = serde_json::json!({
+            "pinned_revision": "corpus-revision",
+            "checkout_revision": "checkout-revision",
+            "checkout_clean": true,
+            "fixture_set_matches": false
+        });
+        let changed_checkout = serde_json::json!({
+            "pinned_revision": "corpus-revision",
+            "checkout_revision": "different-checkout",
+            "checkout_clean": true,
+            "fixture_set_matches": false
+        });
+
+        assert!(same_corpus_checkout(&subset, &expected));
+        assert!(!same_corpus_checkout(&changed_checkout, &expected));
     }
 
     #[test]
