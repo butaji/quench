@@ -10,6 +10,8 @@ pub(crate) use commonjs::source_kind;
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
+        method "stripVTControlCharacters" (1) => crate::modules::util_shared_vm::strip_vt,
+        method "parseEnv" (1) => crate::modules::util_shared_vm::parse_env,
         method "utilTypeCheck" (1) => crate::modules::util_shared_vm::type_check,
         method "uptime" (0) => crate::modules::process_shared_vm::uptime,
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,

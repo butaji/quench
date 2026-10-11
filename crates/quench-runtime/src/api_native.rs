@@ -153,6 +153,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Copy string code units without coercion or lone-surrogate loss.
+    pub fn string_code_units(&mut self, root: RootId) -> Result<Option<Vec<u16>>, RootedError> {
+        let result = self.vm.embedding_string_units(root);
+        result.map_err(|error| self.error(error))
+    }
+
     /// Check whether a live rooted value is a JavaScript Symbol primitive.
     pub fn is_symbol_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
         let result = self.vm.embedding_is_symbol(root);
