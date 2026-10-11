@@ -29,6 +29,27 @@ pub(super) enum Codec {
     ZstdCompress,
     ZstdDecompress,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Family {
+    Zlib,
+    Brotli,
+    Zstd,
+}
+impl Codec {
+    pub(super) fn family(self) -> Family {
+        match self {
+            Self::Gzip
+            | Self::Gunzip
+            | Self::Deflate
+            | Self::Inflate
+            | Self::DeflateRaw
+            | Self::InflateRaw
+            | Self::Unzip => Family::Zlib,
+            Self::BrotliCompress | Self::BrotliDecompress => Family::Brotli,
+            Self::ZstdCompress | Self::ZstdDecompress => Family::Zstd,
+        }
+    }
+}
 pub(super) const CODECS: &[(&str, &str, Codec)] = &[
     ("gzip", "Gzip", Codec::Gzip),
     ("gunzip", "Gunzip", Codec::Gunzip),
@@ -54,63 +75,15 @@ pub(super) fn codec(name: &str) -> Option<Codec> {
 }
 
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(Transform, Buffer, transform, constants, codecs, open, crc32Operation, queueCallback) => {
+    r#"(Transform, Buffer, constants, codecs, open, crc32Operation, queueCallback, prepare) => {
   function crc32(data, value = 0) { return crc32Operation(data, value); }
-  const minZstdLevel = -(2 ** 31);
-  const maxZstdLevel = 2 ** 31 - 1;
   const nativeStreams = new WeakMap();
-  const levelFor = (mode, options) => {
-    if (options == null) return undefined;
-    if (["gzip", "deflate", "deflateRaw"].includes(mode)) {
-      const requested = options.level;
-      if (requested === undefined) return undefined;
-      const level = Number(requested);
-      if (!Number.isInteger(level) || level < -1 || level > 9) {
-        const error = new RangeError("The value of \"level\" is out of range");
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
-      }
-      return level;
-    }
-    const parameter = mode === "brotliCompress"
-      ? constants.BROTLI_PARAM_QUALITY
-      : mode === "zstdCompress"
-      ? constants.ZSTD_c_compressionLevel
-      : undefined;
-    if (parameter === undefined) return undefined;
-    const requested = options.params?.[parameter];
-    if (requested === undefined) return undefined;
-    const level = Number(requested);
-    if (!Number.isSafeInteger(level)) {
-      const error = new RangeError("The compression parameter is out of range");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    if (mode === "brotliCompress" && (level < 0 || level > 11)) {
-      const error = new RangeError("The Brotli quality is out of range");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    if (mode === "zstdCompress" && (level < minZstdLevel || level > maxZstdLevel)) {
-      const error = new RangeError("The Zstandard compression level is out of range");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    return level;
-  };
-  const encode = (mode, input, options) => Buffer.from(transform(
-    mode,
-    input,
-    levelFor(mode, options),
-    options,
-  ));
   class Zlib extends Transform {
     constructor(mode, options) {
-      super(options);
-      this._zlibMode = mode;
-      this._zlibOptions = options;
+      const prepared = prepare(mode, options);
+      super(prepared.streamOptions);
       this._zlibChunks = [];
-      nativeStreams.set(this, open(this, mode, levelFor(mode, options), options));
+      nativeStreams.set(this, open(this, mode, prepared.config, prepared.infoOptions));
     }
 
     _transform(chunk, encoding, callback) {
@@ -130,6 +103,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
     }
     _destroy(error, callback) { return nativeStreams.get(this).destroy(error, callback); }
     close(callback) { return nativeStreams.get(this).close(callback); }
+    get _closed() { return nativeStreams.get(this).closed(); }
 
   }
 
@@ -142,17 +116,18 @@ const FACTORY: &str = quench_js_check::checked_js!(
     Object.defineProperty(Codec, "name", { value: name });
     return Codec;
   };
-  const sync = (mode) => (input, options) => encode(mode, input, options);
-  const callbackCodec = (mode, Codec) => (input, options, callback) =>
-    queueCallback(encode, mode, input, options, callback, Codec);
+  const sync = (Codec) => (input, options) => nativeStreams.get(new Codec(options)).sync(input);
+  const apiOf = (stream) => nativeStreams.get(stream);
+  const callbackCodec = (Codec) => (input, options, callback) =>
+    queueCallback(Codec, input, options, callback, apiOf);
   const api = {
     crc32,
   };
   for (const [mode, name] of codecs) {
     const Codec = codecClass(name, mode);
     api[name] = Codec;
-    api[`${mode}Sync`] = sync(mode);
-    api[mode] = callbackCodec(mode, Codec);
+    api[`${mode}Sync`] = sync(Codec);
+    api[mode] = callbackCodec(Codec);
     api[`create${name}`] = (options) => new Codec(options);
   }
   Object.defineProperty(api, "constants", {
@@ -180,10 +155,6 @@ pub(crate) fn module(
     let factory = context.evaluate_script_rooted(FACTORY, "node:zlib/shared.js")?;
     let buffer_module = crate::host::shared_vm::commonjs::buffer_module(context)?;
     let max_output = get(context, buffer_module, "kMaxLength")?;
-    let transform = context.host_function_with_data(
-        crate::host::shared_vm::operation("zlibTransform"),
-        max_output,
-    )?;
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let stream_transform = get(context, stream, "Transform")?;
@@ -196,10 +167,14 @@ pub(crate) fn module(
     }
     let codecs = context.array_rooted(&rows)?;
     let finished = get(context, stream, "finished")?;
+    let buffer_prototype = get(context, buffer, "prototype")?;
+    let open_data = context.array_rooted(&[finished, buffer_prototype])?;
     let open = context.host_function_with_data(
         crate::host::shared_vm::operation("zlibStreamOpen"),
-        finished,
+        open_data,
     )?;
+    let prepare = context
+        .host_function_with_data(crate::host::shared_vm::operation("zlibPrepare"), max_output)?;
     let queue_callback =
         context.host_function(crate::host::shared_vm::operation("zlibCallbackQueue"))?;
     let crc32 = context.host_function(crate::host::shared_vm::operation("zlibCrc32"))?;
@@ -210,64 +185,17 @@ pub(crate) fn module(
         &[
             stream_transform,
             buffer,
-            transform,
             constants,
             codecs,
             open,
             crc32,
             queue_callback,
+            prepare,
         ],
     )
 }
 
-/// Execute a real codec transform for the guest's sync, callback, and stream
-/// facades. Input and output are byte arrays, so runtime values do not cross
-/// the shared-VM boundary.
-pub(crate) fn transform(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let mode = match args
-        .first()
-        .copied()
-        .and_then(|value| context.string_text(value).ok().flatten())
-    {
-        Some(mode) => mode,
-        None => {
-            let error = context.type_error_rooted("zlib mode must be a string")?;
-            return Err(context.throw(error));
-        }
-    };
-    let default_max = context.host_function_data()?;
-    let max_output = output_limit(context, args.get(3).copied(), default_max)?;
-    let input = codec_input(context, args.get(1).copied())?;
-    let level = args
-        .get(2)
-        .copied()
-        .and_then(|root| context.rooted_value(root))
-        .and_then(|value| value.as_number())
-        .filter(|number| number.is_finite())
-        .map(|number| number as i32);
-    let Some(mode) = codec(&mode) else {
-        return Err(RootedError::host("unsupported zlib operation"));
-    };
-    let output = match transform_bytes(mode, &input, level, Some(max_output)) {
-        Ok(output) => output,
-        Err(error) => {
-            let exception = super::zlib_stream_shared_vm::codec_error(context, error)?;
-            return Err(context.throw(exception));
-        }
-    };
-    if output.len() as f64 > max_output {
-        let error =
-            super::zlib_stream_shared_vm::codec_error(context, output_limit_error(max_output))?;
-        return Err(context.throw(error));
-    }
-    context.uint8_array_rooted(&output)
-}
-
-fn transform_bytes(
+pub(super) fn transform_bytes(
     mode: Codec,
     input: &[u8],
     level: Option<i32>,
@@ -281,7 +209,7 @@ fn transform_bytes(
         Some(level @ 0..=9) => Compression::new(level as u32),
         Some(_) => Compression::default(),
     };
-    match mode {
+    let output = match mode {
         Codec::Gzip => {
             let mut encoder = GzEncoder::new(Vec::new(), flate_level);
             encoder.write_all(input)?;
@@ -324,7 +252,11 @@ fn transform_bytes(
         ),
         Codec::ZstdCompress => zstd::stream::encode_all(input, level.unwrap_or(DEFAULT_ZSTD_LEVEL)),
         Codec::ZstdDecompress => read_all(zstd::stream::read::Decoder::new(input)?, max_output),
+    }?;
+    if max_output.is_some_and(|limit| output.len() as f64 > limit) {
+        return Err(output_limit_error(max_output.unwrap()));
     }
+    Ok(output)
 }
 
 fn read_all(mut reader: impl Read, max_output: Option<f64>) -> Result<Vec<u8>, std::io::Error> {
@@ -488,7 +420,7 @@ impl std::error::Error for OutputLimit {}
 fn output_limit_error(limit: f64) -> std::io::Error {
     std::io::Error::other(OutputLimit(limit))
 }
-fn output_limit(
+pub(super) fn output_limit(
     context: &mut NativeContext<'_, NodeHost>,
     options: Option<RootId>,
     default: RootId,
@@ -559,32 +491,31 @@ pub(crate) fn queue_callback(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
-    let encode = *args
+    let constructor = *args
         .first()
-        .ok_or_else(|| RootedError::host("zlib callback encoder missing"))?;
-    let mode = *args
-        .get(1)
-        .ok_or_else(|| RootedError::host("zlib callback mode missing"))?;
-    let mut options = args.get(3).copied().unwrap_or(undefined);
+        .ok_or_else(|| RootedError::host("zlib callback constructor missing"))?;
+    let mut options = args.get(2).copied().unwrap_or(undefined);
     let callback = if context.is_callable_rooted(options)? {
         let callback = options;
         options = undefined;
         callback
     } else {
-        args.get(4).copied().unwrap_or(undefined)
+        args.get(3).copied().unwrap_or(undefined)
     };
-    let constructor = *args
-        .get(5)
-        .ok_or_else(|| RootedError::host("zlib callback constructor missing"))?;
     let engine = context.construct_rooted(constructor, constructor, &[options])?;
     if !context.is_callable_rooted(callback)? {
         return Err(super::util_shared_vm::argument_type_error(
             context, callback, "callback", "function",
         )?);
     }
-    let input = codec_input(context, args.get(2).copied())?;
+    set(context, engine, "cb", callback)?;
+    let getter = *args
+        .get(4)
+        .ok_or_else(|| RootedError::host("zlib private API getter missing"))?;
+    let api = context.call_rooted(getter, undefined, &[engine])?;
+    let input = codec_input(context, args.get(1).copied())?;
     let input = context.uint8_array_rooted(&input)?;
-    let data = context.array_rooted(&[encode, mode, input, options, callback, engine])?;
+    let data = context.array_rooted(&[api, input, callback])?;
     let pump = context
         .host_function_with_data(crate::host::shared_vm::operation("zlibCallbackRun"), data)?;
     let state = context.host_mut().shared_state();
@@ -612,26 +543,12 @@ pub(crate) fn run_callback(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let data = context.host_function_data()?;
-    let encode = get(context, data, "0")?;
-    let mode = get(context, data, "1")?;
-    let input = get(context, data, "2")?;
-    let options = get(context, data, "3")?;
-    let callback = get(context, data, "4")?;
-    let engine = get(context, data, "5")?;
-    let undefined = context.undefined();
-    match context.call_rooted(encode, undefined, &[mode, input, options]) {
-        Ok(result) => {
-            let close = get(context, engine, "close")?;
-            context.call_rooted(close, engine, &[])?;
-            let null = context.null();
-            context.call_rooted(callback, engine, &[null, result])?;
-        }
-        Err(error)=>{
-            let Some(exception)=error.exception else {return Err(error)};
-            let close=get(context,engine,"close")?;context.call_rooted(close,engine,&[])?;
-            let result=context.call_rooted(callback,engine,&[exception]);
-            context.release_root(exception);result?;
-        }
+    let api=get(context,data,"0")?;let input=get(context,data,"1")?;let callback=get(context,data,"2")?;
+    let engine=get(context,api,"stream")?;let sync=get(context,api,"sync")?;
+    let undefined=context.undefined();
+    match context.call_rooted(sync,undefined,&[input]) {
+        Ok(result)=>{let destroy=get(context,engine,"destroy")?;context.call_rooted(destroy,engine,&[])?;let null=context.null();context.call_rooted(callback,engine,&[null,result])?;}
+        Err(error)=>{let Some(exception)=error.exception else{return Err(error)};let destroy=get(context,engine,"destroy")?;context.call_rooted(destroy,engine,&[])?;let result=context.call_rooted(callback,engine,&[exception]);context.release_root(exception);result?;}
     }
     Ok(undefined)
 }
