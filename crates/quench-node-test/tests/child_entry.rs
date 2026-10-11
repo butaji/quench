@@ -49,3 +49,36 @@ fn node_cli_separates_runtime_options_from_guest_arguments() {
         assert_eq!(observations[0].stdout, observations[1].stdout);
     }
 }
+
+#[test]
+fn package_scope_applies_inside_nested_checkouts() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"type":"module"}"#,
+    )
+    .unwrap();
+    let nested = directory.path().join("tests/node");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(
+        nested.join("entry.js"),
+        "export const value = 'package-module'; console.log(value)",
+    )
+    .unwrap();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command
+            .current_dir(directory.path())
+            .arg("tests/node/entry.js");
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let observation =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                .unwrap();
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(0));
+        assert_eq!(observation.stdout, b"package-module\n");
+        assert!(observation.stderr.is_empty());
+    }
+}
