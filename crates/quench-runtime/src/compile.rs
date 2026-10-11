@@ -2479,7 +2479,7 @@ impl<'a> Compiler<'a> {
                 None
             } else {
                 let name = self.atoms[source_name as usize].to_string();
-                let binding = self.atom(&format!("{name}\0quench:self-binding:{id}"));
+                let binding = self.atom(&format!("{name}{}{id}", crate::bytecode::SELF_BINDING_MARKER));
                 locals.push(binding);
                 Some((source_name, binding))
             }
@@ -2746,6 +2746,7 @@ impl<'a> Compiler<'a> {
             decoded: Default::default(),
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
             handlers: function.handlers,
             register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
         };

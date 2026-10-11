@@ -17,6 +17,10 @@ impl AtomClass {
     /// `size`, buffer and view geometry) answer outside ordinary shape storage, so field
     /// caches never record them.
     pub(super) const VIRTUAL_FIELD: u8 = 1 << 5;
+    /// The compiler's hidden name for a named function expression's own immutable binding.
+    pub(super) const SELF_BINDING: u8 = 1 << 6;
+    /// Engine-internal names, which begin with NUL and never name a source binding.
+    pub(super) const INTERNAL: u8 = 1 << 7;
 
     #[inline(always)]
     pub(super) fn contains(self, bits: u8) -> bool {
@@ -127,6 +131,12 @@ impl<H: Host> Vm<H> {
             "length" | "size" | "byteLength" | "byteOffset" | "buffer"
         ) {
             bits |= AtomClass::VIRTUAL_FIELD;
+        }
+        if name.starts_with('\0') {
+            bits |= AtomClass::INTERNAL;
+        }
+        if name.contains(crate::bytecode::SELF_BINDING_MARKER) {
+            bits |= AtomClass::SELF_BINDING;
         }
         self.atom_classes[atom as usize].set(bits);
         AtomClass(bits)

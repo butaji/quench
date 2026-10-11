@@ -1683,6 +1683,7 @@ impl<H: Host> Vm<H> {
                     self.with_stack.truncate(self.frames[f].with_base);
                     let frame = &mut self.frames[f];
                     frame.context = CallContext::Internal;
+                    frame.reflected_parameters = 0;
                     frame.original_arguments.clear();
                     frame.locals.fill(Value::UNDEFINED);
                     frame.registers.fill(Value::UNDEFINED);

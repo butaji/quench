@@ -12,6 +12,10 @@ mod control_flow;
 mod instruction;
 mod numeric_ops;
 pub(crate) use atoms::AtomTable;
+
+/// Infix of the compiler's hidden atom for a named function expression's own binding:
+/// `{name}{SELF_BINDING_MARKER}{function id}`.
+pub(crate) const SELF_BINDING_MARKER: &str = "\0quench:self-binding:";
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
@@ -847,6 +851,8 @@ pub struct Function {
     pub(crate) plain_locals: std::cell::OnceCell<Box<[bool]>>,
     /// Lazily derived `activation_bindings_observable`; never serialized.
     pub(crate) activation_bindings: std::cell::OnceCell<bool>,
+    /// Lazily derived `reflects_live_parameters`; never serialized.
+    pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     pub(crate) handlers: Vec<Handler>,
     pub(crate) register_root_offset: u32,
 }
@@ -1015,36 +1021,83 @@ impl Function {
                 || self.instance_initializer.is_some()
                 || self.inherited_with_scope
                 || !self.binding_sites.is_empty()
-                || self
-                    .code
-                    .iter()
-                    .map(|packed| {
-                        if packed.is_wide() {
-                            self.wide[packed.wide_index()]
-                        } else {
-                            packed.as_wide()
-                        }
-                    })
-                    .any(|instruction| {
-                        matches!(
-                            instruction.op(),
-                            Op::LoadName
-                                | Op::LoadNameCall
-                                | Op::LoadNameTypeof
-                                | Op::ResolveName
-                                | Op::LoadResolvedName
-                                | Op::DeleteName
-                                | Op::StoreName
-                                | Op::StoreResolvedName
-                                | Op::StoreVarBinding
-                                | Op::MakeClosure
-                                | Op::CloneEnv
-                                | Op::CallDirectEvalArray
-                                | Op::InitializeThis
-                                | Op::SuperCallCheck
-                        ) || (instruction.op() == Op::Call
-                            && (instruction.direct_eval() || instruction.parameter_eval()))
-                    })
+                || self.instructions().any(|instruction| {
+                    matches!(
+                        instruction.op(),
+                        Op::LoadName
+                            | Op::LoadNameCall
+                            | Op::LoadNameTypeof
+                            | Op::ResolveName
+                            | Op::LoadResolvedName
+                            | Op::DeleteName
+                            | Op::StoreName
+                            | Op::StoreResolvedName
+                            | Op::StoreVarBinding
+                            | Op::MakeClosure
+                            | Op::CloneEnv
+                            | Op::CallDirectEvalArray
+                            | Op::InitializeThis
+                            | Op::SuperCallCheck
+                    ) || (instruction.op() == Op::Call
+                        && (instruction.direct_eval() || instruction.parameter_eval()))
+                })
+        })
+    }
+
+    /// Every instruction in fixed-width form.
+    pub(crate) fn instructions(&self) -> impl Iterator<Item = WideInstruction> + '_ {
+        self.code.iter().map(|packed| {
+            if packed.is_wide() {
+                self.wide[packed.wide_index()]
+            } else {
+                packed.as_wide()
+            }
+        })
+    }
+
+    /// Whether a closure environment may hold local `slot`: the selective layout names it or,
+    /// without one, the function captures its whole frame by creating closures or reaching its
+    /// environment.
+    fn local_slot_captured(&self, slot: usize) -> bool {
+        match &self.selective_capture_slots {
+            Some(captured) => {
+                u16::try_from(slot).is_ok_and(|slot| captured.binary_search(&slot).is_ok())
+            }
+            None => self.instructions().any(|instruction| {
+                matches!(
+                    instruction.op(),
+                    Op::MakeClosure | Op::LoadEnvLocal | Op::StoreEnvLocal
+                )
+            }),
+        }
+    }
+
+    /// Whether legacy `f.arguments` reads each passed parameter's current frame value, as V8
+    /// does for parameters that live only in the frame: no code or closure uses an `arguments`
+    /// binding, the parameters are simple, and each is a plain or register-promoted local.
+    /// Otherwise the arguments are reflected as passed.
+    pub(crate) fn reflects_live_parameters(&self, atoms: &AtomTable) -> bool {
+        *self.live_parameter_reflection.get_or_init(|| {
+            let arguments_used = self.local_atoms.iter().enumerate().any(|(slot, &atom)| {
+                usize::try_from(atom)
+                    .is_ok_and(|atom| atom < atoms.len() && &atoms[atom] == "arguments")
+                    && (self.local_slot_captured(slot)
+                        || self.instructions().any(|instruction| {
+                            instruction.op().immediate_role() == ImmediateRole::LocalSlot
+                                && instruction.local_slot() == slot
+                        }))
+            });
+            self.arguments_slot.is_none()
+                && !arguments_used
+                && self.simple_parameters
+                && !self.rest
+                && (0..self.params).all(|parameter| {
+                    self.plain_local(atoms, usize::from(parameter))
+                        || self
+                            .local_registers
+                            .iter()
+                            .any(|entry| entry.local == parameter)
+                })
         })
     }
 
