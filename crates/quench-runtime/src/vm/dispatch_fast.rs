@@ -340,6 +340,11 @@ const ACC_NONE: u8 = 0;
 const ACC_A: u8 = 1;
 const ACC_B: u8 = 2;
 const ACC_C: u8 = 3;
+/// The first register of the immediate's register pair: a select's
+/// condition.
+const ACC_PAIR: u8 = 4;
+/// Accumulator positions a record may read: none, A, B, C and the pair.
+const ACC_POSITIONS: usize = 5;
 
 impl InstructionField {
     const fn accumulator(self) -> u8 {
@@ -765,9 +770,14 @@ lane_handler! {
 }
 
 lane_handler! {
-    fn lane_select<>(cx, r, ip, i, view) {
+    fn lane_select<ACC: u8>(cx, r, ip, i, view) {
         let (condition, _) = ImmediateLayout::register_pair(i.imm());
-        let source = if r.i32(condition) != 0 { i.b } else { i.c };
+        let condition = if ACC == ACC_PAIR {
+            view.acc.wasm_bits32() as i32
+        } else {
+            r.i32(condition)
+        };
+        let source = if condition != 0 { i.b } else { i.c };
         produce!(cx, r, ip, i.a, r.get(source), view)
     }
 }
@@ -1128,7 +1138,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
             Op::WasmI32ShiftRightUnsignedAndImmediate => {
                 return LaneHandler::producer(lane_bit_field::<H, ACC>);
             }
-            Op::WasmSelect => return LaneHandler::producer(lane_select::<H>),
+            Op::WasmSelect => return LaneHandler::producer(lane_select::<H, ACC>),
             Op::WasmI32AddImmediateJumpNonZero => {
                 return LaneHandler::producer(lane_add_jump_nonzero::<H, BACKWARD, ACC>);
             }
@@ -1251,18 +1261,20 @@ struct LaneTable<H>(std::marker::PhantomData<H>);
 impl<H: Host> LaneTable<H> {
     /// Tables indexed by jump direction (forward, then backward: a
     /// safepoint) and by accumulator field.
-    const TABLES: [[Table; 4]; 2] = [
+    const TABLES: [[Table; ACC_POSITIONS]; 2] = [
         [
             lane_table!(H, false, ACC_NONE),
             lane_table!(H, false, ACC_A),
             lane_table!(H, false, ACC_B),
             lane_table!(H, false, ACC_C),
+            lane_table!(H, false, ACC_PAIR),
         ],
         [
             lane_table!(H, true, ACC_NONE),
             lane_table!(H, true, ACC_A),
             lane_table!(H, true, ACC_B),
             lane_table!(H, true, ACC_C),
+            lane_table!(H, true, ACC_PAIR),
         ],
     ];
 }
@@ -1465,8 +1477,8 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
 }
 
 /// The register field of `instruction` that reads `register`, as an
-/// accumulator field; `ACC_NONE` when no register field reads it, or more
-/// than one does.
+/// accumulator position; `ACC_NONE` when no register field reads it, or more
+/// than one does. A register pair's first register is the last resort.
 fn accumulator_field(instruction: WideInstruction, register: u16) -> u8 {
     let mut fields = InstructionField::ALL.iter().copied().filter(|&field| {
         instruction.op().field_layout(field).reads_register()
@@ -1474,6 +1486,12 @@ fn accumulator_field(instruction: WideInstruction, register: u16) -> u8 {
     });
     match (fields.next(), fields.next()) {
         (Some(field), None) => field.accumulator(),
+        (None, _)
+            if instruction.op().immediate_layout() == ImmediateLayout::RegisterPair
+                && ImmediateLayout::register_pair(instruction.imm()).0 == register =>
+        {
+            ACC_PAIR
+        }
         _ => ACC_NONE,
     }
 }
