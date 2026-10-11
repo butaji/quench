@@ -701,7 +701,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         {
             return Err("invalid residual superinstruction pattern".into());
         }
-        Ok(Superinstruction { code })
+        Ok(Superinstruction::new(code))
     })?;
     let register_roots = input.list(|input| input.u64())?;
     input.finish()?;

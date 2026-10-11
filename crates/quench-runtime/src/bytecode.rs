@@ -896,6 +896,19 @@ impl Function {
             .map(|index| self.local_registers[index].register)
     }
 
+    /// Whether the instruction at `pc` returns `register`. A call is in tail position only
+    /// when the instruction after it returns that call's own result.
+    pub(crate) fn returns_register_at(&self, pc: usize, register: Register) -> bool {
+        self.code.get(pc).is_some_and(|packed| {
+            let next = if packed.is_wide() {
+                self.wide[packed.wide_index()]
+            } else {
+                packed.as_wide()
+            };
+            next.op() == Op::Return && next.register_a() == register
+        })
+    }
+
     pub(crate) fn has_restricted_legacy_caller_access(&self) -> bool {
         self.strict || !self.constructible || self.is_class_constructor
     }
@@ -1222,6 +1235,17 @@ pub(crate) struct RegExpLiteralSite {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Superinstruction {
     pub code: [Instr; 4],
+    /// `code` expanded once for dispatch, which reads every operand of every part.
+    pub wide: [WideInstruction; 4],
+}
+
+impl Superinstruction {
+    pub(crate) fn new(code: [Instr; 4]) -> Self {
+        Self {
+            code,
+            wide: code.map(Instr::as_wide),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

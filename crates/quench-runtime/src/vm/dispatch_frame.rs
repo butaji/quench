@@ -194,21 +194,7 @@ impl<H: Host> Vm<H> {
         capture_constructor_this: bool,
     ) -> Result<FrameOutcome, JsError> {
         let frame_index = self.activate_user_frame(p, id, parent, this, args, context)?;
-        let run_numeric =
-            numeric_frame_is_safe(&p.functions[id as usize], capture_constructor_this);
-        // Numeric dispatch changes the body loop only. Frame activation and cleanup
-        // remain shared; unsupported tail-call and suspension completions use general.
-        let result = if run_numeric {
-            let active_program =
-                std::mem::replace(&mut self.active_program, self.frames[frame_index].program);
-            let result = self
-                .run_frame_numeric(p, frame_index)
-                .map(FrameOutcome::Complete);
-            self.active_program = active_program;
-            result
-        } else {
-            self.run_frame_general(p, frame_index)
-        };
+        let result = self.run_frame_general(p, frame_index);
         let mut frame = self.frames.pop().unwrap();
         self.deactivate_frame(&mut frame, &result);
         self.persist_global_lexical_bindings(p, &frame);
@@ -1243,29 +1229,4 @@ impl<H: Host> Vm<H> {
                 .get_unchecked_mut(slot) = value;
         }
     }
-}
-
-fn numeric_frame_is_safe(
-    function: &crate::bytecode::Function,
-    capture_constructor_this: bool,
-) -> bool {
-    if function.dispatch != crate::bytecode::DispatchClass::Numeric
-        || capture_constructor_this
-        || function.is_async
-        || function.is_generator
-        || function.is_class_constructor
-        || function.derived_constructor
-        || function.class_field_initializer
-    {
-        return false;
-    }
-    !function.strict
-        || !function.code.iter().enumerate().any(|(pc, instruction)| {
-            instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call
-                && (instruction.returns_from_frame()
-                    || function
-                        .code
-                        .get(pc + 1)
-                        .is_some_and(|next| next.op() == Op::Return))
-        })
 }

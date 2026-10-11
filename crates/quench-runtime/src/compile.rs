@@ -2571,9 +2571,9 @@ impl<'a> Compiler<'a> {
                     (function_scope.contains(&atom)
                         && !lexical_atoms.contains(&atom)
                         && atom != arguments_atom
-                        && usize::from(slot) < parameter_local_count
+                        && self_binding_slot != Some(slot)
                         && !register_local_facts
-                            .written_names
+                            .nested_written_names
                             .contains(self.atoms[atom as usize].as_ref())
                         && !self.atoms[atom as usize].starts_with('\0'))
                     .then_some(slot)

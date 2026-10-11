@@ -797,12 +797,22 @@ impl<H: Host> Vm<H> {
                 let left = self.resolve_operand(p, f, left_operand)?;
                 let right = self.resolve_operand(p, f, right_operand)?;
                 #[cfg(feature = "profile-aggregate")]
-                self.profile.regional_binary(
-                    self.frames[f].program.raw(),
-                    self.frames[f].function,
-                    (*pc - 1) as u32,
-                    self.numeric_binary(operator, left, right).is_some(),
-                );
+                {
+                    let integer = self.numeric_integer_binary(operator, left, right).is_some();
+                    self.profile.regional_binary(
+                        self.frames[f].program.raw(),
+                        self.frames[f].function,
+                        (*pc - 1) as u32,
+                        integer,
+                    );
+                    if i.op() != Op::Binary {
+                        self.profile.numeric_binary_path(
+                            operator as usize,
+                            integer,
+                            left.as_int().is_some() && right.as_int().is_some(),
+                        );
+                    }
+                }
                 let v = match self.number_binary(operator, left, right) {
                     Some(value) => value,
                     None => self.binary(p, operator, left, right)?,
@@ -1553,13 +1563,7 @@ impl<H: Host> Vm<H> {
                     .then(|| std::mem::replace(&mut self.frames[f].this, this));
                 let caller_function = &p.functions[self.frames[f].function as usize];
                 let terminal = i.returns_from_frame()
-                    || caller_function.code.get(*pc).is_some_and(|packed| {
-                        if packed.is_wide() {
-                            caller_function.wide[packed.wide_index()].op() == Op::Return
-                        } else {
-                            packed.op() == Op::Return
-                        }
-                    });
+                    || caller_function.returns_register_at(*pc, i.result_register());
                 if allow_inline_calls
                     && i.op() == Op::Call
                     && !direct_eval
@@ -1569,14 +1573,12 @@ impl<H: Host> Vm<H> {
                     && p.kind != crate::bytecode::ProgramKind::Wasm
                     && f + 1 == self.frames.len()
                     && self.frames[f].function != super::ROOT_FUNCTION_ID
-                    && caller_function.dispatch == DispatchClass::General
                     && let Some((program_id, id, env)) = self.same_realm_user_target(callee)
                     && id != super::ROOT_FUNCTION_ID
                     && program_id == self.frames[f].program
                     && program_id == self.active_program
                     && p.functions.get(id as usize).is_some_and(|function| {
-                        function.dispatch == DispatchClass::General
-                            && !function.is_async
+                        !function.is_async
                             && !function.is_generator
                             && !function.is_class_constructor
                             && !function.derived_constructor
@@ -1732,18 +1734,7 @@ impl<H: Host> Vm<H> {
                 self.frames[f].pc = *pc;
                 let terminal = i.returns_from_frame()
                     || p.functions[self.frames[f].function as usize]
-                        .code
-                        .get(*pc)
-                        .is_some_and(|packed| {
-                            if packed.is_wide() {
-                                p.functions[self.frames[f].function as usize].wide
-                                    [packed.wide_index()]
-                                .op()
-                                    == Op::Return
-                            } else {
-                                packed.op() == Op::Return
-                            }
-                        });
+                        .returns_register_at(*pc, i.result_register());
                 if ((p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame())
                     || (p.kind != crate::bytecode::ProgramKind::Wasm
                         && terminal
@@ -1908,7 +1899,7 @@ impl<H: Host> Vm<H> {
     /// The program `frame` executes: dispatch keeps `active_program` on the running frame's
     /// program, as the cache-layout lookups also assume.
     #[inline(always)]
-    fn executing_program(&self, frame: usize) -> ProgramId {
+    pub(super) fn executing_program(&self, frame: usize) -> ProgramId {
         debug_assert_eq!(self.active_program, self.frames[frame].program);
         self.active_program
     }
