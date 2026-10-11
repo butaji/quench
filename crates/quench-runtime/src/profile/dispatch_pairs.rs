@@ -155,6 +155,7 @@ mod tests {
             live_parameter_reflection: Default::default(),
             handlers: Vec::new(),
             register_root_offset: 0,
+            undefined_register: None,
         }
     }
 

@@ -258,6 +258,7 @@ mod tests {
             live_parameter_reflection: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
+            undefined_register: None,
         };
         let mut dead = make_function();
         compact_binary_stores(
@@ -336,6 +337,7 @@ mod tests {
             live_parameter_reflection: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
+            undefined_register: None,
         };
         let mut dead = make_function();
         compact_binary_stores(

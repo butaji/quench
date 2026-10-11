@@ -59,7 +59,9 @@ fusion_recipes! {
         };
     ProducerMove: [
         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
-        LoadName, Move; Binary, Move; Unary, Move; GetField, Move; IncDec, Move
+        LoadName, Move; Binary, Move; Unary, Move; GetField, Move; IncDec, Move;
+        Call, Move; CallKnown, Move; CallMethod, Move; CallThisMethod, Move; Construct, Move;
+        LoadThis, Move; MakeObject2, Move; SuperConstArrayObject2, Move
     ] => |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
         if second.register_b() != first.result_register() { return None; }
         first.set_result_register(second.result_register());
@@ -655,7 +657,7 @@ mod tests {
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 24);
+        assert_eq!(RULES.len(), 32);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));
