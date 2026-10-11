@@ -32,7 +32,7 @@ pub struct RootId {
 /// immediately after collection and before it can allocate into freed slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct WeakHandle {
-    pub(super) slot: u32,
+    pub(super) value: Value,
 }
 
 pub(crate) struct RootTable {
