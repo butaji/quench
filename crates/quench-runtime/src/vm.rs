@@ -751,6 +751,9 @@ pub(crate) struct Vm<H> {
     active_registers: *mut Value,
     /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
     active_layout: ProgramCacheLayout,
+    /// The active program's materialized constants, kept by `set_active_program` and by
+    /// constant installation. A program's constant buffer never moves once installed.
+    active_constants: *const [Value],
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
@@ -1419,6 +1422,9 @@ impl<H: Host> Vm<H> {
             constants.push(value);
         }
         self.programs.set_constants(id, constants);
+        if id == self.active_program {
+            self.set_active_program(id);
+        }
     }
     pub(super) fn store_module_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.intern_program_atoms(&program);
@@ -1470,6 +1476,20 @@ impl<H: Host> Vm<H> {
     pub(super) fn set_active_program(&mut self, program: ProgramId) {
         self.active_program = program;
         self.active_layout = self.program_cache_layouts[program.raw() as usize];
+        self.active_constants = self.programs.constants(program);
+    }
+
+    /// Constant `index` of the active program.
+    #[inline(always)]
+    pub(super) fn active_constant(&self, index: usize) -> Option<Value> {
+        debug_assert!(std::ptr::eq(
+            self.active_constants,
+            self.programs.constants(self.active_program)
+        ));
+        // SAFETY: `active_constants` is re-derived whenever the active program or its constants
+        // change, and an installed constant buffer stays put until the store is reset, which
+        // reactivates the main program.
+        unsafe { (&*self.active_constants).get(index).copied() }
     }
 
     #[inline(always)]

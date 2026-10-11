@@ -323,7 +323,13 @@ impl ProgramStore {
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
-        self.programs.get(id.index())?.constants.get(index).copied()
+        self.constants(id).get(index).copied()
+    }
+
+    pub(crate) fn constants(&self, id: ProgramId) -> &[Value] {
+        self.programs
+            .get(id.index())
+            .map_or(&[], |entry| entry.constants.as_slice())
     }
 
     pub(crate) fn const_array(

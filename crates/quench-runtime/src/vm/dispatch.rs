@@ -63,12 +63,10 @@ impl<H: Host> Vm<H> {
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
-                let value = self
-                    .programs
-                    .constant(self.executing_program(f), i.constant_index())
-                    .ok_or_else(|| {
-                        JsError::validation("constant index is outside program".into())
-                    })?;
+                debug_assert_eq!(self.frames[f].program, self.active_program);
+                let value = self.active_constant(i.constant_index()).ok_or_else(|| {
+                    JsError::validation("constant index is outside program".into())
+                })?;
                 self.write(f, i.result_register(), value);
             }
             Op::CreateRegExpLiteral => {
@@ -1900,13 +1898,6 @@ impl<H: Host> Vm<H> {
         }
         Ok(StepResult::Continue)
     }
-    /// The program `frame` executes: dispatch keeps `active_program` on the running frame's
-    /// program, as the cache-layout lookups also assume.
-    #[inline(always)]
-    pub(super) fn executing_program(&self, frame: usize) -> ProgramId {
-        debug_assert_eq!(self.active_program, self.frames[frame].program);
-        self.active_program
-    }
 
     #[inline(always)]
     pub(super) fn resolve_operand(
@@ -1921,10 +1912,13 @@ impl<H: Host> Vm<H> {
             Some(crate::bytecode::OperandKind::Register) => {
                 Ok(self.read(frame, operand.payload() as Register))
             }
-            Some(crate::bytecode::OperandKind::Constant) => self
-                .programs
-                .constant(self.executing_program(frame), operand.payload() as usize)
-                .ok_or_else(|| JsError::validation("constant operand is outside program".into())),
+            Some(crate::bytecode::OperandKind::Constant) => {
+                debug_assert_eq!(self.frames[frame].program, self.active_program);
+                self.active_constant(operand.payload() as usize)
+                    .ok_or_else(|| {
+                        JsError::validation("constant operand is outside program".into())
+                    })
+            }
             Some(crate::bytecode::OperandKind::Field) => {
                 self.resolve_field(p, frame, usize::from(operand.payload()))
             }
