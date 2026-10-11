@@ -370,6 +370,25 @@ impl Heap {
     pub(crate) fn live_slots(&self) -> usize {
         self.slots.len() - self.free_slots
     }
+
+    #[cfg(feature = "profile-memory")]
+    pub(crate) fn slot_slab_census(&self) -> (usize, usize, usize) {
+        let complete_slabs = self.slots.len() / SLOTS_PER_SLAB;
+        let fully_free_slabs = self
+            .free_by_slab
+            .iter()
+            .take(complete_slabs)
+            .filter(|free| free.len() == SLOTS_PER_SLAB)
+            .count();
+        let partial_slabs = self
+            .free_by_slab
+            .iter()
+            .take(complete_slabs)
+            .filter(|free| !free.is_empty() && free.len() < SLOTS_PER_SLAB)
+            .count();
+        (complete_slabs, fully_free_slabs, partial_slabs)
+    }
+
     pub fn alloc(&mut self, cell: Cell) -> Value {
         #[cfg(feature = "profile-aggregate")]
         {
