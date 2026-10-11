@@ -40,6 +40,7 @@ pub(crate) mod path_algorithms;
 pub(crate) mod path_shared_vm;
 pub(crate) mod perf_hooks;
 pub(crate) mod process_shared_vm;
+pub(crate) mod process_signals_state;
 pub(crate) mod process_state;
 pub(crate) mod readline_shared_vm;
 pub(crate) mod querystring_data;

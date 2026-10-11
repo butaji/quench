@@ -36,6 +36,7 @@ pub(crate) struct SharedNodeState {
     /// Immutable startup arguments used to build guest process.argv.
     pub(crate) process_argv: crate::modules::process_state::ProcessArgs,
     pub(crate) process_control: crate::modules::process_state::ProcessControl,
+    pub(crate) process_signals: crate::modules::process_signals_state::SignalState,
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
     pub(crate) output: Option<NodeOutputSink>,
     pub(crate) net_auto_select_family_attempt_timeout: u64,
@@ -114,6 +115,7 @@ impl SharedNodeState {
             primordials_module: None,
             process_argv,
             process_control,
+            process_signals: crate::modules::process_signals_state::SignalState::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
             output: None,
             net_auto_select_family_attempt_timeout:

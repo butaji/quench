@@ -50,10 +50,20 @@ pub enum SharedInput {
 
 /// Execute one entry through the shared VM and the canonical `NodeHost`.
 pub fn execute_shared(input: SharedInput, argv: Vec<String>) -> Result<SharedCompletion, String> {
+    #[cfg(target_os = "linux")]
+    let (_parent_mask, worker_mask) =
+        crate::modules::process_signals_state::ParentSignalMask::block_for_worker()
+            .map_err(|error| format!("runtime worker signal mask: {error}"))?;
     std::thread::Builder::new()
         .name("quench-node-shared-exec".into())
         .stack_size(quench_runtime::WORKER_STACK_SIZE)
-        .spawn(move || execute_shared_on_worker(input, argv))
+        .spawn(move || {
+            #[cfg(target_os = "linux")]
+            worker_mask
+                .restore()
+                .map_err(|error| format!("runtime execution signal mask: {error}"))?;
+            execute_shared_on_worker(input, argv)
+        })
         .map_err(|error| format!("runtime worker thread: {error}"))?
         .join()
         .unwrap_or_else(|_| Err("runtime worker panicked".into()))

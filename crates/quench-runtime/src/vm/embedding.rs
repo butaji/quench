@@ -598,6 +598,22 @@ impl<H: Host> Vm<H> {
         Ok(self.truthy(result))
     }
 
+    pub(crate) fn embedding_bitwise_or(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<Value, JsError> {
+        let left = self.embedding_value(left)?;
+        let right = self.embedding_value(right)?;
+        let program = self.embedding_program()?;
+        self.binary(
+            &program,
+            oxc_ast::ast::BinaryOperator::BitwiseOR as u32,
+            left,
+            right,
+        )
+    }
+
     pub(crate) fn embedding_iterator_record(
         &mut self,
         source: RootId,
