@@ -164,6 +164,23 @@ fn execute_shared_on_worker(
     }
 }
 
+/// Resolve the Node executable used by embeddings and guest child launches.
+/// A colocated CLI handles Node arguments; otherwise the embedding owns that entry.
+pub fn executable_path() -> std::io::Result<PathBuf> {
+    let executable = std::env::current_exe()?;
+    Ok(executable
+        .parent()
+        .map(|parent| {
+            parent.join(if cfg!(windows) {
+                "quench-node.exe"
+            } else {
+                "quench-node"
+            })
+        })
+        .filter(|path| path.is_file())
+        .unwrap_or(executable))
+}
+
 /// Parse the development CLI's entry form and route it through `execute_shared`.
 pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<ExitCode, String> {
     let args = arguments.into_iter().collect::<Vec<_>>();
@@ -199,7 +216,11 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                 index += 1;
                 input = Some(SharedInput::Eval {
                     source: args.get(index).cloned().unwrap_or_default(),
-                    goal: if input_type_module { EntryGoal::Module } else { EntryGoal::Node },
+                    goal: if input_type_module {
+                        EntryGoal::Module
+                    } else {
+                        EntryGoal::Node
+                    },
                     exec_argv: exec_argv.clone(),
                 });
                 break;
@@ -207,7 +228,10 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
             "-pe" | "-ep" => {
                 index += 1;
                 input = Some(SharedInput::Eval {
-                    source: format!("console.log({});", args.get(index).cloned().unwrap_or_default()),
+                    source: format!(
+                        "console.log({});",
+                        args.get(index).cloned().unwrap_or_default()
+                    ),
                     goal: EntryGoal::Node,
                     exec_argv: exec_argv.clone(),
                 });
@@ -216,7 +240,10 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
             "-p" | "--print" => {
                 index += 1;
                 input = Some(SharedInput::Eval {
-                    source: format!("console.log({});", args.get(index).cloned().unwrap_or_default()),
+                    source: format!(
+                        "console.log({});",
+                        args.get(index).cloned().unwrap_or_default()
+                    ),
                     goal: EntryGoal::Node,
                     exec_argv: exec_argv.clone(),
                 });
@@ -238,7 +265,11 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     }
     let input = input.unwrap_or_else(|| SharedInput::Eval {
         source: String::new(),
-        goal: if input_type_module { EntryGoal::Module } else { EntryGoal::Node },
+        goal: if input_type_module {
+            EntryGoal::Module
+        } else {
+            EntryGoal::Node
+        },
         exec_argv,
     });
     execute_shared(input, std::env::args().collect()).map(SharedCompletion::exit_code)

@@ -70,6 +70,20 @@ impl CaseObservation {
 /// Both runner binaries consume this private mode before parsing public options.
 pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
     if arguments.first().map(String::as_str) != Some(WORKER_OPTION) {
+        // Fixtures can launch process.argv[0], which is this embedding
+        // executable. Its children must execute the requested Node entry,
+        // rather than interpreting those arguments as a suite invocation.
+        if std::env::var_os(quench_node::shared_run::CHILD_RUNNER_ENV).is_some() {
+            return Some(
+                match quench_node::shared_run::run_shared_cli(arguments.iter().cloned()) {
+                    Ok(code) => code,
+                    Err(error) => {
+                        eprintln!("quench-node: {error}");
+                        ExitCode::from(1)
+                    }
+                },
+            );
+        }
         return None;
     }
     let [_, fixture, result] = arguments else {
@@ -187,6 +201,8 @@ fn observe_process_in(
     directory: &tempfile::TempDir,
     result_path: Option<&Path>,
 ) -> Result<CaseObservation, String> {
+    #[cfg(target_os = "linux")]
+    enable_child_subreaper()?;
     let stdout = directory.path().join("stdout");
     let stderr = directory.path().join("stderr");
     command
@@ -223,13 +239,16 @@ fn observe_process_in(
         }
     };
     let timed_out = matches!(waited, Ok(None));
+    // A fixture may leave child processes running even when its worker exits
+    // normally or fails early. The case owns the entire process group, so
+    // close that boundary on every terminal outcome, before reading output.
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+    }
     let status = match waited {
         Ok(Some(status)) => status,
         pending => {
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
-            }
             #[cfg(not(unix))]
             let _ = child.kill();
             let status = child.wait().map_err(|error| error.to_string())?;
@@ -237,6 +256,8 @@ fn observe_process_in(
             status
         }
     };
+    #[cfg(target_os = "linux")]
+    reap_process_group(child.id() as libc::pid_t)?;
     #[cfg(unix)]
     let signal = {
         use std::os::unix::process::ExitStatusExt;
@@ -256,10 +277,105 @@ fn observe_process_in(
     })
 }
 
+// Containers may have a PID 1 that does not reap orphaned fixture children.
+// Adopt those children here so each case can reap its own process group.
+#[cfg(target_os = "linux")]
+fn enable_child_subreaper() -> Result<(), String> {
+    static SETUP: std::sync::OnceLock<Result<(), i32>> = std::sync::OnceLock::new();
+    SETUP
+        .get_or_init(|| {
+            if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or(libc::EINVAL))
+            }
+        })
+        .map_err(|code| {
+            format!(
+                "enable fixture child reaping: {}",
+                std::io::Error::from_raw_os_error(code)
+            )
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn reap_process_group(group: libc::pid_t) -> Result<(), String> {
+    loop {
+        if unsafe { libc::waitpid(-group, std::ptr::null_mut(), 0) } >= 0 {
+            continue;
+        }
+        let error = std::io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::ECHILD) => return Ok(()),
+            Some(libc::EINTR) => continue,
+            _ => return Err(format!("reap fixture process group: {error}")),
+        }
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn completed_workers_cannot_leave_live_children() {
+        const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
+        const CLEANUP_TIMEOUT: Duration = Duration::from_secs(1);
+        let directory = tempfile::tempdir().unwrap();
+        let fixture = directory.path().join("case.js");
+        let executable = directory.path().join("worker");
+        let child_pid = directory.path().join("child.pid");
+        fs::write(&fixture, "inert input").unwrap();
+        for (completion, expected) in [
+            (
+                "printf '%s' '{\"outcome\":\"pass\"}' >\"$3\"",
+                RunResult::Pass,
+            ),
+            (
+                "printf '%s' '{\"outcome\":\"fail\",\"reason\":\"control\"}' >\"$3\"\nexit 1",
+                RunResult::Fail,
+            ),
+            ("kill -TERM $$", RunResult::Crash),
+        ] {
+            fs::write(
+                &executable,
+                format!(
+                    "#!/bin/sh\nsleep 30 &\necho $! > '{}'\n{completion}\n",
+                    child_pid.display(),
+                ),
+            )
+            .unwrap();
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(
+                observe_case(&executable, &fixture, CONTROL_TIMEOUT)
+                    .unwrap()
+                    .outcome(),
+                expected
+            );
+            let pid = fs::read_to_string(&child_pid).unwrap();
+            let stat = format!("/proc/{}/stat", pid.trim());
+            let deadline = Instant::now() + CLEANUP_TIMEOUT;
+            loop {
+                let state = fs::read_to_string(&stat).ok().and_then(|stat| {
+                    stat.rsplit_once(") ")
+                        .and_then(|(_, fields)| fields.chars().next())
+                });
+                if state.is_none() {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "worker left live child {}",
+                    pid.trim()
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
 
     #[test]
     fn only_completed_consistent_worker_results_can_pass() {
