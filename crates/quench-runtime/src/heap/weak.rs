@@ -1,19 +1,39 @@
 use super::root::WeakHandle;
 use super::*;
 
+fn heap_slot_generation(
+    generations: &[u16],
+    overflow: &FxHashMap<u32, u32>,
+    slot: u32,
+) -> Option<u32> {
+    let generation = *generations.get(slot as usize)?;
+    if generation == OVERFLOW_HEAP_SLOT_GENERATION {
+        overflow.get(&slot).copied()
+    } else {
+        Some(u32::from(generation))
+    }
+}
+
 impl Heap {
     pub(crate) fn weak_handle(&self, value: Value) -> Option<WeakHandle> {
         let slot = value.heap_index()? as usize;
         self.get(value)?;
         Some(WeakHandle {
             slot: slot as u32,
-            generation: self.generations.get(slot).copied()?,
+            generation: heap_slot_generation(
+                &self.generations,
+                &self.generation_overflow,
+                slot as u32,
+            )?,
         })
     }
 
     pub(crate) fn weak_value(&self, handle: WeakHandle) -> Option<Value> {
-        let slot = handle.slot as usize;
-        (self.generations.get(slot).copied() == Some(handle.generation))
+        (heap_slot_generation(
+            &self.generations,
+            &self.generation_overflow,
+            handle.slot,
+        ) == Some(handle.generation))
             .then_some(())
             .and_then(|_| self.get(Value::heap(handle.slot)))
             .map(|_| Value::heap(handle.slot))
@@ -99,11 +119,19 @@ impl Heap {
     pub(super) fn prune_weak_entries(&mut self, full: bool) -> Vec<(Value, Value)> {
         let mut finalization_jobs = Vec::new();
         let generations = &self.generations;
+        let generation_overflow = &self.generation_overflow;
         let marks = &self.marks;
         if full {
             for slot in self.slots.iter_mut() {
                 if let Some(cell) = slot.cell.as_mut() {
-                    Self::prune_weak_cell(cell, generations, marks, &mut finalization_jobs, true);
+                    Self::prune_weak_cell(
+                        cell,
+                        generations,
+                        generation_overflow,
+                        marks,
+                        &mut finalization_jobs,
+                        true,
+                    );
                 }
             }
             return finalization_jobs;
@@ -118,7 +146,14 @@ impl Heap {
                 .get_mut(index)
                 .and_then(|slot| slot.cell.as_mut())
             {
-                Self::prune_weak_cell(cell, generations, marks, &mut finalization_jobs, true);
+                Self::prune_weak_cell(
+                    cell,
+                    generations,
+                    generation_overflow,
+                    marks,
+                    &mut finalization_jobs,
+                    true,
+                );
             }
         }
         for index in self.remembered.iter().copied() {
@@ -128,7 +163,14 @@ impl Heap {
                 .get_mut(index)
                 .and_then(|slot| slot.cell.as_mut())
             {
-                Self::prune_weak_cell(cell, generations, marks, &mut finalization_jobs, false);
+                Self::prune_weak_cell(
+                    cell,
+                    generations,
+                    generation_overflow,
+                    marks,
+                    &mut finalization_jobs,
+                    false,
+                );
             }
         }
         finalization_jobs
@@ -136,7 +178,8 @@ impl Heap {
 
     fn prune_weak_cell(
         cell: &mut Cell,
-        generations: &[u32],
+        generations: &[u16],
+        generation_overflow: &FxHashMap<u32, u32>,
         marks: &[u64],
         finalization_jobs: &mut Vec<(Value, Value)>,
         finalize: bool,
@@ -153,7 +196,8 @@ impl Heap {
             Cell::WeakRef { target, .. } => {
                 let live = target.is_some_and(|target| {
                     let index = target.slot as usize;
-                    generations.get(index).copied() == Some(target.generation)
+                    heap_slot_generation(generations, generation_overflow, target.slot)
+                        == Some(target.generation)
                         && Self::marked(marks, index)
                 });
                 if !live {
@@ -164,8 +208,11 @@ impl Heap {
                 callback, entries, ..
             } if finalize => {
                 entries.retain(|entry| {
-                    let live = generations.get(entry.target.slot as usize).copied()
-                        == Some(entry.target.generation)
+                    let live = heap_slot_generation(
+                        generations,
+                        generation_overflow,
+                        entry.target.slot,
+                    ) == Some(entry.target.generation)
                         && Self::marked(marks, entry.target.slot as usize);
                     if !live {
                         finalization_jobs.push((*callback, entry.held));
