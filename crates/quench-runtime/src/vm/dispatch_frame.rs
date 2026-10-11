@@ -253,6 +253,7 @@ impl<H: Host> Vm<H> {
         let function = &p.functions[id as usize];
         let mut frame = self.frame_pool.pop().unwrap_or_else(|| Box::new(Frame {
             context: CallContext::Internal,
+            reflected_parameters: 0,
             original_arguments: vec![],
             program: self.active_program,
             function: 0,
@@ -269,7 +270,7 @@ impl<H: Host> Vm<H> {
             with_base: self.with_stack.len(),
             fixed_this: false,
         }));
-        self.bind_activation_arguments(&mut frame, function, context, args)?;
+        self.bind_activation_arguments(&p.atoms, &mut frame, function, context, args)?;
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -349,6 +350,7 @@ impl<H: Host> Vm<H> {
         let placeholder = self.frame_pool.pop().unwrap_or_else(|| {
             Box::new(Frame {
                 context: CallContext::Internal,
+                reflected_parameters: 0,
                 original_arguments: vec![],
                 program: self.active_program,
                 function: 0,
@@ -370,7 +372,7 @@ impl<H: Host> Vm<H> {
         self.with_stack.truncate(old.with_base);
         let mut frame = old;
         Self::recycle_frame(&mut frame);
-        self.bind_activation_arguments(&mut frame, function, context, args)?;
+        self.bind_activation_arguments(&p.atoms, &mut frame, function, context, args)?;
         frame.program = self.active_program;
         frame.function = id;
         frame.pc = 0;
@@ -415,6 +417,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn bind_activation_arguments(
         &mut self,
+        atoms: &crate::bytecode::AtomTable,
         frame: &mut Frame,
         function: &crate::bytecode::Function,
         context: CallContext,
@@ -440,7 +443,7 @@ impl<H: Host> Vm<H> {
             frame.locals[usize::from(slot)] =
                 self.activation_arguments_object(function, context, args)?;
         }
-        self.initialize_frame_invocation(frame, function, context, args);
+        self.initialize_frame_invocation(atoms, frame, function, context, args);
         Ok(())
     }
 
@@ -504,6 +507,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn initialize_frame_invocation(
         &self,
+        atoms: &crate::bytecode::AtomTable,
         frame: &mut Frame,
         function: &crate::bytecode::Function,
         context: CallContext,
@@ -511,9 +515,17 @@ impl<H: Host> Vm<H> {
     ) {
         frame.context = context;
         frame.original_arguments.clear();
-        if context.callable().is_some() && !function.has_restricted_legacy_caller_access() {
-            frame.original_arguments.extend_from_slice(args);
+        frame.reflected_parameters = 0;
+        if context.callable().is_none() || function.has_restricted_legacy_caller_access() {
+            return;
         }
+        let reflected = if function.reflects_live_parameters(atoms) {
+            args.len().min(usize::from(function.params))
+        } else {
+            0
+        };
+        frame.reflected_parameters = reflected as u16;
+        frame.original_arguments.extend_from_slice(&args[reflected..]);
     }
 
     pub(super) fn initialize_arguments_object(
@@ -811,6 +823,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
+        frame.reflected_parameters = 0;
         frame.original_arguments.clear();
         frame.with_objects = Vec::new();
         const RETAINED_VALUES: usize = 256;
