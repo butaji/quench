@@ -22,6 +22,16 @@ fn stable_name(name: &str) -> &str {
         .map_or(name, |(stable, _)| stable)
 }
 
+/// The C runtime's entry and exit code: every run executes it, and valgrind
+/// attributes it to no function, so it leads the order explicitly.
+const PROCESS_RUNTIME: &[&str] = &[
+    "_start",
+    "deregister_tm_clones",
+    "register_tm_clones",
+    "__do_global_dtors_aux",
+    "frame_dummy",
+];
+
 /// `nm` symbol kinds that name code.
 const CODE_KINDS: &[&str] = &["t", "T", "w", "W"];
 
@@ -54,17 +64,20 @@ fn executed(profile: &str) -> Result<Vec<String>, String> {
 fn run(binary: &str, out: &str, profiles: &[String]) -> Result<(), String> {
     let symbols = code_symbols(binary)?;
     // Profiles may come from an earlier link of the same build: match names
-    // without LTO module hashes, and write the binary's current names.
-    let known: std::collections::HashMap<&str, &str> = symbols
-        .iter()
-        .map(|name| (stable_name(name), name.as_str()))
-        .collect();
+    // without LTO module hashes, and write the binary's current names. A
+    // name can belong to several local copies, which a profile cannot tell
+    // apart; every copy is ordered.
+    let mut known: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+    for name in &symbols {
+        known.entry(stable_name(name)).or_default().push(name);
+    }
     let mut seen = HashSet::new();
     let mut order: Vec<&str> = Vec::new();
+    let runtime = PROCESS_RUNTIME.iter().map(|name| (*name).to_owned());
     for profile in profiles {
-        for name in executed(profile)? {
-            if let Some(name) = known.get(stable_name(&name)).copied() {
-                if seen.insert(name) {
+        for name in runtime.clone().chain(executed(profile)?) {
+            for name in known.get(stable_name(&name)).into_iter().flatten() {
+                if seen.insert(*name) {
                     order.push(name);
                 }
             }
