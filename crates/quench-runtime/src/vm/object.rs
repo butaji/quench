@@ -1186,20 +1186,8 @@ impl<H: Host> Vm<H> {
         site: u16,
         strict: bool,
     ) -> Result<(), JsError> {
-        // Assignment to a nullish base is an abrupt completion regardless of
-        // strictness. Keep it on the canonical realm-owned TypeError path;
-        // the generic object mutator's fallback error is not an ECMAScript
-        // error object and loses constructor identity at the Test262 boundary.
-        if object.is_null() || object.is_undefined() {
-            return Err(self.type_error(
-                p,
-                if object.is_null() {
-                    "cannot set properties of null".into()
-                } else {
-                    "cannot set properties of undefined".into()
-                },
-            ));
-        }
+        // Only an ordinary object reaches the shape cache, so a nullish base always falls
+        // through to the uncached path's TypeError.
         if self.specialized
             && p.specialized
             && !self.is_private_name(atom)
@@ -1215,6 +1203,35 @@ impl<H: Host> Vm<H> {
             {
                 return Ok(());
             }
+        }
+        self.set_field_uncached(p, object, atom, value, site, strict)
+    }
+
+    /// The shape-cache miss path of `set_field_cached`: nullish and primitive bases, proxies,
+    /// private names and generic property assignment.
+    #[inline(never)]
+    fn set_field_uncached(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+        strict: bool,
+    ) -> Result<(), JsError> {
+        // Assignment to a nullish base is an abrupt completion regardless of
+        // strictness. Keep it on the canonical realm-owned TypeError path;
+        // the generic object mutator's fallback error is not an ECMAScript
+        // error object and loses constructor identity at the Test262 boundary.
+        if object.is_null() || object.is_undefined() {
+            return Err(self.type_error(
+                p,
+                if object.is_null() {
+                    "cannot set properties of null".into()
+                } else {
+                    "cannot set properties of undefined".into()
+                },
+            ));
         }
         if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
