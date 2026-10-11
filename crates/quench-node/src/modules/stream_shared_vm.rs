@@ -12,6 +12,15 @@ pub(crate) fn module(
         "node:stream/shared.js",
     )?;
     let dependencies = context.object_rooted()?;
+    let apply_options = context.host_function(crate::host::shared_vm::operation(
+        "streamApplyTransformOptions",
+    ))?;
+    set(
+        context,
+        dependencies,
+        "applyTransformOptions",
+        apply_options,
+    )?;
     let default_hwm = context.host_function(crate::host::shared_vm::operation(
         "streamGetDefaultHighWaterMark",
     ))?;
@@ -191,6 +200,30 @@ pub(crate) fn set_default_high_water_mark(
             state.stream_high_water_marks.objects = number;
         } else {
             state.stream_high_water_marks.bytes = number;
+        }
+    }
+    Ok(undefined)
+}
+
+pub(crate) fn apply_transform_options(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let options = args.get(1).copied().unwrap_or(undefined);
+    if !context.truthy_rooted(options)? {
+        return Ok(undefined);
+    }
+    let stream = *args
+        .first()
+        .ok_or_else(|| RootedError::host("Transform receiver missing"))?;
+    for (option, method) in [("transform", "_transform"), ("flush", "_flush")] {
+        let key = context.string_rooted(option);
+        let value = context.get_property_rooted(options, key)?;
+        if context.is_callable_rooted(value)? {
+            let value = context.get_property_rooted(options, key)?;
+            set(context, stream, method, value)?;
         }
     }
     Ok(undefined)

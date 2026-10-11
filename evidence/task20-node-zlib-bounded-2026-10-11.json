@@ -2101,17 +2101,18 @@
   "framework_scenarios": [
     {
       "scenario": "express",
+      "driver": "tests/frameworks/driver.cjs",
       "observations": [
         {
           "engine": "node",
           "exit_code": 0,
-          "stdout": "",
+          "stdout": "statuses 200,200,200,200,404\n",
           "stderr": ""
         },
         {
           "engine": "quench-node",
           "exit_code": 0,
-          "stdout": "",
+          "stdout": "statuses 200,200,200,200,404\n",
           "stderr": ""
         }
       ],
@@ -2119,17 +2120,18 @@
     },
     {
       "scenario": "koa",
+      "driver": "tests/frameworks/driver.cjs",
       "observations": [
         {
           "engine": "node",
           "exit_code": 0,
-          "stdout": "",
+          "stdout": "statuses 200,200,200,200,404\n",
           "stderr": ""
         },
         {
           "engine": "quench-node",
           "exit_code": 0,
-          "stdout": "",
+          "stdout": "statuses 200,200,200,200,404\n",
           "stderr": ""
         }
       ],
@@ -2137,17 +2139,18 @@
     },
     {
       "scenario": "fastify",
+      "driver": "tests/frameworks/driver.cjs",
       "observations": [
         {
           "engine": "node",
           "exit_code": 0,
-          "stdout": "",
+          "stdout": "statuses 200,200,200,200,404\n",
           "stderr": ""
         },
         {
           "engine": "quench-node",
           "exit_code": 0,
-          "stdout": "",
+          "stdout": "statuses 200,200,200,200,404\n",
           "stderr": ""
         }
       ],
@@ -2196,5 +2199,6 @@
     "Input still collects until flush; compression is bulk, not incremental.",
     "Sync decompression maxOutputLength and dictionary/flush/options are incomplete.",
     "No speed claim; focused results are not full-suite completion."
-  ]
+  ],
+  "validation_correction": "Direct scenario-file invocation only loads exports; replaced that no-op check with the existing HTTP driver on frozen 0e1b9ce7c binaries. All three scenarios verify five HTTP statuses/bodies and Express ETag/304 behavior."
 }

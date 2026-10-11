@@ -1512,3 +1512,49 @@ z.gzip('callback',function(error,buffer){
 "#;
     compare_node_stream_source(source);
 }
+
+#[test]
+fn zlib_options_match_node_ranges_parameters_and_getter_order() {
+    let source = r#"
+const z=require('zlib');
+const fractional=z.createDeflate({level:1.5,strategy:1.5});console.log(fractional._level,fractional._strategy);fractional.destroy();
+for (const mode of ['Gzip','Gunzip','Deflate','InflateRaw']) {
+  for (const name of ['windowBits','level','memLevel','strategy','chunkSize','flush','finishFlush','maxOutputLength','rejectGarbageAfterEnd','dictionary']) {
+    for (const value of [undefined,NaN,null,'bad',-Infinity,0,1.5,10000]) {
+      try { const engine=new z[mode]({[name]:value});engine.destroy();console.log(mode,name,String(value),'ok'); }
+      catch(e){ console.log(mode,name,String(value),e.name,e.code,e.message); }
+    }
+  }
+}
+for (const mode of ['BrotliCompress','ZstdCompress']) {
+  for (const params of [{'10000':0},{'0':0,'00':0},{'0':'bad'}]) {
+    try{new z[mode]({params});console.log(mode,'ok')}
+    catch(e){console.log(mode,e.name,e.code,e.message)}
+  }
+}
+for (const mode of ['Gzip','Gunzip','BrotliCompress']) {
+  const trace=[];
+  const opts={};
+  for(const name of ['windowBits','level','memLevel','strategy','params','dictionary','chunkSize','flush','finishFlush','maxOutputLength','rejectGarbageAfterEnd','info'])
+    Object.defineProperty(opts,name,{get(){trace.push(name);return undefined}});
+  const engine=new z[mode](opts);engine.destroy();console.log(mode,JSON.stringify(trace));
+}
+"#;
+    compare_node_stream_source(source);
+}
+
+#[test]
+fn zlib_info_returns_captured_engines_and_preserves_handle_lifecycle() {
+    let source = r#"
+const z=require('zlib');
+const result=z.gzipSync('hello',{info:true});
+console.log(Buffer.isBuffer(result.buffer),result.engine instanceof z.Gzip,result.engine.destroyed,result.engine._closed,result.engine.bytesWritten);
+const trace=[];
+const options={get level(){trace.push('level');return 1},get maxOutputLength(){trace.push('max');return 1000},info:true};
+z.gzip('hello',options,function callback(error,result){
+  console.log(error===null,Buffer.isBuffer(result.buffer),result.engine===this,this.destroyed,this._closed,this.cb===callback,z.gunzipSync(result.buffer).toString(),JSON.stringify(trace));
+});
+options.info=false;
+"#;
+    compare_node_stream_source(source);
+}

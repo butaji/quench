@@ -3127,8 +3127,11 @@
       super(options || {});
       this._isTransform = true;
       this._transformBackpressure = null;
-      if (options && options.transform) this._transform = options.transform;
-      if (options && options.flush) this._flush = options.flush;
+      if (deps.applyTransformOptions) deps.applyTransformOptions(this, options);
+      else {
+        if (options && options.transform) this._transform = options.transform;
+        if (options && options.flush) this._flush = options.flush;
+      }
       if (options && options.final) this._final = options.final;
       // When the writable side finishes, flush then end the readable side.
       // Node flushes and closes the readable side during prefinish, before

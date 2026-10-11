@@ -15,8 +15,7 @@ enum Phase {
 struct Entry {
     api: HostWeakRoot,
     mode: Codec,
-    level: Option<i32>,
-    chunk_size: usize,
+    options: super::zlib_options_shared_vm::Options,
     phase: Phase,
 }
 pub(crate) struct State {
@@ -63,13 +62,34 @@ pub(crate) fn open(
     )?;
     let mode = super::zlib_shared_vm::codec(&mode)
         .ok_or_else(|| RootedError::host("unknown zlib codec"))?;
-    let level = args
+    let open_data = context.host_function_data()?;
+    let finished = get(context, open_data, "0")?;
+    let buffer_prototype = get(context, open_data, "1")?;
+    let prepared = *args
         .get(2)
-        .and_then(|root| context.rooted_value(*root))
-        .and_then(|value| value.as_number())
-        .map(|value| value as i32);
-    let options = args.get(3).copied();
-    let chunk_size = chunk_size(context, options)?;
+        .ok_or_else(|| RootedError::host("zlib prepared options missing"))?;
+    let options = super::zlib_options_shared_vm::Options::from_projection(context, prepared)?;
+    let level = options.level;
+    let chunk_size = options.chunk_size;
+    for (name, value) in [
+        ("_chunkSize", chunk_size as f64),
+        ("_defaultFlushFlag", options.flush),
+        ("_finishFlushFlag", options.finish_flush),
+        ("_maxOutputLength", options.max_output),
+        ("bytesWritten", 0.0),
+    ] {
+        let value = context.number(value);
+        set(context, stream, name, value)?;
+    }
+    if mode.family() == super::zlib_shared_vm::Family::Zlib {
+        for (name, value) in [
+            ("_level", level.unwrap_or_default()),
+            ("_strategy", options.strategy),
+        ] {
+            let value = context.number(value);
+            set(context, stream, name, value)?;
+        }
+    }
     let state = context.host_mut().shared_state();
     // Weak API cells share the core collector's pruning, including slot reuse.
     let dead = state
@@ -100,11 +120,41 @@ pub(crate) fn open(
     };
     let api = context.null_object_rooted()?;
     set(context, api, "stream", stream)?;
-    let finished = context.host_function_data()?;
     set(context, api, "finished", finished)?;
+    set(context, api, "bufferPrototype", buffer_prototype)?;
+    let handle = context.object_rooted()?;
+    set(context, stream, "_handle", handle)?;
+    let undefined = context.undefined();
+    let original_options = args.get(3).copied().unwrap_or(undefined);
+    let info = if context
+        .rooted_value(original_options)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        undefined
+    } else {
+        get(context, original_options, "info")?
+    };
+    set(context, stream, "_info", info)?;
+    let reject = if context
+        .rooted_value(original_options)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        undefined
+    } else {
+        get(context, original_options, "rejectGarbageAfterEnd")?
+    };
+    let reject = context.boolean(
+        context
+            .rooted_value(reject)
+            .and_then(|value| value.as_bool())
+            == Some(true),
+    );
+    set(context, stream, "_rejectGarbageAfterEnd", reject)?;
     let id_value = context.number(id as f64);
     let data = context.array_rooted(&[api, id_value])?;
     for (name, operation) in [
+        ("sync", "zlibStreamSync"),
+        ("closed", "zlibStreamClosed"),
         ("read", "zlibStreamRead"),
         ("finish", "zlibStreamFinish"),
         ("destroy", "zlibStreamDestroy"),
@@ -120,15 +170,14 @@ pub(crate) fn open(
         Entry {
             api: weak,
             mode,
-            level,
-            chunk_size,
+            options,
             phase: Phase::Collecting,
         },
     );
     Ok(api)
 }
 
-fn chunk_size(
+pub(super) fn chunk_size(
     context: &mut NativeContext<'_, NodeHost>,
     options: Option<RootId>,
 ) -> Result<usize, RootedError> {
@@ -198,7 +247,7 @@ pub(crate) fn finish(
         .zlib_streams
         .entries
         .get(&id)
-        .map(|entry| (entry.mode, entry.level))
+        .map(|entry| (entry.mode, entry.options.level.map(|level| level as i32)))
     else {
         let undefined = context.undefined();
         return context.call_rooted(callback, undefined, &[]);
@@ -269,10 +318,10 @@ pub(crate) fn read(
         };
         let mut bytes = Vec::new();
         let result = bytes
-            .try_reserve_exact(entry.chunk_size)
+            .try_reserve_exact(entry.options.chunk_size)
             .map_err(std::io::Error::other)
             .and_then(|()| {
-                bytes.resize(entry.chunk_size, 0);
+                bytes.resize(entry.options.chunk_size, 0);
                 loop {
                     match reader.read(&mut bytes) {
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -289,11 +338,7 @@ pub(crate) fn read(
     };
     match output {
         Ok(bytes) if !bytes.is_empty() => {
-            let bytes = context.uint8_array_rooted(&bytes)?;
-            let buffer = crate::host::shared_vm::commonjs::buffer_module(context)?;
-            let buffer = get(context, buffer, "Buffer")?;
-            let from = get(context, buffer, "from")?;
-            let chunk = context.call_rooted(from, buffer, &[bytes])?;
+            let chunk = buffer_bytes(context, api, &bytes)?;
             let push = get(context, stream, "push")?;
             let pushed = context.call_rooted(push, stream, &[chunk])?;
             let continue_reading = context.truthy_rooted(pushed)?;
@@ -341,6 +386,9 @@ pub(crate) fn destroy(
 ) -> Result<RootId, RootedError> {
     let (api, id) = data(context)?;
     remove(context, id);
+    let stream = get(context, api, "stream")?;
+    let null = context.null();
+    set(context, stream, "_handle", null)?;
     let undefined = context.undefined();
     set(context, api, CALLBACK, undefined)?;
     let error = args.first().copied().unwrap_or(undefined);
@@ -435,5 +483,77 @@ fn set(
         Err(RootedError::host(format!(
             "cannot install zlib stream {name}"
         )))
+    }
+}
+
+pub(crate) fn closed(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (api, _) = data(context)?;
+    let stream = get(context, api, "stream")?;
+    let handle = get(context, stream, "_handle")?;
+    let live = context.truthy_rooted(handle)?;
+    Ok(context.boolean(!live))
+}
+pub(crate) fn sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (api, id) = data(context)?;
+    let state = context.host_mut().shared_state();
+    let (mode, options) = state
+        .borrow()
+        .zlib_streams
+        .entries
+        .get(&id)
+        .map(|entry| (entry.mode, entry.options))
+        .ok_or_else(|| RootedError::host("zlib synchronous handle already closed"))?;
+    let input = super::zlib_shared_vm::codec_input(context, args.first().copied())?;
+    let stream = get(context, api, "stream")?;
+    let bytes_written = context.number(input.len() as f64);
+    set(context, stream, "bytesWritten", bytes_written)?;
+    let output = super::zlib_shared_vm::transform_bytes(
+        mode,
+        &input,
+        options.level.map(|level| level as i32),
+        Some(options.max_output),
+    );
+    remove(context, id);
+    let null = context.null();
+    set(context, stream, "_handle", null)?;
+    let bytes = match output {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let error = codec_error(context, error)?;
+            return Err(context.throw(error));
+        }
+    };
+    let buffer = buffer_bytes(context, api, &bytes)?;
+    let info = get(context, stream, "_info")?;
+    if context.truthy_rooted(info)? {
+        let result = context.object_rooted()?;
+        set(context, result, "buffer", buffer)?;
+        set(context, result, "engine", stream)?;
+        Ok(result)
+    } else {
+        Ok(buffer)
+    }
+}
+fn buffer_bytes(
+    context: &mut NativeContext<'_, NodeHost>,
+    api: RootId,
+    bytes: &[u8],
+) -> Result<RootId, RootedError> {
+    let buffer = context.uint8_array_rooted(bytes)?;
+    let prototype = get(context, api, "bufferPrototype")?;
+    if context.set_prototype_rooted(buffer, prototype)? {
+        Ok(buffer)
+    } else {
+        Err(RootedError::host(
+            "zlib intrinsic Buffer prototype installation failed",
+        ))
     }
 }
