@@ -1331,7 +1331,9 @@ impl<H: Host> Vm<H> {
             .map(|value| self.encode_wasm_value(value))
             .collect::<Vec<_>>();
         let previous = std::mem::replace(&mut self.active_program, id);
+        let compiled = defined.and_then(|index| self.run_compiled(id, environment, index, &args));
         let result = match (defined, imported) {
+            _ if compiled.is_some() => compiled.expect("checked"),
             (Some(index), _) => self.call_user(
                 program,
                 index,

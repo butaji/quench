@@ -38,6 +38,12 @@ quench-regexp = { path = "../quench-regexp" }
 quench-intl = { path = "../quench-intl" }
 quench-temporal = { path = "../quench-temporal" }
 wasmparser = "0.247"
+# The compiled execution mode: Cranelift is the code generator the generating
+# extension emits into; libc maps the resulting code executable.
+cranelift-codegen = { version = "=0.134.3", default-features = false, features = ["std", "host-arch"] }
+cranelift-frontend = { version = "=0.134.3", default-features = false, features = ["std"] }
+cranelift-native = { version = "=0.134.3", default-features = false }
+libc = "0.2"
 unicode-normalization = "0.1"
 unicode-segmentation = "1.13"
 

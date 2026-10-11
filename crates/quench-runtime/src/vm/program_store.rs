@@ -15,6 +15,9 @@ struct ProgramEntry {
     module: bool,
     /// Per-function lane views, derived from the residual on first lane entry.
     lane_views: Vec<std::cell::OnceCell<super::dispatch_fast::LaneView>>,
+    /// The program's compiled functions, once the compiled mode first calls
+    /// one; `Some(None)` records that none compile.
+    compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -98,6 +101,7 @@ impl ProgramStore {
             module_imports: Vec::new(),
             module: false,
             lane_views,
+            compiled: None,
         });
         Some(id)
     }
@@ -337,6 +341,23 @@ impl ProgramStore {
 
     /// The lane view of `function`, derived by `derive` on first use from the
     /// immutable residual and the program's constants.
+    pub(super) fn compiled(
+        &self,
+        id: ProgramId,
+    ) -> Option<Option<Rc<super::compiled::CompiledProgram>>> {
+        self.programs.get(id.index())?.compiled.clone()
+    }
+
+    pub(super) fn set_compiled(
+        &mut self,
+        id: ProgramId,
+        compiled: Option<Rc<super::compiled::CompiledProgram>>,
+    ) {
+        if let Some(entry) = self.programs.get_mut(id.index()) {
+            entry.compiled = Some(compiled);
+        }
+    }
+
     pub(super) fn lane_view(
         &self,
         id: ProgramId,
