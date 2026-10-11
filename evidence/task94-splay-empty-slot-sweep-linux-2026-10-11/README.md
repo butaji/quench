@@ -13,11 +13,11 @@ The candidate binary SHA-256 is `017144e235750f6658dc1adffc7c983822a70e5fff2805e
 
 ## Correctness
 
-Rust 1.99 heap unit suite passed 26/26. The fixed-work and stock Splay reports were valid and output-equal in all 11 rounds.
+Rust 1.99 heap unit suite passed 26/26. Both fixed-work Splay batches and both stock Splay runs were valid and output-equal in all 11 rounds.
 
 ## Results
 
-The fixed-work report is diagnostic: this Linux host had no `perf` counters, so 0/11 rounds were counter-qualified. After subtracting each K=0 setup sample, the paired marginal wall-time median was −2.61% (candidate faster), with a bootstrap 95% interval of −8.47% to +9.47%; 7/11 pairs favored the candidate. Paired median max RSS was unchanged (0 B; candidate won 4/11 pairs). The interval includes no change.
+The fixed-work reports are diagnostic: this Linux host had no `perf` counters, so 0/22 rounds were counter-qualified. Pooling both batches after subtracting each K=0 setup sample, the paired marginal wall-time median was −6.50% (candidate faster), with a bootstrap 95% interval of −12.16% to +3.27%; 15/22 pairs favored the candidate. Paired median max RSS was unchanged (0 B; candidate won 10/22 pairs). The interval includes no change.
 
 The candidate's 11-round stock report was valid/output-equal: Quench Score 2,259 vs Node `--jitless` 5,527; Quench max RSS 123,887,616 B vs Bun no-JIT 60,141,568 B (2.06×). A fresh control stock run scored 1,833 vs Node 3,307 and used 123,826,176 B vs Bun 60,493,824 B. The large change in reference-engine Scores between sequential runs shows host drift; these stock candidate/control values do not establish a Score regression or gain. Both candidate bars remain missed.
 
@@ -26,6 +26,7 @@ The candidate's 11-round stock report was valid/output-equal: Quench Score 2,259
 ## Reports and hashes
 
 - `splay-empty-sweep-fixed-11.json` SHA-256: `5726c906b21def1b7613127fc0c6e8d9243bc74501144de5953ca900491123fe`
+- `splay-empty-sweep-fixed-repeat-11.json` SHA-256: `bcbad683b64bbc5f01c6a264b635e22824c06b6805de3c45ecdbf2d2e3f6d234`
 - `splay-empty-sweep-stock-11.json` SHA-256: `798ab800df3a5f7ba2212f6026424076e9664c29ce2d98d4a479376f4604971e`
 - `splay-empty-sweep-control-stock-11.json` SHA-256: `3ce198f12a5cdaa15cb05f040b417dddd0aff7517b25c9a602d6d3c65193824a`
 
@@ -48,5 +49,7 @@ target/release/quench-bench quench-bench/js-engine-benchmark/v8-v7/splay.js \
   --quench-peer target/splay-125/production/quench-node \
   --runs 11 --timeout-ms 300000 --out work/splay-empty-sweep-fixed-11.json
 ```
+
+The repeat used the same command and binaries, writing to `work/splay-empty-sweep-fixed-11-repeat.json`.
 
 The stock candidate and control reports used the same fixture, engine paths, 11 rounds, and 300,000 ms timeout, with the corresponding Quench binary passed to `--quench`.
