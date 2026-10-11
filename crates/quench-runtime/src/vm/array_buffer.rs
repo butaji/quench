@@ -726,7 +726,9 @@ impl<H: Host> Vm<H> {
             length
         };
         let result = self.heap.alloc(Cell::ArrayBuffer {
-            object: Box::new(Self::empty_object(self.array_buffer_intrinsic_prototype(false))),
+            object: Box::new(Self::empty_object(
+                self.array_buffer_intrinsic_prototype(false),
+            )),
             bytes: Rc::new(copied_bytes),
             shared: false,
             detached: false,
@@ -923,7 +925,9 @@ impl<H: Host> Vm<H> {
             .unwrap()
             .copy_from_slice(&source_bytes[start..end]);
         Ok(self.heap.alloc(Cell::ArrayBuffer {
-            object: Box::new(Self::empty_object(self.array_buffer_intrinsic_prototype(false))),
+            object: Box::new(Self::empty_object(
+                self.array_buffer_intrinsic_prototype(false),
+            )),
             bytes,
             shared: false,
             detached: false,

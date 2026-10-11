@@ -885,6 +885,12 @@ impl<H: Host> Vm<H> {
             return self.json_serialize_value(p, unboxed, state);
         }
         let value = unboxed;
+        if let Some(raw) = self.json_raw_text(value) {
+            return Ok(Some(JsonValue::Raw(raw)));
+        }
+        if self.heap.object_record(value).is_some() {
+            return self.json_serialize_object(p, value, state).map(Some);
+        }
         match self.heap.get(value).cloned() {
             Some(Cell::String(value)) => Ok(Some(JsonValue::String(value))),
             Some(Cell::Symbol(_)) => Ok(None),
@@ -897,8 +903,8 @@ impl<H: Host> Vm<H> {
             }
             Some(Cell::Array { .. }) => self.json_serialize_array(p, value, state).map(Some),
             _ if self.is_array(p, value)? => self.json_serialize_array(p, value, state).map(Some),
-            Some(Cell::Object(_))
-            | Some(Cell::Proxy { .. })
+            Some(Cell::Object(_)) => self.json_serialize_object(p, value, state).map(Some),
+            Some(Cell::Proxy { .. })
             | Some(Cell::Date { .. })
             | Some(Cell::Error(_))
             | Some(Cell::Map { .. })

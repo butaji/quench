@@ -72,8 +72,7 @@ impl<H: Host> Vm<H> {
         proxy: Value,
     ) -> Result<Vec<Value>, JsError> {
         let _stack = self.enter_stack()?;
-        let Some((target, handler)) = self.proxy_parts(proxy)
-        else {
+        let Some((target, handler)) = self.proxy_parts(proxy) else {
             unreachable!("Proxy own-key dispatch");
         };
         if handler.is_null() {
@@ -318,8 +317,7 @@ impl<H: Host> Vm<H> {
         let outcome = (|| {
             let mut current = target;
             loop {
-                if let Some((target, handler)) = self.proxy_parts(current)
-                {
+                if let Some((target, handler)) = self.proxy_parts(current) {
                     return self.proxy_set(
                         p,
                         target,
