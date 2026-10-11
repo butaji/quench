@@ -191,7 +191,7 @@ impl<H: Host> Vm<H> {
                 .get(program_id)
                 .ok_or_else(|| JsError("constructor program is unavailable".into()))?;
             if let Some(initializer) = program.functions[function as usize].instance_initializer {
-                let previous = std::mem::replace(&mut self.active_program, program_id);
+                let previous = self.replace_active_program(program_id);
                 let result = self.call_user(
                     &program,
                     initializer,
@@ -200,7 +200,7 @@ impl<H: Host> Vm<H> {
                     &[],
                     CallContext::Internal,
                 );
-                self.active_program = previous;
+                self.set_active_program(previous);
                 result?;
             }
         }

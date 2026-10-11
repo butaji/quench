@@ -181,14 +181,14 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
             Op::JumpFalse => Op::JumpTrue,
             _ => continue,
         };
-        let target = skipped.jump_target();
         if protected[pc + 1]
             || skipped.op() != Op::Jump
             || branch.jump_target() as usize != pc + 2
-            || target as usize <= pc + 1
+            || skipped.jump_target() as usize <= pc + 1
         {
             continue;
         }
+        let target = skipped.jump_target();
         function.code[pc] = Instr::new(inverted, branch.register_a(), 0, 0, target);
         function.code[pc + 1] = Instr::new(Op::Nop, 0, 0, 0, 0);
     }

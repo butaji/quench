@@ -881,7 +881,7 @@ impl<H: Host> Vm<H> {
         let allow_inline_calls = stop_pc.is_none()
             && initial_error.is_none()
             && p.kind != crate::bytecode::ProgramKind::Wasm;
-        let previous_program = std::mem::replace(&mut self.active_program, frame_program);
+        let previous_program = self.replace_active_program(frame_program);
         let previous_global = self.realm.globals;
         let outcome = self.run_general_loop::<STOPS>(
             p,
@@ -890,7 +890,7 @@ impl<H: Host> Vm<H> {
             initial_error,
             allow_inline_calls,
         );
-        self.active_program = previous_program;
+        self.set_active_program(previous_program);
         self.realm.globals = previous_global;
         outcome
     }
@@ -924,6 +924,9 @@ impl<H: Host> Vm<H> {
         let mut cursor =
             GeneralCodeCursor::new(executing_program, entry_program, initial_function as u32);
         let mut pc = self.frames[frame].pc;
+        // The active frame's published PC. Frames are boxed, so the slot stays put while that
+        // frame is active; every frame change below re-derives it.
+        let mut published_pc: *mut usize = &mut self.frames[frame].pc;
         if let Some(error) = initial_error {
             pc = self.exception_handler_target(
                 p,
@@ -997,7 +1000,8 @@ impl<H: Host> Vm<H> {
             // GC inside a getter or native operation needs this instruction's root map.
             // SAFETY: `frame` names the active activation, which stays on the frame stack
             // for every iteration that dispatches it.
-            unsafe { self.frames.get_unchecked_mut(frame).pc = instruction_pc };
+            debug_assert!(std::ptr::eq(published_pc, &self.frames[frame].pc));
+            unsafe { *published_pc = instruction_pc };
             match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
                 Ok(StepResult::Return(value)) => {
                     if let Some(pending) = pending_calls.pop() {
@@ -1016,6 +1020,7 @@ impl<H: Host> Vm<H> {
                         self.write(frame, pending.destination, value);
                         pc = self.frames[frame].pc;
                         cursor = pending.caller_cursor;
+                        published_pc = &mut self.frames[frame].pc;
                         drop(pending.call_guard);
                     } else {
                         self.frames[frame].pc = pc;
@@ -1042,11 +1047,12 @@ impl<H: Host> Vm<H> {
                     debug_assert_eq!(callee_program, executing_program);
                     cursor =
                         GeneralCodeCursor::new(callee_program, p, self.frames[frame].function);
+                    published_pc = &mut self.frames[frame].pc;
                 }
                 Ok(StepResult::TailCall) => {
                     let replacement_program = self.frames[frame].program;
                     if replacement_program != executing_program {
-                        self.active_program = replacement_program;
+                        self.set_active_program(replacement_program);
                         current_program =
                             Some(self.programs.get(replacement_program).ok_or_else(|| {
                                 JsError::validation("missing tail-call program".into())
@@ -1060,6 +1066,7 @@ impl<H: Host> Vm<H> {
                         current_program.as_deref().unwrap_or(entry_program),
                         self.frames[frame].function,
                     );
+                    published_pc = &mut self.frames[frame].pc;
                     // The replacement frame publishes all callee roots before this back edge.
                     self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
                 }
@@ -1113,6 +1120,7 @@ impl<H: Host> Vm<H> {
                                     frame = pending.caller;
                                     pc = self.frames[frame].pc;
                                     cursor = pending.caller_cursor;
+                                    published_pc = &mut self.frames[frame].pc;
                                     throwing_pc = pending.call_pc;
                                     drop(pending.call_guard);
                                     error = match result {

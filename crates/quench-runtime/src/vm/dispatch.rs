@@ -1627,7 +1627,7 @@ impl<H: Host> Vm<H> {
                     let result = self.with_call_roots(
                         [callee, this].into_iter().chain(args.iter().copied()),
                         |vm| {
-                            vm.active_program = program_id;
+                            vm.set_active_program(program_id);
                             vm.realm.globals = realm;
                             vm.prepare_user_tail(
                                 &program,
