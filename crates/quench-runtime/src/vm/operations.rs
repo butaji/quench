@@ -1182,6 +1182,41 @@ impl<H: Host> Vm<H> {
             _ => self.call_primitive_native(p, native, this, args),
         }
     }
+    /// An arithmetic, bitwise or shift operator applied to two numbers: the integer fast path
+    /// when both are integers, otherwise the IEEE 754 result. Any other operand pair, and
+    /// every other operator, is left to `binary`.
+    #[inline(always)]
+    pub(super) fn number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+        if !is_numeric_binary_operator(op) {
+            return None;
+        }
+        if let Some(value) = self.numeric_integer_binary(op, left, right) {
+            self.record_binary_value_path(
+                op,
+                left,
+                right,
+                crate::profile::BinaryValuePath::IntegerFastPath,
+            );
+            return Some(value);
+        }
+        let (Some(left_number), Some(right_number)) = (left.as_number(), right.as_number()) else {
+            return None;
+        };
+        let operator = numeric_binary_operator(op)
+            .expect("numeric operator range is represented in the operator table");
+        self.record_binary_value_path(
+            op,
+            left,
+            right,
+            crate::profile::BinaryValuePath::NumberFastPath,
+        );
+        Some(Value::number(numeric_number_result(
+            operator,
+            left_number,
+            right_number,
+        )))
+    }
+
     #[inline]
     pub(super) fn binary(
         &mut self,
@@ -1190,31 +1225,12 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<Value, JsError> {
+        if let Some(value) = self.number_binary(op, left, right) {
+            return Ok(value);
+        }
         if is_numeric_binary_operator(op) {
-            if let Some(value) = self.numeric_integer_binary(op, left, right) {
-                self.record_binary_value_path(
-                    op,
-                    left,
-                    right,
-                    crate::profile::BinaryValuePath::IntegerFastPath,
-                );
-                return Ok(value);
-            }
             let operator = numeric_binary_operator(op)
                 .expect("numeric operator range is represented in the operator table");
-            if let (Some(left_number), Some(right_number)) = (left.as_number(), right.as_number()) {
-                self.record_binary_value_path(
-                    op,
-                    left,
-                    right,
-                    crate::profile::BinaryValuePath::NumberFastPath,
-                );
-                return Ok(Value::number(numeric_number_result(
-                    operator,
-                    left_number,
-                    right_number,
-                )));
-            }
             if operator == BinaryOperator::Addition {
                 self.record_binary_value_path(
                     op,
