@@ -135,6 +135,9 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let shared_state = context.host_mut().shared_state();
     let argv = shared_state.borrow().process_argv.clone();
     let exec_argv = shared_state.borrow().exec_argv.clone();
+    if let Some(pair) = exec_argv.windows(2).rev().find(|pair| matches!(pair[0].as_str(), "-e" | "--eval" | "-p" | "--print" | "-pe" | "-ep")) {
+        set_text(context, process, "_eval", &pair[1])?;
+    }
     let title = exec_argv
         .iter()
         .find_map(|argument| argument.strip_prefix("--title="));
@@ -147,8 +150,23 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         }
         set_text(context, process, "title", title)?;
     }
+    super::child_process_ipc_shared_vm::initialize(context)?;
     let env = context.object_rooted()?;
     for (name, value) in std::env::vars() {
+        if context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .process_ipc
+            .channel
+            .is_some()
+            && matches!(
+                name.as_str(),
+                "NODE_CHANNEL_FD" | "NODE_CHANNEL_SERIALIZATION_MODE"
+            )
+        {
+            continue;
+        }
         let key = context.string_rooted(&name);
         let value = context.string_rooted(&value);
         if !context.set_property_rooted(env, key, value, env)? {
@@ -1812,6 +1830,9 @@ fn drain_checkpoint(
             continue;
         }
 
+        if crate::modules::child_process_ipc_shared_vm::poll(runtime, program)? {
+            continue;
+        }
         if crate::modules::child_process_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
@@ -1926,7 +1947,8 @@ fn drain_checkpoint(
 }
 
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
-    crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
+    crate::modules::child_process_ipc_shared_vm::has_work(&shared_state.borrow())
+        || crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
         || crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
         || crate::modules::http_shared_vm::has_work(shared_state)

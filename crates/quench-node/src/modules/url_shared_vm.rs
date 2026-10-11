@@ -687,7 +687,7 @@ fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
-fn url_argument_text(
+pub(crate) fn url_argument_text(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
 ) -> Result<Option<String>, RootedError> {
