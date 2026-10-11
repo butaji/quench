@@ -115,34 +115,6 @@ impl Heap {
         unsafe { self.slots.get_unchecked_mut(index).cell.as_mut() }
     }
 
-    pub(super) fn get_mut_unremembered(&mut self, value: Value) -> Option<&mut Cell> {
-        let index = value.heap_index()? as usize;
-        if index >= self.slots.len() {
-            return None;
-        }
-        // SAFETY: the explicit length check proves the slab index is in range.
-        unsafe { self.slots.get_unchecked_mut(index).cell.as_mut() }
-    }
-
-    pub(super) fn remember_edge(&mut self, owner: Value, value: Value) {
-        if !self.tracks_young_cells() {
-            return;
-        }
-        let (Some(owner_index), Some(value_index)) = (
-            owner.heap_index().map(|index| index as usize),
-            value.heap_index().map(|index| index as usize),
-        ) else {
-            return;
-        };
-        if owner_index >= self.slots.len()
-            || value_index >= self.slots.len()
-            || Self::marked(&self.marks, value_index)
-        {
-            return;
-        }
-        self.remember(owner_index);
-    }
-
     pub(super) fn remember(&mut self, index: usize) {
         if !self.tracks_young_cells()
             || index >= self.slots.len()

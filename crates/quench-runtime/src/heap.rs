@@ -984,13 +984,8 @@ impl Heap {
         }
     }
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
-        self.remember_edge(object, value);
         let vector = {
-            let data = self
-                .get_mut_unremembered(object)
-                .unwrap()
-                .object_mut()
-                .unwrap();
+            let data = self.get_mut(object).unwrap().object_mut().unwrap();
             if data.inline_properties().is_some() {
                 data.set_inline_property(slot, value);
                 return;
