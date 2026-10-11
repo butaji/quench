@@ -372,7 +372,10 @@ impl Heap {
     }
 
     #[cfg(feature = "profile-memory")]
-    pub(crate) fn slot_slab_census(&self) -> (usize, usize, usize) {
+    pub(crate) fn slot_slab_census(
+        &self,
+        page_size: Option<usize>,
+    ) -> (usize, usize, usize, Option<usize>) {
         let complete_slabs = self.slots.len() / SLOTS_PER_SLAB;
         let fully_free_slabs = self
             .free_by_slab
@@ -386,7 +389,14 @@ impl Heap {
             .take(complete_slabs)
             .filter(|free| !free.is_empty() && free.len() < SLOTS_PER_SLAB)
             .count();
-        (complete_slabs, fully_free_slabs, partial_slabs)
+        let fully_empty_pages =
+            page_size.map(|page_size| self.slots.fully_empty_page_count(page_size));
+        (
+            complete_slabs,
+            fully_free_slabs,
+            partial_slabs,
+            fully_empty_pages,
+        )
     }
 
     pub fn alloc(&mut self, cell: Cell) -> Value {
