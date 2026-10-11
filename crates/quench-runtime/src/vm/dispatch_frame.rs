@@ -862,6 +862,9 @@ impl<H: Host> Vm<H> {
         let previous_global = self.realm.globals;
         let outcome = (|| {
             let mut current_program: Option<Rc<ResidualProgram>> = None;
+            // The residual being executed: the entry program, or the one `current_program`
+            // retains after a cross-program tail call. Updated only where that switch happens.
+            let mut executing_residual: *const ResidualProgram = entry_program;
             let mut frame = frame;
             let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
             let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
@@ -885,7 +888,10 @@ impl<H: Host> Vm<H> {
                 )?;
             }
             loop {
-                let p = current_program.as_deref().unwrap_or(p);
+                // SAFETY: `executing_residual` points at `entry_program`, borrowed for the whole
+                // call, or at the residual `current_program` keeps alive until it is replaced,
+                // and it is re-derived at that replacement.
+                let p = unsafe { &*executing_residual };
                 if stop_pc == Some(pc) {
                     self.frames[frame].pc = pc;
                     return Ok(FrameOutcome::ParameterInitializationComplete);
@@ -943,7 +949,9 @@ impl<H: Host> Vm<H> {
                     _ => {}
                 }
                 // GC inside a getter or native operation needs this instruction's root map.
-                self.frames[frame].pc = instruction_pc;
+                // SAFETY: `frame` names the active activation, which stays on the frame stack
+                // for every iteration that dispatches it.
+                unsafe { self.frames.get_unchecked_mut(frame).pc = instruction_pc };
                 match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
                     Ok(StepResult::Return(value)) => {
                         if let Some(pending) = pending_calls.pop() {
@@ -1000,6 +1008,7 @@ impl<H: Host> Vm<H> {
                                 })?);
                         }
                         executing_program = replacement_program;
+                        executing_residual = current_program.as_deref().unwrap_or(entry_program);
                         pc = self.frames[frame].pc;
                         cursor = GeneralCodeCursor::new(
                             replacement_program,
