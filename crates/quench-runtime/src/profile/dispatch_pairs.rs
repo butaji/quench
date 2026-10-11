@@ -152,8 +152,10 @@ mod tests {
             decoded: Default::default(),
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
             handlers: Vec::new(),
             register_root_offset: 0,
+            undefined_register: None,
         }
     }
 

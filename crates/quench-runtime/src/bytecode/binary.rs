@@ -7,6 +7,8 @@ use super::{
     RegExpLiteralSite, SourcePosition, Superinstruction, WideInstruction,
 };
 
+/// Encodes a function without an `undefined` register.
+const NO_UNDEFINED_REGISTER: u16 = u16::MAX;
 const RESIDUAL_MAGIC: &[u8; 8] = &[
     b'Q',
     b'U',
@@ -258,6 +260,7 @@ pub(super) fn write_program(
         out.u16(function.registers);
         out.u8(function.dispatch as u8);
         out.u32(function.register_root_offset);
+        out.u16(function.undefined_register.unwrap_or(NO_UNDEFINED_REGISTER));
         out.u32(function.code.len() as u32);
         for instruction in &function.code {
             out.u8(instruction.op() as u8);
@@ -544,6 +547,8 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             _ => return Err("invalid residual dispatch class".into()),
         };
         let register_root_offset = input.u32()?;
+        let undefined_register =
+            Some(input.u16()?).filter(|register| *register != NO_UNDEFINED_REGISTER);
         let code = input.list(|input| {
             let opcode = input.u8()?;
             let op = Op::from_index(usize::from(opcode))
@@ -647,8 +652,10 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             decoded: Default::default(),
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
             handlers,
             register_root_offset,
+            undefined_register,
         })
     })?;
     let cache_sites = input.u16()?;

@@ -939,6 +939,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
     registers[64] = live;
     vm.frames.push(Box::new(super::Frame {
         context: super::activation::CallContext::Internal,
+        reflected_parameters: 0,
         original_arguments: vec![original],
         program: super::program_store::ProgramId::MAIN,
         function: 0,
@@ -3931,6 +3932,7 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
     let held_atom = vm.intern_atom("held");
     let id = vm.suspend_continuation(Continuation {
         context: super::activation::CallContext::Internal,
+        reflected_parameters: 0,
         original_arguments: vec![original],
         program: super::program_store::ProgramId::MAIN,
         active_iterators: vec![],
@@ -3971,6 +3973,7 @@ fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
     vm.initialize(&program).unwrap();
     let continuation = || Continuation {
         context: CallContext::Internal,
+        reflected_parameters: 0,
         original_arguments: vec![],
         program: super::program_store::ProgramId::MAIN,
         function: 0,
@@ -4005,6 +4008,7 @@ fn exhausted_continuation_generations_retire_slots_without_resumer_aliasing() {
 fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
     let mut frame = super::Frame {
         context: super::activation::CallContext::Internal,
+        reflected_parameters: 0,
         original_arguments: vec![Value::heap(14)],
         program: super::program_store::ProgramId::MAIN,
         function: 0,
@@ -6215,6 +6219,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             let atom = vm.intern_atom("binding");
             let mut frame = super::Frame {
                 context: CallContext::Internal,
+                reflected_parameters: 0,
                 original_arguments: vec![],
                 program: super::program_store::ProgramId::MAIN,
                 function: 0,
