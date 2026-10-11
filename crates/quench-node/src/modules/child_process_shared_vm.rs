@@ -3,12 +3,11 @@
 use crate::host::{node_host::SharedChildProcess, NodeHost};
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::{
-    io::{Read, Write},
+    io::Read,
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc,
-        Arc, Mutex,
     },
 };
 use std::time::Duration;
@@ -37,20 +36,16 @@ const FACTORY: &str = quench_js_check::checked_js!(
       const id = started.id;
       this.stdin = started.piped[0] ? new Writable({
         write(chunk, _encoding, callback) {
-          try {
-            write(id, Buffer.from(chunk).toString("base64"));
-            callback();
-          } catch (error) {
-            callback(error);
-          }
+          let completed;
+          try { completed=write(id,Buffer.from(chunk).toString("base64"),callback); }
+          catch(error) { callback(error); return; }
+          if(completed)callback();
         },
         final(callback) {
-          try {
-            end(id);
-            callback();
-          } catch (error) {
-            callback(error);
-          }
+          let completed;
+          try { completed=end(id,callback); }
+          catch(error) { callback(error); return; }
+          if(completed)callback();
         }
       }) : null;
       this.stdio = [this.stdin, this.stdout, this.stderr, ...started.piped.slice(3).map(() => null)];
@@ -394,7 +389,14 @@ pub(crate) fn spawn_child(
         Ok((mut child, ipc)) => {
             let id = NEXT_CHILD_PROCESS_ID.fetch_add(1, Ordering::Relaxed);
             let pid = child.id();
-            let stdin = Arc::new(Mutex::new(child.stdin.take()));
+            let stdin = match super::child_process_input_shared_vm::Input::new(child.stdin.take()) {
+                Ok(stdin) => stdin,
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(RootedError::host(error.to_string()));
+                }
+            };
             let (sender, receiver) = mpsc::channel();
             if let Some(stdout) = child.stdout.take() {
                 spawn_reader(stdout, sender.clone(), true);
@@ -648,25 +650,28 @@ pub(crate) fn write_child(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(encoded)
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let stdin = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .child_processes
-        .get(&id)
-        .map(|process| Arc::clone(&process.stdin));
-    if let Some(stdin) = stdin {
-        if let Some(stdin) = stdin
-            .lock()
-            .map_err(|error| RootedError::host(error.to_string()))?
-            .as_mut()
-        {
-            stdin
-                .write_all(&bytes)
-                .map_err(|error| RootedError::host(error.to_string()))?;
+    let callback = args.get(2).copied()
+        .ok_or_else(|| RootedError::host("child stdin write callback missing"))?;
+    let callback = context.retain(callback)?;
+    let state = context.host_mut().shared_state();
+    let result = state.borrow_mut().child_processes.get_mut(&id).map_or_else(
+        || Err(std::io::Error::from_raw_os_error(libc::EPIPE)),
+        |process| process.stdin.write(bytes, callback),
+    );
+    match result {
+        Ok(false) => Ok(context.boolean(false)),
+        Ok(true) => {
+            context.release_root(callback);
+            Ok(context.boolean(true))
+        }
+        Err(error) => {
+            context.release_root(callback);
+            let error = super::child_process_input_shared_vm::write_error(
+                context, error.raw_os_error().unwrap_or(libc::EIO),
+            )?;
+            Err(context.throw(error))
         }
     }
-    Ok(context.undefined())
 }
 
 pub(crate) fn end_child(
@@ -674,28 +679,26 @@ pub(crate) fn end_child(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let Some(id) = args.first().and_then(|root| {
-        context
-            .rooted_value(*root)
-            .and_then(quench_runtime::Value::as_number)
-            .map(|number| number as u64)
-    }) else {
-        return Err(RootedError::host("child process end has no id"));
-    };
-    if let Some(stdin) = context
-        .host_mut()
-        .shared_state()
-        .borrow()
+    let id = args
+        .first()
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(quench_runtime::Value::as_number)
+        .ok_or_else(|| RootedError::host("child stdin end id missing"))? as u64;
+    let callback = args
+        .get(1)
+        .copied()
+        .ok_or_else(|| RootedError::host("child stdin final callback missing"))?;
+    let callback = context.retain(callback)?;
+    let state = context.host_mut().shared_state();
+    let completed = state
+        .borrow_mut()
         .child_processes
-        .get(&id)
-        .map(|process| Arc::clone(&process.stdin))
-    {
-        stdin
-            .lock()
-            .map_err(|error| RootedError::host(error.to_string()))?
-            .take();
+        .get_mut(&id)
+        .is_none_or(|process| process.stdin.end(callback));
+    if completed {
+        context.release_root(callback);
     }
-    Ok(context.undefined())
+    Ok(context.boolean(completed))
 }
 
 pub(crate) fn poll(
@@ -712,11 +715,12 @@ pub(crate) fn poll(
         .collect::<Vec<_>>();
     let mut progressed = false;
     for id in ids {
-        let (child, stdout, stderr, events, exit, close) = {
+        let (child, stdout, stderr, events, exit, close, input_progress) = {
             let mut state = shared_state.borrow_mut();
             let Some(process) = state.child_processes.get_mut(&id) else {
                 continue;
             };
+            let input_progress = process.stdin.progress();
             let mut events = Vec::new();
             loop {
                 match process.events.try_recv() {
@@ -739,7 +743,9 @@ pub(crate) fn poll(
             let close = process.stdout_terminal
                 && process.stderr_terminal
                 && process.exit.is_some()
-                && process.ipc.as_ref().is_none_or(|channel| channel.closed());
+                && process.ipc.as_ref().is_none_or(|channel| channel.closed())
+                && !process.stdin.has_pending()
+                && input_progress.callbacks.is_empty();
             let exit_for_close = process.exit.clone();
             (
                 process.child,
@@ -748,8 +754,11 @@ pub(crate) fn poll(
                 events,
                 exit,
                 close.then_some(exit_for_close).flatten(),
+                input_progress,
             )
         };
+        progressed |= input_progress.progressed;
+        super::child_process_input_shared_vm::queue(runtime, program, input_progress.callbacks)?;
         let (Some(child), Some(_stdout), Some(_stderr)) = (child, stdout, stderr) else {
             continue;
         };

@@ -107,7 +107,7 @@ pub(crate) struct SharedChildProcess {
     pub(crate) child: Option<quench_runtime::RootId>,
     pub(crate) stdout: Option<quench_runtime::RootId>,
     pub(crate) stderr: Option<quench_runtime::RootId>,
-    pub(crate) stdin: std::sync::Arc<std::sync::Mutex<Option<std::process::ChildStdin>>>,
+    pub(crate) stdin: crate::modules::child_process_input_shared_vm::Input,
     pub(crate) ipc: Option<crate::modules::child_process_ipc_shared_vm::IpcChannel>,
     pub(crate) events: std::sync::mpsc::Receiver<ChildProcessEvent>,
     pub(crate) stdout_terminal: bool,

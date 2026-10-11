@@ -2867,6 +2867,7 @@
             true,
           );
           st.ended = wasEnded;
+          finishWritable(this);
           return;
         }
         if (

@@ -1740,3 +1740,41 @@ console.log(JSON.stringify(events));}));"#;
     assert_eq!(observations[0].stdout,observations[1].stdout);
     assert_eq!(observations[0].stderr,observations[1].stderr);
 }
+
+#[test]
+fn child_stdin_backpressure_preserves_bytes_and_finishes_synchronously_drained_tail() {
+    const SOURCE: &str = r#"
+const assert=require('assert');
+const child=require('child_process').spawn(process.execPath,['-e',`let n=0;process.stdin.on('data',b=>n+=b.length);process.stdin.on('end',()=>console.log(n));`]);
+let output='', callbacks=0, finished=false;
+child.stdout.on('data',chunk=>output+=chunk);
+assert.strictEqual(child.stdin.write(Buffer.alloc(1024*1024),()=>callbacks++),false);
+assert(child.stdin.writableLength>0);
+for(let i=0;i<10;i++)child.stdin.write(Buffer.alloc(1),()=>callbacks++);
+child.stdin.end(()=>finished=true);
+child.on('close',(code)=>{assert.strictEqual(code,0);assert.strictEqual(callbacks,11);assert(finished);assert.strictEqual(output,'1048586\n');console.log('complete');});
+"#;
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let observation =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
+                .unwrap();
+        assert!(
+            !observation.timed_out,
+            "{executable}: {}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{executable}: {}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert_eq!(observation.stdout, b"complete\n");
+        assert!(observation.stderr.is_empty());
+    }
+}
