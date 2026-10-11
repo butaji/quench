@@ -83,6 +83,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "childProcessShellArgsWarning" (1) => crate::modules::child_process_shared_vm::shell_args_warning,
         method "childProcessSpawn" (3) => crate::modules::child_process_shared_vm::spawn_child,
         method "childProcessRegister" (4) => crate::modules::child_process_shared_vm::register_child,
+        method "childProcessStreamClosed" (0) => crate::modules::child_process_shared_vm::stream_closed,
         method "childProcessWrite" (2) => crate::modules::child_process_shared_vm::write_child,
         method "childProcessEnd" (1) => crate::modules::child_process_shared_vm::end_child,
         method "fail" (1) => crate::modules::assert_shared_vm::fail,

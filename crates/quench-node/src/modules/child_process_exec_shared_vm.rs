@@ -366,6 +366,9 @@ pub(crate) fn event(
         }
         return Ok(undefined);
     }
+    if kind == "error" {
+        close_streams(context, state)?;
+    }
     let done = context.boolean(true);
     set(context, state, "done", done)?;
     let timer = get(context, state, "timer")?;
@@ -477,6 +480,17 @@ fn validate_limit(
 fn kill(context: &mut NativeContext<'_, NodeHost>, state: RootId) -> Result<(), RootedError> {
     let stopped = context.boolean(true);
     set(context, state, "stopped", stopped)?;
+    close_streams(context, state)?;
+    let child = get(context, state, "child")?;
+    let signal = get(context, state, "killSignal")?;
+    method(context, child, "kill", &[signal])?;
+    Ok(())
+}
+
+fn close_streams(
+    context: &mut NativeContext<'_, NodeHost>,
+    state: RootId,
+) -> Result<(), RootedError> {
     let child = get(context, state, "child")?;
     for stream in ["stdout", "stderr"] {
         let emitter = get(context, child, stream)?;
@@ -484,8 +498,6 @@ fn kill(context: &mut NativeContext<'_, NodeHost>, state: RootId) -> Result<(), 
             method(context, emitter, "destroy", &[])?;
         }
     }
-    let signal = get(context, state, "killSignal")?;
-    method(context, child, "kill", &[signal])?;
     Ok(())
 }
 

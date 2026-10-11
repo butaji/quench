@@ -419,8 +419,8 @@ pub(crate) fn spawn_child(
                         stderr: None,
                         stdin,
                         events: receiver,
-                        stdout_ended: false,
-                        stderr_ended: false,
+                        stdout_terminal: false,
+                        stderr_terminal: false,
                         exit: None,
                     },
                 );
@@ -558,6 +558,48 @@ pub(crate) fn register_child(
         .borrow_mut()
         .child_processes
         .insert(id, process);
+    for (stream, is_stdout) in [(stdout, true), (stderr, false)] {
+        let id = context.number(id as f64);
+        let is_stdout = context.boolean(is_stdout);
+        let data = context.array_rooted(&[id, is_stdout])?;
+        let closed = context.host_function_with_data(
+            crate::host::shared_vm::operation("childProcessStreamClosed"),
+            data,
+        )?;
+        let key = context.string_rooted("once");
+        let once = context.get_property_rooted(stream, key)?;
+        let event = context.string_rooted("close");
+        context.call_rooted(once, stream, &[event, closed])?;
+    }
+    Ok(context.undefined())
+}
+
+/// Guest stream destruction closes our end of a child pipe independently of
+/// EOF: a shell descendant may still hold its writer after the shell exits.
+pub(crate) fn stream_closed(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let id_key = context.string_rooted("0");
+    let id = context.get_property_rooted(data, id_key)?;
+    let id = context
+        .rooted_value(id)
+        .and_then(quench_runtime::Value::as_number)
+        .ok_or_else(|| RootedError::host("child stream close has no process id"))?
+        as u64;
+    let kind_key = context.string_rooted("1");
+    let kind = context.get_property_rooted(data, kind_key)?;
+    let is_stdout = context.truthy_rooted(kind)?;
+    let state = context.host_mut().shared_state();
+    if let Some(process) = state.borrow_mut().child_processes.get_mut(&id) {
+        if is_stdout {
+            process.stdout_terminal = true;
+        } else {
+            process.stderr_terminal = true;
+        }
+    }
     Ok(context.undefined())
 }
 
@@ -661,8 +703,8 @@ pub(crate) fn poll(
             let mut exit = None;
             for event in &events {
                 match event {
-                    ChildProcessEvent::StdoutEnd => process.stdout_ended = true,
-                    ChildProcessEvent::StderrEnd => process.stderr_ended = true,
+                    ChildProcessEvent::StdoutEnd => process.stdout_terminal = true,
+                    ChildProcessEvent::StderrEnd => process.stderr_terminal = true,
                     ChildProcessEvent::Exit(code, signal) => {
                         process.exit = Some((*code, signal.clone()));
                         exit = Some((*code, signal.clone()));
@@ -670,7 +712,8 @@ pub(crate) fn poll(
                     _ => {}
                 }
             }
-            let close = process.stdout_ended && process.stderr_ended && process.exit.is_some();
+            let close =
+                process.stdout_terminal && process.stderr_terminal && process.exit.is_some();
             let exit_for_close = process.exit.clone();
             (
                 process.child,
