@@ -706,6 +706,10 @@ pub(crate) struct Vm<H> {
     runtime_atoms: RuntimeAtoms,
     method_caches: Vec<[MethodCache; 2]>,
     megamorphic_methods: Vec<MethodCacheSet>,
+    /// A filter over the atoms method caches may name: bit `atom % u64::BITS` is set when an
+    /// entry for the atom is recorded and the whole filter resets when every method cache is
+    /// cleared, so a clear bit proves that no method cache names the atom.
+    method_cache_atoms: u64,
     #[cfg(feature = "profile-aggregate")]
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: Vec<u32>,
@@ -1278,6 +1282,7 @@ impl<H: Host> Vm<H> {
         self.to_precision_atom = self.intern_atom("toPrecision");
         self.method_caches = vec![[EMPTY_METHOD_CACHE; 2]; program.method_sites.len()];
         self.megamorphic_methods.clear();
+        self.method_cache_atoms = 0;
         self.object_shapes = vec![u32::MAX; program.object_sites.len()];
         self.descriptors.clear();
         self.function_values.clear();

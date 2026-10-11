@@ -1452,7 +1452,9 @@ impl<H: Host> Vm<H> {
         } else {
             return false;
         };
-        let invalidates_method = self.cached_store_is_callable(object, cache.slot as usize, value);
+        // Callable writes matter only to method caches, so atoms no cache names skip the probe.
+        let invalidates_method = self.method_caches_may_name(atom)
+            && self.cached_store_is_callable(object, cache.slot as usize, value);
         // SAFETY: a matching immutable shape proves the cached slot layout.
         unsafe {
             self.heap
