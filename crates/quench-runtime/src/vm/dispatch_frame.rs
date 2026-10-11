@@ -136,12 +136,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
-        match self.call_user_frame_mode(p, id, parent, this, args, context, false, false)? {
-            UserFrameStart::Outcome(outcome) => Ok(outcome),
-            UserFrameStart::Pushed(_) => {
-                unreachable!("ordinary call unexpectedly stayed in dispatch")
-            }
-        }
+        self.run_user_frame(p, id, parent, this, args, context, false)
     }
 
     pub(super) fn call_user_construct_frame(
@@ -152,21 +147,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
-        match self.call_user_frame_mode(
-            p,
-            id,
-            parent,
-            Value::UNDEFINED,
-            args,
-            context,
-            true,
-            false,
-        )? {
-            UserFrameStart::Outcome(outcome) => Ok(outcome),
-            UserFrameStart::Pushed(_) => {
-                unreachable!("constructor unexpectedly stayed in dispatch")
-            }
-        }
+        self.run_user_frame(p, id, parent, Value::UNDEFINED, args, context, true)
     }
 
     /// Starts an activation that the dispatch loop runs in place.
@@ -183,15 +164,26 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<crate::stack::GuestCallGuard, JsError> {
-        match self.call_user_frame_mode(p, id, parent, this, args, context, false, true)? {
-            UserFrameStart::Pushed(guard) => Ok(guard),
-            UserFrameStart::Outcome(_) => {
-                unreachable!("pushed user call unexpectedly ran to completion")
+        self.activate_user_frame(p, id, parent, this, args, context)?;
+        // An in-loop activation grows the frame stack, not the native stack, so it counts
+        // against the live guest-call budget rather than a native transition.
+        match crate::stack::GuestCallGuard::enter() {
+            Ok(guard) => Ok(guard),
+            Err(()) => {
+                let outcome = Err(self.stack_exhaustion_error());
+                let mut frame = self.frames.pop().unwrap();
+                self.deactivate_frame(&mut frame, &outcome);
+                self.persist_global_lexical_bindings(p, &frame);
+                match outcome {
+                    Err(error) => Err(error),
+                    Ok(_) => unreachable!(),
+                }
             }
         }
     }
 
-    fn call_user_frame_mode(
+    /// Runs a user activation to completion on the native stack.
+    fn run_user_frame(
         &mut self,
         p: &ResidualProgram,
         id: u32,
@@ -200,8 +192,71 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
         capture_constructor_this: bool,
-        push_to_dispatch: bool,
-    ) -> Result<UserFrameStart, JsError> {
+    ) -> Result<FrameOutcome, JsError> {
+        let frame_index = self.activate_user_frame(p, id, parent, this, args, context)?;
+        let run_numeric =
+            numeric_frame_is_safe(&p.functions[id as usize], capture_constructor_this);
+        // Numeric dispatch changes the body loop only. Frame activation and cleanup
+        // remain shared; unsupported tail-call and suspension completions use general.
+        let result = if run_numeric {
+            let active_program =
+                std::mem::replace(&mut self.active_program, self.frames[frame_index].program);
+            let result = self
+                .run_frame_numeric(p, frame_index)
+                .map(FrameOutcome::Complete);
+            self.active_program = active_program;
+            result
+        } else {
+            self.run_frame_general(p, frame_index)
+        };
+        let mut frame = self.frames.pop().unwrap();
+        self.deactivate_frame(&mut frame, &result);
+        self.persist_global_lexical_bindings(p, &frame);
+        match result? {
+            FrameOutcome::Complete(value) => {
+                let outcome = if capture_constructor_this {
+                    FrameOutcome::ConstructComplete {
+                        value,
+                        this: frame.this,
+                    }
+                } else {
+                    FrameOutcome::Complete(value)
+                };
+                self.pool_frame(frame);
+                Ok(outcome)
+            }
+            FrameOutcome::ConstructComplete { .. } => {
+                self.pool_frame(frame);
+                Err(JsError(
+                    "nested constructor completion escaped its activation".into(),
+                ))
+            }
+            FrameOutcome::Await {
+                value, destination, ..
+            } => Ok(FrameOutcome::Await {
+                value,
+                destination,
+                frame: Some(*frame),
+            }),
+            FrameOutcome::Yield { .. } => {
+                Err(JsError("yield requires generator continuation".into()))
+            }
+            FrameOutcome::ParameterInitializationComplete => Err(JsError(
+                "unexpected generator parameter initialization boundary".into(),
+            )),
+        }
+    }
+
+    /// Binds a user function's activation and pushes it on the frame stack, returning its index.
+    fn activate_user_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        parent: Value,
+        this: Value,
+        args: &[Value],
+        context: CallContext,
+    ) -> Result<usize, JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
         if p.functions[id as usize].parameter_eval_arguments_error {
@@ -269,8 +324,6 @@ impl<H: Host> Vm<H> {
             new_target,
             id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(),
         );
-        let run_numeric = numeric_frame_is_safe(function, capture_constructor_this);
-        debug_assert!(!push_to_dispatch || !run_numeric);
         frame.prepare_registers_for(function);
         frame.initialize_promoted_registers(function, args);
         self.frames.push(frame);
@@ -282,73 +335,7 @@ impl<H: Host> Vm<H> {
             self.programs
                 .set_module_environment(self.frames[frame_index].program, environment);
         }
-        if push_to_dispatch {
-            // An in-loop activation grows the frame stack, not the native stack, so it counts
-            // against the live guest-call budget rather than a native transition.
-            let call_guard = match crate::stack::GuestCallGuard::enter() {
-                Ok(guard) => guard,
-                Err(()) => {
-                    let outcome = Err(self.stack_exhaustion_error());
-                    let mut frame = self.frames.pop().unwrap();
-                    self.deactivate_frame(&mut frame, &outcome);
-                    self.persist_global_lexical_bindings(p, &frame);
-                    return match outcome {
-                        Err(error) => Err(error),
-                        Ok(_) => unreachable!(),
-                    };
-                }
-            };
-            return Ok(UserFrameStart::Pushed(call_guard));
-        }
-        // Numeric dispatch changes the body loop only. Frame activation and cleanup
-        // remain shared; unsupported tail-call and suspension completions use general.
-        let result = if run_numeric {
-            let active_program =
-                std::mem::replace(&mut self.active_program, self.frames[frame_index].program);
-            let result = self
-                .run_frame_numeric(p, frame_index)
-                .map(FrameOutcome::Complete);
-            self.active_program = active_program;
-            result
-        } else {
-            self.run_frame_general(p, frame_index)
-        };
-        let mut frame = self.frames.pop().unwrap();
-        self.deactivate_frame(&mut frame, &result);
-        self.persist_global_lexical_bindings(p, &frame);
-        match result? {
-            FrameOutcome::Complete(value) => {
-                let outcome = if capture_constructor_this {
-                    FrameOutcome::ConstructComplete {
-                        value,
-                        this: frame.this,
-                    }
-                } else {
-                    FrameOutcome::Complete(value)
-                };
-                self.pool_frame(frame);
-                Ok(UserFrameStart::Outcome(outcome))
-            }
-            FrameOutcome::ConstructComplete { .. } => {
-                self.pool_frame(frame);
-                Err(JsError(
-                    "nested constructor completion escaped its activation".into(),
-                ))
-            }
-            FrameOutcome::Await {
-                value, destination, ..
-            } => Ok(UserFrameStart::Outcome(FrameOutcome::Await {
-                value,
-                destination,
-                frame: Some(*frame),
-            })),
-            FrameOutcome::Yield { .. } => {
-                Err(JsError("yield requires generator continuation".into()))
-            }
-            FrameOutcome::ParameterInitializationComplete => Err(JsError(
-                "unexpected generator parameter initialization boundary".into(),
-            )),
-        }
+        Ok(frame_index)
     }
 
     /// Replace the active frame for a terminal user call.  This is the
@@ -808,8 +795,14 @@ impl<H: Host> Vm<H> {
             Ok(FrameOutcome::Await { .. } | FrameOutcome::Yield { .. }) => {
                 frame.with_objects = self.with_stack.split_off(frame.with_base);
             }
-            _ => self.with_stack.truncate(frame.with_base),
+            _ => self.finish_frame_scopes(frame),
         }
+    }
+
+    /// Drops the `with` scopes a finished (not suspended) activation entered.
+    #[inline(always)]
+    pub(super) fn finish_frame_scopes(&mut self, frame: &Frame) {
+        self.with_stack.truncate(frame.with_base);
     }
 
     /// Returns a finished activation's buffers to the pool without copying the frame again.
@@ -983,9 +976,8 @@ impl<H: Host> Vm<H> {
                     Ok(StepResult::Return(value)) => {
                         if let Some(pending) = pending_calls.pop() {
                             debug_assert_eq!(frame, pending.caller + 1);
-                            let result = Ok(FrameOutcome::Complete(value));
-                            let mut completed_frame = self.frames.pop().unwrap();
-                            self.deactivate_frame(&mut completed_frame, &result);
+                            let completed_frame = self.frames.pop().unwrap();
+                            self.finish_frame_scopes(&completed_frame);
                             self.persist_global_lexical_bindings(p, &completed_frame);
                             self.pool_frame(completed_frame);
                             frame = pending.caller;
