@@ -207,6 +207,10 @@ impl Frame {
             self.prepare_registers(register_count);
         } else {
             self.registers.resize(register_count, Value::UNDEFINED);
+            if let Some(register) = function.undefined_register {
+                // Validation bounds the register by the function's register count.
+                self.registers[usize::from(register)] = Value::UNDEFINED;
+            }
         }
     }
 

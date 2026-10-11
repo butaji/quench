@@ -855,6 +855,9 @@ pub struct Function {
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     pub(crate) handlers: Vec<Handler>,
     pub(crate) register_root_offset: u32,
+    /// A register that holds `undefined` for the whole activation, set at frame entry and
+    /// never written by code: the receiver of plain calls.
+    pub(crate) undefined_register: Option<Register>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1623,7 +1626,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 82;
+    pub const FORMAT_VERSION: u8 = 83;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

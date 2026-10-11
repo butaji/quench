@@ -794,6 +794,7 @@ impl Engine {
                 live_parameter_reflection: Default::default(),
                 handlers: lowering.handlers,
                 register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
+                undefined_register: None,
             };
             functions.push(function);
             constants = lowering.constants;

@@ -644,6 +644,12 @@ impl ResidualProgram {
                     "function {index} has an invalid parameter boundary"
                 ));
             }
+            if function
+                .undefined_register
+                .is_some_and(|register| register >= function.registers)
+            {
+                return Err(format!("function {index} undefined register is out of bounds"));
+            }
             if function.register_root_offset != u32::MAX {
                 let root_end = function
                     .register_root_offset
@@ -1162,6 +1168,7 @@ mod tests {
             live_parameter_reflection: Default::default(),
             handlers: vec![],
             register_root_offset: root,
+            undefined_register: None,
         }
     }
 
