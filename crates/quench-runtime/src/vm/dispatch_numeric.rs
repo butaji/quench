@@ -283,6 +283,16 @@ impl<H: Host> Vm<H> {
                             pc = ins.jump_target() as usize;
                         }
                     }
+                    Op::JumpTrue => {
+                        let value = self.read(frame, ins.register_a());
+                        let truthy = self.truthy(value);
+                        #[cfg(feature = "profile-aggregate")]
+                        self.profile
+                            .branch_value(value.profile_kind() as usize, truthy);
+                        if truthy {
+                            pc = ins.jump_target() as usize;
+                        }
+                    }
                     Op::JumpBinaryFalse => {
                         let operator = ins.binary_operator_field();
                         let left_operand = ins.operand_b();
@@ -298,6 +308,24 @@ impl<H: Host> Vm<H> {
                     Op::Return => {
                         self.frames[frame].pc = pc;
                         return Ok(StepResult::Return(self.read(frame, ins.register_a())));
+                    }
+                    // A root-function projection can run a global accessor, so the instruction's
+                    // root-map PC is published as `numeric_step_fallback` would.
+                    Op::LoadCapture => {
+                        self.frames[frame].pc = pc - 1;
+                        let value =
+                            self.capture(p, frame, ins.capture_depth(), ins.capture_slot())?;
+                        self.write(frame, ins.result_register(), value);
+                    }
+                    Op::StoreCapture => {
+                        self.frames[frame].pc = pc - 1;
+                        self.store_capture(
+                            p,
+                            frame,
+                            ins.capture_depth(),
+                            ins.capture_slot(),
+                            self.read(frame, ins.register_a()),
+                        )?;
                     }
                     _ => {
                         self.frames[frame].pc = pc;
