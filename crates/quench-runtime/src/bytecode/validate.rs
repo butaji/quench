@@ -138,8 +138,7 @@ fn promoted_local_layout_is_valid(
         });
     eligible_function
         && promoted.iter().enumerate().all(|(index, entry)| {
-            entry.local < function.params
-                && entry.local < function.locals
+            entry.local < function.locals
                 && entry.register == index as u16
                 && entry.register < function.registers
                 && function.local_atoms.get(usize::from(entry.local)).is_some_and(|atom| {
@@ -179,31 +178,6 @@ fn instruction_uses_promoted_local(
                     .promoted_register(Operand(instruction.field_value(field)).payload())
                     .is_some()
         })
-}
-
-fn instruction_writes_promoted_register(
-    instruction: super::WideInstruction,
-    function: &super::Function,
-) -> bool {
-    InstructionField::ALL.iter().copied().any(|field| {
-        let layout = instruction.op().field_layout(field);
-        let register = match layout {
-            FieldLayout::ResultRegister if instruction.numeric_local_target().is_none() => {
-                Some(instruction.result_register())
-            }
-            FieldLayout::WriteRegister | FieldLayout::ReadWriteRegister => {
-                Some(instruction.field_value(field))
-            }
-            FieldLayout::OptionalRegister => instruction.optional_register_b(),
-            _ => None,
-        };
-        register.is_some_and(|register| {
-            function
-                .local_registers
-                .iter()
-                .any(|entry| entry.register == register)
-        })
-    })
 }
 
 #[derive(Clone, Copy)]
@@ -704,11 +678,6 @@ impl ResidualProgram {
                 if instruction_uses_promoted_local(instruction, function) {
                     return Err(format!(
                         "function {index} accesses a promoted binding through its local slot"
-                    ));
-                }
-                if instruction_writes_promoted_register(instruction, function) {
-                    return Err(format!(
-                        "function {index} writes a promoted binding outside frame entry"
                     ));
                 }
                 if matches!(
