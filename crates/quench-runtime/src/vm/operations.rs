@@ -10,6 +10,31 @@ const EXPONENTIATION_ZERO: f64 = 0.0;
 const EXPONENTIATION_ONE: f64 = 1.0;
 const EXPONENTIATION_TWO: f64 = 2.0;
 const ODD_INTEGER_PARITY: f64 = 1.0;
+/// The comparison operators occupy the binary operator discriminants up to this one.
+const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
+
+/// A comparison operator applied to two numbers.
+#[inline(always)]
+fn number_comparison(op: u32, a: f64, b: f64) -> bool {
+    const EQUALITY: u32 = BinaryOperator::Equality as u32;
+    const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
+    const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
+    const STRICT_INEQUALITY: u32 = BinaryOperator::StrictInequality as u32;
+    const LESS_THAN: u32 = BinaryOperator::LessThan as u32;
+    const LESS_EQUAL_THAN: u32 = BinaryOperator::LessEqualThan as u32;
+    const GREATER_THAN: u32 = BinaryOperator::GreaterThan as u32;
+    const GREATER_EQUAL_THAN: u32 = BinaryOperator::GreaterEqualThan as u32;
+    match op {
+        EQUALITY | STRICT_EQUALITY => a == b,
+        INEQUALITY | STRICT_INEQUALITY => a != b,
+        LESS_THAN => a < b,
+        LESS_EQUAL_THAN => a <= b,
+        GREATER_THAN => a > b,
+        GREATER_EQUAL_THAN => a >= b,
+        _ => unreachable!("comparison operators end at GreaterEqualThan"),
+    }
+}
+
 const FIRST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::Addition as u32;
 const LAST_NUMERIC_BINARY_OPERATOR: u32 = BinaryOperator::BitwiseAnd as u32;
 const NUMERIC_BINARY_OPERATOR_COUNT: usize =
@@ -1202,7 +1227,7 @@ impl<H: Host> Vm<H> {
                 if matches!(self.heap.get(left), Some(Cell::String(_)))
                     && matches!(self.heap.get(right), Some(Cell::String(_)))
                 {
-                    return self.binary_slow(p, op, left, right);
+                    return self.concatenate(p, left, right);
                 }
                 return self.with_coerced_operands(
                     p,
@@ -1405,6 +1430,27 @@ impl<H: Host> Vm<H> {
     }
     #[cold]
     #[inline(never)]
+    /// String concatenation for `+` once at least one operand is a string: an interned
+    /// result when the dynamic-string cache knows the pair, otherwise both operands' string
+    /// values joined and interned.
+    fn concatenate(
+        &mut self,
+        p: &ResidualProgram,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, JsError> {
+        if let Some(value) = self.intern_dynamic_concat(left, right) {
+            #[cfg(feature = "profile-aggregate")]
+            self.profile.string_concat(true);
+            return Ok(value);
+        }
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.string_concat(false);
+        let mut text = self.coerce_js_string(p, left)?;
+        text.push_js_string(&self.coerce_js_string(p, right)?);
+        Ok(self.intern_dynamic_value(text))
+    }
+
     pub(super) fn binary_slow(
         &mut self,
         p: &ResidualProgram,
@@ -1417,17 +1463,9 @@ impl<H: Host> Vm<H> {
         {
             return Ok(Value::number(numeric_number_result(operator, a, b)));
         }
-        if op == 8 && (self.is_string(left) || self.is_string(right)) {
-            if let Some(value) = self.intern_dynamic_concat(left, right) {
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.string_concat(true);
-                return Ok(value);
-            }
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.string_concat(false);
-            let mut text = self.coerce_js_string(p, left)?;
-            text.push_js_string(&self.coerce_js_string(p, right)?);
-            return Ok(self.intern_dynamic_value(text));
+        if op == BinaryOperator::Addition as u32 && (self.is_string(left) || self.is_string(right))
+        {
+            return self.concatenate(p, left, right);
         }
         if let Some(operator) = RelationalOperator::from_immediate(op) {
             let result = self.compare_relational(p, operator, left, right)?;
@@ -1452,24 +1490,27 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<bool, JsError> {
-        if op <= 7
-            && let Some((a, b)) = Value::int_pair(left, right)
-        {
-            self.record_binary_value_path(
-                op,
-                left,
-                right,
-                crate::profile::BinaryValuePath::IntegerFastPath,
-            );
-            return Ok(match op {
-                0 | 2 => a == b,
-                1 | 3 => a != b,
-                4 => a < b,
-                5 => a <= b,
-                6 => a > b,
-                7 => a >= b,
-                _ => unreachable!(),
-            });
+        if op <= LAST_COMPARISON_OPERATOR {
+            if let Some((a, b)) = Value::int_pair(left, right) {
+                self.record_binary_value_path(
+                    op,
+                    left,
+                    right,
+                    crate::profile::BinaryValuePath::IntegerFastPath,
+                );
+                return Ok(number_comparison(op, f64::from(a), f64::from(b)));
+            }
+            // Equality, strict equality and the relational operators agree with IEEE 754
+            // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
+            if let (Some(a), Some(b)) = (left.as_number(), right.as_number()) {
+                self.record_binary_value_path(
+                    op,
+                    left,
+                    right,
+                    crate::profile::BinaryValuePath::NumberFastPath,
+                );
+                return Ok(number_comparison(op, a, b));
+            }
         }
         let value = self.binary(p, op, left, right)?;
         Ok(self.truthy(value))
