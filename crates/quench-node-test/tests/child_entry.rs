@@ -1558,3 +1558,39 @@ options.info=false;
 "#;
     compare_node_stream_source(source);
 }
+
+#[test]
+#[cfg(unix)]
+fn child_ipc_stdio_maps_a_real_duplex_socket_at_standard_and_extra_descriptors() {
+    let source = r#"const {spawn}=require('child_process');let index=0;const results=[];
+const slots=[0,3,5];function next(){if(index===slots.length){console.log(JSON.stringify(results));return;}
+const slot=slots[index++];const stdio=['ignore','pipe','ignore'];while(stdio.length<=slot)stdio.push(null);stdio[slot]='ipc';
+const child=spawn(process.argv[1],['-e',`console.log(JSON.stringify([process.channel.fd,require('fs').fstatSync(process.channel.fd).isSocket(),process.env.NODE_CHANNEL_FD===undefined]));`],{stdio});
+let output='';child.stdout.on('data',chunk=>output+=chunk);child.on('error',error=>{throw error});child.on('close',(code,signal)=>{results.push([child.stdio.map(stream=>stream===null),code,signal,output]);next()});}next();"#;
+    let node = Command::new("node")
+        .arg("-p")
+        .arg("process.execPath")
+        .output()
+        .unwrap();
+    assert!(node.status.success());
+    let node = String::from_utf8(node.stdout).unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source, node.trim()]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
