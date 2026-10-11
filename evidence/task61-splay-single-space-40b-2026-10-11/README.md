@@ -134,7 +134,36 @@ The production build and current-source correctness checks completed:
   the probe.
 - `git diff --check` passes.
 
-These are correctness results only. The candidate's fixed-work Splay result,
-all-eight guard, and stock-harness score/RSS qualification remain unmeasured
-for this rebased source. The M4 trunk distances therefore remain 2.32x speed
-and 2.00x RSS until clean performance gates establish candidate distances.
+## Fixed-work screen on the current-trunk candidate (2026-10-11)
+
+The Splay-only pair report is
+[`splay-fixed-work-current-trunk-11.json`](splay-fixed-work-current-trunk-11.json).
+On the M4, all 11 pairs were detector-clean and output-equal:
+
+| Splay metric | Trunk baseline | Candidate | Change |
+| --- | ---: | ---: | ---: |
+| Marginal wall / `run()` | 1,323,711 ns | 1,311,551 ns | −0.92% |
+| Marginal cycles / `run()` | 5,279,360 | 5,242,683 | −0.70% |
+| Marginal instructions / `run()` | 29,600,988 | 29,601,793 | +0.003% |
+| Work max RSS | 122,880,000 B | 97,304,576 B | −20.84% |
+
+The all-eight fixed-work report is
+[`all-eight-fixed-work-current-trunk-11.json`](all-eight-fixed-work-current-trunk-11.json);
+all fixtures completed 11/11 clean pairs with equal output. The derived
+decision is [`all-eight-current-trunk-guard.decision.json`](all-eight-current-trunk-guard.decision.json).
+The layout candidate is **rejected**: NavierStokes regressed +4.07% cycles
+(95% paired interval +1.79% to +7.22%) and RayTrace regressed +0.99%
+(+0.85% to +2.40%). RSS fell on all eight fixtures and stayed within budget.
+Splay improved −1.44% cycles (95% interval −3.15% to +0.17%) and −20.84%
+max RSS.
+
+The all-eight runner recorded `source_dirty=true` because the earlier
+Splay-only JSON was already untracked in this same checkout. At the start of
+the Splay run, the candidate checkout was clean; between the two runs, no
+source files changed. Both reports record the exact pinned baseline/candidate
+binary hashes, runner hash, fixture hashes and per-sample contention checks.
+Treat these as fixed-work diagnostics, not stock-harness qualification.
+
+The candidate still has no stock Score/RSS result. M4 trunk distances remain
+2.32x speed and 2.00x RSS; the candidate does not qualify for trunk because
+the all-eight guard rejected it.
