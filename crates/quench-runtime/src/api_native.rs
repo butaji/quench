@@ -5,6 +5,39 @@ use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
 
+/// Builtin internal-slot brands, independent of prototypes and guest property hooks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltinBrand {
+    Date,
+    RegExp,
+    NativeError,
+    Promise,
+    Map,
+    Set,
+    WeakMap,
+    WeakSet,
+    Proxy,
+    ArrayBuffer,
+    SharedArrayBuffer,
+    AnyArrayBuffer,
+    DataView,
+    TypedArray,
+    ArrayBufferView,
+    Uint8Array,
+    Uint8ClampedArray,
+    Uint16Array,
+    Uint32Array,
+    Int8Array,
+    Int16Array,
+    Int32Array,
+    BigInt64Array,
+    BigUint64Array,
+    Float16Array,
+    Float32Array,
+    Float64Array,
+    ArgumentsObject,
+}
+
 pub type HostCallback<H> =
     for<'a> fn(&mut NativeContext<'a, H>, RootId, &[RootId]) -> Result<RootId, RootedError>;
 
@@ -83,6 +116,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
     /// Check whether a live rooted value has the ECMAScript Promise internal slots.
     pub fn is_promise_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
         let result = self.vm.embedding_is_promise(root);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Test an internal-slot brand without invoking guest getters or proxy traps.
+    pub fn has_builtin_brand_rooted(
+        &mut self,
+        root: RootId,
+        brand: BuiltinBrand,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_has_builtin_brand(root, brand);
         result.map_err(|error| self.error(error))
     }
 

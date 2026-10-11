@@ -39,6 +39,6 @@ pub use vm::JsError;
 
 mod api;
 pub use api::{
-    ExecutionRequest, HostFunction, HostFunctionId, NativeContext, PromiseRejectionEvent,
+    BuiltinBrand, ExecutionRequest, HostFunction, HostFunctionId, NativeContext, PromiseRejectionEvent,
     RootedError, Runtime, RuntimeError, SourceKind,
 };

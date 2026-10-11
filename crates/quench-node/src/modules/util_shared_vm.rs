@@ -1,7 +1,38 @@
-//! Shared-VM utilities whose behavior is defined in guest-visible JavaScript.
+//! Shared-VM utilities and native builtin-brand predicates.
 
 use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError};
+use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
+
+const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
+    ("isDate", BuiltinBrand::Date),
+    ("isRegExp", BuiltinBrand::RegExp),
+    ("isNativeError", BuiltinBrand::NativeError),
+    ("isPromise", BuiltinBrand::Promise),
+    ("isMap", BuiltinBrand::Map),
+    ("isSet", BuiltinBrand::Set),
+    ("isWeakMap", BuiltinBrand::WeakMap),
+    ("isWeakSet", BuiltinBrand::WeakSet),
+    ("isProxy", BuiltinBrand::Proxy),
+    ("isArrayBuffer", BuiltinBrand::ArrayBuffer),
+    ("isSharedArrayBuffer", BuiltinBrand::SharedArrayBuffer),
+    ("isAnyArrayBuffer", BuiltinBrand::AnyArrayBuffer),
+    ("isDataView", BuiltinBrand::DataView),
+    ("isTypedArray", BuiltinBrand::TypedArray),
+    ("isArrayBufferView", BuiltinBrand::ArrayBufferView),
+    ("isArgumentsObject", BuiltinBrand::ArgumentsObject),
+    ("isUint8Array", BuiltinBrand::Uint8Array),
+    ("isUint8ClampedArray", BuiltinBrand::Uint8ClampedArray),
+    ("isUint16Array", BuiltinBrand::Uint16Array),
+    ("isUint32Array", BuiltinBrand::Uint32Array),
+    ("isInt8Array", BuiltinBrand::Int8Array),
+    ("isInt16Array", BuiltinBrand::Int16Array),
+    ("isInt32Array", BuiltinBrand::Int32Array),
+    ("isBigInt64Array", BuiltinBrand::BigInt64Array),
+    ("isBigUint64Array", BuiltinBrand::BigUint64Array),
+    ("isFloat16Array", BuiltinBrand::Float16Array),
+    ("isFloat32Array", BuiltinBrand::Float32Array),
+    ("isFloat64Array", BuiltinBrand::Float64Array),
+];
 
 const UTIL: &str = quench_js_check::checked_js!(
     r#"(() => {
@@ -306,10 +337,6 @@ const UTIL: &str = quench_js_check::checked_js!(
     return promisified;
   };
   promisify.custom = promisifyCustom;
-  const types = {
-    isDate: (value) => value instanceof Date,
-    isPromise: (value) => value instanceof Promise,
-  };
   const systemErrorNames = new Map([
     [-2, "ENOENT"], [-8, "ENOEXEC"], [-9, "EBADF"], [-13, "EACCES"], [-22, "EINVAL"], [-88, "ENOTSOCK"], [-98, "EADDRINUSE"],
     [-99, "EADDRNOTAVAIL"], [-111, "ECONNREFUSED"], [-113, "EHOSTUNREACH"],
@@ -336,7 +363,6 @@ const UTIL: &str = quench_js_check::checked_js!(
     debuglog,
     deprecate,
     promisify,
-    types,
     TextEncoder: globalThis.TextEncoder,
     TextDecoder: globalThis.TextDecoder,
   };
@@ -344,5 +370,65 @@ const UTIL: &str = quench_js_check::checked_js!(
 );
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    context.evaluate_script_rooted(UTIL, "node:util/shared.js")
+    let module = context.evaluate_script_rooted(UTIL, "node:util/shared.js")?;
+    let types = context.object_rooted()?;
+    for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
+        let data = context.number(index as f64);
+        let predicate = context
+            .host_function_with_data(crate::host::shared_vm::operation("utilTypeCheck"), data)?;
+        let name_key = context.string_rooted("name");
+        let (function_name, length) = match brand {
+            BuiltinBrand::ArrayBufferView => ("isView", 1),
+            BuiltinBrand::Date
+            | BuiltinBrand::RegExp
+            | BuiltinBrand::NativeError
+            | BuiltinBrand::Promise
+            | BuiltinBrand::Map
+            | BuiltinBrand::Set
+            | BuiltinBrand::WeakMap
+            | BuiltinBrand::WeakSet
+            | BuiltinBrand::Proxy
+            | BuiltinBrand::ArrayBuffer
+            | BuiltinBrand::SharedArrayBuffer
+            | BuiltinBrand::AnyArrayBuffer
+            | BuiltinBrand::ArgumentsObject => ("", 0),
+            _ => (name, 1),
+        };
+        let name_value = context.string_rooted(function_name);
+        context.define_data_property_rooted(predicate, name_key, name_value, false, false, true)?;
+        let length_key = context.string_rooted("length");
+        let length_value = context.number(f64::from(length));
+        context.define_data_property_rooted(
+            predicate,
+            length_key,
+            length_value,
+            false,
+            false,
+            true,
+        )?;
+        let key = context.string_rooted(name);
+        context.set_property_rooted(types, key, predicate, types)?;
+    }
+    let key = context.string_rooted("types");
+    context.set_property_rooted(module, key, types, module)?;
+    Ok(module)
+}
+
+pub(crate) fn type_check(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let index = context
+        .rooted_value(data)
+        .and_then(|value| value.as_number())
+        .ok_or_else(|| RootedError::host("missing util predicate brand"))? as usize;
+    let brand = TYPE_PREDICATES
+        .get(index)
+        .ok_or_else(|| RootedError::host("invalid util predicate brand"))?
+        .1;
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let matches = context.has_builtin_brand_rooted(value, brand)?;
+    Ok(context.boolean(matches))
 }

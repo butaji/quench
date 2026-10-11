@@ -82,3 +82,50 @@ fn package_scope_applies_inside_nested_checkouts() {
         assert!(observation.stderr.is_empty());
     }
 }
+
+#[test]
+fn util_type_predicates_match_node_internal_brands() {
+    let source = r#"
+      const types = require('util').types;
+      const names = ['isDate','isRegExp','isNativeError','isPromise','isMap','isSet',
+        'isWeakMap','isWeakSet','isProxy','isArrayBuffer','isSharedArrayBuffer',
+        'isAnyArrayBuffer','isDataView','isTypedArray','isArrayBufferView',
+        'isArgumentsObject','isUint8Array','isUint8ClampedArray','isUint16Array',
+        'isUint32Array','isInt8Array','isInt16Array','isInt32Array','isBigInt64Array',
+        'isBigUint64Array','isFloat16Array','isFloat32Array','isFloat64Array'];
+      const buffer = new ArrayBuffer(8);
+      const revoked = Proxy.revocable({}, {}); revoked.revoke();
+      const values = [undefined,null,1,'x',{},new Date(),Object.create(Date.prototype),
+        /x/,new Error(),Promise.resolve(),new Map(),new Set(),new WeakMap(),new WeakSet(),
+        new Proxy(new Date(),{}),revoked.proxy,buffer,new SharedArrayBuffer(8),
+        new DataView(buffer),(function(){return arguments})(),
+        new Uint8Array(),new Uint8ClampedArray(),new Uint16Array(),new Uint32Array(),
+        new Int8Array(),new Int16Array(),new Int32Array(),new BigInt64Array(),
+        new BigUint64Array(),new Float16Array(),new Float32Array(),new Float64Array(),
+        require('vm').runInNewContext('new Date()'),
+        {get [Symbol.toStringTag](){throw Error('must not read tag')}}];
+      console.log(JSON.stringify(names.map(name => [name,types[name].name,
+        types[name].length,values.map(value=>types[name](value))])));
+      console.log(require('util/types')===types);
+    "#;
+    let directory = tempfile::tempdir().unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
