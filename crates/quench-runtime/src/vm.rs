@@ -1243,9 +1243,13 @@ impl<H: Host> Vm<H> {
         crate::report_allocator_memory(phase);
     }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        self.initialize_shared(&Rc::new(program.clone()))
+        self.initialize_shared(&Rc::new(program.clone()), builtins::RealmScope::Complete)
     }
-    fn initialize_shared(&mut self, program: &Rc<ResidualProgram>) -> Result<(), JsError> {
+    fn initialize_shared(
+        &mut self,
+        program: &Rc<ResidualProgram>,
+        scope: builtins::RealmScope,
+    ) -> Result<(), JsError> {
         self.specialized = program.specialized;
         self.realm.intrinsics.arguments_objects.clear();
         self.heap.reset();
@@ -1326,7 +1330,7 @@ impl<H: Host> Vm<H> {
         self.materialize_program_constants(ProgramId::MAIN, program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("program_constants");
-        self.install_builtins(program)?;
+        self.install_builtins(program, scope)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins");
         self.initialize_host(program)?;
