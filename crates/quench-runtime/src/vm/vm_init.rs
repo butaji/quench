@@ -74,6 +74,7 @@ impl<H: Host> Vm<H> {
             program_cache_layouts: Vec::new(),
             active_registers: std::ptr::null_mut(),
             active_layout: Default::default(),
+            active_constants: &[],
             active_program: ProgramId::MAIN,
             #[cfg(feature = "profile-aggregate")]
             profile: Profile::default(),
