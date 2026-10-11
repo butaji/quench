@@ -94,11 +94,11 @@ impl JsStringBuilder {
     pub(super) fn append(&mut self, string: &JsString) {
         let units = string.shared_units();
         let length = units.len();
-        self.append_units(units, 0..length);
+        self.append_units(Rc::clone(units), 0..length);
     }
 
     pub(super) fn append_slice(&mut self, string: &JsString, range: Range<usize>) {
-        self.append_units(string.shared_units(), range);
+        self.append_units(Rc::clone(string.shared_units()), range);
     }
 
     fn append_units(&mut self, units: Rc<[u16]>, range: Range<usize>) {
@@ -160,48 +160,25 @@ impl JsString {
         }
     }
 
-    pub(crate) fn shared_units(&self) -> &Rc<[u16]> {
-        &self.units
-    }
-
     pub(crate) fn units(&self) -> &[u16] {
-        self.inner
-            .flat
-            .get_or_init(|| {
-                let mut output = Vec::with_capacity(self.inner.length);
-                let mut pending = vec![self.inner.clone()];
-                while let Some(part) = pending.pop() {
-                    match &part.data {
-                        JsStringData::Flat(units) => output.extend_from_slice(units),
-                        JsStringData::Concat(left, right) => {
-                            pending.push(right.clone());
-                            pending.push(left.clone());
-                        }
-                    }
-                }
-                Rc::from(output)
-            })
-            .as_ref()
+        self.shared_units().as_ref()
     }
 
-    fn shared_units(&self) -> Rc<[u16]> {
-        self.inner
-            .flat
-            .get_or_init(|| {
-                let mut output = Vec::with_capacity(self.inner.length);
-                let mut pending = vec![self.inner.clone()];
-                while let Some(part) = pending.pop() {
-                    match &part.data {
-                        JsStringData::Flat(units) => output.extend_from_slice(units),
-                        JsStringData::Concat(left, right) => {
-                            pending.push(right.clone());
-                            pending.push(left.clone());
-                        }
+    pub(crate) fn shared_units(&self) -> &Rc<[u16]> {
+        self.inner.flat.get_or_init(|| {
+            let mut output = Vec::with_capacity(self.inner.length);
+            let mut pending = vec![self.inner.clone()];
+            while let Some(part) = pending.pop() {
+                match &part.data {
+                    JsStringData::Flat(units) => output.extend_from_slice(units),
+                    JsStringData::Concat(left, right) => {
+                        pending.push(right.clone());
+                        pending.push(left.clone());
                     }
                 }
-                Rc::from(output)
-            })
-            .clone()
+            }
+            Rc::from(output)
+        })
     }
 
     pub(crate) fn host_string(&self) -> &str {
