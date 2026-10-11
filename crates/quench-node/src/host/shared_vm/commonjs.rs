@@ -428,6 +428,7 @@ pub(super) fn require(
             | BuiltinModule::WorkerThreads
             | BuiltinModule::Util
             | BuiltinModule::ChildProcess
+            | BuiltinModule::InternalChildProcess
             | BuiltinModule::Https
             | BuiltinModule::Http2
             | BuiltinModule::Inspector
@@ -505,6 +506,7 @@ enum BuiltinModule {
     TimersPromises,
     NodeTest,
     ChildProcess,
+    InternalChildProcess,
     Url,
     Querystring,
     Readline,
@@ -569,6 +571,7 @@ impl BuiltinModule {
             Self::TimersPromises => Some("timers/promises"),
             Self::NodeTest => Some("node:test"),
             Self::ChildProcess => Some("child_process"),
+            Self::InternalChildProcess => Some("internal/child_process"),
             Self::Url => Some("url"),
             Self::Querystring => Some("querystring"),
             Self::Readline => Some("readline"),
@@ -734,6 +737,10 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("async_hooks", BuiltinModule::AsyncHooks),
     ("node:async_hooks", BuiltinModule::AsyncHooks),
     ("internal/async_hooks", BuiltinModule::AsyncHooks),
+    (
+        "internal/child_process",
+        BuiltinModule::InternalChildProcess,
+    ),
     ("diagnostics_channel", BuiltinModule::DiagnosticsChannel),
     (
         "node:diagnostics_channel",
@@ -891,6 +898,13 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         )),
         BuiltinModule::Util => crate::modules::util_shared_vm::module(context),
         BuiltinModule::ChildProcess => crate::modules::child_process_shared_vm::module(context),
+        BuiltinModule::InternalChildProcess => {
+            let public = cached_builtin(context, BuiltinModule::ChildProcess)?;
+            let module = context.object_rooted()?;
+            let constructor = get(context, public, "ChildProcess")?;
+            set(context, module, "ChildProcess", constructor)?;
+            Ok(module)
+        }
         // Fastify imports both alternatives at module initialization. Its
         // selected HTTP/1 path does not access the HTTPS transport.
         BuiltinModule::Https => context.evaluate_script_rooted(

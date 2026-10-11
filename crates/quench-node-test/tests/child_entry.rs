@@ -659,6 +659,44 @@ controller.abort('cause');
 }
 
 #[test]
+#[cfg(unix)]
+fn exec_reports_kill_override_errors_through_its_callback() {
+    let source = r#"const cp=require('child_process');
+const internal=require('internal/child_process');
+console.log(internal.ChildProcess===cp.ChildProcess);
+const marker=new Error('kill override');
+const kill=cp.ChildProcess.prototype.kill;
+cp.ChildProcess.prototype.kill=function(...args){kill.apply(this,args);throw marker;};
+const command=`"${process.execPath}" -e 'console.log("output");setInterval(()=>{},1000)'`;
+const child=cp.exec(command,{maxBuffer:0,killSignal:'SIGKILL'},(error,out,err)=>{
+  console.log(error===marker,error.message,out==='',err==='',child.killed,child instanceof cp.ChildProcess,error.cmd===command);
+});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--expose-internals", "-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
 fn system_error_names_and_validation_match_node() {
     let source = r#"const {getSystemErrorName}=require('util');
 const numbers=[...Array.from({length:140},(_,i)=>-i-1),...Array.from({length:16},(_,i)=>-3000-i),-4094,-4095,-99999];
