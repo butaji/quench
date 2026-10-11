@@ -1266,3 +1266,126 @@ setTimeout(()=>process.exit(0),0);setTimeout(()=>console.log('unexpected timer')
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+#[cfg(unix)]
+fn stdin_reads_pipe_bytes_and_releases_input_at_end() {
+    let source = r#"const pieces=[];let buffers=true;const stream=process.stdin;
+console.log('identity',stream===process.stdin,stream.fd,stream.readable,typeof stream.resume,typeof stream.pause);
+stream.on('data',chunk=>{buffers&&=Buffer.isBuffer(chunk);pieces.push(chunk)});
+stream.on('end',()=>console.log('input',buffers,Buffer.concat(pieces).toString('utf8')));"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
+        std::io::Write::write_all(&mut writer, "hello 😀\nworld".as_bytes()).unwrap();
+        drop(writer);
+        let input: std::os::fd::OwnedFd = reader.into();
+        command.stdin(std::process::Stdio::from(input));
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(0));
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn cli_stdin_preserves_source_arguments_and_commonjs_origin() {
+    let source = "console.log(JSON.stringify([process.argv.slice(1),process.execArgv,__filename,__dirname,module.id,require('path').basename(module.filename)]));";
+    for arguments in [vec![], vec!["-", "--argument"]] {
+        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command = Command::new(executable);
+            command.args(&arguments);
+            if executable != "node" {
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            }
+            let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
+            std::io::Write::write_all(&mut writer, source.as_bytes()).unwrap();
+            drop(writer);
+            let input: std::os::fd::OwnedFd = reader.into();
+            command.stdin(std::process::Stdio::from(input));
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
+                .unwrap()
+        });
+        for observation in &observations {
+            assert!(!observation.timed_out);
+            assert_eq!(
+                observation.exit_code,
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&observation.stderr)
+            );
+            assert!(observation.stderr.is_empty());
+        }
+        assert_eq!(observations[0].stdout, observations[1].stdout);
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn open_stdin_repeats_public_getter_and_preserves_resume_receiver() {
+    let source = r#"const trace=[];const second={};const first={resume(){trace.push(this===first)}};let reads=0;
+Object.defineProperty(process,'stdin',{configurable:true,get(){trace.push('get');return ++reads===1?first:second}});
+console.log(JSON.stringify([process.openStdin.call(null)===second,process.openStdin.name,process.openStdin.length,trace]));"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(0));
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+#[cfg(unix)]
+fn child_stdio_specs_match_node_pipe_ignore_inherit_and_descriptors() {
+    let source = r#"const {spawn}=require('child_process');const results=[];
+const cases=[['pipe','pipe','pipe'],['inherit','pipe','ignore'],[0,'pipe','ignore'],[{fd:0},'pipe','ignore'],'ignore'];
+let index=0;function next(){if(index===cases.length){console.log(JSON.stringify(results));return;}
+const stdio=cases[index++];const child=spawn(process.execPath,['-e',`let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',chunk=>input+=chunk);process.stdin.on('end',()=>console.log('input:'+input));`],{stdio});
+const record=[child.stdin===null,child.stdout===null,child.stderr===null,child.stdio.map(stream=>stream===null)];let output='';
+child.stdout?.on('data',chunk=>output+=chunk);if(child.stdin)child.stdin.end('piped');
+child.on('error',error=>{throw error});child.on('close',(code,signal)=>{record.push(code,signal,output);results.push(record);next()});}next();
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let (reader, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
+        std::io::Write::write_all(&mut writer, b"inherited").unwrap();
+        drop(writer);
+        let input: std::os::fd::OwnedFd = reader.into();
+        command.stdin(std::process::Stdio::from(input));
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}

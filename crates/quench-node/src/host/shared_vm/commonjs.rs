@@ -74,7 +74,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     // global key so ESM does not acquire a user-visible global `require`.
     let bootstrap_filename = std::env::current_dir()
         .map_err(|error| RootedError::host(error.to_string()))?
-        .join("[eval]");
+        .join(context.host_mut().inline_source.label());
     let bootstrap_require = create_require(context, &bootstrap_filename)?;
     set(context, global, "\0quench:require", bootstrap_require)?;
     context.release_root(bootstrap_require);
@@ -107,18 +107,19 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     } else {
         let filename = std::env::current_dir()
             .map_err(|error| RootedError::host(error.to_string()))?
-            .join("[eval]");
+            .join(context.host_mut().inline_source.label());
         let module = module_record(context, &filename, None, false)?;
+        let label = context.host_mut().inline_source.label();
+        let label = context.string_rooted(label);
+        set(context, module, "id", label)?;
         let global = context.global_root()?;
         for name in ["exports", "require"] {
             let value = get(context, module, name)?;
             set(context, global, name, value)?;
         }
         set(context, global, "module", module)?;
-        let filename = context.string_rooted(&filename.to_string_lossy());
-        set(context, global, "__filename", filename)?;
-        let cwd = std::env::current_dir().map_err(|error| RootedError::host(error.to_string()))?;
-        let dirname = context.string_rooted(&cwd.to_string_lossy());
+        set(context, global, "__filename", label)?;
+        let dirname = context.string_rooted(".");
         set(context, global, "__dirname", dirname)?;
     }
     Ok(())
