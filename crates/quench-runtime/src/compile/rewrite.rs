@@ -117,6 +117,7 @@ pub(super) fn apply(
     superinstructions: &mut Vec<Superinstruction>,
 ) {
     let input = function.code.len();
+    thread_jumps(function);
     let mut changed_passes = 0;
     while rewrite_super_window(function, superinstructions) {
         changed_passes += 1;
@@ -130,6 +131,32 @@ pub(super) fn apply(
             function.code.len(),
             changed_passes + 1
         );
+    }
+}
+
+/// Retargets each unconditional jump whose destination is another unconditional jump to the
+/// end of that chain. Only `Jump` sources are threaded: it is the back-edge collection safepoint,
+/// so every retargeted back edge still collects.
+fn thread_jumps(function: &mut BcFunction) {
+    let length = function.code.len();
+    for pc in 0..length {
+        let mut instruction = function.code[pc];
+        if instruction.op() != Op::Jump {
+            continue;
+        }
+        let mut target = instruction.jump_target();
+        // A chain longer than the function is a cycle of jumps; any member is equivalent.
+        for _ in 0..length {
+            match function.code.get(target as usize) {
+                Some(next) if next.op() == Op::Jump && next.jump_target() != target => {
+                    target = next.jump_target();
+                }
+                _ => break,
+            }
+        }
+        if target != instruction.jump_target() && instruction.try_set_jump_target(target) {
+            function.code[pc] = instruction;
+        }
     }
 }
 
