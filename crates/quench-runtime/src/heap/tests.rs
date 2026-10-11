@@ -424,7 +424,7 @@ fn weak_ref_owner_clears_its_handle_before_slot_reuse() {
 }
 
 #[test]
-fn slab_local_free_offsets_reuse_slots_across_slab_boundaries() {
+fn slab_local_free_bitmap_reuses_slots_across_slab_boundaries() {
     let mut heap = Heap::new();
     let slot_count = super::slots::SLOTS_PER_SLAB + 2;
     for _ in 0..slot_count {

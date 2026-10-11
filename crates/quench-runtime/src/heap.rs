@@ -18,7 +18,7 @@ mod weak;
 pub(crate) use cell::*;
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
-use slots::{SLOTS_PER_SLAB, SlotArena};
+use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 
 // Keep implicit holes in dense storage when their one-time allocation is
 // bounded. 256 KiB covers the measured 16,900-slot NavierStokes grids while
@@ -193,7 +193,7 @@ impl<'slots> ParallelSweepSlab<'slots> {
             if matches!(cell, Cell::Array { .. }) {
                 result.sparse_arrays.push(index as u32);
             }
-            result.free_offsets.push(offset as u16);
+            result.free_slots.insert(offset);
             let dead = StoppedCellDrop(Some(cell));
             if cell_rc_drop_lock(dead.0.as_ref().expect("dead sweep cell")).is_some() {
                 result.rc_cells.push(dead);
@@ -211,7 +211,7 @@ struct ParallelSweepResult {
     live: usize,
     live_shapes: Vec<u32>,
     property_owners: Vec<u64>,
-    free_offsets: Vec<u16>,
+    free_slots: FreeSlotBitmap,
     released_properties: Vec<ValueVec>,
     sparse_arrays: Vec<u32>,
     rc_cells: Vec<StoppedCellDrop>,
@@ -322,7 +322,7 @@ pub(crate) struct Heap {
     remembered_marks: Vec<u64>,
     remembered: Vec<u32>,
     young: Vec<u32>,
-    free_by_slab: Vec<Vec<u16>>,
+    free_by_slab: Vec<FreeSlotBitmap>,
     free_slabs: Vec<u32>,
     free_slots: usize,
     external_bytes: usize,
@@ -752,7 +752,7 @@ impl Heap {
         self.slots.push(Slot { cell: Some(cell) });
         let slab = index / SLOTS_PER_SLAB;
         if self.free_by_slab.len() == slab {
-            self.free_by_slab.push(Vec::new());
+            self.free_by_slab.push(FreeSlotBitmap::default());
         }
         #[cfg(feature = "profile-memory")]
         self.profile_allocation(index);
@@ -1155,20 +1155,20 @@ impl Heap {
                     live,
                     live_shapes,
                     property_owners,
-                    free_offsets,
+                    free_slots,
                     released_properties,
                     sparse_arrays,
                     rc_cells,
                     external_bytes,
                     swept_slots,
                 } = result;
-                let freed_cells = free_offsets.len();
+                let freed_cells = free_slots.len();
                 if freed_cells > 0 {
                     let slab_free = &mut self.free_by_slab[slab as usize];
                     if slab_free.is_empty() {
                         self.free_slabs.push(slab);
                     }
-                    slab_free.extend(free_offsets);
+                    slab_free.merge(&free_slots);
                     self.free_slots += freed_cells;
                     for properties in released_properties {
                         self.properties.release(properties);
@@ -1205,7 +1205,7 @@ impl Heap {
             let external_bytes = &mut self.external_bytes;
             let free_by_slab = &mut self.free_by_slab;
             let free_slabs = &mut self.free_slabs;
-            let free_slots = &mut self.free_slots;
+            let free_slot_count = &mut self.free_slots;
             let sparse_arrays = &mut self.sparse_arrays;
             #[cfg(feature = "profile-memory")]
             let memory_profile = &mut self.memory_profile;
@@ -1225,12 +1225,12 @@ impl Heap {
                     arrays.remove(&(index as u32));
                 }
                 let slab = index / SLOTS_PER_SLAB;
-                let offsets = &mut free_by_slab[slab];
-                if offsets.is_empty() {
+                let slab_free = &mut free_by_slab[slab];
+                if slab_free.is_empty() {
                     free_slabs.push(slab as u32);
                 }
-                offsets.push((index % SLOTS_PER_SLAB) as u16);
-                *free_slots += 1;
+                slab_free.insert(index % SLOTS_PER_SLAB);
+                *free_slot_count += 1;
                 freed_cells += 1;
                 drop(cell);
             };
