@@ -97,10 +97,19 @@ const SPECTEST_MEMORY_MAX: u32 = 2;
 const SPECTEST_TABLE_MIN: u32 = 10;
 const SPECTEST_TABLE_MAX: u32 = 20;
 
+/// The environment variable through which the spec runner passes `-jit` to
+/// its per-file workers.
+pub const EXECUTION_MODE_VARIABLE: &str = "QUENCH_EXECUTION_MODE";
+
 impl Store {
     fn new() -> Self {
+        let mut runtime = Runtime::new(ScriptHost);
+        // The spec runner selects the execution mode for its workers.
+        if std::env::var_os(EXECUTION_MODE_VARIABLE).is_some_and(|mode| mode == "jit") {
+            runtime.set_execution_mode(quench_runtime::ExecutionMode::Compiled);
+        }
         let mut store = Self {
-            runtime: Runtime::new(ScriptHost),
+            runtime,
             current: None,
             named: HashMap::new(),
             definitions: Vec::new(),
