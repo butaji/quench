@@ -68,50 +68,63 @@ fn scalar_constants_preserve_signed_zero_bits() {
 }
 
 #[test]
-fn fixed_register_parameter_promotion_excludes_mutation_and_dynamic_name_ops() {
+fn register_promotion_admits_only_statement_level_writes() {
     for body in [
         "value = 2;",
         "value += 2;",
         "value++;",
-        "for (value of [2]) {}",
-        "({ field: value } = { field: 2 });",
-        "delete value;",
+        "value = other = 2;",
     ] {
-        let source = format!("function update(value) {{ {body} return value; }}");
-        let program = Engine::specialize(&source, "mutable-parameter.js").unwrap();
-        assert!(
-            program.functions[1].local_registers.is_empty(),
-            "write should keep parameter in its local slot: {body}"
+        let source = format!("function update(value) {{ var other; {body} return value; }}");
+        let program = Engine::specialize(&source, "statement-write.js").unwrap();
+        assert_eq!(
+            program.functions[1].local_registers.len(),
+            2,
+            "a statement-level write keeps the parameter in a register: {body}"
         );
         program.validate().unwrap();
     }
-
+    for body in [
+        "for (value of [2]) {}",
+        "({ field: value } = { field: 2 });",
+        "other = (value = 2);",
+        "other = value++;",
+    ] {
+        let source = format!("function update(value) {{ var other; {body} return value; }}");
+        let program = Engine::specialize(&source, "nested-write.js").unwrap();
+        assert!(
+            program.functions[1].local_registers.len() < 2,
+            "a nested write keeps the parameter in its local slot: {body}"
+        );
+        program.validate().unwrap();
+    }
     let program = Engine::specialize(
-        "function read(value) { var other = 2; return value + other; }",
-        "immutable-parameter.js",
+        "function erase(value) { delete value; return value; }",
+        "delete.js",
     )
     .unwrap();
-    assert_eq!(program.functions[1].local_registers.len(), 1);
+    assert!(program.functions[1].local_registers.is_empty());
     program.validate().unwrap();
 }
 
 #[test]
-fn validator_rejects_bytecode_that_overwrites_a_promoted_parameter() {
+fn validator_rejects_a_promoted_binding_read_through_its_local_slot() {
     let mut program = Engine::specialize(
         "function read(value) { return value + 1; }",
         "promoted-register-validation.js",
     )
     .unwrap();
     let function = &mut program.functions[1];
+    assert_eq!(function.local_registers.len(), 1);
+    let local = function.local_registers[0].local;
     let binary = function
         .code
         .iter_mut()
         .find(|instruction| instruction.op() == Op::Binary)
         .unwrap();
-    binary.set_result_register(0);
+    *binary = crate::bytecode::Instr::new(Op::LoadLocal, 1, 0, 0, u32::from(local));
     assert!(program.validate().is_err());
 }
-
 
 #[test]
 fn constant_runs_remain_fresh_and_contiguous() {
