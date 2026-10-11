@@ -5,6 +5,8 @@ use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueVec};
 use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
 use rustc_hash::FxHashMap;
+use std::fmt;
+use std::mem::ManuallyDrop;
 use std::rc::Rc;
 
 #[derive(Clone, Debug, Default)]
@@ -20,9 +22,8 @@ mod cell_layout_tests {
     /// Every heap slot stores an `Option<Cell>`. The M4 object layout includes
     /// two inline properties, and arrays add their shared element handle.
     const CELL_TAG_WORD_BYTES: usize = std::mem::size_of::<Value>();
-    const MAX_CELL_BYTES: usize = std::mem::size_of::<Object>()
-        + std::mem::size_of::<Rc<Vec<Value>>>()
-        + CELL_TAG_WORD_BYTES;
+    const MAX_CELL_BYTES: usize =
+        std::mem::size_of::<Object>() + std::mem::size_of::<Rc<Vec<Value>>>() + CELL_TAG_WORD_BYTES;
 
     #[test]
     fn cells_stay_compact() {
@@ -950,14 +951,23 @@ pub(crate) enum IteratorConsumer {
     Find,
     Some,
 }
-#[derive(Clone, Debug)]
 pub(crate) struct Object {
     pub proto: Value,
     // Property names live once in the VM's immutable shape table; objects keep
     // only the data vector selected by that shape.
     pub properties: ValueVec,
+    payload: ObjectPayload,
+}
+
+union ObjectPayload {
+    inline_properties: ManuallyDrop<[Value; INLINE_PROPERTY_COUNT]>,
+    out_of_line: ManuallyDrop<Box<ObjectOutOfLine>>,
+}
+
+#[derive(Clone, Debug)]
+struct ObjectOutOfLine {
     inline_properties: [Value; INLINE_PROPERTY_COUNT],
-    extras: Option<Box<ObjectExtras>>,
+    extras: ObjectExtras,
 }
 
 #[derive(Clone, Debug)]
@@ -1053,34 +1063,48 @@ impl Object {
         Self {
             proto,
             properties: ValueVec::inline_property_storage(0),
-            inline_properties: [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
-            extras: None,
+            payload: ObjectPayload {
+                inline_properties: ManuallyDrop::new([Value::UNDEFINED; INLINE_PROPERTY_COUNT]),
+            },
         }
     }
 
     pub(crate) fn with_property_storage(
         proto: Value,
-        properties: ValueVec,
+        mut properties: ValueVec,
         inline_properties: [Value; INLINE_PROPERTY_COUNT],
     ) -> Self {
+        properties.set_out_of_line_storage(false);
         Self {
             proto,
             properties,
-            inline_properties,
-            extras: None,
+            payload: ObjectPayload {
+                inline_properties: ManuallyDrop::new(inline_properties),
+            },
         }
     }
 
     pub(crate) fn inline_properties(&self) -> Option<&[Value; INLINE_PROPERTY_COUNT]> {
-        self.properties
-            .has_inline_property_storage()
-            .then_some(&self.inline_properties)
+        if !self.properties.has_inline_property_storage() {
+            return None;
+        }
+        Some(if self.properties.has_out_of_line_storage() {
+            &self.out_of_line().inline_properties
+        } else {
+            // SAFETY: the out-of-line flag selects the other union arm.
+            unsafe { &self.payload.inline_properties }
+        })
     }
 
     pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
         debug_assert!(self.properties.has_inline_property_storage());
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
-        self.inline_properties[slot] = value;
+        if self.properties.has_out_of_line_storage() {
+            self.out_of_line_mut().inline_properties[slot] = value;
+        } else {
+            // SAFETY: the out-of-line flag selects the other union arm.
+            unsafe { (*self.payload.inline_properties)[slot] = value };
+        }
     }
 
     pub(crate) fn replace_property_storage(
@@ -1090,14 +1114,73 @@ impl Object {
     ) -> ValueVec {
         let previous = self.properties;
         properties.preserve_integrity_from(previous);
+        properties.set_out_of_line_storage(previous.has_out_of_line_storage());
         self.properties = properties;
-        self.inline_properties = inline_properties;
+        self.set_inline_words(inline_properties);
         previous
     }
 
     pub(crate) fn copy_property_storage_from(&mut self, source: &Self) {
+        let out_of_line = self.properties.has_out_of_line_storage();
         self.properties = source.properties;
-        self.inline_properties = source.inline_properties;
+        self.properties.set_out_of_line_storage(out_of_line);
+        self.set_inline_words(source.inline_words());
+    }
+
+    fn inline_words(&self) -> [Value; INLINE_PROPERTY_COUNT] {
+        if self.properties.has_out_of_line_storage() {
+            self.out_of_line().inline_properties
+        } else {
+            // SAFETY: the out-of-line flag selects the other union arm.
+            unsafe { *self.payload.inline_properties }
+        }
+    }
+
+    fn set_inline_words(&mut self, values: [Value; INLINE_PROPERTY_COUNT]) {
+        if self.properties.has_out_of_line_storage() {
+            self.out_of_line_mut().inline_properties = values;
+        } else {
+            // SAFETY: the out-of-line flag selects the other union arm.
+            unsafe { *self.payload.inline_properties = values };
+        }
+    }
+
+    fn out_of_line(&self) -> &ObjectOutOfLine {
+        debug_assert!(self.properties.has_out_of_line_storage());
+        // SAFETY: the out-of-line flag selects this initialized union arm.
+        unsafe { self.payload.out_of_line.as_ref() }
+    }
+
+    fn out_of_line_mut(&mut self) -> &mut ObjectOutOfLine {
+        debug_assert!(self.properties.has_out_of_line_storage());
+        // SAFETY: the out-of-line flag selects this initialized union arm.
+        unsafe { (&mut *self.payload.out_of_line).as_mut() }
+    }
+
+    fn extras(&self) -> Option<&ObjectExtras> {
+        self.properties
+            .has_out_of_line_storage()
+            .then(|| &self.out_of_line().extras)
+    }
+
+    fn extras_mut(&mut self) -> &mut ObjectExtras {
+        if !self.properties.has_out_of_line_storage() {
+            let inline_properties = self.inline_words();
+            self.payload = ObjectPayload {
+                out_of_line: ManuallyDrop::new(Box::new(ObjectOutOfLine {
+                    inline_properties,
+                    extras: ObjectExtras::default(),
+                })),
+            };
+            self.properties.set_out_of_line_storage(true);
+        }
+        &mut self.out_of_line_mut().extras
+    }
+
+    fn extras_mut_if_present(&mut self) -> Option<&mut ObjectExtras> {
+        self.properties
+            .has_out_of_line_storage()
+            .then(|| &mut self.out_of_line_mut().extras)
     }
 
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
@@ -1108,13 +1191,11 @@ impl Object {
     }
 
     pub(crate) fn has_error_data(&self) -> bool {
-        self.extras
-            .as_deref()
-            .is_some_and(|extras| extras.error_data)
+        self.extras().is_some_and(|extras| extras.error_data)
     }
 
     pub(crate) fn stack_data(&self) -> Option<&StackData> {
-        self.extras.as_deref()?.stack_data.as_ref()
+        self.extras()?.stack_data.as_ref()
     }
 
     pub(crate) fn set_stack_data(&mut self, data: StackData) {
@@ -1122,17 +1203,13 @@ impl Object {
     }
 
     pub(crate) fn clear_stack_data(&mut self) {
-        if let Some(extras) = self.extras.as_deref_mut() {
+        if let Some(extras) = self.extras_mut_if_present() {
             extras.stack_data = None;
         }
     }
 
     pub(crate) fn visit_stack_data_roots(&self, mut visit: impl FnMut(Value)) {
-        match self
-            .extras
-            .as_deref()
-            .and_then(|extras| extras.stack_data.as_ref())
-        {
+        match self.extras().and_then(|extras| extras.stack_data.as_ref()) {
             Some(StackData::Captured(records)) => {
                 for record in records {
                     visit(record.this_value);
@@ -1161,15 +1238,18 @@ impl Object {
     pub(crate) fn set_frozen(&mut self, value: bool) {
         self.properties.set_frozen(value);
     }
-    fn extras_mut(&mut self) -> &mut ObjectExtras {
-        self.extras
-            .get_or_insert_with(|| Box::new(ObjectExtras::default()))
-    }
     pub(crate) fn arguments_map(&self) -> Option<&[u16]> {
-        self.extras.as_deref()?.arguments_map.as_deref()
+        self.extras()?.arguments_map.as_deref()
     }
     pub(crate) fn arguments_map_mut(&mut self) -> Option<&mut Vec<u16>> {
-        self.extras.as_deref_mut()?.arguments_map.as_mut()
+        self.extras_mut_if_present()?.arguments_map.as_mut()
+    }
+    pub(crate) fn mapped_argument_slot(&self, index: usize) -> Option<usize> {
+        self.arguments_map()?
+            .get(index)
+            .copied()
+            .filter(|slot| *slot != u16::MAX)
+            .map(usize::from)
     }
     pub(crate) fn set_arguments_map(&mut self, mapping: Vec<u16>) {
         self.extras_mut().arguments_map = Some(mapping);
@@ -1178,51 +1258,42 @@ impl Object {
         self.extras_mut().arguments_object = true;
     }
     pub(crate) fn is_arguments_object(&self) -> bool {
-        self.extras
-            .as_deref()
-            .is_some_and(|extras| extras.arguments_object)
+        self.extras().is_some_and(|extras| extras.arguments_object)
     }
     pub(crate) fn has_indexed_descriptors(&self) -> bool {
-        self.extras
-            .as_deref()
+        self.extras()
             .is_some_and(|extras| extras.indexed_descriptors)
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
         self.extras_mut().indexed_descriptors = true;
     }
     pub(crate) fn is_raw_json(&self) -> bool {
-        self.extras.as_deref().is_some_and(|extras| extras.raw_json)
+        self.extras().is_some_and(|extras| extras.raw_json)
     }
     pub(crate) fn set_raw_json(&mut self) {
         self.extras_mut().raw_json = true;
     }
 
     pub(crate) fn is_module_namespace(&self) -> bool {
-        self.extras
-            .as_deref()
-            .is_some_and(|extras| extras.module_namespace)
+        self.extras().is_some_and(|extras| extras.module_namespace)
     }
     pub(crate) fn set_module_namespace(&mut self) {
         self.extras_mut().module_namespace = true;
     }
     pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
-        self.extras
-            .as_deref()
-            .map_or(&[], |extras| &extras.module_bindings)
+        self.extras().map_or(&[], |extras| &extras.module_bindings)
     }
     pub(crate) fn set_module_bindings(&mut self, bindings: Vec<(Atom, ProgramId, u16)>) {
         self.extras_mut().module_bindings = bindings;
     }
     pub(crate) fn deferred_module(&self) -> Option<&crate::ModuleSource> {
-        self.extras.as_deref()?.deferred_module.as_ref()
+        self.extras()?.deferred_module.as_ref()
     }
     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
         self.extras_mut().deferred_module = module;
     }
     pub(crate) fn private_names(&self) -> &[PrivateBrand] {
-        self.extras
-            .as_deref()
-            .map_or(&[], |extras| &extras.private_names)
+        self.extras().map_or(&[], |extras| &extras.private_names)
     }
     pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
         self.private_names().contains(&brand)
@@ -1235,9 +1306,9 @@ impl Object {
     }
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     pub(crate) fn allocated_extra_bytes(&self) -> usize {
-        self.extras
-            .as_deref()
-            .map_or(0, ObjectExtras::allocated_bytes)
+        self.extras().map_or(0, |extras| {
+            std::mem::size_of::<[Value; INLINE_PROPERTY_COUNT]>() + extras.allocated_bytes()
+        })
     }
 
     pub(crate) fn module_binding(&self, atom: Atom) -> Option<(ProgramId, u16)> {
@@ -1246,6 +1317,97 @@ impl Object {
             .find_map(|(name, program, slot)| (*name == atom).then_some((*program, *slot)))
     }
 }
+
+const _: () = assert!(std::mem::size_of::<Object>() == 4 * std::mem::size_of::<Value>());
+
+impl Clone for Object {
+    fn clone(&self) -> Self {
+        let payload = if self.properties.has_out_of_line_storage() {
+            ObjectPayload {
+                out_of_line: ManuallyDrop::new(Box::new(self.out_of_line().clone())),
+            }
+        } else {
+            ObjectPayload {
+                inline_properties: ManuallyDrop::new(self.inline_words()),
+            }
+        };
+        Self {
+            proto: self.proto,
+            properties: self.properties,
+            payload,
+        }
+    }
+}
+
+impl Drop for Object {
+    fn drop(&mut self) {
+        if self.properties.has_out_of_line_storage() {
+            // SAFETY: the out-of-line flag names the initialized Box arm.
+            unsafe { ManuallyDrop::drop(&mut self.payload.out_of_line) };
+        }
+    }
+}
+
+impl fmt::Debug for Object {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Object")
+            .field("proto", &self.proto)
+            .field("properties", &self.properties)
+            .field("inline_properties", &self.inline_properties())
+            .field(
+                "has_out_of_line_storage",
+                &self.properties.has_out_of_line_storage(),
+            )
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod object_payload_tests {
+    use super::Object;
+    use crate::value::Value;
+    use crate::value_vec::ValueVec;
+
+    #[test]
+    fn out_of_line_extras_preserve_inline_values_and_clone_state() {
+        let mut object = Object::with_property_storage(
+            Value::NULL,
+            ValueVec::inline_property_storage(7),
+            [Value::integer(11), Value::integer(13)],
+        );
+        object.set_arguments_object();
+        assert!(object.is_arguments_object());
+        assert_eq!(object.shape(), 7);
+        assert_eq!(
+            object.inline_properties().copied(),
+            Some([Value::integer(11), Value::integer(13)])
+        );
+
+        let mut cloned = object.clone();
+        cloned.set_inline_property(0, Value::integer(17));
+        assert_eq!(cloned.inline_properties().unwrap()[0], Value::integer(17));
+        assert_eq!(object.inline_properties().unwrap()[0], Value::integer(11));
+        assert!(cloned.is_arguments_object());
+
+        object.set_shape(19);
+        assert_eq!(object.shape(), 19);
+        assert!(object.is_arguments_object());
+    }
+
+    #[test]
+    fn out_of_line_extras_keep_arena_storage_mode_and_integrity() {
+        let mut properties = ValueVec::new();
+        properties.set_extensible(false);
+        let mut object =
+            Object::with_property_storage(Value::NULL, properties, [Value::UNDEFINED; 2]);
+        object.set_module_namespace();
+        assert!(object.is_module_namespace());
+        assert!(!object.properties.has_inline_property_storage());
+        assert!(!object.is_extensible());
+    }
+}
+
 /// Internal methods installed by ProxyCreate, retained after target release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProxyKind {

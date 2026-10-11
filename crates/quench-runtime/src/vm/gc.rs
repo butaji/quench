@@ -563,7 +563,7 @@ impl<H: Host> Vm<H> {
             .promise
             .async_resume_jobs
             .iter()
-            .filter(|(owner, _)| self.heap.get(**owner).is_some())
+            .filter(|(owner, _)| self.heap.is_live(**owner))
             .map(|(_, job)| job.continuation)
             .collect();
         for id in attached_continuations.difference(&live_continuations) {
@@ -579,10 +579,10 @@ impl<H: Host> Vm<H> {
                 }),
         );
         self.descriptors
-            .retain(|(object, _), _| self.heap.get(*object).is_some());
+            .retain(|(object, _), _| self.heap.is_live(*object));
         let mut abandoned_job_contexts = Vec::new();
         self.realm.promise.records.retain(|promise, record| {
-            let live = self.heap.get(*promise).is_some();
+            let live = self.heap.is_live(*promise);
             if !live {
                 abandoned_job_contexts.extend(
                     record
@@ -594,14 +594,14 @@ impl<H: Host> Vm<H> {
             live
         });
         self.realm.promise.jobs.retain(|job, record| {
-            let live = self.heap.get(*job).is_some();
+            let live = self.heap.is_live(*job);
             if !live {
                 abandoned_job_contexts.extend(record.execution_context);
             }
             live
         });
         self.realm.promise.thenable_jobs.retain(|job, record| {
-            let live = self.heap.get(*job).is_some();
+            let live = self.heap.is_live(*job);
             if !live {
                 abandoned_job_contexts.extend(record.execution_context);
             }
@@ -613,27 +613,27 @@ impl<H: Host> Vm<H> {
         self.realm
             .promise
             .finally_handler_callbacks
-            .retain(|function, _| self.heap.get(*function).is_some());
+            .retain(|function, _| self.heap.is_live(*function));
         self.realm
             .promise
             .finally_continuation_callbacks
-            .retain(|function, _| self.heap.get(*function).is_some());
+            .retain(|function, _| self.heap.is_live(*function));
         self.realm
             .promise
             .aggregates
-            .retain(|aggregate, _| self.heap.get(*aggregate).is_some());
+            .retain(|aggregate, _| self.heap.is_live(*aggregate));
         self.realm
             .promise
             .aggregate_jobs
-            .retain(|job, _| self.heap.get(*job).is_some());
+            .retain(|job, _| self.heap.is_live(*job));
         self.realm
             .promise
             .reaction_capabilities
-            .retain(|promise, _| self.heap.get(*promise).is_some());
+            .retain(|promise, _| self.heap.is_live(*promise));
         self.realm
             .promise
             .async_resume_jobs
-            .retain(|job, _| self.heap.get(*job).is_some());
+            .retain(|job, _| self.heap.is_live(*job));
         #[cfg(feature = "profile-aggregate")]
         self.retain_live_gc_method_snapshots();
         if let Some(strings) = &mut self.dynamic_strings {
