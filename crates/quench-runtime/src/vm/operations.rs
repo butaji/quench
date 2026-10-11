@@ -1228,6 +1228,11 @@ impl<H: Host> Vm<H> {
         if let Some(value) = self.number_binary(op, left, right) {
             return Ok(value);
         }
+        if op == BinaryOperator::Addition as u32
+            && let Some(value) = self.cached_concat(left, right)
+        {
+            return Ok(value);
+        }
         if is_numeric_binary_operator(op) {
             let operator = numeric_binary_operator(op)
                 .expect("numeric operator range is represented in the operator table");

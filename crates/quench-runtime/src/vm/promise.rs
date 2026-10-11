@@ -3683,7 +3683,7 @@ impl<H: Host> Vm<H> {
             source_import_values.insert(import.local.clone(), value);
         }
         self.programs.set_module_imports(program_id, imports);
-        let active_program = std::mem::replace(&mut self.active_program, program_id);
+        let active_program = self.replace_active_program(program_id);
         let specialized = std::mem::replace(&mut self.specialized, false);
         let evaluated = (|| {
             let closure = self.closure(&residual, 0, Value::NULL)?;
@@ -3789,7 +3789,7 @@ impl<H: Host> Vm<H> {
             }
             Ok(values)
         })();
-        self.active_program = active_program;
+        self.set_active_program(active_program);
         self.specialized = specialized;
         evaluated
     }

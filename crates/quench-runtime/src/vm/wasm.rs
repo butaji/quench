@@ -372,7 +372,7 @@ impl<H: Host> Vm<H> {
             }),
         });
         let root = self.root(environment);
-        let previous = std::mem::replace(&mut self.active_program, id);
+        let previous = self.replace_active_program(id);
         let initialized = self
             .initialize_wasm_globals(module, environment)
             .and_then(|()| self.initialize_wasm_references(module, environment))
@@ -387,7 +387,7 @@ impl<H: Host> Vm<H> {
                     .map(|_| ()),
                 None => Ok(()),
             });
-        self.active_program = previous;
+        self.set_active_program(previous);
         if let Err(error) = initialized {
             self.release_root(root);
             return Err(error);
@@ -799,9 +799,9 @@ impl<H: Host> Vm<H> {
             .root_value(instance.environment)
             .ok_or_else(|| JsError::wasm_link("invalid Wasm instance root"))?;
         let id = self.register_wasm_program(&instance.module)?;
-        let previous = std::mem::replace(&mut self.active_program, id);
+        let previous = self.replace_active_program(id);
         let result = self.wasm_function_reference(instance.module.residual(), index, environment);
-        self.active_program = previous;
+        self.set_active_program(previous);
         result
     }
 
@@ -1195,9 +1195,9 @@ impl<H: Host> Vm<H> {
         let id = self.register_wasm_program(&function.module)?;
         let defined = function.module.signatures.defined_index(function.entry);
         let imported = if defined.is_none() {
-            let previous = std::mem::replace(&mut self.active_program, id);
+            let previous = self.replace_active_program(id);
             let result = self.wasm_function_reference(program, function.entry, environment);
-            self.active_program = previous;
+            self.set_active_program(previous);
             Some(result?)
         } else {
             None
@@ -1207,7 +1207,7 @@ impl<H: Host> Vm<H> {
             .copied()
             .map(|value| self.encode_wasm_value(value))
             .collect::<Vec<_>>();
-        let previous = std::mem::replace(&mut self.active_program, id);
+        let previous = self.replace_active_program(id);
         let result = match (defined, imported) {
             (Some(index), _) => self.call_user(
                 program,
@@ -1220,7 +1220,7 @@ impl<H: Host> Vm<H> {
             (_, Some(callee)) => self.call_value(program, callee, Value::UNDEFINED, &args),
             _ => unreachable!("validated Wasm function target"),
         };
-        self.active_program = previous;
+        self.set_active_program(previous);
         result
     }
 
