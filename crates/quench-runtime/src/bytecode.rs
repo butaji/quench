@@ -1011,7 +1011,9 @@ impl Function {
     /// that can capture the activation, `with` scopes, and constructors, initializers,
     /// generators or async bodies whose `this` or activation outlives ordinary dispatch.
     /// Otherwise the frame's own `this` is authoritative and the bindings are never read.
-    pub(crate) fn activation_bindings_observable(&self) -> bool {
+    /// By-name loads of source names resolve only their own atom; the implicit `this` and
+    /// `new.target` bindings are reachable by name only through engine-internal atoms.
+    pub(crate) fn activation_bindings_observable(&self, atoms: &AtomTable) -> bool {
         *self.activation_bindings.get_or_init(|| {
             self.is_async
                 || self.is_generator
@@ -1024,10 +1026,12 @@ impl Function {
                 || self.instructions().any(|instruction| {
                     matches!(
                         instruction.op(),
-                        Op::LoadName
-                            | Op::LoadNameCall
-                            | Op::LoadNameTypeof
-                            | Op::ResolveName
+                        Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
+                    ) && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
+                        atom >= atoms.len() || atoms[atom].starts_with('\0')
+                    }) || matches!(
+                        instruction.op(),
+                        Op::ResolveName
                             | Op::LoadResolvedName
                             | Op::DeleteName
                             | Op::StoreName
