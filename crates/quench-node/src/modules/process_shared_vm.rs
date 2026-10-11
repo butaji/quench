@@ -1458,7 +1458,7 @@ pub(crate) fn load_env_file(
         .ok_or_else(|| RootedError::host("process.loadEnvFile called without process root"))?;
     let env_key = context.string_rooted("env");
     let env = context.get_property_rooted(process, env_key)?;
-    for (key_text, value_text) in parse_env_file(&contents) {
+    for (key_text, value_text) in crate::modules::util_env::parse_env_file(&contents) {
         if std::env::var_os(&key_text).is_some() {
             continue;
         }
@@ -1479,54 +1479,6 @@ pub(crate) fn load_env_file(
         unsafe { std::env::set_var(&key_text, &value_text) };
     }
     Ok(context.undefined())
-}
-
-fn parse_env_file(contents: &str) -> Vec<(String, String)> {
-    let mut values = Vec::new();
-    let mut lines = contents.lines().peekable();
-    while let Some(line) = lines.next() {
-        let line = line.trim();
-        let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        if key.is_empty()
-            || !key
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.'))
-        {
-            continue;
-        }
-        let raw_value = raw_value.trim_start();
-        let value = if let Some(quote @ ('\'' | '"' | '`')) = raw_value.chars().next() {
-            let mut quoted = raw_value[quote.len_utf8()..].to_owned();
-            while !quoted.contains(quote) {
-                let Some(next) = lines.next() else { break };
-                quoted.push('\n');
-                quoted.push_str(next);
-            }
-            let value = quoted.split_once(quote).map_or(quoted.as_str(), |(value, _)| value);
-            if quote == '\'' {
-                value.to_owned()
-            } else {
-                value.replace("\\n", "\n").replace("\\r", "\r")
-            }
-        } else {
-            let value = raw_value
-                .char_indices()
-                .find(|(index, character)| {
-                    *character == '#' && (*index == 0 || raw_value[..*index].chars().next_back().is_some_and(char::is_whitespace))
-                })
-                .map_or(raw_value, |(index, _)| &raw_value[..index]);
-            value.trim_end().to_owned()
-        };
-        values.push((key.to_owned(), value));
-    }
-    values
 }
 
 fn dotenv_file_error(

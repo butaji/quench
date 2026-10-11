@@ -389,6 +389,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
     let compare_key = context.string_rooted("isDeepStrictEqual");
     context.set_property_rooted(module, compare_key, compare, module)?;
+    for name in ["stripVTControlCharacters", "parseEnv"] {
+        let function = context.host_function(crate::host::shared_vm::operation(name))?;
+        let key = context.string_rooted(name);
+        context.set_property_rooted(module, key, function, module)?;
+    }
     let types = context.object_rooted()?;
     for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
         let data = context.number(index as f64);
@@ -461,4 +466,84 @@ pub(crate) fn type_check(
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let matches = context.has_builtin_brand_rooted(value, brand)?;
     Ok(context.boolean(matches))
+}
+
+pub(crate) fn strip_vt(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let Some(units) = context.string_code_units(value)? else {
+        return Err(string_argument_error(context, value, "str")?);
+    };
+    if !crate::modules::util_strip::has_vt_controls(&units) {
+        return Ok(value);
+    }
+    let stripped = crate::modules::util_strip::strip_vt_control_units(&units);
+    if stripped == units {
+        return Ok(value);
+    }
+    Ok(context.string_units_rooted(&stripped))
+}
+
+pub(crate) fn parse_env(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let Some(text) = context.string_text(value)? else {
+        return Err(string_argument_error(context, value, "content")?);
+    };
+    let result = context.null_object_rooted()?;
+    for (name, value) in crate::modules::util_env::parse_env_file(&text) {
+        let key = context.string_rooted(&name);
+        let value = context.string_rooted(&value);
+        context.define_data_property_rooted(result, key, value, true, true, true)?;
+    }
+    Ok(result)
+}
+
+fn string_argument_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    root: RootId,
+    name: &str,
+) -> Result<RootedError, RootedError> {
+    let value = context
+        .rooted_value(root)
+        .ok_or_else(|| RootedError::host("invalid argument root"))?;
+    let received = if value.is_undefined() {
+        "undefined".to_owned()
+    } else if value.is_null() {
+        "null".to_owned()
+    } else if value.as_bool().is_some() {
+        format!("type boolean ({})", context.to_string(root)?)
+    } else if value.as_number().is_some() {
+        format!("type number ({})", context.to_string(root)?)
+    } else if context.is_symbol_rooted(root)? {
+        let global = context.global_root()?;
+        let key = context.string_rooted("String");
+        let string = context.get_property_rooted(global, key)?;
+        let undefined = context.undefined();
+        let text = context.call_rooted(string, undefined, &[root])?;
+        format!("type symbol ({})", context.to_string(text)?)
+    } else if context.is_callable_rooted(root)? {
+        let key = context.string_rooted("name");
+        let name = context.get_property_rooted(root, key)?;
+        format!("function {}", context.to_string(name)?)
+    } else if context.is_array_rooted(root)? {
+        "an instance of Array".to_owned()
+    } else if context.is_object_rooted(root)? {
+        "an instance of Object".to_owned()
+    } else {
+        format!("type bigint ({}n)", context.to_string(root)?)
+    };
+    let error = context.type_error_rooted(&format!(
+        "The \"{name}\" argument must be of type string. Received {received}"
+    ))?;
+    let key = context.string_rooted("code");
+    let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+    context.set_property_rooted(error, key, code, error)?;
+    Ok(context.throw(error))
 }
