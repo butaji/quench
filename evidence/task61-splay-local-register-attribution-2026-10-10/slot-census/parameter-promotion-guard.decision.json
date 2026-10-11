@@ -1,0 +1,312 @@
+{
+  "schema": 1,
+  "checkpoint": {
+    "schema": 1,
+    "created_unix_ns": 1791624175274020000,
+    "updated_unix_ns": 1791624175274020000,
+    "change_kind": "semantic_neutral_metadata_or_dispatch",
+    "minimum_clean_pairs": 7,
+    "top_up_rounds": 7,
+    "maximum_top_up_batches_per_fixture": 2,
+    "instruction_aa_band_percent": 0.14,
+    "maximum_rss_increase_percent": 0.5,
+    "measurement_runner": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/candidate-a/production/quench-bench",
+      "sha256": "694afd730d95b5cb142bac1deaca3d7b43174ebd8613716b2517884d491cea8b"
+    },
+    "baseline": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/c417d8c41a5e2a370f7054b11923a29a44ddb721e287279ba7d42cd88f9524a6/quench-node",
+      "sha256": "c417d8c41a5e2a370f7054b11923a29a44ddb721e287279ba7d42cd88f9524a6"
+    },
+    "candidate": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/4ad2b512f363998cbe1e85b60ddc697fcadf23eabc666a68657ecfa0ee001b99/quench-node",
+      "sha256": "4ad2b512f363998cbe1e85b60ddc697fcadf23eabc666a68657ecfa0ee001b99"
+    },
+    "timeout_ms": 300000,
+    "source_revision": "7dfe2e1f1326706d2e5c2dff637cd66710ecff1a",
+    "source_dirty": true,
+    "corpus": {
+      "checkout_clean": true,
+      "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+      "fixture_set_matches": true,
+      "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b"
+    },
+    "suite_inputs": [
+      {
+        "modified_unix_ns": 1791399842589165942,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+        "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+        "size_bytes": 9351
+      },
+      {
+        "modified_unix_ns": 1791399842589772400,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+        "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+        "size_bytes": 48043
+      },
+      {
+        "modified_unix_ns": 1791399842589978359,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+        "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+        "size_bytes": 25653
+      },
+      {
+        "modified_unix_ns": 1791399842590910109,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+        "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+        "size_bytes": 195205
+      },
+      {
+        "modified_unix_ns": 1791399842591090359,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+        "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+        "size_bytes": 12690
+      },
+      {
+        "modified_unix_ns": 1791399842591280317,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+        "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+        "size_bytes": 27996
+      },
+      {
+        "modified_unix_ns": 1791399842592027317,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+        "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+        "size_bytes": 111299
+      },
+      {
+        "modified_unix_ns": 1791399842592243692,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+        "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+        "size_bytes": 15776
+      },
+      {
+        "modified_unix_ns": 1791399842592552609,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+        "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+        "size_bytes": 10746
+      }
+    ],
+    "initial_report": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-splay-local-register-attribution-2026-10-10/slot-census/parameter-promotion-all-eight-11.json",
+      "sha256": "3a9606e61f6a81f6328a571a26d9b63a096d6002c25b513652705bde3a1b7517"
+    },
+    "top_up_batches": []
+  },
+  "reports": [
+    {
+      "path": "/Users/admin/Code/GitHub/quench-v2/tasks/evidence/task61-splay-local-register-attribution-2026-10-10/slot-census/parameter-promotion-all-eight-11.json",
+      "sha256": "3a9606e61f6a81f6328a571a26d9b63a096d6002c25b513652705bde3a1b7517"
+    }
+  ],
+  "fixtures": {
+    "crypto.js": {
+      "clean_pairs": 0,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": null,
+        "interval_95_percent": null,
+        "samples": 0,
+        "status": "insufficient_clean_pairs"
+      },
+      "instructions": {
+        "median_percent": -0.5827075096583423,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -1.0852713178294615,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "instructions_only"
+    },
+    "deltablue.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": -0.56798462822365,
+        "interval_95_percent": [
+          -0.8373208773935992,
+          -0.26172808270312764
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -0.8677007796138558,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.49059689288634134,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "earley-boyer.js": {
+      "clean_pairs": 7,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": -2.2522125373968582,
+        "interval_95_percent": [
+          -6.024122547674482,
+          -0.917244904878578
+        ],
+        "samples": 7,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -4.179450457638955,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.1974723538704537,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "navier-stokes.js": {
+      "clean_pairs": 2,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": -2.8815874985033463,
+        "interval_95_percent": [
+          -2.991311170556832,
+          -2.7718638264498607
+        ],
+        "samples": 2,
+        "status": "insufficient_clean_pairs"
+      },
+      "instructions": {
+        "median_percent": -4.956054101833828,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.07993605115906854,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "instructions_only"
+    },
+    "raytrace.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": -2.2120923871075004,
+        "interval_95_percent": [
+          -2.8129503186549054,
+          -1.8262184589256436
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -2.771572939276934,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.6196746707978318,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "regexp.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": 0.535483270105841,
+        "interval_95_percent": [
+          -0.9138276135565948,
+          1.114708989127955
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -0.00007300799763632071,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -1.3085690164626462,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "richards.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": -1.7811508809289611,
+        "interval_95_percent": [
+          -2.0554137494673275,
+          -1.6031668292624368
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -2.5619343458409993,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.7042253521126751,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "splay.js": {
+      "clean_pairs": 11,
+      "valid_pairs": 11,
+      "cycles": {
+        "median_percent": -6.792251489078338,
+        "interval_95_percent": [
+          -7.307623651055262,
+          -6.260961530306597
+        ],
+        "samples": 11,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -8.197887911382296,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.12645914396887115,
+        "interval_95_percent": null,
+        "samples": 11,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    }
+  },
+  "pending_fixtures": [],
+  "all_fixtures_classified": true,
+  "overall": "passed"
+}

@@ -128,6 +128,7 @@ mod tests {
             local_atoms: vec![],
             environment_atoms: vec![],
             selective_capture_slots: None,
+            local_registers: Vec::new(),
             inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
@@ -148,6 +149,9 @@ mod tests {
             wide: Vec::new(),
             registers: 1,
             dispatch,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
+            activation_bindings: Default::default(),
             handlers: Vec::new(),
             register_root_offset: 0,
         }

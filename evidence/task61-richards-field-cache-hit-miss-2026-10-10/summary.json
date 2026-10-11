@@ -1,0 +1,72 @@
+{
+  "schema": 1,
+  "measurement": "Richards profile-aggregate field-cache hit/miss census, K=100 minus K=0",
+  "platform": "M4 arm64 macOS, Mac16,10, 16 GiB",
+  "trunk_runtime_revision": "a03e0646ff216a192d85c6d1d22307855cdb21f2",
+  "trunk_profile_binary_sha256": "d1155cf7a24d0f16dd4320712f0c6718c648923dfc9fc08279459143341534b9",
+  "compact_candidate_source_base": "a03e0646ff216a192d85c6d1d22307855cdb21f2",
+  "compact_candidate_production_source_diff_sha256": "34f5b2f390a3ff28c7c4764dbec9c0a716c991d681970dc0fefb8bba38f32a61",
+  "compact_candidate_profile_after_fix_source_diff_sha256": "8194137811145e68cb9453109508c23a0bee6613c999299e07f3b59abb218e68",
+  "compact_candidate_profile_after_fix_binary_sha256": "5f21ccd0fc023177057fc6034164e5566d73b0d5c94cd57e13caed3e76069251",
+  "baseline_profile_binary_sha256": "d1155cf7a24d0f16dd4320712f0c6718c648923dfc9fc08279459143341534b9",
+  "work_iterations": 100,
+  "output_equal": true,
+  "counters": {
+    "trunk_baseline": {
+      "hits": 25256606,
+      "misses": 194,
+      "depth_0_hits": 21210143,
+      "depth_1_hits": 4046463
+    },
+    "compact_candidate_before_fix": {
+      "hits": 21210143,
+      "misses": 4046657,
+      "depth_0_hits": 21210143,
+      "depth_1_hits": 0
+    },
+    "compact_candidate_after_fix": {
+      "hits": 25256606,
+      "misses": 194,
+      "depth_0_hits": 21210143,
+      "depth_1_hits": 4046463
+    }
+  },
+  "production_gate": {
+    "baseline_binary_sha256": "127b3fdc659ba5944bf03658d5f2e2f85b5971a4b91121e40a7e66dc00649543",
+    "candidate_binary_sha256": "f6886145827282e85b7c1ec2bc28a15940409c95a109b3a5567f9beabf1d3ff0",
+    "measurement_runner_sha256": "694afd730d95b5cb142bac1deaca3d7b43174ebd8613716b2517884d491cea8b",
+    "clean_pairs": 10,
+    "requested_pairs": 11,
+    "marginal_instructions_candidate_vs_baseline_median_percent": 8.022168206322345,
+    "marginal_instructions_pair_range_percent": [
+      8.013457780756749,
+      8.039408707073825
+    ],
+    "marginal_cycles_candidate_vs_baseline_median_percent": 7.586601295474682,
+    "marginal_cycles_pair_range_percent": [
+      5.704319044288608,
+      8.764682124148138
+    ],
+    "work_max_rss_baseline_median_bytes": 20119552,
+    "work_max_rss_candidate_median_bytes": 19513344,
+    "output_equal": true,
+    "decision": "reject compact candidate on all-fixture no-regression guard; cache hit/miss regression was repaired, but Richards retains a reproducible +8.0% instruction / +7.6% cycle cost"
+  },
+  "production_distances_unchanged": {
+    "splay_speed": "1.24x",
+    "splay_rss": "2.09x",
+    "reason": "No runtime candidate was merged into trunk"
+  },
+  "reports": {
+    "profile_counter_comparison": "richards-cache-fix-profile.json",
+    "production_richards_gate": "richards-production-11.json",
+    "pre_fix_candidate_census": "../../task61-splay-compact-object-profile-2026-10-10/richards-field-cache-profile-counter-census-2026-10-10.json"
+  },
+  "baseline_profile_instrumentation_diff_sha256": "04a257e8793d97a9870a1b57edd9fb452201e064359489f25e7999a0688193e5",
+  "candidate_profile_instrumentation_plus_cache_fix_diff_sha256": "8194137811145e68cb9453109508c23a0bee6613c999299e07f3b59abb218e68",
+  "correctness": {
+    "quench_runtime_lib_tests_passed": 546,
+    "failed": 0,
+    "richards_output_equal": true
+  }
+}

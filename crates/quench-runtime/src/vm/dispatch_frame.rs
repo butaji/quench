@@ -6,26 +6,50 @@ struct GeneralCodeCursor {
     function: u32,
     code: *const Instr,
     wide: *const WideInstruction,
+    /// Fixed-width expansion of `code`; null while the function is cold.
+    decoded: *const WideInstruction,
+}
+
+/// A caller suspended by an in-loop frame push, resumed when its callee completes.
+struct PendingGeneralCall {
+    caller: usize,
+    /// The caller's cursor, still valid on resume: the residual outlives the loop and a hot
+    /// decoding, once built, never moves; a cold caller simply keeps reading packed code.
+    caller_cursor: GeneralCodeCursor,
+    call_pc: u32,
+    destination: Register,
+    /// Set for an in-loop `new`; see `StepResult::PushFrame`.
+    construct_this: Option<Value>,
+    call_guard: crate::stack::GuestCallGuard,
 }
 
 impl GeneralCodeCursor {
     fn new(program_id: ProgramId, program: &ResidualProgram, function: u32) -> Self {
         let function_code = &program.functions[function as usize];
+        let decoded = function_code
+            .decoded
+            .on_entry(&function_code.code, &function_code.wide)
+            .map_or(std::ptr::null(), <[WideInstruction]>::as_ptr);
         Self {
             program: program_id,
             function,
             code: function_code.code.as_ptr(),
             wide: function_code.wide.as_ptr(),
+            decoded,
         }
     }
 
+    #[inline(always)]
     fn instruction(self, pc: usize) -> WideInstruction {
         // SAFETY: residual validation establishes every reachable PC and wide
-        // operand index. This cursor stays local to `run_frame_general_until`:
-        // the borrowed entry residual remains alive for the whole call, and a
-        // switched residual is retained by `current_program` until the cursor
-        // is refreshed. Inline frame pushes are restricted to the same program.
-        // The loop refreshes the cursor whenever the active frame changes.
+        // operand index, and `decoded` has one entry per code word. This cursor stays local
+        // to `run_frame_general_until`: the borrowed entry residual remains alive for the
+        // whole call, and a switched residual is retained by `current_program` until the
+        // cursor is refreshed. Inline frame pushes are restricted to the same program. The
+        // loop refreshes the cursor whenever the active frame changes.
+        if !self.decoded.is_null() {
+            return unsafe { *self.decoded.add(pc) };
+        }
         let packed = unsafe { *self.code.add(pc) };
         if packed.is_wide() {
             // SAFETY: the same validation guarantees this packed wide index is
@@ -48,12 +72,19 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    #[inline(always)]
     pub(super) fn initialize_activation_bindings(
         &mut self,
         frame: &mut Frame,
         arrow: bool,
         new_target: Value,
+        observable: bool,
     ) {
+        if !observable {
+            // Nothing reads the implicit bindings, and the frame's own `this` is authoritative.
+            frame.fixed_this = !arrow && !frame.this.is_deleted();
+            return;
+        }
         if !arrow && frame.function != super::ROOT_FUNCTION_ID {
             let atom = self.runtime_atoms.new_target;
             frame.dynamic_bindings.push((atom, new_target));
@@ -69,6 +100,7 @@ impl<H: Host> Vm<H> {
             let atom = self.runtime_atoms.lexical_this;
             frame.dynamic_bindings.push((atom, frame.this));
         }
+        frame.fixed_this = !inherits_this && !frame.this.is_deleted();
     }
 
     #[inline(never)]
@@ -104,12 +136,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
-        match self.call_user_frame_mode(p, id, parent, this, args, context, false, false)? {
-            UserFrameStart::Outcome(outcome) => Ok(outcome),
-            UserFrameStart::Pushed(_) => {
-                unreachable!("ordinary call unexpectedly stayed in dispatch")
-            }
-        }
+        self.run_user_frame(p, id, parent, this, args, context, false)
     }
 
     pub(super) fn call_user_construct_frame(
@@ -120,23 +147,14 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<FrameOutcome, JsError> {
-        match self.call_user_frame_mode(
-            p,
-            id,
-            parent,
-            Value::UNDEFINED,
-            args,
-            context,
-            true,
-            false,
-        )? {
-            UserFrameStart::Outcome(outcome) => Ok(outcome),
-            UserFrameStart::Pushed(_) => {
-                unreachable!("constructor unexpectedly stayed in dispatch")
-            }
-        }
+        self.run_user_frame(p, id, parent, Value::UNDEFINED, args, context, true)
     }
 
+    /// Starts an activation that the dispatch loop runs in place.
+    ///
+    /// `args` may borrow the caller's register window: setup only pushes the new activation,
+    /// never touching or resizing another frame's register buffer, and frame-stack growth moves
+    /// the boxed frames' pointers rather than their buffers.
     pub(super) fn push_general_user_frame(
         &mut self,
         p: &ResidualProgram,
@@ -145,16 +163,27 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
         context: CallContext,
-    ) -> Result<crate::stack::StackGuard, JsError> {
-        match self.call_user_frame_mode(p, id, parent, this, args, context, false, true)? {
-            UserFrameStart::Pushed(guard) => Ok(guard),
-            UserFrameStart::Outcome(_) => {
-                unreachable!("pushed user call unexpectedly ran to completion")
+    ) -> Result<crate::stack::GuestCallGuard, JsError> {
+        self.activate_user_frame(p, id, parent, this, args, context)?;
+        // An in-loop activation grows the frame stack, not the native stack, so it counts
+        // against the live guest-call budget rather than a native transition.
+        match crate::stack::GuestCallGuard::enter() {
+            Ok(guard) => Ok(guard),
+            Err(()) => {
+                let outcome = Err(self.stack_exhaustion_error());
+                let mut frame = self.frames.pop().unwrap();
+                self.deactivate_frame(&mut frame, &outcome);
+                self.persist_global_lexical_bindings(p, &frame);
+                match outcome {
+                    Err(error) => Err(error),
+                    Ok(_) => unreachable!(),
+                }
             }
         }
     }
 
-    fn call_user_frame_mode(
+    /// Runs a user activation to completion on the native stack.
+    fn run_user_frame(
         &mut self,
         p: &ResidualProgram,
         id: u32,
@@ -163,8 +192,57 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
         capture_constructor_this: bool,
-        push_to_dispatch: bool,
-    ) -> Result<UserFrameStart, JsError> {
+    ) -> Result<FrameOutcome, JsError> {
+        let frame_index = self.activate_user_frame(p, id, parent, this, args, context)?;
+        let result = self.run_frame_general(p, frame_index);
+        let mut frame = self.frames.pop().unwrap();
+        self.deactivate_frame(&mut frame, &result);
+        self.persist_global_lexical_bindings(p, &frame);
+        match result? {
+            FrameOutcome::Complete(value) => {
+                let outcome = if capture_constructor_this {
+                    FrameOutcome::ConstructComplete {
+                        value,
+                        this: frame.this,
+                    }
+                } else {
+                    FrameOutcome::Complete(value)
+                };
+                self.pool_frame(frame);
+                Ok(outcome)
+            }
+            FrameOutcome::ConstructComplete { .. } => {
+                self.pool_frame(frame);
+                Err(JsError(
+                    "nested constructor completion escaped its activation".into(),
+                ))
+            }
+            FrameOutcome::Await {
+                value, destination, ..
+            } => Ok(FrameOutcome::Await {
+                value,
+                destination,
+                frame: Some(*frame),
+            }),
+            FrameOutcome::Yield { .. } => {
+                Err(JsError("yield requires generator continuation".into()))
+            }
+            FrameOutcome::ParameterInitializationComplete => Err(JsError(
+                "unexpected generator parameter initialization boundary".into(),
+            )),
+        }
+    }
+
+    /// Binds a user function's activation and pushes it on the frame stack, returning its index.
+    fn activate_user_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        parent: Value,
+        this: Value,
+        args: &[Value],
+        context: CallContext,
+    ) -> Result<usize, JsError> {
         self.profile
             .function(self.active_program.raw(), id as usize);
         if p.functions[id as usize].parameter_eval_arguments_error {
@@ -173,7 +251,7 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let mut frame = self.frame_pool.pop().unwrap_or(Frame {
+        let mut frame = self.frame_pool.pop().unwrap_or_else(|| Box::new(Frame {
             context: CallContext::Internal,
             original_arguments: vec![],
             program: self.active_program,
@@ -189,41 +267,9 @@ impl<H: Host> Vm<H> {
             active_iterators: vec![],
             with_objects: Vec::new(),
             with_base: self.with_stack.len(),
-        });
-        frame
-            .locals
-            .resize(function.locals as usize, Value::UNDEFINED);
-        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
-        let fixed = usize::from(function.params) - usize::from(function.rest);
-        for index in 0..fixed {
-            frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
-        }
-        if function.rest {
-            let elements = args.get(fixed..).unwrap_or_default().to_vec();
-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                elements: Rc::new(elements),
-            });
-        }
-        if let Some(slot) = function.self_binding_slot {
-            frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
-        }
-        if let Some(slot) = function.arguments_slot {
-            let mapped = function.arguments_are_mapped();
-            let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.object_proto),
-                elements: Rc::new(args.to_vec()),
-            });
-            frame.locals[usize::from(slot)] = arguments;
-            self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
-            if mapped {
-                let mapping = (0..function.params.min(args.len() as u16)).collect();
-                if let Some(object) = self.object_data_mut(arguments) {
-                    object.set_arguments_map(mapping);
-                }
-            }
-        }
-        self.initialize_frame_invocation(&mut frame, function, context, args);
+            fixed_this: false,
+        }));
+        self.bind_activation_arguments(&mut frame, function, context, args)?;
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -255,32 +301,17 @@ impl<H: Host> Vm<H> {
         self.with_stack
             .extend(self.captured_with_objects_for_function(parent, function, p.kind));
         if id == super::ROOT_FUNCTION_ID {
-            for &(slot, import) in self.programs.module_imports(frame.program) {
-                let value = match import {
-                    super::program_store::ModuleImport::Value(value)
-                    | super::program_store::ModuleImport::Binding(_, _, value) => value,
-                };
-                let index = usize::from(slot);
-                if frame.locals.get(index).is_none() {
-                    return Err(JsError("module import slot is out of bounds".into()));
-                }
-                if frame.captured {
-                    *self
-                        .heap
-                        .environment_slot_mut(frame.env, index)
-                        .ok_or_else(|| JsError("module import slot is out of bounds".into()))? =
-                        value;
-                } else {
-                    frame.locals[index] = value;
-                }
-            }
+            self.bind_module_imports(&mut frame)?;
         }
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
-        self.initialize_activation_bindings(&mut frame, arrow, new_target);
-        let register_count = function.registers as usize;
-        let run_numeric = numeric_frame_is_safe(function, capture_constructor_this);
-        debug_assert!(!push_to_dispatch || !run_numeric);
-        frame.prepare_registers(register_count);
+        self.initialize_activation_bindings(
+            &mut frame,
+            arrow,
+            new_target,
+            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(),
+        );
+        frame.prepare_registers_for(function);
+        frame.initialize_promoted_registers(function, args);
         self.frames.push(frame);
         let frame_index = self.frames.len() - 1;
         if id == super::ROOT_FUNCTION_ID
@@ -290,71 +321,7 @@ impl<H: Host> Vm<H> {
             self.programs
                 .set_module_environment(self.frames[frame_index].program, environment);
         }
-        if push_to_dispatch {
-            let stack_guard = match self.enter_stack() {
-                Ok(guard) => guard,
-                Err(error) => {
-                    let outcome = Err(error);
-                    let mut frame = self.frames.pop().unwrap();
-                    self.deactivate_frame(&mut frame, &outcome);
-                    self.persist_global_lexical_bindings(p, &frame);
-                    return match outcome {
-                        Err(error) => Err(error),
-                        Ok(_) => unreachable!(),
-                    };
-                }
-            };
-            return Ok(UserFrameStart::Pushed(stack_guard));
-        }
-        // Numeric dispatch changes the body loop only. Frame activation and cleanup
-        // remain shared; unsupported tail-call and suspension completions use general.
-        let result = if run_numeric {
-            let active_program =
-                std::mem::replace(&mut self.active_program, self.frames[frame_index].program);
-            let result = self
-                .run_frame_numeric(p, frame_index)
-                .map(FrameOutcome::Complete);
-            self.active_program = active_program;
-            result
-        } else {
-            self.run_frame_general(p, frame_index)
-        };
-        let mut frame = self.frames.pop().unwrap();
-        self.deactivate_frame(&mut frame, &result);
-        self.persist_global_lexical_bindings(p, &frame);
-        match result? {
-            FrameOutcome::Complete(value) => {
-                let outcome = if capture_constructor_this {
-                    FrameOutcome::ConstructComplete {
-                        value,
-                        this: frame.this,
-                    }
-                } else {
-                    FrameOutcome::Complete(value)
-                };
-                self.frame_pool.push(Self::recycle_frame(frame));
-                Ok(UserFrameStart::Outcome(outcome))
-            }
-            FrameOutcome::ConstructComplete { .. } => {
-                self.frame_pool.push(Self::recycle_frame(frame));
-                Err(JsError(
-                    "nested constructor completion escaped its activation".into(),
-                ))
-            }
-            FrameOutcome::Await {
-                value, destination, ..
-            } => Ok(UserFrameStart::Outcome(FrameOutcome::Await {
-                value,
-                destination,
-                frame: Some(frame),
-            })),
-            FrameOutcome::Yield { .. } => {
-                Err(JsError("yield requires generator continuation".into()))
-            }
-            FrameOutcome::ParameterInitializationComplete => Err(JsError(
-                "unexpected generator parameter initialization boundary".into(),
-            )),
-        }
+        Ok(frame_index)
     }
 
     /// Replace the active frame for a terminal user call.  This is the
@@ -379,9 +346,8 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let old = std::mem::replace(
-            &mut self.frames[frame_index],
-            Frame {
+        let placeholder = self.frame_pool.pop().unwrap_or_else(|| {
+            Box::new(Frame {
                 context: CallContext::Internal,
                 original_arguments: vec![],
                 program: self.active_program,
@@ -397,44 +363,14 @@ impl<H: Host> Vm<H> {
                 active_iterators: vec![],
                 with_objects: Vec::new(),
                 with_base: self.with_stack.len(),
-            },
-        );
+                fixed_this: false,
+            })
+        });
+        let old = std::mem::replace(&mut self.frames[frame_index], placeholder);
         self.with_stack.truncate(old.with_base);
-        let mut frame = Self::recycle_frame(old);
-        frame
-            .locals
-            .resize(function.locals as usize, Value::UNDEFINED);
-        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
-        let fixed = usize::from(function.params) - usize::from(function.rest);
-        for index in 0..fixed {
-            frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
-        }
-        if function.rest {
-            let elements = args.get(fixed..).unwrap_or_default().to_vec();
-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                elements: Rc::new(elements),
-            });
-        }
-        if let Some(slot) = function.self_binding_slot {
-            frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
-        }
-        if let Some(slot) = function.arguments_slot {
-            let mapped = function.arguments_are_mapped();
-            let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.object_proto),
-                elements: Rc::new(args.to_vec()),
-            });
-            frame.locals[usize::from(slot)] = arguments;
-            self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
-            if mapped {
-                let mapping = (0..function.params.min(args.len() as u16)).collect();
-                if let Some(object) = self.object_data_mut(arguments) {
-                    object.set_arguments_map(mapping);
-                }
-            }
-        }
-        self.initialize_frame_invocation(&mut frame, function, context, args);
+        let mut frame = old;
+        Self::recycle_frame(&mut frame);
+        self.bind_activation_arguments(&mut frame, function, context, args)?;
         frame.program = self.active_program;
         frame.function = id;
         frame.pc = 0;
@@ -461,11 +397,109 @@ impl<H: Host> Vm<H> {
         self.with_stack
             .extend(self.captured_with_objects_for_function(parent, function, p.kind));
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
-        self.initialize_activation_bindings(&mut frame, arrow, new_target);
-        let register_count = function.registers as usize;
-        frame.prepare_registers(register_count);
-        self.frames[frame_index] = frame;
+        self.initialize_activation_bindings(
+            &mut frame,
+            arrow,
+            new_target,
+            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(),
+        );
+        frame.prepare_registers_for(function);
+        frame.initialize_promoted_registers(function, args);
+        let placeholder = std::mem::replace(&mut self.frames[frame_index], frame);
+        self.frame_pool.push(placeholder);
         Ok(())
+    }
+
+    /// Binds an activation's locals to its call: fixed parameters, the rest array, the
+    /// function's own name, the `arguments` object and the legacy invocation record.
+    #[inline(always)]
+    fn bind_activation_arguments(
+        &mut self,
+        frame: &mut Frame,
+        function: &crate::bytecode::Function,
+        context: CallContext,
+        args: &[Value],
+    ) -> Result<(), JsError> {
+        frame
+            .locals
+            .resize(function.locals as usize, Value::UNDEFINED);
+        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
+        let fixed = usize::from(function.params) - usize::from(function.rest);
+        // Promoted parameters live in registers; `initialize_promoted_registers` clears their
+        // local slots once the frame is set up, so every fixed parameter is copied here.
+        let passed = fixed.min(args.len());
+        frame.locals[..passed].copy_from_slice(&args[..passed]);
+        frame.locals[passed..fixed].fill(Value::UNDEFINED);
+        if function.rest {
+            frame.locals[fixed] = self.rest_parameter_array(args.get(fixed..).unwrap_or_default());
+        }
+        if let Some(slot) = function.self_binding_slot {
+            frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
+        }
+        if let Some(slot) = function.arguments_slot {
+            frame.locals[usize::from(slot)] =
+                self.activation_arguments_object(function, context, args)?;
+        }
+        self.initialize_frame_invocation(frame, function, context, args);
+        Ok(())
+    }
+
+    /// Copies a program root activation's module import bindings into its locals or, for a
+    /// module environment, its environment slots.
+    #[inline(never)]
+    fn bind_module_imports(&mut self, frame: &mut Frame) -> Result<(), JsError> {
+        for &(slot, import) in self.programs.module_imports(frame.program) {
+            let value = match import {
+                super::program_store::ModuleImport::Value(value)
+                | super::program_store::ModuleImport::Binding(_, _, value) => value,
+            };
+            let index = usize::from(slot);
+            if frame.locals.get(index).is_none() {
+                return Err(JsError("module import slot is out of bounds".into()));
+            }
+            if frame.captured {
+                *self
+                    .heap
+                    .environment_slot_mut(frame.env, index)
+                    .ok_or_else(|| JsError("module import slot is out of bounds".into()))? = value;
+            } else {
+                frame.locals[index] = value;
+            }
+        }
+        Ok(())
+    }
+
+    /// The rest parameter's array of the arguments past the fixed parameters.
+    #[inline(never)]
+    fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
+        self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+            elements: Rc::new(rest.to_vec()),
+        })
+    }
+
+    /// A new activation's `arguments` object, mapped onto the parameters when the function's
+    /// parameter list allows it.
+    #[inline(never)]
+    fn activation_arguments_object(
+        &mut self,
+        function: &crate::bytecode::Function,
+        context: CallContext,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let mapped = function.arguments_are_mapped();
+        let arguments = self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.object_proto),
+            elements: Rc::new(args.to_vec()),
+        });
+        self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
+        if mapped {
+            let mapping = (0..function.params.min(args.len() as u16)).collect();
+            if let Some(object) = self.object_data_mut(arguments) {
+                object.set_arguments_map(mapping);
+            }
+        }
+        Ok(arguments)
     }
 
     pub(super) fn initialize_frame_invocation(
@@ -675,13 +709,15 @@ impl<H: Host> Vm<H> {
         };
         let env = self.heap.alloc(Cell::Environment {
             parent,
-            program: Some(self.frames[frame].program.raw()),
-            root_eval_scope: false,
-            binding_site_pc: None,
             function: self.frames[frame].function,
             slots: slots.into_boxed_slice().into(),
-            dynamic_bindings: std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
-            with_objects: Box::default(),
+            scope: Box::new(crate::heap::EnvironmentScope {
+                program: Some(self.frames[frame].program.raw()),
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: std::mem::take(&mut self.frames[frame].dynamic_bindings).into(),
+                with_objects: Box::default(),
+            }),
         });
         self.frames[frame].env = env;
         self.frames[frame].captured = true;
@@ -707,11 +743,8 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("invalid environment clone owner".into()))?;
         let Some(Cell::Environment {
             parent,
-            program,
-            root_eval_scope,
-            binding_site_pc,
             function,
-            with_objects,
+            scope,
             ..
         }) = self.heap.get(source)
         else {
@@ -719,13 +752,15 @@ impl<H: Host> Vm<H> {
         };
         let environment = Cell::Environment {
             parent: *parent,
-            program: *program,
-            root_eval_scope: *root_eval_scope,
-            binding_site_pc: *binding_site_pc,
             function: *function,
             slots,
-            dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
-            with_objects: with_objects.clone(),
+            scope: Box::new(crate::heap::EnvironmentScope {
+                program: scope.program,
+                root_eval_scope: scope.root_eval_scope,
+                binding_site_pc: scope.binding_site_pc,
+                dynamic_bindings: crate::heap::EnvironmentBindings::Shared(owner),
+                with_objects: scope.with_objects.clone(),
+            }),
         };
         let env = self.heap.alloc(environment);
         self.frames[frame].env = env;
@@ -746,11 +781,35 @@ impl<H: Host> Vm<H> {
             Ok(FrameOutcome::Await { .. } | FrameOutcome::Yield { .. }) => {
                 frame.with_objects = self.with_stack.split_off(frame.with_base);
             }
-            _ => self.with_stack.truncate(frame.with_base),
+            _ => self.finish_frame_scopes(frame),
         }
     }
 
-    pub(super) fn recycle_frame(mut frame: Frame) -> Frame {
+    /// Drops the `with` scopes a finished (not suspended) activation entered.
+    #[inline(always)]
+    pub(super) fn finish_frame_scopes(&mut self, frame: &Frame) {
+        self.with_stack.truncate(frame.with_base);
+    }
+
+    /// Returns a finished activation's buffers to the pool without copying the frame again.
+    /// Moves a detached activation back into pooled frame storage for the frame stack.
+    pub(super) fn adopt_frame(&mut self, frame: Frame) -> Box<Frame> {
+        match self.frame_pool.pop() {
+            Some(mut slot) => {
+                *slot = frame;
+                slot
+            }
+            None => Box::new(frame),
+        }
+    }
+
+    pub(super) fn pool_frame(&mut self, frame: impl Into<Box<Frame>>) {
+        let mut frame = frame.into();
+        Self::recycle_frame(&mut frame);
+        self.frame_pool.push(frame);
+    }
+
+    pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
         frame.original_arguments.clear();
         frame.with_objects = Vec::new();
@@ -773,7 +832,7 @@ impl<H: Host> Vm<H> {
             frame.dynamic_bindings.clear();
         }
         frame.active_iterators.clear();
-        frame
+        frame.fixed_this = false;
     }
 
     pub(super) fn run_frame_general(
@@ -809,6 +868,9 @@ impl<H: Host> Vm<H> {
         let previous_global = self.realm.globals;
         let outcome = (|| {
             let mut current_program: Option<Rc<ResidualProgram>> = None;
+            // The residual being executed: the entry program, or the one `current_program`
+            // retains after a cross-program tail call. Updated only where that switch happens.
+            let mut executing_residual: *const ResidualProgram = entry_program;
             let mut frame = frame;
             let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
             let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
@@ -832,7 +894,10 @@ impl<H: Host> Vm<H> {
                 )?;
             }
             loop {
-                let p = current_program.as_deref().unwrap_or(p);
+                // SAFETY: `executing_residual` points at `entry_program`, borrowed for the whole
+                // call, or at the residual `current_program` keeps alive until it is replaced,
+                // and it is re-derived at that replacement.
+                let p = unsafe { &*executing_residual };
                 if stop_pc == Some(pc) {
                     self.frames[frame].pc = pc;
                     return Ok(FrameOutcome::ParameterInitializationComplete);
@@ -846,8 +911,6 @@ impl<H: Host> Vm<H> {
                     cursor.function,
                     instruction_pc,
                 );
-                // GC inside a getter or native operation needs this instruction's root map.
-                self.frames[frame].pc = instruction_pc;
                 let ins = cursor.instruction(pc);
                 pc += 1;
                 #[cfg(feature = "profile-aggregate")]
@@ -867,24 +930,53 @@ impl<H: Host> Vm<H> {
                 );
                 #[cfg(not(feature = "profile-aggregate"))]
                 self.profile.opcode(ins.op() as usize);
+                // Register/local moves cannot allocate, collect or throw, so they need neither the
+                // published root-map PC nor the general step result.
+                match ins.op() {
+                    Op::LoadLocalPlain => {
+                        // SAFETY: validated bytecode bounds the slot by Function.locals.
+                        let value = unsafe { self.read_validated_local(frame, ins.local_slot()) };
+                        self.write(frame, ins.result_register(), value);
+                        continue;
+                    }
+                    Op::StoreLocalPlain => {
+                        let value = self.read(frame, ins.register_a());
+                        // SAFETY: validated bytecode bounds the slot by Function.locals.
+                        unsafe { self.write_validated_local(frame, ins.local_slot(), value) };
+                        if let Some(register) = ins.optional_register_b() {
+                            self.write(frame, register, value);
+                        }
+                        continue;
+                    }
+                    Op::Move => {
+                        self.write(frame, ins.result_register(), self.read(frame, ins.register_b()));
+                        continue;
+                    }
+                    _ => {}
+                }
+                // GC inside a getter or native operation needs this instruction's root map.
+                // SAFETY: `frame` names the active activation, which stays on the frame stack
+                // for every iteration that dispatches it.
+                unsafe { self.frames.get_unchecked_mut(frame).pc = instruction_pc };
                 match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
                     Ok(StepResult::Return(value)) => {
                         if let Some(pending) = pending_calls.pop() {
                             debug_assert_eq!(frame, pending.caller + 1);
-                            let result = Ok(FrameOutcome::Complete(value));
-                            let mut completed_frame = self.frames.pop().unwrap();
-                            self.deactivate_frame(&mut completed_frame, &result);
+                            let completed_frame = self.frames.pop().unwrap();
+                            self.finish_frame_scopes(&completed_frame);
                             self.persist_global_lexical_bindings(p, &completed_frame);
-                            self.frame_pool.push(Self::recycle_frame(completed_frame));
+                            self.pool_frame(completed_frame);
                             frame = pending.caller;
+                            // [[Construct]] of an ordinary constructor yields its returned object,
+                            // otherwise the receiver it allocated.
+                            let value = match pending.construct_this {
+                                Some(this) if !self.is_object_like(value) => this,
+                                _ => value,
+                            };
                             self.write(frame, pending.destination, value);
                             pc = self.frames[frame].pc;
-                            cursor = GeneralCodeCursor::new(
-                                executing_program,
-                                p,
-                                self.frames[frame].function,
-                            );
-                            drop(pending.stack_guard);
+                            cursor = pending.caller_cursor;
+                            drop(pending.call_guard);
                         } else {
                             self.frames[frame].pc = pc;
                             return Ok(FrameOutcome::Complete(value));
@@ -893,13 +985,16 @@ impl<H: Host> Vm<H> {
                     Ok(StepResult::Continue) => {}
                     Ok(StepResult::PushFrame {
                         destination,
-                        stack_guard,
+                        call_guard,
+                        construct_this,
                     }) => {
                         pending_calls.push(PendingGeneralCall {
                             caller: frame,
+                            caller_cursor: cursor,
                             call_pc: instruction_pc as u32,
                             destination,
-                            stack_guard,
+                            construct_this,
+                            call_guard,
                         });
                         frame += 1;
                         pc = self.frames[frame].pc;
@@ -918,6 +1013,7 @@ impl<H: Host> Vm<H> {
                                 })?);
                         }
                         executing_program = replacement_program;
+                        executing_residual = current_program.as_deref().unwrap_or(entry_program);
                         pc = self.frames[frame].pc;
                         cursor = GeneralCodeCursor::new(
                             replacement_program,
@@ -976,13 +1072,9 @@ impl<H: Host> Vm<H> {
                                         self.persist_global_lexical_bindings(p, &failed_frame);
                                         frame = pending.caller;
                                         pc = self.frames[frame].pc;
-                                        cursor = GeneralCodeCursor::new(
-                                            executing_program,
-                                            p,
-                                            self.frames[frame].function,
-                                        );
+                                        cursor = pending.caller_cursor;
                                         throwing_pc = pending.call_pc;
-                                        drop(pending.stack_guard);
+                                        drop(pending.call_guard);
                                         error = match result {
                                             Err(error) => error,
                                             Ok(_) => unreachable!(),
@@ -1036,15 +1128,13 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn captured_with_objects(&self, mut env: Value) -> Vec<Value> {
+        if !self.with_scope_entered {
+            return Vec::new();
+        }
         let mut layers = Vec::new();
-        while let Some(Cell::Environment {
-            parent,
-            with_objects,
-            ..
-        }) = self.heap.get(env)
-        {
-            if !with_objects.is_empty() {
-                layers.push(with_objects.to_vec());
+        while let Some(Cell::Environment { parent, scope, .. }) = self.heap.get(env) {
+            if !scope.with_objects.is_empty() {
+                layers.push(scope.with_objects.to_vec());
             }
             env = *parent;
             if env.is_null() {
@@ -1055,16 +1145,30 @@ impl<H: Host> Vm<H> {
         layers.into_iter().flatten().collect()
     }
 
+    #[inline(always)]
     pub(super) fn captured_with_objects_for_function(
         &self,
         env: Value,
         function: &crate::bytecode::Function,
         program_kind: crate::bytecode::ProgramKind,
     ) -> Vec<Value> {
-        if !function.inherited_with_scope && program_kind != crate::bytecode::ProgramKind::Eval {
+        if !self.with_scope_entered
+            || !function.inherited_with_scope && program_kind != crate::bytecode::ProgramKind::Eval
+        {
             return Vec::new();
         }
         self.captured_with_objects(env)
+    }
+
+    /// The contiguous argument registers of a call window.
+    #[inline(always)]
+    pub(super) fn register_window(
+        &self,
+        f: usize,
+        window: crate::bytecode::RegisterWindow,
+    ) -> &[Value] {
+        let start = usize::from(window.base);
+        &self.frames[f].registers[start..start + usize::from(window.count)]
     }
 
     #[inline(always)]
@@ -1125,29 +1229,4 @@ impl<H: Host> Vm<H> {
                 .get_unchecked_mut(slot) = value;
         }
     }
-}
-
-fn numeric_frame_is_safe(
-    function: &crate::bytecode::Function,
-    capture_constructor_this: bool,
-) -> bool {
-    if function.dispatch != crate::bytecode::DispatchClass::Numeric
-        || capture_constructor_this
-        || function.is_async
-        || function.is_generator
-        || function.is_class_constructor
-        || function.derived_constructor
-        || function.class_field_initializer
-    {
-        return false;
-    }
-    !function.strict
-        || !function.code.iter().enumerate().any(|(pc, instruction)| {
-            instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call
-                && (instruction.returns_from_frame()
-                    || function
-                        .code
-                        .get(pc + 1)
-                        .is_some_and(|next| next.op() == Op::Return))
-        })
 }

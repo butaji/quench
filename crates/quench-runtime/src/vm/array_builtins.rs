@@ -81,7 +81,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_value_named(array, "prototype", self.array_proto)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             array,
             PropertyKey::string(prototype_atom),
@@ -127,7 +127,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             array,
             PropertyKey::string(prototype_atom),

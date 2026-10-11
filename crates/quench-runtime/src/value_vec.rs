@@ -10,7 +10,7 @@ const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
 pub(crate) const INLINE_PROPERTY_COUNT: usize = 2;
-const MIN_CAPACITY: usize = 4;
+const MIN_CAPACITY: usize = 2;
 const BUCKETS: usize = 32;
 const DENSE_ARENA_RESERVE_THRESHOLD: usize = 65_536;
 const DENSE_ARENA_GROWTH_DIVISOR: usize = 3;
@@ -186,15 +186,31 @@ impl ValueArena {
 
     /// # Safety
     /// `index` must be within the initialized length recorded by `vector`.
+    #[inline(always)]
     pub(crate) unsafe fn get_unchecked(&self, vector: ValueVec, index: usize) -> Value {
         debug_assert!(!vector.has_inline_property_storage());
         debug_assert!(index < self.len(vector));
         if vector.is_dictionary() {
-            return self.dictionaries[&vector.dictionary_id()][&(index as u32)];
+            return self.dictionary_get(vector, index);
         }
         // SAFETY: caller provides the initialized-range invariant; every
         // vector range was allocated from `values` and remains reserved.
         unsafe { *self.values.get_unchecked(vector.start() + index) }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn dictionary_get(&self, vector: ValueVec, index: usize) -> Value {
+        self.dictionaries[&vector.dictionary_id()][&(index as u32)]
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn dictionary_set(&mut self, vector: ValueVec, index: usize, value: Value) {
+        self.dictionaries
+            .get_mut(&vector.dictionary_id())
+            .expect("object dictionary exists")
+            .insert(index as u32, value);
     }
 
     pub(crate) fn set(&mut self, vector: ValueVec, index: usize, value: Value) {
@@ -212,14 +228,12 @@ impl ValueArena {
 
     /// # Safety
     /// `index` must be within the initialized length recorded by `vector`.
+    #[inline(always)]
     pub(crate) unsafe fn set_unchecked(&mut self, vector: ValueVec, index: usize, value: Value) {
         debug_assert!(!vector.has_inline_property_storage());
         debug_assert!(index < self.len(vector));
         if vector.is_dictionary() {
-            self.dictionaries
-                .get_mut(&vector.dictionary_id())
-                .expect("object dictionary exists")
-                .insert(index as u32, value);
+            self.dictionary_set(vector, index, value);
             return;
         }
         // SAFETY: caller provides the same initialized-range invariant as get.
@@ -274,15 +288,16 @@ impl ValueArena {
         vector
     }
 
-    pub(crate) fn append_live_values(&self, vector: ValueVec, output: &mut Vec<Value>) {
-        debug_assert!(!vector.has_inline_property_storage());
+    /// The heap references among a vector's values: the edges a collector traces. Numbers,
+    /// other immediates and deleted slots are not references.
+    pub(crate) fn append_heap_references(&self, vector: ValueVec, output: &mut Vec<Value>) {
         let len = self.len(vector);
         if vector.is_dictionary() {
             let values = &self.dictionaries[&vector.dictionary_id()];
             output.extend(
                 (0..len)
                     .filter_map(|slot| values.get(&(slot as u32)).copied())
-                    .filter(|value| !value.is_deleted()),
+                    .filter(|value| value.is_heap()),
             );
             return;
         }
@@ -293,7 +308,7 @@ impl ValueArena {
             self.values[vector.start()..vector.start() + len]
                 .iter()
                 .copied()
-                .filter(|value| !value.is_deleted()),
+                .filter(|value| value.is_heap()),
         );
     }
 
@@ -551,9 +566,9 @@ mod tests {
         arena.set(vector, 1, Value::number(33.0));
         assert_eq!(arena.get(vector, 1).unwrap().as_number(), Some(33.0));
 
-        let mut live = Vec::new();
-        arena.append_live_values(vector, &mut live);
-        assert_eq!(live.len(), 2);
+        let mut references = Vec::new();
+        arena.append_heap_references(vector, &mut references);
+        assert!(references.is_empty(), "numbers are not heap references");
         assert_eq!(arena.values.len(), range_count);
         assert!(
             arena
@@ -577,7 +592,7 @@ mod tests {
         arena.migrate_to_dictionary_for_test(&mut vector);
 
         let mut roots = Vec::new();
-        arena.append_live_values(vector, &mut roots);
+        arena.append_heap_references(vector, &mut roots);
         assert_eq!(roots, [Value::heap(11)]);
     }
 }

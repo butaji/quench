@@ -4,7 +4,7 @@ Fixtures and scoring are measurement-only; they never select VM behavior.
 
 - [V8-v7 commands](../docs/v8_v7.md)
 - [Micros manual](micros/README.md)
-- [Task queue](../tasks/index.json)
+- [Backlog (Linear)](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview)
 
 Run measurements only after the affected execution path passes its correctness
 checks. Every report must retain source, binary, toolchain, and host identity.

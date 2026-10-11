@@ -59,7 +59,7 @@ fusion_recipes! {
         };
     ProducerMove: [
         LoadConst, Move; LoadLocal, Move; LoadEnvLocal, Move; LoadCapture, Move;
-        LoadName, Move; Binary, Move; Unary, Move; GetField, Move
+        LoadName, Move; Binary, Move; Unary, Move; GetField, Move; IncDec, Move
     ] => |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
         if second.register_b() != first.result_register() { return None; }
         first.set_result_register(second.result_register());
@@ -117,6 +117,7 @@ pub(super) fn apply(
     superinstructions: &mut Vec<Superinstruction>,
 ) {
     let input = function.code.len();
+    thread_jumps(function);
     let mut changed_passes = 0;
     while rewrite_super_window(function, superinstructions) {
         changed_passes += 1;
@@ -130,6 +131,32 @@ pub(super) fn apply(
             function.code.len(),
             changed_passes + 1
         );
+    }
+}
+
+/// Retargets each unconditional jump whose destination is another unconditional jump to the
+/// end of that chain. Only `Jump` sources are threaded: it is the back-edge collection safepoint,
+/// so every retargeted back edge still collects.
+fn thread_jumps(function: &mut BcFunction) {
+    let length = function.code.len();
+    for pc in 0..length {
+        let mut instruction = function.code[pc];
+        if instruction.op() != Op::Jump {
+            continue;
+        }
+        let mut target = instruction.jump_target();
+        // A chain longer than the function is a cycle of jumps; any member is equivalent.
+        for _ in 0..length {
+            match function.code.get(target as usize) {
+                Some(next) if next.op() == Op::Jump && next.jump_target() != target => {
+                    target = next.jump_target();
+                }
+                _ => break,
+            }
+        }
+        if target != instruction.jump_target() && instruction.try_set_jump_target(target) {
+            function.code[pc] = instruction;
+        }
     }
 }
 
@@ -220,7 +247,7 @@ fn fuse_const_array_object2(
         return None;
     }
     let site = superinstructions.len() as u32;
-    superinstructions.push(Superinstruction { code });
+    superinstructions.push(Superinstruction::new(code));
     Some(Instr::new(
         Op::SuperConstArrayObject2,
         object.result_register(),
@@ -552,7 +579,7 @@ mod tests {
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 23);
+        assert_eq!(RULES.len(), 24);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));

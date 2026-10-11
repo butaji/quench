@@ -177,6 +177,7 @@ impl Continuation {
             active_iterators: self.active_iterators,
             with_objects: self.with_objects,
             with_base,
+            fixed_this: false,
         }
     }
 

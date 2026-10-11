@@ -1,0 +1,583 @@
+{
+  "schema": 3,
+  "measurement_mode": "fixed_work_diagnostic",
+  "created_unix_ns": 1791659003282202000,
+  "rounds_requested": 1,
+  "timeout_ms": 300000,
+  "source_revision": "bfcf8c56cee3f27807f82dda1ba4eefaf6eb46b6",
+  "source_dirty": false,
+  "corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2",
+    "model": "Mac16,10",
+    "memory_bytes": 17179869184,
+    "memory_limit_bytes": null,
+    "cpu_quota": null,
+    "process_metrics_backend": "macOS /usr/bin/time -l"
+  },
+  "measurement_runner": {
+    "path": "/Users/admin/Code/GitHub/quench-v2/target/production/quench-bench",
+    "size_bytes": 842240,
+    "modified_unix_ns": 1791602287465758807,
+    "sha256": "750695d07cdc57bd6cb51e1d76ba34e3984758233e10619d2fc3baeb7de4571f"
+  },
+  "engines": [
+    {
+      "name": "quench_baseline",
+      "executable": "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/profiling/quench-node",
+      "executable_sha256": "73a042380a7e70e085bc7590ce916515f4fe8be515b415f2298697e37ef19cce",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/Users/admin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/admin/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/admin/.codex/tmp/arg0/codex-arg0AdTZTd:/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg063fvIr:/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0W8VGnz:/Users/admin/.local/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/profiling/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    },
+    {
+      "name": "quench_candidate",
+      "executable": "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/profiling/quench-node",
+      "executable_sha256": "73a042380a7e70e085bc7590ce916515f4fe8be515b415f2298697e37ef19cce",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/Users/admin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/admin/.local/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/opt/homebrew/bin:/Users/admin/.codex/tmp/arg0/codex-arg0AdTZTd:/Users/admin/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg063fvIr:/Users/admin/.codex/packages/standalone/releases/0.162.0-aarch64-apple-darwin/codex-path:/Users/admin/.codex/tmp/arg0/codex-arg0W8VGnz:/Users/admin/.local/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/Users/admin/Code/GitHub/quench-v2/target/candidate-b/profiling/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+      "size_bytes": 9351,
+      "modified_unix_ns": 1791399842589165942,
+      "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "size_bytes": 48043,
+      "modified_unix_ns": 1791399842589772400,
+      "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "size_bytes": 25653,
+      "modified_unix_ns": 1791399842589978359,
+      "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "size_bytes": 195205,
+      "modified_unix_ns": 1791399842590910109,
+      "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "size_bytes": 12690,
+      "modified_unix_ns": 1791399842591090359,
+      "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "size_bytes": 27996,
+      "modified_unix_ns": 1791399842591280317,
+      "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "size_bytes": 111299,
+      "modified_unix_ns": 1791399842592027317,
+      "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "size_bytes": 15776,
+      "modified_unix_ns": 1791399842592243692,
+      "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "size_bytes": 10746,
+      "modified_unix_ns": 1791399842592552609,
+      "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+    }
+  ],
+  "fixtures": {
+    "quench-bench/js-engine-benchmark/v8-v7/richards.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+        "size_bytes": 15776,
+        "modified_unix_ns": 1791399842592243692,
+        "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+      },
+      "materialized_source": {
+        "path": "/tmp/quench-v8-v7-97594-1791658975805097000-richards.js",
+        "size_bytes": 26129,
+        "modified_unix_ns": 1791658975805928630,
+        "sha256": "750972307e96e804b6c74073e9f76f2d3b9fbfa86c5b970f27e768bf614eb1ec"
+      },
+      "setup_only_source": {
+        "path": "/tmp/quench-v8-v7-97594-1791658975805950000-richards.js",
+        "size_bytes": 26125,
+        "modified_unix_ns": 1791658975806188418,
+        "sha256": "0ebaa93c2030cd29c75dc4876a5dc2846b6d725ff7ae76ae95e6380303235094"
+      },
+      "plan": {
+        "fixture": "richards.js",
+        "suite": "Richards",
+        "benchmark_count": 1,
+        "iterations_per_benchmark": 100
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "quench_baseline": {
+          "work": {
+            "median_wall_ns": 12266987417,
+            "median_cycles": 7760194835,
+            "median_instructions": 32357869128,
+            "median_max_rss_bytes": 22118400,
+            "valid_samples": 1
+          },
+          "setup_only": {
+            "median_wall_ns": 87806667,
+            "median_cycles": 118432133,
+            "median_instructions": 271670274,
+            "median_max_rss_bytes": 22839296,
+            "valid_samples": 1
+          },
+          "marginal_per_run": {
+            "median_wall_ns": 121791807.5,
+            "median_cycles": 76417627.02,
+            "median_instructions": 320861988.54,
+            "paired_samples": 1
+          }
+        },
+        "quench_candidate": {
+          "work": {
+            "median_wall_ns": 14259467208,
+            "median_cycles": 8014196334,
+            "median_instructions": 32341046738,
+            "median_max_rss_bytes": 22265856,
+            "valid_samples": 1
+          },
+          "setup_only": {
+            "median_wall_ns": 251343000,
+            "median_cycles": 130962146,
+            "median_instructions": 274875835,
+            "median_max_rss_bytes": 22544384,
+            "valid_samples": 1
+          },
+          "marginal_per_run": {
+            "median_wall_ns": 140081242.08,
+            "median_cycles": 78832341.88,
+            "median_instructions": 320661709.03,
+            "paired_samples": 1
+          }
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            {
+              "engine": "quench_baseline",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_baseline",
+              "sample": "setup_only"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "work"
+            },
+            {
+              "engine": "quench_candidate",
+              "sample": "setup_only"
+            }
+          ],
+          "samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 12266987417,
+              "peak_rss_bytes": 22118400,
+              "score": null,
+              "instructions": 32357869128,
+              "cycles": 7760194835,
+              "page_faults": 36,
+              "page_reclaims": 2429,
+              "involuntary_context_switches": 10460,
+              "host_before": {
+                "captured_unix_ns": 1791658975935288000,
+                "load_average": {
+                  "one_minute": 11.68,
+                  "five_minutes": 16.78,
+                  "fifteen_minutes": 16.79
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 97550,
+                    "cpu_percent": 263.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97582,
+                    "cpu_percent": 72.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97566,
+                    "cpu_percent": 71.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97579,
+                    "cpu_percent": 69.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97580,
+                    "cpu_percent": 69.7,
+                    "command": "deno"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791658988262638000,
+                "load_average": {
+                  "one_minute": 14.76,
+                  "five_minutes": 17.25,
+                  "fifteen_minutes": 16.95
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 97550,
+                    "cpu_percent": 263.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97569,
+                    "cpu_percent": 70.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97581,
+                    "cpu_percent": 59.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97570,
+                    "cpu_percent": 58.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97580,
+                    "cpu_percent": 57.2,
+                    "command": "deno"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchFixedWork:Richards:1:100\n",
+              "stderr": "{\"kind\":\"quench-regional-numeric\",\"general_binary\":{\"fast_integer\":0,\"fallback\":0,\"total\":0},\"numeric_dispatch_binary\":0,\"backward_regions\":[]}\n{\"kind\":\"quench-profile\",\"allocations\":11642,\"allocation_kinds\":{\"names\":[\"object\",\"array\",\"map\",\"set\",\"iterator\",\"weak_map\",\"weak_set\",\"weak_ref\",\"function\",\"environment\",\"string\",\"bigint\",\"symbol\",\"date\",\"error\"],\"size_buckets\":[0,7,15,31,63,127,255,null],\"counts\":[2914, 980, 0, 0, 38, 4, 0, 0, 1559, 212, 5897, 0, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],\"payload_bytes\":[0, 2320, 0, 0, 0, 0, 0, 0, 37416, 146896, 485125, 0, 703, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],\"bucket_counts\":[[2914, 0, 0, 0, 0, 0, 0, 0], [916, 0, 5, 29, 22, 2, 5, 1], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [38, 0, 0, 0, 0, 0, 0, 0], [4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 1559, 0, 0, 0, 0], [63, 0, 0, 9, 6, 14, 4, 116], [221, 492, 1770, 1532, 708, 958, 63, 153], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 20, 16, 2, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]]},\"collections\":4,\"peak_live\":7563,\"peak_survivors\":5054,\"max_gc_threshold\":2527,\"gc\":{\"roots\":7646,\"work_items\":61466,\"max_worklist\":4784,\"marked\":17990,\"freed\":5795,\"sweep_slots\":23992,\"mark_nanos\":2102041,\"sweep_nanos\":810292,\"marked_kinds\":[726, 67, 0, 0, 38, 14, 0, 0, 5755, 516, 10750, 0, 124, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},\"shape_transitions\":{\"hits\":9529,\"misses\":2560},\"dictionary_transitions\":{\"names\":[\"property_count\",\"deletion_pattern\",\"prototype_use\"],\"counts\":[0, 0, 10]},\"field_cache\":{\"hits\":21210144,\"misses\":4046760,\"tiers\":[21210144, 0, 0],\"depths\":[21210144, 0, 0]},\"method_cache\":{\"hits\":0,\"misses\":0,\"tiers\":[0, 0, 0],\"refill_names\":[\"first\",\"post_gc\",\"post_mutation\"],\"refills\":[0, 0, 0],\"same_target_names\":[\"gc\",\"mutation\"],\"same_targets\":[0, 0],\"invalidation_names\":[\"gc_candidates\",\"mutation_cleared\"],\"invalidation_entries\":[0, 0],\"dead_after_gc\":0},\"dynamic_atoms\":1969,\"dynamic_strings\":{\"hits\":0,\"misses\":0},\"string_concats\":{\"coercing\":0,\"both_strings\":2,\"cache_hits\":0,\"cache_misses\":2,\"size_buckets\":[0, 0, 0, 0, 2, 0, 0, 0],\"max_bytes\":33},\"operand_tags\":[13911397, 5028080, 0, 1],\"binary_ops\":[3516400, 2884200, 87, 15, 319703, 0, 341400, 0, 93102, 0, 0, 0, 0, 0, 0, 99900, 0, 473101, 49700, 1266900, 0, 0],\"numeric_binary_paths\":{\"names\":[\"fast_hit\",\"integer_operator_miss\",\"type_miss\"],\"counts\":[[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]},\"branch_values\":{\"names\":[\"undefined\",\"null\",\"boolean\",\"integer\",\"double\",\"heap\"],\"outcome_names\":[\"falsey\",\"truthy\"],\"counts\":[[25, 3, 1669253, 0, 0, 0], [0, 0, 465431, 0, 0, 6]]},\"method_argc\":[0, 0, 0, 0, 0, 0, 0, 0, 0],\"calls\":{\"source_names\":[\"dynamic\",\"known\",\"method\",\"this_method\",\"construct\"],\"sources\":[4046918, 0, 0, 0, 3006],\"target_names\":[\"native\",\"user\",\"numeric_user\"],\"targets\":[340, 4046632, 0],\"target_argc\":[[185, 37, 32, 86, 0, 0, 0, 0, 0], [2622907, 1190207, 232204, 513, 800, 1, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0]]},\"terminal_calls\":[1546800, 0, 0],\"indexed_access\":{\"get_names\":[\"int_dense\",\"int_sparse\",\"int_missing\",\"wide_dense\",\"wide_sparse\",\"wide_missing\",\"numeric_non_array\",\"property\"],\"gets\":[425335, 0, 0, 0, 0, 0, 0, 0],\"set_names\":[\"int_replace\",\"int_grow\",\"int_sparse\",\"wide_replace\",\"wide_grow\",\"wide_sparse\",\"numeric_non_array\",\"property\"],\"sets\":[92800, 0, 0, 0, 0, 0, 0, 0],\"dispatch_names\":[\"get_general\",\"get_numeric\",\"set_general\",\"set_numeric\"],\"dispatches\":[425231, 0, 94224, 0]},\"array_writes\":{\"names\":[\"unique\",\"shared\"],\"counts\":[94244, 0]},\"dispatch_classes\":[1,0],\"opcodes\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":1,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":1},\"dispatch_opcode_targets\":{\"general\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":1,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":1,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0},\"numeric\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":0,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0},\"virtual\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":0,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0}},\"dispatch_pair_targets\":{\"general\":{\"pairs\":[[\"LoadConst\",\"Return\",1]],\"boundaries\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":1,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0}},\"numeric\":{\"pairs\":[],\"boundaries\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":0,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0}}},\"binary_pair_dependencies\":{\"names\":[\"none\",\"left\",\"right\",\"both\"],\"counts\":[0, 0, 0, 0]},\"top_pairs\":[[\"LoadConst\",\"Return\",1]],\"binary_operand_modes\":[[1, 0, 1, 2884000],[0, 0, 0, 1808700],[0, 0, 1, 1707700],[19, 0, 0, 1167000],[17, 0, 0, 473100],[4, 0, 0, 319602],[6, 0, 0, 247800],[15, 0, 1, 99900],[19, 0, 1, 99900],[6, 0, 1, 93600],[8, 0, 1, 93100],[18, 0, 1, 49700],[1, 0, 0, 200],[4, 0, 1, 101],[2, 0, 1, 64],[2, 0, 0, 23],[3, 0, 1, 15],[8, 0, 0, 2],[17, 0, 3, 1]],\"top_pair_sites\":[{\"function\":0,\"pc\":0,\"first\":\"LoadConst\",\"second\":\"Return\",\"count\":1}],\"instruction_word_domains\":[{\"op\":\"LoadConst\",\"count\":1,\"max_fields\":[0,0,0],\"max_imm\":0,\"compound_imm\":false,\"field_overflow\":0,\"immediate_overflow\":0},{\"op\":\"Return\",\"count\":1,\"max_fields\":[0,0,0],\"max_imm\":0,\"compound_imm\":false,\"field_overflow\":0,\"immediate_overflow\":0}],\"root_maps\":{\"full_entries\":3,\"full_bytes\":24,\"distinct_masks\":2,\"mask_runs\":3,\"observed_sites\":0,\"observed_masks\":0,\"frame_observations\":0,\"active_observations\":0,\"suspended_observations\":0},\"functions\":[{\"id\":0,\"name\":\"<script>\",\"count\":1,\"instructions\":2,\"registers\":1,\"max_live\":1,\"dispatch\":\"General\"}]}\n       12.24 real         2.56 user         0.05 sys\n            22118400  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2429  page reclaims\n                  36  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   3  voluntary context switches\n               10460  involuntary context switches\n         32357869128  instructions retired\n          7760194835  cycles elapsed\n            13336984  peak memory footprint\n"
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 14259467208,
+              "peak_rss_bytes": 22265856,
+              "score": null,
+              "instructions": 32341046738,
+              "cycles": 8014196334,
+              "page_faults": 14,
+              "page_reclaims": 2607,
+              "involuntary_context_switches": 10224,
+              "host_before": {
+                "captured_unix_ns": 1791658988543583000,
+                "load_average": {
+                  "one_minute": 14.76,
+                  "five_minutes": 17.25,
+                  "fifteen_minutes": 16.95
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 97550,
+                    "cpu_percent": 242.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97569,
+                    "cpu_percent": 84.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97566,
+                    "cpu_percent": 57.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97578,
+                    "cpu_percent": 51.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97577,
+                    "cpu_percent": 49.9,
+                    "command": "deno"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791659002829257000,
+                "load_average": {
+                  "one_minute": 19.36,
+                  "five_minutes": 18.14,
+                  "fifteen_minutes": 17.27
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 97550,
+                    "cpu_percent": 295.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97573,
+                    "cpu_percent": 81.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97577,
+                    "cpu_percent": 69.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97578,
+                    "cpu_percent": 61.9,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97569,
+                    "cpu_percent": 58.6,
+                    "command": "deno"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchFixedWork:Richards:1:100\n",
+              "stderr": "{\"kind\":\"quench-regional-numeric\",\"general_binary\":{\"fast_integer\":0,\"fallback\":0,\"total\":0},\"numeric_dispatch_binary\":0,\"backward_regions\":[]}\n{\"kind\":\"quench-profile\",\"allocations\":11642,\"allocation_kinds\":{\"names\":[\"object\",\"array\",\"map\",\"set\",\"iterator\",\"weak_map\",\"weak_set\",\"weak_ref\",\"function\",\"environment\",\"string\",\"bigint\",\"symbol\",\"date\",\"error\"],\"size_buckets\":[0,7,15,31,63,127,255,null],\"counts\":[2914, 980, 0, 0, 38, 4, 0, 0, 1559, 212, 5897, 0, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],\"payload_bytes\":[0, 2320, 0, 0, 0, 0, 0, 0, 37416, 146896, 485125, 0, 703, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],\"bucket_counts\":[[2914, 0, 0, 0, 0, 0, 0, 0], [916, 0, 5, 29, 22, 2, 5, 1], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [38, 0, 0, 0, 0, 0, 0, 0], [4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 1559, 0, 0, 0, 0], [63, 0, 0, 9, 6, 14, 4, 116], [221, 492, 1770, 1532, 708, 958, 63, 153], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 20, 16, 2, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]]},\"collections\":4,\"peak_live\":7563,\"peak_survivors\":5054,\"max_gc_threshold\":2527,\"gc\":{\"roots\":7646,\"work_items\":61466,\"max_worklist\":4784,\"marked\":17990,\"freed\":5795,\"sweep_slots\":23992,\"mark_nanos\":1890707,\"sweep_nanos\":792707,\"marked_kinds\":[726, 67, 0, 0, 38, 14, 0, 0, 5755, 516, 10750, 0, 124, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},\"shape_transitions\":{\"hits\":9529,\"misses\":2560},\"dictionary_transitions\":{\"names\":[\"property_count\",\"deletion_pattern\",\"prototype_use\"],\"counts\":[0, 0, 10]},\"field_cache\":{\"hits\":21210144,\"misses\":4046760,\"tiers\":[21210144, 0, 0],\"depths\":[21210144, 0, 0]},\"method_cache\":{\"hits\":0,\"misses\":0,\"tiers\":[0, 0, 0],\"refill_names\":[\"first\",\"post_gc\",\"post_mutation\"],\"refills\":[0, 0, 0],\"same_target_names\":[\"gc\",\"mutation\"],\"same_targets\":[0, 0],\"invalidation_names\":[\"gc_candidates\",\"mutation_cleared\"],\"invalidation_entries\":[0, 0],\"dead_after_gc\":0},\"dynamic_atoms\":1969,\"dynamic_strings\":{\"hits\":0,\"misses\":0},\"string_concats\":{\"coercing\":0,\"both_strings\":2,\"cache_hits\":0,\"cache_misses\":2,\"size_buckets\":[0, 0, 0, 0, 2, 0, 0, 0],\"max_bytes\":33},\"operand_tags\":[13911397, 5028080, 0, 1],\"binary_ops\":[3516400, 2884200, 87, 15, 319703, 0, 341400, 0, 93102, 0, 0, 0, 0, 0, 0, 99900, 0, 473101, 49700, 1266900, 0, 0],\"numeric_binary_paths\":{\"names\":[\"fast_hit\",\"integer_operator_miss\",\"type_miss\"],\"counts\":[[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]},\"branch_values\":{\"names\":[\"undefined\",\"null\",\"boolean\",\"integer\",\"double\",\"heap\"],\"outcome_names\":[\"falsey\",\"truthy\"],\"counts\":[[25, 3, 1669253, 0, 0, 0], [0, 0, 465431, 0, 0, 6]]},\"method_argc\":[0, 0, 0, 0, 0, 0, 0, 0, 0],\"calls\":{\"source_names\":[\"dynamic\",\"known\",\"method\",\"this_method\",\"construct\"],\"sources\":[4046918, 0, 0, 0, 3006],\"target_names\":[\"native\",\"user\",\"numeric_user\"],\"targets\":[340, 4046632, 0],\"target_argc\":[[185, 37, 32, 86, 0, 0, 0, 0, 0], [2622907, 1190207, 232204, 513, 800, 1, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0]]},\"terminal_calls\":[1546800, 0, 0],\"indexed_access\":{\"get_names\":[\"int_dense\",\"int_sparse\",\"int_missing\",\"wide_dense\",\"wide_sparse\",\"wide_missing\",\"numeric_non_array\",\"property\"],\"gets\":[425335, 0, 0, 0, 0, 0, 0, 0],\"set_names\":[\"int_replace\",\"int_grow\",\"int_sparse\",\"wide_replace\",\"wide_grow\",\"wide_sparse\",\"numeric_non_array\",\"property\"],\"sets\":[92800, 0, 0, 0, 0, 0, 0, 0],\"dispatch_names\":[\"get_general\",\"get_numeric\",\"set_general\",\"set_numeric\"],\"dispatches\":[425231, 0, 94224, 0]},\"array_writes\":{\"names\":[\"unique\",\"shared\"],\"counts\":[94244, 0]},\"dispatch_classes\":[1,0],\"opcodes\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":1,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":1},\"dispatch_opcode_targets\":{\"general\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":1,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":1,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0},\"numeric\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":0,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0},\"virtual\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":0,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0}},\"dispatch_pair_targets\":{\"general\":{\"pairs\":[[\"LoadConst\",\"Return\",1]],\"boundaries\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":1,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0}},\"numeric\":{\"pairs\":[],\"boundaries\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":0,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0}}},\"binary_pair_dependencies\":{\"names\":[\"none\",\"left\",\"right\",\"both\"],\"counts\":[0, 0, 0, 0]},\"top_pairs\":[[\"LoadConst\",\"Return\",1]],\"binary_operand_modes\":[[1, 0, 1, 2884000],[0, 0, 0, 1808700],[0, 0, 1, 1707700],[19, 0, 0, 1167000],[17, 0, 0, 473100],[4, 0, 0, 319602],[6, 0, 0, 247800],[15, 0, 1, 99900],[19, 0, 1, 99900],[6, 0, 1, 93600],[8, 0, 1, 93100],[18, 0, 1, 49700],[1, 0, 0, 200],[4, 0, 1, 101],[2, 0, 1, 64],[2, 0, 0, 23],[3, 0, 1, 15],[8, 0, 0, 2],[17, 0, 3, 1]],\"top_pair_sites\":[{\"function\":0,\"pc\":0,\"first\":\"LoadConst\",\"second\":\"Return\",\"count\":1}],\"instruction_word_domains\":[{\"op\":\"LoadConst\",\"count\":1,\"max_fields\":[0,0,0],\"max_imm\":0,\"compound_imm\":false,\"field_overflow\":0,\"immediate_overflow\":0},{\"op\":\"Return\",\"count\":1,\"max_fields\":[0,0,0],\"max_imm\":0,\"compound_imm\":false,\"field_overflow\":0,\"immediate_overflow\":0}],\"root_maps\":{\"full_entries\":3,\"full_bytes\":24,\"distinct_masks\":2,\"mask_runs\":3,\"observed_sites\":0,\"observed_masks\":0,\"frame_observations\":0,\"active_observations\":0,\"suspended_observations\":0},\"functions\":[{\"id\":0,\"name\":\"<script>\",\"count\":1,\"instructions\":2,\"registers\":1,\"max_live\":1,\"dispatch\":\"General\"}]}\n       14.24 real         2.68 user         0.05 sys\n            22265856  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                2607  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  35  voluntary context switches\n               10224  involuntary context switches\n         32341046738  instructions retired\n          8014196334  cycles elapsed\n            13713816  peak memory footprint\n"
+            }
+          },
+          "setup_only_samples": {
+            "quench_baseline": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 87806667,
+              "peak_rss_bytes": 22839296,
+              "score": null,
+              "instructions": 271670274,
+              "cycles": 118432133,
+              "page_faults": 27,
+              "page_reclaims": 1565,
+              "involuntary_context_switches": 157,
+              "host_before": {
+                "captured_unix_ns": 1791658988312348000,
+                "load_average": {
+                  "one_minute": 14.76,
+                  "five_minutes": 17.25,
+                  "fifteen_minutes": 16.95
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 97550,
+                    "cpu_percent": 263.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97569,
+                    "cpu_percent": 70.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97581,
+                    "cpu_percent": 59.1,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97570,
+                    "cpu_percent": 58.3,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97580,
+                    "cpu_percent": 57.2,
+                    "command": "deno"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791658988489242000,
+                "load_average": {
+                  "one_minute": 14.76,
+                  "five_minutes": 17.25,
+                  "fifteen_minutes": 16.95
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 97550,
+                    "cpu_percent": 242.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97569,
+                    "cpu_percent": 84.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97566,
+                    "cpu_percent": 57.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97578,
+                    "cpu_percent": 51.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97577,
+                    "cpu_percent": 49.9,
+                    "command": "deno"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchFixedWork:Richards:1:0\n",
+              "stderr": "{\"kind\":\"quench-regional-numeric\",\"general_binary\":{\"fast_integer\":0,\"fallback\":0,\"total\":0},\"numeric_dispatch_binary\":0,\"backward_regions\":[]}\n{\"kind\":\"quench-profile\",\"allocations\":8342,\"allocation_kinds\":{\"names\":[\"object\",\"array\",\"map\",\"set\",\"iterator\",\"weak_map\",\"weak_set\",\"weak_ref\",\"function\",\"environment\",\"string\",\"bigint\",\"symbol\",\"date\",\"error\"],\"size_buckets\":[0,7,15,31,63,127,255,null],\"counts\":[814, 80, 0, 0, 38, 4, 0, 0, 1559, 212, 5597, 0, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],\"payload_bytes\":[0, 2320, 0, 0, 0, 0, 0, 0, 37416, 146896, 484497, 0, 703, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],\"bucket_counts\":[[814, 0, 0, 0, 0, 0, 0, 0], [16, 0, 5, 29, 22, 2, 5, 1], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [38, 0, 0, 0, 0, 0, 0, 0], [4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 1559, 0, 0, 0, 0], [63, 0, 0, 9, 6, 14, 4, 116], [221, 192, 1770, 1532, 713, 953, 63, 153], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 20, 16, 2, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]]},\"collections\":3,\"peak_live\":6415,\"peak_survivors\":5026,\"max_gc_threshold\":2513,\"gc\":{\"roots\":5440,\"work_items\":41367,\"max_worklist\":4732,\"marked\":12936,\"freed\":3286,\"sweep_slots\":16222,\"mark_nanos\":912209,\"sweep_nanos\":423376,\"marked_kinds\":[474, 39, 0, 0, 22, 10, 0, 0, 4214, 328, 7763, 0, 86, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},\"shape_transitions\":{\"hits\":9519,\"misses\":2541},\"dictionary_transitions\":{\"names\":[\"property_count\",\"deletion_pattern\",\"prototype_use\"],\"counts\":[0, 0, 10]},\"field_cache\":{\"hits\":1,\"misses\":103,\"tiers\":[1, 0, 0],\"depths\":[1, 0, 0]},\"method_cache\":{\"hits\":0,\"misses\":0,\"tiers\":[0, 0, 0],\"refill_names\":[\"first\",\"post_gc\",\"post_mutation\"],\"refills\":[0, 0, 0],\"same_target_names\":[\"gc\",\"mutation\"],\"same_targets\":[0, 0],\"invalidation_names\":[\"gc_candidates\",\"mutation_cleared\"],\"invalidation_entries\":[0, 0],\"dead_after_gc\":0},\"dynamic_atoms\":1969,\"dynamic_strings\":{\"hits\":0,\"misses\":0},\"string_concats\":{\"coercing\":0,\"both_strings\":2,\"cache_hits\":0,\"cache_misses\":2,\"size_buckets\":[0, 0, 0, 2, 0, 0, 0, 0],\"max_bytes\":31},\"operand_tags\":[197, 80, 0, 1],\"binary_ops\":[0, 0, 87, 15, 3, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0],\"numeric_binary_paths\":{\"names\":[\"fast_hit\",\"integer_operator_miss\",\"type_miss\"],\"counts\":[[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]},\"branch_values\":{\"names\":[\"undefined\",\"null\",\"boolean\",\"integer\",\"double\",\"heap\"],\"outcome_names\":[\"falsey\",\"truthy\"],\"counts\":[[25, 3, 253, 0, 0, 0], [0, 0, 31, 0, 0, 6]]},\"method_argc\":[0, 0, 0, 0, 0, 0, 0, 0, 0],\"calls\":{\"source_names\":[\"dynamic\",\"known\",\"method\",\"this_method\",\"construct\"],\"sources\":[318, 0, 0, 0, 6],\"target_names\":[\"native\",\"user\",\"numeric_user\"],\"targets\":[340, 32, 0],\"target_argc\":[[185, 37, 32, 86, 0, 0, 0, 0, 0], [7, 7, 4, 13, 0, 1, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0]]},\"terminal_calls\":[0, 0, 0],\"indexed_access\":{\"get_names\":[\"int_dense\",\"int_sparse\",\"int_missing\",\"wide_dense\",\"wide_sparse\",\"wide_missing\",\"numeric_non_array\",\"property\"],\"gets\":[135, 0, 0, 0, 0, 0, 0, 0],\"set_names\":[\"int_replace\",\"int_grow\",\"int_sparse\",\"wide_replace\",\"wide_grow\",\"wide_sparse\",\"numeric_non_array\",\"property\"],\"sets\":[0, 0, 0, 0, 0, 0, 0, 0],\"dispatch_names\":[\"get_general\",\"get_numeric\",\"set_general\",\"set_numeric\"],\"dispatches\":[31, 0, 24, 0]},\"array_writes\":{\"names\":[\"unique\",\"shared\"],\"counts\":[44, 0]},\"dispatch_classes\":[1,0],\"opcodes\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":1,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":1},\"dispatch_opcode_targets\":{\"general\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":1,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":1,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0},\"numeric\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":0,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0},\"virtual\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":0,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0}},\"dispatch_pair_targets\":{\"general\":{\"pairs\":[[\"LoadConst\",\"Return\",1]],\"boundaries\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":1,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0}},\"numeric\":{\"pairs\":[],\"boundaries\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":0,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0}}},\"binary_pair_dependencies\":{\"names\":[\"none\",\"left\",\"right\",\"both\"],\"counts\":[0, 0, 0, 0]},\"top_pairs\":[[\"LoadConst\",\"Return\",1]],\"binary_operand_modes\":[[2, 0, 1, 64],[2, 0, 0, 23],[3, 0, 1, 15],[4, 0, 0, 2],[8, 0, 0, 2],[4, 0, 1, 1],[17, 0, 3, 1]],\"top_pair_sites\":[{\"function\":0,\"pc\":0,\"first\":\"LoadConst\",\"second\":\"Return\",\"count\":1}],\"instruction_word_domains\":[{\"op\":\"LoadConst\",\"count\":1,\"max_fields\":[0,0,0],\"max_imm\":0,\"compound_imm\":false,\"field_overflow\":0,\"immediate_overflow\":0},{\"op\":\"Return\",\"count\":1,\"max_fields\":[0,0,0],\"max_imm\":0,\"compound_imm\":false,\"field_overflow\":0,\"immediate_overflow\":0}],\"root_maps\":{\"full_entries\":3,\"full_bytes\":24,\"distinct_masks\":2,\"mask_runs\":3,\"observed_sites\":0,\"observed_masks\":0,\"frame_observations\":0,\"active_observations\":0,\"suspended_observations\":0},\"functions\":[{\"id\":0,\"name\":\"<script>\",\"count\":1,\"instructions\":2,\"registers\":1,\"max_live\":1,\"dispatch\":\"General\"}]}\n        0.06 real         0.02 user         0.01 sys\n            22839296  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1565  page reclaims\n                  27  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  26  voluntary context switches\n                 157  involuntary context switches\n           271670274  instructions retired\n           118432133  cycles elapsed\n            13205912  peak memory footprint\n"
+            },
+            "quench_candidate": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 251343000,
+              "peak_rss_bytes": 22544384,
+              "score": null,
+              "instructions": 274875835,
+              "cycles": 130962146,
+              "page_faults": 40,
+              "page_reclaims": 1542,
+              "involuntary_context_switches": 214,
+              "host_before": {
+                "captured_unix_ns": 1791659002851344000,
+                "load_average": {
+                  "one_minute": 19.36,
+                  "five_minutes": 18.14,
+                  "fifteen_minutes": 17.27
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 97550,
+                    "cpu_percent": 286.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97578,
+                    "cpu_percent": 68.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97573,
+                    "cpu_percent": 64.4,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97566,
+                    "cpu_percent": 62.5,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97577,
+                    "cpu_percent": 62.0,
+                    "command": "deno"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791659003173165000,
+                "load_average": {
+                  "one_minute": 19.36,
+                  "five_minutes": 18.14,
+                  "fifteen_minutes": 17.27
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 97550,
+                    "cpu_percent": 336.7,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97578,
+                    "cpu_percent": 82.6,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97577,
+                    "cpu_percent": 66.2,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97580,
+                    "cpu_percent": 61.8,
+                    "command": "deno"
+                  },
+                  {
+                    "pid": 97566,
+                    "cpu_percent": 38.7,
+                    "command": "deno"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchFixedWork:Richards:1:0\n",
+              "stderr": "{\"kind\":\"quench-regional-numeric\",\"general_binary\":{\"fast_integer\":0,\"fallback\":0,\"total\":0},\"numeric_dispatch_binary\":0,\"backward_regions\":[]}\n{\"kind\":\"quench-profile\",\"allocations\":8342,\"allocation_kinds\":{\"names\":[\"object\",\"array\",\"map\",\"set\",\"iterator\",\"weak_map\",\"weak_set\",\"weak_ref\",\"function\",\"environment\",\"string\",\"bigint\",\"symbol\",\"date\",\"error\"],\"size_buckets\":[0,7,15,31,63,127,255,null],\"counts\":[814, 80, 0, 0, 38, 4, 0, 0, 1559, 212, 5597, 0, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],\"payload_bytes\":[0, 2320, 0, 0, 0, 0, 0, 0, 37416, 146896, 484497, 0, 703, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],\"bucket_counts\":[[814, 0, 0, 0, 0, 0, 0, 0], [16, 0, 5, 29, 22, 2, 5, 1], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [38, 0, 0, 0, 0, 0, 0, 0], [4, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 1559, 0, 0, 0, 0], [63, 0, 0, 9, 6, 14, 4, 116], [221, 192, 1770, 1532, 713, 953, 63, 153], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 20, 16, 2, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0]]},\"collections\":3,\"peak_live\":6415,\"peak_survivors\":5026,\"max_gc_threshold\":2513,\"gc\":{\"roots\":5440,\"work_items\":41367,\"max_worklist\":4732,\"marked\":12936,\"freed\":3286,\"sweep_slots\":16222,\"mark_nanos\":769416,\"sweep_nanos\":362500,\"marked_kinds\":[474, 39, 0, 0, 22, 10, 0, 0, 4214, 328, 7763, 0, 86, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]},\"shape_transitions\":{\"hits\":9519,\"misses\":2541},\"dictionary_transitions\":{\"names\":[\"property_count\",\"deletion_pattern\",\"prototype_use\"],\"counts\":[0, 0, 10]},\"field_cache\":{\"hits\":1,\"misses\":103,\"tiers\":[1, 0, 0],\"depths\":[1, 0, 0]},\"method_cache\":{\"hits\":0,\"misses\":0,\"tiers\":[0, 0, 0],\"refill_names\":[\"first\",\"post_gc\",\"post_mutation\"],\"refills\":[0, 0, 0],\"same_target_names\":[\"gc\",\"mutation\"],\"same_targets\":[0, 0],\"invalidation_names\":[\"gc_candidates\",\"mutation_cleared\"],\"invalidation_entries\":[0, 0],\"dead_after_gc\":0},\"dynamic_atoms\":1969,\"dynamic_strings\":{\"hits\":0,\"misses\":0},\"string_concats\":{\"coercing\":0,\"both_strings\":2,\"cache_hits\":0,\"cache_misses\":2,\"size_buckets\":[0, 0, 0, 2, 0, 0, 0, 0],\"max_bytes\":31},\"operand_tags\":[197, 80, 0, 1],\"binary_ops\":[0, 0, 87, 15, 3, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0],\"numeric_binary_paths\":{\"names\":[\"fast_hit\",\"integer_operator_miss\",\"type_miss\"],\"counts\":[[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]},\"branch_values\":{\"names\":[\"undefined\",\"null\",\"boolean\",\"integer\",\"double\",\"heap\"],\"outcome_names\":[\"falsey\",\"truthy\"],\"counts\":[[25, 3, 253, 0, 0, 0], [0, 0, 31, 0, 0, 6]]},\"method_argc\":[0, 0, 0, 0, 0, 0, 0, 0, 0],\"calls\":{\"source_names\":[\"dynamic\",\"known\",\"method\",\"this_method\",\"construct\"],\"sources\":[318, 0, 0, 0, 6],\"target_names\":[\"native\",\"user\",\"numeric_user\"],\"targets\":[340, 32, 0],\"target_argc\":[[185, 37, 32, 86, 0, 0, 0, 0, 0], [7, 7, 4, 13, 0, 1, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0]]},\"terminal_calls\":[0, 0, 0],\"indexed_access\":{\"get_names\":[\"int_dense\",\"int_sparse\",\"int_missing\",\"wide_dense\",\"wide_sparse\",\"wide_missing\",\"numeric_non_array\",\"property\"],\"gets\":[135, 0, 0, 0, 0, 0, 0, 0],\"set_names\":[\"int_replace\",\"int_grow\",\"int_sparse\",\"wide_replace\",\"wide_grow\",\"wide_sparse\",\"numeric_non_array\",\"property\"],\"sets\":[0, 0, 0, 0, 0, 0, 0, 0],\"dispatch_names\":[\"get_general\",\"get_numeric\",\"set_general\",\"set_numeric\"],\"dispatches\":[31, 0, 24, 0]},\"array_writes\":{\"names\":[\"unique\",\"shared\"],\"counts\":[44, 0]},\"dispatch_classes\":[1,0],\"opcodes\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":1,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":1},\"dispatch_opcode_targets\":{\"general\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":1,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":1,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0},\"numeric\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":0,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0},\"virtual\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":0,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0}},\"dispatch_pair_targets\":{\"general\":{\"pairs\":[[\"LoadConst\",\"Return\",1]],\"boundaries\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":1,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0}},\"numeric\":{\"pairs\":[],\"boundaries\":{\"Nop\":0,\"CloneEnv\":0,\"Wide\":0,\"LoadConst\":0,\"LoadLocal\":0,\"StoreLocal\":0,\"StoreVarBinding\":0,\"LoadEnvLocal\":0,\"StoreEnvLocal\":0,\"LoadCapture\":0,\"StoreCapture\":0,\"LoadName\":0,\"LoadNameCall\":0,\"LoadNameTypeof\":0,\"ResolveName\":0,\"LoadResolvedName\":0,\"DeleteName\":0,\"StoreName\":0,\"StoreResolvedName\":0,\"LoadThis\":0,\"LoadImportMeta\":0,\"MakeClosure\":0,\"MakeArray\":0,\"MakeConstArray\":0,\"MakeObject\":0,\"MakeObject2\":0,\"MakeObjectLiteral\":0,\"SuperConstArrayObject2\":0,\"GetIterator\":0,\"GetAsyncIterator\":0,\"CreateRegExpLiteral\":0,\"IteratorClose\":0,\"SpreadToArray\":0,\"RequireObjectCoercible\":0,\"RequireIteratorResult\":0,\"SuperCallCheck\":0,\"IteratorCleanupPush\":0,\"IteratorCleanupPop\":0,\"SetFunctionName\":0,\"SetFunctionNameKey\":0,\"InitializeTdz\":0,\"Await\":0,\"Yield\":0,\"YieldStar\":0,\"GetField\":0,\"GetIndex\":0,\"ToPropertyKey\":0,\"ToNumeric\":0,\"CopyDataProperties\":0,\"MarkPrivateName\":0,\"SetField\":0,\"DefineComputedField\":0,\"SetThisField\":0,\"SetIndex\":0,\"DefineArrayElement\":0,\"Binary\":0,\"IncDec\":0,\"Unary\":0,\"Delete\":0,\"CheckPrivate\":0,\"PrivateIn\":0,\"Move\":0,\"Call\":0,\"CallDirectEvalArray\":0,\"CallKnown\":0,\"CallMethod\":0,\"CallThisMethod\":0,\"Construct\":0,\"Jump\":0,\"JumpFalse\":0,\"JumpBinaryFalse\":0,\"Return\":0,\"Throw\":0,\"NumericAdd\":0,\"NumericMultiply\":0,\"InitializeThis\":0,\"CacheTemplateObject\":0,\"LoadCachedTemplateObject\":0,\"DefineField\":0,\"ValidateClassHeritage\":0,\"SetFieldStrict\":0,\"SetThisFieldStrict\":0,\"WasmI32Binary\":0,\"WasmI32Unary\":0,\"WasmI64Binary\":0,\"WasmI64Unary\":0,\"WasmScalarConvert\":0,\"WasmF32Binary\":0,\"WasmF32Unary\":0,\"WasmF64Binary\":0,\"WasmF64Unary\":0,\"WasmTableInit\":0,\"WasmIndirectTarget\":0,\"WasmGlobalGet\":0,\"WasmGlobalSet\":0,\"WasmRefFunc\":0,\"WasmRefIsNull\":0,\"WasmTableSize\":0,\"WasmTableGet\":0,\"WasmTableSet\":0,\"WasmTableGrow\":0,\"WasmTableFill\":0,\"WasmTableCopy\":0,\"WasmMemoryInit\":0,\"WasmMemoryCopy\":0,\"WasmMemoryFill\":0,\"WasmMemoryAddress\":0,\"WasmMemoryLoad\":0,\"WasmMemoryStore\":0,\"WasmMemorySize\":0,\"WasmMemoryGrow\":0,\"WasmUnreachable\":0,\"WasmSimd\":0,\"WasmSimdShuffle\":0,\"DefinePropertyRecord\":0,\"WasmRefAsNonNull\":0,\"WasmI31\":0,\"WasmRefTest\":0,\"WasmRefCast\":0,\"WasmRefEq\":0,\"WasmStructNew\":0,\"WasmStructNewDefault\":0,\"WasmStructGet\":0,\"WasmStructGetS\":0,\"WasmStructGetU\":0,\"WasmStructSet\":0,\"WasmArrayNew\":0,\"WasmArrayNewDefault\":0,\"WasmArrayNewFixed\":0,\"WasmArrayLen\":0,\"WasmArrayGet\":0,\"WasmArrayGetS\":0,\"WasmArrayGetU\":0,\"WasmArraySet\":0,\"WasmExternalConversion\":0,\"WasmArrayFill\":0,\"WasmArrayCopy\":0,\"WasmArrayNewData\":0,\"WasmArrayNewElem\":0,\"WasmArrayInitData\":0,\"WasmArrayInitElem\":0,\"WasmExceptionNew\":0,\"WasmExceptionMatch\":0,\"WasmExceptionPayload\":0,\"WasmThrowRef\":0,\"WasmStructNewDesc\":0,\"WasmStructNewDefaultDesc\":0,\"WasmRefGetDesc\":0,\"WasmDescriptorTest\":0,\"WasmDescriptorCast\":0,\"WasmAtomicAccess\":0,\"WasmAtomicFence\":0,\"LoadLocalPlain\":0,\"StoreLocalPlain\":0}}},\"binary_pair_dependencies\":{\"names\":[\"none\",\"left\",\"right\",\"both\"],\"counts\":[0, 0, 0, 0]},\"top_pairs\":[[\"LoadConst\",\"Return\",1]],\"binary_operand_modes\":[[2, 0, 1, 64],[2, 0, 0, 23],[3, 0, 1, 15],[4, 0, 0, 2],[8, 0, 0, 2],[4, 0, 1, 1],[17, 0, 3, 1]],\"top_pair_sites\":[{\"function\":0,\"pc\":0,\"first\":\"LoadConst\",\"second\":\"Return\",\"count\":1}],\"instruction_word_domains\":[{\"op\":\"LoadConst\",\"count\":1,\"max_fields\":[0,0,0],\"max_imm\":0,\"compound_imm\":false,\"field_overflow\":0,\"immediate_overflow\":0},{\"op\":\"Return\",\"count\":1,\"max_fields\":[0,0,0],\"max_imm\":0,\"compound_imm\":false,\"field_overflow\":0,\"immediate_overflow\":0}],\"root_maps\":{\"full_entries\":3,\"full_bytes\":24,\"distinct_masks\":2,\"mask_runs\":3,\"observed_sites\":0,\"observed_masks\":0,\"frame_observations\":0,\"active_observations\":0,\"suspended_observations\":0},\"functions\":[{\"id\":0,\"name\":\"<script>\",\"count\":1,\"instructions\":2,\"registers\":1,\"max_live\":1,\"dispatch\":\"General\"}]}\n        0.21 real         0.02 user         0.01 sys\n            22544384  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                1542  page reclaims\n                  40  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  16  voluntary context switches\n                 214  involuntary context switches\n           274875835  instructions retired\n           130962146  cycles elapsed\n            13025688  peak memory footprint\n"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

@@ -28,22 +28,14 @@ impl<H: Host> Vm<H> {
         if object.is_module_namespace() || self.shape_is_dictionary(object.shape()) {
             return None;
         }
+        let class = self.atom_class(atom);
         match cell {
             Cell::Proxy { .. } => return None,
-            Cell::Array { .. }
-                if super::object_static::array_index(self.atom_name(atom)).is_some() =>
-            {
+            Cell::Array { .. } if class.contains(AtomClass::ARRAY_INDEX) => return None,
+            Cell::TypedArray { .. } if class.contains(AtomClass::TYPED_ARRAY_INDEX) => {
                 return None;
             }
-            Cell::TypedArray { .. }
-                if !matches!(
-                    Self::typed_array_index_key(self.atom_name(atom)),
-                    super::object_descriptors::TypedArrayIndexKey::NotCanonical
-                ) =>
-            {
-                return None;
-            }
-            Cell::Function { .. } if matches!(self.atom_name(atom), "caller" | "arguments") => {
+            Cell::Function { .. } if class.contains(AtomClass::RESTRICTED_FUNCTION_PROPERTY) => {
                 return None;
             }
             _ => {}

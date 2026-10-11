@@ -45,14 +45,10 @@ impl Heap {
 
     pub(crate) fn environment_binding_owner(&self, environment: Value) -> Option<Value> {
         match self.get(environment)? {
-            Cell::Environment {
-                dynamic_bindings: EnvironmentBindings::Owned(_),
-                ..
-            } => Some(environment),
-            Cell::Environment {
-                dynamic_bindings: EnvironmentBindings::Shared(owner),
-                ..
-            } => Some(*owner),
+            Cell::Environment { scope, .. } => match scope.dynamic_bindings {
+                EnvironmentBindings::Owned(_) => Some(environment),
+                EnvironmentBindings::Shared(owner) => Some(owner),
+            },
             _ => None,
         }
     }
@@ -60,10 +56,10 @@ impl Heap {
     pub(crate) fn environment_bindings(&self, environment: Value) -> Option<&Vec<(Atom, Value)>> {
         let owner = self.environment_binding_owner(environment)?;
         match self.get(owner)? {
-            Cell::Environment {
-                dynamic_bindings: EnvironmentBindings::Owned(bindings),
-                ..
-            } => Some(bindings),
+            Cell::Environment { scope, .. } => match &scope.dynamic_bindings {
+                EnvironmentBindings::Owned(bindings) => Some(bindings),
+                EnvironmentBindings::Shared(_) => None,
+            },
             _ => None,
         }
     }
@@ -74,19 +70,12 @@ impl Heap {
     ) -> Option<&mut Vec<(Atom, Value)>> {
         let owner = self.environment_binding_owner(environment)?;
         match self.get_mut(owner)? {
-            Cell::Environment {
-                dynamic_bindings: EnvironmentBindings::Owned(bindings),
-                ..
-            } => Some(bindings),
+            Cell::Environment { scope, .. } => match &mut scope.dynamic_bindings {
+                EnvironmentBindings::Owned(bindings) => Some(bindings),
+                EnvironmentBindings::Shared(_) => None,
+            },
             _ => None,
         }
-    }
-
-    pub(crate) fn environment_contains(&self, environment: Value, value: Value) -> bool {
-        let Some(Cell::Environment { slots, .. }) = self.get(environment) else {
-            return false;
-        };
-        (0..slots.len()).any(|slot| self.environment_slot(environment, slot) == Some(value))
     }
 
     pub(crate) fn environment_slot_owner(&self, environment: Value, slot: usize) -> Option<Value> {
@@ -100,13 +89,21 @@ impl Heap {
     }
 
     pub(crate) fn environment_slot(&self, environment: Value, slot: usize) -> Option<Value> {
-        let owner = self.environment_slot_owner(environment, slot)?;
-        let Cell::Environment { slots, .. } = self.get(owner)? else {
+        let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
         match slots.0.get(slot)? {
             EnvironmentSlot::Owned(value) => Some(*value),
-            EnvironmentSlot::Shared(_) => None,
+            // A shared slot names its owner, which holds the slot itself.
+            EnvironmentSlot::Shared(owner) => {
+                let Cell::Environment { slots, .. } = self.get(*owner)? else {
+                    return None;
+                };
+                match slots.0.get(slot)? {
+                    EnvironmentSlot::Owned(value) => Some(*value),
+                    EnvironmentSlot::Shared(_) => None,
+                }
+            }
         }
     }
 

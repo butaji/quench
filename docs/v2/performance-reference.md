@@ -1,7 +1,7 @@
 > Historical pinned-v2 document. Its task numbers, engine versions, measurements
 > and QuickJS-only gate describe v2, not current Quench qualification. Current
 > Quench targets all eight benchmarks against all three no-JIT competitors;
-> [tasks/61.md](../../tasks/61.md) owns that contract.
+> the [Linear project](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview) owns that contract.
 
 # Performance reference points
 
