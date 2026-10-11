@@ -15,7 +15,7 @@ impl Heap {
         (
             self.total_allocations,
             self.collections,
-            self.peak_live,
+            self.peak_live.max(self.live_slots()),
             self.peak_survivors,
             self.max_threshold,
             self.external_bytes,
