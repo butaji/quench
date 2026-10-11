@@ -128,6 +128,10 @@ fn numeric_dispatch_class_is_data_derived_and_semantics_neutral() {
         x = x * b; x = x + a; x = x * b; x = x + a;
         x = x * b; x = x + a; x = x * b; x = x + a;
         x = x * b; x = x + a; x = x * b; x = x + a;
+        x = x * b; x = x + a; x = x * b; x = x + a;
+        x = x * b; x = x + a; x = x * b; x = x + a;
+        x = x * b; x = x + a; x = x * b; x = x + a;
+        x = x * b; x = x + a; x = x * b; x = x + a;
         return x;
       }
       print(dense(2, 3));
@@ -141,7 +145,7 @@ fn numeric_dispatch_class_is_data_derived_and_semantics_neutral() {
                 .lines()
                 .any(|line| line.contains(" dense ") && line.ends_with("dispatch=Numeric"))
         );
-        assert_eq!(output(source), ["39365"]);
+        assert_eq!(output(source), ["258280325"]);
     }
     // These generated functions exercise the Numeric execution view's binding
     // checks, which guest conformance inputs cannot require a compiler to select.
@@ -188,6 +192,10 @@ fn numeric_method_arguments_flow_directly_from_caller_registers() {
         x = x * b; x = x + a; x = x * b; x = x + a;
         x = x * b; x = x + a; x = x * b; x = x + a;
         x = x * b; x = x + a; x = x * b; x = x + a;
+        x = x * b; x = x + a; x = x * b; x = x + a;
+        x = x * b; x = x + a; x = x * b; x = x + a;
+        x = x * b; x = x + a; x = x * b; x = x + a;
+        x = x * b; x = x + a; x = x * b; x = x + a;
         return x;
       };
       var holder = new Holder();
@@ -200,5 +208,5 @@ fn numeric_method_arguments_flow_directly_from_caller_registers() {
             .lines()
             .any(|line| line.ends_with("dispatch=Numeric"))
     );
-    assert_eq!(output(source), ["39365"]);
+    assert_eq!(output(source), ["258280325"]);
 }

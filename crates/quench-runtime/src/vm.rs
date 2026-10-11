@@ -59,7 +59,6 @@ mod data_view;
 mod date;
 mod dispatch;
 mod dispatch_frame;
-mod dispatch_numeric;
 mod dynamic_strings;
 mod embedding;
 mod environment;
@@ -216,14 +215,16 @@ impl Frame {
         debug_assert_eq!(self.locals.len(), usize::from(function.locals));
         debug_assert_eq!(self.registers.len(), usize::from(function.registers));
         for entry in &function.local_registers {
-            // Residual validation admits only parameters as promoted locals, each below the
-            // function's local and register counts that frame setup sized these buffers to.
-            debug_assert!(entry.local < function.params);
-            let initial = args
-                .get(usize::from(entry.local))
-                .copied()
-                .unwrap_or(Value::UNDEFINED);
-            // SAFETY: see above; `entry.local < locals` and `entry.register < registers`.
+            // A promoted parameter starts as its argument and a promoted `var` as undefined.
+            let initial = if entry.local < function.params {
+                args.get(usize::from(entry.local))
+                    .copied()
+                    .unwrap_or(Value::UNDEFINED)
+            } else {
+                Value::UNDEFINED
+            };
+            // SAFETY: residual validation bounds each promoted entry by the function's local and
+            // register counts, which frame setup sized these buffers to.
             unsafe {
                 *self.locals.get_unchecked_mut(usize::from(entry.local)) = Value::UNDEFINED;
                 *self.registers.get_unchecked_mut(usize::from(entry.register)) = initial;
