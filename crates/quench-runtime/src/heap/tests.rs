@@ -7,7 +7,8 @@ fn plain_object() -> Object {
 }
 
 fn collect_minor(heap: &mut Heap, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
-    heap.collect_with_object_roots(roots, |_, _, _, _| {}, false)
+    heap.collect_with_object_roots(roots, |_, _, _, _| {}, None, false)
+        .0
 }
 
 #[test]
@@ -43,6 +44,57 @@ fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     }
     heap.collect([owner, sparse]);
     assert!(heap.get(child).is_none());
+}
+
+#[test]
+fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
+    let mut heap = Heap::new();
+    let children = (0..PARALLEL_MARK_MINIMUM_SLOTS)
+        .map(|_| heap.alloc(Cell::String("parallel survivor".into())))
+        .collect::<Vec<_>>();
+    let root = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::new(children.clone()),
+    });
+
+    heap.collect([root]);
+    assert!(children.iter().all(|child| heap.get(*child).is_some()));
+
+    let young = (0..128)
+        .map(|_| heap.alloc(Cell::String("remembered young survivor".into())))
+        .collect::<Vec<_>>();
+    if let Some(Cell::Array { elements, .. }) = heap.get_mut(root) {
+        Rc::make_mut(elements).extend(young.iter().copied());
+    }
+    collect_minor(&mut heap, [root]);
+    assert!(young.iter().all(|child| heap.get(*child).is_some()));
+
+    if let Some(Cell::Array { elements, .. }) = heap.get_mut(root) {
+        Rc::make_mut(elements).clear();
+    }
+    heap.collect([root]);
+    assert!(children.iter().all(|child| heap.get(*child).is_none()));
+    assert!(young.iter().all(|child| heap.get(*child).is_none()));
+}
+
+#[test]
+fn parallel_sweep_releases_shared_array_payloads() {
+    let mut heap = Heap::new();
+    let elements = Rc::new(vec![Value::UNDEFINED]);
+    let arrays = (0..PARALLEL_MARK_MINIMUM_SLOTS)
+        .map(|_| {
+            heap.alloc(Cell::Array {
+                object: plain_object(),
+                elements: elements.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    drop(elements);
+
+    heap.collect([]);
+
+    assert!(arrays.iter().all(|array| heap.get(*array).is_none()));
+    assert_eq!(heap.live_slots(), 0);
 }
 
 #[test]

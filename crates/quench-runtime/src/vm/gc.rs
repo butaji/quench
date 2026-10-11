@@ -1,6 +1,7 @@
 use super::module::ModuleRecord;
 use super::promise::PromiseState;
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // RayTrace's allocation trace shows about 40–43% of its shape table is
 // unreachable after each collection. Compact only once at least half the
@@ -57,6 +58,49 @@ fn append_shape_roots(shapes: &[Shape], shape: u32, roots: &mut Vec<Value>) {
                     .chain([attributes.getter, attributes.setter].into_iter().flatten())
             }),
     );
+}
+
+/// Parallel GC readers need only the immutable shape transition metadata.
+/// `Shape` also contains `Cell` and `OnceCell` caches, which this view never
+/// reads or mutates while workers are active.
+struct ParallelShapeTrace<'a> {
+    shapes: *const Shape,
+    shape_count: usize,
+    rooted_shapes: &'a [AtomicU64],
+    owned_roots: &'a FxHashMap<Value, Vec<Value>>,
+    _shape_borrow: std::marker::PhantomData<&'a [Shape]>,
+}
+
+// SAFETY: the shape vector is immutable for the duration of collection, and
+// `append_shape_roots` reads only `parent` and `transition`, never the
+// interior-mutable caches. All shared bitmap updates are atomic; owned roots
+// are read-only. The trace object cannot outlive the joined worker scope.
+unsafe impl Send for ParallelShapeTrace<'_> {}
+// SAFETY: same immutable-metadata contract as the Send implementation.
+unsafe impl Sync for ParallelShapeTrace<'_> {}
+
+impl ParallelShapeTrace<'_> {
+    fn append(&self, trace_kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>) {
+        let shape_index = shape as usize;
+        debug_assert!(shape_index < self.shape_count);
+        // SAFETY: construction holds an immutable borrow of the shape table;
+        // collection cannot compact or append shapes until all workers join.
+        let shapes = unsafe { std::slice::from_raw_parts(self.shapes, self.shape_count) };
+        let word = shape_index / u64::BITS as usize;
+        let mask = 1_u64 << (shape_index % u64::BITS as usize);
+        if trace_kind == GcTraceKind::VerifyFull {
+            if shapes[shape_index].may_have_gc_roots {
+                append_shape_roots(shapes, shape, roots);
+            }
+        } else if shapes[shape_index].may_have_gc_roots
+            && self.rooted_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0
+        {
+            append_shape_roots(shapes, shape, roots);
+        }
+        if let Some(edges) = self.owned_roots.get(&owner) {
+            roots.extend(edges.iter().copied());
+        }
+    }
 }
 
 fn append_compacted_shape(
@@ -533,34 +577,27 @@ impl<H: Host> Vm<H> {
             self.report_memory_snapshot(&phase);
         }
         let shape_count = self.shapes.len();
-        let mut live_shape_bits = vec![0_u64; shape_count.div_ceil(u64::BITS as usize)];
-        let mut live_shapes = Vec::new();
-        let shapes = &mut self.shapes;
-        let finalization_jobs = self.heap.collect_with_object_roots(
+        let shape_word_count = shape_count.div_ceil(u64::BITS as usize);
+        let rooted_shape_bits = (0..shape_word_count)
+            .map(|_| AtomicU64::new(0))
+            .collect::<Vec<_>>();
+        let shape_trace = ParallelShapeTrace {
+            shapes: self.shapes.as_ptr(),
+            shape_count,
+            rooted_shapes: &rooted_shape_bits,
+            owned_roots: &owned_roots,
+            _shape_borrow: std::marker::PhantomData,
+        };
+        let parallel_object_roots =
+            |trace_kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>| {
+                shape_trace.append(trace_kind, owner, shape, roots);
+            };
+        let (finalization_jobs, live_shapes) = self.heap.collect_with_object_roots(
             roots,
             |trace_kind, owner, shape, roots| {
-                let shape_index = shape as usize;
-                let word = shape_index / u64::BITS as usize;
-                let mask = 1_u64 << (shape_index % u64::BITS as usize);
-                if trace_kind == GcTraceKind::VerifyFull {
-                    if shapes[shape_index].may_have_gc_roots {
-                        append_shape_roots(shapes, shape, roots);
-                    }
-                } else {
-                    if full {
-                        live_shapes.push(shape);
-                    }
-                    if shapes[shape_index].may_have_gc_roots && live_shape_bits[word] & mask == 0 {
-                        live_shape_bits[word] |= mask;
-                        append_shape_roots(shapes, shape, roots);
-                    }
-                }
-                if !owned_roots.is_empty()
-                    && let Some(edges) = owned_roots.get(&owner)
-                {
-                    roots.extend(edges.iter().copied());
-                }
+                shape_trace.append(trace_kind, owner, shape, roots);
             },
+            Some(&parallel_object_roots),
             full,
         );
         // Heap weak fields are pruned during collection. Prune the VM-owned
