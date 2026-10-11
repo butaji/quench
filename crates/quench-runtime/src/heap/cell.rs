@@ -1226,21 +1226,10 @@ impl Object {
         self
     }
 
-    #[inline(always)]
     pub(crate) fn inline_properties(&self) -> Option<&[Value; INLINE_PROPERTY_COUNT]> {
-        if !self.properties.has_inline_property_storage() {
-            return None;
-        }
-        if self.properties.has_object_extras() {
-            // The inline-storage sentinel excludes arrays, whose named
-            // properties always use ValueArena. Extras mode keeps inline
-            // values in the same boxed record as the rare object metadata.
-            // SAFETY: the extras bit selects the initialized boxed union arm.
-            Some(unsafe { &(**self.storage.out_of_line).inline_properties })
-        } else {
-            // SAFETY: inline storage without extras selects this union arm.
-            Some(unsafe { &self.storage.inline_properties })
-        }
+        self.properties
+            .has_inline_property_storage()
+            .then(|| self.inline_property_values())
     }
 
     #[inline(always)]
