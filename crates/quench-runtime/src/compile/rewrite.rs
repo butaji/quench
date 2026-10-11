@@ -247,7 +247,7 @@ fn fuse_const_array_object2(
         return None;
     }
     let site = superinstructions.len() as u32;
-    superinstructions.push(Superinstruction { code });
+    superinstructions.push(Superinstruction::new(code));
     Some(Instr::new(
         Op::SuperConstArrayObject2,
         object.result_register(),
