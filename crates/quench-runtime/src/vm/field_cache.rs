@@ -3,12 +3,9 @@ use super::*;
 impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn field_cache_atom_eligible(&self, atom: Atom) -> bool {
-        !self.is_private_name(atom)
-            && atom != self.length_atom
-            && atom != self.size_atom
-            && atom != self.byte_length_atom
-            && atom != self.byte_offset_atom
-            && atom != self.buffer_atom
+        !self
+            .atom_class(atom)
+            .intersects(AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD)
     }
 
     // Shapes prove ordinary data storage only when no exotic or virtual lookup intervenes.
