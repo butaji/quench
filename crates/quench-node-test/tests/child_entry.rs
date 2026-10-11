@@ -250,3 +250,57 @@ fn deep_comparison_modes_match_node_values_keys_and_prototypes() {
         String::from_utf8_lossy(&observations[1].stdout)
     );
 }
+
+#[test]
+fn util_text_operations_match_node_without_utf16_loss() {
+    let source = r#"
+      const util = require('util');
+      const texts = ['', 'plain', '\x1b', '\x1b[', '\x1b[31mred\x1b[0m',
+        '\x1b(Btext', '\x9b2Jtext', '\x1b]8;;https://a/b?x=1&y=2\x07link\x1b]8;;\x07',
+        '\x1b]8;;https://a\x1b\\link\x1b]8;;\x1b\\', '\ud800\x1b[31m\udfff',
+        '\x1b[99999mtext', '\x1b[31☃text', '\x1b]unterminated', '😀\x1b[0m😀'];
+      console.log(JSON.stringify(texts.map(text=>util.stripVTControlCharacters(text))));
+      const envs = ['', 'Z=1\nA=2\nZ=3', 'A=1#comment\nB=x #rest',
+        'A=`x\\n`\nB="x\\n\\r"\nC=\'x\\n\'', 'A="one\ntwo"\nB=three',
+        'bad key=x\n1key=y\n=value\nexport   Z=z', 'A=\nB=2', 'A="unterminated\nB=2',
+        'A=x\r\nB=y\r\n', '\t #comment\n X = y ', 'A="a"ignored\nB=b'];
+      console.log(JSON.stringify(envs.map(text=> {
+        const result=util.parseEnv(text);
+        return [Object.getPrototypeOf(result)===null,Object.entries(result),
+          Object.values(Object.getOwnPropertyDescriptors(result)).map(d=>[d.writable,d.enumerable,d.configurable])];
+      })));
+      const fs = require('fs');
+      for (const key of ['QUENCH_ORACLE_A','QUENCH_ORACLE_B','QUENCH_ORACLE_C']) delete process.env[key];
+      fs.writeFileSync('oracle.env', 'QUENCH_ORACLE_A=first\nQUENCH_ORACLE_A=last#comment\nQUENCH_ORACLE_B="one\\ntwo"\nQUENCH_ORACLE_C=`keep\\n`');
+      process.loadEnvFile('oracle.env');
+      console.log(JSON.stringify(['QUENCH_ORACLE_A','QUENCH_ORACLE_B','QUENCH_ORACLE_C'].map(key=>process.env[key])));
+      console.log(JSON.stringify(['stripVTControlCharacters','parseEnv'].map(name=>[
+        util[name].name,util[name].length,
+        [undefined,null,{},[],42,true,1n,Symbol('x')].map(value=>{
+          try{util[name](value);return 'pass'}catch(e){return [e.name,e.code,e.message]}
+        })])));
+    "#;
+    let directory = tempfile::tempdir().unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}

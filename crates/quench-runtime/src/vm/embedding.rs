@@ -336,6 +336,14 @@ impl<H: Host> Vm<H> {
         Ok(self.is_object_like(value) && !self.is_function(value))
     }
 
+    pub(crate) fn embedding_string_units(&self, root: RootId) -> Result<Option<Vec<u16>>, JsError> {
+        let value = self.embedding_value(root)?;
+        Ok(match self.heap.get(value) {
+            Some(Cell::String(text)) => Some(text.units().to_vec()),
+            _ => None,
+        })
+    }
+
     pub(crate) fn embedding_string_text(&self, root: RootId) -> Result<Option<String>, JsError> {
         let value = self.embedding_value(root)?;
         Ok(match self.heap.get(value) {
