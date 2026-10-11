@@ -30,6 +30,10 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
+        // ToNumeric of a number is that number.
+        if value.as_number().is_some() {
+            return Ok(value);
+        }
         let primitive = if self.is_object_like(value) {
             self.to_primitive(p, value, "number")?
         } else {
