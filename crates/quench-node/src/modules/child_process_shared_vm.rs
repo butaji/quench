@@ -265,10 +265,6 @@ const FACTORY: &str = quench_js_check::checked_js!(
     }
     return [args, options, callback];
   };
-  const execFile = (file, args, options, callback) => {
-    [args, options] = parseFileArguments(args, options, callback);
-    return spawn(file, args, options);
-  };
   const fork = (file, args, options) => {
     [args, options] = parseFileArguments(args, options);
     return spawn(globalThis.process.execPath, [file, ...args], options);
@@ -324,7 +320,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
     }
     return synchronousCommand(file, args, options, false);
   };
-  return { spawn, spawnSync: spawnSyncFunction, execFile, fork, exec, execSync, execFileSync };
+  return { spawn, spawnSync: spawnSyncFunction, fork, exec, execSync, execFileSync };
 }"#
 );
 
@@ -341,7 +337,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let end = context.host_function(crate::host::shared_vm::operation("childProcessEnd"))?;
     let factory = context.evaluate_script_rooted(FACTORY, "node:child_process/shared.js")?;
     let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[spawn_sync, spawn, register, write, end, buffer])
+    let module = context.call_rooted(factory, undefined, &[spawn_sync, spawn, register, write, end, buffer])?;
+    let key = context.string_rooted("spawn");
+    let spawn = context.get_property_rooted(module, key)?;
+    let exec_file = super::child_process_exec_shared_vm::function(context, spawn, buffer)?;
+    let key = context.string_rooted("execFile");
+    context.set_property_rooted(module, key, exec_file, module)?;
+    Ok(module)
 }
 
 pub(crate) fn spawn_child(

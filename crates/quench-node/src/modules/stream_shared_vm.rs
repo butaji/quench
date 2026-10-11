@@ -22,7 +22,20 @@ pub(crate) fn module(
     set(context, dependencies, "string_decoder", string_decoder)?;
 
     let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[dependencies])
+    let module = context.call_rooted(factory, undefined, &[dependencies])?;
+    let key = context.string_rooted("Readable");
+    let readable = context.get_property_rooted(module, key)?;
+    let key = context.string_rooted("prototype");
+    let prototype = context.get_property_rooted(readable, key)?;
+    let getter = context.host_function(crate::host::shared_vm::operation("readableEncoding"))?;
+    let name = context.string_rooted("name");
+    let get_name = context.string_rooted("get");
+    context.define_data_property_rooted(getter, name, get_name, false, false, true)?;
+    let descriptor = context.null_object_rooted()?;
+    set(context, descriptor, "get", getter)?;
+    let key = context.string_rooted("readableEncoding");
+    context.define_property_descriptor_rooted(prototype, key, descriptor)?;
+    Ok(module)
 }
 
 fn set(
@@ -39,4 +52,18 @@ fn set(
             "cannot install shared stream dependency {name}"
         )))
     }
+}
+
+pub(crate) fn readable_encoding(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let key = context.string_rooted("_readableState");
+    let state = context.get_property_rooted(receiver, key)?;
+    if !context.truthy_rooted(state)? {
+        return Ok(context.null());
+    }
+    let key = context.string_rooted("encoding");
+    context.get_property_rooted(state, key)
 }

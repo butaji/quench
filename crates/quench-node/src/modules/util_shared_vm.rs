@@ -49,6 +49,8 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
     ("isFloat64Array", BuiltinBrand::Float64Array),
 ];
 
+pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
+
 const UTIL: &str = quench_js_check::checked_js!(
     r#"(() => {
   const quote = (value) => {
@@ -352,28 +354,10 @@ const UTIL: &str = quench_js_check::checked_js!(
     return promisified;
   };
   promisify.custom = promisifyCustom;
-  const systemErrorNames = new Map([
-    [-2, "ENOENT"], [-8, "ENOEXEC"], [-9, "EBADF"], [-13, "EACCES"], [-22, "EINVAL"], [-88, "ENOTSOCK"], [-98, "EADDRINUSE"],
-    [-99, "EADDRNOTAVAIL"], [-111, "ECONNREFUSED"], [-113, "EHOSTUNREACH"],
-    [-101, "ENETUNREACH"], [-110, "ETIMEDOUT"], [-32, "EPIPE"], [-4094, "UNKNOWN"],
-  ]);
-  function getSystemErrorName(errno) {
-    if (typeof errno !== "number") {
-      throw Object.assign(new TypeError('The "err" argument must be of type number'), {
-        code: "ERR_INVALID_ARG_TYPE",
-      });
-    }
-    const name = systemErrorNames.get(errno);
-    if (name) return name;
-    throw Object.assign(new RangeError(`Unknown system error ${errno}`), {
-      code: "ERR_UNKNOWN_SYSTEM_ERROR",
-    });
-  }
   return {
     format,
     inspect,
     getCallSites,
-    getSystemErrorName,
     inherits,
     debuglog,
     deprecate,
@@ -389,7 +373,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
     let compare_key = context.string_rooted("isDeepStrictEqual");
     context.set_property_rooted(module, compare_key, compare, module)?;
-    for name in ["stripVTControlCharacters", "parseEnv"] {
+    for name in ["stripVTControlCharacters", "parseEnv", "getSystemErrorName"] {
         let function = context.host_function(crate::host::shared_vm::operation(name))?;
         let key = context.string_rooted(name);
         context.set_property_rooted(module, key, function, module)?;
@@ -550,14 +534,37 @@ pub(crate) fn argument_type_error(
     };
     let label = if name.ends_with(" argument") {
         name.to_owned()
+    } else if name.contains('.') {
+        format!("\"{name}\" property")
     } else {
         format!("\"{name}\" argument")
     };
+    let expected = if expected.chars().next().is_some_and(char::is_uppercase) {
+        format!("an instance of {expected}")
+    } else {
+        format!("of type {expected}")
+    };
     let error = context.type_error_rooted(&format!(
-        "The {label} must be of type {expected}. Received {received}"
+        "The {label} must be {expected}. Received {received}"
     ))?;
     let key = context.string_rooted("code");
     let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
     context.set_property_rooted(error, key, code, error)?;
     Ok(context.throw(error))
+}
+
+/// Numeric ERR_OUT_OF_RANGE input rendering, shared by native validators.
+pub(crate) fn range_error_received(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<String, RootedError> {
+    let text = context.to_string(value)?;
+    let Some(number) = context.rooted_value(value).and_then(|value| value.as_number()) else { return Ok(text); };
+    if number == 0.0 && number.is_sign_negative() { return Ok("-0".to_owned()); }
+    if number.fract() == 0.0 && number.abs() > f64::from(u32::MAX) + 1.0 {
+        let start = usize::from(text.starts_with('-'));
+        let mut result = String::with_capacity(text.len() + text.len() / 3);
+        for (index, character) in text.char_indices() {
+            if index > start && (text.len() - index) % 3 == 0 { result.push('_'); }
+            result.push(character);
+        }
+        Ok(result)
+    } else { Ok(text) }
 }
