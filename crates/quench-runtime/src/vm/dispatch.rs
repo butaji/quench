@@ -803,7 +803,10 @@ impl<H: Host> Vm<H> {
                     (*pc - 1) as u32,
                     self.numeric_binary(operator, left, right).is_some(),
                 );
-                let v = self.binary(p, operator, left, right)?;
+                let v = match self.number_binary(operator, left, right) {
+                    Some(value) => value,
+                    None => self.binary(p, operator, left, right)?,
+                };
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
                 }
