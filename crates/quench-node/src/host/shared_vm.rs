@@ -48,6 +48,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processDispatchWarning" (1) => crate::modules::process_shared_vm::dispatch_warning,
         method "require" (1) => commonjs::require,
         method "resolve" (2) => commonjs::resolve,
+        method "assertionErrorInitialize" (2) => crate::modules::assert_shared_vm::initialize_assertion_error,
         method "assert" (2) => crate::modules::assert_shared_vm::ok,
         method "ok" (2) => crate::modules::assert_shared_vm::ok,
         method "strict" (1) => crate::modules::assert_shared_vm::ok,
