@@ -522,15 +522,18 @@ impl FunctionCompiler<'_, '_> {
             Expression::ParenthesizedExpression(item) => self.callee(&item.expression),
             Expression::ComputedMemberExpression(item) => self.computed_member_callee(item),
             Expression::Identifier(identifier) => {
-                let this = self.literal(Constant::Undefined);
                 let atom = self.owner.atom(identifier.name.as_str());
+                if let Some(callee) = self.static_atom_reference(atom) {
+                    return (callee, self.undefined_register());
+                }
+                // A by-name callee may resolve through a with object, which becomes `this`.
+                let this = self.literal(Constant::Undefined);
                 let callee = self.load_atom_reference(atom, Some(this));
                 (callee, this)
             }
             _ => {
                 let callee = self.expression(value);
-                let this = self.literal(Constant::Undefined);
-                (callee, this)
+                (callee, self.undefined_register())
             }
         }
     }
@@ -538,8 +541,9 @@ impl FunctionCompiler<'_, '_> {
     pub(super) fn arguments(&mut self, values: &[Argument<'_>]) -> (Register, u16) {
         // Evaluate first, then reserve the contiguous ABI argument window.
         // Reserving targets before expression lowering lets expression
-        // temporaries occupy later argument registers.
-        let expressions = values
+        // temporaries occupy later argument registers. A primitive literal has no
+        // evaluation effect, so it loads straight into its window slot instead.
+        let arguments = values
             .iter()
             .filter_map(|argument| {
                 let Some(expression) = argument.as_expression() else {
@@ -547,16 +551,37 @@ impl FunctionCompiler<'_, '_> {
                         .reject(argument.span(), "spread arguments unsupported");
                     return None;
                 };
-                Some(self.expression(expression))
+                Some(match Self::primitive_literal(expression) {
+                    Some(constant) => Err(constant),
+                    None => Ok(self.expression(expression)),
+                })
             })
             .collect::<Vec<_>>();
         let base = self.next_reg;
-        let targets: Vec<_> = (0..expressions.len()).map(|_| self.reg()).collect();
+        let targets: Vec<_> = (0..arguments.len()).map(|_| self.reg()).collect();
         let count = targets.len() as u16;
-        for (value, target) in expressions.into_iter().zip(targets) {
-            self.emit(Op::Move, target, value, 0, 0);
+        for (argument, target) in arguments.into_iter().zip(targets) {
+            match argument {
+                Ok(value) => {
+                    self.emit(Op::Move, target, value, 0, 0);
+                }
+                Err(constant) => {
+                    let id = self.owner.constant(constant);
+                    self.emit(Op::LoadConst, target, 0, 0, id);
+                }
+            }
         }
         (base, count)
+    }
+
+    /// The constant of a literal whose load has no observable effect.
+    fn primitive_literal(expression: &Expression<'_>) -> Option<Constant> {
+        match expression {
+            Expression::NumericLiteral(value) => Some(Constant::Number(value.value)),
+            Expression::BooleanLiteral(value) => Some(Constant::Boolean(value.value)),
+            Expression::NullLiteral(_) => Some(Constant::Null),
+            _ => None,
+        }
     }
 
     pub(super) fn has_spread(values: &[Argument<'_>]) -> bool {

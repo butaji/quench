@@ -65,13 +65,13 @@ impl<H: Host> Vm<H> {
             .get(program_id)
             .ok_or_else(|| self.type_error(p, "dynamic program is unavailable".into()))?;
         let eval_script_context = std::mem::replace(&mut self.eval_script_context, true);
-        let active_program = std::mem::replace(&mut self.active_program, program_id);
+        let active_program = self.replace_active_program(program_id);
         let result = (|| {
             self.instantiate_global_declarations(&residual)?;
             let root = self.closure(&residual, 0, Value::NULL)?;
             self.call_value(&residual, root, self.realm.globals, &[])
         })();
-        self.active_program = active_program;
+        self.set_active_program(active_program);
         self.eval_script_context = eval_script_context;
         result
     }
@@ -325,7 +325,7 @@ impl<H: Host> Vm<H> {
             .programs
             .get(program_id)
             .ok_or_else(|| self.type_error(p, "dynamic program is unavailable".into()))?;
-        let active_program = std::mem::replace(&mut self.active_program, program_id);
+        let active_program = self.replace_active_program(program_id);
         let direct_eval = std::mem::replace(&mut self.direct_eval, false);
         let root_function = residual.functions[super::ROOT_FUNCTION_ID as usize].clone();
         let root_scope = self
@@ -493,7 +493,7 @@ impl<H: Host> Vm<H> {
         })();
         self.direct_eval_var_program = previous_eval_var_program;
         self.direct_eval = direct_eval;
-        self.active_program = active_program;
+        self.set_active_program(active_program);
         result
     }
 
@@ -975,14 +975,14 @@ impl<H: Host> Vm<H> {
                 }),
             });
         }
-        let active_program = std::mem::replace(&mut self.active_program, program_id);
+        let active_program = self.replace_active_program(program_id);
         let direct_eval = std::mem::replace(&mut self.direct_eval, false);
         let parameter_eval = std::mem::replace(&mut self.parameter_eval, false);
         let result = (|| {
             let callee = self.closure(&residual, function, parent_environment)?;
             self.call_eval_closure(&residual, callee, this, direct_eval)
         })();
-        self.active_program = active_program;
+        self.set_active_program(active_program);
         self.direct_eval = direct_eval;
         self.parameter_eval = parameter_eval;
         result
