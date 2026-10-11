@@ -15,6 +15,10 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SUITE = ROOT / "quench-bench/js-engine-benchmark/v8-v7"
 OUT = pathlib.Path(__file__).resolve().parent
+PROFILE_BINARY_SHA256 = "a486ee1e7698546fc5d8427dd7e48a5904e676ebe9bfab6d643c5e36e67dc746"
+DEFAULT_BINARY = ROOT / "target/pinned" / PROFILE_BINARY_SHA256 / "quench-node"
+COMPLETE_REPORT = "gc-share-11.json"
+INCOMPLETE_REPORT = "gc-share-incomplete.json"
 ROUNDS = 11
 RUNS = 300
 MAX_LOAD_PER_CPU = 1.0
@@ -283,8 +287,7 @@ def build_report(binary: pathlib.Path, warmup: list[dict], warmup_error: str | N
 
 
 def main() -> None:
-    default_binary = ROOT / "target/candidate-a/production/quench-node"
-    binary = pathlib.Path(os.environ.get("QUENCH_GC_PROFILE_BINARY", default_binary)).resolve()
+    binary = pathlib.Path(os.environ.get("QUENCH_GC_PROFILE_BINARY", DEFAULT_BINARY)).resolve()
     if not binary.is_file():
         raise SystemExit(f"profile-gc-time binary not found: {binary}")
     paths = {WORK: OUT / "work-300.js", SETUP: OUT / "setup-0.js"}
@@ -293,7 +296,8 @@ def main() -> None:
     warmup, warmup_error = warm_up(binary, paths)
     rounds, attempts = collect_pairs(binary, paths) if warmup_error is None else ([], 0)
     report = build_report(binary, warmup, warmup_error, rounds, attempts)
-    output = OUT / "gc-share-11.json"
+    complete = report["valid_pairs"] == ROUNDS and warmup_error is None
+    output = OUT / (COMPLETE_REPORT if complete else INCOMPLETE_REPORT)
     output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report["summary"], indent=2))
     print(f"valid pairs: {report['valid_pairs']}/{ROUNDS}; report: {output}")
