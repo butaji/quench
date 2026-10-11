@@ -65,7 +65,7 @@ impl<H: Host> Vm<H> {
             Op::LoadConst => {
                 let value = self
                     .programs
-                    .constant(self.frames[f].program, i.constant_index())
+                    .constant(self.executing_program(f), i.constant_index())
                     .ok_or_else(|| {
                         JsError::validation("constant index is outside program".into())
                     })?;
@@ -804,26 +804,26 @@ impl<H: Host> Vm<H> {
                     .binary(operator as usize, left_operand.0, right_operand.0);
                 let left = self.resolve_operand(p, f, left_operand)?;
                 let right = self.resolve_operand(p, f, right_operand)?;
-                let site_pc = *pc - 1;
-                let armed = self.profile_regional_binary(f, site_pc, operator, left, right);
-                let v = if armed {
-                    match self.numeric_binary(operator, left, right) {
-                        Some(value) => {
-                            self.record_binary_value_path(
-                                operator,
-                                left,
-                                right,
-                                crate::profile::BinaryValuePath::IntegerFastPath,
-                            );
-                            value
-                        }
-                        None => {
-                            self.deopt_numeric_site(f, site_pc);
-                            self.binary(p, operator, left, right)?
-                        }
+                #[cfg(feature = "profile-aggregate")]
+                {
+                    let integer = self.numeric_integer_binary(operator, left, right).is_some();
+                    self.profile.regional_binary(
+                        self.frames[f].program.raw(),
+                        self.frames[f].function,
+                        (*pc - 1) as u32,
+                        integer,
+                    );
+                    if i.op() != Op::Binary {
+                        self.profile.numeric_binary_path(
+                            operator as usize,
+                            integer,
+                            left.as_int().is_some() && right.as_int().is_some(),
+                        );
                     }
-                } else {
-                    self.binary(p, operator, left, right)?
+                }
+                let v = match self.number_binary(operator, left, right) {
+                    Some(value) => value,
+                    None => self.binary(p, operator, left, right)?,
                 };
                 if i.returns_from_frame() {
                     return Ok(StepResult::Return(v));
@@ -1470,7 +1470,13 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::Unary => {
-                let v = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
+                let operator = i.unary_operator();
+                let operand = self.read(f, i.register_b());
+                let v = if operator == super::coercion::LOGICAL_NOT {
+                    self.logical_not(operand)
+                } else {
+                    self.unary(p, operator, operand)?
+                };
                 self.write(f, i.result_register(), v);
             }
             Op::Delete => {
@@ -1502,6 +1508,16 @@ impl<H: Host> Vm<H> {
                     *pc = i.jump_target() as usize;
                 }
             }
+            Op::JumpTrue => {
+                let value = self.read(f, i.register_a());
+                let truthy = self.truthy(value);
+                #[cfg(feature = "profile-aggregate")]
+                self.profile
+                    .branch_value(value.profile_kind() as usize, truthy);
+                if truthy {
+                    *pc = i.jump_target() as usize;
+                }
+            }
             Op::JumpBinaryFalse => {
                 let operator = i.binary_operator_field();
                 let left_operand = i.operand_b();
@@ -1517,17 +1533,17 @@ impl<H: Host> Vm<H> {
             Op::Call | Op::CallDirectEvalArray => {
                 self.profile.call_source(0);
                 let window = i.call_window();
-                let arguments = if i.op() == Op::CallDirectEvalArray {
+                // A spread direct-eval array is read before any call state changes, since
+                // reading it can fail; register windows are copied only on the paths that
+                // need an owned argument list.
+                let spread_arguments = if i.op() == Op::CallDirectEvalArray {
                     let array = self.read(f, window.base);
-                    CallArguments::from_values(self.array_values(array)?)
+                    Some(CallArguments::from_values(self.array_values(array)?))
                 } else {
-                    CallArguments::from_values(
-                        (0..window.count).map(|x| self.read(f, window.base + x)),
-                    )
+                    None
                 };
                 let this = self.read(f, i.register_c());
                 let callee = self.read(f, i.register_b());
-                let args = arguments.as_slice();
                 self.frames[f].pc = *pc;
                 let direct_eval = i.direct_eval()
                     && matches!(
@@ -1553,20 +1569,9 @@ impl<H: Host> Vm<H> {
                 self.parameter_eval = parameter_eval;
                 let previous_this = (direct_eval && !this.is_undefined())
                     .then(|| std::mem::replace(&mut self.frames[f].this, this));
+                let caller_function = &p.functions[self.frames[f].function as usize];
                 let terminal = i.returns_from_frame()
-                    || p.functions[self.frames[f].function as usize]
-                        .code
-                        .get(*pc)
-                        .is_some_and(|packed| {
-                            if packed.is_wide() {
-                                p.functions[self.frames[f].function as usize].wide
-                                    [packed.wide_index()]
-                                .op()
-                                    == Op::Return
-                            } else {
-                                packed.op() == Op::Return
-                            }
-                        });
+                    || caller_function.returns_register_at(*pc, i.result_register());
                 if allow_inline_calls
                     && i.op() == Op::Call
                     && !direct_eval
@@ -1576,22 +1581,12 @@ impl<H: Host> Vm<H> {
                     && p.kind != crate::bytecode::ProgramKind::Wasm
                     && f + 1 == self.frames.len()
                     && self.frames[f].function != super::ROOT_FUNCTION_ID
-                    && p.functions
-                        .get(self.frames[f].function as usize)
-                        .is_some_and(|function| {
-                            function.dispatch == DispatchClass::General
-                        })
-                    && let Some(CallTarget::User(program_id, id, env)) =
-                        self.call_target(callee).ok()
+                    && let Some((program_id, id, env)) = self.same_realm_user_target(callee)
                     && id != super::ROOT_FUNCTION_ID
                     && program_id == self.frames[f].program
                     && program_id == self.active_program
-                    && self.heap.get(callee).is_some_and(|cell| {
-                        matches!(cell, Cell::Function { realm, .. } if *realm == self.realm.globals)
-                    })
                     && p.functions.get(id as usize).is_some_and(|function| {
-                        function.dispatch == DispatchClass::General
-                            && !function.is_async
+                        !function.is_async
                             && !function.is_generator
                             && !function.is_class_constructor
                             && !function.derived_constructor
@@ -1599,28 +1594,32 @@ impl<H: Host> Vm<H> {
                             && !function.parameter_eval_arguments_error
                     })
                 {
-                    self.profile.call_target(1, args.len());
-                    let result = self.with_call_roots(
-                        [callee, this].into_iter().chain(args.iter().copied()),
-                        |vm| {
-                            vm.push_general_user_frame(
-                                p,
-                                id,
-                                env,
-                                this,
-                                args,
-                                CallContext::user_function(id, callee),
-                            )
-                        },
+                    self.profile.call_target(1, usize::from(window.count));
+                    // Collection happens only at back edges, tail calls and explicit host
+                    // safepoints, none of which can run while a frame is pushed; afterwards the
+                    // new frame itself roots the callee, receiver and arguments.
+                    let arguments: *const [Value] = self.register_window(f, window);
+                    // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+                    let result = self.push_general_user_frame(
+                        p,
+                        id,
+                        env,
+                        this,
+                        unsafe { &*arguments },
+                        CallContext::user_function(id, callee),
                     );
                     self.direct_eval = previous_direct_eval;
                     self.parameter_eval = previous_parameter_eval;
-                    let stack_guard = result?;
+                    let call_guard = result?;
                     return Ok(StepResult::PushFrame {
                         destination: i.result_register(),
-                        stack_guard,
+                        call_guard,
+                        construct_this: None,
                     });
                 }
+                let arguments = spread_arguments
+                    .unwrap_or_else(|| CallArguments::from_slice(self.register_window(f, window)));
+                let args = arguments.as_slice();
                 if p.kind == crate::bytecode::ProgramKind::Wasm
                     && i.returns_from_frame()
                     && let Some(CallTarget::User(program_id, id, env)) =
@@ -1699,6 +1698,7 @@ impl<H: Host> Vm<H> {
                     frame.active_iterators.clear();
                     frame.env = Value::NULL;
                     frame.this = Value::UNDEFINED;
+                    frame.fixed_this = false;
                     frame.captured = false;
                 }
                 let called = if discarded_wasm_frame {
@@ -1735,27 +1735,14 @@ impl<H: Host> Vm<H> {
                 self.profile.call_source(1);
                 let window = i.call_window();
                 let function_index = i.known_function_index();
-                let n = window.count;
-                let arguments =
-                    CallArguments::from_values((0..n).map(|x| self.read(f, window.base + x)));
+                let arguments = CallArguments::from_slice(self.register_window(f, window));
                 let args = arguments.as_slice();
                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
-                self.profile.call_target(1, n as usize);
+                self.profile.call_target(1, usize::from(window.count));
                 self.frames[f].pc = *pc;
                 let terminal = i.returns_from_frame()
                     || p.functions[self.frames[f].function as usize]
-                        .code
-                        .get(*pc)
-                        .is_some_and(|packed| {
-                            if packed.is_wide() {
-                                p.functions[self.frames[f].function as usize].wide
-                                    [packed.wide_index()]
-                                .op()
-                                    == Op::Return
-                            } else {
-                                packed.op() == Op::Return
-                            }
-                        });
+                        .returns_register_at(*pc, i.result_register());
                 if ((p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame())
                     || (p.kind != crate::bytecode::ProgramKind::Wasm
                         && terminal
@@ -1819,6 +1806,34 @@ impl<H: Host> Vm<H> {
             }
             Op::Construct => {
                 self.profile.call_source(4);
+                if allow_inline_calls
+                    && !i.is_super_construct()
+                    && !i.returns_from_frame()
+                    && let crate::bytecode::ConstructArguments::Registers(window) =
+                        i.construct_arguments()
+                {
+                    let callee = self.read(f, i.register_b());
+                    if let Some((id, env, this)) = self.inline_construct_target(p, f, callee) {
+                        let arguments: *const [Value] = self.register_window(f, window);
+                        self.frames[f].pc = *pc;
+                        self.construct_target = Some(callee);
+                        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+                        let pushed = self.push_general_user_frame(
+                            p,
+                            id,
+                            env,
+                            this,
+                            unsafe { &*arguments },
+                            CallContext::user_function(id, callee),
+                        );
+                        self.construct_target = None;
+                        return Ok(StepResult::PushFrame {
+                            destination: i.result_register(),
+                            call_guard: pushed?,
+                            construct_this: Some(this),
+                        });
+                    }
+                }
                 let args = match i.construct_arguments() {
                     crate::bytecode::ConstructArguments::Array(register) => {
                         let array = self.read(f, register);
@@ -1830,10 +1845,7 @@ impl<H: Host> Vm<H> {
                         self.call_argument_list(p, array, false)?
                     }
                     crate::bytecode::ConstructArguments::Registers(window) => {
-                        let arguments = CallArguments::from_values(
-                            (0..window.count).map(|x| self.read(f, window.base + x)),
-                        );
-                        arguments.as_slice().to_vec()
+                        self.register_window(f, window).to_vec()
                     }
                 };
                 self.frames[f].pc = *pc;
@@ -1892,6 +1904,14 @@ impl<H: Host> Vm<H> {
         }
         Ok(StepResult::Continue)
     }
+    /// The program `frame` executes: dispatch keeps `active_program` on the running frame's
+    /// program, as the cache-layout lookups also assume.
+    #[inline(always)]
+    pub(super) fn executing_program(&self, frame: usize) -> ProgramId {
+        debug_assert_eq!(self.active_program, self.frames[frame].program);
+        self.active_program
+    }
+
     #[inline(always)]
     pub(super) fn resolve_operand(
         &mut self,
@@ -1907,13 +1927,18 @@ impl<H: Host> Vm<H> {
             }
             Some(crate::bytecode::OperandKind::Constant) => self
                 .programs
-                .constant(self.frames[frame].program, operand.payload() as usize)
+                .constant(self.executing_program(frame), operand.payload() as usize)
                 .ok_or_else(|| JsError::validation("constant operand is outside program".into())),
             Some(crate::bytecode::OperandKind::Field) => {
                 self.resolve_field(p, frame, usize::from(operand.payload()))
             }
             Some(crate::bytecode::OperandKind::Local) => {
-                self.load_local_binding(p, frame, operand.payload() as usize, None)
+                let slot = operand.payload() as usize;
+                // A plain slot is exactly what `LoadLocalPlain` reads.
+                if p.functions[self.frames[frame].function as usize].plain_local(&p.atoms, slot) {
+                    return Ok(self.frames[frame].locals[slot]);
+                }
+                self.load_local_binding(p, frame, slot, None)
             }
             None => unreachable!("two-bit operand tag"),
         }

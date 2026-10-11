@@ -1,9 +1,11 @@
 [build]
 # Enforce clippy rules from .clippy.toml — never allow warnings.
-rustflags = ["-D", "warnings"]
+# 64-byte function alignment measured +3.4% on Linux CoreMark (Linear TOD-19)
+# and passed the M4 V8-v7 all-eight guard with the Splay speed-lane head.
+rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6"]
 
-# Target rustflags replace build.rustflags. Keep the warning policy active on
-# the M4 qualification target. The host-specific deployment argument remains
-# supplied by its target configuration.
+# Cargo replaces build rustflags for targets with their own rustflags, so keep
+# the same alignment policy active on M4. Its deployment target comes from the
+# host's target configuration.
 [target.aarch64-apple-darwin]
-rustflags = ["-D", "warnings"]
+rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6"]

@@ -13,7 +13,7 @@ mod instruction;
 mod numeric_ops;
 pub(crate) use atoms::AtomTable;
 pub use instruction::Instr;
-pub(crate) use instruction::{ConstructArguments, WideInstruction};
+pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
 pub(crate) const RETURN_REGISTER: Register = 1 << 15;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
@@ -661,6 +661,7 @@ opcodes!(
     WasmAtomicFence => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
     LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
     StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    JumpTrue => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
 
 );
 
@@ -733,6 +734,58 @@ const _: () = {
     }
 };
 
+/// Entries after which a function's packed code is expanded into fixed-width instructions.
+/// Decoding costs 1.5x the packed code's memory, so cold bootstrap and one-shot code keeps
+/// decoding on the fly while repeatedly entered functions skip the per-dispatch unpacking.
+const HOT_DECODE_ENTRIES: u32 = 64;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct HotDecoding {
+    entries: std::cell::Cell<u32>,
+    // A thin pointer: every `Function` pays for this field, almost all stay cold.
+    #[allow(clippy::box_collection)]
+    code: std::cell::OnceCell<Box<Vec<WideInstruction>>>,
+}
+
+impl HotDecoding {
+    /// Counts one entry and returns the expanded code once the function is hot.
+    #[inline(always)]
+    pub(crate) fn on_entry(
+        &self,
+        code: &[Instr],
+        wide: &[WideInstruction],
+    ) -> Option<&[WideInstruction]> {
+        if let Some(decoded) = self.code.get() {
+            return Some(decoded);
+        }
+        let entries = self.entries.get() + 1;
+        self.entries.set(entries);
+        if entries >= HOT_DECODE_ENTRIES {
+            return Some(self.expand(code, wide));
+        }
+        None
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn expand(&self, code: &[Instr], wide: &[WideInstruction]) -> &[WideInstruction] {
+        self.code
+            .get_or_init(|| {
+                code.iter()
+                    .map(|packed| {
+                        if packed.is_wide() {
+                            wide[packed.wide_index()]
+                        } else {
+                            packed.as_wide()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .into()
+            })
+            .as_slice()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub parent: Option<u32>,
@@ -767,6 +820,8 @@ pub struct Function {
     /// escapes. `None` retains legacy whole-frame promotion; `Some` is the
     /// selective layout, including an empty set for closure-only activations.
     pub(crate) selective_capture_slots: Option<Vec<u16>>,
+    /// Binding slots assigned stable frame registers by lowering.
+    pub(crate) local_registers: Vec<LocalRegister>,
     /// The function was created while an enclosing `with` scope was active,
     /// so unresolved names in descendants can still observe its outer locals.
     pub(crate) inherited_with_scope: bool,
@@ -786,8 +841,20 @@ pub struct Function {
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
     pub(crate) dispatch: DispatchClass,
+    /// Fixed-width view of `code`, derived once the function proves hot.
+    pub(crate) decoded: HotDecoding,
+    /// Lazily derived `plain_local_slots`; never serialized.
+    pub(crate) plain_locals: std::cell::OnceCell<Box<[bool]>>,
+    /// Lazily derived `activation_bindings_observable`; never serialized.
+    pub(crate) activation_bindings: std::cell::OnceCell<bool>,
     pub(crate) handlers: Vec<Handler>,
     pub(crate) register_root_offset: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LocalRegister {
+    pub(crate) local: u16,
+    pub(crate) register: Register,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -822,6 +889,26 @@ pub(crate) enum PlainLocalSlotIneligibility {
 }
 
 impl Function {
+    pub(crate) fn promoted_register(&self, local: u16) -> Option<Register> {
+        self.local_registers
+            .binary_search_by_key(&local, |entry| entry.local)
+            .ok()
+            .map(|index| self.local_registers[index].register)
+    }
+
+    /// Whether the instruction at `pc` returns `register`. A call is in tail position only
+    /// when the instruction after it returns that call's own result.
+    pub(crate) fn returns_register_at(&self, pc: usize, register: Register) -> bool {
+        self.code.get(pc).is_some_and(|packed| {
+            let next = if packed.is_wide() {
+                self.wide[packed.wide_index()]
+            } else {
+                packed.as_wide()
+            };
+            next.op() == Op::Return && next.register_a() == register
+        })
+    }
+
     pub(crate) fn has_restricted_legacy_caller_access(&self) -> bool {
         self.strict || !self.constructible || self.is_class_constructor
     }
@@ -874,6 +961,109 @@ impl Function {
                 || instruction.op() == Op::Call && ImmediateLayout::direct_eval(instruction.imm())
         });
         has_dynamic_name_resolution.then_some(PlainLocalContextIneligibility::DynamicNameResolution)
+    }
+
+    /// Which local slots are plain: read and written only through the frame's local array,
+    /// with no environment, TDZ, mapped-argument or dynamic-scope observer. Compilation
+    /// specializes these slots' operations, validation re-derives the same proof, and the
+    /// interpreter memoizes it in `plain_locals` to read plain local operands directly.
+    pub(crate) fn plain_local_slots<'a>(
+        &self,
+        atom_name: impl Fn(Atom) -> Option<&'a str>,
+    ) -> Vec<bool> {
+        let mut plain = vec![false; usize::from(self.locals)];
+        if !self.plain_local_context_is_safe() {
+            return plain;
+        }
+        let mut tdz_slots = vec![false; usize::from(self.locals)];
+        for instruction in &self.code {
+            if instruction.op() == Op::InitializeTdz
+                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+            {
+                *slot = true;
+            }
+        }
+        for instruction in &self.wide {
+            if instruction.op() == Op::InitializeTdz
+                && let Some(slot) = tdz_slots.get_mut(instruction.local_slot())
+            {
+                *slot = true;
+            }
+        }
+        for (slot, plain) in plain.iter_mut().enumerate() {
+            *plain = self
+                .local_atoms
+                .get(slot)
+                .and_then(|atom| atom_name(*atom))
+                .is_some_and(|name| self.plain_local_slot_is_safe(slot, name, tdz_slots[slot]));
+        }
+        plain
+    }
+
+    /// Whether anything can read an activation's implicit `new.target` and lexical-this
+    /// bindings: by-name resolution or direct eval in the body, closures or cloned scopes
+    /// that can capture the activation, `with` scopes, and constructors, initializers,
+    /// generators or async bodies whose `this` or activation outlives ordinary dispatch.
+    /// Otherwise the frame's own `this` is authoritative and the bindings are never read.
+    pub(crate) fn activation_bindings_observable(&self) -> bool {
+        *self.activation_bindings.get_or_init(|| {
+            self.is_async
+                || self.is_generator
+                || self.is_class_constructor
+                || self.derived_constructor
+                || self.class_field_initializer
+                || self.instance_initializer.is_some()
+                || self.inherited_with_scope
+                || !self.binding_sites.is_empty()
+                || self
+                    .code
+                    .iter()
+                    .map(|packed| {
+                        if packed.is_wide() {
+                            self.wide[packed.wide_index()]
+                        } else {
+                            packed.as_wide()
+                        }
+                    })
+                    .any(|instruction| {
+                        matches!(
+                            instruction.op(),
+                            Op::LoadName
+                                | Op::LoadNameCall
+                                | Op::LoadNameTypeof
+                                | Op::ResolveName
+                                | Op::LoadResolvedName
+                                | Op::DeleteName
+                                | Op::StoreName
+                                | Op::StoreResolvedName
+                                | Op::StoreVarBinding
+                                | Op::MakeClosure
+                                | Op::CloneEnv
+                                | Op::CallDirectEvalArray
+                                | Op::InitializeThis
+                                | Op::SuperCallCheck
+                        ) || (instruction.op() == Op::Call
+                            && (instruction.direct_eval() || instruction.parameter_eval()))
+                    })
+        })
+    }
+
+    /// The memoized `plain_local_slots` projection for this residual's atoms.
+    #[inline(always)]
+    pub(crate) fn plain_local(&self, atoms: &AtomTable, slot: usize) -> bool {
+        self.plain_locals
+            .get_or_init(|| {
+                self.plain_local_slots(|atom| {
+                    usize::try_from(atom)
+                        .ok()
+                        .filter(|atom| *atom < atoms.len())
+                        .map(|atom| &atoms[atom])
+                })
+                .into_boxed_slice()
+            })
+            .get(slot)
+            .copied()
+            .unwrap_or(false)
     }
 
     pub(crate) fn plain_local_slot_is_safe(
@@ -1045,6 +1235,17 @@ pub(crate) struct RegExpLiteralSite {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Superinstruction {
     pub code: [Instr; 4],
+    /// `code` expanded once for dispatch, which reads every operand of every part.
+    pub wide: [WideInstruction; 4],
+}
+
+impl Superinstruction {
+    pub(crate) fn new(code: [Instr; 4]) -> Self {
+        Self {
+            code,
+            wide: code.map(Instr::as_wide),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1365,7 +1566,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 80;
+    pub const FORMAT_VERSION: u8 = 82;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

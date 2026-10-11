@@ -72,8 +72,6 @@ pub(crate) struct Heap {
     slots: SlotArena,
     marks: Vec<u64>,
     free: Vec<u32>,
-    retired_slots: usize,
-    generations: Vec<u32>,
     external_bytes: usize,
     allocations: usize,
     threshold: usize,
@@ -85,42 +83,88 @@ pub(crate) struct Heap {
     properties: ValueArena,
     roots: RootTable,
     sparse_arrays: Option<Box<FxHashMap<u32, SparseElements>>>,
-    #[cfg(feature = "profile-aggregate")]
+    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
     memory_profile: memory_profile::MemoryProfile,
 }
-#[cfg(feature = "profile-aggregate")]
+#[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
 #[derive(Clone, Copy)]
 pub(crate) struct GcProfile {
+    #[cfg(feature = "profile-aggregate")]
     pub allocated_kinds: [u64; CellKind::COUNT],
+    #[cfg(feature = "profile-aggregate")]
     pub allocated_payload_bytes: [u64; CellKind::COUNT],
+    #[cfg(feature = "profile-aggregate")]
     pub allocated_size_buckets: [[u64; 8]; CellKind::COUNT],
+    #[cfg(feature = "profile-aggregate")]
     pub roots: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub work_items: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub max_worklist: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub marked: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub freed: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub sweep_slots: u64,
     pub mark_nanos: u64,
     pub sweep_nanos: u64,
+    pub mark_clear_nanos: u64,
+    #[cfg(feature = "profile-aggregate")]
+    pub allocations_between_collections_total: u64,
+    #[cfg(feature = "profile-aggregate")]
+    pub allocations_between_collections_min: u64,
+    #[cfg(feature = "profile-aggregate")]
+    pub allocations_between_collections_max: u64,
+    #[cfg(feature = "profile-aggregate")]
+    pub survivors_total: u64,
+    #[cfg(feature = "profile-aggregate")]
+    pub survivors_min: u64,
+    #[cfg(feature = "profile-aggregate")]
+    pub survivors_max: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub marked_kinds: [u64; CellKind::COUNT],
 }
-#[cfg(feature = "profile-aggregate")]
+#[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
 impl Default for GcProfile {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "profile-aggregate")]
             allocated_kinds: [0; CellKind::COUNT],
+            #[cfg(feature = "profile-aggregate")]
             allocated_payload_bytes: [0; CellKind::COUNT],
+            #[cfg(feature = "profile-aggregate")]
             allocated_size_buckets: [[0; 8]; CellKind::COUNT],
+            #[cfg(feature = "profile-aggregate")]
             roots: 0,
+            #[cfg(feature = "profile-aggregate")]
             work_items: 0,
+            #[cfg(feature = "profile-aggregate")]
             max_worklist: 0,
+            #[cfg(feature = "profile-aggregate")]
             marked: 0,
+            #[cfg(feature = "profile-aggregate")]
             freed: 0,
+            #[cfg(feature = "profile-aggregate")]
             sweep_slots: 0,
             mark_nanos: 0,
             sweep_nanos: 0,
+            mark_clear_nanos: 0,
+            #[cfg(feature = "profile-aggregate")]
+            allocations_between_collections_total: 0,
+            #[cfg(feature = "profile-aggregate")]
+            allocations_between_collections_min: u64::MAX,
+            #[cfg(feature = "profile-aggregate")]
+            allocations_between_collections_max: 0,
+            #[cfg(feature = "profile-aggregate")]
+            survivors_total: 0,
+            #[cfg(feature = "profile-aggregate")]
+            survivors_min: u64::MAX,
+            #[cfg(feature = "profile-aggregate")]
+            survivors_max: 0,
+            #[cfg(feature = "profile-aggregate")]
             marked_kinds: [0; CellKind::COUNT],
         }
     }
@@ -249,6 +293,10 @@ impl Heap {
         self.roots.values().count()
     }
 
+    /// Slots that currently hold a cell.
+    pub(crate) fn live_slots(&self) -> usize {
+        self.slots.len() - self.free.len()
+    }
     pub fn alloc(&mut self, cell: Cell) -> Value {
         #[cfg(feature = "profile-aggregate")]
         {
@@ -261,18 +309,16 @@ impl Heap {
         self.allocations += 1;
         self.total_allocations += 1;
         self.external_bytes += cell.external_bytes();
-        while let Some(index) = self.free.pop() {
-            let Some(generation) = self.generations[index as usize].checked_add(1) else {
-                self.retired_slots += 1;
-                continue;
-            };
-            self.generations[index as usize] = generation;
-            self.slots.get_mut(index as usize).unwrap().cell = Some(cell);
+        if let Some(index) = self.free.pop() {
+            let slot = &mut self.slots.get_mut(index as usize).unwrap().cell;
+            debug_assert!(slot.is_none(), "free-list slots hold no cell");
+            // Collection clears heap weak owners before adding a dead slot here;
+            // the VM clears its weak closure cache before control can allocate.
+            // SAFETY: `slot` is a valid, exclusively borrowed place. Sweeping empties a slot
+            // before freeing it, so overwriting it without dropping discards nothing.
+            unsafe { std::ptr::write(slot, Some(cell)) };
             #[cfg(feature = "profile-memory")]
             self.profile_allocation(index as usize);
-            self.peak_live = self
-                .peak_live
-                .max(self.slots.len() - self.free.len() - self.retired_slots);
             return Value::heap(index);
         }
         let index = self.slots.len();
@@ -282,10 +328,6 @@ impl Heap {
         if index / 64 == self.marks.len() {
             self.marks.push(0);
         }
-        self.generations.push(1);
-        self.peak_live = self
-            .peak_live
-            .max(self.slots.len() - self.free.len() - self.retired_slots);
         Value::heap(index as u32)
     }
     pub(crate) fn alloc_object_pair(
@@ -363,27 +405,17 @@ impl Heap {
             self.properties.register_shape(shape as u32, length);
         }
     }
-    pub(crate) fn compact_property_arena(&mut self) {
+    /// Slide every live arena range down over released ones, in offset order.
+    /// `objects` holds each live arena owner packed with its range offset.
+    fn compact_property_arena(&mut self, mut objects: Vec<u64>) {
         if !self.properties.has_released_ranges() {
             return;
         }
         #[cfg(feature = "profile-memory")]
         let before = self.properties.stats();
-        let mut objects = self
-            .slots
-            .iter()
-            .enumerate()
-            .filter_map(|(index, slot)| {
-                let object = slot.cell.as_ref()?.object()?;
-                self.properties
-                    .has_compact_range(object.properties)
-                    .then_some(())?;
-                Some((object.properties.start_offset(), index))
-            })
-            .collect::<Vec<_>>();
-        objects.sort_unstable();
+        sort_by_unique_offset(&mut objects);
         let mut target = 0;
-        for (_, index) in objects {
+        for index in objects.into_iter().map(owner_of_packed) {
             let slot = self
                 .slots
                 .get_mut(index)
@@ -411,8 +443,6 @@ impl Heap {
         self.slots.clear();
         self.marks.clear();
         self.free.clear();
-        self.retired_slots = 0;
-        self.generations.clear();
         self.external_bytes = 0;
         self.allocations = 0;
         self.threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
@@ -454,8 +484,21 @@ impl Heap {
         roots: impl IntoIterator<Item = Value>,
         mut object_roots: impl FnMut(Value, u32, &mut Vec<Value>),
     ) -> Vec<(Value, Value)> {
+        // Live slots grow only by allocation and shrink only by sweeping, so the peak is
+        // observed here and when it is reported rather than on every allocation.
+        self.peak_live = self.peak_live.max(self.live_slots());
         self.collections += 1;
         #[cfg(feature = "profile-aggregate")]
+        {
+            let allocations = self.allocations as u64;
+            let profile = &mut self.gc_profile;
+            profile.allocations_between_collections_total += allocations;
+            profile.allocations_between_collections_min =
+                profile.allocations_between_collections_min.min(allocations);
+            profile.allocations_between_collections_max =
+                profile.allocations_between_collections_max.max(allocations);
+        }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mark_started = std::time::Instant::now();
         let mut work: Vec<Value> = roots.into_iter().chain(self.roots.values()).collect();
         #[cfg(feature = "profile-aggregate")]
@@ -468,11 +511,11 @@ impl Heap {
             self.mark_work(&mut work, &mut object_roots, &mut ephemerons);
         }
         let finalization_jobs = self.prune_weak_entries();
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             self.gc_profile.mark_nanos += mark_started.elapsed().as_nanos() as u64;
         }
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
         let mut live = 0;
         let properties = &mut self.properties;
@@ -480,37 +523,63 @@ impl Heap {
         {
             self.gc_profile.sweep_slots += self.slots.len() as u64;
         }
-        for (index, slot) in self.slots.iter_mut().enumerate() {
-            if Self::marked(&self.marks, index) {
-                live += 1;
-            } else if let Some(cell) = slot.cell.take() {
-                self.external_bytes = self.external_bytes.saturating_sub(cell.external_bytes());
-                #[cfg(feature = "profile-memory")]
-                {
-                    let object_slots = cell
-                        .object()
-                        .map(|object| properties.len(object.properties));
-                    self.memory_profile.freed(index, &cell, object_slots);
-                }
-                if let Some(object) = cell.object() {
-                    properties.release(object.properties);
-                }
-                if let Some(arrays) = &mut self.sparse_arrays {
-                    arrays.remove(&(index as u32));
-                }
-                // Reused slots enter `free` only after their side-table entries are gone.
-                self.free.push(index as u32);
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    self.gc_profile.freed += 1;
+        // Live arena owners, keyed for the offset-ordered compaction below.
+        let mut property_owners = Vec::new();
+        for (base, slab) in self.slots.slabs_mut() {
+            for (offset, slot) in slab.iter_mut().enumerate() {
+                let index = base + offset;
+                if Self::marked(&self.marks, index) {
+                    live += 1;
+                    if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
+                        && properties.has_compact_range(object.properties)
+                    {
+                        property_owners
+                            .push(pack_offset_owner(object.properties.start_offset(), index));
+                    }
+                } else if let Some(cell) = slot.cell.take() {
+                    self.external_bytes = self.external_bytes.saturating_sub(cell.external_bytes());
+                    #[cfg(feature = "profile-memory")]
+                    {
+                        let object_slots = cell
+                            .object()
+                            .map(|object| properties.len(object.properties));
+                        self.memory_profile.freed(index, &cell, object_slots);
+                    }
+                    if let Some(object) = cell.object() {
+                        properties.release(object.properties);
+                    }
+                    if let Some(arrays) = &mut self.sparse_arrays {
+                        arrays.remove(&(index as u32));
+                    }
+                    // Reused slots enter `free` only after their side-table entries are gone.
+                    self.free.push(index as u32);
+                    #[cfg(feature = "profile-aggregate")]
+                    {
+                        self.gc_profile.freed += 1;
+                    }
                 }
             }
         }
-        #[cfg(feature = "profile-aggregate")]
+        self.compact_property_arena(property_owners);
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        let clear_started = std::time::Instant::now();
         self.marks.fill(0);
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.gc_profile.mark_clear_nanos += clear_started.elapsed().as_nanos() as u64;
+        }
+        #[cfg(feature = "profile-aggregate")]
+        {
+            let survivors = live as u64;
+            let profile = &mut self.gc_profile;
+            profile.survivors_total += survivors;
+            profile.survivors_min = profile.survivors_min.min(survivors);
+            profile.survivors_max = profile.survivors_max.max(survivors);
+        }
         self.allocations = 0;
         // `threshold` counts allocations after collection. The selected growth
         // factor is added to the live set to describe the occupied high-water.
@@ -568,7 +637,7 @@ impl Heap {
     fn mark(marks: &mut [u64], index: usize) {
         marks[index / 64] |= 1 << (index % 64);
     }
-    #[cfg(feature = "profile-aggregate")]
+    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     pub(crate) const fn gc_profile(&self) -> GcProfile {
         self.gc_profile
     }
@@ -652,6 +721,7 @@ impl Heap {
         }?;
         (!value.is_deleted()).then_some(value)
     }
+    #[inline(always)]
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
         if let Some(values) = object.inline_properties() {
             debug_assert!(slot < INLINE_PROPERTY_COUNT);
@@ -673,6 +743,7 @@ impl Heap {
         };
         self.properties.set(vector, slot, value);
     }
+    #[inline(always)]
     pub(crate) unsafe fn property_set_unchecked(
         &mut self,
         object: Value,
@@ -769,9 +840,14 @@ impl Heap {
             object_roots(owner, object.shape(), work);
             work.extend(object.private_names().iter().map(|brand| brand.home));
             if let Some(values) = object.inline_properties() {
-                work.extend(values.iter().copied().filter(|value| !value.is_deleted()));
+                work.extend(
+                    values
+                        .iter()
+                        .copied()
+                        .filter(|value| value.is_heap() && !value.is_deleted()),
+                );
             } else {
-                properties.append_live_values(object.properties, work);
+                properties.append_heap_references(object.properties, work);
             }
             object.visit_stack_data_roots(|value| work.push(value));
         };
@@ -787,16 +863,16 @@ impl Heap {
                 elements,
             } => {
                 object(value);
-                work.extend(elements.iter().copied());
+                work.extend(elements.iter().copied().filter(|value| value.is_heap()));
             }
             Cell::ArrayBuffer { object: value, .. } => object(value),
             Cell::RegExp {
                 object: value,
-                legacy_constructor,
+                meta,
                 ..
             } => {
                 object(value);
-                work.push(legacy_constructor.constructor());
+                work.push(meta.legacy_constructor.constructor());
             }
             Cell::DataView {
                 object: value,
@@ -844,11 +920,15 @@ impl Heap {
             Cell::Iterator {
                 object: value,
                 source,
-                next_method,
-                helper,
-                generator,
+                ext,
                 ..
             } => {
+                let IteratorExt {
+                    next_method,
+                    helper,
+                    generator,
+                    ..
+                } = &**ext;
                 object(value);
                 work.push(*source);
                 work.extend(*next_method);
@@ -930,12 +1010,16 @@ impl Heap {
             Cell::Environment {
                 parent,
                 slots,
-                dynamic_bindings,
-                with_objects,
+                scope,
                 ..
             } => {
                 work.push(*parent);
                 work.extend(slots.roots());
+                let crate::heap::EnvironmentScope {
+                    dynamic_bindings,
+                    with_objects,
+                    ..
+                } = &**scope;
                 match dynamic_bindings {
                     EnvironmentBindings::Owned(bindings) => {
                         work.extend(bindings.iter().map(|(_, value)| *value));
@@ -944,9 +1028,8 @@ impl Heap {
                 }
                 work.extend(with_objects.iter().copied());
             }
-            Cell::WasmElements(elements) | Cell::WasmTable { elements, .. } => {
-                work.extend(elements.iter().copied())
-            }
+            Cell::WasmElements(elements) => work.extend(elements.iter().copied()),
+            Cell::WasmTable { elements, .. } => work.extend(elements.iter().copied()),
             Cell::WasmGc {
                 fields, descriptor, ..
             } => {
@@ -1057,8 +1140,8 @@ impl Heap {
                         + (signature.params.capacity() + signature.results.capacity())
                             * size_of::<crate::WasmType>()
                 }
-                Cell::WasmElements(elements)
-                | Cell::WasmTable { elements, .. }
+                Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
+                Cell::WasmTable { elements, .. }
                 | Cell::WasmGc {
                     fields: elements, ..
                 } => elements.capacity() * size_of::<Value>(),
@@ -1071,7 +1154,7 @@ impl Heap {
                     calendar,
                     ..
                 } => time_zone.capacity() + calendar.capacity(),
-                Cell::RegExp { source, flags, .. } => source.capacity() + flags.capacity(),
+                Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
                 Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
@@ -1080,11 +1163,8 @@ impl Heap {
                 Cell::WeakMap { entries, .. } => entries.allocated_bytes(),
                 Cell::WeakSet { entries, .. } => entries.capacity() * size_of::<Value>(),
                 Cell::Function { .. } => size_of::<Object>(),
-                Cell::Environment {
-                    slots,
-                    with_objects,
-                    ..
-                } => {
+                Cell::Environment { slots, scope, .. } => {
+                    let with_objects = &scope.with_objects;
                     slots.len() * size_of::<EnvironmentSlot>()
                         + with_objects.len() * size_of::<Value>()
                 }
@@ -1109,3 +1189,68 @@ impl Heap {
 }
 #[cfg(test)]
 mod tests;
+
+/// Bits per radix pass when ordering property owners by arena offset.
+const OFFSET_RADIX_BITS: u32 = 16;
+/// An owner key keeps the arena offset in the high half and the slot index in the low half.
+const OWNER_KEY_HALF_BITS: u32 = u32::BITS;
+
+fn pack_offset_owner(offset: usize, owner: usize) -> u64 {
+    debug_assert!(offset <= u32::MAX as usize && owner <= u32::MAX as usize);
+    ((offset as u64) << OWNER_KEY_HALF_BITS) | owner as u64
+}
+
+fn owner_of_packed(key: u64) -> usize {
+    (key & u64::from(u32::MAX)) as usize
+}
+
+/// Orders packed owner keys by arena offset in linear time. Offsets are distinct arena
+/// positions, so two stable 16-bit passes over the offset half give a full ordering.
+fn sort_by_unique_offset(keys: &mut Vec<u64>) {
+    let buckets = 1usize << OFFSET_RADIX_BITS;
+    let mask = (buckets - 1) as u64;
+    let mut scratch = vec![0; keys.len()];
+    let mut counts = vec![0usize; buckets + 1];
+    for pass in 0..2 {
+        let shift = OWNER_KEY_HALF_BITS + pass * OFFSET_RADIX_BITS;
+        counts.fill(0);
+        for key in keys.iter() {
+            counts[((key >> shift) & mask) as usize + 1] += 1;
+        }
+        for bucket in 0..buckets {
+            counts[bucket + 1] += counts[bucket];
+        }
+        for key in keys.iter() {
+            let bucket = ((key >> shift) & mask) as usize;
+            scratch[counts[bucket]] = *key;
+            counts[bucket] += 1;
+        }
+        std::mem::swap(keys, &mut scratch);
+    }
+}
+
+#[cfg(test)]
+mod offset_order_tests {
+    #[test]
+    fn radix_offset_order_matches_comparison_sort() {
+        let mut state = 0x2545_f491_u64;
+        let mut offsets: Vec<usize> = (0..5000)
+            .map(|_| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (state >> 33) as usize
+            })
+            .collect();
+        offsets.sort_unstable();
+        offsets.dedup();
+        let mut keys: Vec<u64> = offsets
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(slot, offset)| super::pack_offset_owner(*offset, slot))
+            .collect();
+        let mut expected = keys.clone();
+        expected.sort_unstable();
+        super::sort_by_unique_offset(&mut keys);
+        assert_eq!(keys, expected);
+    }
+}

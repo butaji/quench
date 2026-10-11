@@ -72,9 +72,7 @@ impl<H: Host> Vm<H> {
         proxy: Value,
     ) -> Result<Vec<Value>, JsError> {
         let _stack = self.enter_stack()?;
-        let Some(Cell::Proxy {
-            target, handler, ..
-        }) = self.heap.get(proxy).cloned()
+        let Some((target, handler)) = self.proxy_parts(proxy)
         else {
             unreachable!("Proxy own-key dispatch");
         };
@@ -320,9 +318,7 @@ impl<H: Host> Vm<H> {
         let outcome = (|| {
             let mut current = target;
             loop {
-                if let Some(Cell::Proxy {
-                    target, handler, ..
-                }) = self.heap.get(current).cloned()
+                if let Some((target, handler)) = self.proxy_parts(current)
                 {
                     return self.proxy_set(
                         p,

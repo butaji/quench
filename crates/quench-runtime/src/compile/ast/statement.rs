@@ -426,14 +426,16 @@ impl FunctionCompiler<'_, '_> {
     fn while_statement_labeled(&mut self, item: &WhileStatement<'_>, label: Option<Atom>) {
         self.clear_statement_completion();
         let head = self.code.len() as u32;
-        let condition_end = self.condition(&item.test);
+        let condition_end = self.loop_condition(&item.test);
         self.push_control(ControlKind::Loop, label);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();
         self.patch_edges(&control.continues, head);
         self.emit(Op::Jump, 0, 0, 0, head);
         let end = self.code.len() as u32;
-        self.patch_to(condition_end, end);
+        if let Some(edge) = condition_end {
+            self.patch_to(edge, end);
+        }
         self.patch_edges(&control.breaks, end);
         self.resolve_control_destinations(&control, end, Some(head));
     }
@@ -450,10 +452,12 @@ impl FunctionCompiler<'_, '_> {
         let control = self.controls.pop().unwrap();
         let condition = self.code.len() as u32;
         self.patch_edges(&control.continues, condition);
-        let end_edge = self.condition(&item.test);
+        let end_edge = self.loop_condition(&item.test);
         self.emit(Op::Jump, 0, 0, 0, head);
         let end = self.code.len() as u32;
-        self.patch_to(end_edge, end);
+        if let Some(edge) = end_edge {
+            self.patch_to(edge, end);
+        }
         self.patch_edges(&control.breaks, end);
         self.resolve_control_destinations(&control, end, Some(condition));
     }
@@ -497,7 +501,7 @@ impl FunctionCompiler<'_, '_> {
             self.clone_lexical_environment();
         }
         let head = self.code.len() as u32;
-        let condition_end = item.test.as_ref().map(|test| self.condition(test));
+        let condition_end = item.test.as_ref().and_then(|test| self.loop_condition(test));
         self.push_control(ControlKind::Loop, label);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();

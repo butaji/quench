@@ -23,7 +23,7 @@ impl<H: Host> Vm<H> {
             .intl_relative_time_format_prototypes
             .insert(global, prototype);
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
