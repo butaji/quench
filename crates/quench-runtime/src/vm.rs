@@ -417,7 +417,7 @@ struct MethodCacheSet {
     len: u8,
     entries: [MethodCache; METHOD_MEGAMORPHIC_LIMIT],
 }
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ProgramCacheLayout {
     field_base: usize,
     method_base: usize,
@@ -746,6 +746,8 @@ pub(crate) struct Vm<H> {
     test262_agent: Test262AgentState,
     programs: ProgramStore,
     program_cache_layouts: Vec<ProgramCacheLayout>,
+    /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
+    active_layout: ProgramCacheLayout,
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
@@ -1369,7 +1371,7 @@ impl<H: Host> Vm<H> {
         self.program_cache_layouts.clear();
         self.program_cache_layouts
             .push(ProgramCacheLayout::default());
-        self.active_program = ProgramId::MAIN;
+        self.set_active_program(ProgramId::MAIN);
         self.typed_array_proto = Value::NULL;
         self.finalization_registry_proto = Value::NULL;
         self.temporal_plain_date_proto = Value::NULL;
@@ -1459,14 +1461,28 @@ impl<H: Host> Vm<H> {
             u32::MAX,
         );
     }
+    /// Makes `program` the executing program and caches its layout, the projection every cache
+    /// index reads. A program's layout is appended before the program can run.
+    #[inline(always)]
+    pub(super) fn set_active_program(&mut self, program: ProgramId) {
+        self.active_program = program;
+        self.active_layout = self.program_cache_layouts[program.raw() as usize];
+    }
+
+    #[inline(always)]
+    pub(super) fn replace_active_program(&mut self, program: ProgramId) -> ProgramId {
+        let previous = self.active_program;
+        self.set_active_program(program);
+        previous
+    }
+
     #[inline(always)]
     fn active_cache_layout(&self) -> ProgramCacheLayout {
-        let program = self.active_program.raw() as usize;
-        debug_assert!(program < self.program_cache_layouts.len());
-        // SAFETY: program ids come only from the main-program reset and the module and dynamic
-        // program stores, each of which appends that program's layout; layouts are never
-        // removed while ids live.
-        unsafe { *self.program_cache_layouts.get_unchecked(program) }
+        debug_assert_eq!(
+            self.active_layout,
+            self.program_cache_layouts[self.active_program.raw() as usize]
+        );
+        self.active_layout
     }
     #[inline(always)]
     pub(super) fn field_cache_index(&self, site: u16) -> usize {
@@ -1570,7 +1586,7 @@ impl<H: Host> Vm<H> {
                 let program = self.programs.get(program_id).ok_or_else(|| {
                     self.type_error(p, "function belongs to an unavailable program".into())
                 })?;
-                let active_program = std::mem::replace(&mut self.active_program, program_id);
+                let active_program = self.replace_active_program(program_id);
                 let realm = match self.heap.get(callee) {
                     Some(Cell::Function { realm, .. }) => *realm,
                     _ => self.realm.globals,
@@ -1593,7 +1609,7 @@ impl<H: Host> Vm<H> {
                         CallContext::user_function(id, callee),
                     )
                 };
-                self.active_program = active_program;
+                self.set_active_program(active_program);
                 self.realm.globals = current_global;
                 result
             }
@@ -1630,7 +1646,7 @@ impl<H: Host> Vm<H> {
         let program = self.programs.get(program_id).ok_or_else(|| {
             self.type_error(p, "function belongs to an unavailable program".into())
         })?;
-        let previous_program = std::mem::replace(&mut self.active_program, program_id);
+        let previous_program = self.replace_active_program(program_id);
         let previous_global = std::mem::replace(&mut self.realm.globals, realm);
         let outcome = self.call_user_construct_frame(
             &program,
@@ -1639,7 +1655,7 @@ impl<H: Host> Vm<H> {
             args,
             CallContext::user_function(id, callee),
         );
-        self.active_program = previous_program;
+        self.set_active_program(previous_program);
         self.realm.globals = previous_global;
         match outcome? {
             FrameOutcome::ConstructComplete { value, this } => Ok((value, this)),

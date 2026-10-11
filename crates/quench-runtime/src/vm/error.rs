@@ -1061,7 +1061,7 @@ impl<H: Host> Vm<H> {
             .programs
             .get(program_id)
             .ok_or_else(|| self.type_error(program, "dynamic program is unavailable".into()))?;
-        let active_program = std::mem::replace(&mut self.active_program, program_id);
+        let active_program = self.replace_active_program(program_id);
         let result = (|| {
             let function = residual
                 .functions
@@ -1074,7 +1074,7 @@ impl<H: Host> Vm<H> {
                 })?;
             self.closure_in_realm(&residual, function, Value::NULL, function_realm)
         })();
-        self.active_program = active_program;
+        self.set_active_program(active_program);
         let function = result?;
         self.set_builtin_function_name(function, "anonymous")?;
         let function_source = match kind {

@@ -1287,7 +1287,7 @@ impl<H: Host> Vm<H> {
             }
             frame.registers[register as usize] = args.first().copied().unwrap_or(Value::UNDEFINED);
         }
-        let previous_program = std::mem::replace(&mut self.active_program, frame.program);
+        let previous_program = self.replace_active_program(frame.program);
         let previous_global = self.switch_realm_global(realm);
         self.activate_frame(&mut frame);
         let frame = self.adopt_frame(frame);
@@ -1299,7 +1299,7 @@ impl<H: Host> Vm<H> {
         );
         let mut frame = self.frames.pop().expect("generator frame exists");
         self.deactivate_frame(&mut frame, &result);
-        self.active_program = previous_program;
+        self.set_active_program(previous_program);
         self.switch_realm_global(previous_global);
         let outcome = match result {
             Ok(outcome) => outcome,
@@ -1528,7 +1528,7 @@ impl<H: Host> Vm<H> {
                 }
                 frame.registers[register as usize] = value;
             }
-            let previous_program = std::mem::replace(&mut vm.active_program, frame.program);
+            let previous_program = vm.replace_active_program(frame.program);
             let previous_global = vm.switch_realm_global(realm);
             vm.activate_frame(&mut frame);
             let frame = vm.adopt_frame(frame);
@@ -1540,7 +1540,7 @@ impl<H: Host> Vm<H> {
             );
             let mut frame = vm.frames.pop().expect("async generator frame exists");
             vm.deactivate_frame(&mut frame, &result);
-            vm.active_program = previous_program;
+            vm.set_active_program(previous_program);
             vm.switch_realm_global(previous_global);
             match result {
                 Err(error) => {
