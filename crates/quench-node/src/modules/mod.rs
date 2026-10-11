@@ -58,6 +58,7 @@ pub(crate) mod url_shared_vm;
 pub(crate) mod url_whatwg_data;
 pub(crate) mod web_stream_consumers_shared_vm;
 pub(crate) mod util_shared_vm;
+pub(crate) mod util_callbackify_shared_vm;
 pub mod util_strip;
 pub(crate) mod util_env;
 pub(crate) mod vm_shared_vm;
