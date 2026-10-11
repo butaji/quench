@@ -78,6 +78,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "childProcessPromiseExec" (1) => crate::modules::child_process_exec_shared_vm::promise_exec,
         method "childProcessPromiseExecSettled" (3) => crate::modules::child_process_exec_shared_vm::promise_settled,
         method "utilInspectQuote" (1) => crate::modules::util_shared_vm::inspect_quote,
+        method "styleText" (3) => crate::modules::util_style_shared_vm::style_text,
+        method "utilColorAliasGet" (0) => crate::modules::util_style_shared_vm::alias_get,
+        method "utilColorAliasSet" (1) => crate::modules::util_style_shared_vm::alias_set,
         method "readableEncoding" (0) => crate::modules::stream_shared_vm::readable_encoding,
         method "execFileEvent" (2) => crate::modules::child_process_exec_shared_vm::event,
         method "childProcessShellArgsWarning" (1) => crate::modules::child_process_shared_vm::shell_args_warning,
@@ -458,6 +461,20 @@ impl quench_runtime::Host for NodeHost {
             "node:bootstrap/event-emitter.js",
         )?;
         context.release_root(event_emitter);
+        // Native stdio writes still participate in the shared EventEmitter
+        // protocol; consumers such as util.styleText validate that protocol.
+        let global = context.global_root()?;
+        let key = context.string_rooted("__nodeEventEmitter");
+        let emitter = context.get_property_rooted(global, key)?;
+        let key = context.string_rooted("prototype");
+        let prototype = context.get_property_rooted(emitter, key)?;
+        let key = context.string_rooted("process");
+        let process = context.get_property_rooted(global, key)?;
+        for name in ["stdout", "stderr"] {
+            let key = context.string_rooted(name);
+            let stream = context.get_property_rooted(process, key)?;
+            context.set_prototype_rooted(stream, prototype)?;
+        }
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_emitter_polyfill");
         crate::modules::text_decoder_shared_vm::install_global(context)?;

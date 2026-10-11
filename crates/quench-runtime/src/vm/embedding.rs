@@ -581,6 +581,59 @@ impl<H: Host> Vm<H> {
         self.to_string(&program, value)
     }
 
+    pub(crate) fn embedding_greater_than(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<bool, JsError> {
+        let left = self.embedding_value(left)?;
+        let right = self.embedding_value(right)?;
+        let program = self.embedding_program()?;
+        let result = self.binary(
+            &program,
+            super::operations::RelationalOperator::GreaterThan as u32,
+            left,
+            right,
+        )?;
+        Ok(self.truthy(result))
+    }
+
+    pub(crate) fn embedding_iterator_record(
+        &mut self,
+        source: RootId,
+    ) -> Result<(RootId, RootId), JsError> {
+        let source = self.embedding_value(source)?;
+        let program = self.embedding_program()?;
+        let iterator = self.get_iterator(&program, source)?;
+        let iterator = self.root(iterator);
+        let value = self.embedding_value(iterator)?;
+        let next = self.intern_atom("next");
+        match self.get_property(&program, value, next) {
+            Ok(next) => Ok((iterator, self.root(next))),
+            Err(error) => {
+                self.release_root(iterator);
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn embedding_iterator_step(
+        &mut self,
+        iterator: RootId,
+        next: RootId,
+    ) -> Result<Option<Value>, JsError> {
+        self.embedding_value(iterator)?;
+        self.embedding_value(next)?;
+        let program = self.embedding_program()?;
+        self.rooted_iterator_step_value(&program, iterator, next)
+    }
+
+    pub(crate) fn embedding_iterator_close(&mut self, iterator: RootId) -> Result<Value, JsError> {
+        let value = self.embedding_value(iterator)?;
+        let program = self.embedding_program()?;
+        self.iterator_close(&program, value)
+    }
+
     pub(crate) fn embedding_truthy(&self, root: RootId) -> Result<bool, JsError> {
         Ok(self.truthy(self.embedding_value(root)?))
     }

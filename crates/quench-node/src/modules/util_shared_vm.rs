@@ -361,6 +361,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let quote = context.host_function(crate::host::shared_vm::operation("utilInspectQuote"))?;
     let undefined = context.undefined();
     let module = context.call_rooted(factory, undefined, &[quote])?;
+    let inspect_key = context.string_rooted("inspect");
+    let inspect = context.get_property_rooted(module, inspect_key)?;
+    super::util_style_shared_vm::install(context, module, inspect)?;
     let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
     let compare_key = context.string_rooted("isDeepStrictEqual");
     context.set_property_rooted(module, compare_key, compare, module)?;
