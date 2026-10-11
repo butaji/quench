@@ -33,19 +33,57 @@ The control is preserved in the sibling evidence directory
 its report has `source_dirty: true`, although the measured executable was the
 clean `aa88c4a99` build.
 
-## Candidate and decision
+## 1/1 precise-barrier follow-up
 
-The candidate combined large-heap headroom 1/2 with `property_set` remembering
+At commit `bb8c6b87eb16e4b48d7b471c3b49cf3203976e09`, large-heap headroom
+was restored to 1/1 while the precise `property_set` barrier remained. This
+isolated stock run used 11 rounds and is in
+[`stock-splay-precise-barrier-1x-11.json`](stock-splay-precise-barrier-1x-11.json).
+It was valid and output-equal, but its Score was 1,593 vs Node `--jitless`
+2,852, and max RSS was 123,887,616 B vs Bun no-JIT 60,530,688 B. This also
+missed both bars.
+
+Because the references shifted from the previous session, I built a clean
+generic-barrier control from `0c9831f8dc7b23393a3d0fc59063f6ae46522998` and
+alternated 11 one-round control/candidate pairs, reversing order on every
+other pair. Each report was valid and output-equal. The control and candidate
+production binary SHA-256 values were respectively
+`6ee6c8364de11bd52cd37297c757d08a43dda16cc929dc0c4ff69c3ecb516d41` and
+`accda9aeaeb2c38d6573140e07cc9820209e873204f7becea0d1a41f8ce60032`.
+Paired measurements and the deterministic 20,000-resample bootstrap summary
+are in [`paired-summary.json`](paired-summary.json); raw one-round reports
+remain in the ignored `work/` directory.
+
+| Paired measure | Generic barrier | Precise barrier | Paired delta (95% bootstrap interval) |
+| --- | ---: | ---: | ---: |
+| Median Quench Score | 2,060 | 2,166 | +2.48% (-3.40%, +9.43%) |
+| Median Quench max RSS | 123,957,248 B | 123,949,056 B | -69,632 B (-200,704 B, +61,440 B) |
+
+The candidate won Score in 7/11 pairs and RSS in 6/11. The Score and RSS
+intervals both include no change. The paired Quench/Node Score ratio also had
+a 95% interval spanning zero. This does not establish a performance or memory
+benefit, so the precise barrier is rejected and its source change is removed.
+
+## Decision
+
+The 1/2 candidate combined reduced headroom with `property_set` remembering
 only old-owner to young-value edges. Full-collection growth remained 1/1. The
 focused remembered-edge and collection tests passed before the stock run.
 
-The candidate does not meet the joint Score/RSS target. For the next screen,
-large-heap headroom is restored to 1/1 while the precise `property_set`
-barrier remains in place. This isolates that barrier's effect against the
-existing policy. The policy value is a proposal for the trunk owner to review;
-the lane does not own the trunk's production GC policy.
+The 1/2 candidate loses Score and saves only about 1.1 MB against the
+sequential 1/1 control. The precise barrier at 1/1 has no measurable paired
+benefit. The production barrier therefore returns to the generic behavior and
+large-heap headroom stays at 1/1. The trunk retains ownership of the named GC
+policy.
 
 ## Reproduction
+
+Use the same stock command shown below for the original `3074bf1b3` candidate
+and the 11-round `bb8c6b87e` follow-up, changing the Quench executable to the
+corresponding recorded binary. The paired screen ran the command with
+`--runs 1` once for each binary in every pair, alternating which ran first.
+It used the exact engine binaries recorded in the JSON reports. The control
+source is `0c9831f8d`; the candidate source is `bb8c6b87e`.
 
 ```sh
 source /workspace/quench-build-env.sh
