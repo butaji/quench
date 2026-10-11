@@ -40,6 +40,9 @@ pub struct Value(u64);
 #[repr(transparent)]
 pub(crate) struct IntegerEncoding(u64);
 
+/// The tag bits an encoded i32 carries; compiled code encodes in place.
+pub(crate) const INTEGER_TAG_BITS: u64 = TAG_INT;
+
 impl IntegerEncoding {
     pub(crate) const TAG: Self = Self(TAG_INT);
 
@@ -77,10 +80,6 @@ impl Value {
         self.0
     }
 
-    #[inline(always)]
-    pub(crate) const fn from_bits(bits: u64) -> Self {
-        Self(bits)
-    }
 
     #[inline(always)]
     pub(crate) fn as_int(self) -> Option<i32> {

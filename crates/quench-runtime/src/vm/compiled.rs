@@ -125,11 +125,15 @@ struct CallContext {
     /// The guarded memory reservation compiled code may fault in.
     guard_start: usize,
     guard_end: usize,
+    /// Per global the program accesses (`CompiledProgram::globals`), the
+    /// address of the global's value in this instance.
+    globals: *const *mut Value,
 }
 
 const CONTEXT_STACK_LIMIT: i32 = 0;
 const CONTEXT_TABLE: i32 = 8;
 const CONTEXT_ENTRY_STACK: u8 = 32;
+const CONTEXT_GLOBALS: i32 = 56;
 
 /// A compiled function's entry: (context, memory base, memory length,
 /// arguments, result) -> status.
@@ -152,6 +156,9 @@ pub(super) struct CompiledProgram {
     /// Memory accesses rely on the memory's guard reservation instead of
     /// bounds checks.
     guarded: bool,
+    /// The environment slots of the globals compiled code accesses, in the
+    /// order of the context's global addresses.
+    globals: Vec<u32>,
 }
 
 /// Executable memory holding a program's machine code.
@@ -204,7 +211,6 @@ struct Plan {
     result: Option<crate::WasmType>,
     /// The register state on entry to each reachable instruction.
     states: Vec<Option<Vec<Slot>>>,
-    memory_register: Option<u16>,
 }
 
 /// The register a direct access of `instruction` reads its memory through.
@@ -362,7 +368,6 @@ impl<H: Host> Analysis<'_, H> {
             params,
             result,
             states,
-            memory_register,
         })
     }
 
@@ -527,20 +532,22 @@ impl<H: Host> Analysis<'_, H> {
                 }
                 set(state, instruction.a(), Slot::Binding(slot))
             }
+            // Compiled code reads and writes a 32-bit global's encoded value
+            // in place; a 64-bit global's value is a box, so it stays
+            // interpreted.
             Op::WasmGlobalGet => {
                 let Slot::Binding(slot) = *state.get(usize::from(instruction.b()))? else {
                     return None;
                 };
-                let kind = Kind::of(self.global_type(slot)?)?;
-                set(state, instruction.a(), Slot::Value(kind))
+                (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
+                set(state, instruction.a(), Slot::Value(Kind::I32))
             }
             Op::WasmGlobalSet => {
                 let Slot::Binding(slot) = *state.get(usize::from(instruction.b()))? else {
                     return None;
                 };
-                // Setting a 64-bit global boxes its value, which allocates.
-                let kind = Kind::of(self.global_type(slot)?)?;
-                (kind == Kind::I32 && value(state, instruction.a())? == Kind::I32).then_some(())
+                (Kind::of(self.global_type(slot)?)? == Kind::I32).then_some(())?;
+                (value(state, instruction.a())? == Kind::I32).then_some(())
             }
             _ => None,
         }
@@ -614,39 +621,10 @@ fn internal_signature(
     signature
 }
 
-/// Callouts compiled code makes for instance state it does not hold.
-extern "C" fn binding_callout<H: Host>(context: *mut CallContext, slot: u64) -> u64 {
-    // SAFETY: compiled code passes its own context, whose VM outlives it.
-    let context = unsafe { &*context };
-    let vm = unsafe { &*context.vm.cast::<Vm<H>>() };
-    vm.heap
-        .environment_slot(Value::from_bits(context.env), slot as usize)
-        .map_or(0, Value::to_bits)
-}
-
-extern "C" fn global_get_callout<H: Host>(context: *mut CallContext, binding: u64) -> u64 {
-    // SAFETY: as for `binding_callout`.
-    let vm = unsafe { &*(*context).vm.cast::<Vm<H>>() };
-    match vm.heap.get(Value::from_bits(binding)) {
-        Some(Cell::WasmGlobal { value, .. }) => match vm.heap.get(*value) {
-            Some(Cell::WasmBits64(bits)) => *bits,
-            _ => u64::from(value.wasm_bits32()),
-        },
-        _ => 0,
-    }
-}
-
-extern "C" fn global_set_callout<H: Host>(context: *mut CallContext, binding: u64, bits: u64) {
-    // SAFETY: as for `binding_callout`; only 32-bit globals are set, which
-    // encode without allocating.
-    let vm = unsafe { &mut *(*context).vm.cast::<Vm<H>>() };
-    if let Some(Cell::WasmGlobal { value, .. }) = vm.heap.get_mut(Value::from_bits(binding)) {
-        *value = Value::integer(bits as u32 as i32);
-    }
-}
 
 struct Emitter<'a, 'b, H: Host> {
     guarded: bool,
+    globals: &'a [u32],
     analysis: &'a Analysis<'a, H>,
     builder: FunctionBuilder<'b>,
     plan: &'a Plan,
@@ -822,6 +800,34 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.builder.ins().iadd_imm_s(host, i64::from(offset))
     }
 
+    /// The address of the value of the global bound at `slot`.
+    fn global_address(&mut self, slot: u32) -> ir::Value {
+        let position = self
+            .globals
+            .iter()
+            .position(|candidate| *candidate == slot)
+            .expect("planned globals are collected");
+        let table = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted(),
+            self.context,
+            CONTEXT_GLOBALS,
+        );
+        self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted().with_readonly(),
+            table,
+            (position * 8) as i32,
+        )
+    }
+
+    fn binding_slot(&self, pc: usize, register: u16) -> u32 {
+        match self.plan.states[pc].as_ref().expect("reachable")[usize::from(register)] {
+            Slot::Binding(slot) => slot,
+            _ => unreachable!("planned global accesses read a binding"),
+        }
+    }
+
     fn jump(&mut self, target: usize) {
         let block = self.block(target);
         self.builder.ins().jump(block, &[]);
@@ -831,25 +837,6 @@ impl<H: Host> Emitter<'_, '_, H> {
         let taken = self.block(target);
         let next = self.block(fallthrough);
         self.builder.ins().brif(condition, taken, &[], next, &[]);
-    }
-
-    fn callout(
-        &mut self,
-        address: usize,
-        params: &[ir::Value],
-        returns: bool,
-    ) -> Option<ir::Value> {
-        let mut signature = Signature::new(self.call_conv);
-        for _ in params {
-            signature.params.push(AbiParam::new(types::I64));
-        }
-        if returns {
-            signature.returns.push(AbiParam::new(types::I64));
-        }
-        let signature = self.builder.import_signature(signature);
-        let callee = self.builder.ins().iconst(types::I64, address as i64);
-        let call = self.builder.ins().call_indirect(signature, callee, params);
-        self.builder.inst_results(call).first().copied()
     }
 
     /// Emit the instruction at `pc`; returns whether control falls through.
@@ -1091,51 +1078,27 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.builder.ins().return_(&values);
                 return false;
             }
-            Op::WasmInstanceBinding => {
-                if Some(a) != self.plan.memory_register {
-                    let slot = self
-                        .builder
-                        .ins()
-                        .iconst(types::I64, i64::from(instruction.imm()));
-                    let context = self.context;
-                    let value = self
-                        .callout(
-                            binding_callout::<H> as *const () as usize,
-                            &[context, slot],
-                            true,
-                        )
-                        .expect("returns");
-                    self.write(a, Kind::I64, value);
-                }
-            }
+            // A binding is known statically per instruction; the globals it
+            // names are reached through the context.
+            Op::WasmInstanceBinding => {}
             Op::WasmGlobalGet => {
-                let binding = self.read(b, Kind::I64);
-                let context = self.context;
-                let bits = self
-                    .callout(
-                        global_get_callout::<H> as *const () as usize,
-                        &[context, binding],
-                        true,
-                    )
-                    .expect("returns");
-                let kind = self.kind_at(pc + 1, a);
-                let value = if kind == Kind::I32 {
-                    self.builder.ins().ireduce(types::I32, bits)
-                } else {
-                    bits
-                };
-                self.write(a, kind, value);
+                let slot = self.binding_slot(pc, b);
+                let address = self.global_address(slot);
+                let value = self
+                    .builder
+                    .ins()
+                    .load(types::I32, MemFlagsData::trusted().with_endianness(ir::Endianness::Little), address, 0);
+                self.write(a, Kind::I32, value);
             }
             Op::WasmGlobalSet => {
-                let binding = self.read(b, Kind::I64);
+                let slot = self.binding_slot(pc, b);
+                let address = self.global_address(slot);
                 let value = self.read(a, Kind::I32);
-                let bits = self.builder.ins().uextend(types::I64, value);
-                let context = self.context;
-                self.callout(
-                    global_set_callout::<H> as *const () as usize,
-                    &[context, binding, bits],
-                    false,
-                );
+                let wide = self.builder.ins().uextend(types::I64, value);
+                let encoded = self.builder.ins().bor_imm_u(wide, INTEGER_TAG as i64);
+                self.builder
+                    .ins()
+                    .store(MemFlagsData::trusted(), encoded, address, 0);
             }
             _ => unreachable!("planned instructions have a denotation"),
         }
@@ -1152,6 +1115,7 @@ impl<H: Host> Analysis<'_, H> {
         index: usize,
         plans: &[Option<Plan>],
         guarded: bool,
+        globals: &[u32],
     ) -> Option<Vec<u8>> {
         let plan = plans[index].as_ref()?;
         let function = &self.code.functions[index];
@@ -1178,6 +1142,7 @@ impl<H: Host> Analysis<'_, H> {
         let (context, base, length) = (parameters[0], parameters[1], parameters[2]);
         let mut emitter = Emitter {
             guarded,
+            globals,
             analysis: self,
             builder,
             plan,
@@ -1592,6 +1557,25 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let isa = target_isa()?;
+        // The globals compiled code accesses, each once.
+        let mut globals: Vec<u32> = Vec::new();
+        for (index, plan) in plans.iter().enumerate() {
+            let Some(plan) = plan else { continue };
+            let function = &code.functions[index];
+            for (pc, packed) in function.code.iter().enumerate() {
+                let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
+                if !matches!(instruction.op(), Op::WasmGlobalGet | Op::WasmGlobalSet) {
+                    continue;
+                }
+                if let Some(Slot::Binding(slot)) = plan.states[pc]
+                    .as_ref()
+                    .map(|state| state[usize::from(instruction.b())])
+                    && !globals.contains(&slot)
+                {
+                    globals.push(slot);
+                }
+            }
+        }
         // Accesses may rely on the guard when the memory has one and this
         // host resumes guard faults.
         let guarded = guard_trampoline().is_some()
@@ -1614,7 +1598,7 @@ impl<H: Host> Vm<H> {
             if plans[index].is_none() {
                 continue;
             }
-            let body = analysis.compile_function(&*isa, index, &plans, guarded)?;
+            let body = analysis.compile_function(&*isa, index, &plans, guarded, &globals)?;
             offsets[index] = Some(place(&mut bytes, body));
             let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?)?;
             entries[index] = Some(place(&mut bytes, entry));
@@ -1647,6 +1631,7 @@ impl<H: Host> Vm<H> {
             functions,
             memory_slot,
             guarded,
+            globals,
         })
     }
 
@@ -1724,6 +1709,14 @@ impl<H: Host> Vm<H> {
         }
         let marker = 0u8;
         let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
+        let mut globals: smallvec::SmallVec<[*mut Value; 8]> = smallvec::SmallVec::new();
+        for slot in &compiled.globals {
+            let binding = self.heap.environment_slot(env, *slot as usize)?;
+            match self.heap.get_mut(binding)? {
+                Cell::WasmGlobal { value, .. } => globals.push(value),
+                _ => return None,
+            }
+        }
         let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
             (start as usize, start as usize + size)
         });
@@ -1735,6 +1728,7 @@ impl<H: Host> Vm<H> {
             entry_stack: 0,
             guard_start,
             guard_end,
+            globals: globals.as_ptr(),
         };
         let mut out = 0u64;
         let status = match guard_trampoline() {
@@ -1776,6 +1770,9 @@ impl<H: Host> Vm<H> {
         }))
     }
 }
+
+/// The tag bits of an encoded i32, which a global's value carries.
+const INTEGER_TAG: u64 = crate::value::INTEGER_TAG_BITS;
 
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
