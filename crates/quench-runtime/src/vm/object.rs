@@ -634,6 +634,10 @@ impl<H: Host> Vm<H> {
                 // property on the cache miss path.
                 return Ok(unsafe { self.heap.property_get_unchecked(receiver, slot as usize) });
             }
+            if let Some(hit) = self.cached_ordinary_holder_field_value(index, receiver) {
+                self.profile.field_cache_hit(usize::from(hit.tier), hit.depth);
+                return Ok(hit.value);
+            }
             return self.get_field_polymorphic(p, object, atom, site);
         }
         self.get_field_uncached(p, object, atom, site)
