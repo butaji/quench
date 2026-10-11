@@ -1,7 +1,9 @@
 # Task 94: Splay collector after origin/v2 integration
 
 Date: 2026-10-11. Branch: `v2-cloud`. The explicitly fetched `origin/v2`
-head was `8c24b46b9`; the merge base was `883e5c00f`.
+head was `8c24b46b9`; the merge base was `883e5c00f`. The merge commit is
+`8eeb9f4da`, pushed to `origin/v2-cloud`. A post-commit fetch and merge found
+no newer `origin/v2` changes.
 
 ## Integration decisions
 
