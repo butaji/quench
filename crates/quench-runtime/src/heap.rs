@@ -1125,10 +1125,14 @@ impl Heap {
 #[cfg(test)]
 mod tests;
 
-/// Bits per radix pass when ordering property owners by arena offset.
-const OFFSET_RADIX_BITS: u32 = 16;
+/// Bits per radix pass when ordering property owners by arena offset. Each
+/// pass counts into a table of `2^bits` buckets, which every compacting
+/// collection allocates; a byte keeps it small.
+const OFFSET_RADIX_BITS: u32 = u8::BITS;
 /// An owner key keeps the arena offset in the high half and the slot index in the low half.
 const OWNER_KEY_HALF_BITS: u32 = u32::BITS;
+/// Radix passes that order the whole offset half.
+const OFFSET_RADIX_PASSES: u32 = OWNER_KEY_HALF_BITS / OFFSET_RADIX_BITS;
 
 fn pack_offset_owner(offset: usize, owner: usize) -> u64 {
     debug_assert!(offset <= u32::MAX as usize && owner <= u32::MAX as usize);
@@ -1140,13 +1144,13 @@ fn owner_of_packed(key: u64) -> usize {
 }
 
 /// Orders packed owner keys by arena offset in linear time. Offsets are distinct arena
-/// positions, so two stable 16-bit passes over the offset half give a full ordering.
+/// positions, so stable passes over the offset half give a full ordering.
 fn sort_by_unique_offset(keys: &mut Vec<u64>) {
     let buckets = 1usize << OFFSET_RADIX_BITS;
     let mask = (buckets - 1) as u64;
     let mut scratch = vec![0; keys.len()];
     let mut counts = vec![0usize; buckets + 1];
-    for pass in 0..2 {
+    for pass in 0..OFFSET_RADIX_PASSES {
         let shift = OWNER_KEY_HALF_BITS + pass * OFFSET_RADIX_BITS;
         counts.fill(0);
         for key in keys.iter() {
@@ -1171,7 +1175,9 @@ mod offset_order_tests {
         let mut state = 0x2545_f491_u64;
         let mut offsets: Vec<usize> = (0..5000)
             .map(|_| {
-                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 (state >> 33) as usize
             })
             .collect();
