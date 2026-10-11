@@ -263,6 +263,10 @@ impl Heap {
         self.roots.values().count()
     }
 
+    /// Slots that currently hold a cell.
+    pub(crate) fn live_slots(&self) -> usize {
+        self.slots.len() - self.free.len() - self.retired_slots
+    }
     pub fn alloc(&mut self, cell: Cell) -> Value {
         #[cfg(feature = "profile-aggregate")]
         {
@@ -281,12 +285,13 @@ impl Heap {
                 continue;
             };
             self.generations[index as usize] = generation;
-            self.slots.get_mut(index as usize).unwrap().cell = Some(cell);
+            let slot = &mut self.slots.get_mut(index as usize).unwrap().cell;
+            debug_assert!(slot.is_none(), "free-list slots hold no cell");
+            // SAFETY: `slot` is a valid, exclusively borrowed place. Sweeping empties a slot
+            // before freeing it, so overwriting it without dropping discards nothing.
+            unsafe { std::ptr::write(slot, Some(cell)) };
             #[cfg(feature = "profile-memory")]
             self.profile_allocation(index as usize);
-            self.peak_live = self
-                .peak_live
-                .max(self.slots.len() - self.free.len() - self.retired_slots);
             return Value::heap(index);
         }
         let index = self.slots.len();
@@ -297,9 +302,6 @@ impl Heap {
             self.marks.push(0);
         }
         self.generations.push(1);
-        self.peak_live = self
-            .peak_live
-            .max(self.slots.len() - self.free.len() - self.retired_slots);
         Value::heap(index as u32)
     }
     pub(crate) fn alloc_object_pair(
@@ -458,6 +460,9 @@ impl Heap {
         roots: impl IntoIterator<Item = Value>,
         mut object_roots: impl FnMut(Value, u32, &mut Vec<Value>),
     ) -> Vec<(Value, Value)> {
+        // Live slots grow only by allocation and shrink only by sweeping, so the peak is
+        // observed here and when it is reported rather than on every allocation.
+        self.peak_live = self.peak_live.max(self.live_slots());
         self.collections += 1;
         #[cfg(feature = "profile-aggregate")]
         {
