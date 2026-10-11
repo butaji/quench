@@ -1587,20 +1587,17 @@ impl<H: Host> Vm<H> {
                     self.profile.call_target(1, usize::from(window.count));
                     // Collection happens only at back edges, tail calls and explicit host
                     // safepoints, none of which can run while a frame is pushed; afterwards the
-                    // new frame itself roots the callee, receiver and arguments. Callee setup
-                    // never reads the caller's registers, so the caller's register file lends
-                    // the argument window directly instead of copying it.
-                    let registers = std::mem::take(&mut self.frames[f].registers);
-                    let start = usize::from(window.base);
+                    // new frame itself roots the callee, receiver and arguments.
+                    let arguments: *const [Value] = self.register_window(f, window);
+                    // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
                     let result = self.push_general_user_frame(
                         p,
                         id,
                         env,
                         this,
-                        &registers[start..start + usize::from(window.count)],
+                        unsafe { &*arguments },
                         CallContext::user_function(id, callee),
                     );
-                    self.frames[f].registers = registers;
                     self.direct_eval = previous_direct_eval;
                     self.parameter_eval = previous_parameter_eval;
                     let call_guard = result?;
@@ -1818,15 +1815,16 @@ impl<H: Host> Vm<H> {
                 {
                     let callee = self.read(f, i.register_b());
                     if let Some((id, env, this)) = self.inline_construct_target(p, f, callee) {
-                        let arguments = CallArguments::from_slice(self.register_window(f, window));
+                        let arguments: *const [Value] = self.register_window(f, window);
                         self.frames[f].pc = *pc;
                         self.construct_target = Some(callee);
+                        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
                         let pushed = self.push_general_user_frame(
                             p,
                             id,
                             env,
                             this,
-                            arguments.as_slice(),
+                            unsafe { &*arguments },
                             CallContext::user_function(id, callee),
                         );
                         self.construct_target = None;
