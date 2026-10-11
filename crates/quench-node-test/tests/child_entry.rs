@@ -183,7 +183,22 @@ fn deep_comparison_modes_match_node_values_keys_and_prototypes() {
       const symbol = Symbol();
       class A { constructor(){this.x=1} } class B { constructor(){this.x=1} }
       const a={x:1},b={x:1};a.self=a;b.self=b;
-      const cases = [[1,'1'],[NaN,NaN],[0,-0],[1n,1],[Symbol(),Symbol()],
+      const bytes = value => new Uint8Array(value).buffer;
+      const cases = [[new Date(1),new Date(2)],[new Date(NaN),new Date(NaN)],
+        [Object(1),Object(2)],[Object(0),Object(-0)],[Object(NaN),Object(NaN)],
+        [/a/g,/b/g],[/a/g,/a/g],[new Error('a'),new Error('b')],
+        [new Map([[{x:1},2]]),new Map([[{x:1},2]])],
+        [new Map([[1,2]]),new Map([[1,3]])],
+        [new Set([{x:1},2]),new Set([2,{x:1}])],
+        [new Set([1]),new Set([2])],[new WeakMap(),new WeakMap()],
+        [Promise.resolve(1),Promise.resolve(1)],
+        [new Uint8Array([1,2]),new Uint8Array([1,3])],
+        [new Uint8Array([1,2]),new Uint16Array([513])],
+        [new Float32Array([0]),new Float32Array([-0])],
+        [new Float64Array([NaN]),new Float64Array([NaN])],
+        [bytes([1,2]),bytes([1,3])],
+        [new DataView(bytes([1,2])),new DataView(bytes([1,3]))],
+        [1,'1'],[NaN,NaN],[0,-0],[1n,1],[Symbol(),Symbol()],
         [()=>{},()=>{}],[new A(),new B()],[a,b],[new Array(1),new Array(2)],
         [[,],[undefined]],[[,],[,]], [{[symbol]:1},{[symbol]:2}],
         [{[symbol]:1},{[Symbol()]:1}], [{x:1},{x:'1'}],
@@ -193,6 +208,13 @@ fn deep_comparison_modes_match_node_values_keys_and_prototypes() {
         outcome(()=>assert.deepEqual(a,b)),outcome(()=>assert.notDeepEqual(a,b)),
         outcome(()=>assert.deepStrictEqual(a,b)),outcome(()=>assert.notDeepStrictEqual(a,b)),
         util.isDeepStrictEqual(a,b),util.isDeepStrictEqual(a,b,true)])));
+      console.log(JSON.stringify([
+        [{x:1,y:2},{x:1}], [{x:1},{x:1,y:2}],
+        [[1,2,3],[1,3]], [[1,2],[2,1]],
+        [new Uint8Array([1,2,3]),new Uint8Array([1,3])],
+        [new Set([{x:1,y:2},3]),new Set([{x:1}])],
+        [new Map([[{x:1,y:2},{a:1,b:2}]]),new Map([[{x:1},{a:1}]])]
+      ].map(([a,b])=>outcome(()=>assert.partialDeepStrictEqual(a,b)))));
       console.log(JSON.stringify(['equal','notEqual','deepEqual','notDeepEqual'].map(name=>outcome(()=>assert[name]()))));
       console.log(outcome(()=>assert.equal(NaN,NaN)),util.isDeepStrictEqual());
       Object.keys=Object.getOwnPropertySymbols=Object.getPrototypeOf=Array.isArray=()=>{throw Error('patched')};

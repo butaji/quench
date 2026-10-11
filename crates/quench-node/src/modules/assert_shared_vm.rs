@@ -1,7 +1,7 @@
 //! Shared-VM operations for the Node `assert` CommonJS builtin.
 
 use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError};
+use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
 
 const MISSING_ASSERT_ARGS: &str = "The \"actual\" and \"expected\" arguments must be specified";
 const ASSERTION_FAILED: &str = "Expected values to be strictly equal";
@@ -70,41 +70,9 @@ pub(crate) fn module(
     set(context, assert, "notStrictEqual", not_strict_equal)?;
     set(context, assert, "deepStrictEqual", deep_strict_equal)?;
     set(context, assert, "notDeepStrictEqual", not_deep_strict_equal)?;
-    let partial_factory = context.evaluate_script_rooted(
-        r#"(deepStrictEqual) => function partialDeepStrictEqual(actual, expected, message) {
-  const compare = (actualValue, expectedValue) => {
-    if (expectedValue === null || typeof expectedValue !== "object") {
-      deepStrictEqual(actualValue, expectedValue, message);
-      return;
-    }
-    if (actualValue === null || typeof actualValue !== "object") {
-      deepStrictEqual(actualValue, expectedValue, message);
-      return;
-    }
-    if (Array.isArray(expectedValue)) {
-      if (!Array.isArray(actualValue) || actualValue.length !== expectedValue.length) {
-        deepStrictEqual(actualValue, expectedValue, message);
-      }
-      for (let i = 0; i < expectedValue.length; i++) compare(actualValue[i], expectedValue[i]);
-      return;
-    }
-    for (const key of Reflect.ownKeys(expectedValue)) {
-      if (!Reflect.has(actualValue, key)) deepStrictEqual(undefined, expectedValue[key], message);
-      compare(actualValue[key], expectedValue[key]);
-    }
-  };
-  compare(actual, expected);
-}"#,
-        "node:assert/partial-deep-strict-equal.js",
-    )?;
-    let partial_deep_strict_equal =
-        context.call_rooted(partial_factory, undefined, &[deep_strict_equal])?;
-    set(
-        context,
-        assert,
-        "partialDeepStrictEqual",
-        partial_deep_strict_equal,
-    )?;
+    let partial =
+        context.host_function(crate::host::shared_vm::operation("partialDeepStrictEqual"))?;
+    set(context, assert, "partialDeepStrictEqual", partial)?;
     set(context, assert, "match", match_string)?;
     set(context, assert, "doesNotMatch", does_not_match)?;
     set(context, assert, "fail", fail)?;
@@ -164,12 +132,7 @@ pub(crate) fn module(
     set(context, strict, "strictEqual", strict_equal)?;
     set(context, strict, "notStrictEqual", not_strict_equal)?;
     set(context, strict, "deepStrictEqual", deep_strict_equal)?;
-    set(
-        context,
-        strict,
-        "partialDeepStrictEqual",
-        partial_deep_strict_equal,
-    )?;
+    set(context, strict, "partialDeepStrictEqual", partial)?;
     set(context, strict, "notDeepStrictEqual", not_deep_strict_equal)?;
     set(context, strict, "match", match_string)?;
     set(context, strict, "doesNotMatch", does_not_match)?;
@@ -332,6 +295,7 @@ enum ComparisonMode {
     Loose,
     Strict,
     StrictWithoutPrototypes,
+    Partial,
 }
 
 pub(crate) fn equal(
@@ -396,6 +360,14 @@ pub(crate) fn not_deep_strict_equal(
     deep_assertion(context, args, ComparisonMode::Strict, true)
 }
 
+pub(crate) fn partial_deep_strict_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    deep_assertion(context, args, ComparisonMode::Partial, false)
+}
+
 pub(crate) fn legacy_deep_equal(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -430,6 +402,10 @@ fn deep_assertion(
         (ComparisonMode::Loose, true) => (
             "notDeepEqual",
             "Expected actual not to be loosely deep-equal to",
+        ),
+        (ComparisonMode::Partial, false) => (
+            "partialDeepStrictEqual",
+            "Expected values to be partially and strictly deep-equal",
         ),
         (_, false) => (
             "deepStrictEqual",
@@ -583,7 +559,8 @@ fn deep_equal(
     }
     seen.push((actual, expected));
     let array = context.is_array_rooted(actual)?;
-    if (mode == ComparisonMode::Strict && !same_prototype(context, actual, expected)?)
+    if (mode == ComparisonMode::Strict
+        && !same_prototype(context, actual, expected)?)
         || array != context.is_array_rooted(expected)?
     {
         return Ok(false);
@@ -591,21 +568,64 @@ fn deep_equal(
     if array {
         let actual_length = get(context, actual, "length")?;
         let expected_length = get(context, expected, "length")?;
-        if !context.same_value_rooted(actual_length, expected_length)? {
+        if mode == ComparisonMode::Partial {
+            let actual_length: usize = context.to_string(actual_length)?.parse().unwrap_or(0);
+            let expected_length: usize = context.to_string(expected_length)?.parse().unwrap_or(0);
+            if actual_length < expected_length {
+                return Ok(false);
+            }
+            let mut cursor = 0;
+            for index in 0..expected_length {
+                let expected_value = get(context, expected, &index.to_string())?;
+                let mut matched = false;
+                while cursor < actual_length {
+                    let actual_value = get(context, actual, &cursor.to_string())?;
+                    cursor += 1;
+                    let mut trial = seen.clone();
+                    if deep_equal(context, actual_value, expected_value, mode, &mut trial)? {
+                        *seen = trial;
+                        matched = true;
+                        break;
+                    }
+                }
+                if !matched {
+                    return Ok(false);
+                }
+            }
+        } else if !context.same_value_rooted(actual_length, expected_length)? {
             return Ok(false);
         }
     }
+    let actual_data = context.builtin_data_rooted(actual)?;
+    let expected_data = context.builtin_data_rooted(expected)?;
+    let indices = !matches!(actual_data, Some(BuiltinData::Bytes { .. }))
+        && !(array && mode == ComparisonMode::Partial);
+    if !builtin_equal(
+        context,
+        actual,
+        expected,
+        actual_data,
+        expected_data,
+        mode,
+        seen,
+    )? {
+        return Ok(false);
+    }
     let (actual_keys, actual_symbols) =
-        enumerable_keys(context, actual, mode != ComparisonMode::Loose)?;
+        enumerable_keys(context, actual, mode != ComparisonMode::Loose, indices)?;
     let (expected_keys, expected_symbols) =
-        enumerable_keys(context, expected, mode != ComparisonMode::Loose)?;
-    if actual_symbols.len() != expected_symbols.len() {
+        enumerable_keys(context, expected, mode != ComparisonMode::Loose, indices)?;
+    if mode != ComparisonMode::Partial && actual_symbols.len() != expected_symbols.len() {
         return Ok(false);
     }
-    if actual_keys != expected_keys {
+    if mode == ComparisonMode::Partial {
+        if expected_keys.iter().any(|key| !actual_keys.contains(key)) {
+            return Ok(false);
+        }
+    } else if actual_keys != expected_keys {
         return Ok(false);
     }
-    for key in actual_keys {
+    for key in expected_keys {
         let key = context.string_rooted(&key);
         let left = context.get_property_rooted(actual, key)?;
         let right = context.get_property_rooted(expected, key)?;
@@ -613,9 +633,9 @@ fn deep_equal(
             return Ok(false);
         }
     }
-    for key in actual_symbols {
+    for key in expected_symbols {
         let mut present = false;
-        for expected_key in &expected_symbols {
+        for expected_key in &actual_symbols {
             if context.same_value_rooted(key, *expected_key)? {
                 present = true;
                 break;
@@ -633,14 +653,187 @@ fn deep_equal(
     Ok(true)
 }
 
+fn builtin_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    actual: RootId,
+    expected: RootId,
+    left: Option<BuiltinData>,
+    right: Option<BuiltinData>,
+    mode: ComparisonMode,
+    seen: &mut Vec<(RootId, RootId)>,
+) -> Result<bool, RootedError> {
+    use BuiltinData::*;
+    match (left, right) {
+        (None, None) => Ok(true),
+        (Some(Primitive { brand: a, value: x }), Some(Primitive { brand: b, value: y })) => {
+            Ok(a == b && context.same_value_rooted(x, y)?)
+        }
+        (Some(Bytes { brand: a, bytes: x }), Some(Bytes { brand: b, bytes: y })) => {
+            if a != b {
+                return Ok(false);
+            }
+            if mode == ComparisonMode::Loose {
+                if let (Some(x), Some(y)) = (
+                    context.floating_view_values_rooted(actual)?,
+                    context.floating_view_values_rooted(expected)?,
+                ) {
+                    return Ok(x.len() == y.len() && x.iter().zip(y).all(|(a, b)| *a == b));
+                }
+            }
+            if mode == ComparisonMode::Partial && x.len() != y.len() {
+                let mut cursor = 0;
+                for byte in y {
+                    let Some(offset) = x[cursor..].iter().position(|candidate| *candidate == byte)
+                    else {
+                        return Ok(false);
+                    };
+                    cursor += offset + 1;
+                }
+                return Ok(true);
+            }
+            Ok(x == y)
+        }
+        (Some(RegExp), Some(RegExp)) => {
+            for key in ["source", "flags", "lastIndex"] {
+                let x = get(context, actual, key)?;
+                let y = get(context, expected, key)?;
+                if !context.strict_equal_rooted(x, y)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        (Some(Error), Some(Error)) => {
+            for key in ["name", "message", "cause", "errors"] {
+                let x = get(context, actual, key)?;
+                let y = get(context, expected, key)?;
+                if !deep_equal(context, x, y, mode, seen)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        (Some(Map(x)), Some(Map(y))) => {
+            let (x, y) = if mode == ComparisonMode::Partial {
+                if y.len() > x.len() {
+                    return Ok(false);
+                }
+                (y, x)
+            } else {
+                if x.len() != y.len() {
+                    return Ok(false);
+                }
+                (x, y)
+            };
+            let mut used = vec![false; y.len()];
+            for (key, value) in x {
+                let mut matched = false;
+                for (index, (other_key, other_value)) in y.iter().copied().enumerate() {
+                    if used[index] {
+                        continue;
+                    }
+                    let mut trial = seen.clone();
+                    if deep_equal(
+                        context,
+                        if mode == ComparisonMode::Partial {
+                            other_key
+                        } else {
+                            key
+                        },
+                        if mode == ComparisonMode::Partial {
+                            key
+                        } else {
+                            other_key
+                        },
+                        mode,
+                        &mut trial,
+                    )? && deep_equal(
+                        context,
+                        if mode == ComparisonMode::Partial {
+                            other_value
+                        } else {
+                            value
+                        },
+                        if mode == ComparisonMode::Partial {
+                            value
+                        } else {
+                            other_value
+                        },
+                        mode,
+                        &mut trial,
+                    )? {
+                        *seen = trial;
+                        used[index] = true;
+                        matched = true;
+                        break;
+                    }
+                }
+                if !matched {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        (Some(Set(x)), Some(Set(y))) => {
+            let (x, y) = if mode == ComparisonMode::Partial {
+                if y.len() > x.len() {
+                    return Ok(false);
+                }
+                (y, x)
+            } else {
+                if x.len() != y.len() {
+                    return Ok(false);
+                }
+                (x, y)
+            };
+            let mut used = vec![false; y.len()];
+            for value in x {
+                let mut matched = false;
+                for (index, other) in y.iter().copied().enumerate() {
+                    if used[index] {
+                        continue;
+                    }
+                    let mut trial = seen.clone();
+                    if deep_equal(
+                        context,
+                        if mode == ComparisonMode::Partial {
+                            other
+                        } else {
+                            value
+                        },
+                        if mode == ComparisonMode::Partial {
+                            value
+                        } else {
+                            other
+                        },
+                        mode,
+                        &mut trial,
+                    )? {
+                        *seen = trial;
+                        used[index] = true;
+                        matched = true;
+                        break;
+                    }
+                }
+                if !matched {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 fn enumerable_keys(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
     symbols: bool,
+    indices: bool,
 ) -> Result<(Vec<String>, Vec<RootId>), RootedError> {
     let mut names = Vec::new();
     let mut symbol_keys = Vec::new();
-    for key in context.enumerable_own_keys_rooted(value, symbols)? {
+    for key in context.enumerable_own_keys_rooted(value, symbols, indices)? {
         if let Some(name) = context.string_text(key)? {
             names.push(name);
         } else if symbols {

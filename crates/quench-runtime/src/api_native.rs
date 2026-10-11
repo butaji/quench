@@ -50,6 +50,40 @@ pub enum BuiltinBrand {
     BoxedPrimitive,
 }
 
+/// Intrinsic payload snapshot. Value roots remain scoped to the native callback.
+#[derive(Debug)]
+pub enum BuiltinData<T = RootId> {
+    Primitive { brand: BuiltinBrand, value: T },
+    Bytes { brand: BuiltinBrand, bytes: Vec<u8> },
+    Map(Vec<(T, T)>),
+    Set(Vec<T>),
+    RegExp,
+    Error,
+    Opaque,
+}
+
+impl<T> BuiltinData<T> {
+    pub(crate) fn map_values<U>(self, mut map: impl FnMut(T) -> U) -> BuiltinData<U> {
+        match self {
+            Self::Primitive { brand, value } => BuiltinData::Primitive {
+                brand,
+                value: map(value),
+            },
+            Self::Bytes { brand, bytes } => BuiltinData::Bytes { brand, bytes },
+            Self::Map(entries) => BuiltinData::Map(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (map(key), map(value)))
+                    .collect(),
+            ),
+            Self::Set(entries) => BuiltinData::Set(entries.into_iter().map(map).collect()),
+            Self::RegExp => BuiltinData::RegExp,
+            Self::Error => BuiltinData::Error,
+            Self::Opaque => BuiltinData::Opaque,
+        }
+    }
+}
+
 pub type HostCallback<H> =
     for<'a> fn(&mut NativeContext<'a, H>, RootId, &[RootId]) -> Result<RootId, RootedError>;
 
@@ -141,6 +175,34 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Copy builtin internal data without invoking guest properties or proxy traps.
+    pub fn builtin_data_rooted(
+        &mut self,
+        root: RootId,
+    ) -> Result<Option<BuiltinData>, RootedError> {
+        let result = self.vm.embedding_builtin_data(root);
+        let data = result.map_err(|error| self.error(error))?;
+        Ok(data.map(|data| data.map_values(|value| self.scoped_value(value))))
+    }
+
+    /// Read floating-point view elements through their internal slots.
+    pub fn floating_view_values_rooted(
+        &mut self,
+        root: RootId,
+    ) -> Result<Option<Vec<f64>>, RootedError> {
+        let result = self.vm.embedding_floating_view_values(root);
+        result.map_err(|error| self.error(error))
+    }
+
+    pub fn strict_equal_rooted(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_strict_equal(left, right);
+        result.map_err(|error| self.error(error))
+    }
+
     /// Apply IsArray, including proxy target and revocation semantics.
     pub fn is_array_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
         let result = self.vm.embedding_is_array(root);
@@ -158,8 +220,11 @@ impl<'a, H: Host> NativeContext<'a, H> {
         &mut self,
         root: RootId,
         include_symbols: bool,
+        include_indices: bool,
     ) -> Result<Vec<RootId>, RootedError> {
-        let result = self.vm.embedding_enumerable_own_keys(root, include_symbols);
+        let result = self
+            .vm
+            .embedding_enumerable_own_keys(root, include_symbols, include_indices);
         let roots = result.map_err(|error| self.error(error))?;
         self.roots.extend(roots.iter().copied());
         Ok(roots)
