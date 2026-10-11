@@ -298,13 +298,7 @@ impl quench_runtime::Host for NodeHost {
         let referrer = Path::new(referrer);
         let internal = specifier.starts_with("internal/");
         let base = if internal {
-            let node_lib = std::env::current_dir()
-                .map_err(|error| error.to_string())?
-                .join("tests/node/lib");
-            // Node's upstream test suite imports `internal/*` from its own
-            // lib tree. Resolve those requests from that tree rather than
-            // treating them as npm package names.
-            node_lib
+            self.node_library_root.join("lib")
         } else {
             referrer.parent().unwrap_or(Path::new(".")).to_path_buf()
         };
