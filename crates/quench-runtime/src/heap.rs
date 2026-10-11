@@ -1064,6 +1064,7 @@ impl Heap {
         }?;
         (!value.is_deleted()).then_some(value)
     }
+    #[inline(always)]
     pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
         if let Some(values) = object.inline_properties() {
             debug_assert!(slot < INLINE_PROPERTY_COUNT);
@@ -1085,6 +1086,7 @@ impl Heap {
         };
         self.properties.set(vector, slot, value);
     }
+    #[inline(always)]
     pub(crate) unsafe fn property_set_unchecked(
         &mut self,
         object: Value,

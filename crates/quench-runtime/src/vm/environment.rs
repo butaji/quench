@@ -1339,7 +1339,21 @@ impl<H: Host> Vm<H> {
         Some(env)
     }
 
-    fn skip_with_environment_layers(&self, mut env: Value) -> Option<Value> {
+    #[inline(always)]
+    fn skip_with_environment_layers(&self, env: Value) -> Option<Value> {
+        // With-object and lexical-this wrappers are allocated function-less, and environment
+        // clones keep their source's function, so a function's own layer ends the walk before
+        // its boxed scope is read.
+        match self.heap.get(env) {
+            Some(Cell::Environment { function, .. }) if *function == u32::MAX => {
+                self.skip_function_less_layers(env)
+            }
+            _ => Some(env),
+        }
+    }
+
+    #[inline(never)]
+    fn skip_function_less_layers(&self, mut env: Value) -> Option<Value> {
         while let Some(Cell::Environment {
             parent,
             function,
@@ -1347,15 +1361,18 @@ impl<H: Host> Vm<H> {
             scope,
         }) = self.heap.get(env)
         {
-            // Only a slotless, function-less, non-eval layer can be a lexical-this wrapper, so
-            // its dynamic bindings are read only after those field checks pass.
-            let lexical_this_wrapper =
-                !scope.root_eval_scope && *function == u32::MAX && slots.is_empty() && {
-                    let dynamic_bindings = self.heap.environment_bindings(env)?;
-                    dynamic_bindings.is_empty()
-                        || (dynamic_bindings.len() == 1
-                            && dynamic_bindings[0].0 == self.runtime_atoms.lexical_this)
-                };
+            if *function != u32::MAX {
+                debug_assert!(scope.with_objects.is_empty());
+                break;
+            }
+            // Only a slotless, non-eval layer can be a lexical-this wrapper, so its dynamic
+            // bindings are read only after those field checks pass.
+            let lexical_this_wrapper = !scope.root_eval_scope && slots.is_empty() && {
+                let dynamic_bindings = self.heap.environment_bindings(env)?;
+                dynamic_bindings.is_empty()
+                    || (dynamic_bindings.len() == 1
+                        && dynamic_bindings[0].0 == self.runtime_atoms.lexical_this)
+            };
             if scope.with_objects.is_empty() && !lexical_this_wrapper {
                 break;
             }
@@ -1377,6 +1394,7 @@ impl<H: Host> Vm<H> {
         self.load_environment_binding(p, env, slot)
     }
 
+    #[inline(always)]
     fn load_environment_binding(
         &mut self,
         p: &ResidualProgram,
@@ -1392,6 +1410,18 @@ impl<H: Host> Vm<H> {
         {
             return Ok(value);
         }
+        self.load_projected_environment_binding(p, env, slot)
+    }
+
+    /// Reads a root-function projection (global var, global lexical or module import) or
+    /// reports an uninitialized binding.
+    #[inline(never)]
+    fn load_projected_environment_binding(
+        &mut self,
+        p: &ResidualProgram,
+        env: Value,
+        slot: u16,
+    ) -> Result<Value, JsError> {
         let Cell::Environment {
             function, scope, ..
         } = self

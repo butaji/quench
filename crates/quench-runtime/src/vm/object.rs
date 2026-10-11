@@ -481,21 +481,29 @@ impl<H: Host> Vm<H> {
         self.heap
             .alloc_object_pair(self.object_proto, shape, first, second)
     }
+    #[inline(always)]
     pub(super) fn object_site_shape(&mut self, program: &ResidualProgram, site: usize) -> u32 {
-        let atoms = &program.object_sites[site].atoms;
-        if !self.specialized || !program.specialized {
-            return atoms
-                .iter()
-                .fold(0, |shape, atom| self.transition_shape(shape, *atom));
+        if self.specialized && program.specialized {
+            let cache_site = self.object_cache_index(site);
+            if self.object_shapes[cache_site] != u32::MAX {
+                return self.object_shapes[cache_site];
+            }
         }
-        let cache_site = self.object_cache_index(site);
-        if self.object_shapes[cache_site] != u32::MAX {
-            return self.object_shapes[cache_site];
-        }
-        let shape = atoms
+        self.derive_object_site_shape(program, site)
+    }
+
+    /// Walks a literal site's transitions from the empty shape, recording the result when
+    /// shape caches are active.
+    #[inline(never)]
+    fn derive_object_site_shape(&mut self, program: &ResidualProgram, site: usize) -> u32 {
+        let shape = program.object_sites[site]
+            .atoms
             .iter()
             .fold(0, |shape, atom| self.transition_shape(shape, *atom));
-        self.object_shapes[cache_site] = shape;
+        if self.specialized && program.specialized {
+            let cache_site = self.object_cache_index(site);
+            self.object_shapes[cache_site] = shape;
+        }
         shape
     }
     pub(super) fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
@@ -562,19 +570,35 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
-        // A site is only populated after the atom and a non-dictionary receiver shape passed
-        // `shape_property_lookup_cell`, and an ordinary object is eligible whenever those hold,
-        // so a monomorphic own-shape hit needs no further eligibility probe.
+        // A site is only populated after the atom and non-dictionary receiver and holder shapes
+        // passed `shape_property_lookup_cell`, and an ordinary object is eligible whenever those
+        // hold, so a monomorphic hit on ordinary objects needs no further eligibility probe.
         if self.specialized
             && p.specialized
             && let Some(Cell::Object(receiver)) = self.heap.get(object)
             && !receiver.is_module_namespace()
-            && let Some(hit) = self.cached_field_value(self.field_cache_index(site), receiver)
+            && let site = self.field_cache_index(site)
+            && let Some(hit) = self
+                .cached_field_value(site, receiver)
+                .or_else(|| self.cached_ordinary_holder_field_value(site, receiver))
         {
             self.profile
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return Ok(hit.value);
         }
+        self.get_field_uncached(p, object, atom, site)
+    }
+
+    /// The receiver-shape miss path of `get_field_cached`: strings, proxies, prototype holders,
+    /// cache population and generic lookup.
+    #[inline(never)]
+    fn get_field_uncached(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+    ) -> Result<Value, JsError> {
         let lookup = match self.heap.get(object) {
             Some(Cell::String(_)) if self.specialized && p.specialized => {
                 if !self.field_cache_atom_eligible(atom) {
@@ -661,6 +685,38 @@ impl<H: Host> Vm<H> {
             });
         }
         None
+    }
+
+    /// The monomorphic prototype-holder hit when the immediate prototype is an ordinary object;
+    /// any other holder takes `cached_holder_field_value` on the uncached path.
+    #[inline(always)]
+    fn cached_ordinary_holder_field_value(
+        &self,
+        site: usize,
+        receiver: &Object,
+    ) -> Option<FieldCacheHit> {
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(site) };
+        if cache.holder == NO_FIELD_HOLDER || cache.receiver != receiver.shape() {
+            return None;
+        }
+        let Some(Cell::Object(holder)) = self.heap.get(receiver.proto) else {
+            return None;
+        };
+        if holder.is_module_namespace() || cache.holder != holder.shape() {
+            return None;
+        }
+        // SAFETY: both immutable shapes and the property slot were recorded together after
+        // confirming an immediate-prototype data property.
+        let value = unsafe {
+            self.heap
+                .property_get_unchecked(holder, cache.slot as usize)
+        };
+        Some(FieldCacheHit {
+            value,
+            tier: 0,
+            depth: 1,
+        })
     }
 
     #[inline(always)]
@@ -1173,20 +1229,8 @@ impl<H: Host> Vm<H> {
         site: u16,
         strict: bool,
     ) -> Result<(), JsError> {
-        // Assignment to a nullish base is an abrupt completion regardless of
-        // strictness. Keep it on the canonical realm-owned TypeError path;
-        // the generic object mutator's fallback error is not an ECMAScript
-        // error object and loses constructor identity at the Test262 boundary.
-        if object.is_null() || object.is_undefined() {
-            return Err(self.type_error(
-                p,
-                if object.is_null() {
-                    "cannot set properties of null".into()
-                } else {
-                    "cannot set properties of undefined".into()
-                },
-            ));
-        }
+        // Only an ordinary object reaches the shape cache, so a nullish base always falls
+        // through to the uncached path's TypeError.
         if self.specialized
             && p.specialized
             && !self.is_private_name(atom)
@@ -1202,6 +1246,35 @@ impl<H: Host> Vm<H> {
             {
                 return Ok(());
             }
+        }
+        self.set_field_uncached(p, object, atom, value, site, strict)
+    }
+
+    /// The shape-cache miss path of `set_field_cached`: nullish and primitive bases, proxies,
+    /// private names and generic property assignment.
+    #[inline(never)]
+    fn set_field_uncached(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+        strict: bool,
+    ) -> Result<(), JsError> {
+        // Assignment to a nullish base is an abrupt completion regardless of
+        // strictness. Keep it on the canonical realm-owned TypeError path;
+        // the generic object mutator's fallback error is not an ECMAScript
+        // error object and loses constructor identity at the Test262 boundary.
+        if object.is_null() || object.is_undefined() {
+            return Err(self.type_error(
+                p,
+                if object.is_null() {
+                    "cannot set properties of null".into()
+                } else {
+                    "cannot set properties of undefined".into()
+                },
+            ));
         }
         if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
@@ -1452,7 +1525,9 @@ impl<H: Host> Vm<H> {
         } else {
             return false;
         };
-        let invalidates_method = self.cached_store_is_callable(object, cache.slot as usize, value);
+        // Callable writes matter only to method caches, so atoms no cache names skip the probe.
+        let invalidates_method = self.method_caches_may_name(atom)
+            && self.cached_store_is_callable(object, cache.slot as usize, value);
         // SAFETY: a matching immutable shape proves the cached slot layout.
         unsafe {
             self.heap

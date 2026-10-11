@@ -519,7 +519,7 @@ pub(super) enum StepResult {
     TailCall,
     PushFrame {
         destination: Register,
-        stack_guard: crate::stack::StackGuard,
+        call_guard: crate::stack::GuestCallGuard,
         /// For `new`: the allocated receiver, the result unless the callee returns an object.
         construct_this: Option<Value>,
     },
@@ -552,10 +552,6 @@ pub(super) enum FrameOutcome {
         delegated_result: Option<Value>,
         frame: Option<Frame>,
     },
-}
-enum UserFrameStart {
-    Outcome(FrameOutcome),
-    Pushed(crate::stack::StackGuard),
 }
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -706,6 +702,10 @@ pub(crate) struct Vm<H> {
     runtime_atoms: RuntimeAtoms,
     method_caches: Vec<[MethodCache; 2]>,
     megamorphic_methods: Vec<MethodCacheSet>,
+    /// A filter over the atoms method caches may name: bit `atom % u64::BITS` is set when an
+    /// entry for the atom is recorded and the whole filter resets when every method cache is
+    /// cleared, so a clear bit proves that no method cache names the atom.
+    method_cache_atoms: u64,
     #[cfg(feature = "profile-aggregate")]
     invalidated_methods: FxHashMap<MethodCacheKey, InvalidatedMethod>,
     object_shapes: Vec<u32>,
@@ -930,14 +930,21 @@ impl<H: Host> Vm<H> {
             self.realm.global_lexical_bindings.insert(atom, value);
         }
     }
+    /// Publishes a finished script root's global lexical bindings; every other activation
+    /// returns without leaving the caller.
+    #[inline(always)]
     pub(super) fn persist_global_lexical_bindings(
         &mut self,
         program: &ResidualProgram,
         frame: &Frame,
     ) {
-        if !self.eval_script_context || frame.function != ROOT_FUNCTION_ID {
-            return;
+        if self.eval_script_context && frame.function == ROOT_FUNCTION_ID {
+            self.persist_root_global_lexical_bindings(program, frame);
         }
+    }
+
+    #[inline(never)]
+    fn persist_root_global_lexical_bindings(&mut self, program: &ResidualProgram, frame: &Frame) {
         let metadata = &program.functions[ROOT_FUNCTION_ID as usize];
         let bindings = metadata
             .global_lexical_atoms
@@ -1307,6 +1314,7 @@ impl<H: Host> Vm<H> {
         self.to_precision_atom = self.intern_atom("toPrecision");
         self.method_caches = vec![[EMPTY_METHOD_CACHE; 2]; program.method_sites.len()];
         self.megamorphic_methods.clear();
+        self.method_cache_atoms = 0;
         self.object_shapes = vec![u32::MAX; program.object_sites.len()];
         self.descriptors.clear();
         self.function_values.clear();
@@ -1402,7 +1410,12 @@ impl<H: Host> Vm<H> {
     }
     #[inline(always)]
     fn active_cache_layout(&self) -> ProgramCacheLayout {
-        self.program_cache_layouts[self.active_program.raw() as usize]
+        let program = self.active_program.raw() as usize;
+        debug_assert!(program < self.program_cache_layouts.len());
+        // SAFETY: program ids come only from the main-program reset and the module and dynamic
+        // program stores, each of which appends that program's layout; layouts are never
+        // removed while ids live.
+        unsafe { *self.program_cache_layouts.get_unchecked(program) }
     }
     #[inline(always)]
     pub(super) fn field_cache_index(&self, site: u16) -> usize {
