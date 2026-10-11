@@ -1593,10 +1593,10 @@ impl<H: Host> Vm<H> {
                     self.frames[f].registers = registers;
                     self.direct_eval = previous_direct_eval;
                     self.parameter_eval = previous_parameter_eval;
-                    let stack_guard = result?;
+                    let call_guard = result?;
                     return Ok(StepResult::PushFrame {
                         destination: i.result_register(),
-                        stack_guard,
+                        call_guard,
                         construct_this: None,
                     });
                 }
@@ -1822,7 +1822,7 @@ impl<H: Host> Vm<H> {
                         self.construct_target = None;
                         return Ok(StepResult::PushFrame {
                             destination: i.result_register(),
-                            stack_guard: pushed?,
+                            call_guard: pushed?,
                             construct_this: Some(this),
                         });
                     }
