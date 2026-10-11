@@ -50,7 +50,7 @@ const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
 // occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x.
 const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
     numerator: 1,
-    denominator: 1,
+    denominator: 2,
 };
 
 #[derive(Clone, Copy)]
@@ -984,8 +984,13 @@ impl Heap {
         }
     }
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
+        self.remember_edge(object, value);
         let vector = {
-            let data = self.get_mut(object).unwrap().object_mut().unwrap();
+            let data = self
+                .get_mut_unremembered(object)
+                .unwrap()
+                .object_mut()
+                .unwrap();
             if data.inline_properties().is_some() {
                 data.set_inline_property(slot, value);
                 return;
