@@ -724,11 +724,16 @@ impl Engine {
         let bodies = bodies
             .into_iter()
             .map(|(locals, operators)| {
-                let operators = operators
-                    .into_iter()
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| Diagnostic::unsupported(name, e.to_string()))?;
-                Ok((locals, operators))
+                // Reserve to the source's bound instead of doubling: a large
+                // body's untouched capacity stays unmapped, and no grow copies
+                // the whole body while the old buffer is still live.
+                let operators = operators.into_iter();
+                let mut collected = Vec::with_capacity(operators.size_hint().1.unwrap_or(0));
+                for operator in operators {
+                    collected
+                        .push(operator.map_err(|e| Diagnostic::unsupported(name, e.to_string()))?);
+                }
+                Ok((locals, collected))
             })
             .collect::<Result<Vec<_>, Diagnostic>>()?;
         let bodies = inline::inline_leaf_calls(bodies, &signature_pool, inline::leaf_budget(mode))
