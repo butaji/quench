@@ -1469,6 +1469,9 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.unary(p, operator, operand)?
                 };
+                if i.returns_from_frame() {
+                    return Ok(StepResult::Return(v));
+                }
                 self.write(f, i.result_register(), v);
             }
             Op::Delete => {
