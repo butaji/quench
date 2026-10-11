@@ -74,6 +74,7 @@ impl<H: Host> Vm<H> {
         let function = &p.functions[id as usize];
         let mut frame = self.frame_pool.pop().unwrap_or_else(|| Box::new(Frame {
             context: CallContext::Internal,
+            reflected_parameters: 0,
             original_arguments: vec![],
             program: self.active_program,
             function: 0,
@@ -121,7 +122,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        self.initialize_frame_invocation(&mut frame, function, context, args);
+        self.initialize_frame_invocation(&p.atoms, &mut frame, function, context, args);
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -135,7 +136,7 @@ impl<H: Host> Vm<H> {
         frame.prepare_registers(register_count);
         if function.parameter_end_pc != 0 {
             self.frames.push(frame);
-            let result = self.run_frame_general_until(
+            let result = self.run_frame_general_until::<true>(
                 p,
                 self.frames.len() - 1,
                 Some(function.parameter_end_pc as usize),
@@ -1286,7 +1287,7 @@ impl<H: Host> Vm<H> {
             }
             frame.registers[register as usize] = args.first().copied().unwrap_or(Value::UNDEFINED);
         }
-        let previous_program = std::mem::replace(&mut self.active_program, frame.program);
+        let previous_program = self.replace_active_program(frame.program);
         let previous_global = self.switch_realm_global(realm);
         self.activate_frame(&mut frame);
         let frame = self.adopt_frame(frame);
@@ -1298,7 +1299,7 @@ impl<H: Host> Vm<H> {
         );
         let mut frame = self.frames.pop().expect("generator frame exists");
         self.deactivate_frame(&mut frame, &result);
-        self.active_program = previous_program;
+        self.set_active_program(previous_program);
         self.switch_realm_global(previous_global);
         let outcome = match result {
             Ok(outcome) => outcome,
@@ -1527,7 +1528,7 @@ impl<H: Host> Vm<H> {
                 }
                 frame.registers[register as usize] = value;
             }
-            let previous_program = std::mem::replace(&mut vm.active_program, frame.program);
+            let previous_program = vm.replace_active_program(frame.program);
             let previous_global = vm.switch_realm_global(realm);
             vm.activate_frame(&mut frame);
             let frame = vm.adopt_frame(frame);
@@ -1539,7 +1540,7 @@ impl<H: Host> Vm<H> {
             );
             let mut frame = vm.frames.pop().expect("async generator frame exists");
             vm.deactivate_frame(&mut frame, &result);
-            vm.active_program = previous_program;
+            vm.set_active_program(previous_program);
             vm.switch_realm_global(previous_global);
             match result {
                 Err(error) => {
