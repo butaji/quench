@@ -17,14 +17,167 @@ pub enum MemoryStorage {
 #[derive(Debug)]
 pub struct SharedMemory(std::sync::Mutex<MemoryState>);
 
+/// A linear memory's bytes. Either an ordinary heap buffer, or a fixed
+/// virtual reservation whose accessible prefix grows in place: the bytes
+/// never move, and every address a memory32 access can form (an i32 index
+/// plus a u32 offset plus the access width) lies inside the reservation, so
+/// an access past the accessible prefix faults instead of reaching other
+/// memory. Compiled code relies on that fault in place of a bounds check.
+#[derive(Debug)]
+pub struct LinearBytes {
+    repr: LinearRepr,
+}
+
+#[derive(Debug)]
+enum LinearRepr {
+    Heap(Vec<u8>),
+    Reserved { base: *mut u8, len: usize },
+}
+
+/// The page granularity of the reservation's accessible prefix.
+pub(crate) const HOST_PAGE: usize = 4096;
+
+/// The reservation a guarded memory32 needs: every index plus offset plus
+/// the widest scalar access, rounded up to a host page.
+pub(crate) const GUARDED_RESERVATION: usize =
+    (u32::MAX as usize + 1) * 2 + HOST_PAGE;
+
+impl LinearBytes {
+    pub(crate) fn heap(bytes: Vec<u8>) -> Self {
+        Self {
+            repr: LinearRepr::Heap(bytes),
+        }
+    }
+
+    /// `len` zero bytes in a guarded reservation; `None` when the host
+    /// cannot reserve the address space.
+    pub(crate) fn reserved(len: usize) -> Option<Self> {
+        if len > u32::MAX as usize + 1 {
+            return None;
+        }
+        // SAFETY: an inaccessible, unbacked private reservation; checked.
+        let base = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                GUARDED_RESERVATION,
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
+                -1,
+                0,
+            )
+        };
+        if base == libc::MAP_FAILED {
+            return None;
+        }
+        let mut bytes = Self {
+            repr: LinearRepr::Reserved {
+                base: base.cast(),
+                len: 0,
+            },
+        };
+        bytes.grow_to(len).then_some(bytes)
+    }
+
+    /// The reservation's base and size when the memory is guarded.
+    pub(crate) fn guard(&self) -> Option<(*mut u8, usize)> {
+        match self.repr {
+            LinearRepr::Reserved { base, .. } => Some((base, GUARDED_RESERVATION)),
+            LinearRepr::Heap(_) => None,
+        }
+    }
+
+    /// Grow to `len` bytes, zero-filling the new suffix; false when the host
+    /// refuses the memory.
+    pub(crate) fn grow_to(&mut self, new_len: usize) -> bool {
+        match &mut self.repr {
+            LinearRepr::Heap(bytes) => {
+                let extra = new_len.saturating_sub(bytes.len());
+                if bytes.try_reserve_exact(extra).is_err() {
+                    return false;
+                }
+                bytes.resize(new_len, 0);
+                true
+            }
+            LinearRepr::Reserved { base, len } => {
+                if new_len > u32::MAX as usize + 1 {
+                    return false;
+                }
+                let committed = len.next_multiple_of(HOST_PAGE);
+                let wanted = new_len.next_multiple_of(HOST_PAGE);
+                if wanted > committed {
+                    // SAFETY: a page-aligned range inside the reservation;
+                    // fresh anonymous pages read as zero.
+                    let result = unsafe {
+                        libc::mprotect(
+                            base.add(committed).cast(),
+                            wanted - committed,
+                            libc::PROT_READ | libc::PROT_WRITE,
+                        )
+                    };
+                    if result != 0 {
+                        return false;
+                    }
+                }
+                *len = new_len.max(*len);
+                true
+            }
+        }
+    }
+
+    /// Bytes the memory holds for external accounting.
+    pub(crate) fn capacity(&self) -> usize {
+        match &self.repr {
+            LinearRepr::Heap(bytes) => bytes.capacity(),
+            LinearRepr::Reserved { len, .. } => len.next_multiple_of(HOST_PAGE),
+        }
+    }
+}
+
+impl Drop for LinearBytes {
+    fn drop(&mut self) {
+        if let LinearRepr::Reserved { base, .. } = self.repr {
+            // SAFETY: the reservation this value owns.
+            unsafe { libc::munmap(base.cast(), GUARDED_RESERVATION) };
+        }
+    }
+}
+
+impl std::ops::Deref for LinearBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match &self.repr {
+            LinearRepr::Heap(bytes) => bytes,
+            // SAFETY: the accessible prefix of the reservation.
+            LinearRepr::Reserved { base, len } => unsafe { std::slice::from_raw_parts(*base, *len) },
+        }
+    }
+}
+
+impl std::ops::DerefMut for LinearBytes {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        match &mut self.repr {
+            LinearRepr::Heap(bytes) => bytes,
+            // SAFETY: as for `deref`; the memory state owns the bytes.
+            LinearRepr::Reserved { base, len } => unsafe {
+                std::slice::from_raw_parts_mut(*base, *len)
+            },
+        }
+    }
+}
+
+// SAFETY: the reservation is owned memory like a Vec's buffer; shared
+// memories synchronize their accesses through their lock.
+unsafe impl Send for LinearBytes {}
+unsafe impl Sync for LinearBytes {}
+
 #[derive(Debug)]
 pub struct MemoryState {
-    pub(crate) bytes: Vec<u8>,
+    pub(crate) bytes: LinearBytes,
     pub(super) waiters: Vec<super::wait::Waiter>,
 }
 
 impl MemoryState {
-    fn new(bytes: Vec<u8>) -> Self {
+    fn new(bytes: LinearBytes) -> Self {
         Self {
             bytes,
             waiters: Vec::new(),
@@ -47,8 +200,8 @@ impl MemoryGuard<'_> {
 }
 
 impl std::ops::Deref for MemoryGuard<'_> {
-    type Target = Vec<u8>;
-    fn deref(&self) -> &Vec<u8> {
+    type Target = LinearBytes;
+    fn deref(&self) -> &LinearBytes {
         match self {
             Self::Unshared(state) => &state.bytes,
             Self::Shared(state) => &state.bytes,
@@ -56,13 +209,13 @@ impl std::ops::Deref for MemoryGuard<'_> {
     }
 }
 impl std::ops::DerefMut for MemoryGuard<'_> {
-    fn deref_mut(&mut self) -> &mut Vec<u8> {
+    fn deref_mut(&mut self) -> &mut LinearBytes {
         &mut self.state().bytes
     }
 }
 
 impl MemoryStorage {
-    pub(crate) fn new(bytes: Vec<u8>, shared: bool) -> Self {
+    pub(crate) fn new(bytes: LinearBytes, shared: bool) -> Self {
         if shared {
             Self::Shared(std::sync::Arc::new(SharedMemory::new(bytes)))
         } else {
@@ -111,7 +264,7 @@ impl MemoryStorage {
 }
 
 impl SharedMemory {
-    pub(crate) fn new(bytes: Vec<u8>) -> Self {
+    pub(crate) fn new(bytes: LinearBytes) -> Self {
         Self(std::sync::Mutex::new(MemoryState::new(bytes)))
     }
 
@@ -656,8 +809,8 @@ mod storage_tests {
 
     #[test]
     fn shared_backing_preserves_mutations_and_orders_opposing_copy_locks() {
-        let first = Arc::new(MemoryStorage::new(vec![1; 32]));
-        let second = Arc::new(MemoryStorage::new(vec![2; 32]));
+        let first = Arc::new(MemoryStorage::new(super::LinearBytes::heap(vec![1; 32])));
+        let second = Arc::new(MemoryStorage::new(super::LinearBytes::heap(vec![2; 32])));
         let start = Arc::new(Barrier::new(2));
         std::thread::scope(|scope| {
             for (destination, source) in [(&first, &second), (&second, &first)] {
@@ -670,11 +823,11 @@ mod storage_tests {
                 });
             }
         });
-        assert_eq!(*first.lock(), *second.lock());
+        assert_eq!(&**first.lock(), &**second.lock());
         let backing = first.clone();
         std::thread::spawn(move || {
             let mut bytes = backing.lock();
-            bytes.resize(64, 0);
+            assert!(bytes.grow_to(64));
             bytes[48] = 7;
         })
         .join()

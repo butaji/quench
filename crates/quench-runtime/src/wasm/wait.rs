@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn waiter_registration_notification_and_timeout_share_one_lifecycle() {
-        let memory = SharedMemory::new(vec![0; 32]);
+        let memory = SharedMemory::new(crate::wasm::memory::LinearBytes::heap(vec![0; 32]));
         let (sender, receiver) = mpsc::channel();
         std::thread::scope(|scope| {
             let handles: Vec<_> = [
