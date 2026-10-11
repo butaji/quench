@@ -84,7 +84,17 @@ fn main() -> ExitCode {
             .iter()
             .position(|a| a == "--results")
             .and_then(|i| args.get(i + 1));
-        return run_all(filter, timeout, jobs, results);
+        let root = match args.iter().position(|arg| arg == "--parallel-dir") {
+            Some(index) => match args.get(index + 1) {
+                Some(path) => PathBuf::from(path),
+                None => {
+                    eprintln!("error: --parallel-dir requires a directory");
+                    return ExitCode::from(2);
+                }
+            },
+            None => PathBuf::from(PARALLEL_DIR),
+        };
+        return run_all(filter, timeout, jobs, results, root);
     }
     let profile = args
         .iter()
@@ -115,6 +125,7 @@ fn print_help() {
     println!("  --timeout-secs N                     isolate fixtures for N seconds (default 30)");
     println!();
     println!("options for --all:");
+    println!("  --parallel-dir PATH use another unchanged Node parallel checkout");
     println!("  --filter NAME       restrict fixtures by filename");
     println!("  --timeout-secs N    isolate each fixture with an N-second timeout (default 30)");
     println!("  --jobs N            run up to N isolated fixtures concurrently (default: available CPUs)");
@@ -214,9 +225,11 @@ fn run_all(
     timeout_secs: u64,
     jobs: usize,
     results_path: Option<&String>,
+    root: PathBuf,
 ) -> ExitCode {
     let runtime_commit = command_output("git", &["rev-parse", "HEAD"]);
-    let root = PathBuf::from(PARALLEL_DIR);
+    let tests_node_commit =
+        command_output("git", &["-C", &root.to_string_lossy(), "rev-parse", "HEAD"]);
     let mut entries = match quench_node_test::stages::discover_fixtures(&root) {
         Ok(entries) => entries,
         Err(error) => {
@@ -292,6 +305,7 @@ fn run_all(
             timeout_secs,
             jobs,
             &runtime_commit,
+            &tests_node_commit,
         ) {
             eprintln!("error: cannot write {path}: {error}");
             return ExitCode::from(2);
@@ -318,6 +332,7 @@ fn write_results(
     timeout_secs: u64,
     jobs: usize,
     runtime_commit: &str,
+    tests_node_commit: &str,
 ) -> std::io::Result<()> {
     let records: Vec<_> = results
         .iter()
@@ -333,7 +348,7 @@ fn write_results(
         "schema_version":2,"inventory_hash":format!("{inventory_hash:016x}"),"timeout_secs":timeout_secs,"jobs":jobs,
         "node_version":command_output("node", &["--version"]),
         "runtime_commit":runtime_commit,
-        "tests_node_commit":command_output("git", &["-C", "tests/node", "rev-parse", "HEAD"]),
+        "tests_node_commit":tests_node_commit,
         "platform":format!("{}-{}",std::env::consts::OS,std::env::consts::ARCH),
         "results":records,
     });

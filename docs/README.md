@@ -212,6 +212,25 @@ cargo run --profile iteration -p quench-node-test --bin run-parallel -- \
   --profile framework-core --filter test-path-join.js
 ```
 
+For the full inventory, use an unchanged Node checkout outside any enclosing
+JavaScript package. Otherwise a parent `package.json` can change the module
+type of upstream child scripts. Workers run from that checkout's root, matching
+the upstream harness; production module resolution uses ordinary package scopes.
+
+```sh
+NODE_FIXTURE_WORKTREE=$(mktemp -d)
+git -C tests/node worktree add --detach "$NODE_FIXTURE_WORKTREE" HEAD
+cargo build --profile iteration -p quench-node -p quench-node-test \
+  --bin quench-node --bin run-parallel
+target/iteration/run-parallel --all \
+  --parallel-dir "$NODE_FIXTURE_WORKTREE/test/parallel" \
+  --jobs 4 --timeout-secs 10 --results evidence/node-parallel.json
+```
+
+The report records the selected fixture revision and inventory hash at launch.
+Cases print as they complete. Every worker's process group is stopped after
+completion, failure, or timeout; Linux workers also reap orphaned children.
+
 ## Shared Wasm scopes
 
 Build and run the separately named shared-VM development target on explicit
