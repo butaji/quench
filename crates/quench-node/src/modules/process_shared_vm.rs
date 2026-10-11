@@ -9,6 +9,14 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Instant;
 
+pub(crate) fn collect_garbage(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    context.collect()?;
+    Ok(context.undefined())
+}
 
 const STDOUT_FD: i32 = 1;
 const STDERR_FD: i32 = 2;
@@ -2097,6 +2105,7 @@ fn drain_shared_jobs(
         }
         let unhandled = runtime.take_promise_rejection_unhandled_events();
         if unhandled.is_empty() {
+            runtime.clear_kept_objects();
             return Ok(());
         }
         dispatch_promise_rejection_batch(runtime, program, unhandled)?;

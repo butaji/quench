@@ -103,6 +103,11 @@ impl<H: Host> Runtime<H> {
         self.vm.execute_deferred_jobs(program).map(drop)
     }
 
+    /// Release WeakRef targets after the host completes a job and its microtasks.
+    pub fn clear_kept_objects(&mut self) {
+        self.vm.clear_kept_objects();
+    }
+
     /// Drain VM jobs at a host-selected checkpoint, including module jobs.
     pub fn run_host_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         program.validate().map_err(JsError::validation)?;

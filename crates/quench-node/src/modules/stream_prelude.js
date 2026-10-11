@@ -2612,9 +2612,8 @@
     }
     const item = st.pending.shift();
     updateBufferedRequestCount(st);
-    st.buffered -= item.chunkLength;
-    updateNeedDrain(st);
-    stream.write(
+    deps.replayWrite(
+      stream,
       item.chunk,
       item.encoding === "buffer" ? undefined : item.encoding,
       item.callback,

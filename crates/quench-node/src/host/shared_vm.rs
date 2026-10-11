@@ -11,6 +11,7 @@ pub(crate) use commonjs::source_kind;
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
+        method "gc" (0) => crate::modules::process_shared_vm::collect_garbage,
         method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
         method "utilCallbackifySettled" (1) => crate::modules::util_callbackify_shared_vm::settled,
         method "utilCallbackifyInvoke" (0) => crate::modules::util_callbackify_shared_vm::invoke,
@@ -124,7 +125,9 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netIsIPv4" (1) => crate::modules::net_shared_vm::is_ipv4,
         method "netIsIPv6" (1) => crate::modules::net_shared_vm::is_ipv6,
         method "netConnect" (3) => crate::modules::net_shared_vm::connect_operation,
-        method "netSocketWrite" (2) => crate::modules::net_shared_vm::write_operation,
+        method "streamReplayWrite" (4) => crate::modules::stream_shared_vm::replay_write,
+        method "netSocketAccountWrite" (4) => crate::modules::net_shared_vm::account_write_operation,
+        method "netSocketWrite" (3) => crate::modules::net_shared_vm::write_operation,
         method "netSocketEnd" (1) => crate::modules::net_shared_vm::end_operation,
         method "netSocketDestroy" (2) => crate::modules::net_shared_vm::destroy_operation,
         method "netSocketSetEncoding" (2) => crate::modules::net_shared_vm::set_encoding_operation,
@@ -158,6 +161,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsWriteStreamWrite" (3) => crate::modules::fs_shared_vm::write_stream::write,
         method "fsWriteStreamClose" (1) => crate::modules::fs_shared_vm::write_stream::close,
         method "fsReadFileSync" (2) => crate::modules::fs_shared_vm::read_file_sync,
+        method "fsValidateAbortSignal" (1) => crate::modules::fs_shared_vm::validate_read_signal,
+        method "fsReadFileComplete" (5) => crate::modules::fs_shared_vm::complete_read_file,
         method "fsMkdirSync" (2) => crate::modules::fs_shared_vm::sync::mkdir_sync,
         method "fsRmdirSync" (1) => crate::modules::fs_shared_vm::sync::rmdir_sync,
         method "fsMkdtempSync" (1) => crate::modules::fs_shared_vm::sync::mkdtemp_sync,
@@ -480,6 +485,24 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::text_decoder_shared_vm::install_global(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_text_decoder");
+        let expose_gc = context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .exec_argv
+            .iter()
+            .any(|flag| flag == "--expose-gc" || flag == "--expose_gc");
+        if expose_gc {
+            let collect = context.host_function(operation("gc"))?;
+            let factory = context.evaluate_script_rooted(
+                "collect => function gc(...args) { return collect(...args); }",
+                "node:bootstrap/gc.js",
+            )?;
+            let undefined = context.undefined();
+            let gc = context.call_rooted(factory, undefined, &[collect])?;
+            let key = context.string_rooted("gc");
+            context.define_data_property_rooted(global, key, gc, true, true, false)?;
+        }
         commonjs::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");
