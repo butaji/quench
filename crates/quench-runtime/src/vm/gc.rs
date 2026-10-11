@@ -536,33 +536,37 @@ impl<H: Host> Vm<H> {
         let mut live_shape_bits = vec![0_u64; shape_count.div_ceil(u64::BITS as usize)];
         let mut live_shapes = Vec::new();
         let shapes = &mut self.shapes;
-        let finalization_jobs =
-            self.heap
-                .collect_with_object_roots(roots, |trace_kind, owner, shape, roots| {
-                    let shape_index = shape as usize;
-                    let word = shape_index / u64::BITS as usize;
-                    let mask = 1_u64 << (shape_index % u64::BITS as usize);
-                    if trace_kind == GcTraceKind::VerifyFull {
-                        if shapes[shape_index].may_have_gc_roots {
-                            append_shape_roots(shapes, shape, roots);
-                        }
-                    } else {
-                        if full {
-                            live_shapes.push(shape);
-                        }
-                        if shapes[shape_index].may_have_gc_roots
-                            && live_shape_bits[word] & mask == 0
-                        {
-                            live_shape_bits[word] |= mask;
-                            append_shape_roots(shapes, shape, roots);
-                        }
+        let finalization_jobs = self.heap.collect_with_object_roots(
+            roots,
+            |trace_kind, owner, shape, roots| {
+                let shape_index = shape as usize;
+                let word = shape_index / u64::BITS as usize;
+                let mask = 1_u64 << (shape_index % u64::BITS as usize);
+                if trace_kind == GcTraceKind::VerifyFull {
+                    if shapes[shape_index].may_have_gc_roots {
+                        append_shape_roots(shapes, shape, roots);
                     }
-                    if !owned_roots.is_empty()
-                        && let Some(edges) = owned_roots.get(&owner)
-                    {
-                        roots.extend(edges.iter().copied());
+                } else {
+                    if full {
+                        live_shapes.push(shape);
                     }
-                }, full);
+                    if shapes[shape_index].may_have_gc_roots && live_shape_bits[word] & mask == 0 {
+                        live_shape_bits[word] |= mask;
+                        append_shape_roots(shapes, shape, roots);
+                    }
+                }
+                if !owned_roots.is_empty()
+                    && let Some(edges) = owned_roots.get(&owner)
+                {
+                    roots.extend(edges.iter().copied());
+                }
+            },
+            full,
+        );
+        // Heap weak fields are pruned during collection. Prune the VM-owned
+        // weak function cache before any post-collection cleanup can allocate
+        // into newly freed slots.
+        self.prune_function_values();
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.
@@ -584,7 +588,6 @@ impl<H: Host> Vm<H> {
         for id in attached_continuations.difference(&live_continuations) {
             self.resume_continuation(*id);
         }
-        self.prune_function_values();
         self.realm.jobs.extend(
             finalization_jobs
                 .into_iter()

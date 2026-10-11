@@ -24,9 +24,6 @@ const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
 const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
-const FIRST_HEAP_SLOT_GENERATION: u16 = 1;
-const OVERFLOW_HEAP_SLOT_GENERATION: u16 = 0;
-const FIRST_WIDE_HEAP_SLOT_GENERATION: u32 = u16::MAX as u32 + 1;
 
 #[derive(Clone, Copy)]
 struct GcHeadroomFactor {
@@ -119,9 +116,6 @@ pub(crate) struct Heap {
     free_by_slab: Vec<Vec<u16>>,
     free_slabs: Vec<u32>,
     free_slots: usize,
-    retired_slots: usize,
-    generations: Vec<u16>,
-    generation_overflow: FxHashMap<u32, u32>,
     external_bytes: usize,
     allocations: usize,
     allocations_since_full: usize,
@@ -137,68 +131,108 @@ pub(crate) struct Heap {
     properties: ValueArena,
     roots: RootTable,
     sparse_arrays: Option<Box<FxHashMap<u32, SparseElements>>>,
-    #[cfg(feature = "profile-aggregate")]
+    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
     memory_profile: memory_profile::MemoryProfile,
 }
-#[cfg(feature = "profile-aggregate")]
+#[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
 #[derive(Clone, Copy)]
 pub(crate) struct GcProfile {
+    #[cfg(feature = "profile-aggregate")]
     pub allocated_kinds: [u64; CellKind::COUNT],
+    #[cfg(feature = "profile-aggregate")]
     pub allocated_payload_bytes: [u64; CellKind::COUNT],
+    #[cfg(feature = "profile-aggregate")]
     pub allocated_size_buckets: [[u64; 8]; CellKind::COUNT],
+    #[cfg(feature = "profile-aggregate")]
     pub roots: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub work_items: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub max_worklist: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub marked: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub freed: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub sweep_slots: u64,
     pub mark_nanos: u64,
     pub full_mark_nanos: u64,
     pub minor_mark_nanos: u64,
     pub sweep_nanos: u64,
     pub mark_clear_nanos: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub full_collections: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub minor_collections: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub remembered_owner_scans: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub young_cells_swept: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub allocations_between_collections_total: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub allocations_between_collections_min: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub allocations_between_collections_max: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub survivors_total: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub survivors_min: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub survivors_max: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub marked_kinds: [u64; CellKind::COUNT],
 }
-#[cfg(feature = "profile-aggregate")]
+#[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
 impl Default for GcProfile {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "profile-aggregate")]
             allocated_kinds: [0; CellKind::COUNT],
+            #[cfg(feature = "profile-aggregate")]
             allocated_payload_bytes: [0; CellKind::COUNT],
+            #[cfg(feature = "profile-aggregate")]
             allocated_size_buckets: [[0; 8]; CellKind::COUNT],
+            #[cfg(feature = "profile-aggregate")]
             roots: 0,
+            #[cfg(feature = "profile-aggregate")]
             work_items: 0,
+            #[cfg(feature = "profile-aggregate")]
             max_worklist: 0,
+            #[cfg(feature = "profile-aggregate")]
             marked: 0,
+            #[cfg(feature = "profile-aggregate")]
             freed: 0,
+            #[cfg(feature = "profile-aggregate")]
             sweep_slots: 0,
             mark_nanos: 0,
             full_mark_nanos: 0,
             minor_mark_nanos: 0,
             sweep_nanos: 0,
             mark_clear_nanos: 0,
+            #[cfg(feature = "profile-aggregate")]
             full_collections: 0,
+            #[cfg(feature = "profile-aggregate")]
             minor_collections: 0,
+            #[cfg(feature = "profile-aggregate")]
             remembered_owner_scans: 0,
+            #[cfg(feature = "profile-aggregate")]
             young_cells_swept: 0,
+            #[cfg(feature = "profile-aggregate")]
             allocations_between_collections_total: 0,
-            allocations_between_collections_min: 0,
+            #[cfg(feature = "profile-aggregate")]
+            allocations_between_collections_min: u64::MAX,
+            #[cfg(feature = "profile-aggregate")]
             allocations_between_collections_max: 0,
+            #[cfg(feature = "profile-aggregate")]
             survivors_total: 0,
-            survivors_min: 0,
+            #[cfg(feature = "profile-aggregate")]
+            survivors_min: u64::MAX,
+            #[cfg(feature = "profile-aggregate")]
             survivors_max: 0,
+            #[cfg(feature = "profile-aggregate")]
             marked_kinds: [0; CellKind::COUNT],
         }
     }
@@ -332,6 +366,10 @@ impl Heap {
         self.roots.values().count()
     }
 
+    /// Slots that currently hold a cell.
+    pub(crate) fn live_slots(&self) -> usize {
+        self.slots.len() - self.free_slots
+    }
     pub fn alloc(&mut self, cell: Cell) -> Value {
         #[cfg(feature = "profile-aggregate")]
         {
@@ -358,33 +396,13 @@ impl Heap {
             }
             let slot = slab_index * SLOTS_PER_SLAB + offset as usize;
             let index = slot as u32;
-            let current = self.generations[slot];
-            if current == OVERFLOW_HEAP_SLOT_GENERATION {
-                let Some(current) = self.generation_overflow.get_mut(&index) else {
-                    self.retired_slots += 1;
-                    continue;
-                };
-                let Some(next) = current.checked_add(1) else {
-                    self.retired_slots += 1;
-                    continue;
-                };
-                *current = next;
-            } else if let Some(next) = current.checked_add(1) {
-                self.generations[slot] = next;
-            } else {
-                self.generations[slot] = OVERFLOW_HEAP_SLOT_GENERATION;
-                self.generation_overflow
-                    .insert(index, FIRST_WIDE_HEAP_SLOT_GENERATION);
-            }
-            self.slots.get_mut(index as usize).unwrap().cell = Some(cell);
+            self.slots.get_mut(slot).unwrap().cell = Some(cell);
             if track_young {
                 self.young.push(index);
             }
             #[cfg(feature = "profile-memory")]
-            self.profile_allocation(index as usize);
-            self.peak_live = self
-                .peak_live
-                .max(self.slots.len() - self.free_slots - self.retired_slots);
+            self.profile_allocation(slot);
+            self.peak_live = self.peak_live.max(self.live_slots());
             return Value::heap(index);
         }
         let index = self.slots.len();
@@ -398,13 +416,10 @@ impl Heap {
         if index / 64 == self.marks.len() {
             self.marks.push(0);
         }
-        self.generations.push(FIRST_HEAP_SLOT_GENERATION);
         if track_young {
             self.young.push(index as u32);
         }
-        self.peak_live = self
-            .peak_live
-            .max(self.slots.len() - self.free_slots - self.retired_slots);
+        self.peak_live = self.peak_live.max(self.live_slots());
         Value::heap(index as u32)
     }
     pub(crate) fn alloc_object_pair(
@@ -522,9 +537,6 @@ impl Heap {
         self.free_by_slab.clear();
         self.free_slabs.clear();
         self.free_slots = 0;
-        self.retired_slots = 0;
-        self.generations.clear();
-        self.generation_overflow.clear();
         self.external_bytes = 0;
         self.allocations = 0;
         self.allocations_since_full = 0;
@@ -543,7 +555,7 @@ impl Heap {
         self.roots.clear();
         self.sparse_arrays = None;
         self.collection_state = CollectionState::Idle;
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             self.gc_profile = GcProfile::default();
         }
@@ -599,10 +611,13 @@ impl Heap {
         } else {
             CollectionState::MinorMarking
         };
+        // Live slots grow only by allocation and shrink only by sweeping, so the peak is
+        // observed here and when it is reported rather than on every allocation.
+        self.peak_live = self.peak_live.max(self.live_slots());
         self.collections += 1;
         #[cfg(feature = "profile-aggregate")]
         let allocations_between_collections = self.allocations as u64;
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mark_started = std::time::Instant::now();
         #[cfg(feature = "profile-aggregate")]
         let mark_clear_started = std::time::Instant::now();
@@ -670,7 +685,7 @@ impl Heap {
         #[cfg(feature = "profile-aggregate")]
         let mut swept_slots = 0;
         let finalization_jobs = self.prune_weak_entries(full);
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             let mark_nanos = mark_started.elapsed().as_nanos() as u64;
             self.gc_profile.mark_nanos += mark_nanos;
@@ -680,7 +695,7 @@ impl Heap {
                 self.gc_profile.minor_mark_nanos += mark_nanos;
             }
         }
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
         let mut live = 0;
         let properties = &mut self.properties;
@@ -781,7 +796,7 @@ impl Heap {
         if full {
             self.compact_property_arena(property_owners);
         }
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
@@ -933,7 +948,7 @@ impl Heap {
     fn mark(marks: &mut [u64], index: usize) {
         marks[index / 64] |= 1 << (index % 64);
     }
-    #[cfg(feature = "profile-aggregate")]
+    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     pub(crate) const fn gc_profile(&self) -> GcProfile {
         self.gc_profile
     }
