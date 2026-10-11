@@ -29,3 +29,12 @@ pub(super) fn expression(value: &Expression<'_>) -> BindingTime<Constant> {
         _ => BindingTime::Dynamic,
     }
 }
+
+/// Whether a test is a literal whose ToBoolean is true, so a loop need not evaluate it.
+pub(super) fn always_truthy(value: &Expression<'_>) -> bool {
+    match expression(value).static_value() {
+        Some(Constant::Boolean(value)) => value,
+        Some(Constant::Number(value)) => value != 0.0 && !value.is_nan(),
+        _ => false,
+    }
+}

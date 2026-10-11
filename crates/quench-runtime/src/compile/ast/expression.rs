@@ -669,8 +669,20 @@ impl FunctionCompiler<'_, '_> {
                 0,
             );
         }
+        // `!x` is false exactly when `x` is truthy, and ToBoolean has no effects.
+        if let Expression::UnaryExpression(unary) = value
+            && unary.operator == UnaryOperator::LogicalNot
+        {
+            let test = self.expression(&unary.argument);
+            return self.emit(Op::JumpTrue, test, 0, 0, 0);
+        }
         let test = self.expression(value);
         self.emit(Op::JumpFalse, test, 0, 0, 0)
+    }
+
+    /// A loop test's exit edge, or none when the test is a literal that is always true.
+    pub(super) fn loop_condition(&mut self, value: &Expression<'_>) -> Option<usize> {
+        (!binding_time::always_truthy(value)).then(|| self.condition(value))
     }
 
     pub(crate) fn load_this_value(&mut self) -> Register {
