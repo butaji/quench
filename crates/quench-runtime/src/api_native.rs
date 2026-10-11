@@ -36,6 +36,18 @@ pub enum BuiltinBrand {
     Float32Array,
     Float64Array,
     ArgumentsObject,
+    AsyncFunction,
+    GeneratorFunction,
+    GeneratorObject,
+    MapIterator,
+    SetIterator,
+    ModuleNamespaceObject,
+    BooleanObject,
+    NumberObject,
+    StringObject,
+    SymbolObject,
+    BigIntObject,
+    BoxedPrimitive,
 }
 
 pub type HostCallback<H> =

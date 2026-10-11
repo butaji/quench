@@ -92,7 +92,10 @@ fn util_type_predicates_match_node_internal_brands() {
         'isAnyArrayBuffer','isDataView','isTypedArray','isArrayBufferView',
         'isArgumentsObject','isUint8Array','isUint8ClampedArray','isUint16Array',
         'isUint32Array','isInt8Array','isInt16Array','isInt32Array','isBigInt64Array',
-        'isBigUint64Array','isFloat16Array','isFloat32Array','isFloat64Array'];
+        'isBigUint64Array','isFloat16Array','isFloat32Array','isFloat64Array',
+        'isAsyncFunction','isGeneratorFunction','isGeneratorObject','isMapIterator',
+        'isSetIterator','isModuleNamespaceObject','isBooleanObject','isNumberObject',
+        'isStringObject','isSymbolObject','isBigIntObject','isBoxedPrimitive'];
       const buffer = new ArrayBuffer(8);
       const revoked = Proxy.revocable({}, {}); revoked.revoke();
       const values = [undefined,null,1,'x',{},new Date(),Object.create(Date.prototype),
@@ -103,7 +106,13 @@ fn util_type_predicates_match_node_internal_brands() {
         new Int8Array(),new Int16Array(),new Int32Array(),new BigInt64Array(),
         new BigUint64Array(),new Float16Array(),new Float32Array(),new Float64Array(),
         require('vm').runInNewContext('new Date()'),
-        {get [Symbol.toStringTag](){throw Error('must not read tag')}}];
+        {get [Symbol.toStringTag](){throw Error('must not read tag')}},
+        async function(){},function*(){},async function*(){},
+        (function*(){})(),(async function*(){})(),new Map().keys(),new Map().values(),
+        new Map().entries(),new Set().values(),new Set().entries(),
+        Object(true),Object(2),Object('x'),Object(Symbol()),Object(2n),
+        Object.create(Number.prototype),new Proxy(Object(2),{}),
+        require('vm').runInNewContext('Object(2)')];
       console.log(JSON.stringify(names.map(name => [name,types[name].name,
         types[name].length,values.map(value=>types[name](value))])));
       console.log(require('util/types')===types);

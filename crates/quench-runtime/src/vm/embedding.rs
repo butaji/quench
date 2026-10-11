@@ -30,6 +30,79 @@ impl<H: Host> Vm<H> {
             B::ArgumentsObject => self
                 .object_data(value)
                 .is_some_and(Object::is_arguments_object),
+            B::AsyncFunction | B::GeneratorFunction => match cell {
+                Some(Cell::Function {
+                    kind:
+                        FunctionKind::User(program, function)
+                        | FunctionKind::NumericUser(program, function),
+                    ..
+                }) => self
+                    .programs
+                    .get(*program)
+                    .and_then(|program| {
+                        program.functions.get(*function as usize).map(|function| {
+                            if brand == B::AsyncFunction {
+                                function.is_async
+                            } else {
+                                function.is_generator
+                            }
+                        })
+                    })
+                    .unwrap_or(false),
+                _ => false,
+            },
+            B::GeneratorObject => matches!(
+                cell,
+                Some(Cell::Iterator {
+                    kind: IteratorKind::Generator | IteratorKind::AsyncGenerator,
+                    ..
+                })
+            ),
+            B::MapIterator => matches!(
+                cell,
+                Some(Cell::Iterator {
+                    kind: IteratorKind::MapKeys
+                        | IteratorKind::MapValues
+                        | IteratorKind::MapEntries,
+                    ..
+                })
+            ),
+            B::SetIterator => matches!(
+                cell,
+                Some(Cell::Iterator {
+                    kind: IteratorKind::SetValues | IteratorKind::SetEntries,
+                    ..
+                })
+            ),
+            B::ModuleNamespaceObject => {
+                matches!(cell, Some(Cell::Object(object)) if object.is_module_namespace())
+            }
+            B::BooleanObject
+            | B::NumberObject
+            | B::StringObject
+            | B::SymbolObject
+            | B::BigIntObject
+            | B::BoxedPrimitive => {
+                if !matches!(cell, Some(Cell::Object(_))) {
+                    false
+                } else {
+                    [
+                        (B::BooleanObject, "\0quench:boolean-value"),
+                        (B::NumberObject, "\0quench:number-value"),
+                        (B::StringObject, "\0quench:string-value"),
+                        (B::SymbolObject, "\0quench:symbol-value"),
+                        (B::BigIntObject, "\0quench:bigint-value"),
+                    ]
+                    .into_iter()
+                    .any(|(candidate, marker)| {
+                        (brand == B::BoxedPrimitive || brand == candidate)
+                            && self
+                                .lookup_atom(marker)
+                                .and_then(|atom| self.own_property(value, atom))
+                                .is_some()
+                    })
+                }
+            }
             typed => {
                 let kind = match typed {
                     B::Uint8Array => TypedArrayKind::Uint8,
