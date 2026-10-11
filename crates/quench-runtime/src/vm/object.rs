@@ -481,21 +481,29 @@ impl<H: Host> Vm<H> {
         self.heap
             .alloc_object_pair(self.object_proto, shape, first, second)
     }
+    #[inline(always)]
     pub(super) fn object_site_shape(&mut self, program: &ResidualProgram, site: usize) -> u32 {
-        let atoms = &program.object_sites[site].atoms;
-        if !self.specialized || !program.specialized {
-            return atoms
-                .iter()
-                .fold(0, |shape, atom| self.transition_shape(shape, *atom));
+        if self.specialized && program.specialized {
+            let cache_site = self.object_cache_index(site);
+            if self.object_shapes[cache_site] != u32::MAX {
+                return self.object_shapes[cache_site];
+            }
         }
-        let cache_site = self.object_cache_index(site);
-        if self.object_shapes[cache_site] != u32::MAX {
-            return self.object_shapes[cache_site];
-        }
-        let shape = atoms
+        self.derive_object_site_shape(program, site)
+    }
+
+    /// Walks a literal site's transitions from the empty shape, recording the result when
+    /// shape caches are active.
+    #[inline(never)]
+    fn derive_object_site_shape(&mut self, program: &ResidualProgram, site: usize) -> u32 {
+        let shape = program.object_sites[site]
+            .atoms
             .iter()
             .fold(0, |shape, atom| self.transition_shape(shape, *atom));
-        self.object_shapes[cache_site] = shape;
+        if self.specialized && program.specialized {
+            let cache_site = self.object_cache_index(site);
+            self.object_shapes[cache_site] = shape;
+        }
         shape
     }
     pub(super) fn own_property(&self, object: Value, atom: Atom) -> Option<Value> {
