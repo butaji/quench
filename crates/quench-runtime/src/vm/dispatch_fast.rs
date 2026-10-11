@@ -19,12 +19,18 @@
 //! which unwinds it; a due collection raises the floor so that the next
 //! safepoint jump leaves the lane.
 
-use super::*;
 use super::dispatch_frame::PendingGeneralCall;
+use super::*;
 use crate::bytecode::{
     FieldLayout, Function, ImmediateLayout, ImmediateRole, InstructionField, WideInstruction,
 };
-use crate::wasm::integer::{I32BinaryOperator, I32UnaryOperator};
+use crate::wasm::conversion::ScalarConversionOperator;
+use crate::wasm::float::{
+    F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator,
+};
+use crate::wasm::integer::{
+    I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator,
+};
 use crate::wasm::memory::{MemoryLoad, MemoryStorage, MemoryStore};
 
 /// One instruction of a lane view.
@@ -360,7 +366,11 @@ impl InstructionField {
 /// is `ACC`.
 #[inline(always)]
 fn read<const ACC: u8, const FIELD: u8>(r: Registers, register: u16, view: Carried) -> Value {
-    if ACC == FIELD { view.acc } else { r.get(register) }
+    if ACC == FIELD {
+        view.acc
+    } else {
+        r.get(register)
+    }
 }
 
 #[inline(always)]
@@ -373,7 +383,15 @@ macro_rules! produce {
     ($cx:expr, $r:expr, $ip:expr, $register:expr, $value:expr, $view:expr) => {{
         let value: Value = $value;
         $r.set($register, value);
-        next!($cx, $r, following($ip), Carried { acc: value, ..$view })
+        next!(
+            $cx,
+            $r,
+            following($ip),
+            Carried {
+                acc: value,
+                ..$view
+            }
+        )
     }};
 }
 
@@ -625,9 +643,7 @@ fn lane_jump<H: Host>(
         // Scalar arguments only, so the slow path stays a sibling call.
         return match commit {
             None => lane_safepoint::<H>(ip, target),
-            Some((register, value)) => {
-                lane_safepoint_writing::<H>(r, ip, target, register, value)
-            }
+            Some((register, value)) => lane_safepoint_writing::<H>(r, ip, target, register, value),
         };
     }
     if let Some((register, value)) = commit {
@@ -829,6 +845,143 @@ lane_handler! {
     }
 }
 
+/// A scalar of static Wasm type `ty` read from a slot value.
+#[inline(always)]
+fn lane_scalar(value: Value, ty: crate::WasmType) -> Option<crate::WasmValue> {
+    Some(match ty {
+        crate::WasmType::I32 => crate::WasmValue::I32(value.as_int()?),
+        crate::WasmType::F32 => crate::WasmValue::F32(value.as_int()? as u32),
+        crate::WasmType::I64 => crate::WasmValue::I64(value.bits64()? as i64),
+        crate::WasmType::F64 => crate::WasmValue::F64(value.bits64()?),
+        _ => return None,
+    })
+}
+
+/// A numeric scalar as a slot value.
+#[inline(always)]
+fn lane_encode(view: Carried, value: crate::WasmValue) -> Option<Value> {
+    Some(match value {
+        crate::WasmValue::I32(value) => view.integers.encode(value),
+        crate::WasmValue::F32(bits) => view.integers.encode(bits as i32),
+        crate::WasmValue::I64(value) => Value::from_bits64(value as u64)?,
+        crate::WasmValue::F64(bits) => Value::from_bits64(bits)?,
+        _ => return None,
+    })
+}
+
+lane_handler! {
+    /// An f32 or f64 operator: each width's selector applies its own
+    /// semantics (`crate::wasm::float`).
+    fn lane_float_binary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
+        let left = read::<ACC, ACC_B>(r, i.b, view);
+        let right = read::<ACC, ACC_C>(r, i.c, view);
+        let value = if const { matches!(opcode(OP), Op::WasmF64Binary) } {
+            let (Some(left), Some(right), Some(operator)) = (
+                left.bits64(),
+                right.bits64(),
+                F64BinaryOperator::from_tag(i.imm()),
+            ) else {
+                return exit(ip);
+            };
+            operator.apply(f64::from_bits(left), f64::from_bits(right))
+        } else {
+            let (Some(left), Some(right), Some(operator)) = (
+                left.as_int(),
+                right.as_int(),
+                F32BinaryOperator::from_tag(i.imm()),
+            ) else {
+                return exit(ip);
+            };
+            operator.apply(f32::from_bits(left as u32), f32::from_bits(right as u32))
+        };
+        let Some(value) = lane_encode(view, value) else {
+            return exit(ip);
+        };
+        produce!(cx, r, ip, i.a, value, view)
+    }
+}
+
+lane_handler! {
+    fn lane_float_unary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
+        let input = read::<ACC, ACC_B>(r, i.b, view);
+        let value = if const { matches!(opcode(OP), Op::WasmF64Unary) } {
+            let (Some(input), Some(operator)) =
+                (input.bits64(), F64UnaryOperator::from_tag(i.imm()))
+            else {
+                return exit(ip);
+            };
+            operator.apply(f64::from_bits(input))
+        } else {
+            let (Some(input), Some(operator)) =
+                (input.as_int(), F32UnaryOperator::from_tag(i.imm()))
+            else {
+                return exit(ip);
+            };
+            operator.apply(f32::from_bits(input as u32))
+        };
+        let Some(value) = lane_encode(view, value) else {
+            return exit(ip);
+        };
+        produce!(cx, r, ip, i.a, value, view)
+    }
+}
+
+lane_handler! {
+    /// An i64 operator; a trap leaves the lane, where the general loop
+    /// raises it.
+    fn lane_i64_binary<ACC: u8>(cx, r, ip, i, view) {
+        let (Some(left), Some(right), Some(operator)) = (
+            read::<ACC, ACC_B>(r, i.b, view).bits64(),
+            read::<ACC, ACC_C>(r, i.c, view).bits64(),
+            I64BinaryOperator::from_tag(i.imm()),
+        ) else {
+            return exit(ip);
+        };
+        let Ok(value) = operator.apply(left as i64, right as i64) else {
+            return exit(ip);
+        };
+        let Some(value) = lane_encode(view, value) else {
+            return exit(ip);
+        };
+        produce!(cx, r, ip, i.a, value, view)
+    }
+}
+
+lane_handler! {
+    fn lane_i64_unary<ACC: u8>(cx, r, ip, i, view) {
+        let (Some(input), Some(operator)) = (
+            read::<ACC, ACC_B>(r, i.b, view).bits64(),
+            I64UnaryOperator::from_tag(i.imm()),
+        ) else {
+            return exit(ip);
+        };
+        let Some(value) = lane_encode(view, operator.apply(input as i64)) else {
+            return exit(ip);
+        };
+        produce!(cx, r, ip, i.a, value, view)
+    }
+}
+
+lane_handler! {
+    /// A scalar conversion; a trapping truncation leaves the lane.
+    fn lane_scalar_convert<ACC: u8>(cx, r, ip, i, view) {
+        let Some(operator) = ScalarConversionOperator::from_tag(i.imm()) else {
+            return exit(ip);
+        };
+        let Some(input) = lane_scalar(read::<ACC, ACC_B>(r, i.b, view), operator.source_type())
+        else {
+            return exit(ip);
+        };
+        let Ok(value) = operator.apply(input) else {
+            return exit(ip);
+        };
+        let Some(value) = lane_encode(view, value) else {
+            return exit(ip);
+        };
+        produce!(cx, r, ip, i.a, value, view)
+    }
+}
+
 /// The memory32 effective address of a direct access through the function's
 /// memory register.
 #[inline(always)]
@@ -917,34 +1070,10 @@ fn lane_safepoint_writing<H: Host>(
     next
 }
 
-/// Boxing a 64-bit result allocates; kept out of line with scalar arguments
-/// so the hot handlers keep their registers and sibling calls.
-#[cold]
-#[inline(never)]
-fn lane_box_bits64<H: Host>(cx: *mut LaneContext<H>, bits: u64) -> Value {
-    let vm = unsafe { vm(cx) };
-    let value = vm.heap.alloc(Cell::WasmBits64(bits));
-    // A due collection waits for the next safepoint.
-    note_allocation(vm);
-    value
-}
-
-#[cold]
-#[inline(never)]
-fn lane_unbox_bits64<H: Host>(
-    cx: *mut LaneContext<H>,
-    value: Value,
-    ty: crate::WasmType,
-) -> Option<u64> {
-    match unsafe { vm(cx) }
-        .decode_wasm_value(value, ty)
-        .ok()?
-        .bits()?
-    {
-        crate::wasm::ScalarBits::Bits64(bits) => Some(bits),
-        _ => None,
-    }
-}
+// The lane holds 64-bit payloads only in place (`Value::from_bits64`): a
+// boxed operand or a result that needs a box leaves the lane, and the
+// general loop, which boxes, runs the instruction. The handlers then make
+// no calls and keep their sibling-call shape.
 
 lane_handler! {
     fn lane_load<OP: u16, ACC: u8>(cx, r, ip, i, view) {
@@ -960,12 +1089,8 @@ lane_handler! {
         else {
             return exit(ip);
         };
-        let value = match value {
-            crate::WasmValue::I32(value) => view.integers.encode(value),
-            crate::WasmValue::F32(bits) => view.integers.encode(bits as i32),
-            crate::WasmValue::I64(value) => lane_box_bits64(cx, value as u64),
-            crate::WasmValue::F64(bits) => lane_box_bits64(cx, bits),
-            _ => return exit(ip),
+        let Some(value) = lane_encode(view, value) else {
+            return exit(ip);
         };
         produce!(cx, r, ip, i.a, value, view)
     }
@@ -985,11 +1110,11 @@ lane_handler! {
                 Some(bits) => crate::WasmValue::F32(bits as u32),
                 None => return exit(ip),
             },
-            ty @ crate::WasmType::I64 => match lane_unbox_bits64(cx, r.get(i.a), ty) {
+            crate::WasmType::I64 => match r.get(i.a).bits64() {
                 Some(bits) => crate::WasmValue::I64(bits as i64),
                 None => return exit(ip),
             },
-            ty @ crate::WasmType::F64 => match lane_unbox_bits64(cx, r.get(i.a), ty) {
+            crate::WasmType::F64 => match r.get(i.a).bits64() {
                 Some(bits) => crate::WasmValue::F64(bits),
                 None => return exit(ip),
             },
@@ -1123,8 +1248,8 @@ impl LaneHandler {
 /// The handler serving opcode `OP` whose accumulator field is `ACC`, derived
 /// from the opcode's semantic family; `None` when the general path executes
 /// the opcode.
-const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8>(
-) -> Option<LaneHandler> {
+const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8>()
+-> Option<LaneHandler> {
     let Some(op) = Op::from_index(OP as usize) else {
         return None;
     };
@@ -1153,6 +1278,17 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
                 return LaneHandler::producer(lane_add_jump_nonzero::<H, BACKWARD, ACC>);
             }
             Op::WasmI32Unary => return LaneHandler::producer(lane_i32_unary::<H, ACC>),
+            Op::WasmF32Binary | Op::WasmF64Binary => {
+                return LaneHandler::producer(lane_float_binary::<H, OP, ACC>);
+            }
+            Op::WasmF32Unary | Op::WasmF64Unary => {
+                return LaneHandler::producer(lane_float_unary::<H, OP, ACC>);
+            }
+            Op::WasmI64Binary => return LaneHandler::producer(lane_i64_binary::<H, ACC>),
+            Op::WasmI64Unary => return LaneHandler::producer(lane_i64_unary::<H, ACC>),
+            Op::WasmScalarConvert => {
+                return LaneHandler::producer(lane_scalar_convert::<H, ACC>);
+            }
             _ => match other_handler::<H, BACKWARD, ACC>(op) {
                 Some(handler) => handler,
                 None => return None,
@@ -1167,9 +1303,7 @@ const fn handler_for<H: Host, const OP: u16, const BACKWARD: bool, const ACC: u8
 
 /// Handlers that neither produce nor read the accumulator, apart from the
 /// branch tests, which read it.
-const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(
-    op: Op,
-) -> Option<Handler> {
+const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> Option<Handler> {
     match op {
         Op::StoreLocalPlain => Some(lane_store_local_plain::<H>),
         Op::LoadThis => Some(lane_load_this::<H>),
@@ -1434,7 +1568,9 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             // jump targets it; the general loop never enters at a record that
             // reads the accumulator.
             let carried = producer.take().filter(|_| ACCUMULATOR && !jump_targets[pc]);
-            let acc = carried.map_or(ACC_NONE, |register| accumulator_field(instruction, register));
+            let acc = carried.map_or(ACC_NONE, |register| {
+                accumulator_field(instruction, register)
+            });
             let backward_jump = op.immediate_role() == ImmediateRole::JumpTarget
                 && instruction.imm() as usize <= pc;
             let selected = operand.and(if binds_memory {
@@ -1465,8 +1601,7 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
     for (pc, packed) in function.code.iter().enumerate() {
         let instruction = decoded_instruction(function, *packed);
         if instruction.op() == Op::WasmBranchTable
-            && crate::bytecode::branch_table_entries(pc, instruction)
-                .any(|entry| exits[entry])
+            && crate::bytecode::branch_table_entries(pc, instruction).any(|entry| exits[entry])
         {
             records[pc].handler = lane_exit::<H> as Handler as *const ();
             exits[pc] = true;
@@ -1520,7 +1655,10 @@ fn jump_targets(function: &Function) -> Vec<bool> {
     targets
 }
 
-pub(super) fn decoded_instruction(function: &Function, packed: crate::bytecode::Instr) -> WideInstruction {
+pub(super) fn decoded_instruction(
+    function: &Function,
+    packed: crate::bytecode::Instr,
+) -> WideInstruction {
     if packed.is_wide() {
         function.wide[packed.wide_index()]
     } else {

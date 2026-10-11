@@ -434,16 +434,16 @@ impl<H: Host> Analysis<'_, H> {
     /// The machine kind of a constant: i32-encoded scalars, boxed 64-bit
     /// scalars, and any other constant (the void result) as an inert i32.
     fn constant_kind(&self, value: Value) -> Kind {
-        match self.vm.heap.get(value) {
-            Some(Cell::WasmBits64(_)) => Kind::I64,
-            _ => Kind::I32,
+        match self.vm.decode_bits64(value) {
+            Some(_) => Kind::I64,
+            None => Kind::I32,
         }
     }
 
     fn constant_bits(&self, value: Value) -> i64 {
-        match self.vm.heap.get(value) {
-            Some(Cell::WasmBits64(bits)) => *bits as i64,
-            _ => i64::from(value.wasm_bits32() as i32),
+        match self.vm.decode_bits64(value) {
+            Some(bits) => bits as i64,
+            None => i64::from(value.wasm_bits32() as i32),
         }
     }
 
@@ -2452,10 +2452,7 @@ impl<H: Host> Vm<H> {
         for (value, ty) in args.iter().zip(&function.params) {
             raw.push(match Kind::of(*ty)? {
                 Kind::I32 => u64::from(value.wasm_bits32()),
-                Kind::I64 => match self.heap.get(*value)? {
-                    Cell::WasmBits64(bits) => *bits,
-                    _ => return None,
-                },
+                Kind::I64 => self.decode_bits64(*value)?,
             });
         }
         let marker = 0u8;
@@ -2524,7 +2521,7 @@ impl<H: Host> Vm<H> {
         Some(Ok(match function.result {
             Some(ty) => match Kind::of(ty)? {
                 Kind::I32 => Value::integer(out as u32 as i32),
-                Kind::I64 => self.heap.alloc(Cell::WasmBits64(out)),
+                Kind::I64 => self.encode_bits64(out),
             },
             None => self.programs.constant(program, VOID_RESULT_CONSTANT)?,
         }))

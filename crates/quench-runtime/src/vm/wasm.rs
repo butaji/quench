@@ -1440,9 +1440,25 @@ impl<H: Host> Vm<H> {
         }
         match value.bits().expect("numeric Wasm slot") {
             crate::wasm::ScalarBits::Bits32(bits) => Value::integer(bits as i32),
-            crate::wasm::ScalarBits::Bits64(bits) => self.heap.alloc(Cell::WasmBits64(bits)),
+            crate::wasm::ScalarBits::Bits64(bits) => self.encode_bits64(bits),
             crate::wasm::ScalarBits::Bits128(bits) => self.heap.alloc(Cell::WasmV128(bits)),
         }
+    }
+
+    /// A 64-bit Wasm payload as a slot value: in place unless it falls in
+    /// the tag space (`Value::from_bits64`).
+    #[inline(always)]
+    pub(crate) fn encode_bits64(&mut self, bits: u64) -> Value {
+        Value::from_bits64(bits).unwrap_or_else(|| self.heap.alloc(Cell::WasmBits64(bits)))
+    }
+
+    /// The 64-bit Wasm payload of a slot value typed i64 or f64.
+    #[inline(always)]
+    pub(crate) fn decode_bits64(&self, value: Value) -> Option<u64> {
+        value.bits64().or_else(|| match self.heap.get(value) {
+            Some(Cell::WasmBits64(bits)) => Some(*bits),
+            _ => None,
+        })
     }
 
     pub(crate) fn decode_wasm_value(
@@ -1563,8 +1579,8 @@ impl<H: Host> Vm<H> {
         }
         let bits = if let Some(bits) = value.as_int() {
             Some(crate::wasm::ScalarBits::Bits32(bits as u32))
-        } else if let Some(Cell::WasmBits64(bits)) = self.heap.get(value) {
-            Some(crate::wasm::ScalarBits::Bits64(*bits))
+        } else if let Some(bits) = self.decode_bits64(value) {
+            Some(crate::wasm::ScalarBits::Bits64(bits))
         } else if let Some(Cell::WasmV128(bits)) = self.heap.get(value) {
             Some(crate::wasm::ScalarBits::Bits128(*bits))
         } else {
