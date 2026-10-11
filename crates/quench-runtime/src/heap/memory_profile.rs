@@ -519,7 +519,13 @@ impl Heap {
         (
             self.slots.len(),
             self.slots.capacity() * size_of::<super::Slot>(),
-            self.free.capacity() * size_of::<u32>(),
+            self.free_by_slab.capacity() * size_of::<Vec<u16>>()
+                + self
+                    .free_by_slab
+                    .iter()
+                    .map(|free| free.capacity() * size_of::<u16>())
+                    .sum::<usize>()
+                + self.free_slabs.capacity() * size_of::<u32>(),
             dynamic,
             property.0,
             property.1,
