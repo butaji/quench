@@ -264,7 +264,9 @@ fn coalesce_distant_producer_moves(
                 handler.end as usize <= producer || handler.start as usize > target
             });
         if !span_is_block
-            || !is_move_producer(instruction.op())
+            || !fuses(instruction.op(), Op::Move, |recipe| {
+                matches!(recipe, Recipe::ProducerMove)
+            })
             || instruction.result_register() != source
             || liveness::definitions(instruction, superinstructions) != register_bit(source)
             || liveness::uses(instruction, methods, field_sites, superinstructions) & pair != 0
@@ -281,11 +283,40 @@ fn coalesce_distant_producer_moves(
     changed
 }
 
-/// The producers `ProducerMove` may retarget.
-fn is_move_producer(op: Op) -> bool {
-    RULES.iter().any(|rule| {
-        matches!(rule.recipe, Recipe::ProducerMove) && rule.pattern == [op, Op::Move]
-    })
+/// Lets a packed producer whose fallthrough successor returns its result return directly,
+/// including when that `Return` is a jump target, the case `ReturnResult` cannot fuse; the
+/// `Return` stays for its other predecessors. A `Return` on a region boundary is left alone:
+/// returning on its other side would cross a handler. Run on every function, so outside the
+/// wide-instruction table each producer that falls into a `Return` of its result carries the
+/// flag and dispatch needs no look-ahead to recognize a terminal call.
+pub(super) fn return_through_shared_returns(function: &mut BcFunction) {
+    let boundaries = region_boundaries(
+        function.code.len(),
+        &function.handlers,
+        function.parameter_end_pc,
+        &function.binding_sites,
+    );
+    for pc in 1..function.code.len() {
+        let (producer, next) = (function.code[pc - 1], function.code[pc]);
+        if !boundaries[pc]
+            && !producer.is_wide()
+            && next.op() == Op::Return
+            && fuses(producer.op(), Op::Return, |recipe| {
+                matches!(recipe, Recipe::ReturnResult)
+            })
+            && producer.result_flags() == 0
+            && producer.result_register() == next.register_a()
+        {
+            function.code[pc - 1].set_returns_from_frame();
+        }
+    }
+}
+
+/// Whether a rule of the selected recipe fuses `[first, second]`.
+fn fuses(first: Op, second: Op, recipe: impl Fn(Recipe) -> bool) -> bool {
+    RULES
+        .iter()
+        .any(|rule| rule.pattern == [first, second] && recipe(rule.recipe))
 }
 
 fn register_bit(register: Register) -> u64 {
@@ -395,12 +426,24 @@ pub(super) fn protected_positions(
     parameter_end_pc: u32,
     binding_sites: &[crate::bytecode::BindingSite],
 ) -> Vec<bool> {
-    let mut protected = vec![false; code.len() + 1];
+    let mut protected =
+        region_boundaries(code.len(), handlers, parameter_end_pc, binding_sites);
     for instruction in code {
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
             protected[instruction.jump_target() as usize] = true;
         }
     }
+    protected
+}
+
+/// Positions that open or close a handler or parameter region, or resume a binding site.
+fn region_boundaries(
+    length: usize,
+    handlers: &[crate::bytecode::Handler],
+    parameter_end_pc: u32,
+    binding_sites: &[crate::bytecode::BindingSite],
+) -> Vec<bool> {
+    let mut protected = vec![false; length + 1];
     for handler in handlers {
         protected[handler.start as usize] = true;
         protected[handler.end as usize] = true;
@@ -762,6 +805,32 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(coalesce_fixture(code, 8, storage), expected);
         }
+    }
+
+    #[test]
+    fn producers_return_through_a_shared_return_inside_one_region() {
+        let code = vec![
+            Instr::new(Op::LoadConst, 3, 0, 0, 0),
+            Instr::new(Op::JumpFalse, 0, 0, 0, 3),
+            Instr::new(
+                Op::Binary,
+                3,
+                Operand::register(1).0,
+                Operand::register(2).0,
+                BinaryOperator::Addition as u32,
+            ),
+            Instr::new(Op::Return, 3, 0, 0, 0),
+        ];
+        let mut program = Engine::specialize_unspecialized("", "rewrite-return.js").unwrap();
+        let function = &mut program.functions[0];
+        function.code = code.clone();
+        return_through_shared_returns(function);
+        assert!(function.code[2].returns_from_frame());
+        assert_eq!(function.code[3].op(), Op::Return);
+        function.code = code;
+        function.parameter_end_pc = 3;
+        return_through_shared_returns(function);
+        assert!(!function.code[2].returns_from_frame());
     }
 
     fn rewrite_fixture(code: Vec<Instr>, registers: u16) -> Vec<Instr> {

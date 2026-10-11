@@ -907,8 +907,11 @@ impl Function {
 
     /// Whether the instruction at `pc` returns `register`. A call is in tail position only
     /// when the instruction after it returns that call's own result.
+    /// Whether the instruction at `pc` returns `register`. Only a wide predecessor can fall into
+    /// such a `Return` without carrying the return flag itself; see
+    /// `return_through_shared_returns`.
     pub(crate) fn returns_register_at(&self, pc: usize, register: Register) -> bool {
-        self.code.get(pc).is_some_and(|packed| {
+        !self.wide.is_empty() && self.code.get(pc).is_some_and(|packed| {
             let next = if packed.is_wide() {
                 self.wide[packed.wide_index()]
             } else {
