@@ -2019,7 +2019,7 @@ fn drain_shared_jobs(
                 .args
                 .get(1)
                 .and_then(|root| runtime.rooted_value(*root));
-            invoke_async_callback(runtime, program, callback)?;
+            runtime.with_native_stack_frame("process.processTicksAndRejections", |runtime| invoke_async_callback(runtime, program, callback))?;
             if let Some(connection) = possible_connection {
                 let mut host = shared_state.borrow_mut();
                 if let Some(socket) = host.net_sockets.values_mut().find(|socket| {

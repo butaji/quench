@@ -325,7 +325,7 @@ fn callbackify_matches_node_descriptors_receivers_and_tick_order() {
       thenable.call(receiver, function(err,value){log.push(['thenable',this.tag,err,value])});
       for (const value of [null,undefined,false,0,-0,'',NaN,0n]) {
         callbackify(()=>Promise.reject(value)).call(receiver, function(err){
-          log.push(['rejected',this.tag,err.code,err.message,Object.is(err.reason,value),arguments.length]);
+          log.push(['rejected',this.tag,err.code,err.message,Object.is(err.reason,value),arguments.length,err.stack.includes('at process.processTicksAndRejections')]);
         });
       }
       function getterName(){return Promise.resolve(1)}
@@ -339,6 +339,90 @@ fn callbackify_matches_node_descriptors_receivers_and_tick_order() {
       process.nextTick(()=>log.push(['tick']));
       Promise.resolve().then(()=>log.push(['microtask']));
       process.on('exit',()=>console.log(JSON.stringify(log)));
+    "#;
+    let directory = tempfile::tempdir().unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn error_constructors_capture_stack_at_the_node_observable_phase() {
+    let source = r#"
+      function capture(Ctor) {
+        const error = Ctor===AggregateError ? new Ctor([],'message') : new Ctor('message');
+        const descriptor = Object.getOwnPropertyDescriptor(error,'stack');
+        console.log(JSON.stringify([error.name,error.stack.includes('at capture'),
+          descriptor.enumerable,descriptor.configurable,typeof descriptor.get,typeof descriptor.set]));
+      }
+      for(const Ctor of [Error,TypeError,RangeError,AggregateError]) capture(Ctor);
+      Error.stackTraceLimit=5;
+      const first=new Error({toString(){Error.stackTraceLimit=0;return 'x'}});
+      console.log(first.stack.split('\n').length);
+      Error.stackTraceLimit=5;
+      const second=new Error('x',{get cause(){Error.stackTraceLimit=0;return 1}});
+      console.log(second.stack.split('\n').length);
+      Error.stackTraceLimit=5;
+      const third=new AggregateError({[Symbol.iterator](){Error.stackTraceLimit=0;return [][Symbol.iterator]()}},'x');
+      console.log(third.stack.split('\n').length>1);
+      console.log(Object.getOwnPropertyDescriptor(Error.prototype,'stack')===undefined);
+      let count=0;
+      Error.prepareStackTrace=(error,sites)=>{count++;return {count,sites}};
+      const cached=new Error;
+      console.log(cached.stack===cached.stack,count);
+      const accessor=Object.getOwnPropertyDescriptor(cached,'stack');
+      for(const value of [123,null,undefined,{x:1}]) { cached.stack=value; console.log(cached.stack===value,typeof Object.getOwnPropertyDescriptor(cached,'stack').get); }
+      console.log(accessor.get.call({}),accessor.get.call(null),accessor.set.call({},42));
+      Error.stackTraceLimit=5;
+      Error.prepareStackTrace=(error,sites)=>sites.slice(0,2).map(site=>[site.getFunctionName(),site.getThis()===undefined]);
+      function outer(){return inner.call({x:1})}
+      function inner(){'use strict';return new Error().stack}
+      console.log(JSON.stringify(outer.call({x:2})));
+      Error.prepareStackTrace=(error,sites)=>sites.map(site=>site.getFunctionName());
+      function omitted(){const object={};Error.captureStackTrace(object,omitted);return object.stack}
+      function caller(){return omitted()}
+      console.log(caller().includes('caller'),caller().includes('omitted'));
+      const missing={};Error.captureStackTrace(missing,function absent(){});console.log(missing.stack.length);
+      const sharedA=Object.getOwnPropertyDescriptor(new Error,'stack');
+      const sharedB=Object.getOwnPropertyDescriptor(new Error,'stack');
+      console.log(sharedA.get===sharedB.get,sharedA.set===sharedB.set,sharedA.get.name,sharedA.set.name);
+      delete Error.prepareStackTrace;
+      for(const limit of [undefined,null,'5',NaN,-1,0,Infinity]) {
+        Error.stackTraceLimit=limit;
+        const error=new Error('limit');
+        console.log(typeof error.stack,error.stack===undefined || error.stack.split('\n').length===1);
+        error.stack=42;console.log(error.stack);
+      }
+      let reads=0;
+      Object.defineProperty(Error,'stackTraceLimit',{configurable:true,get(){reads++;return 5}});
+      console.log(new Error().stack,reads);
+      Object.defineProperty(Error,'stackTraceLimit',{configurable:true,writable:true,value:5});
+      const OriginalError=Error;
+      OriginalError.prepareStackTrace=()=>123;
+      globalThis.Error=function ReplacementError(){};
+      console.log(new OriginalError().stack);
+      globalThis.Error=OriginalError;
+
+
     "#;
     let directory = tempfile::tempdir().unwrap();
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {

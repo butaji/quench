@@ -20,9 +20,8 @@ mod cell_layout_tests {
     /// Every heap slot stores an `Option<Cell>`. The M4 object layout includes
     /// two inline properties, and arrays add their shared element handle.
     const CELL_TAG_WORD_BYTES: usize = std::mem::size_of::<Value>();
-    const MAX_CELL_BYTES: usize = std::mem::size_of::<Object>()
-        + std::mem::size_of::<Rc<Vec<Value>>>()
-        + CELL_TAG_WORD_BYTES;
+    const MAX_CELL_BYTES: usize =
+        std::mem::size_of::<Object>() + std::mem::size_of::<Rc<Vec<Value>>>() + CELL_TAG_WORD_BYTES;
 
     #[test]
     fn cells_stay_compact() {
@@ -961,17 +960,26 @@ pub(crate) struct Object {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) enum CallSiteLocation {
+    Source {
+        file_name: String,
+        line: u32,
+        column: u32,
+    },
+    Native,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CallSiteRecord {
-    pub(crate) file_name: String,
+    pub(crate) location: CallSiteLocation,
     pub(crate) function_name: Option<String>,
     pub(crate) this_value: Value,
-    pub(crate) line: u32,
-    pub(crate) column: u32,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum StackData {
     Captured(Vec<CallSiteRecord>),
+    Formatted(Value),
     CallSite(CallSiteRecord),
 }
 
@@ -1012,7 +1020,10 @@ impl StackData {
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     fn allocated_bytes(&self) -> usize {
         fn record_bytes(record: &CallSiteRecord) -> usize {
-            record.file_name.capacity() + record.function_name.as_ref().map_or(0, String::capacity)
+            (match &record.location {
+                CallSiteLocation::Source { file_name, .. } => file_name.capacity(),
+                CallSiteLocation::Native => 0,
+            }) + record.function_name.as_ref().map_or(0, String::capacity)
         }
         match self {
             Self::Captured(records) => {
@@ -1020,6 +1031,7 @@ impl StackData {
                     + records.iter().map(record_bytes).sum::<usize>()
             }
             Self::CallSite(record) => record_bytes(record),
+            Self::Formatted(_) => 0,
         }
     }
 }
@@ -1121,12 +1133,6 @@ impl Object {
         self.extras_mut().stack_data = Some(data);
     }
 
-    pub(crate) fn clear_stack_data(&mut self) {
-        if let Some(extras) = self.extras.as_deref_mut() {
-            extras.stack_data = None;
-        }
-    }
-
     pub(crate) fn visit_stack_data_roots(&self, mut visit: impl FnMut(Value)) {
         match self
             .extras
@@ -1139,6 +1145,7 @@ impl Object {
                 }
             }
             Some(StackData::CallSite(record)) => visit(record.this_value),
+            Some(StackData::Formatted(value)) => visit(*value),
             None => {}
         }
     }

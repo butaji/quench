@@ -236,27 +236,21 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        if !self.is_object_like(receiver) {
-            return Err(self.type_error(program, "Error stack getter requires an object".into()));
-        }
-        let Some(StackData::Captured(records)) = self
+        let records = match self
             .object_data(receiver)
             .and_then(Object::stack_data)
             .cloned()
-        else {
-            return if self.error_is_error(receiver) {
-                self.error_to_string(program, receiver)
-            } else {
-                Ok(Value::UNDEFINED)
-            };
+        {
+            Some(StackData::Formatted(value)) => return Ok(value),
+            Some(StackData::Captured(records)) => records,
+            _ => return Ok(Value::UNDEFINED),
         };
 
         let receiver_root = self.heap.root(receiver);
         let mut roots = Vec::with_capacity(2);
         let outcome = (|| {
-            let global = self.realm.globals;
-            let error_atom = self.intern_atom("Error");
-            let constructor = self.get_property(program, global, error_atom)?;
+            let constructor =
+                self.realm.intrinsics.error_intrinsics[&self.realm.globals].constructor;
             roots.push(self.heap.root(constructor));
             let prepare_atom = self.intern_atom("prepareStackTrace");
             let prepare = self.get_property(program, constructor, prepare_atom)?;
@@ -278,6 +272,12 @@ impl<H: Host> Vm<H> {
             })();
             result
         })();
+        if let Ok(value) = outcome {
+            let target = self.heap.root_value(receiver_root).unwrap();
+            if let Some(object) = self.object_data_mut(target) {
+                object.set_stack_data(StackData::Formatted(value));
+            }
+        }
         for root in roots {
             self.heap.release_root(root);
         }
@@ -352,17 +352,35 @@ impl<H: Host> Vm<H> {
         let constructor_opt = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let trim_constructor =
             constructor_opt != Value::UNDEFINED && self.is_function(constructor_opt);
-        let limit = self.error_stack_trace_limit(program)?;
+        let capture_limit = self.error_stack_trace_limit();
+        let limit = capture_limit.unwrap_or(0);
         let mut records = Vec::with_capacity(self.frames.len().min(limit));
-        for frame in self.frames.iter().rev() {
+        let mut native_frames = self.native_stack_frames.iter().rev().peekable();
+        let mut constructor_found = !trim_constructor;
+        let mut hide_this = false;
+        for (depth, frame) in self.frames.iter().enumerate().rev() {
+            while records.len() < limit
+                && native_frames
+                    .peek()
+                    .is_some_and(|(native_depth, _)| *native_depth > depth)
+            {
+                let (_, name) = native_frames.next().unwrap();
+                if constructor_found {
+                    records.push(CallSiteRecord {
+                        location: CallSiteLocation::Native,
+                        function_name: Some(name.clone()),
+                        this_value: Value::UNDEFINED,
+                    });
+                }
+            }
             if records.len() >= limit {
                 break;
             }
-            if frame.context == CallContext::Internal {
+            // A Script root has no exposed callee identity, but its compiler
+            // source position is still a visible stack frame. Synthetic helper
+            // activations remain hidden.
+            if frame.context == CallContext::Internal && frame.function != ROOT_FUNCTION_ID {
                 continue;
-            }
-            if trim_constructor && frame.context.callable() == Some(constructor_opt) {
-                break;
             }
             let Some(residual) = self.programs.get(frame.program) else {
                 continue;
@@ -370,6 +388,11 @@ impl<H: Host> Vm<H> {
             let Some(function) = residual.functions.get(frame.function as usize) else {
                 continue;
             };
+            hide_this |= function.strict;
+            if !constructor_found {
+                constructor_found = frame.context.callable() == Some(constructor_opt);
+                continue;
+            }
             // A PC without compiler-owned source metadata has no truthful JS location.
             let pc = u32::try_from(frame.pc).unwrap_or(u32::MAX);
             let position = function
@@ -385,12 +408,28 @@ impl<H: Host> Vm<H> {
                 .map(|atom| self.atom_name(atom).to_owned())
                 .filter(|name| !name.starts_with('\0'));
             records.push(CallSiteRecord {
-                file_name: residual.source_name.clone(),
+                location: CallSiteLocation::Source {
+                    file_name: residual.source_name.clone(),
+                    line: position.line,
+                    column: position.column,
+                },
                 function_name,
-                this_value: frame.this,
-                line: position.line,
-                column: position.column,
+                this_value: if hide_this || frame.this == Value::DELETED {
+                    Value::UNDEFINED
+                } else {
+                    frame.this
+                },
             });
+        }
+
+        if constructor_found {
+            for (_, name) in native_frames.take(limit.saturating_sub(records.len())) {
+                records.push(CallSiteRecord {
+                    location: CallSiteLocation::Native,
+                    function_name: Some(name.clone()),
+                    this_value: Value::UNDEFINED,
+                });
+            }
         }
 
         let target_root = self.heap.root(target);
@@ -402,16 +441,9 @@ impl<H: Host> Vm<H> {
                     "Error.captureStackTrace target must be an object".into(),
                 ));
             }
-            let getter = self.native_with_realm(
-                Native::ErrorStackGetter,
-                self.realm.globals,
-                self.realm.globals,
-            );
-            let setter = self.native_with_realm(
-                Native::ErrorStackSetter,
-                self.realm.globals,
-                self.realm.globals,
-            );
+            let intrinsics = self.realm.intrinsics.error_intrinsics[&self.realm.globals];
+            let getter = intrinsics.stack_getter;
+            let setter = intrinsics.stack_setter;
             let target = self.heap.root_value(target_root).unwrap();
             let key = self.heap.alloc(Cell::String("stack".into()));
             self.define_property_or_throw(
@@ -429,31 +461,50 @@ impl<H: Host> Vm<H> {
             )?;
             self.object_data_mut(target)
                 .expect("captureStackTrace target remains object-like")
-                .set_stack_data(StackData::Captured(records));
+                .set_stack_data(match capture_limit {
+                    Some(_) => StackData::Captured(records),
+                    None => StackData::Formatted(Value::UNDEFINED),
+                });
             Ok(Value::UNDEFINED)
         })();
         self.heap.release_root(target_root);
         result
     }
 
-    fn error_stack_trace_limit(&mut self, program: &ResidualProgram) -> Result<usize, JsError> {
-        let global = self.realm.globals;
-        let error_atom = self.intern_atom("Error");
-        let constructor = self.get_property(program, global, error_atom)?;
-        let limit_atom = self.intern_atom("stackTraceLimit");
-        let value = self.get_property(program, constructor, limit_atom)?;
-        let number = self.to_number(program, value)?;
-        Ok(if number.is_nan() || number <= 0.0 {
-            0
-        } else if !number.is_finite() {
-            usize::MAX
-        } else {
-            number.floor().min(usize::MAX as f64) as usize
-        })
+    fn error_stack_trace_limit(&mut self) -> Option<usize> {
+        let mut constructor =
+            self.realm.intrinsics.error_intrinsics[&self.realm.globals].constructor;
+        let atom = self.intern_atom("stackTraceLimit");
+        loop {
+            if self
+                .property_attributes(constructor, PropertyKey::string(atom))
+                .is_some_and(|attributes| attributes.accessor)
+            {
+                return None;
+            }
+            if let Some(value) = self.own_property(constructor, atom) {
+                let number = value.as_number()?;
+                return Some(if number.is_nan() || number <= 0.0 {
+                    0
+                } else if !number.is_finite() {
+                    usize::MAX
+                } else {
+                    number.floor().min(usize::MAX as f64) as usize
+                });
+            }
+            constructor = self.object_data(constructor)?.proto;
+        }
     }
 
     fn format_call_site(record: &CallSiteRecord) -> String {
-        let location = format!("{}:{}:{}", record.file_name, record.line, record.column);
+        let location = match &record.location {
+            CallSiteLocation::Source {
+                file_name,
+                line,
+                column,
+            } => format!("{file_name}:{line}:{column}"),
+            CallSiteLocation::Native => "native".to_owned(),
+        };
         record
             .function_name
             .as_ref()
@@ -476,18 +527,34 @@ impl<H: Host> Vm<H> {
             }
         };
         match native {
-            Native::CallSiteGetFileName => {
-                Ok(self.heap.alloc(Cell::String(record.file_name.into())))
-            }
+            Native::CallSiteGetFileName => Ok(match record.location {
+                CallSiteLocation::Source { file_name, .. } => {
+                    self.heap.alloc(Cell::String(file_name.into()))
+                }
+                CallSiteLocation::Native => Value::NULL,
+            }),
             Native::CallSiteGetThis => Ok(record.this_value),
             Native::CallSiteGetFunctionName | Native::CallSiteGetMethodName => Ok(record
                 .function_name
                 .map(|name| self.heap.alloc(Cell::String(name.into())))
                 .unwrap_or(Value::UNDEFINED)),
-            Native::CallSiteGetLineNumber => Ok(Value::number(f64::from(record.line))),
-            Native::CallSiteGetColumnNumber => Ok(Value::number(f64::from(record.column))),
+            Native::CallSiteGetLineNumber => Ok(match record.location {
+                CallSiteLocation::Source { line, .. } => Value::number(f64::from(line)),
+                CallSiteLocation::Native => Value::NULL,
+            }),
+            Native::CallSiteGetColumnNumber => Ok(match record.location {
+                CallSiteLocation::Source { column, .. } => Value::number(f64::from(column)),
+                CallSiteLocation::Native => Value::NULL,
+            }),
             Native::CallSiteIsEval => Ok(Value::FALSE),
-            Native::CallSiteIsConstructor | Native::CallSiteIsNative => Ok(Value::FALSE),
+            Native::CallSiteIsConstructor => Ok(Value::FALSE),
+            Native::CallSiteIsNative => {
+                Ok(if matches!(record.location, CallSiteLocation::Native) {
+                    Value::TRUE
+                } else {
+                    Value::FALSE
+                })
+            }
             Native::CallSiteGetTypeName | Native::CallSiteGetEvalOrigin => Ok(Value::UNDEFINED),
             Native::CallSiteToString => Ok(self
                 .heap
@@ -500,61 +567,20 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn error_stack_setter(
         &mut self,
-        program: &ResidualProgram,
+        _program: &ResidualProgram,
         receiver: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        if !self.is_object_like(receiver) {
-            return Err(self.type_error(program, "Error stack setter requires an object".into()));
-        }
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if !matches!(self.heap.get(value), Some(Cell::String(_))) {
-            return Err(self.type_error(program, "Error stack must be a string".into()));
+        if let Some(object) = self.object_data_mut(receiver) {
+            if matches!(
+                object.stack_data(),
+                Some(StackData::Captured(_) | StackData::Formatted(_))
+            ) {
+                object.set_stack_data(StackData::Formatted(value));
+            }
         }
-        let receiver = self.heap.root(receiver);
-        let value_root = self.heap.root(value);
-        let mut key_root = None;
-        let result = (|| {
-            let target = self.heap.root_value(receiver).unwrap();
-            let home =
-                self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::Error)];
-            if target == home {
-                return Err(self.type_error(program, "cannot set Error.prototype.stack".into()));
-            }
-            let key = self.heap.alloc(Cell::String("stack".into()));
-            let key = self.heap.root(key);
-            key_root = Some(key);
-            let property = self.heap.root_value(key).unwrap();
-            let target = self.heap.root_value(receiver).unwrap();
-            let descriptor =
-                self.object_get_own_property_descriptor(program, &[target, property])?;
-            let target = self.heap.root_value(receiver).unwrap();
-            let value = self.heap.root_value(value_root).unwrap();
-            if descriptor.is_undefined() {
-                let key = self.heap.root_value(key).unwrap();
-                self.define_property_or_throw(
-                    program,
-                    target,
-                    key,
-                    PropertyDescriptorRecord::data(value),
-                )?;
-            } else {
-                let atom = self.intern_atom("stack");
-                if !self.set_property_with_receiver(program, target, atom, value, target)? {
-                    return Err(self.type_error(program, "cannot set Error stack property".into()));
-                }
-            }
-            if let Some(object) = self.object_data_mut(target) {
-                object.clear_stack_data();
-            }
-            Ok(Value::UNDEFINED)
-        })();
-        if let Some(root) = key_root {
-            self.heap.release_root(root);
-        }
-        self.heap.release_root(value_root);
-        self.heap.release_root(receiver);
-        result
+        Ok(Value::UNDEFINED)
     }
 
     pub(super) fn error_to_string(
@@ -1573,24 +1599,6 @@ impl<H: Host> Vm<H> {
         let realm_is_error = self.native_with_realm(Native::ErrorIsError, global, global);
         self.set_builtin_function_name(realm_is_error, "isError")?;
         self.set_builtin_value_named(realm_error_constructor, "isError", realm_is_error)?;
-        let stack_getter = self.native_with_realm(Native::ErrorStackGetter, global, global);
-        let stack_setter = self.native_with_realm(Native::ErrorStackSetter, global, global);
-        self.set_builtin_function_name(stack_getter, "get stack")?;
-        self.set_builtin_function_name(stack_setter, "set stack")?;
-        let stack_atom = self.intern_atom("stack");
-        self.set_property(realm_error_prototype, stack_atom, Value::UNDEFINED)?;
-        self.set_property_attributes(
-            realm_error_prototype,
-            PropertyKey::string(stack_atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(stack_getter),
-                setter: Some(stack_setter),
-            },
-        );
         self.set_builtin_function_name(realm_error_constructor, "Error")?;
         self.set_builtin_value_named(global, "Error", realm_error_constructor)?;
         self.set_realm_builtin_named(
@@ -1915,24 +1923,6 @@ impl<H: Host> Vm<H> {
         let error_constructor = self.native_value(Native::Error);
         self.install_error_stack_api(program, error_constructor)?;
         self.set_builtin_named(program, error_constructor, "isError", Native::ErrorIsError)?;
-        let stack_getter = self.native_value(Native::ErrorStackGetter);
-        let stack_setter = self.native_value(Native::ErrorStackSetter);
-        self.set_builtin_function_name(stack_getter, "get stack")?;
-        self.set_builtin_function_name(stack_setter, "set stack")?;
-        let stack_atom = self.intern_atom("stack");
-        self.set_property(error_prototype, stack_atom, Value::UNDEFINED)?;
-        self.set_property_attributes(
-            error_prototype,
-            PropertyKey::string(stack_atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(stack_getter),
-                setter: Some(stack_setter),
-            },
-        );
         let realm_constructor = self.native_value(Native::RealmTypeError);
         let realm_prototype = self
             .heap
@@ -1958,6 +1948,31 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         constructor: Value,
     ) -> Result<(), JsError> {
+        let global = match self.heap.get(constructor) {
+            Some(Cell::Function { realm, .. }) => *realm,
+            _ => self.realm.globals,
+        };
+        let (stack_getter, stack_setter) = if constructor == self.native_value(Native::Error) {
+            (
+                self.native_value(Native::ErrorStackGetter),
+                self.native_value(Native::ErrorStackSetter),
+            )
+        } else {
+            (
+                self.native_with_realm(Native::ErrorStackGetter, global, global),
+                self.native_with_realm(Native::ErrorStackSetter, global, global),
+            )
+        };
+        self.set_builtin_function_name(stack_getter, "")?;
+        self.set_builtin_function_name(stack_setter, "")?;
+        self.realm.intrinsics.error_intrinsics.insert(
+            global,
+            ErrorRealmIntrinsics {
+                constructor,
+                stack_getter,
+                stack_setter,
+            },
+        );
         self.set_builtin_named(
             program,
             constructor,
@@ -2066,6 +2081,8 @@ impl<H: Host> Vm<H> {
             if let Some(options) = options {
                 self.install_error_cause(program, root, options)?;
             }
+            let object = self.heap.root_value(root).unwrap();
+            self.error_capture_stack_trace(program, &[object])?;
             Ok(self.heap.root_value(root).unwrap())
         })();
         for root in [Some(root), message, options]
@@ -2138,6 +2155,8 @@ impl<H: Host> Vm<H> {
             if let Some(options) = options {
                 self.install_error_cause(program, root, options)?;
             }
+            let value = self.heap.root_value(root).unwrap();
+            self.error_capture_stack_trace(program, &[value])?;
             let input = self.heap.root_value(input).unwrap();
             errors_list = self.iterable_to_rooted_list(program, input)?;
             let prototype = self.array_prototype_for_realm(self.realm.globals);

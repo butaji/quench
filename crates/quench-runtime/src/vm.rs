@@ -11,8 +11,8 @@ use crate::bytecode::{
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    CallSiteRecord, Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind,
-    Native, Object, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
+    CallSiteLocation, CallSiteRecord, Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper,
+    IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
@@ -259,6 +259,7 @@ struct RealmIntrinsics {
     iterator_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
     builtin_prototypes: FxHashMap<(Value, Native), Value>,
     promise_constructors: FxHashMap<Value, Value>,
+    error_intrinsics: FxHashMap<Value, ErrorRealmIntrinsics>,
     regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
     intl_number_format_prototypes: FxHashMap<Value, Value>,
@@ -280,6 +281,12 @@ struct RealmIntrinsics {
     intl_segment_iterator_prototypes: FxHashMap<Value, Value>,
     intl_segments_prototypes: FxHashMap<Value, Value>,
     intl_locale_prototypes: FxHashMap<Value, Value>,
+}
+#[derive(Clone, Copy)]
+struct ErrorRealmIntrinsics {
+    constructor: Value,
+    stack_getter: Value,
+    stack_setter: Value,
 }
 #[derive(Clone, Copy)]
 struct ArgumentsObjectTemplate {
@@ -663,6 +670,7 @@ pub(crate) struct Vm<H> {
     temporal_plain_year_month_proto: Value,
     natives: Vec<(Native, Value)>,
     frames: Vec<Box<Frame>>,
+    native_stack_frames: Vec<(usize, String)>,
     frame_pool: Vec<Box<Frame>>,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,

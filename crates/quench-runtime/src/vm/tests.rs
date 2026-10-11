@@ -2180,25 +2180,10 @@ fn error_stack_setter_roots_release_after_each_completion() {
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
             let outcome = vm.error_stack_setter(&program, target, &[value]);
-            assert_eq!(
-                outcome.is_ok(),
-                matches!(phase, "missing" | "data" | "accessor"),
-                "{phase}"
-            );
-            if let Err(error) = outcome {
-                if phase.ends_with("-throw") {
-                    let atom = vm.intern_atom("marker");
-                    assert_eq!(
-                        error.thrown_value(),
-                        vm.own_property(vm.realm.globals, atom)
-                    );
-                } else {
-                    assert!(
-                        vm.format_error(&program, &error).starts_with("TypeError:"),
-                        "{phase}"
-                    );
-                }
-            }
+            // A borrowed V8 stack setter ignores receivers without captured
+            // stack data, including proxies, primitives and arbitrary accessors.
+            // It must not invoke their descriptor or setter hooks.
+            assert!(outcome.is_ok(), "{phase}");
             assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
             assert_eq!(vm.active_call_roots.len(), calls);
             vm.collect_now(&program);

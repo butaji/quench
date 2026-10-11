@@ -36,6 +36,17 @@ fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_push_native_stack_frame(&mut self, name: &str) {
+        self.native_stack_frames
+            .push((self.frames.len(), name.to_owned()));
+    }
+
+    pub(crate) fn embedding_pop_native_stack_frame(&mut self) {
+        self.native_stack_frames
+            .pop()
+            .expect("balanced native stack scope");
+    }
+
     pub(crate) fn embedding_is_array(&mut self, root: RootId) -> Result<bool, JsError> {
         let value = self.embedding_value(root)?;
         let program = self.embedding_program()?;
