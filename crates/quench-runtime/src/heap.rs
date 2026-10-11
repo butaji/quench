@@ -1,7 +1,11 @@
 use crate::value::Value;
 use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
+use rayon::prelude::*;
+use rayon::{Scope, ThreadPool, ThreadPoolBuilder};
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 mod access;
 mod cell;
 mod cell_access;
@@ -24,6 +28,25 @@ const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
 const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
+const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
+const PARALLEL_MARK_MAX_THREADS: usize = 4;
+// Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
+// larger hosts start with four total markers, with an explicit env override.
+const PARALLEL_MARK_SMALL_HOST_MAX_CPUS: usize = 4;
+const PARALLEL_MARK_SMALL_HOST_DEFAULT_THREADS: usize = 1;
+const PARALLEL_MARK_LARGE_HOST_DEFAULT_THREADS: usize = PARALLEL_MARK_MAX_THREADS;
+const PARALLEL_MARK_SPLIT_THRESHOLD: usize = 256;
+const PARALLEL_MARK_STACK_SIZE_BYTES: usize = 256 * 1024;
+const PARALLEL_SWEEP_SLAB_BATCH_SIZE: usize = 8;
+const RC_DROP_LOCK_STRIPES: usize = 64;
+
+#[inline(always)]
+fn mark_word_if_new(word: &AtomicU64, mask: u64) -> bool {
+    if word.load(Ordering::Relaxed) & mask != 0 {
+        return false;
+    }
+    word.fetch_or(mask, Ordering::Relaxed) & mask == 0
+}
 
 #[derive(Clone, Copy)]
 struct GcHeadroomFactor {
@@ -92,6 +115,9 @@ pub(crate) enum GcTraceKind {
     VerifyFull,
 }
 
+pub(crate) type ParallelObjectRootTrace<'a> =
+    dyn Fn(GcTraceKind, Value, u32, &mut Vec<Value>) + Sync + 'a;
+
 fn gc_allocation_headroom(live_cells: usize) -> usize {
     let factor = if live_cells >= LARGE_HEAP_MINIMUM_LIVE_CELLS {
         LARGE_HEAP_GC_HEADROOM
@@ -106,10 +132,193 @@ fn gc_allocation_headroom(live_cells: usize) -> usize {
 pub(super) struct Slot {
     cell: Option<Cell>,
 }
+
+struct ParallelSweepSlab<'slots> {
+    base: usize,
+    slots: *mut Slot,
+    len: usize,
+    _borrow: std::marker::PhantomData<&'slots mut [Slot]>,
+}
+
+// SAFETY: these wrappers are built from the disjoint mutable slices returned
+// by SlotArena::slabs_mut. Each wrapper is consumed by exactly one Rayon task,
+// and all tasks join before any slot is read or mutated on the collector
+// thread. The collection has stopped the mutator, and the task only reads live
+// cells and takes dead cells from its unique slice.
+unsafe impl Send for ParallelSweepSlab<'_> {}
+
+impl<'slots> ParallelSweepSlab<'slots> {
+    fn new(base: usize, slots: &'slots mut [Slot]) -> Self {
+        Self {
+            base,
+            slots: slots.as_mut_ptr(),
+            len: slots.len(),
+            _borrow: std::marker::PhantomData,
+        }
+    }
+
+    fn sweep(&mut self, marks: &[AtomicU64]) -> ParallelSweepResult {
+        let mut result = ParallelSweepResult {
+            slab: (self.base / SLOTS_PER_SLAB) as u32,
+            ..ParallelSweepResult::default()
+        };
+        // SAFETY: the wrapper exclusively owns this disjoint slab until the
+        // joined Rayon task returns. No other code accesses its cells during
+        // the stop-the-world sweep.
+        let slots = unsafe { std::slice::from_raw_parts_mut(self.slots, self.len) };
+        result.swept_slots = slots.len();
+        for (offset, slot) in slots.iter_mut().enumerate() {
+            let Some(cell) = slot.cell.as_ref() else {
+                continue;
+            };
+            let index = self.base + offset;
+            if Heap::marked(marks, index) {
+                result.live += 1;
+                if let Some(object) = cell.object() {
+                    result.live_shapes.push(object.shape());
+                    if object.properties.has_compact_range() {
+                        result
+                            .property_owners
+                            .push(pack_offset_owner(object.properties.start_offset(), index));
+                    }
+                }
+                continue;
+            }
+
+            let cell = slot.cell.take().expect("occupied dead sweep slot");
+            result.external_bytes = result.external_bytes.saturating_add(cell.external_bytes());
+            if let Some(object) = cell.object() {
+                result.released_properties.push(object.properties);
+            }
+            if matches!(cell, Cell::Array { .. }) {
+                result.sparse_arrays.push(index as u32);
+            }
+            result.free_offsets.push(offset as u16);
+            let dead = StoppedCellDrop(Some(cell));
+            if cell_rc_drop_lock(dead.0.as_ref().expect("dead sweep cell")).is_some() {
+                result.rc_cells.push(dead);
+            } else {
+                drop(dead);
+            }
+        }
+        result
+    }
+}
+
+#[derive(Default)]
+struct ParallelSweepResult {
+    slab: u32,
+    live: usize,
+    live_shapes: Vec<u32>,
+    property_owners: Vec<u64>,
+    free_offsets: Vec<u16>,
+    released_properties: Vec<ValueVec>,
+    sparse_arrays: Vec<u32>,
+    rc_cells: Vec<StoppedCellDrop>,
+    external_bytes: usize,
+    swept_slots: usize,
+}
+
+#[derive(Default)]
+struct SweepOutput {
+    live: usize,
+    live_shapes: Vec<u32>,
+    property_owners: Vec<u64>,
+    freed_cells: usize,
+    swept_slots: usize,
+}
+
+static SHARED_RC_DROP_LOCK: Mutex<()> = Mutex::new(());
+static RC_DROP_LOCKS: [Mutex<()>; RC_DROP_LOCK_STRIPES] =
+    [const { Mutex::new(()) }; RC_DROP_LOCK_STRIPES];
+
+/// A dead cell moved from a sweep worker to the collector thread. Rc-bearing
+/// cells are released by that owner after the sweep batch joins; the
+/// destructor's lock is a safe fallback if a transfer cannot be completed.
+struct StoppedCellDrop(Option<Cell>);
+
+// SAFETY: a sweep worker only moves the detached Cell into this wrapper and
+// reads an Rc allocation pointer to classify it. It does not clone, inspect or
+// drop any Rc payload. The collector thread drops transferred cells after the
+// sweep batch joins; the fallback Drop path serializes worker-side destruction.
+unsafe impl Send for StoppedCellDrop {}
+
+impl StoppedCellDrop {
+    fn drop_on_owner(mut self) {
+        if let Some(cell) = self.0.take() {
+            drop(cell);
+        }
+    }
+}
+
+impl Drop for StoppedCellDrop {
+    fn drop(&mut self) {
+        let Some(cell) = self.0.take() else {
+            return;
+        };
+        let Some(lock) = cell_rc_drop_lock(&cell) else {
+            drop(cell);
+            return;
+        };
+
+        let guard = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if cell_has_shared_rc_payload(&cell) {
+            drop(cell);
+            drop(guard);
+        } else {
+            drop(guard);
+            drop(cell);
+        }
+    }
+}
+
+fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
+    match cell {
+        Cell::Array { elements, .. } => {
+            Some(&RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(elements) as usize)])
+        }
+        Cell::ArrayBuffer { bytes, .. } => {
+            Some(&RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(bytes) as usize)])
+        }
+        Cell::WasmHostFunction { signature, .. } => {
+            Some(&RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(signature) as usize)])
+        }
+        Cell::Iterator { .. }
+        | Cell::String(_)
+        | Cell::WasmGc { .. }
+        | Cell::WasmGlobal { .. }
+        | Cell::WasmTable { .. }
+        | Cell::WasmTag { .. }
+        | Cell::RegExp { .. } => Some(&SHARED_RC_DROP_LOCK),
+        _ => None,
+    }
+}
+
+fn cell_has_shared_rc_payload(cell: &Cell) -> bool {
+    match cell {
+        Cell::Array { elements, .. } => Rc::strong_count(elements) > 1,
+        Cell::ArrayBuffer { bytes, .. } => Rc::strong_count(bytes) > 1,
+        Cell::WasmHostFunction { signature, .. } => Rc::strong_count(signature) > 1,
+        Cell::Iterator { .. }
+        | Cell::String(_)
+        | Cell::WasmGc { .. }
+        | Cell::WasmGlobal { .. }
+        | Cell::WasmTable { .. }
+        | Cell::WasmTag { .. }
+        | Cell::RegExp { .. } => true,
+        _ => false,
+    }
+}
+
+fn rc_drop_lock_index(address: usize) -> usize {
+    (address >> 4) & (RC_DROP_LOCK_STRIPES - 1)
+}
 #[derive(Default)]
 pub(crate) struct Heap {
     slots: SlotArena,
-    marks: Vec<u64>,
+    marks: Vec<AtomicU64>,
     remembered_marks: Vec<u64>,
     remembered: Vec<u32>,
     young: Vec<u32>,
@@ -135,6 +344,111 @@ pub(crate) struct Heap {
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
     memory_profile: memory_profile::MemoryProfile,
+}
+
+/// Immutable view used only while the mutator is stopped during parallel
+/// marking. `Cell` contains `Rc` and other `!Sync` payloads, so workers must
+/// only borrow them and walk immutable edges: they may not clone/drop an `Rc`,
+/// mutate a cell, or retain any reference past the joined Rayon scope.
+#[derive(Clone, Copy)]
+struct ReadOnlyHeapView<'heap> {
+    slots: *const SlotArena,
+    properties: *const ValueArena,
+    sparse_arrays: *const Option<Box<FxHashMap<u32, SparseElements>>>,
+    marks: *const [AtomicU64],
+    slot_len: usize,
+    _heap: std::marker::PhantomData<&'heap Heap>,
+}
+
+// SAFETY: the view is created from an immutable borrow of Heap and remains
+// scoped to the stop-the-world marking call. SlotArena, ValueArena, sparse
+// arrays and Cells are not mutated until all Rayon work joins. The only
+// shared writes are the atomic mark bits. Cell tracing borrows Rc payloads
+// without changing their reference counts.
+unsafe impl Send for ReadOnlyHeapView<'_> {}
+// SAFETY: same stopped-mutator and read-only-payload invariant as above.
+unsafe impl Sync for ReadOnlyHeapView<'_> {}
+
+impl<'heap> ReadOnlyHeapView<'heap> {
+    fn new(heap: &'heap Heap) -> Self {
+        Self {
+            slots: &heap.slots,
+            properties: &heap.properties,
+            sparse_arrays: &heap.sparse_arrays,
+            marks: heap.marks.as_slice(),
+            slot_len: heap.slots.len(),
+            _heap: std::marker::PhantomData,
+        }
+    }
+
+    fn cell(&self, index: usize) -> Option<&'heap Cell> {
+        if index >= self.slot_len {
+            return None;
+        }
+        // SAFETY: the view borrows this immutable SlotArena for 'heap; the
+        // bound proves the flat slot index is initialized and no worker can
+        // mutate or reclaim it until the scope has joined.
+        unsafe {
+            let slots: &'heap SlotArena = &*self.slots;
+            slots.get_unchecked(index).cell.as_ref()
+        }
+    }
+
+    fn properties(&self) -> &'heap ValueArena {
+        // SAFETY: protected by the view's immutable heap borrow and scope.
+        unsafe { &*self.properties }
+    }
+
+    fn sparse_arrays(&self) -> Option<&'heap FxHashMap<u32, SparseElements>> {
+        // SAFETY: protected by the view's immutable heap borrow and scope.
+        unsafe { (&*self.sparse_arrays).as_deref() }
+    }
+
+    fn mark_if_new(&self, index: usize) -> bool {
+        // SAFETY: the mark slice has one atomic word for every allocated slot.
+        let marks = unsafe { &*self.marks };
+        let word = &marks[index / u64::BITS as usize];
+        let mask = 1_u64 << (index % u64::BITS as usize);
+        mark_word_if_new(word, mask)
+    }
+}
+
+#[derive(Default)]
+struct ParallelMarkBatch {
+    weak_maps: Vec<u32>,
+    object_roots: Vec<(Value, u32)>,
+    work_items: u64,
+    max_worklist: usize,
+    marked_count: usize,
+    #[cfg(feature = "profile-aggregate")]
+    marked_kinds: [u64; CellKind::COUNT],
+}
+
+fn parallel_mark_pool() -> Option<&'static ThreadPool> {
+    static POOL: OnceLock<Option<ThreadPool>> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let available = std::thread::available_parallelism().map_or(1, |count| count.get());
+        let default_threads = if available <= PARALLEL_MARK_SMALL_HOST_MAX_CPUS {
+            PARALLEL_MARK_SMALL_HOST_DEFAULT_THREADS
+        } else {
+            PARALLEL_MARK_LARGE_HOST_DEFAULT_THREADS
+        };
+        let requested = std::env::var("QUENCH_GC_MARK_THREADS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(default_threads)
+            .clamp(1, PARALLEL_MARK_MAX_THREADS);
+        let total_threads = available.min(requested);
+        let worker_threads = total_threads.saturating_sub(1);
+        (worker_threads > 0).then(|| {
+            ThreadPoolBuilder::new()
+                .num_threads(worker_threads)
+                .stack_size(PARALLEL_MARK_STACK_SIZE_BYTES)
+                .build()
+                .expect("parallel GC mark pool construction failed")
+        })
+    })
+    .as_ref()
 }
 #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
 #[derive(Clone, Copy)]
@@ -443,7 +757,7 @@ impl Heap {
         #[cfg(feature = "profile-memory")]
         self.profile_allocation(index);
         if index / 64 == self.marks.len() {
-            self.marks.push(0);
+            self.marks.push(AtomicU64::new(0));
         }
         if track_young {
             self.young.push(index as u32);
@@ -626,14 +940,16 @@ impl Heap {
     }
     #[cfg(test)]
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
-        self.collect_with_object_roots(roots, |_, _, _, _| {}, true)
+        self.collect_with_object_roots(roots, |_, _, _, _| {}, None, true)
+            .0
     }
     pub(crate) fn collect_with_object_roots(
         &mut self,
         roots: impl IntoIterator<Item = Value>,
         mut object_roots: impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+        parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
         full: bool,
-    ) -> Vec<(Value, Value)> {
+    ) -> (Vec<(Value, Value)>, Vec<u32>) {
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
         self.collection_state = if full {
             CollectionState::FullMarking
@@ -659,7 +975,7 @@ impl Heap {
             self.gc_profile.young_cells_swept += self.young.len() as u64;
         }
         if full {
-            self.marks.fill(0);
+            Self::clear_marks(&self.marks);
             self.remembered.clear();
             self.remembered_marks.fill(0);
         }
@@ -669,7 +985,7 @@ impl Heap {
         }
         let mut work: Vec<Value> = roots.into_iter().chain(self.roots.values()).collect();
         #[cfg(debug_assertions)]
-        let verify_roots = (!full).then(|| work.clone());
+        let verify_roots = work.clone();
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.roots += work.len() as u64;
@@ -700,19 +1016,22 @@ impl Heap {
                     }
                 }
             }
-            self.mark_work(
+            self.mark_work_parallel_or_serial(
                 &mut work,
                 &mut object_roots,
+                parallel_object_roots,
                 &mut ephemerons,
                 GcTraceKind::Collection,
             );
         }
         #[cfg(debug_assertions)]
-        if let Some(roots) = verify_roots {
-            self.debug_verify_minor(&roots, &mut object_roots);
+        {
+            if full {
+                self.debug_verify_full(&verify_roots, &mut object_roots);
+            } else {
+                self.debug_verify_minor(&verify_roots, &mut object_roots);
+            }
         }
-        #[cfg(feature = "profile-aggregate")]
-        let mut swept_slots = 0;
         let finalization_jobs = self.prune_weak_entries(full);
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
@@ -726,102 +1045,31 @@ impl Heap {
         }
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
-        let mut live = 0;
-        let properties = &mut self.properties;
-        let mut property_owners = Vec::new();
+        let sweep_pool = if full
+            && self.slots.len() >= PARALLEL_MARK_MINIMUM_SLOTS
+            && !cfg!(feature = "profile-memory")
         {
-            let external_bytes = &mut self.external_bytes;
-            let free_by_slab = &mut self.free_by_slab;
-            let free_slabs = &mut self.free_slabs;
-            let free_slots = &mut self.free_slots;
-            let sparse_arrays = &mut self.sparse_arrays;
-            #[cfg(feature = "profile-memory")]
-            let memory_profile = &mut self.memory_profile;
-            #[cfg(feature = "profile-aggregate")]
-            let gc_profile = &mut self.gc_profile;
-            let mut reclaim = |properties: &mut ValueArena, index: usize, cell: Cell| {
-                *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
-                #[cfg(feature = "profile-memory")]
-                {
-                    let object_slots = cell
-                        .object()
-                        .map(|object| properties.len(object.properties));
-                    memory_profile.freed(index, &cell, object_slots);
-                }
-                if let Some(object) = cell.object() {
-                    properties.release(object.properties);
-                }
-                if let Some(arrays) = sparse_arrays {
-                    arrays.remove(&(index as u32));
-                }
-                let slab = index / SLOTS_PER_SLAB;
-                let offsets = &mut free_by_slab[slab];
-                if offsets.is_empty() {
-                    free_slabs.push(slab as u32);
-                }
-                offsets.push((index % SLOTS_PER_SLAB) as u16);
-                *free_slots += 1;
-                #[cfg(feature = "profile-aggregate")]
-                {
-                    gc_profile.freed += 1;
-                }
-            };
-            self.collection_state = CollectionState::Sweeping;
-            if full {
-                for (base, slab) in self.slots.slabs_mut() {
-                    for (offset, slot) in slab.iter_mut().enumerate() {
-                        let index = base + offset;
-                        #[cfg(feature = "profile-aggregate")]
-                        {
-                            swept_slots += 1;
-                        }
-                        if Self::marked(&self.marks, index) {
-                            live += 1;
-                            if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
-                                && properties.has_compact_range(object.properties)
-                            {
-                                property_owners.push(pack_offset_owner(
-                                    object.properties.start_offset(),
-                                    index,
-                                ));
-                            }
-                        } else if let Some(cell) = slot.cell.take() {
-                            reclaim(properties, index, cell);
-                        }
-                    }
-                }
-            } else {
-                let mut promoted = 0;
-                for index in self.young.iter().copied() {
-                    #[cfg(feature = "profile-aggregate")]
-                    {
-                        swept_slots += 1;
-                    }
-                    let index_usize = index as usize;
-                    let Some(slot) = self.slots.get_mut(index_usize) else {
-                        continue;
-                    };
-                    if Self::marked(&self.marks, index_usize) {
-                        promoted += 1;
-                    } else if let Some(cell) = slot.cell.take() {
-                        reclaim(properties, index_usize, cell);
-                        self.marks[index_usize / 64] &= !(1 << (index_usize % 64));
-                    }
-                }
-                self.young.clear();
-                for index in self.remembered.iter().copied() {
-                    let index = index as usize;
-                    self.remembered_marks[index / 64] &= !(1 << (index % 64));
-                }
-                self.remembered.clear();
-                self.old_live = self.old_live.saturating_add(promoted);
-                live = self.old_live;
-            }
-        }
+            parallel_mark_pool()
+        } else {
+            None
+        };
+        let SweepOutput {
+            live,
+            live_shapes,
+            property_owners,
+            freed_cells,
+            swept_slots,
+        } = if let Some(pool) = sweep_pool {
+            self.sweep_full_parallel(pool)
+        } else {
+            self.sweep_serial(full)
+        };
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.sweep_slots += swept_slots as u64;
+            self.gc_profile.freed += freed_cells as u64;
         }
+        let _ = (freed_cells, swept_slots);
         if full {
             self.compact_property_arena(property_owners);
         }
@@ -878,29 +1126,355 @@ impl Heap {
         self.peak_survivors = self.peak_survivors.max(live);
         self.max_threshold = self.max_threshold.max(self.threshold);
         self.collection_state = CollectionState::Idle;
-        finalization_jobs
+        (finalization_jobs, live_shapes)
     }
+    fn sweep_full_parallel(&mut self, pool: &ThreadPool) -> SweepOutput {
+        self.collection_state = CollectionState::Sweeping;
+        let slot_len = self.slots.len();
+        let mut slabs = self
+            .slots
+            .slabs_mut()
+            .map(|(base, slots)| ParallelSweepSlab::new(base, slots))
+            .collect::<Vec<_>>();
+        let mut output = SweepOutput::default();
+
+        for batch in slabs.chunks_mut(PARALLEL_SWEEP_SLAB_BATCH_SIZE) {
+            let results = {
+                let marks = &self.marks;
+                pool.install(|| {
+                    batch
+                        .par_iter_mut()
+                        .map(|slab| slab.sweep(marks))
+                        .collect::<Vec<_>>()
+                })
+            };
+
+            for result in results {
+                let ParallelSweepResult {
+                    slab,
+                    live,
+                    live_shapes,
+                    property_owners,
+                    free_offsets,
+                    released_properties,
+                    sparse_arrays,
+                    rc_cells,
+                    external_bytes,
+                    swept_slots,
+                } = result;
+                let freed_cells = free_offsets.len();
+                if freed_cells > 0 {
+                    let slab_free = &mut self.free_by_slab[slab as usize];
+                    if slab_free.is_empty() {
+                        self.free_slabs.push(slab);
+                    }
+                    slab_free.extend(free_offsets);
+                    self.free_slots += freed_cells;
+                    for properties in released_properties {
+                        self.properties.release(properties);
+                    }
+                    if let Some(arrays) = &mut self.sparse_arrays {
+                        for index in sparse_arrays {
+                            arrays.remove(&index);
+                        }
+                    }
+                    self.external_bytes = self.external_bytes.saturating_sub(external_bytes);
+                }
+                for cell in rc_cells {
+                    cell.drop_on_owner();
+                }
+                output.live += live;
+                output.live_shapes.extend(live_shapes);
+                output.property_owners.extend(property_owners);
+                output.freed_cells += freed_cells;
+                output.swept_slots += swept_slots;
+            }
+        }
+        debug_assert_eq!(output.swept_slots, slot_len);
+        output
+    }
+
+    fn sweep_serial(&mut self, full: bool) -> SweepOutput {
+        let mut live = 0;
+        let mut live_shapes = Vec::new();
+        let mut freed_cells = 0;
+        let mut swept_slots = 0;
+        let properties = &mut self.properties;
+        let mut property_owners_for_sweep = Vec::new();
+        {
+            let external_bytes = &mut self.external_bytes;
+            let free_by_slab = &mut self.free_by_slab;
+            let free_slabs = &mut self.free_slabs;
+            let free_slots = &mut self.free_slots;
+            let sparse_arrays = &mut self.sparse_arrays;
+            #[cfg(feature = "profile-memory")]
+            let memory_profile = &mut self.memory_profile;
+            let mut reclaim = |properties: &mut ValueArena, index: usize, cell: Cell| {
+                *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
+                #[cfg(feature = "profile-memory")]
+                {
+                    let object_slots = cell
+                        .object()
+                        .map(|object| properties.len(object.properties));
+                    memory_profile.freed(index, &cell, object_slots);
+                }
+                if let Some(object) = cell.object() {
+                    properties.release(object.properties);
+                }
+                if let Some(arrays) = sparse_arrays {
+                    arrays.remove(&(index as u32));
+                }
+                let slab = index / SLOTS_PER_SLAB;
+                let offsets = &mut free_by_slab[slab];
+                if offsets.is_empty() {
+                    free_slabs.push(slab as u32);
+                }
+                offsets.push((index % SLOTS_PER_SLAB) as u16);
+                *free_slots += 1;
+                freed_cells += 1;
+                drop(cell);
+            };
+            self.collection_state = CollectionState::Sweeping;
+            if full {
+                for (base, slab) in self.slots.slabs_mut() {
+                    for (offset, slot) in slab.iter_mut().enumerate() {
+                        let index = base + offset;
+                        swept_slots += 1;
+                        if Self::marked(&self.marks, index) {
+                            live += 1;
+                            if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
+                                live_shapes.push(object.shape());
+                                if properties.has_compact_range(object.properties) {
+                                    property_owners_for_sweep.push(pack_offset_owner(
+                                        object.properties.start_offset(),
+                                        index,
+                                    ));
+                                }
+                            }
+                        } else if let Some(cell) = slot.cell.take() {
+                            reclaim(properties, index, cell);
+                        }
+                    }
+                }
+            } else {
+                let mut promoted = 0;
+                for index in self.young.iter().copied() {
+                    swept_slots += 1;
+                    let index_usize = index as usize;
+                    let Some(slot) = self.slots.get_mut(index_usize) else {
+                        continue;
+                    };
+                    if Self::marked(&self.marks, index_usize) {
+                        promoted += 1;
+                    } else if let Some(cell) = slot.cell.take() {
+                        reclaim(properties, index_usize, cell);
+                        self.marks[index_usize / 64]
+                            .fetch_and(!(1 << (index_usize % 64)), Ordering::Relaxed);
+                    }
+                }
+                self.young.clear();
+                for index in self.remembered.iter().copied() {
+                    let index = index as usize;
+                    self.remembered_marks[index / 64] &= !(1 << (index % 64));
+                }
+                self.remembered.clear();
+                self.old_live = self.old_live.saturating_add(promoted);
+                live = self.old_live;
+            }
+        }
+        SweepOutput {
+            live,
+            live_shapes,
+            property_owners: property_owners_for_sweep,
+            freed_cells,
+            swept_slots,
+        }
+    }
+
+    fn mark_work_parallel_or_serial(
+        &mut self,
+        work: &mut Vec<Value>,
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+        parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
+        ephemerons: &mut weak::EphemeronWork,
+        trace_kind: GcTraceKind,
+    ) {
+        if self.slots.len() < PARALLEL_MARK_MINIMUM_SLOTS {
+            self.mark_work(work, object_roots, ephemerons, trace_kind);
+            return;
+        }
+        let Some(pool) = parallel_mark_pool() else {
+            self.mark_work(work, object_roots, ephemerons, trace_kind);
+            return;
+        };
+
+        while !work.is_empty() {
+            let initial_work = std::mem::take(work);
+            let batches = {
+                let view = ReadOnlyHeapView::new(self);
+                let batches = Mutex::new(Vec::new());
+                pool.scope(|scope| {
+                    Self::visit_parallel_work(
+                        scope,
+                        initial_work,
+                        view,
+                        &batches,
+                        parallel_object_roots,
+                        trace_kind,
+                    );
+                });
+                batches
+                    .into_inner()
+                    .expect("parallel GC mark output mutex poisoned")
+            };
+            for batch in batches {
+                #[cfg(feature = "profile-aggregate")]
+                {
+                    self.gc_profile.work_items += batch.work_items;
+                    self.gc_profile.max_worklist =
+                        self.gc_profile.max_worklist.max(batch.max_worklist as u64);
+                    self.gc_profile.marked += batch.marked_count as u64;
+                    for (kind, count) in batch.marked_kinds.iter().copied().enumerate() {
+                        self.gc_profile.marked_kinds[kind] += count;
+                    }
+                }
+                for (owner, shape) in batch.object_roots {
+                    object_roots(trace_kind, owner, shape, work);
+                }
+                for index in batch.weak_maps {
+                    if let Some(cell) = self.get(Value::heap(index)) {
+                        ephemerons.newly_marked(index, cell, &self.marks, work);
+                    }
+                }
+            }
+        }
+    }
+
+    fn visit_parallel_work<'scope>(
+        scope: &Scope<'scope>,
+        mut work: Vec<Value>,
+        view: ReadOnlyHeapView<'scope>,
+        batches: &'scope Mutex<Vec<ParallelMarkBatch>>,
+        parallel_object_roots: Option<&'scope ParallelObjectRootTrace<'scope>>,
+        trace_kind: GcTraceKind,
+    ) {
+        let mut batch = ParallelMarkBatch::default();
+        batch.max_worklist = work.len();
+        while let Some(value) = work.pop() {
+            batch.work_items += 1;
+            let Some(index) = value.heap_index().map(|value| value as usize) else {
+                continue;
+            };
+            let Some(cell) = view.cell(index) else {
+                continue;
+            };
+            if !view.mark_if_new(index) {
+                continue;
+            }
+
+            let mut trace_object_root =
+                |kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>| {
+                    if let Some(parallel_object_roots) = parallel_object_roots {
+                        parallel_object_roots(kind, owner, shape, roots);
+                    } else {
+                        batch.object_roots.push((owner, shape));
+                    }
+                };
+            Self::children(
+                value,
+                cell,
+                view.properties(),
+                &mut work,
+                &mut trace_object_root,
+                trace_kind,
+            );
+            if matches!(cell, Cell::Array { .. })
+                && let Some(elements) = view
+                    .sparse_arrays()
+                    .and_then(|arrays| arrays.get(&(index as u32)))
+            {
+                work.extend(elements.values.values().copied());
+            }
+            batch.marked_count += 1;
+            if matches!(cell, Cell::WeakMap { .. }) {
+                batch.weak_maps.push(index as u32);
+            }
+            #[cfg(feature = "profile-aggregate")]
+            {
+                batch.marked_kinds[Self::cell_kind(cell) as usize] += 1;
+            }
+            batch.max_worklist = batch.max_worklist.max(work.len());
+
+            if work.len() > PARALLEL_MARK_SPLIT_THRESHOLD {
+                let spawned = work.split_off(work.len() / 2);
+                scope.spawn(move |scope| {
+                    Self::visit_parallel_work(
+                        scope,
+                        spawned,
+                        view,
+                        batches,
+                        parallel_object_roots,
+                        trace_kind,
+                    );
+                });
+            }
+        }
+        batches
+            .lock()
+            .expect("parallel GC mark output mutex poisoned")
+            .push(batch);
+    }
+
+    #[cfg(debug_assertions)]
+    fn debug_verify_full(
+        &mut self,
+        roots: &[Value],
+        object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+    ) {
+        let parallel_marks = Self::snapshot_marks(&self.marks);
+        #[cfg(feature = "profile-aggregate")]
+        let profile = self.gc_profile;
+        Self::clear_marks(&self.marks);
+        let mut work = roots.to_vec();
+        let mut ephemerons = weak::EphemeronWork::default();
+        self.mark_work(
+            &mut work,
+            object_roots,
+            &mut ephemerons,
+            GcTraceKind::VerifyFull,
+        );
+        let sequential_marks = Self::snapshot_marks(&self.marks);
+        assert_eq!(
+            sequential_marks, parallel_marks,
+            "parallel full mark differs from the single-threaded verifier"
+        );
+        Self::restore_marks(&self.marks, &parallel_marks);
+        self.collection_state = CollectionState::FullMarking;
+        #[cfg(feature = "profile-aggregate")]
+        {
+            self.gc_profile = profile;
+        }
+    }
+
     #[cfg(debug_assertions)]
     fn debug_verify_minor(
         &mut self,
         roots: &[Value],
         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
     ) {
-        let minor_marks = self.marks.clone();
+        let minor_marks = Self::snapshot_marks(&self.marks);
         let young = self.young.clone();
         #[cfg(feature = "profile-aggregate")]
         let profile = self.gc_profile;
-        self.marks.fill(0);
+        Self::clear_marks(&self.marks);
         let mut young_slots = vec![false; self.slots.len()];
         for index in young.iter().copied() {
             young_slots[index as usize] = true;
         }
         let mut work = roots.to_vec();
         work.extend(self.slots.iter().enumerate().filter_map(|(index, slot)| {
-            (slot.cell.is_some()
-                && !young_slots[index]
-                && Self::marked(&minor_marks, index))
-            .then_some(Value::heap(index as u32))
+            (slot.cell.is_some() && !young_slots[index] && Self::marked_words(&minor_marks, index))
+                .then_some(Value::heap(index as u32))
         }));
         let mut ephemerons = weak::EphemeronWork::default();
         self.collection_state = CollectionState::FullMarking;
@@ -915,12 +1489,12 @@ impl Heap {
             if self.get(Value::heap(index as u32)).is_some() {
                 assert_eq!(
                     Self::marked(&self.marks, index),
-                    Self::marked(&minor_marks, index),
+                    Self::marked_words(&minor_marks, index),
                     "minor collection's young live set differs from a full mark with old cells pinned: {index}"
                 );
             }
         }
-        self.marks = minor_marks;
+        Self::restore_marks(&self.marks, &minor_marks);
         self.collection_state = CollectionState::MinorMarking;
         #[cfg(feature = "profile-aggregate")]
         {
@@ -945,17 +1519,23 @@ impl Heap {
             let Some(slot) = self.slots.get_mut(index) else {
                 continue;
             };
-            if Self::marked(&self.marks, index) || slot.cell.is_none() {
+            if slot.cell.is_none() || !Self::mark_serial(&self.marks, index) {
                 continue;
             }
-            Self::mark(&mut self.marks, index);
             let cell = slot.cell.as_ref().unwrap();
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.marked += 1;
                 self.gc_profile.marked_kinds[Self::cell_kind(cell) as usize] += 1;
             }
-            Self::children(value, cell, &self.properties, work, object_roots, trace_kind);
+            Self::children(
+                value,
+                cell,
+                &self.properties,
+                work,
+                object_roots,
+                trace_kind,
+            );
             ephemerons.newly_marked(index as u32, cell, &self.marks, work);
             if let Some(arrays) = self.sparse_arrays.as_ref()
                 && matches!(cell, Cell::Array { .. })
@@ -970,12 +1550,36 @@ impl Heap {
         }
     }
     #[inline(always)]
-    fn marked(marks: &[u64], index: usize) -> bool {
-        marks[index / 64] & (1 << (index % 64)) != 0
+    fn marked(marks: &[AtomicU64], index: usize) -> bool {
+        marks[index / 64].load(Ordering::Relaxed) & (1 << (index % 64)) != 0
     }
     #[inline(always)]
-    fn mark(marks: &mut [u64], index: usize) {
-        marks[index / 64] |= 1 << (index % 64);
+    fn mark_serial(marks: &[AtomicU64], index: usize) -> bool {
+        let mask = 1_u64 << (index % u64::BITS as usize);
+        mark_word_if_new(&marks[index / u64::BITS as usize], mask)
+    }
+    #[cfg(debug_assertions)]
+    fn marked_words(marks: &[u64], index: usize) -> bool {
+        marks[index / 64] & (1 << (index % 64)) != 0
+    }
+    #[cfg(debug_assertions)]
+    fn snapshot_marks(marks: &[AtomicU64]) -> Vec<u64> {
+        marks
+            .iter()
+            .map(|word| word.load(Ordering::Relaxed))
+            .collect()
+    }
+    fn clear_marks(marks: &[AtomicU64]) {
+        for word in marks {
+            word.store(0, Ordering::Relaxed);
+        }
+    }
+    #[cfg(debug_assertions)]
+    fn restore_marks(marks: &[AtomicU64], words: &[u64]) {
+        debug_assert_eq!(marks.len(), words.len());
+        for (mark, value) in marks.iter().zip(words) {
+            mark.store(*value, Ordering::Relaxed);
+        }
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     pub(crate) const fn gc_profile(&self) -> GcProfile {
@@ -1580,7 +2184,9 @@ mod offset_order_tests {
         let mut state = 0x2545_f491_u64;
         let mut offsets: Vec<usize> = (0..5000)
             .map(|_| {
-                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 (state >> 33) as usize
             })
             .collect();

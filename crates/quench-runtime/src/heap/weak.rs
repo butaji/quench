@@ -1,5 +1,6 @@
 use super::root::WeakHandle;
 use super::*;
+use std::sync::atomic::AtomicU64;
 
 impl Heap {
     pub(crate) fn weak_handle(&self, value: Value) -> Option<WeakHandle> {
@@ -33,7 +34,7 @@ impl EphemeronWork {
         &mut self,
         index: u32,
         cell: &Cell,
-        marks: &[u64],
+        marks: &[AtomicU64],
         work: &mut Vec<Value>,
     ) {
         self.flush(index, work);
@@ -44,7 +45,7 @@ impl EphemeronWork {
         &mut self,
         index: u32,
         cell: &Cell,
-        marks: &[u64],
+        marks: &[AtomicU64],
         work: &mut Vec<Value>,
     ) {
         self.flush(index, work);
@@ -62,7 +63,7 @@ impl EphemeronWork {
         }
     }
 
-    fn scan_weak_map(&mut self, cell: &Cell, marks: &[u64], work: &mut Vec<Value>) {
+    fn scan_weak_map(&mut self, cell: &Cell, marks: &[AtomicU64], work: &mut Vec<Value>) {
         if let Cell::WeakMap { entries, .. } = cell {
             for (key, value) in entries.iter() {
                 let Some(key) = key.heap_index() else {
@@ -114,7 +115,7 @@ impl Heap {
 
     fn prune_weak_slot(
         slots: &mut SlotArena,
-        marks: &[u64],
+        marks: &[AtomicU64],
         index: u32,
         finalization_jobs: &mut Vec<(Value, Value)>,
     ) {
@@ -129,7 +130,7 @@ impl Heap {
 
     fn prune_weak_cell(
         cell: &mut Cell,
-        marks: &[u64],
+        marks: &[AtomicU64],
         finalization_jobs: &mut Vec<(Value, Value)>,
     ) {
         match cell {
