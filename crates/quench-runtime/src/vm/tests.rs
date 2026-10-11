@@ -29,7 +29,7 @@ impl Host for RecordingHost {
 }
 
 #[test]
-fn promoted_immutable_parameters_preserve_order_and_survive_collection() {
+fn promoted_locals_preserve_order_and_survive_collection() {
     let source = r#"
       function read(value) {
         var index = 0;
@@ -54,8 +54,9 @@ fn promoted_immutable_parameters_preserve_order_and_survive_collection() {
     vm.execute(&program).unwrap();
     assert_eq!(output.borrow().as_slice(), ["42", "3", "3"]);
 
+    // `value`, `index` and `discarded` are written only at statement level.
     let read = &program.functions[1];
-    assert_eq!(read.local_registers.len(), 1);
+    assert_eq!(read.local_registers.len(), 3);
     assert!(program.functions[2].local_registers.is_empty());
     assert!(program.functions[3].local_registers.is_empty());
 }

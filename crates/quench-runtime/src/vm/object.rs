@@ -1442,8 +1442,10 @@ impl<H: Host> Vm<H> {
         }) else {
             return false;
         };
-        if self.shape_is_dictionary(shape)
-            || !self.object_data(object).is_some_and(Object::is_extensible)
+        // Entries record only non-dictionary source and prototype shapes, a shape's dictionary
+        // state is fixed when it is created, and shape compaction clears these caches, so a
+        // matching shape needs no dictionary probe here or along the prototype chain.
+        if !self.object_data(object).is_some_and(Object::is_extensible)
             || !self.field_add_prototype_chain_matches(object, &cache.prototype_shapes)
         {
             return false;
@@ -1495,11 +1497,9 @@ impl<H: Host> Vm<H> {
             let Some(Cell::Object(data)) = self.heap.get(prototype) else {
                 return false;
             };
-            let shape = data.shape();
-            if shape != *expected_shape
+            if data.shape() != *expected_shape
                 || data.is_module_namespace()
                 || data.is_arguments_object()
-                || self.shape_is_dictionary(shape)
             {
                 return false;
             }
