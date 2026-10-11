@@ -10,6 +10,10 @@ pub(crate) use commonjs::source_kind;
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
+        method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
+        method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
+        method "utilCallbackifySettled" (1) => crate::modules::util_callbackify_shared_vm::settled,
+        method "utilCallbackifyInvoke" (0) => crate::modules::util_callbackify_shared_vm::invoke,
         method "stripVTControlCharacters" (1) => crate::modules::util_shared_vm::strip_vt,
         method "parseEnv" (1) => crate::modules::util_shared_vm::parse_env,
         method "utilTypeCheck" (1) => crate::modules::util_shared_vm::type_check,

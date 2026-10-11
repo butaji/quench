@@ -394,6 +394,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let key = context.string_rooted(name);
         context.set_property_rooted(module, key, function, module)?;
     }
+    let callbackify = crate::modules::util_callbackify_shared_vm::function(context)?;
+    let callbackify_key = context.string_rooted("callbackify");
+    context.set_property_rooted(module, callbackify_key, callbackify, module)?;
     let types = context.object_rooted()?;
     for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
         let data = context.number(index as f64);
@@ -475,7 +478,7 @@ pub(crate) fn strip_vt(
 ) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let Some(units) = context.string_code_units(value)? else {
-        return Err(string_argument_error(context, value, "str")?);
+        return Err(argument_type_error(context, value, "str", "string")?);
     };
     if !crate::modules::util_strip::has_vt_controls(&units) {
         return Ok(value);
@@ -494,7 +497,7 @@ pub(crate) fn parse_env(
 ) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
     let Some(text) = context.string_text(value)? else {
-        return Err(string_argument_error(context, value, "content")?);
+        return Err(argument_type_error(context, value, "content", "string")?);
     };
     let result = context.null_object_rooted()?;
     for (name, value) in crate::modules::util_env::parse_env_file(&text) {
@@ -505,10 +508,11 @@ pub(crate) fn parse_env(
     Ok(result)
 }
 
-fn string_argument_error(
+pub(crate) fn argument_type_error(
     context: &mut NativeContext<'_, NodeHost>,
     root: RootId,
     name: &str,
+    expected: &str,
 ) -> Result<RootedError, RootedError> {
     let value = context
         .rooted_value(root)
@@ -521,6 +525,11 @@ fn string_argument_error(
         format!("type boolean ({})", context.to_string(root)?)
     } else if value.as_number().is_some() {
         format!("type number ({})", context.to_string(root)?)
+    } else if let Some(text) = context.string_text(root)? {
+        format!(
+            "type string ('{}')",
+            text.replace('\\', "\\\\").replace('\'', "\\'")
+        )
     } else if context.is_symbol_rooted(root)? {
         let global = context.global_root()?;
         let key = context.string_rooted("String");
@@ -539,8 +548,13 @@ fn string_argument_error(
     } else {
         format!("type bigint ({}n)", context.to_string(root)?)
     };
+    let label = if name.ends_with(" argument") {
+        name.to_owned()
+    } else {
+        format!("\"{name}\" argument")
+    };
     let error = context.type_error_rooted(&format!(
-        "The \"{name}\" argument must be of type string. Received {received}"
+        "The {label} must be of type {expected}. Received {received}"
     ))?;
     let key = context.string_rooted("code");
     let code = context.string_rooted("ERR_INVALID_ARG_TYPE");

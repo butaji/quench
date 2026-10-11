@@ -202,6 +202,12 @@ gate together with Test262 and Wasm.
 See
 [task 21 qualification](../evidence/task21-shared-commonjs-loader.json).
 
+For local Node oracle checks, put a Node executable matching the pinned
+checkout's major version (`tests/node/src/node_version.h`) on `PATH`. The current
+checkout targets Node 27; earlier majors can differ on API contracts such as
+`util.parseEnv` object prototypes. Run the CLI/API oracle checks with
+`cargo test --profile iteration -p quench-node-test --test child_entry`.
+
 Run the selected upstream Node `test/parallel` profile against the shared VM
 with the canonical `run-parallel` worker. Profile membership
 comes from `crates/quench-node-test/node-tests/parallel.txt`; `--filter`
