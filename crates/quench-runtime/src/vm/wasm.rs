@@ -304,11 +304,28 @@ impl<H: Host> Vm<H> {
             let length = memory.byte_length().ok_or_else(|| {
                 JsError::validation("Wasm memory allocation exceeds host address space".into())
             })?;
-            let mut bytes = Vec::new();
-            bytes
-                .try_reserve_exact(length)
-                .map_err(|_| JsError::validation("Wasm memory allocation failed".into()))?;
-            bytes.resize(length, 0);
+            // Compiled code accesses an unshared memory32 without bounds checks,
+            // so the compiled mode gives it a guarded reservation.
+            // The guard covers exactly the bytes past the memory's length
+            // only when every length is a whole number of host pages.
+            let guarded = (self.execution_mode == super::ExecutionMode::Compiled
+                && !memory.ty.shared
+                && !memory.ty.memory64
+                && (memory.ty.page_size() as usize)
+                    .is_multiple_of(crate::wasm::memory::HOST_PAGE))
+                .then(|| crate::wasm::memory::LinearBytes::reserved(length))
+                .flatten();
+            let bytes = match guarded {
+                Some(bytes) => bytes,
+                None => {
+                    let mut bytes = Vec::new();
+                    bytes.try_reserve_exact(length).map_err(|_| {
+                        JsError::validation("Wasm memory allocation failed".into())
+                    })?;
+                    bytes.resize(length, 0);
+                    crate::wasm::memory::LinearBytes::heap(bytes)
+                }
+            };
             values.push(self.heap.alloc(Cell::WasmMemory {
                 bytes: std::rc::Rc::new(crate::wasm::memory::MemoryStorage::new(
                     bytes,
@@ -1241,11 +1258,9 @@ impl<H: Host> Vm<H> {
             return Ok(None);
         };
         let before = bytes.capacity();
-        let extra = length - bytes.len();
-        if bytes.try_reserve_exact(extra).is_err() {
+        if !bytes.grow_to(length) {
             return Ok(None);
         }
-        bytes.resize(length, 0);
         let after = bytes.capacity();
         drop(bytes);
         self.heap.adjust_external_bytes(before, after);
