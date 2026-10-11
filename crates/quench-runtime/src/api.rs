@@ -6,7 +6,7 @@ mod embedding;
 pub use embedding::RootedError;
 #[path = "api_native.rs"]
 mod native;
-pub use native::{BuiltinBrand, HostFunction, HostFunctionId, NativeContext};
+pub use native::{BuiltinBrand, BuiltinData, HostFunction, HostFunctionId, NativeContext};
 
 /// The syntax context used when compiling source. Script and Module use
 /// their OXC parse goals; contextual Eval requires an active guest activation.
