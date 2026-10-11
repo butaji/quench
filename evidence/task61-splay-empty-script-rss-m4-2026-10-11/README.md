@@ -4,9 +4,17 @@ Host: Mac16,10, Apple M4, macOS 26.5, arm64, 10 logical CPUs, 16 GiB. Eleven `qu
 
 Median maximum RSS was **19,038,208 B** (18.16 MiB); the range was **18,530,304–19,202,048 B**. This measures the empty JavaScript process only. It excludes V8-v7 fixture parsing, the harness, and benchmark `Setup`, so it is the process-floor input, not the Splay K=0 result.
 
-Against the latest M4 Bun Splay stock RSS bar of 61,898,752 B, this leaves an optimistic **42,860,544 B** for everything beyond Quench's empty-script process. The Splay `[0..9]` literal arrays share one `Rc<Vec<Value>>` per literal site (`ProgramStore::const_array`, used by `SuperConstArrayObject2`), and the fixture does not mutate them. No int32-elements specialization is needed: estimate each ArrayRecord at 16 B for its header and references, with the one shared ten-Value backing allocation and its Rc/Vec metadata excluded as negligible.
+The Splay `[0..9]` literal arrays share one `Rc<Vec<Value>>` per literal site (`ProgramStore::const_array`, used by `SuperConstArrayObject2`), and the fixture does not mutate them. An ArrayRecord therefore needs only its 16 B header and references; the one shared ten-Value backing allocation and its Rc/Vec metadata are excluded from the per-array count and are negligible here. No int32-elements specialization is needed for Splay.
 
-Corrected GC18 live-record estimate: 504,343 two-property objects × 32 B + 8,000 four-property nodes × 48 B + 256,084 arrays × 16 B = **20,620,320 B**. At 1.5× live high-water, records use 30,930,480 B; a 4 B cage-offset locator for each of 1,152,641 reserved identities adds 4,610,564 B. Adding the 19,038,208 B empty-process floor gives **54,579,252 B**, 7,319,500 B below Bun's bar before block/allocator metadata. If the cage cannot be reserved and `SlotEntry` uses an 8 B native pointer, the same estimate is **59,189,816 B**, only 2,708,936 B below before metadata. After direct Values retire the locators, 2× record high-water plus the same floor is **60,278,848 B**, 1,619,904 B below before metadata.
+Corrected GC18 live-record estimate: 504,343 two-property objects × 32 B + 8,000 four-property nodes × 48 B + 256,084 arrays × 16 B = **20,620,320 B**. The observed 2× occupancy relation at 1,562,164 high-water slots implies 781,082 live heap identities across all kinds, not only the 768,427 object/array records. Thus 1.5× capacity requires 1,171,623 locators (rounded up); the roughly 12,655 remaining live identities are legacy cell families whose payloads are excluded below. Bun 1.4.2 with `BUN_JSC_useJIT=0` measured a one-line process maximum RSS of 21,118,976–21,135,360 B over three runs; its 61,898,752 B Splay stock maximum differs from that floor by 40,763,392–40,779,776 B (about **1.98×** the estimated live object/array records; an arithmetic difference, not a same-process K=0 run).
+
+| Projection | Estimated total | Margin below Bun Splay bar |
+| -- | --: | --: |
+| 1.5× records + 4 B locators for all identities + Quench empty-script floor | 54,655,180 B | 7,243,572 B |
+| 1.5× records + 8 B pointers for all identities + Quench empty-script floor | 59,341,672 B | 2,557,080 B |
+| 2.0× records + no locators for migrated families + Quench empty-script floor | 60,278,848 B | 1,619,904 B |
+
+These are object/array subtotal sums using the 19,038,208 B Quench empty-script median and Bun's 61,898,752 B Splay bar. They exclude remaining LegacyCell payloads and identity storage, block metadata, allocator slack, harness/setup overhead and untracked resident pages, so they are lower-bound projections, not a win result.
 
 That budget requires `SlotEntry` to be a separate compact identity table containing only a payload offset or pointer. It cannot retain `Option<Cell>` inline: the largest remaining Cell variant would preserve the 56 B slot stride and erase the projected saving. Non-migrated Cell families must also live in separate LegacyCell blocks, with the slot table pointing to them.
 
