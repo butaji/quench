@@ -1157,6 +1157,9 @@
     }
 
     pipe(dest, options) {
+      const endDestination = deps.pipeShouldEnd
+        ? deps.pipeShouldEnd(dest, options)
+        : (!options || options.end !== false);
       const source = this;
       const sourceState = source._readableState;
       sourceState.pipes.push(dest);
@@ -1209,7 +1212,6 @@
         source.removeListener("data", ondata);
         source.removeListener("end", onend);
         source.removeListener("end", cleanup);
-        source.removeListener("close", onclose);
         source.removeListener("close", cleanup);
         dest.removeListener("close", cleanup);
         dest.removeListener("unpipe", onunpipe);
@@ -1220,14 +1222,12 @@
         cleanup(true);
       };
       const onend = () => {
-        if (!options || options.end !== false) dest.end();
+        if (endDestination) dest.end();
       };
-      const onclose = () => dest.destroy?.();
       sourceState.pipeListeners.push({ dest, ondata });
       source.on("data", ondata);
       source.on("end", onend);
       source.on("end", cleanup);
-      source.on("close", onclose);
       source.on("close", cleanup);
       dest.on("close", cleanup);
       dest.on("unpipe", onunpipe);

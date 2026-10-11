@@ -1594,3 +1594,149 @@ let output='';child.stdout.on('data',chunk=>output+=chunk);child.on('error',erro
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+#[cfg(unix)]
+fn fork_json_ipc_matches_node_frames_callbacks_and_disconnect_lifecycle() {
+    let directory = tempfile::tempdir().unwrap();
+    let child = directory.path().join("ipc-child.cjs");
+    std::fs::write(&child, r#"const stringify=JSON.stringify;JSON.parse=()=>{throw Error('guest parse')};JSON.stringify=()=>{throw Error('guest stringify')};
+process.on('message',message=>{process.send({text:message.text,length:message.big.length,tail:message.big.slice(-2)});process.disconnect();});"#).unwrap();
+    let source = r#"const {fork}=require('child_process');const stringify=JSON.stringify;const events=[];
+const options={silent:true};const child=fork(process.argv[1],[],options);
+events.push(['initial',child.connected,child.stdio.map(stream=>stream===null),Object.hasOwn(options,'stdio')]);
+const control=child.channel,prototype=Object.getPrototypeOf(control),fdDescriptor=Object.getOwnPropertyDescriptor(prototype,'fd');
+events.push(['shape',child.send.name,child.send.length,!!child.send.prototype,child.disconnect.name,child.disconnect.length,!!child.disconnect.prototype,
+prototype.constructor.name,prototype.constructor.length,control instanceof require('events').EventEmitter,
+control.ref.name,control.ref.length,!!control.ref.prototype,fdDescriptor.get.name,fdDescriptor.get.length,fdDescriptor.enumerable,fdDescriptor.configurable]);
+child.stderr.on('data',chunk=>process.stderr.write(chunk));
+for(const message of [undefined,Symbol('x'),()=>{}]){try{child.send(message)}catch(error){events.push(['error',error.name,error.code,error.message])}}
+const circular={};circular.self=circular;try{child.send(circular)}catch(error){events.push(['circular',error.name])}
+JSON.parse=()=>{throw Error('guest parse')};JSON.stringify=()=>{throw Error('guest stringify')};
+child.on('message',message=>events.push(['message',message]));child.on('disconnect',()=>events.push(['disconnect',child.connected,child.channel===null,control.fd]));
+child.on('close',(code,signal)=>{events.push(['close',code,signal]);child.send('closed',error=>{events.push(['closed-send',error.name,error.code,error.message]);console.log(stringify(events))})});
+child.send({toJSON(){events.push(['toJSON']);return {text:'hé😀\n',big:'x'.repeat(180000)+'尾😀'}}},error=>events.push(['sent',error]));
+process.nextTick(()=>events.push(['tick']));"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source, child.to_str().unwrap()]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(
+            !observation.timed_out,
+            "{}",
+            String::from_utf8_lossy(&observation.stdout)
+        );
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+#[cfg(unix)]
+fn filesystem_descriptors_match_node_positioned_io_and_spawn_inheritance() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("descriptor.txt");
+    let source = r#"const fs=require('fs'),{spawn}=require('child_process');const path=process.argv[1];
+fs.writeFileSync(path,'abcdef');const fd=fs.openSync(path,'r+');const bytes=Buffer.alloc(6,45);
+const read=fs.readSync(fd,bytes,2,3,1);const written=fs.writeSync(fd,Buffer.from('XY'),1,1,3);
+console.log(JSON.stringify([read,bytes.toString(),written,fs.readFileSync(path,'utf8'),fs.fstatSync(fd).isFile()]));
+fs.writeSync(1,'descriptor-stdout\n');const child=spawn(process.execPath,['-e',`const fs=require('fs'),buffer=Buffer.alloc(3);const n=fs.readSync(0,buffer,0,buffer.length,null);console.log(JSON.stringify([n,buffer.toString()]));`],{stdio:[fd,'pipe','ignore']});
+let output='';child.stdout.on('data',chunk=>output+=chunk);child.on('error',error=>{throw error});child.on('close',(code,signal)=>{fs.closeSync(fd);console.log(JSON.stringify([child.stdin===null,code,signal,output]));});"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source, path.to_str().unwrap()]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn node_entry_resolution_matches_extensionless_files_and_package_directories() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("entry.js"),
+        "console.log(__filename.slice(__dirname.length+1));",
+    )
+    .unwrap();
+    std::fs::create_dir(directory.path().join("package")).unwrap();
+    std::fs::write(
+        directory.path().join("package/package.json"),
+        r#"{"main":"main.cjs"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("package/main.cjs"),
+        "console.log(__filename.slice(__dirname.length+1));",
+    )
+    .unwrap();
+    for entry in ["entry", "package"] {
+        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command = Command::new(executable);
+            command.current_dir(directory.path()).arg(entry);
+            if executable != "node" {
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            }
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                .unwrap()
+        });
+        for observation in &observations {
+            assert!(!observation.timed_out);
+            assert_eq!(
+                observation.exit_code,
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&observation.stderr)
+            );
+            assert!(observation.stderr.is_empty());
+        }
+        assert_eq!(observations[0].stdout, observations[1].stdout);
+    }
+}
+
+#[test]
+fn readable_pipe_matches_node_stdio_lifetime_and_captured_end_option() {
+    let source=r#"const {Readable,Writable}=require('stream');const events=[];
+const stdoutEnd=process.stdout.end,stdoutDestroy=process.stdout.destroy;
+process.stdout.end=()=>events.push('stdout-end');process.stdout.destroy=()=>events.push('stdout-destroy');
+const stderrEnd=process.stderr.end,stderrDestroy=process.stderr.destroy;
+process.stderr.end=()=>events.push('stderr-end');process.stderr.destroy=()=>events.push('stderr-destroy');
+const out=Readable.from(['stdio-pipe\n']),err=Readable.from(['stderr-pipe\n']);out.pipe(process.stdout);err.pipe(process.stderr);
+let content='';const target=new Writable({autoDestroy:false,write(chunk,encoding,callback){content+=chunk;callback()}});
+const options={get end(){events.push('option');return false}};const input=Readable.from(['kept']);input.pipe(target,options);
+Object.defineProperty(options,'end',{value:true});
+setImmediate(()=>setImmediate(()=>{events.push(['target',content,target.writableEnded,target.destroyed]);
+process.stdout.end=stdoutEnd;process.stdout.destroy=stdoutDestroy;process.stderr.end=stderrEnd;process.stderr.destroy=stderrDestroy;
+console.log(JSON.stringify(events));}));"#;
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
+        let mut command=Command::new(executable);command.args(["-e",source]);
+        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1");}
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations{assert!(!observation.timed_out);assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr));}
+    assert_eq!(observations[0].stdout,observations[1].stdout);
+    assert_eq!(observations[0].stderr,observations[1].stderr);
+}

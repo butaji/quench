@@ -12,6 +12,9 @@ pub(crate) fn module(
         "node:stream/shared.js",
     )?;
     let dependencies = context.object_rooted()?;
+    let pipe_end =
+        context.host_function(crate::host::shared_vm::operation("streamPipeShouldEnd"))?;
+    set(context, dependencies, "pipeShouldEnd", pipe_end)?;
     let apply_options = context.host_function(crate::host::shared_vm::operation(
         "streamApplyTransformOptions",
     ))?;
@@ -227,4 +230,38 @@ pub(crate) fn apply_transform_options(
         }
     }
     Ok(undefined)
+}
+
+pub(crate) fn pipe_should_end(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let destination = args
+        .first()
+        .copied()
+        .ok_or_else(|| RootedError::host("pipe destination missing"))?;
+    if let Some(options) = args
+        .get(1)
+        .copied()
+        .filter(|options| context.truthy_rooted(*options).unwrap_or(false))
+    {
+        let key = context.string_rooted("end");
+        let end = context.get_property_rooted(options, key)?;
+        let false_value = context.boolean(false);
+        if context.strict_equal_rooted(end, false_value)? {
+            return Ok(false_value);
+        }
+    }
+    for name in ["stdout", "stderr"] {
+        let global = context.global_root()?;
+        let key = context.string_rooted("process");
+        let process = context.get_property_rooted(global, key)?;
+        let key = context.string_rooted(name);
+        let stdio = context.get_property_rooted(process, key)?;
+        if context.strict_equal_rooted(destination, stdio)? {
+            return Ok(context.boolean(false));
+        }
+    }
+    Ok(context.boolean(true))
 }

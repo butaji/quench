@@ -11,6 +11,28 @@ const WRAPPER_PREFIX: &str =
     "(function (exports, require, module, __filename, __dirname, primordials) { ";
 const WRAPPER_SUFFIX: &str = "\n});";
 
+fn commonjs_resolver() -> oxc_resolver::Resolver {
+    oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+        extensions: vec![".js".into(), ".json".into(), ".node".into()],
+        main_files: vec!["index".into()],
+        condition_names: vec!["node".into(), "require".into(), "default".into()],
+        ..Default::default()
+    })
+}
+
+pub(crate) fn entry_path(path: &Path) -> Result<PathBuf, String> {
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    let path = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        cwd.join(path)
+    };
+    commonjs_resolver()
+        .resolve(&cwd, &path.to_string_lossy())
+        .map(|resolution| resolution.full_path())
+        .map_err(|error| error.to_string())
+}
+
 /// Node's explicit extension/package parse-goal policy, before guest execution.
 pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, String> {
     match path.extension().and_then(|extension| extension.to_str()) {
@@ -1003,12 +1025,7 @@ fn resolve_filename(
     let filename = context
         .string_text(filename)?
         .ok_or_else(|| RootedError::host("invalid parent module filename"))?;
-    let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
-        extensions: vec![".js".into(), ".json".into(), ".node".into()],
-        main_files: vec!["index".into()],
-        condition_names: vec!["node".into(), "require".into(), "default".into()],
-        ..Default::default()
-    });
+    let resolver = commonjs_resolver();
     let node_lib = context.host_mut().node_library_root.join("lib");
     let internal_specifier = specifier.strip_prefix("node:").unwrap_or(specifier);
     let node_internal = internal_specifier.starts_with("internal/")

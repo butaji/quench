@@ -93,6 +93,14 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "readableEncoding" (0) => crate::modules::stream_shared_vm::readable_encoding,
         method "execFileEvent" (2) => crate::modules::child_process_exec_shared_vm::event,
         method "childProcessShellArgsWarning" (1) => crate::modules::child_process_shared_vm::shell_args_warning,
+        method "childProcessForkPlan" (3) => crate::modules::child_process_fork_shared_vm::plan,
+        method "ipcSend" (4) => crate::modules::child_process_ipc_shared_vm::send,
+        method "ipcDisconnect" (0) => crate::modules::child_process_ipc_shared_vm::disconnect,
+        method "ipcDescriptor" (0) => crate::modules::child_process_ipc_shared_vm::descriptor,
+        method "ipcReference" (0) => crate::modules::child_process_ipc_shared_vm::reference,
+        method "ipcComplete" (2) => crate::modules::child_process_ipc_shared_vm::complete,
+        method "ipcDecode" (2) => crate::modules::child_process_ipc_shared_vm::decode,
+        method "ipcEmit" (3) => crate::modules::child_process_ipc_shared_vm::emit,
         method "childProcessSpawn" (3) => crate::modules::child_process_shared_vm::spawn_child,
         method "childProcessRegister" (4) => crate::modules::child_process_shared_vm::register_child,
         method "childProcessStreamClosed" (0) => crate::modules::child_process_shared_vm::stream_closed,
@@ -133,6 +141,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netIsIPv4" (1) => crate::modules::net_shared_vm::is_ipv4,
         method "netIsIPv6" (1) => crate::modules::net_shared_vm::is_ipv6,
         method "netConnect" (3) => crate::modules::net_shared_vm::connect_operation,
+        method "streamPipeShouldEnd" (2) => crate::modules::stream_shared_vm::pipe_should_end,
         method "streamApplyTransformOptions" (2) => crate::modules::stream_shared_vm::apply_transform_options,
         method "streamGetDefaultHighWaterMark" (1) => crate::modules::stream_shared_vm::get_default_high_water_mark,
         method "streamSetDefaultHighWaterMark" (2) => crate::modules::stream_shared_vm::set_default_high_water_mark,
@@ -501,6 +510,7 @@ impl quench_runtime::Host for NodeHost {
             let stream = context.get_property_rooted(process, key)?;
             context.set_prototype_rooted(stream, prototype)?;
         }
+        crate::modules::child_process_ipc_shared_vm::install_process(context, process, emitter)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_emitter_polyfill");
         crate::modules::text_decoder_shared_vm::install_global(context)?;
