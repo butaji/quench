@@ -315,6 +315,49 @@ fn inherited_field_cache_reads_live_object_prototype_data() {
 }
 
 #[test]
+fn direct_object_field_cache_probes_nonordinary_prototype_holder() {
+    let source = r#"
+      function holder() {}
+      holder.inherited = 41;
+      var receiver = Object.create(holder);
+      function readValue(value) { return value.inherited; }
+      print(readValue(receiver));
+      print(readValue(receiver));
+      print(readValue(receiver));
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "direct-object-holder-cache.js").unwrap();
+        #[cfg(feature = "profile-aggregate")]
+        let depth_one_hits_before = vm.profile.field_cache_depths[1];
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["41", "41", "41"], "{mode}");
+
+        if vm.specialized {
+            let receiver_atom = vm.intern_atom("receiver");
+            let holder_atom = vm.intern_atom("holder");
+            let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
+            let holder = vm.own_property(vm.realm.globals, holder_atom).unwrap();
+            assert!(vm.heap.object_record(receiver).is_some());
+            assert!(vm.heap.object_record(holder).is_none());
+
+            let inherited = vm.intern_atom("inherited");
+            assert!(
+                field_cache_entries(&vm, &program, inherited)
+                    .iter()
+                    .any(|entry| entry.holder != NO_FIELD_HOLDER)
+            );
+            #[cfg(feature = "profile-aggregate")]
+            assert!(vm.profile.field_cache_depths[1] - depth_one_hits_before >= 2);
+        }
+    }
+}
+
+#[test]
 fn custom_prototype_fallback_reads_live_data_and_keeps_accessor_fallback() {
     let source = r#"
       var getterCalls = 0;

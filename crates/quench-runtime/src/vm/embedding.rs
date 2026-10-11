@@ -66,6 +66,26 @@ impl<H: Host> Vm<H> {
             value = *target;
         }
 
+        if self
+            .heap
+            .object_record(value)
+            .is_some_and(Object::has_error_data)
+        {
+            let name = self
+                .own_data_string(value, "name")
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "Error".into());
+            let message = self.own_data_string(value, "message").unwrap_or_default();
+            return if message.is_empty() {
+                name
+            } else {
+                format!("{name}: {message}")
+            };
+        }
+        if self.heap.object_record(value).is_some() {
+            return "#<Object>".into();
+        }
+
         match self.heap.get(value) {
             Some(Cell::String(text)) => text.host_string().to_owned(),
             Some(Cell::BigInt(integer)) => {
@@ -77,19 +97,6 @@ impl<H: Host> Vm<H> {
             }
             Some(Cell::Symbol(description)) => Self::detail_symbol(description.as_deref()),
             Some(Cell::Error(message)) => format!("Error: {message}"),
-            Some(Cell::Object(object)) if object.has_error_data() => {
-                let name = self
-                    .own_data_string(value, "name")
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| "Error".into());
-                let message = self.own_data_string(value, "message").unwrap_or_default();
-                if message.is_empty() {
-                    name
-                } else {
-                    format!("{name}: {message}")
-                }
-            }
-            Some(Cell::Object(_)) => "#<Object>".into(),
             Some(Cell::Map { .. }) => "#<Map>".into(),
             Some(Cell::Set { .. }) => "#<Set>".into(),
             Some(cell) => format!("[object {}]", Self::diagnostic_class_name(cell)),

@@ -3,14 +3,13 @@ use super::*;
 
 impl Heap {
     pub(crate) fn weak_handle(&self, value: Value) -> Option<WeakHandle> {
-        let slot = value.heap_index()? as usize;
-        self.get(value)?;
-        Some(WeakHandle { slot: slot as u32 })
+        value.heap_index()?;
+        self.is_live(value).then_some(())?;
+        Some(WeakHandle { value })
     }
 
     pub(crate) fn weak_value(&self, handle: WeakHandle) -> Option<Value> {
-        self.get(Value::heap(handle.slot))
-            .map(|_| Value::heap(handle.slot))
+        self.is_live(handle.value).then_some(handle.value)
     }
 }
 
@@ -24,42 +23,42 @@ struct PendingWeakValue {
 /// The flat edge list avoids an allocation for every waiting key.
 #[derive(Default)]
 pub(super) struct EphemeronWork {
-    heads: FxHashMap<u32, usize>,
+    heads: FxHashMap<Value, usize>,
     values: Vec<PendingWeakValue>,
 }
 
 impl EphemeronWork {
     pub(super) fn newly_marked(
         &mut self,
-        index: u32,
-        cell: &Cell,
-        marks: &[u64],
+        identity: Value,
+        cell: Option<&Cell>,
+        mut is_marked: impl FnMut(Value) -> bool,
         work: &mut Vec<Value>,
     ) {
         if !self.heads.is_empty() {
-            let mut next = self.heads.remove(&index);
+            let mut next = self.heads.remove(&identity);
             while let Some(index) = next {
                 let pending = self.values[index];
                 work.push(pending.value);
                 next = pending.next;
             }
         }
-        if let Cell::WeakMap { entries, .. } = cell {
+        if let Some(Cell::WeakMap { entries, .. }) = cell {
             for (key, value) in entries.iter() {
-                let Some(key) = key.heap_index() else {
-                    continue;
-                };
-                let Some(target) = value.heap_index() else {
-                    continue;
-                };
-                if Heap::marked(marks, target as usize) {
+                if key.heap_index().is_none() {
                     continue;
                 }
-                if Heap::marked(marks, key as usize) {
+                if value.heap_index().is_none() {
+                    continue;
+                }
+                if is_marked(*value) {
+                    continue;
+                }
+                if is_marked(*key) {
                     work.push(*value);
                 } else {
                     let index = self.values.len();
-                    let next = self.heads.insert(key, index);
+                    let next = self.heads.insert(*key, index);
                     self.values.push(PendingWeakValue {
                         value: *value,
                         next,
@@ -74,24 +73,32 @@ impl Heap {
     pub(super) fn prune_weak_entries(&mut self) -> Vec<(Value, Value)> {
         let mut finalization_jobs = Vec::new();
         let marks = &self.marks;
-        for slot in self.slots.iter_mut() {
-            let Some(cell) = slot.cell.as_mut() else {
+        let object_records = &self.object_records;
+        let slots = &self.slots;
+        let legacy_cells = &mut self.legacy_cells;
+        let is_marked = |value: Value| {
+            if let Some(record_id) = value.direct_object_index() {
+                return object_records.is_marked(record_id);
+            }
+            let Some(index) = value.legacy_heap_index().map(|index| index as usize) else {
+                return false;
+            };
+            slots
+                .get(index)
+                .is_some_and(|entry| entry.is_live() && Self::marked(marks, index))
+        };
+        for index in 0..slots.len() {
+            let Some(record_id) = slots.get(index).and_then(|entry| entry.cell_record_id()) else {
                 continue;
             };
+            // SAFETY: the Cell SlotEntry supplied this locator and remains
+            // live until weak pruning has completed.
+            let cell = unsafe { legacy_cells.get_live_mut(record_id) };
             match cell {
-                Cell::WeakMap { entries, .. } => entries.retain(|(key, _)| {
-                    key.heap_index()
-                        .is_some_and(|key| Self::marked(&self.marks, key as usize))
-                }),
-                Cell::WeakSet { entries, .. } => entries.retain(|key| {
-                    key.heap_index()
-                        .is_some_and(|key| Self::marked(&self.marks, key as usize))
-                }),
+                Cell::WeakMap { entries, .. } => entries.retain(|(key, _)| is_marked(*key)),
+                Cell::WeakSet { entries, .. } => entries.retain(|key| is_marked(*key)),
                 Cell::WeakRef { target, .. } => {
-                    let live = target.is_some_and(|target| {
-                        let index = target.slot as usize;
-                        Self::marked(marks, index)
-                    });
+                    let live = target.is_some_and(|target| is_marked(target.value));
                     if !live {
                         *target = None;
                     }
@@ -100,11 +107,8 @@ impl Heap {
                     callback, entries, ..
                 } => {
                     entries.retain_mut(|entry| {
-                        let live = Self::marked(marks, entry.target.slot as usize);
-                        if entry
-                            .token
-                            .is_some_and(|token| !Self::marked(marks, token.slot as usize))
-                        {
+                        let live = is_marked(entry.target.value);
+                        if entry.token.is_some_and(|token| !is_marked(token.value)) {
                             entry.token = None;
                         }
                         if !live {

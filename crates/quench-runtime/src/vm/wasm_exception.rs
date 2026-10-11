@@ -89,8 +89,8 @@ mod tests {
         let exception = vm.wasm_exception_new(tag, vec![bits]).unwrap();
         let handle = vm.root(exception);
         vm.heap.collect([exception]);
-        assert!(vm.heap.get(tag).is_some());
-        assert!(vm.heap.get(bits).is_some());
+        assert!(vm.heap.is_live(tag));
+        assert!(vm.heap.is_live(bits));
         let thrown = vm.wasm_throw_ref(exception);
         assert_eq!(thrown.wasm_exception(), Some(exception));
         assert_eq!(thrown.thrown_value(), Some(exception));
@@ -121,8 +121,8 @@ mod tests {
         }
         vm.release_root(handle);
         vm.heap.collect([]);
-        assert!(vm.heap.get(exception).is_none());
-        assert!(vm.heap.get(tag).is_none());
-        assert!(vm.heap.get(bits).is_none());
+        assert!(!vm.heap.is_live(exception));
+        assert!(!vm.heap.is_live(tag));
+        assert!(!vm.heap.is_live(bits));
     }
 }

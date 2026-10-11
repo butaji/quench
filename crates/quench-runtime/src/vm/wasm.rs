@@ -1513,7 +1513,7 @@ mod tests {
         vm.release_root(owner.environment);
         vm.release_root(first.environment);
         vm.collect_now(imported.residual());
-        assert!(vm.heap.get(owner_env).is_none());
+        assert!(!vm.heap.is_live(owner_env));
         assert_eq!(vm.wasm_tag(&second, 0).unwrap(), tag);
         assert!(matches!(
             vm.heap.get(tag),
@@ -1527,7 +1527,7 @@ mod tests {
         assert_eq!(vm.heap.root_count_for_test(), roots);
         vm.release_root(second.environment);
         vm.collect_now(imported.residual());
-        assert!(vm.heap.get(tag).is_none());
+        assert!(!vm.heap.is_live(tag));
     }
 
     #[test]
@@ -1607,7 +1607,7 @@ mod tests {
             vm.release_root(owner.environment);
             vm.release_root(first.environment);
             vm.collect_now(imported.residual());
-            assert!(vm.heap.get(owner_env).is_none());
+            assert!(!vm.heap.is_live(owner_env));
             assert!(matches!(
                 vm.heap.get(memory),
                 Some(Cell::WasmMemory { ty, .. }) if ty.maximum == Some(3)
@@ -1635,7 +1635,7 @@ mod tests {
             assert_eq!(vm.heap.root_count_for_test(), roots);
             vm.release_root(second.environment);
             vm.collect_now(imported.residual());
-            assert!(vm.heap.get(memory).is_none());
+            assert!(!vm.heap.is_live(memory));
         }
     }
 
@@ -1972,7 +1972,7 @@ mod tests {
         assert!(vm.release_root(first.environment));
         assert!(vm.release_root(handle));
         vm.collect_now(importer.residual());
-        assert!(vm.heap.get(owner_env).is_some());
+        assert!(vm.heap.is_live(owner_env));
         assert_eq!(
             vm.invoke_wasm(&second, 0, &[]).unwrap(),
             Some(WasmValue::I64(i64::MAX))
@@ -2063,8 +2063,8 @@ mod tests {
         );
         assert!(vm.release_root(third.environment));
         vm.collect_now(importer.residual());
-        assert!(vm.heap.get(owner_env).is_none());
-        assert!(vm.heap.get(function).is_none());
+        assert!(!vm.heap.is_live(owner_env));
+        assert!(!vm.heap.is_live(function));
     }
 
     #[test]
@@ -2115,8 +2115,8 @@ mod tests {
         assert!(vm.release_root(handle));
         assert!(vm.release_root(first.environment));
         vm.collect_now(importer.residual());
-        assert!(vm.heap.get(first_env).is_none());
-        assert!(vm.heap.get(payload).is_some());
+        assert!(!vm.heap.is_live(first_env));
+        assert!(vm.heap.is_live(payload));
         assert_eq!(
             vm.wasm_global(&second, 0).unwrap(),
             crate::WasmValue::ExternRef(payload)
@@ -2128,8 +2128,8 @@ mod tests {
             )));
         vm.wasm_global_store(binding, replacement).unwrap();
         vm.collect_now(importer.residual());
-        assert!(vm.heap.get(payload).is_none());
-        assert!(vm.heap.get(replacement).is_some());
+        assert!(!vm.heap.is_live(payload));
+        assert!(vm.heap.is_live(replacement));
         let third_handle = vm.root(vm.wasm_global_binding(&second, 0).unwrap());
         let third = vm
             .instantiate_wasm_module_with_imports(&importer, &[third_handle])
@@ -2151,8 +2151,8 @@ mod tests {
         assert_eq!(vm.heap.root_count_for_test(), roots);
         assert!(vm.release_root(third.environment));
         vm.collect_now(importer.residual());
-        assert!(vm.heap.get(binding).is_none());
-        assert!(vm.heap.get(replacement).is_none());
+        assert!(!vm.heap.is_live(binding));
+        assert!(!vm.heap.is_live(replacement));
     }
 
     #[test]
@@ -2453,8 +2453,8 @@ mod tests {
             !vm.heap.should_collect(),
             "instantiation is a collection boundary"
         );
-        assert!(vm.heap.get(first_memory).is_some());
-        assert!(vm.heap.get(second_memory).is_some());
+        assert!(vm.heap.is_live(first_memory));
+        assert!(vm.heap.is_live(second_memory));
         assert!(vm.release_root(third.environment));
         assert!(
             vm.execute_wasm(&module.function(0).unwrap(), &[crate::WasmValue::I64(0)])
@@ -2496,8 +2496,8 @@ mod tests {
                 .is_err()
         );
         vm.collect_now(module.residual());
-        assert!(vm.heap.get(first_memory).is_none());
-        assert!(vm.heap.get(second_memory).is_some());
+        assert!(!vm.heap.is_live(first_memory));
+        assert!(vm.heap.is_live(second_memory));
         assert!(vm.frames.is_empty());
     }
 
