@@ -50,7 +50,7 @@ const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
 // occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x.
 const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
     numerator: 1,
-    denominator: 2,
+    denominator: 1,
 };
 
 #[derive(Clone, Copy)]
