@@ -472,7 +472,11 @@ still need the shared implementation and complete suite proof recorded in tasks.
 compiles each Wasm function with a compiled denotation through Cranelift
 (`crates/quench-runtime/src/vm/compiled.rs`) and leaves the rest interpreted.
 `run -jit` runs the testsuite in the compiled mode; both modes must pass the
-whole suite.
+whole suite. A module is lowered for the mode that runs it
+(`Module::lower_shared_module_for`): the interpreter's residual inlines leaf
+calls up to a large budget, since a call costs it a frame and a dispatch, while
+the compiled mode keeps every call, since Cranelift calls cheaply and a copied
+body only adds register pressure. The residual's meaning is the same in both.
 
 On Linux the harness binaries link position-dependent, and on x86-64 with
 `ld.lld` available they link in the trained symbol order

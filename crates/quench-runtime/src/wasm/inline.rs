@@ -12,9 +12,21 @@ use wasmparser::{BlockType, Operator, ValType};
 
 use super::{WasmSignatures, WasmType};
 
-/// Operators a leaf callee may have to be copied into each call site. The
-/// budget bounds code growth per call site; larger callees keep their call.
-const INLINE_LEAF_OPERATORS: usize = 512;
+/// Operators a leaf callee may have to be copied into each call site when
+/// the interpreter runs the module: a call costs it a frame and a dispatch,
+/// so copying a body pays up to this size. The budget bounds code growth per
+/// call site; larger callees keep their call.
+const INTERPRETED_LEAF_OPERATORS: usize = 512;
+
+/// The leaf budget for a module lowered for `mode`. Compiled code calls
+/// cheaply and allocates registers per function, where a copied body only
+/// adds pressure and spills, so compiled lowering keeps every call.
+pub(super) fn leaf_budget(mode: crate::ExecutionMode) -> usize {
+    match mode {
+        crate::ExecutionMode::Interpreted => INTERPRETED_LEAF_OPERATORS,
+        crate::ExecutionMode::Compiled => 0,
+    }
+}
 
 /// Inlining rounds. A function that only called leaves is call-free after a
 /// round and may be inlined in the next, so code grows by at most this many
@@ -67,13 +79,14 @@ fn disqualifies(operator: &Operator<'_>) -> bool {
 fn leaves(
     bodies: &[(Vec<ValType>, Vec<Operator<'_>>)],
     signatures: &WasmSignatures,
+    budget: usize,
 ) -> Vec<Option<Leaf>> {
     bodies
         .iter()
         .enumerate()
         .map(|(index, (locals, operators))| {
             let signature = signatures.defined_signature(index as u32)?;
-            if operators.len() > INLINE_LEAF_OPERATORS
+            if operators.len() > budget
                 || signature.results.len() > 1
                 || operators.iter().any(disqualifies)
                 || locals.iter().any(|ty| {
@@ -120,9 +133,10 @@ fn default_value<'a>(ty: ValType) -> Operator<'a> {
 pub(super) fn inline_leaf_calls<'a>(
     mut bodies: Vec<(Vec<ValType>, Vec<Operator<'a>>)>,
     signatures: &WasmSignatures,
+    budget: usize,
 ) -> Option<Vec<(Vec<ValType>, Vec<Operator<'a>>)>> {
     for _ in 0..INLINE_ROUNDS {
-        let leaves = leaves(&bodies, signatures);
+        let leaves = leaves(&bodies, signatures, budget);
         if leaves.iter().all(Option::is_none) {
             break;
         }
