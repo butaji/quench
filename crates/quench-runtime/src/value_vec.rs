@@ -186,15 +186,31 @@ impl ValueArena {
 
     /// # Safety
     /// `index` must be within the initialized length recorded by `vector`.
+    #[inline(always)]
     pub(crate) unsafe fn get_unchecked(&self, vector: ValueVec, index: usize) -> Value {
         debug_assert!(!vector.has_inline_property_storage());
         debug_assert!(index < self.len(vector));
         if vector.is_dictionary() {
-            return self.dictionaries[&vector.dictionary_id()][&(index as u32)];
+            return self.dictionary_get(vector, index);
         }
         // SAFETY: caller provides the initialized-range invariant; every
         // vector range was allocated from `values` and remains reserved.
         unsafe { *self.values.get_unchecked(vector.start() + index) }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn dictionary_get(&self, vector: ValueVec, index: usize) -> Value {
+        self.dictionaries[&vector.dictionary_id()][&(index as u32)]
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn dictionary_set(&mut self, vector: ValueVec, index: usize, value: Value) {
+        self.dictionaries
+            .get_mut(&vector.dictionary_id())
+            .expect("object dictionary exists")
+            .insert(index as u32, value);
     }
 
     pub(crate) fn set(&mut self, vector: ValueVec, index: usize, value: Value) {
@@ -212,14 +228,12 @@ impl ValueArena {
 
     /// # Safety
     /// `index` must be within the initialized length recorded by `vector`.
+    #[inline(always)]
     pub(crate) unsafe fn set_unchecked(&mut self, vector: ValueVec, index: usize, value: Value) {
         debug_assert!(!vector.has_inline_property_storage());
         debug_assert!(index < self.len(vector));
         if vector.is_dictionary() {
-            self.dictionaries
-                .get_mut(&vector.dictionary_id())
-                .expect("object dictionary exists")
-                .insert(index as u32, value);
+            self.dictionary_set(vector, index, value);
             return;
         }
         // SAFETY: caller provides the same initialized-range invariant as get.

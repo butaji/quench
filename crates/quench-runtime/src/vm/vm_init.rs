@@ -105,6 +105,7 @@ impl<H: Host> Vm<H> {
             runtime_atoms: RuntimeAtoms::default(),
             method_caches: vec![],
             megamorphic_methods: vec![],
+            method_cache_atoms: 0,
             #[cfg(feature = "profile-aggregate")]
             invalidated_methods: FxHashMap::default(),
             object_shapes: vec![],

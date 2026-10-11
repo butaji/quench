@@ -1,5 +1,13 @@
 use super::wtf16::JsString;
 use super::*;
+use oxc_ast::ast::UnaryOperator;
+
+const UNARY_PLUS: u32 = UnaryOperator::UnaryPlus as u32;
+const UNARY_NEGATION: u32 = UnaryOperator::UnaryNegation as u32;
+pub(super) const LOGICAL_NOT: u32 = UnaryOperator::LogicalNot as u32;
+const BITWISE_NOT: u32 = UnaryOperator::BitwiseNot as u32;
+const TYPEOF: u32 = UnaryOperator::Typeof as u32;
+const VOID: u32 = UnaryOperator::Void as u32;
 
 impl<H: Host> Vm<H> {
     pub(super) fn typeof_value(&mut self, value: Value) -> Value {
@@ -108,47 +116,52 @@ impl<H: Host> Vm<H> {
         self.to_string(program, primitive).map(JsString::from)
     }
 
+    /// `!value`: the negated truthiness.
+    #[inline(always)]
+    pub(super) fn logical_not(&self, value: Value) -> Value {
+        if self.truthy(value) {
+            Value::FALSE
+        } else {
+            Value::TRUE
+        }
+    }
+
     pub(super) fn unary(
         &mut self,
         p: &ResidualProgram,
         op: u32,
         value: Value,
     ) -> Result<Value, JsError> {
-        let value = if matches!(op, 0 | 1 | 3) && self.is_object_like(value) {
+        let numeric = matches!(op, UNARY_PLUS | UNARY_NEGATION | BITWISE_NOT);
+        let value = if numeric && self.is_object_like(value) {
             self.to_primitive(p, value, "number")?
         } else {
             value
         };
-        if matches!(op, 0 | 1 | 3)
-            && let Some(Cell::BigInt(value)) = self.heap.get(value)
-        {
+        if numeric && let Some(Cell::BigInt(value)) = self.heap.get(value) {
             let value = value.clone();
-            if op == 0 {
+            if op == UNARY_PLUS {
                 return Err(self.type_error(p, "Cannot convert BigInt value to number".into()));
             }
             let value = value
                 .parse::<num_bigint::BigInt>()
                 .map_err(|_| self.type_error(p, "Invalid BigInt value".into()))?;
-            if op == 1 {
+            if op == UNARY_NEGATION {
                 return Ok(self.heap.alloc(Cell::BigInt((-value).to_str_radix(10))));
             }
-            if op == 3 {
+            if op == BITWISE_NOT {
                 return Ok(self.heap.alloc(Cell::BigInt((!value).to_str_radix(10))));
             }
         }
         Ok(match op {
-            0 => Value::number(self.to_number(p, value)?),
-            1 => Value::number(-self.to_number(p, value)?),
-            2 => {
-                if self.truthy(value) {
-                    Value::FALSE
-                } else {
-                    Value::TRUE
-                }
+            UNARY_PLUS => Value::number(self.to_number(p, value)?),
+            UNARY_NEGATION => Value::number(-self.to_number(p, value)?),
+            LOGICAL_NOT => self.logical_not(value),
+            BITWISE_NOT => {
+                Value::number((!(number_to_u32(self.to_number(p, value)?) as i32)) as f64)
             }
-            3 => Value::number((!(number_to_u32(self.to_number(p, value)?) as i32)) as f64),
-            4 => return Ok(self.typeof_value(value)),
-            5 => Value::UNDEFINED,
+            TYPEOF => return Ok(self.typeof_value(value)),
+            VOID => Value::UNDEFINED,
             _ => return Err(JsError("unsupported unary operator".into())),
         })
     }
