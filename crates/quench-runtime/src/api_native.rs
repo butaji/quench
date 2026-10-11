@@ -141,6 +141,30 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Apply IsArray, including proxy target and revocation semantics.
+    pub fn is_array_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_is_array(root);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Get an object's prototype through its internal method, preserving proxy effects.
+    pub fn prototype_rooted(&mut self, root: RootId) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_prototype(root);
+        self.completion(result)
+    }
+
+    /// Enumerable own string keys, optionally including Symbols, through internal methods.
+    pub fn enumerable_own_keys_rooted(
+        &mut self,
+        root: RootId,
+        include_symbols: bool,
+    ) -> Result<Vec<RootId>, RootedError> {
+        let result = self.vm.embedding_enumerable_own_keys(root, include_symbols);
+        let roots = result.map_err(|error| self.error(error))?;
+        self.roots.extend(roots.iter().copied());
+        Ok(roots)
+    }
+
     /// Apply the realm's ordinary ToString operation at a host boundary.
     pub fn to_string(&mut self, root: RootId) -> Result<String, RootedError> {
         let result = self.vm.embedding_to_string(root);

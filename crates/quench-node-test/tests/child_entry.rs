@@ -145,7 +145,11 @@ fn configured_node_library_survives_guest_cwd_changes() {
     let library = directory.path().join("installation");
     std::fs::create_dir_all(library.join("lib/internal")).unwrap();
     std::fs::write(library.join("package.json"), r#"{"type":"module"}"#).unwrap();
-    std::fs::write(library.join("lib/internal/probe.js"), "module.exports = 'library-probe';").unwrap();
+    std::fs::write(
+        library.join("lib/internal/probe.js"),
+        "module.exports = 'library-probe';",
+    )
+    .unwrap();
     let cwd = directory.path().join("guest");
     std::fs::create_dir(&cwd).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_run-parallel"));
@@ -153,9 +157,69 @@ fn configured_node_library_survives_guest_cwd_changes() {
         .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1")
         .env(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV, "installation")
         .args(["-e", "process.chdir('guest');console.log(require('internal/probe'));console.log(require.resolve('internal/probe'))"]);
-    let observation = quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap();
+    let observation =
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap();
     assert!(!observation.timed_out);
-    assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
-    assert_eq!(String::from_utf8(observation.stdout).unwrap(), format!("library-probe\n{}\n", library.join("lib/internal/probe.js").display()));
+    assert_eq!(
+        observation.exit_code,
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&observation.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(observation.stdout).unwrap(),
+        format!(
+            "library-probe\n{}\n",
+            library.join("lib/internal/probe.js").display()
+        )
+    );
     assert!(observation.stderr.is_empty());
+}
+
+#[test]
+fn deep_comparison_modes_match_node_values_keys_and_prototypes() {
+    let source = r#"
+      const assert = require('assert'), util = require('util');
+      const symbol = Symbol();
+      class A { constructor(){this.x=1} } class B { constructor(){this.x=1} }
+      const a={x:1},b={x:1};a.self=a;b.self=b;
+      const cases = [[1,'1'],[NaN,NaN],[0,-0],[1n,1],[Symbol(),Symbol()],
+        [()=>{},()=>{}],[new A(),new B()],[a,b],[new Array(1),new Array(2)],
+        [[,],[undefined]],[[,],[,]], [{[symbol]:1},{[symbol]:2}],
+        [{[symbol]:1},{[Symbol()]:1}], [{x:1},{x:'1'}],
+        [Object.defineProperty({x:1},symbol,{value:2}),{x:1}]];
+      function outcome(fn){try{fn();return true}catch(error){return error.code}}
+      console.log(JSON.stringify(cases.map(([a,b]) => [
+        outcome(()=>assert.deepEqual(a,b)),outcome(()=>assert.notDeepEqual(a,b)),
+        outcome(()=>assert.deepStrictEqual(a,b)),outcome(()=>assert.notDeepStrictEqual(a,b)),
+        util.isDeepStrictEqual(a,b),util.isDeepStrictEqual(a,b,true)])));
+      console.log(JSON.stringify(['equal','notEqual','deepEqual','notDeepEqual'].map(name=>outcome(()=>assert[name]()))));
+      console.log(outcome(()=>assert.equal(NaN,NaN)),util.isDeepStrictEqual());
+      Object.keys=Object.getOwnPropertySymbols=Object.getPrototypeOf=Array.isArray=()=>{throw Error('patched')};
+      console.log(outcome(()=>assert.deepStrictEqual({x:1},{x:1})),
+        outcome(()=>assert.deepStrictEqual([1],[1])));
+    "#;
+    let directory = tempfile::tempdir().unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
 }
