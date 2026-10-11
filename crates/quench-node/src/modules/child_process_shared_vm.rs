@@ -17,53 +17,6 @@ static NEXT_CHILD_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
 const FACTORY: &str = quench_js_check::checked_js!(
     r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs) => {
-  const spawn = (file, args, options) => {
-    if (typeof file !== "string") {
-      throw Object.assign(new TypeError('The "file" argument must be of type string.'), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
-    if (file.length === 0) {
-      throw Object.assign(new TypeError('The "file" argument must be a non-empty string.'), {
-        code: "ERR_INVALID_ARG_VALUE"
-      });
-    }
-    if (args === undefined || args === null) {
-      args = [];
-    } else if (!Array.isArray(args)) {
-      if (typeof args !== "object") {
-        throw Object.assign(new TypeError('The "args" argument must be of type object.'), {
-          code: "ERR_INVALID_ARG_TYPE"
-        });
-      }
-      if (options !== undefined) {
-        throw Object.assign(new TypeError('The "options" argument must be of type object.'), {
-          code: "ERR_INVALID_ARG_TYPE"
-        });
-      }
-      options = args;
-      args = [];
-    }
-    if (options !== undefined &&
-        (options === null || typeof options !== "object" || Array.isArray(options))) {
-      throw Object.assign(new TypeError('The "options" argument must be of type object.'), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
-    if (options?.timeout !== undefined &&
-        (typeof options.timeout !== "number" || !Number.isFinite(options.timeout) || options.timeout < 0)) {
-      throw Object.assign(new RangeError('ERR_INVALID_ARG_TYPE: The value of "timeout" is out of range. It must be an unsigned integer.'), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
-    for (const name of ["uid", "gid"]) {
-      if (options?.[name] !== undefined &&
-          (!Number.isInteger(options[name]) || options[name] < 0 || options[name] > 0xFFFFFFFF)) {
-        throw Object.assign(new RangeError(`The value of "options.${name}" is out of range.`), {
-          code: "ERR_OUT_OF_RANGE"
-        });
-      }
-    }
     const { EventEmitter } = globalThis.process.getBuiltinModule("events");
     class ChildProcess extends EventEmitter {
       constructor(file, args, started, options) {
@@ -173,6 +126,53 @@ const FACTORY: &str = quench_js_check::checked_js!(
 
       ref() { return this; }
       unref() { return this; }
+    }
+  const spawn = (file, args, options) => {
+    if (typeof file !== "string") {
+      throw Object.assign(new TypeError('The "file" argument must be of type string.'), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    }
+    if (file.length === 0) {
+      throw Object.assign(new TypeError('The "file" argument must be a non-empty string.'), {
+        code: "ERR_INVALID_ARG_VALUE"
+      });
+    }
+    if (args === undefined || args === null) {
+      args = [];
+    } else if (!Array.isArray(args)) {
+      if (typeof args !== "object") {
+        throw Object.assign(new TypeError('The "args" argument must be of type object.'), {
+          code: "ERR_INVALID_ARG_TYPE"
+        });
+      }
+      if (options !== undefined) {
+        throw Object.assign(new TypeError('The "options" argument must be of type object.'), {
+          code: "ERR_INVALID_ARG_TYPE"
+        });
+      }
+      options = args;
+      args = [];
+    }
+    if (options !== undefined &&
+        (options === null || typeof options !== "object" || Array.isArray(options))) {
+      throw Object.assign(new TypeError('The "options" argument must be of type object.'), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    }
+    if (options?.timeout !== undefined &&
+        (typeof options.timeout !== "number" || !Number.isFinite(options.timeout) || options.timeout < 0)) {
+      throw Object.assign(new RangeError('ERR_INVALID_ARG_TYPE: The value of "timeout" is out of range. It must be an unsigned integer.'), {
+        code: "ERR_INVALID_ARG_TYPE"
+      });
+    }
+    for (const name of ["uid", "gid"]) {
+      if (options?.[name] !== undefined &&
+          (!Number.isInteger(options[name]) || options[name] < 0 || options[name] > 0xFFFFFFFF)) {
+        throw Object.assign(new RangeError(`The value of "options.${name}" is out of range.`), {
+          code: "ERR_OUT_OF_RANGE"
+        });
+      }
     }
     if (options?.shell) {
       const shell = typeof options.shell === "string"
@@ -288,7 +288,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
     }
     return synchronousCommand(file, args, options, false);
   };
-  return { spawn, spawnSync: spawnSyncFunction, fork, execSync, execFileSync };
+  return { ChildProcess, spawn, spawnSync: spawnSyncFunction, fork, execSync, execFileSync };
 }"#
 );
 

@@ -483,7 +483,19 @@ fn kill(context: &mut NativeContext<'_, NodeHost>, state: RootId) -> Result<(), 
     close_streams(context, state)?;
     let child = get(context, state, "child")?;
     let signal = get(context, state, "killSignal")?;
-    method(context, child, "kill", &[signal])?;
+    if let Err(error) = method(context, child, "kill", &[signal]) {
+        let exception = match error.exception {
+            Some(exception) => exception,
+            None => context.error_rooted(&error.error.to_string())?,
+        };
+        set(context, state, "error", exception)?;
+        let close = context.string_rooted("close");
+        let data = context.array_rooted(&[state, close])?;
+        let finish = context
+            .host_function_with_data(crate::host::shared_vm::operation("execFileEvent"), data)?;
+        let undefined = context.undefined();
+        context.call_rooted(finish, undefined, &[])?;
+    }
     Ok(())
 }
 
