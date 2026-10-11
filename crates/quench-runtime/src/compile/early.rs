@@ -368,6 +368,147 @@ pub(super) fn expression_contains_direct_eval(expression: &Expression<'_>) -> bo
     finder.0
 }
 
+pub(super) struct FixedRegisterLocalFacts {
+    pub(super) safe: bool,
+    /// Names written somewhere other than at statement level (see `statement_level_write`).
+    /// A register-resident local loads as its register itself, so it stays sound only while
+    /// no write can land between a read and that read's consumer within one statement.
+    pub(super) nested_written_names: FxHashSet<String>,
+}
+
+pub(super) fn fixed_register_local_facts(
+    body: &[Statement<'_>],
+    expression: Option<&Expression<'_>>,
+) -> FixedRegisterLocalFacts {
+    struct Facts {
+        safe: bool,
+        nested_written_names: FxHashSet<String>,
+    }
+
+    impl Facts {
+        /// Visits `x = e`, `x op= e` or `x++` standing as a whole statement or for-update:
+        /// the write to `x` follows every read in it, so only the operands are visited. A
+        /// chain `x = y = e` of plain assignments is the same: each link writes after `e`.
+        fn statement_level_write<'a>(&mut self, expression: &Expression<'a>) -> bool {
+            let target = match expression {
+                Expression::AssignmentExpression(assignment) => match &assignment.left {
+                    oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(target) => {
+                        let chained = assignment.operator
+                            == oxc_syntax::operator::AssignmentOperator::Assign
+                            && matches!(
+                                &assignment.right,
+                                Expression::AssignmentExpression(link)
+                                    if link.operator
+                                        == oxc_syntax::operator::AssignmentOperator::Assign
+                            )
+                            && self.statement_level_write(&assignment.right);
+                        if !chained {
+                            self.visit_expression(&assignment.right);
+                        }
+                        target
+                    }
+                    _ => return false,
+                },
+                Expression::UpdateExpression(update) => match &update.argument {
+                    SimpleAssignmentTarget::AssignmentTargetIdentifier(target) => target,
+                    _ => return false,
+                },
+                _ => return false,
+            };
+            self.safe &= target.name != "arguments";
+            true
+        }
+    }
+
+    impl<'a> Visit<'a> for Facts {
+        fn visit_identifier_reference(
+            &mut self,
+            identifier: &oxc_ast::ast::IdentifierReference<'a>,
+        ) {
+            self.safe &= identifier.name != "arguments";
+        }
+
+        fn visit_simple_assignment_target(&mut self, target: &SimpleAssignmentTarget<'a>) {
+            if let SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) = target {
+                self.nested_written_names
+                    .insert(identifier.name.to_string());
+            }
+            walk::walk_simple_assignment_target(self, target);
+        }
+
+        fn visit_assignment_target_property_identifier(
+            &mut self,
+            property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
+        ) {
+            self.nested_written_names
+                .insert(property.binding.name.to_string());
+            walk::walk_assignment_target_property_identifier(self, property);
+        }
+
+        fn visit_expression_statement(
+            &mut self,
+            statement: &oxc_ast::ast::ExpressionStatement<'a>,
+        ) {
+            if !self.statement_level_write(&statement.expression) {
+                walk::walk_expression_statement(self, statement);
+            }
+        }
+
+        fn visit_for_statement(&mut self, statement: &oxc_ast::ast::ForStatement<'a>) {
+            if let Some(init) = &statement.init {
+                self.visit_for_statement_init(init);
+            }
+            if let Some(test) = &statement.test {
+                self.visit_expression(test);
+            }
+            if let Some(update) = &statement.update
+                && !self.statement_level_write(update)
+            {
+                self.visit_expression(update);
+            }
+            self.visit_statement(&statement.body);
+        }
+
+        fn visit_with_statement(&mut self, _: &oxc_ast::ast::WithStatement<'a>) {
+            self.safe = false;
+        }
+
+        fn visit_unary_expression(&mut self, expression: &UnaryExpression<'a>) {
+            if expression.operator == oxc_syntax::operator::UnaryOperator::Delete {
+                self.safe = false;
+            }
+            walk::walk_unary_expression(self, expression);
+        }
+
+        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {
+            self.safe = false;
+        }
+
+        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {
+            self.safe = false;
+        }
+
+        fn visit_class(&mut self, _: &oxc_ast::ast::Class<'a>) {
+            self.safe = false;
+        }
+    }
+
+    let mut facts = Facts {
+        safe: true,
+        nested_written_names: FxHashSet::default(),
+    };
+    for statement in body {
+        facts.visit_statement(statement);
+    }
+    if let Some(expression) = expression {
+        facts.visit_expression(expression);
+    }
+    FixedRegisterLocalFacts {
+        safe: facts.safe,
+        nested_written_names: facts.nested_written_names,
+    }
+}
+
 pub(super) fn is_direct_eval_call(call: &CallExpression<'_>) -> bool {
     !call.optional
         && matches!(call.callee.without_parentheses(), Expression::Identifier(id) if id.name == "eval")

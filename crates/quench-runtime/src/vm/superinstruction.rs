@@ -9,7 +9,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<Value>, JsError> {
         let destination = instruction.result_register();
         let site = instruction.superinstruction_index();
-        let [array, first, second, object] = program.superinstructions[site].code;
+        let [array, first, second, object] = program.superinstructions[site].wide;
         debug_assert_eq!(array.op(), Op::MakeConstArray);
         debug_assert_eq!(first.op(), Op::Binary);
         debug_assert_eq!(second.op(), Op::Binary);
@@ -48,7 +48,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         program: &ResidualProgram,
         frame: usize,
-        instruction: Instr,
+        instruction: WideInstruction,
     ) -> Result<(), JsError> {
         let operator = instruction.binary_operator();
         let left_operand = instruction.operand_b();

@@ -27,7 +27,7 @@ impl<H: Host> Vm<H> {
         let prototype = self.object();
         self.finalization_registry_proto = prototype;
         self.set_builtin_value_named(registry, "prototype", prototype)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             registry,
             PropertyKey::string(prototype_atom),
@@ -63,7 +63,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "FinalizationRegistry")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
             PropertyKey::string(prototype_atom),
@@ -115,7 +115,7 @@ impl<H: Host> Vm<H> {
         ) {
             return Err(self.type_error(p, "FinalizationRegistry callback is not callable".into()));
         }
-        let prototype_atom = self.intern_atom("prototype");
+        let prototype_atom = self.prototype_atom();
         let candidate = self.get_property(p, new_target, prototype_atom)?;
         let prototype = if self.object_data(candidate).is_some() {
             candidate
@@ -134,7 +134,7 @@ impl<H: Host> Vm<H> {
             }
         };
         Ok(self.heap.alloc(Cell::FinalizationRegistry {
-            object: Self::empty_object(prototype),
+            object: Box::new(Self::empty_object(prototype)),
             callback,
             entries: Box::new(FinalizationEntries::default()),
         }))

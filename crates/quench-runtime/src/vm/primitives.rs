@@ -41,6 +41,24 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The user function `callee` names when it belongs to the current realm: the one
+    /// target an in-loop frame push can enter without switching realm or program state.
+    #[inline(always)]
+    pub(super) fn same_realm_user_target(
+        &self,
+        callee: Value,
+    ) -> Option<(super::ProgramId, u32, Value)> {
+        match self.heap.get(callee) {
+            Some(Cell::Function {
+                kind: FunctionKind::User(program, id),
+                env,
+                realm,
+                ..
+            }) if *realm == self.realm.globals => Some((*program, *id, *env)),
+            _ => None,
+        }
+    }
+
     pub(super) fn non_callable_target(
         &self,
         _callee: Value,

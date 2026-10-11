@@ -298,6 +298,7 @@ mod tests {
             local_atoms: vec![],
             environment_atoms: vec![],
             selective_capture_slots: None,
+            local_registers: Vec::new(),
             inherited_with_scope: false,
             lexical_atoms: vec![],
             global_lexical_atoms: vec![],
@@ -318,6 +319,9 @@ mod tests {
             wide: vec![],
             registers: 2,
             dispatch: crate::bytecode::DispatchClass::General,
+            decoded: Default::default(),
+            plain_locals: Default::default(),
+            activation_bindings: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
         };
