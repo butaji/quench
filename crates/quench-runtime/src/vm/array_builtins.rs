@@ -53,10 +53,10 @@ const ARRAY_STATIC_METHODS: &[(&str, Native)] = &[
 impl<H: Host> Vm<H> {
     pub(super) fn install_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let array = self.native_value(Native::Array);
-        self.array_proto = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.object_proto),
-            elements: Rc::new(Vec::new()),
-        });
+        self.array_proto = self.heap.alloc(Cell::array(
+            self.object_proto,
+            Rc::new(Vec::new()),
+        ));
         self.realm
             .intrinsics
             .builtin_prototypes
