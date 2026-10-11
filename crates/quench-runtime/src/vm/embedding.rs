@@ -1,6 +1,56 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_has_builtin_brand(
+        &self,
+        root: RootId,
+        brand: crate::BuiltinBrand,
+    ) -> Result<bool, JsError> {
+        use crate::BuiltinBrand as B;
+        let value = self.embedding_value(root)?;
+        let cell = self.heap.get(value);
+        Ok(match brand {
+            B::Date => matches!(cell, Some(Cell::Date { .. })),
+            B::RegExp => matches!(cell, Some(Cell::RegExp { .. })),
+            B::NativeError => self.error_is_error(value) || matches!(cell, Some(Cell::Error(_))),
+            B::Promise => self.realm.promise.records.contains_key(&value),
+            B::Map => matches!(cell, Some(Cell::Map { .. })),
+            B::Set => matches!(cell, Some(Cell::Set { .. })),
+            B::WeakMap => matches!(cell, Some(Cell::WeakMap { .. })),
+            B::WeakSet => matches!(cell, Some(Cell::WeakSet { .. })),
+            B::Proxy => matches!(cell, Some(Cell::Proxy { .. })),
+            B::ArrayBuffer => matches!(cell, Some(Cell::ArrayBuffer { shared: false, .. })),
+            B::SharedArrayBuffer => matches!(cell, Some(Cell::ArrayBuffer { shared: true, .. })),
+            B::AnyArrayBuffer => matches!(cell, Some(Cell::ArrayBuffer { .. })),
+            B::DataView => matches!(cell, Some(Cell::DataView { .. })),
+            B::TypedArray => matches!(cell, Some(Cell::TypedArray { .. })),
+            B::ArrayBufferView => {
+                matches!(cell, Some(Cell::TypedArray { .. } | Cell::DataView { .. }))
+            }
+            B::ArgumentsObject => self
+                .object_data(value)
+                .is_some_and(Object::is_arguments_object),
+            typed => {
+                let kind = match typed {
+                    B::Uint8Array => TypedArrayKind::Uint8,
+                    B::Uint8ClampedArray => TypedArrayKind::Uint8Clamped,
+                    B::Uint16Array => TypedArrayKind::Uint16,
+                    B::Uint32Array => TypedArrayKind::Uint32,
+                    B::Int8Array => TypedArrayKind::Int8,
+                    B::Int16Array => TypedArrayKind::Int16,
+                    B::Int32Array => TypedArrayKind::Int32,
+                    B::BigInt64Array => TypedArrayKind::BigInt64,
+                    B::BigUint64Array => TypedArrayKind::BigUint64,
+                    B::Float16Array => TypedArrayKind::Float16,
+                    B::Float32Array => TypedArrayKind::Float32,
+                    B::Float64Array => TypedArrayKind::Float64,
+                    _ => unreachable!("non-typed-array brands handled above"),
+                };
+                matches!(cell, Some(Cell::TypedArray { kind: actual, .. }) if *actual == kind)
+            }
+        })
+    }
+
     pub(crate) fn embedding_is_callable(&self, root: RootId) -> Result<bool, JsError> {
         Ok(self.is_function(self.embedding_value(root)?))
     }
@@ -198,8 +248,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn embedding_is_promise(&self, root: RootId) -> Result<bool, JsError> {
-        let value = self.embedding_value(root)?;
-        Ok(self.realm.promise.records.contains_key(&value))
+        self.embedding_has_builtin_brand(root, crate::BuiltinBrand::Promise)
     }
 
     pub(crate) fn embedding_to_string(&mut self, root: RootId) -> Result<String, JsError> {
