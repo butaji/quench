@@ -141,34 +141,37 @@ pub(super) fn inline_leaf_calls<'a>(
             break;
         }
         // Only bodies that call a leaf are rebuilt; the rest stay in place.
-        let rebuilt = bodies
-            .iter()
-            .enumerate()
-            .map(|(index, (locals, operators))| {
-                if !operators
-                    .iter()
-                    .any(|operator| leaf_call(operator, index, &leaves, signatures).is_some())
-                {
-                    return Some(None);
-                }
-                let params = signatures.defined_signature(index as u32)?.params.len();
-                let mut locals = locals.clone();
-                let operators = inline_body(
-                    index,
-                    params,
-                    &mut locals,
-                    operators,
-                    &bodies,
-                    &leaves,
-                    signatures,
-                )?;
-                Some(Some((locals, operators)))
-            })
-            .collect::<Option<Vec<_>>>()?;
-        for (body, rebuilt) in bodies.iter_mut().zip(rebuilt) {
-            if let Some(rebuilt) = rebuilt {
-                *body = rebuilt;
+        // A rebuilt caller that is not itself a leaf replaces its old body at
+        // once, since no other body inlines it; leaves change only after the
+        // round, so every call site of a round inlines the same bodies.
+        let mut rebuilt_leaves = Vec::new();
+        for index in 0..bodies.len() {
+            let (locals, operators) = &bodies[index];
+            if !operators
+                .iter()
+                .any(|operator| leaf_call(operator, index, &leaves, signatures).is_some())
+            {
+                continue;
             }
+            let params = signatures.defined_signature(index as u32)?.params.len();
+            let mut locals = locals.clone();
+            let operators = inline_body(
+                index,
+                params,
+                &mut locals,
+                operators,
+                &bodies,
+                &leaves,
+                signatures,
+            )?;
+            if leaves[index].is_some() {
+                rebuilt_leaves.push((index, (locals, operators)));
+            } else {
+                bodies[index] = (locals, operators);
+            }
+        }
+        for (index, body) in rebuilt_leaves {
+            bodies[index] = body;
         }
     }
     Some(bodies)
@@ -193,7 +196,11 @@ fn leaf_call<'l>(
 /// the parameter stores, the resets of locals not assigned first, the
 /// block, and the body itself (one operator per callee operator).
 fn inlined_length(leaf: &Leaf, body: &[Operator<'_>]) -> usize {
-    let resets = leaf.assigned_first.iter().filter(|assigned| !**assigned).count();
+    let resets = leaf
+        .assigned_first
+        .iter()
+        .filter(|assigned| !**assigned)
+        .count();
     leaf.params.len() + 2 * resets + 1 + body.len()
 }
 
