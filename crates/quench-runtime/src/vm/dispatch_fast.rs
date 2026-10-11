@@ -1219,7 +1219,12 @@ lane_handler! {
         };
         let vm = unsafe { vm(cx) };
         // SAFETY: the context's program outlives the lane run.
-        vm.retire_pending_frame(unsafe { &*(*cx).code });
+        let code = unsafe { &*(*cx).code };
+        if code.kind == crate::bytecode::ProgramKind::Wasm {
+            vm.retire_wasm_frame();
+        } else {
+            vm.retire_pending_frame(code);
+        }
         vm.write(call.caller, call.destination, value);
         drop(call.stack_guard);
         let pc = vm.frames[call.caller].pc;
