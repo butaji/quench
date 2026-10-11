@@ -1,6 +1,55 @@
 use super::*;
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_is_array(&mut self, root: RootId) -> Result<bool, JsError> {
+        let value = self.embedding_value(root)?;
+        let program = self.embedding_program()?;
+        self.is_array(&program, value)
+    }
+
+    pub(crate) fn embedding_prototype(&mut self, root: RootId) -> Result<Value, JsError> {
+        let value = self.embedding_value(root)?;
+        let program = self.embedding_program()?;
+        self.object_get_prototype_of(&program, value)
+    }
+
+    pub(crate) fn embedding_enumerable_own_keys(
+        &mut self,
+        root: RootId,
+        include_symbols: bool,
+    ) -> Result<Vec<RootId>, JsError> {
+        let value = self.embedding_value(root)?;
+        let program = self.embedding_program()?;
+        let keys = self
+            .object_own_key_values(&program, value)?
+            .into_iter()
+            .map(|key| self.root(key))
+            .collect::<Vec<_>>();
+        let mut retained = vec![false; keys.len()];
+        let outcome = (|| {
+            let mut enumerable = Vec::with_capacity(keys.len());
+            for (index, key) in keys.iter().enumerate() {
+                let property = self.root_value(*key).expect("own key root is live");
+                if !include_symbols && matches!(self.heap.get(property), Some(Cell::Symbol(_))) {
+                    continue;
+                }
+                let descriptor =
+                    self.object_get_own_property_descriptor(&program, &[value, property])?;
+                if !descriptor.is_undefined() && self.descriptor_flag(descriptor, "enumerable") {
+                    enumerable.push(*key);
+                    retained[index] = true;
+                }
+            }
+            Ok(enumerable)
+        })();
+        for (key, retained) in keys.into_iter().zip(retained) {
+            if outcome.is_err() || !retained {
+                self.release_root(key);
+            }
+        }
+        outcome
+    }
+
     pub(crate) fn embedding_has_builtin_brand(
         &self,
         root: RootId,

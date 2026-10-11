@@ -386,6 +386,9 @@ const UTIL: &str = quench_js_check::checked_js!(
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.evaluate_script_rooted(UTIL, "node:util/shared.js")?;
+    let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
+    let compare_key = context.string_rooted("isDeepStrictEqual");
+    context.set_property_rooted(module, compare_key, compare, module)?;
     let types = context.object_rooted()?;
     for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
         let data = context.number(index as f64);
