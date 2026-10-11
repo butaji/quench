@@ -71,6 +71,34 @@ impl SlotArena {
             .take(len)
     }
 
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn fully_empty_page_count(&self, page_size: usize) -> usize {
+        self.slabs
+            .iter()
+            .map(|slab| {
+                let slab_start = slab.as_ptr() as usize;
+                let slab_end = slab_start + slab.len() * std::mem::size_of::<Slot>();
+                let mut page_start = slab_start.div_ceil(page_size) * page_size;
+                let mut empty_pages = 0;
+                while let Some(page_end) = page_start.checked_add(page_size)
+                    && page_end <= slab_end
+                {
+                    let first_slot = (page_start - slab_start) / std::mem::size_of::<Slot>();
+                    let end_slot =
+                        (page_end - slab_start).div_ceil(std::mem::size_of::<Slot>());
+                    if slab[first_slot..end_slot]
+                        .iter()
+                        .all(|slot| slot.cell.is_none())
+                    {
+                        empty_pages += 1;
+                    }
+                    page_start = page_end;
+                }
+                empty_pages
+            })
+            .sum()
+    }
+
     /// Occupied slots grouped by slab, each with the flat index of its first
     /// slot, so whole-heap passes run a plain loop per slab.
     pub(super) fn slabs_mut(&mut self) -> impl Iterator<Item = (usize, &mut [Slot])> {
