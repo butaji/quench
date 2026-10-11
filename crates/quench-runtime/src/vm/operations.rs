@@ -1202,7 +1202,7 @@ impl<H: Host> Vm<H> {
                 if matches!(self.heap.get(left), Some(Cell::String(_)))
                     && matches!(self.heap.get(right), Some(Cell::String(_)))
                 {
-                    return self.binary_slow(p, op, left, right);
+                    return self.concatenate(p, left, right);
                 }
                 return self.with_coerced_operands(
                     p,
@@ -1405,6 +1405,27 @@ impl<H: Host> Vm<H> {
     }
     #[cold]
     #[inline(never)]
+    /// String concatenation for `+` once at least one operand is a string: an interned
+    /// result when the dynamic-string cache knows the pair, otherwise both operands' string
+    /// values joined and interned.
+    fn concatenate(
+        &mut self,
+        p: &ResidualProgram,
+        left: Value,
+        right: Value,
+    ) -> Result<Value, JsError> {
+        if let Some(value) = self.intern_dynamic_concat(left, right) {
+            #[cfg(feature = "profile-aggregate")]
+            self.profile.string_concat(true);
+            return Ok(value);
+        }
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.string_concat(false);
+        let mut text = self.coerce_js_string(p, left)?;
+        text.push_js_string(&self.coerce_js_string(p, right)?);
+        Ok(self.intern_dynamic_value(text))
+    }
+
     pub(super) fn binary_slow(
         &mut self,
         p: &ResidualProgram,
@@ -1417,17 +1438,10 @@ impl<H: Host> Vm<H> {
         {
             return Ok(Value::number(numeric_number_result(operator, a, b)));
         }
-        if op == 8 && (self.is_string(left) || self.is_string(right)) {
-            if let Some(value) = self.intern_dynamic_concat(left, right) {
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.string_concat(true);
-                return Ok(value);
-            }
-            #[cfg(feature = "profile-aggregate")]
-            self.profile.string_concat(false);
-            let mut text = self.coerce_js_string(p, left)?;
-            text.push_js_string(&self.coerce_js_string(p, right)?);
-            return Ok(self.intern_dynamic_value(text));
+        if op == BinaryOperator::Addition as u32
+            && (self.is_string(left) || self.is_string(right))
+        {
+            return self.concatenate(p, left, right);
         }
         if let Some(operator) = RelationalOperator::from_immediate(op) {
             let result = self.compare_relational(p, operator, left, right)?;
