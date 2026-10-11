@@ -1,0 +1,3288 @@
+diff --git a/crates/quench-runtime/src/heap.rs b/crates/quench-runtime/src/heap.rs
+index 2787d835b..f7aacf650 100644
+--- a/crates/quench-runtime/src/heap.rs
++++ b/crates/quench-runtime/src/heap.rs
+@@ -600,10 +600,10 @@ impl Heap {
+         }
+     }
+     pub(crate) fn sparse_set_length(&mut self, array: Value, length: usize) {
+-        let Some(Cell::Array { elements, .. }) = self.get(array) else {
++        let Some(cell @ Cell::Array { .. }) = self.get(array) else {
+             return;
+         };
+-        let dense_length = elements.len();
++        let dense_length = cell.array_elements().len();
+         let sparse_length = self.sparse_length(array);
+         if sparse_length.is_none() && length == dense_length {
+             return;
+@@ -634,9 +634,10 @@ impl Heap {
+         {
+             self.sparse_arrays = None;
+         }
+-        let Some(Cell::Array { elements, .. }) = self.get_mut(array) else {
++        let Some(cell @ Cell::Array { .. }) = self.get_mut(array) else {
+             return;
+         };
++        let elements = cell.array_elements_mut();
+         let dense_length = elements.len();
+         let elements = Rc::make_mut(elements);
+         elements.resize(length, Value::DELETED);
+@@ -788,12 +789,14 @@ impl Heap {
+         }
+         match cell {
+             Cell::Object(value) => object(value),
+-            Cell::Array {
+-                object: value,
+-                elements,
+-            } => {
++            Cell::Array { object: value } => {
+                 object(value);
+-                work.extend(elements.iter().copied().filter(|value| value.is_heap()));
++                work.extend(
++                    cell.array_elements()
++                        .iter()
++                        .copied()
++                        .filter(|value| value.is_heap()),
++                );
+             }
+             Cell::ArrayBuffer { object: value, .. } => object(value),
+             Cell::RegExp {
+@@ -1085,7 +1088,10 @@ impl Heap {
+                     ..
+                 } => time_zone.capacity() + calendar.capacity(),
+                 Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
+-                Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
++                cell @ Cell::Array { .. } => {
++                    let elements = cell.array_elements();
++                    elements.capacity() * size_of::<Value>()
++                }
+                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
+                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
+                 Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
+diff --git a/crates/quench-runtime/src/heap/cell.rs b/crates/quench-runtime/src/heap/cell.rs
+index 92b6bc130..76052af8e 100644
+--- a/crates/quench-runtime/src/heap/cell.rs
++++ b/crates/quench-runtime/src/heap/cell.rs
+@@ -6,6 +6,7 @@ use crate::vm::program_store::ProgramId;
+ use crate::vm::wtf16::JsString;
+ use rustc_hash::FxHashMap;
+ use std::rc::Rc;
++use std::{fmt, mem::ManuallyDrop};
+ 
+ #[derive(Clone, Debug, Default)]
+ pub(crate) struct WeakMapEntries {
+@@ -17,17 +18,75 @@ pub(crate) struct WeakMapEntries {
+ mod cell_layout_tests {
+     use super::*;
+ 
++    const OBJECT_HEADER_BYTES: usize =
++        std::mem::size_of::<Value>() + INLINE_PROPERTY_COUNT * std::mem::size_of::<Value>();
+     /// Every heap slot stores an `Option<Cell>`. The M4 object layout includes
+-    /// two inline properties, and arrays add their shared element handle.
++    /// two inline properties, with array backing stored in their spare words.
+     const CELL_TAG_WORD_BYTES: usize = std::mem::size_of::<Value>();
+-    const MAX_CELL_BYTES: usize = std::mem::size_of::<Object>()
+-        + std::mem::size_of::<Rc<Vec<Value>>>()
+-        + CELL_TAG_WORD_BYTES;
++    const ARRAY_STORAGE_BYTES: usize =
++        std::mem::size_of::<Rc<Vec<Value>>>() + std::mem::size_of::<Option<Box<ObjectExtras>>>();
++    const MAX_CELL_BYTES: usize = std::mem::size_of::<Object>() + CELL_TAG_WORD_BYTES;
+ 
+     #[test]
+     fn cells_stay_compact() {
++        assert_eq!(
++            std::mem::size_of::<Object>(),
++            OBJECT_HEADER_BYTES + std::mem::size_of::<ValueVec>()
++        );
++        assert_eq!(std::mem::size_of::<ArrayStorage>(), ARRAY_STORAGE_BYTES);
++        assert_eq!(std::mem::size_of::<ObjectStorage>(), ARRAY_STORAGE_BYTES);
+         assert_eq!(std::mem::size_of::<Option<Cell>>(), MAX_CELL_BYTES);
+     }
++
++    #[test]
++    fn object_extras_preserve_inline_properties_across_clone_and_drop() {
++        let first = Value::integer(17);
++        let second = Value::integer(29);
++        let mut object = Object::with_property_storage(
++            Value::NULL,
++            ValueVec::inline_property_storage(0),
++            [first, second],
++        );
++
++        object.set_arguments_object();
++        assert!(object.is_arguments_object());
++        assert_eq!(object.inline_properties(), Some(&[first, second]));
++
++        let clone = object.clone();
++        assert!(clone.is_arguments_object());
++        assert_eq!(clone.inline_properties(), Some(&[first, second]));
++    }
++
++    #[test]
++    fn array_backing_survives_extras_clone_and_drop() {
++        let values = Rc::new(vec![Value::integer(17), Value::integer(29)]);
++        let mut array = Cell::array(Value::NULL, values);
++        assert_eq!(Rc::strong_count(array.array_elements()), 1);
++        assert!(!array.array_has_indexed_descriptors());
++
++        let Cell::Array { object } = &mut array else {
++            unreachable!()
++        };
++        object.set_arguments_object();
++        object.mark_indexed_descriptors();
++        assert!(object.is_arguments_object());
++        assert!(array.array_has_indexed_descriptors());
++        assert_eq!(
++            array.array_elements().as_slice(),
++            &[Value::integer(17), Value::integer(29)]
++        );
++
++        let clone = array.clone();
++        assert_eq!(Rc::strong_count(clone.array_elements()), 2);
++        let Cell::Array { object } = &clone else {
++            unreachable!()
++        };
++        assert!(object.is_arguments_object());
++        assert_eq!(clone.array_elements()[0], Value::integer(17));
++
++        drop(array);
++        assert_eq!(Rc::strong_count(clone.array_elements()), 1);
++    }
+ }
+ 
+ impl WeakMapEntries {
+@@ -950,13 +1009,23 @@ pub(crate) enum IteratorConsumer {
+     Find,
+     Some,
+ }
+-#[derive(Clone, Debug)]
+ pub(crate) struct Object {
+     pub proto: Value,
+     // Property names live once in the VM's immutable shape table; objects keep
+     // only the data vector selected by that shape.
+     pub properties: ValueVec,
++    storage: ObjectStorage,
++}
++
++union ObjectStorage {
+     inline_properties: [Value; INLINE_PROPERTY_COUNT],
++    array_storage: ManuallyDrop<ArrayStorage>,
++    out_of_line: ManuallyDrop<Box<ObjectExtraStorage>>,
++}
++
++#[derive(Clone, Debug)]
++struct ArrayStorage {
++    elements: Rc<Vec<Value>>,
+     extras: Option<Box<ObjectExtras>>,
+ }
+ 
+@@ -989,14 +1058,70 @@ struct ObjectExtras {
+     /// An index-keyed property descriptor has been recorded for this object; never cleared.
+     indexed_descriptors: bool,
+ }
++
++#[derive(Clone, Debug)]
++struct ObjectExtraStorage {
++    inline_properties: [Value; INLINE_PROPERTY_COUNT],
++    extras: ObjectExtras,
++}
++
++impl Clone for Object {
++    fn clone(&self) -> Self {
++        let storage = if self.properties.has_array_elements() {
++            // SAFETY: Cell::Array initializes this union arm before exposing
++            // its Object header, and the array-kind bit remains set for life.
++            let array = unsafe { &*self.storage.array_storage };
++            ObjectStorage {
++                array_storage: ManuallyDrop::new(array.clone()),
++            }
++        } else if let Some(out_of_line) = self.out_of_line() {
++            ObjectStorage {
++                out_of_line: ManuallyDrop::new(Box::new(out_of_line.clone())),
++            }
++        } else {
++            ObjectStorage {
++                inline_properties: *self.inline_property_values(),
++            }
++        };
++        Self {
++            proto: self.proto,
++            properties: self.properties,
++            storage,
++        }
++    }
++}
++
++impl fmt::Debug for Object {
++    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
++        formatter
++            .debug_struct("Object")
++            .field("proto", &self.proto)
++            .field("properties", &self.properties)
++            .field("inline_properties", self.inline_property_values())
++            .field("extras", &self.extras())
++            .finish()
++    }
++}
++
++impl Drop for Object {
++    fn drop(&mut self) {
++        if self.properties.has_array_elements() {
++            // SAFETY: Cell::Array initializes this union arm and keeps its
++            // array-kind bit set until the record is dropped.
++            unsafe { ManuallyDrop::drop(&mut self.storage.array_storage) };
++        } else if self.properties.has_object_extras() {
++            // SAFETY: the object-extras bit is set only after `storage` is
++            // initialized with the matching out-of-line allocation.
++            unsafe { ManuallyDrop::drop(&mut self.storage.out_of_line) };
++        }
++    }
++}
+ impl ObjectExtras {
+     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
+     fn allocated_bytes(&self) -> usize {
+-        std::mem::size_of::<Self>()
+-            + self
+-                .arguments_map
+-                .as_ref()
+-                .map_or(0, |mapping| mapping.capacity() * std::mem::size_of::<u16>())
++        self.arguments_map
++            .as_ref()
++            .map_or(0, |mapping| mapping.capacity() * std::mem::size_of::<u16>())
+             + self.module_bindings.capacity() * std::mem::size_of::<(Atom, ProgramId, u16)>()
+             + self.deferred_module.as_ref().map_or(0, |module| {
+                 module.name.capacity() + module.source.capacity() + module.bytes.capacity()
+@@ -1008,6 +1133,13 @@ impl ObjectExtras {
+                 .map_or(0, StackData::allocated_bytes)
+     }
+ }
++
++impl ObjectExtraStorage {
++    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
++    fn allocated_bytes(&self) -> usize {
++        std::mem::size_of::<Self>() + self.extras.allocated_bytes()
++    }
++}
+ impl StackData {
+     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
+     fn allocated_bytes(&self) -> usize {
+@@ -1053,34 +1185,76 @@ impl Object {
+         Self {
+             proto,
+             properties: ValueVec::inline_property_storage(0),
+-            inline_properties: [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+-            extras: None,
++            storage: ObjectStorage {
++                inline_properties: [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
++            },
+         }
+     }
+ 
+     pub(crate) fn with_property_storage(
+         proto: Value,
+-        properties: ValueVec,
++        mut properties: ValueVec,
+         inline_properties: [Value; INLINE_PROPERTY_COUNT],
+     ) -> Self {
++        properties.set_object_extras(false);
++        properties.set_array_elements(false);
+         Self {
+             proto,
+             properties,
+-            inline_properties,
+-            extras: None,
++            storage: ObjectStorage { inline_properties },
+         }
+     }
+ 
++    fn into_array_elements(mut self, elements: Rc<Vec<Value>>) -> Self {
++        debug_assert!(!self.properties.has_object_extras());
++        debug_assert!(!self.properties.has_array_elements());
++        debug_assert!(self.properties.has_inline_property_storage());
++        debug_assert!(
++            self.inline_property_values()
++                .iter()
++                .all(|value| *value == Value::UNDEFINED)
++        );
++        let properties = ValueVec::array_property_storage(self.shape());
++        self.storage = ObjectStorage {
++            array_storage: ManuallyDrop::new(ArrayStorage {
++                elements,
++                extras: None,
++            }),
++        };
++        self.properties = properties;
++        self
++    }
++
+     pub(crate) fn inline_properties(&self) -> Option<&[Value; INLINE_PROPERTY_COUNT]> {
+-        self.properties
+-            .has_inline_property_storage()
+-            .then_some(&self.inline_properties)
++        (!self.properties.has_array_elements() && self.properties.has_inline_property_storage())
++            .then(|| self.inline_property_values())
++    }
++
++    #[inline(always)]
++    fn array_elements(&self) -> &Rc<Vec<Value>> {
++        debug_assert!(self.properties.has_array_elements());
++        // SAFETY: Cell::Array is the authority for this union arm. Its
++        // elements pointer stays at this offset whether or not extras exist.
++        unsafe { &self.storage.array_storage.elements }
++    }
++
++    #[inline(always)]
++    fn array_elements_mut(&mut self) -> &mut Rc<Vec<Value>> {
++        debug_assert!(self.properties.has_array_elements());
++        // SAFETY: Cell::Array is the authority for this union arm. Its
++        // elements pointer stays at this offset whether or not extras exist.
++        unsafe { &mut (*self.storage.array_storage).elements }
+     }
+ 
+     pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
+         debug_assert!(self.properties.has_inline_property_storage());
+         debug_assert!(slot < INLINE_PROPERTY_COUNT);
+-        self.inline_properties[slot] = value;
++        if let Some(out_of_line) = self.out_of_line_mut() {
++            out_of_line.inline_properties[slot] = value;
++        } else {
++            // SAFETY: without object extras, the union stores inline values.
++            unsafe { self.storage.inline_properties[slot] = value };
++        }
+     }
+ 
+     pub(crate) fn replace_property_storage(
+@@ -1091,13 +1265,29 @@ impl Object {
+         let previous = self.properties;
+         properties.preserve_integrity_from(previous);
+         self.properties = properties;
+-        self.inline_properties = inline_properties;
++        if !self.properties.has_array_elements() {
++            if let Some(out_of_line) = self.out_of_line_mut() {
++                out_of_line.inline_properties = inline_properties;
++            } else {
++                self.storage.inline_properties = inline_properties;
++            }
++        }
+         previous
+     }
+ 
+     pub(crate) fn copy_property_storage_from(&mut self, source: &Self) {
+-        self.properties = source.properties;
+-        self.inline_properties = source.inline_properties;
++        let mut properties = source.properties;
++        properties.set_object_extras(self.properties.has_object_extras());
++        properties.set_array_elements(self.properties.has_array_elements());
++        self.properties = properties;
++        if !self.properties.has_array_elements() {
++            let inline_properties = *source.inline_property_values();
++            if let Some(out_of_line) = self.out_of_line_mut() {
++                out_of_line.inline_properties = inline_properties;
++            } else {
++                self.storage.inline_properties = inline_properties;
++            }
++        }
+     }
+ 
+     /// Presence of [[ErrorData]] is the unforgeable Error brand.
+@@ -1108,13 +1298,11 @@ impl Object {
+     }
+ 
+     pub(crate) fn has_error_data(&self) -> bool {
+-        self.extras
+-            .as_deref()
+-            .is_some_and(|extras| extras.error_data)
++        self.extras().is_some_and(|extras| extras.error_data)
+     }
+ 
+     pub(crate) fn stack_data(&self) -> Option<&StackData> {
+-        self.extras.as_deref()?.stack_data.as_ref()
++        self.extras()?.stack_data.as_ref()
+     }
+ 
+     pub(crate) fn set_stack_data(&mut self, data: StackData) {
+@@ -1122,17 +1310,13 @@ impl Object {
+     }
+ 
+     pub(crate) fn clear_stack_data(&mut self) {
+-        if let Some(extras) = self.extras.as_deref_mut() {
++        if let Some(extras) = self.extras_mut_if_present() {
+             extras.stack_data = None;
+         }
+     }
+ 
+     pub(crate) fn visit_stack_data_roots(&self, mut visit: impl FnMut(Value)) {
+-        match self
+-            .extras
+-            .as_deref()
+-            .and_then(|extras| extras.stack_data.as_ref())
+-        {
++        match self.extras().and_then(|extras| extras.stack_data.as_ref()) {
+             Some(StackData::Captured(records)) => {
+                 for record in records {
+                     visit(record.this_value);
+@@ -1162,14 +1346,44 @@ impl Object {
+         self.properties.set_frozen(value);
+     }
+     fn extras_mut(&mut self) -> &mut ObjectExtras {
+-        self.extras
+-            .get_or_insert_with(|| Box::new(ObjectExtras::default()))
++        if self.properties.has_array_elements() {
++            // Array records keep their elements pointer fixed and place only
++            // rare extras behind the second word of the same storage arm.
++            // SAFETY: the array-kind bit selects the initialized ArrayStorage.
++            let array = unsafe { &mut *self.storage.array_storage };
++            let extras = array
++                .extras
++                .get_or_insert_with(|| Box::new(ObjectExtras::default()));
++            return extras;
++        }
++        if !self.properties.has_object_extras() {
++            // SAFETY: before the mode bit changes, the union stores the two
++            // inline property values. They move into the out-of-line record
++            // with the rare extras, keeping ordinary objects at 32 bytes.
++            let inline_properties = if self.properties.has_inline_property_storage() {
++                // SAFETY: without object extras, the union stores inline values.
++                unsafe { self.storage.inline_properties }
++            } else {
++                [Value::UNDEFINED; INLINE_PROPERTY_COUNT]
++            };
++            self.storage = ObjectStorage {
++                out_of_line: ManuallyDrop::new(Box::new(ObjectExtraStorage {
++                    inline_properties,
++                    extras: ObjectExtras::default(),
++                })),
++            };
++            self.properties.set_object_extras(true);
++        }
++        &mut self
++            .out_of_line_mut()
++            .expect("object extras mode has out-of-line storage")
++            .extras
+     }
+     pub(crate) fn arguments_map(&self) -> Option<&[u16]> {
+-        self.extras.as_deref()?.arguments_map.as_deref()
++        self.extras()?.arguments_map.as_deref()
+     }
+     pub(crate) fn arguments_map_mut(&mut self) -> Option<&mut Vec<u16>> {
+-        self.extras.as_deref_mut()?.arguments_map.as_mut()
++        self.extras_mut_if_present()?.arguments_map.as_mut()
+     }
+     pub(crate) fn set_arguments_map(&mut self, mapping: Vec<u16>) {
+         self.extras_mut().arguments_map = Some(mapping);
+@@ -1178,51 +1392,42 @@ impl Object {
+         self.extras_mut().arguments_object = true;
+     }
+     pub(crate) fn is_arguments_object(&self) -> bool {
+-        self.extras
+-            .as_deref()
+-            .is_some_and(|extras| extras.arguments_object)
++        self.extras().is_some_and(|extras| extras.arguments_object)
+     }
+-    pub(crate) fn has_indexed_descriptors(&self) -> bool {
+-        self.extras
+-            .as_deref()
++    fn array_has_indexed_descriptors(&self) -> bool {
++        self.array_extras()
+             .is_some_and(|extras| extras.indexed_descriptors)
+     }
+     pub(crate) fn mark_indexed_descriptors(&mut self) {
+         self.extras_mut().indexed_descriptors = true;
+     }
+     pub(crate) fn is_raw_json(&self) -> bool {
+-        self.extras.as_deref().is_some_and(|extras| extras.raw_json)
++        self.extras().is_some_and(|extras| extras.raw_json)
+     }
+     pub(crate) fn set_raw_json(&mut self) {
+         self.extras_mut().raw_json = true;
+     }
+ 
+     pub(crate) fn is_module_namespace(&self) -> bool {
+-        self.extras
+-            .as_deref()
+-            .is_some_and(|extras| extras.module_namespace)
++        self.extras().is_some_and(|extras| extras.module_namespace)
+     }
+     pub(crate) fn set_module_namespace(&mut self) {
+         self.extras_mut().module_namespace = true;
+     }
+     pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
+-        self.extras
+-            .as_deref()
+-            .map_or(&[], |extras| &extras.module_bindings)
++        self.extras().map_or(&[], |extras| &extras.module_bindings)
+     }
+     pub(crate) fn set_module_bindings(&mut self, bindings: Vec<(Atom, ProgramId, u16)>) {
+         self.extras_mut().module_bindings = bindings;
+     }
+     pub(crate) fn deferred_module(&self) -> Option<&crate::ModuleSource> {
+-        self.extras.as_deref()?.deferred_module.as_ref()
++        self.extras()?.deferred_module.as_ref()
+     }
+     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
+         self.extras_mut().deferred_module = module;
+     }
+     pub(crate) fn private_names(&self) -> &[PrivateBrand] {
+-        self.extras
+-            .as_deref()
+-            .map_or(&[], |extras| &extras.private_names)
++        self.extras().map_or(&[], |extras| &extras.private_names)
+     }
+     pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
+         self.private_names().contains(&brand)
+@@ -1235,9 +1440,14 @@ impl Object {
+     }
+     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
+     pub(crate) fn allocated_extra_bytes(&self) -> usize {
+-        self.extras
+-            .as_deref()
+-            .map_or(0, ObjectExtras::allocated_bytes)
++        if self.properties.has_array_elements() {
++            self.array_extras().map_or(0, |extras| {
++                std::mem::size_of::<ObjectExtras>() + extras.allocated_bytes()
++            })
++        } else {
++            self.out_of_line()
++                .map_or(0, ObjectExtraStorage::allocated_bytes)
++        }
+     }
+ 
+     pub(crate) fn module_binding(&self, atom: Atom) -> Option<(ProgramId, u16)> {
+@@ -1245,6 +1455,57 @@ impl Object {
+             .iter()
+             .find_map(|(name, program, slot)| (*name == atom).then_some((*program, *slot)))
+     }
++
++    fn inline_property_values(&self) -> &[Value; INLINE_PROPERTY_COUNT] {
++        if self.properties.has_array_elements() {
++            // Arrays store named properties in ValueArena and elements in the
++            // array storage arm, so they have no inline named-property slots.
++            &[Value::UNDEFINED; INLINE_PROPERTY_COUNT]
++        } else if let Some(out_of_line) = self.out_of_line() {
++            &out_of_line.inline_properties
++        } else {
++            // SAFETY: without object extras, the union stores inline values.
++            unsafe { &self.storage.inline_properties }
++        }
++    }
++
++    fn extras(&self) -> Option<&ObjectExtras> {
++        if self.properties.has_array_elements() {
++            self.array_extras()
++        } else {
++            self.out_of_line().map(|storage| &storage.extras)
++        }
++    }
++
++    fn extras_mut_if_present(&mut self) -> Option<&mut ObjectExtras> {
++        if self.properties.has_array_elements() {
++            // SAFETY: the array-kind bit selects the initialized ArrayStorage.
++            return unsafe { &mut (*self.storage.array_storage).extras }.as_deref_mut();
++        }
++        self.out_of_line_mut().map(|storage| &mut storage.extras)
++    }
++
++    fn array_extras(&self) -> Option<&ObjectExtras> {
++        debug_assert!(self.properties.has_array_elements());
++        // SAFETY: the array-kind bit selects the initialized ArrayStorage.
++        unsafe { &self.storage.array_storage.extras }.as_deref()
++    }
++
++    fn out_of_line(&self) -> Option<&ObjectExtraStorage> {
++        if self.properties.has_array_elements() || !self.properties.has_object_extras() {
++            return None;
++        }
++        // SAFETY: the mode bit selects the initialized boxed union field.
++        Some(unsafe { &self.storage.out_of_line })
++    }
++
++    fn out_of_line_mut(&mut self) -> Option<&mut ObjectExtraStorage> {
++        if self.properties.has_array_elements() || !self.properties.has_object_extras() {
++            return None;
++        }
++        // SAFETY: the mode bit selects the initialized boxed union field.
++        Some(unsafe { &mut self.storage.out_of_line })
++    }
+ }
+ /// Internal methods installed by ProxyCreate, retained after target release.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -1350,7 +1611,6 @@ pub(crate) enum Cell {
+     Object(Object),
+     Array {
+         object: Object,
+-        elements: Rc<Vec<Value>>,
+     },
+     ArrayBuffer {
+         object: Box<Object>,
+@@ -1523,6 +1783,38 @@ pub(crate) enum Cell {
+     },
+ }
+ 
++impl Cell {
++    #[inline(always)]
++    pub(crate) fn array_has_indexed_descriptors(&self) -> bool {
++        match self {
++            Self::Array { object } => object.array_has_indexed_descriptors(),
++            _ => unreachable!("array descriptors requested from a non-array cell"),
++        }
++    }
++
++    #[inline(always)]
++    pub(crate) fn array_elements(&self) -> &Rc<Vec<Value>> {
++        match self {
++            Self::Array { object } => object.array_elements(),
++            _ => unreachable!("array elements requested from a non-array cell"),
++        }
++    }
++
++    #[inline(always)]
++    pub(crate) fn array_elements_mut(&mut self) -> &mut Rc<Vec<Value>> {
++        match self {
++            Self::Array { object } => object.array_elements_mut(),
++            _ => unreachable!("array elements requested from a non-array cell"),
++        }
++    }
++
++    pub(crate) fn array(proto: Value, elements: Rc<Vec<Value>>) -> Self {
++        Self::Array {
++            object: Object::new(proto).into_array_elements(elements),
++        }
++    }
++}
++
+ #[cfg(feature = "profile-memory")]
+ impl Cell {
+     pub(crate) fn profile_variant_name(&self) -> &'static str {
+diff --git a/crates/quench-runtime/src/heap/memory_profile.rs b/crates/quench-runtime/src/heap/memory_profile.rs
+index e5ad744c3..6b5c21927 100644
+--- a/crates/quench-runtime/src/heap/memory_profile.rs
++++ b/crates/quench-runtime/src/heap/memory_profile.rs
+@@ -398,7 +398,8 @@ impl Heap {
+             }
+             let payload_bytes = Self::cell_payload_bytes(cell);
+             match cell {
+-                Cell::Array { elements, .. } => {
++                cell @ Cell::Array { .. } => {
++                    let elements = cell.array_elements();
+                     let element_bytes = elements.capacity() * size_of::<Value>();
+                     other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
+                     let identity = Rc::as_ptr(elements) as usize;
+@@ -541,7 +542,10 @@ impl Heap {
+         self.slots
+             .iter()
+             .filter_map(|slot| match slot.cell.as_ref()? {
+-                Cell::Array { elements, .. } => Some((elements.len(), elements.capacity())),
++                cell @ Cell::Array { .. } => {
++                    let elements = cell.array_elements();
++                    Some((elements.len(), elements.capacity()))
++                }
+                 _ => None,
+             })
+             .fold((0, 0), |(len, capacity), value| {
+@@ -592,7 +596,9 @@ fn cell_bytes(cell: &Cell) -> usize {
+             | Cell::WasmGc {
+                 fields: elements, ..
+             } => elements.capacity() * size_of::<Value>(),
+-            Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
++            cell @ Cell::Array { .. } => {
++                cell.array_elements().capacity() * size_of::<Value>()
++            }
+             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
+             Cell::WasmMemory { bytes, .. } => bytes.capacity(),
+             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),
+diff --git a/crates/quench-runtime/src/heap/tests.rs b/crates/quench-runtime/src/heap/tests.rs
+index 47177e3a1..03496fb35 100644
+--- a/crates/quench-runtime/src/heap/tests.rs
++++ b/crates/quench-runtime/src/heap/tests.rs
+@@ -97,10 +97,7 @@ fn scope_slot_owners_survive_collection_and_release() {
+ fn object_storage_keeps_two_values_inline_in_the_cell() {
+     assert_eq!(
+         size_of::<Object>(),
+-        size_of::<Value>()
+-            + size_of::<ValueVec>()
+-            + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
+-            + size_of::<Option<Box<()>>>()
++        size_of::<Value>() + size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
+     );
+     assert_eq!(size_of::<Cell>(), size_of::<Slot>());
+ }
+@@ -248,10 +245,7 @@ fn stale_weak_handles_cannot_resolve_reused_slots() {
+ #[test]
+ fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
+     let mut heap = Heap::new();
+-    let array = heap.alloc(Cell::Array {
+-        object: plain_object(),
+-        elements: Rc::new(Vec::new()),
+-    });
++    let array = heap.alloc(Cell::array(Value::NULL, Rc::new(Vec::new())));
+     let slot = array.heap_index().unwrap();
+     let index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
+     heap.sparse_set(array, index, Value::number(7.0));
+@@ -259,10 +253,7 @@ fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
+ 
+     heap.collect([]);
+ 
+-    let reused = heap.alloc(Cell::Array {
+-        object: plain_object(),
+-        elements: Rc::new(Vec::new()),
+-    });
++    let reused = heap.alloc(Cell::array(Value::NULL, Rc::new(Vec::new())));
+     assert_eq!(reused.heap_index(), Some(slot));
+     assert_eq!(heap.sparse_get(reused, index), None);
+     assert_eq!(heap.sparse_length(reused), None);
+@@ -307,6 +298,25 @@ fn out_of_line_private_brand_keeps_its_home_alive() {
+     assert!(heap.get(home).is_none());
+ }
+ 
++#[test]
++fn array_backing_in_out_of_line_storage_remains_a_gc_edge() {
++    let mut heap = Heap::new();
++    let element = heap.alloc(Cell::String("array element".into()));
++    let array = heap.alloc(Cell::array(Value::NULL, Rc::new(vec![element])));
++    heap.get_mut(array)
++        .and_then(Cell::object_mut)
++        .unwrap()
++        .set_arguments_object();
++
++    heap.collect([array]);
++    assert!(heap.get(array).is_some());
++    assert!(heap.get(element).is_some());
++
++    heap.collect([]);
++    assert!(heap.get(array).is_none());
++    assert!(heap.get(element).is_none());
++}
++
+ #[test]
+ fn object_property_storage_migration_preserves_writes_and_gc_roots() {
+     let mut heap = Heap::new();
+diff --git a/crates/quench-runtime/src/value_vec.rs b/crates/quench-runtime/src/value_vec.rs
+index bc6b42763..03817a1e4 100644
+--- a/crates/quench-runtime/src/value_vec.rs
++++ b/crates/quench-runtime/src/value_vec.rs
+@@ -5,7 +5,10 @@ const START_MASK: u32 = 0x3fff_ffff;
+ const NON_EXTENSIBLE: u32 = 1 << 30;
+ const FROZEN: u32 = 1 << 31;
+ const DICTIONARY_STORAGE: u32 = 1 << 31;
+-const SHAPE_MASK: u32 = !DICTIONARY_STORAGE;
++const OBJECT_EXTRAS: u32 = 1 << 30;
++const ARRAY_ELEMENTS: u32 = 1 << 29;
++const SHAPE_CAPACITY: u32 = 1 << 29;
++const SHAPE_MASK: u32 = SHAPE_CAPACITY - 1;
+ const EMPTY_START: u32 = START_MASK;
+ const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
+ const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
+@@ -37,17 +40,49 @@ impl ValueVec {
+         }
+     }
+ 
++    pub(crate) const fn array_property_storage(shape: u32) -> Self {
++        Self {
++            start: EMPTY_START,
++            auxiliary: shape | ARRAY_ELEMENTS,
++        }
++    }
++
+     pub(crate) const fn auxiliary(self) -> u32 {
+         self.auxiliary & SHAPE_MASK
+     }
+ 
++    pub(crate) const fn has_object_extras(self) -> bool {
++        self.auxiliary & OBJECT_EXTRAS != 0
++    }
++
++    pub(crate) const fn has_array_elements(self) -> bool {
++        self.auxiliary & ARRAY_ELEMENTS != 0
++    }
++
++    pub(crate) fn set_array_elements(&mut self, value: bool) {
++        if value {
++            self.auxiliary |= ARRAY_ELEMENTS;
++        } else {
++            self.auxiliary &= !ARRAY_ELEMENTS;
++        }
++    }
++
++    pub(crate) fn set_object_extras(&mut self, value: bool) {
++        if value {
++            self.auxiliary |= OBJECT_EXTRAS;
++        } else {
++            self.auxiliary &= !OBJECT_EXTRAS;
++        }
++    }
++
+     pub(crate) fn has_inline_property_storage(self) -> bool {
+         self.start() as u32 == INLINE_PROPERTY_START
+     }
+ 
+     pub(crate) fn set_auxiliary(&mut self, value: u32) {
+         assert!(value <= SHAPE_MASK, "object shape table exhausted");
+-        self.auxiliary = (self.auxiliary & DICTIONARY_STORAGE) | value;
++        self.auxiliary =
++            (self.auxiliary & (DICTIONARY_STORAGE | OBJECT_EXTRAS | ARRAY_ELEMENTS)) | value;
+     }
+ 
+     fn is_dictionary(self) -> bool {
+@@ -92,6 +127,8 @@ impl ValueVec {
+     pub(crate) fn preserve_integrity_from(&mut self, previous: Self) {
+         self.start = (self.start & !(NON_EXTENSIBLE | FROZEN))
+             | (previous.start & (NON_EXTENSIBLE | FROZEN));
++        self.auxiliary = (self.auxiliary & !(OBJECT_EXTRAS | ARRAY_ELEMENTS))
++            | (previous.auxiliary & (OBJECT_EXTRAS | ARRAY_ELEMENTS));
+     }
+ 
+     fn start(self) -> usize {
+diff --git a/crates/quench-runtime/src/vm/agent.rs b/crates/quench-runtime/src/vm/agent.rs
+index 2983823ef..6b93ec70b 100644
+--- a/crates/quench-runtime/src/vm/agent.rs
++++ b/crates/quench-runtime/src/vm/agent.rs
+@@ -49,10 +49,10 @@ impl<H: Host> Vm<H> {
+     ) -> Result<(), JsError> {
+         let agent = self.object();
+         for (method, name, length) in AGENT_METHODS {
+-            let state = self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.array_proto),
+-                elements: Rc::new(vec![Value::number(*method as u8 as f64)]),
+-            });
++            let state = self.heap.alloc(Cell::array(
++                self.array_proto,
++                Rc::new(vec![Value::number(*method as u8 as f64)]),
++            ));
+             let function = self.native_with_env(Native::Test262Agent, state);
+             self.set_builtin_function_name(function, name)?;
+             self.set_agent_function_length(function, *length);
+@@ -94,9 +94,10 @@ impl<H: Host> Vm<H> {
+         args: &[Value],
+     ) -> Result<Value, JsError> {
+         let method = self.active_native_env().and_then(|env| {
+-            let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
++            let Some(cell @ Cell::Array { .. }) = self.heap.get(env) else {
+                 return None;
+             };
++            let elements = cell.array_elements();
+             elements.first().and_then(|value| value.as_number())
+         });
+         match method.and_then(AgentMethod::from_index) {
+diff --git a/crates/quench-runtime/src/vm/arguments.rs b/crates/quench-runtime/src/vm/arguments.rs
+index 28ff45e25..8eef29b7e 100644
+--- a/crates/quench-runtime/src/vm/arguments.rs
++++ b/crates/quench-runtime/src/vm/arguments.rs
+@@ -27,7 +27,8 @@ impl<H: Host> Vm<H> {
+             return fallback;
+         };
+         match self.heap.get(arguments) {
+-            Some(Cell::Array { elements, .. }) => elements
++            Some(cell @ Cell::Array { .. }) => cell
++                .array_elements()
+                 .get(index)
+                 .copied()
+                 .filter(|value| !value.is_deleted())
+@@ -120,10 +121,7 @@ impl<H: Host> Vm<H> {
+             return;
+         };
+         if self.frames[owner].captured {
+-            if let Some(target) = self
+-                .heap
+-                .environment_slot_mut(self.frames[owner].env, slot)
+-            {
++            if let Some(target) = self.heap.environment_slot_mut(self.frames[owner].env, slot) {
+                 *target = value;
+             }
+         } else if let Some(target) = self.frames[owner].locals.get_mut(slot) {
+diff --git a/crates/quench-runtime/src/vm/array.rs b/crates/quench-runtime/src/vm/array.rs
+index 8cd041c50..56317ea2f 100644
+--- a/crates/quench-runtime/src/vm/array.rs
++++ b/crates/quench-runtime/src/vm/array.rs
+@@ -23,7 +23,8 @@ impl<H: Host> Vm<H> {
+ 
+     pub(super) fn array_value_at(&self, array: Value, index: usize) -> Value {
+         let value = match self.heap.get(array) {
+-            Some(Cell::Array { elements, .. }) => elements
++            Some(cell @ Cell::Array { .. }) => cell
++                .array_elements()
+                 .get(index)
+                 .copied()
+                 .filter(|value| !value.is_deleted())
+diff --git a/crates/quench-runtime/src/vm/array_builtins.rs b/crates/quench-runtime/src/vm/array_builtins.rs
+index 25e269a04..4fd697654 100644
+--- a/crates/quench-runtime/src/vm/array_builtins.rs
++++ b/crates/quench-runtime/src/vm/array_builtins.rs
+@@ -53,10 +53,10 @@ const ARRAY_STATIC_METHODS: &[(&str, Native)] = &[
+ impl<H: Host> Vm<H> {
+     pub(super) fn install_array(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+         let array = self.native_value(Native::Array);
+-        self.array_proto = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.object_proto),
+-            elements: Rc::new(Vec::new()),
+-        });
++        self.array_proto = self.heap.alloc(Cell::array(
++            self.object_proto,
++            Rc::new(Vec::new()),
++        ));
+         self.realm
+             .intrinsics
+             .builtin_prototypes
+diff --git a/crates/quench-runtime/src/vm/array_copy.rs b/crates/quench-runtime/src/vm/array_copy.rs
+index ae8938442..fadfe829d 100644
+--- a/crates/quench-runtime/src/vm/array_copy.rs
++++ b/crates/quench-runtime/src/vm/array_copy.rs
+@@ -159,9 +159,10 @@ impl<H: Host> Vm<H> {
+                         .unwrap_or(Value::UNDEFINED),
+                 };
+                 let result = self.heap.root_value(result_root).unwrap();
+-                let Some(Cell::Array { elements, .. }) = self.heap.get_mut(result) else {
++                let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(result) else {
+                     unreachable!("fresh copy target remains an array");
+                 };
++                let elements = cell.array_elements_mut();
+                 Rc::make_mut(elements).push(value);
+             }
+             Ok(self.heap.root_value(result_root).unwrap())
+diff --git a/crates/quench-runtime/src/vm/array_group.rs b/crates/quench-runtime/src/vm/array_group.rs
+index 628cb5e79..21117394a 100644
+--- a/crates/quench-runtime/src/vm/array_group.rs
++++ b/crates/quench-runtime/src/vm/array_group.rs
+@@ -9,9 +9,10 @@ impl<H: Host> Vm<H> {
+         args: &[Value],
+     ) -> Result<Value, JsError> {
+         let length = match self.heap.get(this) {
+-            Some(Cell::Array { elements, .. }) => {
+-                self.heap.sparse_length(this).unwrap_or(elements.len())
+-            }
++            Some(cell @ Cell::Array { .. }) => self
++                .heap
++                .sparse_length(this)
++                .unwrap_or(cell.array_elements().len()),
+             _ => return Err(JsError("array group receiver is not array".into())),
+         };
+         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
+@@ -53,16 +54,16 @@ impl<H: Host> Vm<H> {
+                     })
+                 });
+             if let Some(existing) = existing {
+-                let Some(Cell::Array { elements, .. }) = self.heap.get_mut(existing) else {
++                let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(existing) else {
+                     return Err(JsError("array group bucket is not an array".into()));
+                 };
+-                Rc::make_mut(elements).push(value);
++                Rc::make_mut(cell.array_elements_mut()).push(value);
+                 continue;
+             }
+-            let bucket = self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.array_proto),
+-                elements: Rc::new(vec![value]),
+-            });
++            let bucket = self.heap.alloc(Cell::array(
++                self.array_proto,
++                Rc::new(vec![value]),
++            ));
+             if let Some(atom) = key_atom {
+                 self.set_property(grouped, atom, bucket)?;
+             } else if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(grouped) {
+diff --git a/crates/quench-runtime/src/vm/array_modern.rs b/crates/quench-runtime/src/vm/array_modern.rs
+index 1ef864348..8d4b2e180 100644
+--- a/crates/quench-runtime/src/vm/array_modern.rs
++++ b/crates/quench-runtime/src/vm/array_modern.rs
+@@ -36,9 +36,10 @@ impl<H: Host> Vm<H> {
+     }
+ 
+     pub(super) fn array_values(&self, this: Value) -> Result<Vec<Value>, JsError> {
+-        let Some(Cell::Array { elements, .. }) = self.heap.get(this) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get(this) else {
+             return Err(JsError("modern array method receiver is not array".into()));
+         };
++        let elements = cell.array_elements();
+         let length = self.heap.sparse_length(this).unwrap_or(elements.len());
+         Ok((0..length)
+             .map(|index| self.array_value_at(this, index))
+@@ -51,9 +52,10 @@ impl<H: Host> Vm<H> {
+ 
+     /// Append an own data element to an unexposed dense array. No guest code runs.
+     pub(super) fn append_fresh_array_element(&mut self, array: Value, value: Value) -> usize {
+-        let Some(Cell::Array { elements, .. }) = self.heap.get_mut(array) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(array) else {
+             unreachable!("fresh array owner remains an array");
+         };
++        let elements = cell.array_elements_mut();
+         let elements = super::index::mutable_array_elements(elements);
+         elements.push(value);
+         elements.len()
+@@ -64,10 +66,8 @@ impl<H: Host> Vm<H> {
+         values: Vec<Value>,
+         prototype: Value,
+     ) -> Value {
+-        self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(prototype),
+-            elements: Rc::new(values),
+-        })
++        self.heap
++            .alloc(Cell::array(prototype, Rc::new(values)))
+     }
+ 
+     fn array_to_string_native(
+@@ -187,10 +187,10 @@ impl<H: Host> Vm<H> {
+             return Err(self.range_error(p, "invalid array length".into()));
+         }
+         let prototype = self.array_prototype_for_realm(self.realm.globals);
+-        let array = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(prototype),
+-            elements: Rc::new(Vec::new()),
+-        });
++        let array = self.heap.alloc(Cell::array(
++            prototype,
++            Rc::new(Vec::new()),
++        ));
+         self.heap.sparse_set_length(array, length);
+         Ok(array)
+     }
+diff --git a/crates/quench-runtime/src/vm/construction.rs b/crates/quench-runtime/src/vm/construction.rs
+index dc9e2c105..abfde9b0b 100644
+--- a/crates/quench-runtime/src/vm/construction.rs
++++ b/crates/quench-runtime/src/vm/construction.rs
+@@ -522,7 +522,11 @@ impl<H: Host> Vm<H> {
+                     let bound_args = vm
+                         .own_property(env, args_atom)
+                         .and_then(|value| match vm.heap.get(value) {
+-                            Some(Cell::Array { elements, .. }) => Some(elements.as_ref().clone()),
++                            Some(cell @ Cell::Array { .. }) => Some(
++                                cell.array_elements()
++                                    .as_ref()
++                                    .clone(),
++                            ),
+                             _ => None,
+                         })
+                         .unwrap_or_default();
+@@ -671,7 +675,11 @@ impl<H: Host> Vm<H> {
+         ))
+     }
+ 
+-    pub(super) fn own_function_prototype_data(&self, constructor: Value, prototype_atom: Atom) -> Option<Value> {
++    pub(super) fn own_function_prototype_data(
++        &self,
++        constructor: Value,
++        prototype_atom: Atom,
++    ) -> Option<Value> {
+         if !matches!(self.heap.get(constructor), Some(Cell::Function { .. })) {
+             return None;
+         }
+@@ -1092,17 +1100,17 @@ impl<H: Host> Vm<H> {
+             {
+                 return Err(self.range_error(p, "Invalid array length".into()));
+             }
+-            let array = self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(prototype),
+-                elements: Rc::new(Vec::new()),
+-            });
++            let array = self.heap.alloc(Cell::array(
++                prototype,
++                Rc::new(Vec::new()),
++            ));
+             self.heap.sparse_set_length(array, length as usize);
+             return Ok(array);
+         }
+ 
+-        Ok(self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(prototype),
+-            elements: Rc::new(args.to_vec()),
+-        }))
++        Ok(self.heap.alloc(Cell::array(
++            prototype,
++            Rc::new(args.to_vec()),
++        )))
+     }
+ }
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 6f2ae5d30..c13388d77 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -387,10 +387,10 @@ impl<H: Host> Vm<H> {
+                 }
+             }
+             Op::MakeArray => {
+-                let v = self.heap.alloc(Cell::Array {
+-                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+-                    elements: Rc::new(vec![Value::DELETED; i.array_length()]),
+-                });
++                let v = self.heap.alloc(Cell::array(
++                    self.array_prototype_for_realm(self.realm.globals),
++                    Rc::new(vec![Value::DELETED; i.array_length()]),
++                ));
+                 self.write(f, i.result_register(), v);
+             }
+             Op::MakeConstArray => {
+@@ -402,10 +402,10 @@ impl<H: Host> Vm<H> {
+                     .ok_or_else(|| {
+                         JsError::validation("constant array is outside program".into())
+                     })?;
+-                let v = self.heap.alloc(Cell::Array {
+-                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
++                let v = self.heap.alloc(Cell::array(
++                    self.array_prototype_for_realm(self.realm.globals),
+                     elements,
+-                });
++                ));
+                 self.write(f, i.result_register(), v);
+             }
+             Op::GetField => {
+diff --git a/crates/quench-runtime/src/vm/dispatch_frame.rs b/crates/quench-runtime/src/vm/dispatch_frame.rs
+index be67a65c2..83794de5c 100644
+--- a/crates/quench-runtime/src/vm/dispatch_frame.rs
++++ b/crates/quench-runtime/src/vm/dispatch_frame.rs
+@@ -199,24 +199,26 @@ impl<H: Host> Vm<H> {
+                 .expect_err("syntax_error_result must throw"));
+         }
+         let function = &p.functions[id as usize];
+-        let mut frame = self.frame_pool.pop().unwrap_or_else(|| Box::new(Frame {
+-            context: CallContext::Internal,
+-            original_arguments: vec![],
+-            program: self.active_program,
+-            function: 0,
+-            pc: 0,
+-            binding_site_pc: None,
+-            env: Value::NULL,
+-            this: Value::UNDEFINED,
+-            locals: vec![],
+-            dynamic_bindings: vec![],
+-            captured: false,
+-            registers: vec![],
+-            active_iterators: vec![],
+-            with_objects: Vec::new(),
+-            with_base: self.with_stack.len(),
+-            fixed_this: false,
+-        }));
++        let mut frame = self.frame_pool.pop().unwrap_or_else(|| {
++            Box::new(Frame {
++                context: CallContext::Internal,
++                original_arguments: vec![],
++                program: self.active_program,
++                function: 0,
++                pc: 0,
++                binding_site_pc: None,
++                env: Value::NULL,
++                this: Value::UNDEFINED,
++                locals: vec![],
++                dynamic_bindings: vec![],
++                captured: false,
++                registers: vec![],
++                active_iterators: vec![],
++                with_objects: Vec::new(),
++                with_base: self.with_stack.len(),
++                fixed_this: false,
++            })
++        });
+         frame
+             .locals
+             .resize(function.locals as usize, Value::UNDEFINED);
+@@ -229,20 +231,20 @@ impl<H: Host> Vm<H> {
+         }
+         if function.rest {
+             let elements = args.get(fixed..).unwrap_or_default().to_vec();
+-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+-                elements: Rc::new(elements),
+-            });
++            frame.locals[fixed] = self.heap.alloc(Cell::array(
++                self.array_prototype_for_realm(self.realm.globals),
++                Rc::new(elements),
++            ));
+         }
+         if let Some(slot) = function.self_binding_slot {
+             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
+         }
+         if let Some(slot) = function.arguments_slot {
+             let mapped = function.arguments_are_mapped();
+-            let arguments = self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.object_proto),
+-                elements: Rc::new(args.to_vec()),
+-            });
++            let arguments = self.heap.alloc(Cell::array(
++                self.object_proto,
++                Rc::new(args.to_vec()),
++            ));
+             frame.locals[usize::from(slot)] = arguments;
+             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
+             if mapped {
+@@ -445,20 +447,20 @@ impl<H: Host> Vm<H> {
+         }
+         if function.rest {
+             let elements = args.get(fixed..).unwrap_or_default().to_vec();
+-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+-                elements: Rc::new(elements),
+-            });
++            frame.locals[fixed] = self.heap.alloc(Cell::array(
++                self.array_prototype_for_realm(self.realm.globals),
++                Rc::new(elements),
++            ));
+         }
+         if let Some(slot) = function.self_binding_slot {
+             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
+         }
+         if let Some(slot) = function.arguments_slot {
+             let mapped = function.arguments_are_mapped();
+-            let arguments = self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.object_proto),
+-                elements: Rc::new(args.to_vec()),
+-            });
++            let arguments = self.heap.alloc(Cell::array(
++                self.object_proto,
++                Rc::new(args.to_vec()),
++            ));
+             frame.locals[usize::from(slot)] = arguments;
+             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
+             if mapped {
+@@ -939,7 +941,11 @@ impl<H: Host> Vm<H> {
+                         continue;
+                     }
+                     Op::Move => {
+-                        self.write(frame, ins.result_register(), self.read(frame, ins.register_b()));
++                        self.write(
++                            frame,
++                            ins.result_register(),
++                            self.read(frame, ins.register_b()),
++                        );
+                         continue;
+                     }
+                     _ => {}
+diff --git a/crates/quench-runtime/src/vm/disposal.rs b/crates/quench-runtime/src/vm/disposal.rs
+index 342c6d8fd..4283ec055 100644
+--- a/crates/quench-runtime/src/vm/disposal.rs
++++ b/crates/quench-runtime/src/vm/disposal.rs
+@@ -310,10 +310,7 @@ impl<H: Host> Vm<H> {
+         };
+         let stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+         let root = self.heap.root(stack);
+-        let entries = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(vec![]),
+-        });
++        let entries = self.heap.alloc(Cell::array(self.array_proto, Rc::new(vec![])));
+         let entries_atom = self.intern_atom(ENTRIES);
+         let disposed_atom = self.intern_atom(DISPOSED);
+         self.set_property(stack, entries_atom, entries)?;
+@@ -558,7 +555,9 @@ impl<H: Host> Vm<H> {
+         self.require_open_stack(p, stack)?;
+         let entries = self.stack_entries(stack)?;
+         let moved = match self.heap.get_mut(entries) {
+-            Some(Cell::Array { elements, .. }) => std::mem::replace(elements, Rc::new(vec![])),
++            Some(cell @ Cell::Array { .. }) => {
++                std::mem::replace(cell.array_elements_mut(), Rc::new(vec![]))
++            }
+             _ => return Err(JsError("DisposableStack entries are invalid".into())),
+         };
+         let disposed_atom = self.intern_atom(DISPOSED);
+@@ -574,10 +573,7 @@ impl<H: Host> Vm<H> {
+             .unwrap_or(self.object_proto);
+         let moved_stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+         let root = self.heap.root(moved_stack);
+-        let entries = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: moved,
+-        });
++        let entries = self.heap.alloc(Cell::array(self.array_proto, moved));
+         let entries_atom = self.intern_atom(ENTRIES);
+         self.set_property(moved_stack, entries_atom, entries)?;
+         self.set_property(moved_stack, disposed_atom, Value::FALSE)?;
+@@ -709,18 +705,16 @@ impl<H: Host> Vm<H> {
+         await_result: bool,
+     ) -> Result<(), JsError> {
+         let entries = self.stack_entries(stack)?;
+-        let entry = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(vec![
++        let entry = self.heap.alloc(Cell::array(self.array_proto, Rc::new(vec![
+                 callback,
+                 value,
+                 Value::integer(mode),
+                 if await_result { Value::TRUE } else { Value::FALSE },
+-            ]),
+-        });
+-        let Some(Cell::Array { elements, .. }) = self.heap.get_mut(entries) else {
++            ])));
++        let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(entries) else {
+             return Err(JsError("DisposableStack entries are invalid".into()));
+         };
++        let elements = cell.array_elements_mut();
+         let mut values = (**elements).clone();
+         values.push(entry);
+         *elements = Rc::new(values);
+@@ -758,13 +752,16 @@ impl<H: Host> Vm<H> {
+         self.set_property(stack, disposed_atom, Value::TRUE)?;
+         let entries = self.stack_entries(stack)?;
+         let values = match self.heap.get_mut(entries) {
+-            Some(Cell::Array { elements, .. }) => std::mem::replace(elements, Rc::new(vec![])),
++            Some(cell @ Cell::Array { .. }) => {
++                std::mem::replace(cell.array_elements_mut(), Rc::new(vec![]))
++            }
+             _ => return Err(JsError("DisposableStack entries are invalid".into())),
+         };
+         for entry in values.iter().rev().copied() {
+-            let Some(Cell::Array { elements, .. }) = self.heap.get(entry) else {
++            let Some(cell @ Cell::Array { .. }) = self.heap.get(entry) else {
+                 continue;
+             };
++            let elements = cell.array_elements();
+             let callback = elements
+                 .get(DISPOSAL_ENTRY_CALLBACK_SLOT)
+                 .copied()
+@@ -847,38 +844,35 @@ impl<H: Host> Vm<H> {
+         self.set_property(stack, disposed_atom, Value::TRUE)?;
+         let entries = self.stack_entries(stack)?;
+         let values = match self.heap.get_mut(entries) {
+-            Some(Cell::Array { elements, .. }) => std::mem::replace(elements, Rc::new(vec![])),
++            Some(cell @ Cell::Array { .. }) => {
++                std::mem::replace(cell.array_elements_mut(), Rc::new(vec![]))
++            }
+             _ => return Err(JsError("DisposableStack entries are invalid".into())),
+         };
+         let resource_count = values.len();
+-        let resources = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: values,
+-        });
++        let resources = self.heap.alloc(Cell::array(self.array_proto, values));
+         let result = self.promise_object();
+-        let state = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(vec![
++        let state = self.heap.alloc(Cell::array(self.array_proto, Rc::new(vec![
+                 resources,
+                 Value::number(resource_count as f64),
+                 completion,
+                 result,
+-            ]),
+-        });
++            ])));
+         self.continue_async_disposal(p, state)?;
+         Ok(result)
+     }
+ 
+     fn async_disposal_state_value(&self, state: Value, slot: usize) -> Value {
+         match self.heap.get(state) {
+-            Some(Cell::Array { elements, .. }) => elements.get(slot).copied(),
++            Some(cell @ Cell::Array { .. }) => cell.array_elements().get(slot).copied(),
+             _ => None,
+         }
+         .unwrap_or(Value::UNDEFINED)
+     }
+ 
+     fn set_async_disposal_state_value(&mut self, state: Value, slot: usize, value: Value) {
+-        if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(state) {
++        if let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(state) {
++            let elements = cell.array_elements_mut();
+             let mut updated = (**elements).clone();
+             updated[slot] = value;
+             *elements = Rc::new(updated);
+@@ -937,11 +931,13 @@ impl<H: Host> Vm<H> {
+                 );
+                 let resources = self.async_disposal_state_value(state, ASYNC_DISPOSAL_ENTRIES_SLOT);
+                 let entry = match self.heap.get(resources) {
+-                    Some(Cell::Array { elements, .. }) => elements[cursor],
++                    Some(cell @ Cell::Array { .. }) => cell.array_elements()[cursor],
+                     _ => return Err(JsError("DisposableStack entries are invalid".into())),
+                 };
+                 let (callback, value, mode, await_result) = match self.heap.get(entry) {
+-                    Some(Cell::Array { elements, .. }) => (
++                    Some(cell @ Cell::Array { .. }) => {
++                        let elements = cell.array_elements();
++                        (
+                         elements
+                             .get(DISPOSAL_ENTRY_CALLBACK_SLOT)
+                             .copied()
+@@ -957,7 +953,8 @@ impl<H: Host> Vm<H> {
+                         elements
+                             .get(DISPOSAL_ENTRY_AWAIT_RESULT_SLOT)
+                             .is_some_and(|value| self.truthy(*value)),
+-                    ),
++                        )
++                    }
+                     _ => continue,
+                 };
+                 let result = match mode {
+diff --git a/crates/quench-runtime/src/vm/embedding.rs b/crates/quench-runtime/src/vm/embedding.rs
+index b1c991deb..f61050b26 100644
+--- a/crates/quench-runtime/src/vm/embedding.rs
++++ b/crates/quench-runtime/src/vm/embedding.rs
+@@ -248,10 +248,10 @@ impl<H: Host> Vm<H> {
+     pub(crate) fn create_embedding_array(&mut self, values: &[RootId]) -> Result<Value, JsError> {
+         self.embedding_program()?;
+         let elements = self.embedding_arguments(values)?;
+-        Ok(self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(elements),
+-        }))
++        Ok(self.heap.alloc(Cell::array(
++            self.array_proto,
++            Rc::new(elements),
++        )))
+     }
+ 
+     pub(crate) fn create_embedding_exception(
+diff --git a/crates/quench-runtime/src/vm/error.rs b/crates/quench-runtime/src/vm/error.rs
+index 275d8a58d..fbaaf1c6b 100644
+--- a/crates/quench-runtime/src/vm/error.rs
++++ b/crates/quench-runtime/src/vm/error.rs
+@@ -327,10 +327,10 @@ impl<H: Host> Vm<H> {
+                 }
+                 sites.push(self.heap.root_value(root).unwrap());
+             }
+-            Ok(self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.array_proto),
+-                elements: Rc::new(sites),
+-            }))
++            Ok(self.heap.alloc(Cell::array(
++                self.array_proto,
++                Rc::new(sites),
++            )))
+         })();
+         for root in roots {
+             self.heap.release_root(root);
+@@ -1483,10 +1483,10 @@ impl<H: Host> Vm<H> {
+                 setter: None,
+             },
+         );
+-        let array_prototype = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(object_prototype),
+-            elements: Rc::new(Vec::new()),
+-        });
++        let array_prototype = self.heap.alloc(Cell::array(
++            object_prototype,
++            Rc::new(Vec::new()),
++        ));
+         self.install_array_for_realm(program, global, array_prototype)?;
+         let map = self.native_with_realm(Native::Map, global, global);
+         let map_prototype = self
+diff --git a/crates/quench-runtime/src/vm/function.rs b/crates/quench-runtime/src/vm/function.rs
+index 727da5c97..e68b5070b 100644
+--- a/crates/quench-runtime/src/vm/function.rs
++++ b/crates/quench-runtime/src/vm/function.rs
+@@ -25,9 +25,10 @@ impl<H: Host> Vm<H> {
+                 kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
+                 ..
+             }) => self.programs.get(*program_id).is_some_and(|program| {
+-                program.functions.get(*id as usize).is_some_and(|function| {
+-                    function.has_restricted_legacy_caller_access()
+-                })
++                program
++                    .functions
++                    .get(*id as usize)
++                    .is_some_and(|function| function.has_restricted_legacy_caller_access())
+             }),
+             Some(Cell::Function {
+                 kind: FunctionKind::Native(_),
+@@ -101,10 +102,10 @@ impl<H: Host> Vm<H> {
+             })
+             .unwrap_or(false);
+         let args = Rc::new(frame.original_arguments.clone());
+-        let arguments = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.realm_object_prototype(self.realm.globals)),
+-            elements: args.clone(),
+-        });
++        let arguments = self.heap.alloc(Cell::array(
++            self.realm_object_prototype(self.realm.globals),
++            args.clone(),
++        ));
+         self.with_call_roots([arguments], |vm| {
+             vm.initialize_arguments_object(arguments, Some(function), &args, expose_callee)?;
+             Ok(arguments)
+@@ -130,10 +131,10 @@ impl<H: Host> Vm<H> {
+             this_atom,
+             args.first().copied().unwrap_or(Value::UNDEFINED),
+         )?;
+-        let bound_args = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(args.get(1..).unwrap_or_default().to_vec()),
+-        });
++        let bound_args = self.heap.alloc(Cell::array(
++            self.array_proto,
++            Rc::new(args.get(1..).unwrap_or_default().to_vec()),
++        ));
+         self.set_property(env, args_atom, bound_args)?;
+         let function = self.native_with_env(Native::FunctionBoundCall, env);
+         let function_root = self.heap.root(function);
+@@ -251,7 +252,7 @@ impl<H: Host> Vm<H> {
+         let bound_args = self
+             .own_property(env, args_atom)
+             .and_then(|value| match self.heap.get(value) {
+-                Some(Cell::Array { elements, .. }) => Some(elements.as_ref().clone()),
++                Some(cell @ Cell::Array { .. }) => Some(cell.array_elements().as_ref().clone()),
+                 _ => None,
+             })
+             .unwrap_or_default();
+diff --git a/crates/quench-runtime/src/vm/generator.rs b/crates/quench-runtime/src/vm/generator.rs
+index 2ffa504e9..1a21ba014 100644
+--- a/crates/quench-runtime/src/vm/generator.rs
++++ b/crates/quench-runtime/src/vm/generator.rs
+@@ -62,7 +62,8 @@ impl<H: Host> Vm<H> {
+         args: &[Value],
+         context: CallContext,
+     ) -> Result<Value, JsError> {
+-        self.profile.function(self.active_program.raw(), id as usize);
++        self.profile
++            .function(self.active_program.raw(), id as usize);
+         let parameter_eval_arguments_error =
+             p.functions[id as usize].parameter_eval_arguments_error;
+         if parameter_eval_arguments_error {
+@@ -72,24 +73,26 @@ impl<H: Host> Vm<H> {
+             );
+         }
+         let function = &p.functions[id as usize];
+-        let mut frame = self.frame_pool.pop().unwrap_or_else(|| Box::new(Frame {
+-            context: CallContext::Internal,
+-            original_arguments: vec![],
+-            program: self.active_program,
+-            function: 0,
+-            pc: 0,
+-            binding_site_pc: None,
+-            env: Value::NULL,
+-            this: Value::UNDEFINED,
+-            locals: vec![],
+-            dynamic_bindings: vec![],
+-            captured: false,
+-            registers: vec![],
+-            active_iterators: vec![],
+-            with_objects: Vec::new(),
+-            with_base: self.with_stack.len(),
+-            fixed_this: false,
+-        }));
++        let mut frame = self.frame_pool.pop().unwrap_or_else(|| {
++            Box::new(Frame {
++                context: CallContext::Internal,
++                original_arguments: vec![],
++                program: self.active_program,
++                function: 0,
++                pc: 0,
++                binding_site_pc: None,
++                env: Value::NULL,
++                this: Value::UNDEFINED,
++                locals: vec![],
++                dynamic_bindings: vec![],
++                captured: false,
++                registers: vec![],
++                active_iterators: vec![],
++                with_objects: Vec::new(),
++                with_base: self.with_stack.len(),
++                fixed_this: false,
++            })
++        });
+         frame
+             .locals
+             .resize(function.locals as usize, Value::UNDEFINED);
+@@ -99,20 +102,20 @@ impl<H: Host> Vm<H> {
+             frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
+         }
+         if function.rest {
+-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.array_proto),
+-                elements: Rc::new(args.get(fixed..).unwrap_or_default().to_vec()),
+-            });
++            frame.locals[fixed] = self.heap.alloc(Cell::array(
++                self.array_proto,
++                Rc::new(args.get(fixed..).unwrap_or_default().to_vec()),
++            ));
+         }
+         if let Some(slot) = function.self_binding_slot {
+             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
+         }
+         if let Some(slot) = function.arguments_slot {
+             let mapped = function.arguments_are_mapped();
+-            let arguments = self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.object_proto),
+-                elements: Rc::new(args.to_vec()),
+-            });
++            let arguments = self.heap.alloc(Cell::array(
++                self.object_proto,
++                Rc::new(args.to_vec()),
++            ));
+             frame.locals[usize::from(slot)] = arguments;
+             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
+             if mapped {
+@@ -309,14 +312,14 @@ impl<H: Host> Vm<H> {
+                         return Ok(());
+                     }
+                 };
+-                let environment = vm.heap.alloc(Cell::Array {
+-                    object: Self::empty_object(vm.array_proto),
+-                    elements: Rc::new(vec![
++                let environment = vm.heap.alloc(Cell::array(
++                    vm.array_proto,
++                    Rc::new(vec![
+                         generator,
+                         iterator,
+                         Value::number(f64::from(destination)),
+                     ]),
+-                });
++                ));
+                 let start =
+                     vm.native_with_env(Native::AsyncGeneratorDelegateReturnStart, environment);
+                 let completion = vm.promise_then(p, awaited, start, Value::UNDEFINED)?;
+@@ -340,10 +343,10 @@ impl<H: Host> Vm<H> {
+                     return Ok(());
+                 }
+             };
+-            let environment = vm.heap.alloc(Cell::Array {
+-                object: Self::empty_object(vm.array_proto),
+-                elements: Rc::new(vec![generator, promise]),
+-            });
++            let environment = vm.heap.alloc(Cell::array(
++                vm.array_proto,
++                Rc::new(vec![generator, promise]),
++            ));
+             let fulfilled = vm.native_with_env(Native::AsyncGeneratorReturnFulfilled, environment);
+             let rejected = vm.native_with_env(Native::AsyncGeneratorReturnRejected, environment);
+             vm.promise_then_intrinsic(p, awaited, fulfilled, rejected)?;
+@@ -359,9 +362,10 @@ impl<H: Host> Vm<H> {
+         let environment = self
+             .active_native_env()
+             .ok_or_else(|| JsError("async generator return reaction without state".into()))?;
+-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get(environment) else {
+             return Err(JsError("async generator return state is invalid".into()));
+         };
++        let elements = cell.array_elements();
+         let [generator, promise] = elements.as_slice() else {
+             return Err(JsError("async generator return state is malformed".into()));
+         };
+@@ -410,9 +414,10 @@ impl<H: Host> Vm<H> {
+         let environment = self
+             .active_native_env()
+             .ok_or_else(|| JsError("async generator return rejection without state".into()))?;
+-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get(environment) else {
+             return Err(JsError("async generator return state is invalid".into()));
+         };
++        let elements = cell.array_elements();
+         let [generator, promise] = elements.as_slice() else {
+             return Err(JsError("async generator return state is malformed".into()));
+         };
+@@ -438,9 +443,10 @@ impl<H: Host> Vm<H> {
+         let environment = self
+             .active_native_env()
+             .ok_or_else(|| JsError("async delegate return without state".into()))?;
+-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get(environment) else {
+             return Err(JsError("async delegate return state is invalid".into()));
+         };
++        let elements = cell.array_elements();
+         let [generator, iterator, destination] = elements.as_slice() else {
+             return Err(JsError("async delegate return state is malformed".into()));
+         };
+@@ -719,16 +725,16 @@ impl<H: Host> Vm<H> {
+             return Ok(promise);
+         }
+         let unwrapped = self.async_from_sync_result(p, adapter, result, false)?;
+-        let env = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(vec![
++        let env = self.heap.alloc(Cell::array(
++            self.array_proto,
++            Rc::new(vec![
+                 generator,
+                 Value::number(f64::from(destination)),
+                 Value::FALSE,
+                 Value::FALSE,
+                 Value::TRUE,
+             ]),
+-        });
++        ));
+         let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
+         let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
+         self.promise_then(p, unwrapped, fulfilled, rejected)
+@@ -919,9 +925,9 @@ impl<H: Host> Vm<H> {
+                 (result, false)
+             };
+             let promise = self.promise_for_value(p, result)?;
+-            let env = self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.array_proto),
+-                elements: Rc::new(vec![
++            let env = self.heap.alloc(Cell::array(
++                self.array_proto,
++                Rc::new(vec![
+                     generator,
+                     Value::number(f64::from(destination)),
+                     Value::number(if throwing { 1.0 } else { 0.0 }),
+@@ -932,7 +938,7 @@ impl<H: Host> Vm<H> {
+                         Value::FALSE
+                     },
+                 ]),
+-            });
++            ));
+             let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
+             let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
+             self.promise_then(p, promise, fulfilled, rejected)
+@@ -968,9 +974,10 @@ impl<H: Host> Vm<H> {
+         let env = self
+             .active_native_env()
+             .ok_or_else(|| JsError("async delegate reaction without state".into()))?;
+-        let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get(env) else {
+             return Err(JsError("async delegate reaction state is invalid".into()));
+         };
++        let elements = cell.array_elements();
+         let [generator, destination, throwing, adapter, _async_from_sync] = elements.as_slice()
+         else {
+             return Err(JsError("async delegate reaction state is malformed".into()));
+@@ -1046,9 +1053,10 @@ impl<H: Host> Vm<H> {
+         let env = self
+             .active_native_env()
+             .ok_or_else(|| JsError("async delegate rejection without state".into()))?;
+-        let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get(env) else {
+             return Err(JsError("async delegate rejection state is invalid".into()));
+         };
++        let elements = cell.array_elements();
+         let generator = elements
+             .first()
+             .copied()
+diff --git a/crates/quench-runtime/src/vm/group_by.rs b/crates/quench-runtime/src/vm/group_by.rs
+index e6c8918db..53ed29cb9 100644
+--- a/crates/quench-runtime/src/vm/group_by.rs
++++ b/crates/quench-runtime/src/vm/group_by.rs
+@@ -137,15 +137,16 @@ impl<H: Host> Vm<H> {
+             }),
+         };
+         if let Some(group) = group {
+-            let Some(Cell::Array { elements, .. }) = self.heap.get_mut(group) else {
++            let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(group) else {
+                 unreachable!("groupBy owns array groups")
+             };
++            let elements = cell.array_elements_mut();
+             Rc::make_mut(elements).push(value);
+         } else {
+-            let group = self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+-                elements: Rc::new(vec![value]),
+-            });
++            let group = self.heap.alloc(Cell::array(
++                self.array_prototype_for_realm(self.realm.globals),
++                Rc::new(vec![value]),
++            ));
+             match kind {
+                 GroupByKind::Object => match self.heap.get(key).cloned() {
+                     Some(Cell::Symbol(_)) => {
+diff --git a/crates/quench-runtime/src/vm/index.rs b/crates/quench-runtime/src/vm/index.rs
+index 70e65f624..e42ef527b 100644
+--- a/crates/quench-runtime/src/vm/index.rs
++++ b/crates/quench-runtime/src/vm/index.rs
+@@ -67,8 +67,9 @@ impl<H: Host> Vm<H> {
+         if let Some(index) = self.array_index_key(key) {
+             let index = index as usize;
+             // Accessor indices are stored as holes, so a present dense element is a data property.
+-            if let Some(Cell::Array { elements, .. }) = self.heap.get(object)
+-                && let Some(value) = elements
++            if let Some(cell @ Cell::Array { .. }) = self.heap.get(object)
++                && let Some(value) = cell
++                    .array_elements()
+                     .get(index)
+                     .copied()
+                     .filter(|value| !value.is_deleted())
+@@ -156,10 +157,13 @@ impl<H: Host> Vm<H> {
+             let index = index as usize;
+             // Descriptors, accessors and frozen state are the only things that make replacing a
+             // present dense element differ from a plain store, and a plain array has none.
+-            if let Some(Cell::Array { object: data, elements }) = self.heap.get(object)
+-                && !data.has_indexed_descriptors()
++            if let Some(cell @ Cell::Array { object: data }) = self.heap.get(object)
++                && !cell.array_has_indexed_descriptors()
+                 && !data.is_frozen()
+-                && elements.get(index).is_some_and(|value| !value.is_deleted())
++                && cell
++                    .array_elements()
++                    .get(index)
++                    .is_some_and(|value| !value.is_deleted())
+             {
+                 self.replace_dense_element(object, index, value);
+                 return Ok(());
+@@ -188,7 +192,8 @@ impl<H: Host> Vm<H> {
+                     Ok(())
+                 };
+             }
+-            if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
++            if let Some(cell @ Cell::Array { .. }) = self.heap.get(object) {
++                let elements = cell.array_elements();
+                 let existing = index < elements.len()
+                     && elements.get(index).is_some_and(|value| !value.is_deleted())
+                     || self
+@@ -218,8 +223,11 @@ impl<H: Host> Vm<H> {
+             }
+             let replaces = matches!(
+                 self.heap.get(object),
+-                Some(Cell::Array { elements, .. })
+-                    if elements.get(index).is_some_and(|value| !value.is_deleted())
++                Some(cell @ Cell::Array { .. })
++                    if cell
++                        .array_elements()
++                        .get(index)
++                        .is_some_and(|value| !value.is_deleted())
+             );
+             if replaces {
+                 self.replace_dense_element(object, index, value);
+@@ -232,9 +240,10 @@ impl<H: Host> Vm<H> {
+     /// Overwrites a present dense array element after every guard has passed.
+     #[inline(always)]
+     fn replace_dense_element(&mut self, object: Value, index: usize, value: Value) {
+-        let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(object) else {
+             unreachable!("dense element replacement requires an array")
+         };
++        let elements = cell.array_elements_mut();
+         #[cfg(feature = "profile-aggregate")]
+         self.profile
+             .array_write_ownership(Rc::strong_count(elements) != 1);
+@@ -356,17 +365,19 @@ impl<H: Host> Vm<H> {
+     }
+ 
+     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
+-        let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get(object) else {
+             return false;
+         };
++        let elements = cell.array_elements();
+         if self.check_array_element_write(object, index).is_err() {
+             return false;
+         }
+         let dense_len = elements.len();
+         if index < dense_len {
+-            let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) else {
++            let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(object) else {
+                 unreachable!()
+             };
++            let elements = cell.array_elements_mut();
+             #[cfg(feature = "profile-aggregate")]
+             self.profile
+                 .array_write_ownership(Rc::strong_count(elements) != 1);
+@@ -377,7 +388,8 @@ impl<H: Host> Vm<H> {
+         let sparse = self.array_index_uses_sparse_storage(object, index, dense_len);
+         if sparse {
+             self.heap.sparse_set(object, index, value);
+-        } else if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) {
++        } else if let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(object) {
++            let elements = cell.array_elements_mut();
+             #[cfg(feature = "profile-aggregate")]
+             self.profile
+                 .array_write_ownership(Rc::strong_count(elements) != 1);
+@@ -418,9 +430,10 @@ impl<H: Host> Vm<H> {
+         object: Value,
+         index: usize,
+     ) -> Result<(), JsError> {
+-        let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get(object) else {
+             return Err(JsError("array receiver is not array".into()));
+         };
++        let elements = cell.array_elements();
+         let existing = index < elements.len()
+             && elements.get(index).is_some_and(|value| !value.is_deleted())
+             || self
+@@ -452,14 +465,12 @@ mod tests {
+     #[test]
+     fn high_array_index_stays_out_of_dense_storage() {
+         let mut vm = Vm::new(SilentHost);
+-        let array = vm.heap.alloc(Cell::Array {
+-            object: Vm::<SilentHost>::empty_object(Value::NULL),
+-            elements: Rc::new(vec![]),
+-        });
++        let array = vm.heap.alloc(Cell::array(Value::NULL, Rc::new(vec![])));
+         assert!(vm.set_array_element(array, 1_000_000, Value::TRUE));
+-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
++        let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
+             panic!("array cell")
+         };
++        let elements = cell.array_elements();
+         assert!(elements.is_empty());
+         assert_eq!(vm.heap.sparse_length(array), Some(1_000_001));
+     }
+@@ -470,17 +481,19 @@ mod tests {
+         let mut vm = Vm::new(SilentHost);
+         let array = vm.array_create(&program, 16_900).unwrap();
+ 
+-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
++        let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
+             panic!("array cell")
+         };
++        let elements = cell.array_elements();
+         assert_eq!(elements.len(), 16_900);
+         assert!(elements.iter().all(|value| value.is_deleted()));
+         assert_eq!(vm.heap.sparse_length(array), None);
+ 
+         assert!(vm.set_array_element(array, 16_899, Value::TRUE));
+-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
++        let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
+             panic!("array cell")
+         };
++        let elements = cell.array_elements();
+         assert_eq!(elements[16_899], Value::TRUE);
+         assert!(elements[16_898].is_deleted());
+         assert_eq!(vm.heap.sparse_length(array), None);
+@@ -489,16 +502,14 @@ mod tests {
+     #[test]
+     fn bounded_sparse_write_promotes_to_dense_storage() {
+         let mut vm = Vm::new(SilentHost);
+-        let array = vm.heap.alloc(Cell::Array {
+-            object: Vm::<SilentHost>::empty_object(Value::NULL),
+-            elements: Rc::new(Vec::new()),
+-        });
++        let array = vm.heap.alloc(Cell::array(Value::NULL, Rc::new(Vec::new())));
+ 
+         assert!(vm.set_array_element(array, 2_048, Value::TRUE));
+ 
+-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
++        let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
+             panic!("array cell")
+         };
++        let elements = cell.array_elements();
+         assert_eq!(elements.len(), 2_049);
+         assert!(elements[..2_048].iter().all(|value| value.is_deleted()));
+         assert_eq!(elements[2_048], Value::TRUE);
+@@ -508,19 +519,17 @@ mod tests {
+     #[test]
+     fn shrinking_large_sparse_array_promotes_and_preserves_values() {
+         let mut vm = Vm::new(SilentHost);
+-        let array = vm.heap.alloc(Cell::Array {
+-            object: Vm::<SilentHost>::empty_object(Value::NULL),
+-            elements: Rc::new(Vec::new()),
+-        });
++        let array = vm.heap.alloc(Cell::array(Value::NULL, Rc::new(Vec::new())));
+         vm.heap.sparse_set_length(array, 1_000_000);
+         vm.heap.sparse_set(array, 3, Value::TRUE);
+         vm.heap.sparse_set(array, 999_999, Value::FALSE);
+ 
+         vm.heap.sparse_set_length(array, 16_900);
+ 
+-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
++        let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
+             panic!("array cell")
+         };
++        let elements = cell.array_elements();
+         assert_eq!(elements.len(), 16_900);
+         assert_eq!(elements[3], Value::TRUE);
+         assert!(elements[4].is_deleted());
+@@ -531,10 +540,7 @@ mod tests {
+     fn ordinary_indexed_writes_do_not_intern_property_names() {
+         let program = crate::Engine::specialize("", "array-index-atoms.js").unwrap();
+         let mut vm = Vm::new(SilentHost);
+-        let array = vm.heap.alloc(Cell::Array {
+-            object: Vm::<SilentHost>::empty_object(Value::NULL),
+-            elements: Rc::new(Vec::new()),
+-        });
++        let array = vm.heap.alloc(Cell::array(Value::NULL, Rc::new(Vec::new())));
+         let atom_count = vm.dynamic_atoms.len();
+         vm.heap.retain_allocations_for_test();
+         let cell_count = vm.heap.occupied_cell_count_for_test();
+@@ -557,17 +563,17 @@ mod tests {
+     #[test]
+     fn deleting_an_uninterned_present_index_does_not_create_an_atom() {
+         let mut vm = Vm::new(SilentHost);
+-        let array = vm.heap.alloc(Cell::Array {
+-            object: Vm::<SilentHost>::empty_object(Value::NULL),
+-            elements: Rc::new(vec![Value::FALSE; 1024]),
+-        });
++        let array = vm
++            .heap
++            .alloc(Cell::array(Value::NULL, Rc::new(vec![Value::FALSE; 1024])));
+         let atom_count = vm.dynamic_atoms.len();
+ 
+         assert_eq!(vm.delete_array_index(array, 1023), Value::TRUE);
+ 
+-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
++        let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
+             panic!("array cell")
+         };
++        let elements = cell.array_elements();
+         assert!(elements[1023].is_deleted());
+         assert_eq!(vm.dynamic_atoms.len(), atom_count);
+         assert!(vm.lookup_array_index_atom(1023).is_none());
+@@ -601,6 +607,29 @@ mod tests {
+         vm.execute(&program).unwrap();
+     }
+ 
++    #[test]
++    fn reflect_set_rejects_inherited_readonly_array_index() {
++        let source = r#"
++            Object.defineProperty(Array.prototype, "9", {
++                value: 90,
++                writable: false,
++                configurable: true,
++            });
++            var array = [];
++            array.length = 9;
++            if (Reflect.set(array, "9", 99)
++                || array.length !== 9
++                || Object.prototype.hasOwnProperty.call(array, "9")) {
++                throw new Error("Reflect.set ignored an inherited read-only index");
++            }
++            delete Array.prototype[9];
++        "#;
++        let program =
++            crate::Engine::specialize(source, "inherited-readonly-array-index.js").unwrap();
++        let mut vm = Vm::new(SilentHost);
++        vm.execute(&program).unwrap();
++    }
++
+     #[test]
+     fn indexed_write_keeps_default_inherited_data_semantics_without_atoms() {
+         let source = r#"
+diff --git a/crates/quench-runtime/src/vm/intl_datetime.rs b/crates/quench-runtime/src/vm/intl_datetime.rs
+index cc1530b6d..d26539e42 100644
+--- a/crates/quench-runtime/src/vm/intl_datetime.rs
++++ b/crates/quench-runtime/src/vm/intl_datetime.rs
+@@ -651,7 +651,11 @@ impl<H: Host> Vm<H> {
+                     ..
+                 }) => (
+                     DateTimeDefaults::TemporalZonedDateTime(ZONED_DATE_TIME_DEFAULTS),
+-                    Some((**epoch_nanoseconds, time_zone.to_string(), calendar.to_string())),
++                    Some((
++                        **epoch_nanoseconds,
++                        time_zone.to_string(),
++                        calendar.to_string(),
++                    )),
+                 ),
+                 _ => return Err(self.type_error(p, "Invalid Temporal value".into())),
+             }
+@@ -1468,10 +1472,10 @@ impl<H: Host> Vm<H> {
+             }
+             entries.push(entry);
+         }
+-        Ok(self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(entries),
+-        }))
++        Ok(self.heap.alloc(Cell::array(
++            self.array_proto,
++            Rc::new(entries),
++        )))
+     }
+ 
+     fn date_time_resolved_options(
+diff --git a/crates/quench-runtime/src/vm/intl_duration_format.rs b/crates/quench-runtime/src/vm/intl_duration_format.rs
+index e81029cab..c8754421b 100644
+--- a/crates/quench-runtime/src/vm/intl_duration_format.rs
++++ b/crates/quench-runtime/src/vm/intl_duration_format.rs
+@@ -351,10 +351,10 @@ impl<H: Host> Vm<H> {
+             }
+             values.push(object);
+         }
+-        Ok(self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(values),
+-        }))
++        Ok(self.heap.alloc(Cell::array(
++            self.array_proto,
++            Rc::new(values),
++        )))
+     }
+ 
+     fn duration_format_parts(
+diff --git a/crates/quench-runtime/src/vm/intl_list_format.rs b/crates/quench-runtime/src/vm/intl_list_format.rs
+index d12ce72cf..cd4106b05 100644
+--- a/crates/quench-runtime/src/vm/intl_list_format.rs
++++ b/crates/quench-runtime/src/vm/intl_list_format.rs
+@@ -153,10 +153,10 @@ impl<H: Host> Vm<H> {
+             self.set_property(object, atom, value)?;
+             values.push(object);
+         }
+-        Ok(self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+-            elements: Rc::new(values),
+-        }))
++        Ok(self.heap.alloc(Cell::array(
++            self.array_prototype_for_realm(self.realm.globals),
++            Rc::new(values),
++        )))
+     }
+ 
+     fn list_format_parts(
+diff --git a/crates/quench-runtime/src/vm/intl_namespace.rs b/crates/quench-runtime/src/vm/intl_namespace.rs
+index 96b5520e2..bddb6bcd3 100644
+--- a/crates/quench-runtime/src/vm/intl_namespace.rs
++++ b/crates/quench-runtime/src/vm/intl_namespace.rs
+@@ -675,10 +675,10 @@ impl<H: Host> Vm<H> {
+             .into_iter()
+             .map(|value| self.heap.alloc(Cell::String(value.into())))
+             .collect::<Vec<_>>();
+-        self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+-            elements: Rc::new(elements),
+-        })
++        self.heap.alloc(Cell::array(
++            self.array_prototype_for_realm(self.realm.globals),
++            Rc::new(elements),
++        ))
+     }
+ 
+     fn intl_supported_values_of(
+diff --git a/crates/quench-runtime/src/vm/intl_number.rs b/crates/quench-runtime/src/vm/intl_number.rs
+index 9b0808bbf..5294f4940 100644
+--- a/crates/quench-runtime/src/vm/intl_number.rs
++++ b/crates/quench-runtime/src/vm/intl_number.rs
+@@ -1046,10 +1046,10 @@ impl<H: Host> Vm<H> {
+             };
+             let text = formatted.to_string();
+             let parts = vm.number_format_parts_for_text(this, &text)?;
+-            Ok(vm.heap.alloc(Cell::Array {
+-                object: Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
+-                elements: Rc::new(parts),
+-            }))
++            Ok(vm.heap.alloc(Cell::array(
++                vm.array_prototype_for_realm(vm.realm.globals),
++                Rc::new(parts),
++            )))
+         })
+     }
+ 
+@@ -1156,10 +1156,10 @@ impl<H: Host> Vm<H> {
+                         parts.push(literal);
+                         parts.extend(vm.number_format_tag_parts(p, second, "endRange")?);
+                     }
+-                    Ok(vm.heap.alloc(Cell::Array {
+-                        object: Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
+-                        elements: Rc::new(parts),
+-                    }))
++                    Ok(vm.heap.alloc(Cell::array(
++                        vm.array_prototype_for_realm(vm.realm.globals),
++                        Rc::new(parts),
++                    )))
+                 })
+             })
+         })
+diff --git a/crates/quench-runtime/src/vm/intl_plural_rules.rs b/crates/quench-runtime/src/vm/intl_plural_rules.rs
+index 36427060d..bd0d892e4 100644
+--- a/crates/quench-runtime/src/vm/intl_plural_rules.rs
++++ b/crates/quench-runtime/src/vm/intl_plural_rules.rs
+@@ -578,10 +578,10 @@ impl<H: Host> Vm<H> {
+             .into_iter()
+             .map(|category| self.heap.alloc(Cell::String(category.into())))
+             .collect::<Vec<_>>();
+-        let categories = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(categories),
+-        });
++        let categories = self.heap.alloc(Cell::array(
++            self.array_proto,
++            Rc::new(categories),
++        ));
+         self.set_plural_result_property(result, "pluralCategories", categories)?;
+         self.set_plural_result_property(
+             result,
+diff --git a/crates/quench-runtime/src/vm/intl_relative.rs b/crates/quench-runtime/src/vm/intl_relative.rs
+index 0fbca663e..fcd09f11a 100644
+--- a/crates/quench-runtime/src/vm/intl_relative.rs
++++ b/crates/quench-runtime/src/vm/intl_relative.rs
+@@ -133,10 +133,10 @@ impl<H: Host> Vm<H> {
+                         Ok(object)
+                     })
+                     .collect::<Result<Vec<_>, JsError>>()?;
+-                Ok(self.heap.alloc(Cell::Array {
+-                    object: Self::empty_object(self.array_proto),
+-                    elements: Rc::new(values),
+-                }))
++                Ok(self.heap.alloc(Cell::array(
++                    self.array_proto,
++                    Rc::new(values),
++                )))
+             }
+             _ => Err(JsError("invalid RelativeTimeFormat operation".into())),
+         }
+diff --git a/crates/quench-runtime/src/vm/intl_segmenter.rs b/crates/quench-runtime/src/vm/intl_segmenter.rs
+index d12b505b5..f93a9ffa6 100644
+--- a/crates/quench-runtime/src/vm/intl_segmenter.rs
++++ b/crates/quench-runtime/src/vm/intl_segmenter.rs
+@@ -207,9 +207,10 @@ impl<H: Host> Vm<H> {
+     ) -> Result<Option<(Value, usize)>, JsError> {
+         // The private state tuple owns [segmenter, input, boundaries]; public
+         // Segments and cursors share it without retaining one another.
+-        let Some(Cell::Array { elements, .. }) = self.heap.get(data) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get(data) else {
+             return Err(self.type_error(p, "incompatible Segments receiver".into()));
+         };
++        let elements = cell.array_elements();
+         let [segmenter, input, boundaries] = elements.as_slice() else {
+             return Err(self.type_error(p, "incompatible Segments receiver".into()));
+         };
+@@ -220,9 +221,10 @@ impl<H: Host> Vm<H> {
+         if index >= text.units().len() {
+             return Ok(None);
+         }
+-        let Some(Cell::Array { elements, .. }) = self.heap.get(boundaries) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get(boundaries) else {
+             return Ok(None);
+         };
++        let elements = cell.array_elements();
+         let end = elements
+             .partition_point(|boundary| boundary.as_number().unwrap_or(0.0) <= index as f64);
+         let Some((start, end)) = end
+diff --git a/crates/quench-runtime/src/vm/iterators.rs b/crates/quench-runtime/src/vm/iterators.rs
+index 87bfc32bb..73626b93b 100644
+--- a/crates/quench-runtime/src/vm/iterators.rs
++++ b/crates/quench-runtime/src/vm/iterators.rs
+@@ -1884,7 +1884,7 @@ impl<H: Host> Vm<H> {
+         let keys_value = self.object_own_keys(p, input)?;
+         let keys_root = self.heap.root(keys_value);
+         let keys = match self.heap.get(keys_value) {
+-            Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
++            Some(cell @ Cell::Array { .. }) => cell.array_elements().as_ref().clone(),
+             _ => Vec::new(),
+         };
+         let mut iterators = Vec::new();
+@@ -2788,9 +2788,9 @@ impl<H: Host> Vm<H> {
+                 return self.async_from_sync_reject(p, iterator, error, close_on_rejection);
+             }
+         };
+-        let env = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(vec![
++        let env = self.heap.alloc(Cell::array(
++            self.array_proto,
++            Rc::new(vec![
+                 if done { Value::TRUE } else { Value::FALSE },
+                 iterator,
+                 if close_on_rejection {
+@@ -2799,7 +2799,7 @@ impl<H: Host> Vm<H> {
+                     Value::FALSE
+                 },
+             ]),
+-        });
++        ));
+         let fulfilled = self.native_with_env(Native::AsyncFromSyncValue, env);
+         let rejected = self.native_with_env(Native::AsyncFromSyncValueRejected, env);
+         self.promise_then_intrinsic(p, value_promise, fulfilled, rejected)
+@@ -2809,10 +2809,13 @@ impl<H: Host> Vm<H> {
+         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
+         let env = self.active_native_env().unwrap_or(Value::UNDEFINED);
+         let (done, iterator) = match self.heap.get(env) {
+-            Some(Cell::Array { elements, .. }) => (
+-                elements.first().is_some_and(|done| self.truthy(*done)),
+-                elements.get(1).copied().unwrap_or(Value::UNDEFINED),
+-            ),
++            Some(cell @ Cell::Array { .. }) => {
++                let elements = cell.array_elements();
++                (
++                    elements.first().is_some_and(|done| self.truthy(*done)),
++                    elements.get(1).copied().unwrap_or(Value::UNDEFINED),
++                )
++            }
+             _ => (false, Value::UNDEFINED),
+         };
+         if done {
+@@ -2831,10 +2834,13 @@ impl<H: Host> Vm<H> {
+         let reason = args.first().copied().unwrap_or(Value::UNDEFINED);
+         let env = self.active_native_env().unwrap_or(Value::UNDEFINED);
+         let (iterator, close_on_rejection) = match self.heap.get(env) {
+-            Some(Cell::Array { elements, .. }) => (
+-                elements.get(1).copied().unwrap_or(Value::UNDEFINED),
+-                elements.get(2).is_some_and(|close| self.truthy(*close)),
+-            ),
++            Some(cell @ Cell::Array { .. }) => {
++                let elements = cell.array_elements();
++                (
++                    elements.get(1).copied().unwrap_or(Value::UNDEFINED),
++                    elements.get(2).is_some_and(|close| self.truthy(*close)),
++                )
++            }
+             _ => (Value::UNDEFINED, false),
+         };
+         if close_on_rejection {
+@@ -2922,14 +2928,20 @@ impl<H: Host> Vm<H> {
+             }
+             if kind == IteratorKind::RegExpStringMatchAll {
+                 let (input, global, unicode) = match vm.heap.get(this) {
+-                    Some(Cell::Iterator { ext, .. }) if let Some(helper) = &ext.helper => match helper.as_ref() {
+-                        IteratorHelper::RegExpStringMatchAll {
+-                            input,
+-                            global,
+-                            unicode,
+-                        } => (input.clone(), *global, *unicode),
+-                        _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
+-                    },
++                    Some(Cell::Iterator { ext, .. }) if let Some(helper) = &ext.helper => {
++                        match helper.as_ref() {
++                            IteratorHelper::RegExpStringMatchAll {
++                                input,
++                                global,
++                                unicode,
++                            } => (input.clone(), *global, *unicode),
++                            _ => {
++                                return Err(
++                                    vm.type_error(p, "invalid RegExp string iterator".into())
++                                );
++                            }
++                        }
++                    }
+                     _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
+                 };
+                 let input_value = vm.heap.alloc(Cell::String(input.clone()));
+@@ -3042,10 +3054,10 @@ impl<H: Host> Vm<H> {
+             };
+             let item = selected.map(|(value, second)| {
+                 second.map_or(value, |second| {
+-                    vm.heap.alloc(Cell::Array {
+-                        object: Self::empty_object(vm.array_proto),
+-                        elements: Rc::new(vec![value, second]),
+-                    })
++                    vm.heap.alloc(Cell::array(
++                        vm.array_proto,
++                        Rc::new(vec![value, second]),
++                    ))
+                 })
+             });
+             if let Some(value) = item {
+@@ -3107,10 +3119,10 @@ impl<H: Host> Vm<H> {
+             Ok(match kind {
+                 IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
+                 IteratorKind::ArrayEntries => {
+-                    let entry = vm.heap.alloc(Cell::Array {
+-                        object: Self::empty_object(vm.array_proto),
+-                        elements: Rc::new(vec![Value::number(index as f64), value]),
+-                    });
++                    let entry = vm.heap.alloc(Cell::array(
++                        vm.array_proto,
++                        Rc::new(vec![Value::number(index as f64), value]),
++                    ));
+                     Some((entry, None))
+                 }
+                 _ => None,
+diff --git a/crates/quench-runtime/src/vm/json.rs b/crates/quench-runtime/src/vm/json.rs
+index 5db287719..0972f4996 100644
+--- a/crates/quench-runtime/src/vm/json.rs
++++ b/crates/quench-runtime/src/vm/json.rs
+@@ -508,10 +508,10 @@ impl<H: Host> Vm<H> {
+                     .iter()
+                     .map(|value| self.parse_json_value(value))
+                     .collect::<Result<Vec<_>, _>>()?;
+-                self.heap.alloc(Cell::Array {
+-                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+-                    elements: Rc::new(values),
+-                })
++                self.heap.alloc(Cell::array(
++                    self.array_prototype_for_realm(self.realm.globals),
++                    Rc::new(values),
++                ))
+             }
+             JsonValue::Object(values) => {
+                 let object = self.json_object();
+@@ -1060,14 +1060,14 @@ impl<H: Host> Vm<H> {
+             let keys_handle = self.heap.root(keys);
+             keys_root = Some(keys_handle);
+             let length = match self.heap.get(keys) {
+-                Some(Cell::Array { elements, .. }) => elements.len(),
++                Some(cell @ Cell::Array { .. }) => cell.array_elements().len(),
+                 _ => unreachable!("OwnPropertyKeys projects an array"),
+             };
+             let mut names = Vec::new();
+             for index in 0..length {
+                 let keys = self.heap.root_value(keys_handle).unwrap();
+                 let key = match self.heap.get(keys) {
+-                    Some(Cell::Array { elements, .. }) => elements[index],
++                    Some(cell @ Cell::Array { .. }) => cell.array_elements()[index],
+                     _ => unreachable!("rooted own-key projection"),
+                 };
+                 if !matches!(self.heap.get(key), Some(Cell::String(_))) {
+diff --git a/crates/quench-runtime/src/vm/object.rs b/crates/quench-runtime/src/vm/object.rs
+index f8e6edd08..757641b4a 100644
+--- a/crates/quench-runtime/src/vm/object.rs
++++ b/crates/quench-runtime/src/vm/object.rs
+@@ -504,6 +504,22 @@ impl<H: Host> Vm<H> {
+         {
+             return Some(Value::number(length as f64));
+         }
++        // Canonical array indices live in the element backing, not a shape
++        // slot; expose that representation through the shared own-property view.
++        if let Some(cell @ Cell::Array { .. }) = self.heap.get(object)
++            && let Some(index) = super::object_static::array_index(self.atom_name(atom))
++        {
++            return cell
++                .array_elements()
++                .get(index as usize)
++                .copied()
++                .filter(|value| !value.is_deleted())
++                .or_else(|| {
++                    self.heap
++                        .sparse_get(object, index as usize)
++                        .filter(|value| !value.is_deleted())
++                });
++        }
+         let object = self.object_data(object)?;
+         let slot = self.shape_slot(object.shape(), atom)?;
+         self.heap.property_get(object, slot)
+@@ -857,8 +873,7 @@ impl<H: Host> Vm<H> {
+         } else {
+             None
+         };
+-        if let Some((target, handler)) = self.proxy_parts(target)
+-        {
++        if let Some((target, handler)) = self.proxy_parts(target) {
+             return self.proxy_set(
+                 p,
+                 target,
+@@ -903,8 +918,7 @@ impl<H: Host> Vm<H> {
+                     super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
+                 }
+             }
+-            if let Some((target, handler)) = self.proxy_parts(current)
+-            {
++            if let Some((target, handler)) = self.proxy_parts(current) {
+                 return self.proxy_set(
+                     p,
+                     target,
+diff --git a/crates/quench-runtime/src/vm/object_array.rs b/crates/quench-runtime/src/vm/object_array.rs
+index 3a0442578..06c9e7a77 100644
+--- a/crates/quench-runtime/src/vm/object_array.rs
++++ b/crates/quench-runtime/src/vm/object_array.rs
+@@ -26,9 +26,11 @@ fn array_length_uint32(number: f64) -> u32 {
+ 
+ impl<H: Host> Vm<H> {
+     pub(super) fn own_array_length(&self, target: Value) -> Option<usize> {
+-        let Cell::Array { object, elements } = self.heap.get(target)? else {
++        let cell = self.heap.get(target)?;
++        let Cell::Array { object } = cell else {
+             return None;
+         };
++        let elements = cell.array_elements();
+         (!object.is_arguments_object()).then(|| {
+             self.heap
+                 .sparse_length(target)
+@@ -39,8 +41,8 @@ impl<H: Host> Vm<H> {
+ 
+     pub(super) fn has_own_array_index(&self, target: Value, index: usize) -> bool {
+         self.array_descriptor(target, index).is_some()
+-            || matches!(self.heap.get(target), Some(Cell::Array { elements, .. })
+-                if elements.get(index).is_some_and(|value| !value.is_deleted())
++            || matches!(self.heap.get(target), Some(cell @ Cell::Array { .. })
++                if cell.array_elements().get(index).is_some_and(|value| !value.is_deleted())
+                     || self.heap.sparse_get(target, index).is_some_and(|value| !value.is_deleted()))
+     }
+ 
+@@ -96,13 +98,14 @@ impl<H: Host> Vm<H> {
+                     .max();
+                 if let Some(blocked_index) = blocked_index {
+                     let partial_len = blocked_index + 1;
+-                    if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target) {
+-                        Rc::make_mut(elements).truncate(partial_len);
++                    if let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(target) {
++                        Rc::make_mut(cell.array_elements_mut()).truncate(partial_len);
+                     }
+                     self.heap.sparse_set_length(target, partial_len);
+                     for (atom, index, _) in &tail {
+                         if *index > blocked_index {
+-                            self.descriptors.remove(&(target, PropertyKey::string(*atom)));
++                            self.descriptors
++                                .remove(&(target, PropertyKey::string(*atom)));
+                         }
+                     }
+                     if !writable {
+@@ -117,11 +120,12 @@ impl<H: Host> Vm<H> {
+                     }
+                     return Ok(false);
+                 }
+-                if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target) {
+-                    Rc::make_mut(elements).truncate(next_len);
++                if let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(target) {
++                    Rc::make_mut(cell.array_elements_mut()).truncate(next_len);
+                 }
+                 for (atom, _, _) in &tail {
+-                    self.descriptors.remove(&(target, PropertyKey::string(*atom)));
++                    self.descriptors
++                        .remove(&(target, PropertyKey::string(*atom)));
+                 }
+             }
+             self.heap.sparse_set_length(target, next_len);
+@@ -182,9 +186,10 @@ impl<H: Host> Vm<H> {
+     }
+ 
+     pub(super) fn array_present_indices(&self, target: Value) -> Vec<usize> {
+-        let Some(Cell::Array { elements, .. }) = self.heap.get(target) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get(target) else {
+             return Vec::new();
+         };
++        let elements = cell.array_elements();
+         let length = self.heap.sparse_length(target).unwrap_or(elements.len());
+         let mut indices = (0..length)
+             .filter(|index| {
+@@ -306,7 +311,8 @@ impl<H: Host> Vm<H> {
+     ) -> Result<bool, JsError> {
+         let atom = self.intern_atom(&index.to_string());
+         let existing = match self.heap.get(target) {
+-            Some(Cell::Array { elements, .. }) => elements
++            Some(cell @ Cell::Array { .. }) => cell
++                .array_elements()
+                 .get(index)
+                 .copied()
+                 .filter(|value| !value.is_deleted()),
+@@ -322,11 +328,11 @@ impl<H: Host> Vm<H> {
+                 .descriptors
+                 .contains_key(&(target, PropertyKey::string(atom)));
+         let current_len = match self.heap.get(target) {
+-            Some(Cell::Array { elements, .. }) => self
++            Some(cell @ Cell::Array { .. }) => self
+                 .heap
+                 .sparse_length(target)
+                 .unwrap_or(0)
+-                .max(elements.len()),
++                .max(cell.array_elements().len()),
+             _ => 0,
+         };
+         if is_new
+@@ -374,7 +380,8 @@ impl<H: Host> Vm<H> {
+ 
+     pub(super) fn delete_array_index(&mut self, target: Value, index: usize) -> Value {
+         let present = match self.heap.get(target) {
+-            Some(Cell::Array { elements, .. }) => elements
++            Some(cell @ Cell::Array { .. }) => cell
++                .array_elements()
+                 .get(index)
+                 .copied()
+                 .filter(|value| !value.is_deleted())
+@@ -394,10 +401,10 @@ impl<H: Host> Vm<H> {
+         }
+         self.unmap_argument_index(target, index);
+         if present {
+-            if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target)
+-                && index < elements.len()
++            if let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(target)
++                && index < cell.array_elements().len()
+             {
+-                Rc::make_mut(elements)[index] = Value::DELETED;
++                Rc::make_mut(cell.array_elements_mut())[index] = Value::DELETED;
+             } else {
+                 self.heap.sparse_set(target, index, Value::DELETED);
+             }
+diff --git a/crates/quench-runtime/src/vm/object_descriptors.rs b/crates/quench-runtime/src/vm/object_descriptors.rs
+index 9f2e18437..141419971 100644
+--- a/crates/quench-runtime/src/vm/object_descriptors.rs
++++ b/crates/quench-runtime/src/vm/object_descriptors.rs
+@@ -509,7 +509,8 @@ impl<H: Host> Vm<H> {
+                     return self.property_descriptor_object(Value::UNDEFINED, attributes);
+                 }
+                 let value = match self.heap.get(target) {
+-                    Some(Cell::Array { elements, .. }) => elements
++                    Some(cell @ Cell::Array { .. }) => cell
++                        .array_elements()
+                         .get(index)
+                         .copied()
+                         .filter(|value| !value.is_deleted()),
+@@ -563,8 +564,7 @@ impl<H: Host> Vm<H> {
+         key: Value,
+     ) -> Result<Value, JsError> {
+         let _stack = self.enter_stack()?;
+-        let Some((target, handler)) = self.proxy_parts(proxy)
+-        else {
++        let Some((target, handler)) = self.proxy_parts(proxy) else {
+             unreachable!("Proxy descriptor dispatch")
+         };
+         if handler.is_null() {
+diff --git a/crates/quench-runtime/src/vm/object_get.rs b/crates/quench-runtime/src/vm/object_get.rs
+index a4b8ead85..09fa3e2e9 100644
+--- a/crates/quench-runtime/src/vm/object_get.rs
++++ b/crates/quench-runtime/src/vm/object_get.rs
+@@ -442,9 +442,10 @@ impl<H: Host> Vm<H> {
+             }
+             if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+                 && let Some(index) = super::object_static::array_index(self.atom_name(atom))
+-                && let Some(Cell::Array { elements, .. }) = self.heap.get(object)
++                && let Some(cell @ Cell::Array { .. }) = self.heap.get(object)
+             {
+-                let value = elements
++                let value = cell
++                    .array_elements()
+                     .get(index as usize)
+                     .copied()
+                     .filter(|value| !value.is_deleted())
+diff --git a/crates/quench-runtime/src/vm/object_keys.rs b/crates/quench-runtime/src/vm/object_keys.rs
+index 5f0bbe31d..4723dbce0 100644
+--- a/crates/quench-runtime/src/vm/object_keys.rs
++++ b/crates/quench-runtime/src/vm/object_keys.rs
+@@ -66,10 +66,10 @@ impl<H: Host> Vm<H> {
+                         )?,
+                 };
+                 let property = match kind {
+-                    EnumerableOwnPropertyKind::KeyValue => self.heap.alloc(Cell::Array {
+-                        object: Self::empty_object(self.array_proto),
+-                        elements: Rc::new(vec![self.heap.root_value(*key).unwrap(), item]),
+-                    }),
++                    EnumerableOwnPropertyKind::KeyValue => self.heap.alloc(Cell::array(
++                        self.array_proto,
++                        Rc::new(vec![self.heap.root_value(*key).unwrap(), item]),
++                    )),
+                     EnumerableOwnPropertyKind::Key | EnumerableOwnPropertyKind::Value => item,
+                 };
+                 properties.push(self.heap.root(property));
+@@ -78,10 +78,10 @@ impl<H: Host> Vm<H> {
+                 .iter()
+                 .map(|root| self.heap.root_value(*root).unwrap())
+                 .collect();
+-            Ok(self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.array_proto),
+-                elements: Rc::new(elements),
+-            }))
++            Ok(self.heap.alloc(Cell::array(
++                self.array_proto,
++                Rc::new(elements),
++            )))
+         })();
+         for root in keys.into_iter().chain(properties) {
+             self.heap.release_root(root);
+@@ -100,9 +100,9 @@ impl<H: Host> Vm<H> {
+             .into_iter()
+             .filter(|key| matches!(self.heap.get(*key), Some(Cell::String(_))))
+             .collect();
+-        Ok(self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(values),
+-        }))
++        Ok(self.heap.alloc(Cell::array(
++            self.array_proto,
++            Rc::new(values),
++        )))
+     }
+ }
+diff --git a/crates/quench-runtime/src/vm/object_static.rs b/crates/quench-runtime/src/vm/object_static.rs
+index 636e4c9c6..85225d97f 100644
+--- a/crates/quench-runtime/src/vm/object_static.rs
++++ b/crates/quench-runtime/src/vm/object_static.rs
+@@ -264,10 +264,10 @@ impl<H: Host> Vm<H> {
+         source: Value,
+     ) -> Result<Value, JsError> {
+         if source.is_null() || source.is_undefined() {
+-            return Ok(self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.array_proto),
+-                elements: Rc::new(Vec::new()),
+-            }));
++            return Ok(self.heap.alloc(Cell::array(
++                self.array_proto,
++                Rc::new(Vec::new()),
++            )));
+         }
+         let mut current = self.box_object(source)?;
+         let mut visited_objects = std::collections::HashMap::new();
+@@ -318,10 +318,10 @@ impl<H: Host> Vm<H> {
+                 .iter()
+                 .map(|key| self.heap.root_value(*key).unwrap())
+                 .collect();
+-            Ok(self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.array_proto),
+-                elements: Rc::new(elements),
+-            }))
++            Ok(self.heap.alloc(Cell::array(
++                self.array_proto,
++                Rc::new(elements),
++            )))
+         })();
+         for root in visited_objects.into_values().chain(own_keys).chain(keys) {
+             self.heap.release_root(root);
+diff --git a/crates/quench-runtime/src/vm/object_symbols.rs b/crates/quench-runtime/src/vm/object_symbols.rs
+index 4d20b9102..225a6e394 100644
+--- a/crates/quench-runtime/src/vm/object_symbols.rs
++++ b/crates/quench-runtime/src/vm/object_symbols.rs
+@@ -20,10 +20,10 @@ impl<H: Host> Vm<H> {
+             .iter()
+             .filter_map(|root| self.heap.root_value(*root))
+             .collect::<Vec<_>>();
+-        let result = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(keys),
+-        });
++        let result = self.heap.alloc(Cell::array(
++            self.array_proto,
++            Rc::new(keys),
++        ));
+         roots.into_iter().for_each(|root| {
+             self.heap.release_root(root);
+         });
+@@ -72,8 +72,7 @@ impl<H: Host> Vm<H> {
+         proxy: Value,
+     ) -> Result<Vec<Value>, JsError> {
+         let _stack = self.enter_stack()?;
+-        let Some((target, handler)) = self.proxy_parts(proxy)
+-        else {
++        let Some((target, handler)) = self.proxy_parts(proxy) else {
+             unreachable!("Proxy own-key dispatch");
+         };
+         if handler.is_null() {
+@@ -180,7 +179,8 @@ impl<H: Host> Vm<H> {
+     ) -> Result<Vec<Value>, JsError> {
+         let keys = self.object_own_keys(p, object)?;
+         Ok(match self.heap.get(keys) {
+-            Some(Cell::Array { elements, .. }) => elements
++            Some(cell @ Cell::Array { .. }) => cell
++                .array_elements()
+                 .iter()
+                 .copied()
+                 .filter(|key| {
+@@ -207,7 +207,7 @@ impl<H: Host> Vm<H> {
+         exclusions: Value,
+     ) -> Result<(), JsError> {
+         let excluded = match self.heap.get(exclusions) {
+-            Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
++            Some(cell @ Cell::Array { .. }) => cell.array_elements().as_ref().clone(),
+             _ => Vec::new(),
+         };
+         self.copy_enumerable_properties(
+@@ -318,8 +318,7 @@ impl<H: Host> Vm<H> {
+         let outcome = (|| {
+             let mut current = target;
+             loop {
+-                if let Some((target, handler)) = self.proxy_parts(current)
+-                {
++                if let Some((target, handler)) = self.proxy_parts(current) {
+                     return self.proxy_set(
+                         p,
+                         target,
+@@ -401,10 +400,10 @@ impl<H: Host> Vm<H> {
+             .into_iter()
+             .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
+             .collect();
+-        Ok(self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(values),
+-        }))
++        Ok(self.heap.alloc(Cell::array(
++            self.array_proto,
++            Rc::new(values),
++        )))
+     }
+ 
+     pub(super) fn object_own_keys(
+diff --git a/crates/quench-runtime/src/vm/promise.rs b/crates/quench-runtime/src/vm/promise.rs
+index ef20603cd..985f3ca1b 100644
+--- a/crates/quench-runtime/src/vm/promise.rs
++++ b/crates/quench-runtime/src/vm/promise.rs
+@@ -4463,11 +4463,12 @@ impl<H: Host> Vm<H> {
+             return Err(self.type_error(p, "dynamic import attributes must be an object".into()));
+         }
+         let keys = self.object_own_keys(p, attributes)?;
+-        let Some(Cell::Array { elements, .. }) = self.heap.get(keys) else {
++        let Some(cell @ Cell::Array { .. }) = self.heap.get(keys) else {
+             return Err(JsError(
+                 "dynamic import own keys result is not an array".into(),
+             ));
+         };
++        let elements = cell.array_elements();
+         let keys = elements.as_ref().clone();
+         let mut module_type = None;
+         for key in keys {
+diff --git a/crates/quench-runtime/src/vm/promise_aggregate.rs b/crates/quench-runtime/src/vm/promise_aggregate.rs
+index 30105dc34..28f75f6e9 100644
+--- a/crates/quench-runtime/src/vm/promise_aggregate.rs
++++ b/crates/quench-runtime/src/vm/promise_aggregate.rs
+@@ -9,10 +9,10 @@ impl<H: Host> Vm<H> {
+         values: Vec<Value>,
+     ) -> Result<Value, JsError> {
+         let Some(keys) = keys else {
+-            return Ok(self.heap.alloc(Cell::Array {
+-                object: Self::empty_object(self.array_proto),
+-                elements: std::rc::Rc::new(values),
+-            }));
++            return Ok(self.heap.alloc(Cell::array(
++                self.array_proto,
++                std::rc::Rc::new(values),
++            )));
+         };
+         let result = self
+             .heap
+@@ -30,10 +30,10 @@ impl<H: Host> Vm<H> {
+ 
+     pub(super) fn aggregate_error(&mut self, errors: Vec<Value>) -> Result<Value, JsError> {
+         let array_prototype = self.array_prototype_for_realm(self.realm.globals);
+-        let errors = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(array_prototype),
+-            elements: std::rc::Rc::new(errors),
+-        });
++        let errors = self.heap.alloc(Cell::array(
++            array_prototype,
++            std::rc::Rc::new(errors),
++        ));
+         let errors = self.heap.root(errors);
+         let prototype =
+             self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::AggregateError)];
+diff --git a/crates/quench-runtime/src/vm/promise_jobs.rs b/crates/quench-runtime/src/vm/promise_jobs.rs
+index 7d0156b37..bc2de057b 100644
+--- a/crates/quench-runtime/src/vm/promise_jobs.rs
++++ b/crates/quench-runtime/src/vm/promise_jobs.rs
+@@ -92,7 +92,7 @@ impl<H: Host> Vm<H> {
+             }
+             let array = self.object_own_keys(p, input)?;
+             let keys = match self.heap.get(array) {
+-                Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
++                Some(cell @ Cell::Array { .. }) => cell.array_elements().as_ref().clone(),
+                 _ => Vec::new(),
+             };
+             return Ok(AggregateInput::Keyed {
+diff --git a/crates/quench-runtime/src/vm/proxy.rs b/crates/quench-runtime/src/vm/proxy.rs
+index b62d99959..4d1c2c321 100644
+--- a/crates/quench-runtime/src/vm/proxy.rs
++++ b/crates/quench-runtime/src/vm/proxy.rs
+@@ -9,8 +9,7 @@ impl<H: Host> Vm<H> {
+         args: &[Value],
+     ) -> Result<Value, JsError> {
+         let _stack = self.enter_stack()?;
+-        let Some((target, handler)) = self.proxy_parts(proxy)
+-        else {
++        let Some((target, handler)) = self.proxy_parts(proxy) else {
+             return Err(JsError("proxy call target is invalid".into()));
+         };
+         if handler.is_null() {
+@@ -30,10 +29,10 @@ impl<H: Host> Vm<H> {
+                     if !vm.is_function(trap) {
+                         return Err(vm.type_error(p, "proxy apply trap is not callable".into()));
+                     }
+-                    let arguments = vm.heap.alloc(Cell::Array {
+-                        object: Self::empty_object(vm.array_proto),
+-                        elements: Rc::new(args.to_vec()),
+-                    });
++                    let arguments = vm.heap.alloc(Cell::array(
++                        vm.array_proto,
++                        Rc::new(args.to_vec()),
++                    ));
+                     return vm.call_value(p, trap, handler, &[target, this, arguments]);
+                 }
+                 vm.call_value(p, target, this, args)
+@@ -49,8 +48,7 @@ impl<H: Host> Vm<H> {
+         args: &[Value],
+     ) -> Result<Value, JsError> {
+         let _stack = self.enter_stack()?;
+-        let Some((target, handler)) = self.proxy_parts(proxy)
+-        else {
++        let Some((target, handler)) = self.proxy_parts(proxy) else {
+             return Err(JsError("proxy construct target is invalid".into()));
+         };
+         if handler.is_null() {
+@@ -73,10 +71,10 @@ impl<H: Host> Vm<H> {
+                     if !vm.is_function(trap) {
+                         return Err(vm.type_error(p, "proxy construct trap is not callable".into()));
+                     }
+-                    let arguments = vm.heap.alloc(Cell::Array {
+-                        object: Self::empty_object(vm.array_proto),
+-                        elements: Rc::new(args.to_vec()),
+-                    });
++                    let arguments = vm.heap.alloc(Cell::array(
++                        vm.array_proto,
++                        Rc::new(args.to_vec()),
++                    ));
+                     let result =
+                         vm.call_value(p, trap, handler, &[target, arguments, new_target])?;
+                     if !vm.is_object_like(result) {
+diff --git a/crates/quench-runtime/src/vm/regexp.rs b/crates/quench-runtime/src/vm/regexp.rs
+index 2b8ca6489..2d5be790a 100644
+--- a/crates/quench-runtime/src/vm/regexp.rs
++++ b/crates/quench-runtime/src/vm/regexp.rs
+@@ -622,7 +622,8 @@ impl<H: Host> Vm<H> {
+             return Ok(matcher);
+         }
+         let matcher = Rc::new(Self::compile_regexp(source, flags)?);
+-        self.regexp_matchers.insert(source, flags, Rc::clone(&matcher));
++        self.regexp_matchers
++            .insert(source, flags, Rc::clone(&matcher));
+         Ok(matcher)
+     }
+ 
+@@ -1031,10 +1032,10 @@ impl<H: Host> Vm<H> {
+                         ext: Box::new(crate::heap::IteratorExt {
+                             next_method: None,
+                             helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
+-                            input,
+-                            global: flags.contains('g'),
+-                            unicode: flags.contains('u') || flags.contains('v'),
+-                        })),
++                                input,
++                                global: flags.contains('g'),
++                                unicode: flags.contains('u') || flags.contains('v'),
++                            })),
+                             helper_running: false,
+                             helper_started: false,
+                             generator: None,
+@@ -1115,9 +1116,10 @@ impl<H: Host> Vm<H> {
+                     loop {
+                         let result = vm.regexp_exec_value(p, receiver, input_value)?;
+                         if result.is_null() {
+-                            let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
++                            let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
+                                 unreachable!("match owns its fresh result array");
+                             };
++                            let elements = cell.array_elements();
+                             return Ok(if elements.is_empty() {
+                                 Value::NULL
+                             } else {
+@@ -1182,9 +1184,9 @@ impl<H: Host> Vm<H> {
+         this: Value,
+     ) -> Result<Value, JsError> {
+         match (native, self.heap.get(this)) {
+-            (Native::RegExpSource, Some(Cell::RegExp { meta, .. })) => {
+-                Ok(self.heap.alloc(Cell::String(escape_regexp_source(&meta.source))))
+-            }
++            (Native::RegExpSource, Some(Cell::RegExp { meta, .. })) => Ok(self
++                .heap
++                .alloc(Cell::String(escape_regexp_source(&meta.source)))),
+             (Native::RegExpSource, _)
+                 if self
+                     .realm
+@@ -1705,7 +1707,9 @@ impl<H: Host> Vm<H> {
+             let last_index = vm.get_property(p, this, last_index_atom)?;
+             let last_index = vm.regexp_to_length_value(p, last_index)?;
+             let (regex, flags) = match vm.heap.get(this) {
+-                Some(Cell::RegExp { matcher, meta, .. }) => (Rc::clone(matcher), meta.flags.clone()),
++                Some(Cell::RegExp { matcher, meta, .. }) => {
++                    (Rc::clone(matcher), meta.flags.clone())
++                }
+                 _ => {
+                     return Err(
+                         vm.type_error(p, "RegExp method called on incompatible receiver".into())
+@@ -1758,10 +1762,10 @@ impl<H: Host> Vm<H> {
+                     })
+                 })
+                 .collect::<Vec<_>>();
+-            let result = vm.heap.alloc(Cell::Array {
+-                object: Self::empty_object(vm.array_proto),
+-                elements: Rc::new(values),
+-            });
++            let result = vm.heap.alloc(Cell::array(
++                vm.array_proto,
++                Rc::new(values),
++            ));
+             let named = regexp_named_capture_ranges(&matched);
+             let groups = vm.regexp_groups_object(&named, input.units())?;
+             let index = matched.range.start;
+@@ -1838,10 +1842,10 @@ impl<H: Host> Vm<H> {
+             .into_iter()
+             .map(|range| self.regexp_index_pair(range))
+             .collect::<Vec<_>>();
+-        let indices = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(entries),
+-        });
++        let indices = self.heap.alloc(Cell::array(
++            self.array_proto,
++            Rc::new(entries),
++        ));
+         let groups = if !named.is_empty() {
+             let groups = self
+                 .heap
+@@ -1868,10 +1872,10 @@ impl<H: Host> Vm<H> {
+             Value::number(range.start as f64),
+             Value::number(range.end as f64),
+         ];
+-        self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements: Rc::new(pair.into()),
+-        })
++        self.heap.alloc(Cell::array(
++            self.array_proto,
++            Rc::new(pair.into()),
++        ))
+     }
+ 
+     pub(super) fn compile_regexp(
+diff --git a/crates/quench-runtime/src/vm/string.rs b/crates/quench-runtime/src/vm/string.rs
+index b3de4e947..1070a5f6e 100644
+--- a/crates/quench-runtime/src/vm/string.rs
++++ b/crates/quench-runtime/src/vm/string.rs
+@@ -586,10 +586,10 @@ impl<H: Host> Vm<H> {
+                 .take(limit)
+                 .map(|part| vm.heap.alloc(Cell::String(part)))
+                 .collect();
+-            Ok(vm.heap.alloc(Cell::Array {
+-                object: Self::empty_object(vm.array_proto),
+-                elements: Rc::new(values),
+-            }))
++            Ok(vm.heap.alloc(Cell::array(
++                vm.array_proto,
++                Rc::new(values),
++            )))
+         })
+     }
+ 
+diff --git a/crates/quench-runtime/src/vm/structured_clone.rs b/crates/quench-runtime/src/vm/structured_clone.rs
+index 2d9454ef7..eb29f71d5 100644
+--- a/crates/quench-runtime/src/vm/structured_clone.rs
++++ b/crates/quench-runtime/src/vm/structured_clone.rs
+@@ -164,10 +164,10 @@ impl<H: Host> Vm<H> {
+                 let length = self.own_array_length(source).unwrap_or_default();
+                 let source_root = graph.root(self, source);
+                 let prototype = self.array_prototype_for_realm(self.realm.globals);
+-                let target = self.heap.alloc(Cell::Array {
+-                    object: Self::empty_object(prototype),
+-                    elements: Rc::new(Vec::new()),
+-                });
++                let target = self.heap.alloc(Cell::array(
++                    prototype,
++                    Rc::new(Vec::new()),
++                ));
+                 let target_root = graph.root(self, target);
+                 graph.remember(source, target_root);
+                 self.structured_clone_properties(program, source_root, target_root, graph)?;
+diff --git a/crates/quench-runtime/src/vm/superinstruction.rs b/crates/quench-runtime/src/vm/superinstruction.rs
+index 0b6eecb45..a35ff65d1 100644
+--- a/crates/quench-runtime/src/vm/superinstruction.rs
++++ b/crates/quench-runtime/src/vm/superinstruction.rs
+@@ -21,10 +21,9 @@ impl<H: Host> Vm<H> {
+             .programs
+             .const_array(self.frames[frame].program, start, end - start)
+             .ok_or_else(|| JsError::validation("constant array is outside program".into()))?;
+-        let array_value = self.heap.alloc(Cell::Array {
+-            object: Self::empty_object(self.array_proto),
+-            elements,
+-        });
++        let array_value = self
++            .heap
++            .alloc(Cell::array(self.array_proto, elements));
+         self.write(frame, array.result_register(), array_value);
+ 
+         self.execute_super_binary(program, frame, first)?;
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index fcc89270d..9b3d51e2f 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -60,17 +60,16 @@ fn promoted_immutable_parameters_preserve_order_and_survive_collection() {
+     assert!(program.functions[3].local_registers.is_empty());
+ }
+ 
+-
+ #[test]
+ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
+     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
+     use crate::heap::Cell;
+     let program = Engine::specialize("", "descriptor-owner.js").unwrap();
+     let mut vm = Vm::new(SilentHost);
+-    let owner = vm.heap.alloc(Cell::Array {
+-        object: Vm::<SilentHost>::empty_object(Value::NULL),
+-        elements: Rc::new(Vec::new()),
+-    });
++    let owner = vm.heap.alloc(Cell::array(
++        Value::NULL,
++        Rc::new(Vec::new()),
++    ));
+     let setter = vm.native_with_env(Native::Object, owner);
+     let owner_weak = vm.heap.weak_handle(owner).unwrap();
+     let setter_weak = vm.heap.weak_handle(setter).unwrap();
+@@ -4318,7 +4317,9 @@ fn property_copy_roots_release_after_callback_completion() {
+                     .call_value(&program, factory, Value::UNDEFINED, &[])
+                     .unwrap();
+                 let args = match vm.heap.get(operands) {
+-                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
++                    Some(cell @ super::Cell::Array { .. }) => {
++                        cell.array_elements().as_ref().clone()
++                    }
+                     _ => panic!("operands"),
+                 };
+                 let handles = args
+@@ -4410,7 +4411,9 @@ fn descriptor_snapshot_and_assign_root_fresh_native_arguments() {
+                     .call_value(&program, factory, Value::UNDEFINED, &[])
+                     .unwrap();
+                 let args = match vm.heap.get(operands) {
+-                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
++                    Some(cell @ super::Cell::Array { .. }) => {
++                        cell.array_elements().as_ref().clone()
++                    }
+                     _ => panic!("operands"),
+                 };
+                 let source_handle = vm.heap.weak_handle(args[1]).unwrap();
+@@ -4559,7 +4562,9 @@ fn for_in_roots_release_after_prototype_and_key_callbacks() {
+                     }
+                     Ok(result) => {
+                         let elements = match vm.heap.get(result) {
+-                            Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
++                            Some(cell @ super::Cell::Array { .. }) => {
++                                cell.array_elements().as_ref().clone()
++                            }
+                             _ => panic!("key snapshot"),
+                         };
+                         let names = elements
+@@ -4689,7 +4694,9 @@ fn proxy_introspection_roots_release_after_nested_validation() {
+                     .call_value(&program, factory, Value::UNDEFINED, &[])
+                     .unwrap();
+                 let args = match vm.heap.get(operands) {
+-                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
++                    Some(cell @ super::Cell::Array { .. }) => {
++                        cell.array_elements().as_ref().clone()
++                    }
+                     _ => panic!("operands"),
+                 };
+                 let handles = args
+@@ -4836,7 +4843,9 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
+                     .call_value(&program, factory, Value::UNDEFINED, &[])
+                     .unwrap();
+                 let args = match vm.heap.get(operands) {
+-                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
++                    Some(cell @ super::Cell::Array { .. }) => {
++                        cell.array_elements().as_ref().clone()
++                    }
+                     _ => panic!("operands"),
+                 };
+                 let handles = args
+@@ -5304,7 +5313,9 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
+                         .call_value(&program, factory, Value::UNDEFINED, &[])
+                         .unwrap();
+                     let (proxy, raw) = match vm.heap.get(values) {
+-                        Some(super::Cell::Array { elements, .. }) => (elements[0], elements[1]),
++                        Some(cell @ super::Cell::Array { .. }) => {
++                            (cell.array_elements()[0], cell.array_elements()[1])
++                        }
+                         _ => panic!("operands"),
+                     };
+                     let key = if symbol {
+@@ -5673,7 +5684,9 @@ fn coerced_binary_operands_restore_roots_after_each_completion() {
+                         .call_value(&program, factory, Value::UNDEFINED, &[])
+                         .unwrap();
+                     let (left, right) = match vm.heap.get(values) {
+-                        Some(super::Cell::Array { elements, .. }) => (elements[0], elements[1]),
++                        Some(cell @ super::Cell::Array { .. }) => {
++                            (cell.array_elements()[0], cell.array_elements()[1])
++                        }
+                         _ => panic!("operands"),
+                     };
+                     let handles = [left, right].map(|value| vm.heap.weak_handle(value).unwrap());
+@@ -5877,7 +5890,9 @@ fn instanceof_roots_fresh_inputs_across_lookup_and_traversal() {
+                     .call_value(&program, factory, Value::UNDEFINED, &[])
+                     .unwrap();
+                 let (value, constructor) = match vm.heap.get(values) {
+-                    Some(super::Cell::Array { elements, .. }) => (elements[0], elements[1]),
++                    Some(cell @ super::Cell::Array { .. }) => {
++                        (cell.array_elements()[0], cell.array_elements()[1])
++                    }
+                     _ => panic!("operands"),
+                 };
+                 let handles = [value, constructor].map(|v| vm.heap.weak_handle(v).unwrap());
+@@ -5950,9 +5965,11 @@ fn instanceof_roots_detached_prototype_and_restores_cursor_after_throw() {
+                     .call_value(&program, factory, Value::UNDEFINED, &[])
+                     .unwrap();
+                 let values = match vm.heap.get(operands) {
+-                    Some(super::Cell::Array { elements, .. }) => {
+-                        [elements[0], elements[1], elements[2]]
+-                    }
++                    Some(cell @ super::Cell::Array { .. }) => [
++                        cell.array_elements()[0],
++                        cell.array_elements()[1],
++                        cell.array_elements()[2],
++                    ],
+                     _ => panic!("operands"),
+                 };
+                 let handles = values.map(|value| vm.heap.weak_handle(value).unwrap());
+@@ -6171,17 +6188,17 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
+                         helper_running: false,
+                         helper_started: false,
+                         generator: Some(Box::new(GeneratorRecord {
+-                        continuation: Some(continuation),
+-                        realm,
+-                        done: false,
+-                        running: false,
+-                        requests: [AsyncGeneratorRequest {
+-                            operation: AsyncGeneratorOperation::Next,
+-                            promise: request_promise,
+-                            value: request_value,
+-                        }]
+-                        .into(),
+-                    })),
++                            continuation: Some(continuation),
++                            realm,
++                            done: false,
++                            running: false,
++                            requests: [AsyncGeneratorRequest {
++                                operation: AsyncGeneratorOperation::Next,
++                                promise: request_promise,
++                                value: request_value,
++                            }]
++                            .into(),
++                        })),
+                     }),
+                 });
+                 owner = Some(vm.heap.root(value));
+@@ -6291,9 +6308,9 @@ fn array_iterator_advance_roots_owner_and_applies_index_transition() {
+                             let mut value = vm.own_property(result, atom).unwrap();
+                             if native == Native::ArrayEntries {
+                                 value = match vm.heap.get(value) {
+-                                    Some(super::Cell::Array { elements, .. }) => {
+-                                        assert_eq!(elements[0].as_number(), Some(0.0));
+-                                        elements[1]
++                                    Some(cell @ super::Cell::Array { .. }) => {
++                                        assert_eq!(cell.array_elements()[0].as_number(), Some(0.0));
++                                        cell.array_elements()[1]
+                                     }
+                                     _ => panic!("entry"),
+                                 };
+@@ -6504,7 +6521,9 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
+                     "raw" => source,
+                     "protocol" => vm.iterator_from(&program, &[source]).unwrap(),
+                     _ => vm.heap.alloc(super::Cell::Iterator {
+-                        object: Box::new(Vm::<Test262Host>::empty_object(vm.async_from_sync_iterator_proto)),
++                        object: Box::new(Vm::<Test262Host>::empty_object(
++                            vm.async_from_sync_iterator_proto,
++                        )),
+                         source,
+                         kind: super::IteratorKind::AsyncFromSync,
+                         index: 0,
+@@ -6709,7 +6728,9 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
+                     .call_value(&program, factory, Value::UNDEFINED, &[])
+                     .unwrap();
+                 let iterator = vm.heap.alloc(super::Cell::Iterator {
+-                    object: Box::new(Vm::<Test262Host>::empty_object(vm.regexp_string_iterator_proto)),
++                    object: Box::new(Vm::<Test262Host>::empty_object(
++                        vm.regexp_string_iterator_proto,
++                    )),
+                     source: matcher,
+                     kind: super::IteratorKind::RegExpStringMatchAll,
+                     index: 0,
+@@ -6717,12 +6738,16 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
+                     ext: Box::new(crate::heap::IteratorExt {
+                         next_method: None,
+                         helper: Some(Box::new(
+-                        crate::heap::IteratorHelper::RegExpStringMatchAll {
+-                            input: JsString::from_units(if full { &[0xd800, 97] } else { &[97] }),
+-                            global: true,
+-                            unicode: true,
+-                        },
+-                    )),
++                            crate::heap::IteratorHelper::RegExpStringMatchAll {
++                                input: JsString::from_units(if full {
++                                    &[0xd800, 97]
++                                } else {
++                                    &[97]
++                                }),
++                                global: true,
++                                unicode: true,
++                            },
++                        )),
+                         helper_running: false,
+                         helper_started: false,
+                         generator: None,
+@@ -7962,8 +7987,7 @@ fn regexp_entrypoints_root_receivers_and_arguments_through_callbacks() {
+                             match kind {
+                                 "compile" => {
+                                     assert_eq!(value, values[0]);
+-                                    let Some(super::Cell::RegExp { meta, .. }) =
+-                                        vm.heap.get(value)
++                                    let Some(super::Cell::RegExp { meta, .. }) = vm.heap.get(value)
+                                     else {
+                                         panic!("compiled receiver retained");
+                                     };
+diff --git a/crates/quench-runtime/src/vm/wasm.rs b/crates/quench-runtime/src/vm/wasm.rs
+index 33a281d04..3362d18db 100644
+--- a/crates/quench-runtime/src/vm/wasm.rs
++++ b/crates/quench-runtime/src/vm/wasm.rs
+@@ -1248,9 +1248,10 @@ impl<H: Host> Vm<H> {
+                 .decode_wasm_value_in(result, *ty, declarations)
+                 .map(|value| vec![value]),
+             types => {
+-                let Some(Cell::Array { elements, .. }) = self.heap.get(result) else {
++                let Some(cell @ Cell::Array { .. }) = self.heap.get(result) else {
+                     return Err(JsError::validation("invalid Wasm result bundle".into()));
+                 };
++                let elements = cell.array_elements();
+                 if elements.len() != types.len() {
+                     return Err(JsError::validation("Wasm result count mismatch".into()));
+                 }
+diff --git a/crates/quench-runtime/src/vm/wasm_host.rs b/crates/quench-runtime/src/vm/wasm_host.rs
+index 852b641ba..a9f1af1bc 100644
+--- a/crates/quench-runtime/src/vm/wasm_host.rs
++++ b/crates/quench-runtime/src/vm/wasm_host.rs
+@@ -247,10 +247,9 @@ impl<H: Host> Vm<H> {
+             Ok(match values.as_slice() {
+                 [] => Value::UNDEFINED,
+                 [value] => *value,
+-                _ => self.heap.alloc(Cell::Array {
+-                    object: Self::empty_object(Value::NULL),
+-                    elements: values.into(),
+-                }),
++                _ => self
++                    .heap
++                    .alloc(Cell::array(Value::NULL, values.into())),
+             })
+         })();
+         for root in roots {
