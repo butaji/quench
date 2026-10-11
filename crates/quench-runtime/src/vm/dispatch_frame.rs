@@ -223,42 +223,7 @@ impl<H: Host> Vm<H> {
             with_base: self.with_stack.len(),
             fixed_this: false,
         }));
-        frame
-            .locals
-            .resize(function.locals as usize, Value::UNDEFINED);
-        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
-        let fixed = usize::from(function.params) - usize::from(function.rest);
-        // Promoted parameters live in registers; `initialize_promoted_registers` clears their
-        // local slots once the frame is set up, so every fixed parameter is copied here.
-        let passed = fixed.min(args.len());
-        frame.locals[..passed].copy_from_slice(&args[..passed]);
-        frame.locals[passed..fixed].fill(Value::UNDEFINED);
-        if function.rest {
-            let elements = args.get(fixed..).unwrap_or_default().to_vec();
-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                elements: Rc::new(elements),
-            });
-        }
-        if let Some(slot) = function.self_binding_slot {
-            frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
-        }
-        if let Some(slot) = function.arguments_slot {
-            let mapped = function.arguments_are_mapped();
-            let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.object_proto),
-                elements: Rc::new(args.to_vec()),
-            });
-            frame.locals[usize::from(slot)] = arguments;
-            self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
-            if mapped {
-                let mapping = (0..function.params.min(args.len() as u16)).collect();
-                if let Some(object) = self.object_data_mut(arguments) {
-                    object.set_arguments_map(mapping);
-                }
-            }
-        }
-        self.initialize_frame_invocation(&mut frame, function, context, args);
+        self.bind_activation_arguments(&mut frame, function, context, args)?;
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -290,25 +255,7 @@ impl<H: Host> Vm<H> {
         self.with_stack
             .extend(self.captured_with_objects_for_function(parent, function, p.kind));
         if id == super::ROOT_FUNCTION_ID {
-            for &(slot, import) in self.programs.module_imports(frame.program) {
-                let value = match import {
-                    super::program_store::ModuleImport::Value(value)
-                    | super::program_store::ModuleImport::Binding(_, _, value) => value,
-                };
-                let index = usize::from(slot);
-                if frame.locals.get(index).is_none() {
-                    return Err(JsError("module import slot is out of bounds".into()));
-                }
-                if frame.captured {
-                    *self
-                        .heap
-                        .environment_slot_mut(frame.env, index)
-                        .ok_or_else(|| JsError("module import slot is out of bounds".into()))? =
-                        value;
-                } else {
-                    frame.locals[index] = value;
-                }
-            }
+            self.bind_module_imports(&mut frame)?;
         }
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
         self.initialize_activation_bindings(
@@ -443,42 +390,7 @@ impl<H: Host> Vm<H> {
         self.with_stack.truncate(old.with_base);
         let mut frame = old;
         Self::recycle_frame(&mut frame);
-        frame
-            .locals
-            .resize(function.locals as usize, Value::UNDEFINED);
-        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
-        let fixed = usize::from(function.params) - usize::from(function.rest);
-        // Promoted parameters live in registers; `initialize_promoted_registers` clears their
-        // local slots once the frame is set up, so every fixed parameter is copied here.
-        let passed = fixed.min(args.len());
-        frame.locals[..passed].copy_from_slice(&args[..passed]);
-        frame.locals[passed..fixed].fill(Value::UNDEFINED);
-        if function.rest {
-            let elements = args.get(fixed..).unwrap_or_default().to_vec();
-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                elements: Rc::new(elements),
-            });
-        }
-        if let Some(slot) = function.self_binding_slot {
-            frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
-        }
-        if let Some(slot) = function.arguments_slot {
-            let mapped = function.arguments_are_mapped();
-            let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.object_proto),
-                elements: Rc::new(args.to_vec()),
-            });
-            frame.locals[usize::from(slot)] = arguments;
-            self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
-            if mapped {
-                let mapping = (0..function.params.min(args.len() as u16)).collect();
-                if let Some(object) = self.object_data_mut(arguments) {
-                    object.set_arguments_map(mapping);
-                }
-            }
-        }
-        self.initialize_frame_invocation(&mut frame, function, context, args);
+        self.bind_activation_arguments(&mut frame, function, context, args)?;
         frame.program = self.active_program;
         frame.function = id;
         frame.pc = 0;
@@ -516,6 +428,98 @@ impl<H: Host> Vm<H> {
         let placeholder = std::mem::replace(&mut self.frames[frame_index], frame);
         self.frame_pool.push(placeholder);
         Ok(())
+    }
+
+    /// Binds an activation's locals to its call: fixed parameters, the rest array, the
+    /// function's own name, the `arguments` object and the legacy invocation record.
+    #[inline(always)]
+    fn bind_activation_arguments(
+        &mut self,
+        frame: &mut Frame,
+        function: &crate::bytecode::Function,
+        context: CallContext,
+        args: &[Value],
+    ) -> Result<(), JsError> {
+        frame
+            .locals
+            .resize(function.locals as usize, Value::UNDEFINED);
+        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
+        let fixed = usize::from(function.params) - usize::from(function.rest);
+        // Promoted parameters live in registers; `initialize_promoted_registers` clears their
+        // local slots once the frame is set up, so every fixed parameter is copied here.
+        let passed = fixed.min(args.len());
+        frame.locals[..passed].copy_from_slice(&args[..passed]);
+        frame.locals[passed..fixed].fill(Value::UNDEFINED);
+        if function.rest {
+            frame.locals[fixed] = self.rest_parameter_array(args.get(fixed..).unwrap_or_default());
+        }
+        if let Some(slot) = function.self_binding_slot {
+            frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
+        }
+        if let Some(slot) = function.arguments_slot {
+            frame.locals[usize::from(slot)] =
+                self.activation_arguments_object(function, context, args)?;
+        }
+        self.initialize_frame_invocation(frame, function, context, args);
+        Ok(())
+    }
+
+    /// Copies a program root activation's module import bindings into its locals or, for a
+    /// module environment, its environment slots.
+    #[inline(never)]
+    fn bind_module_imports(&mut self, frame: &mut Frame) -> Result<(), JsError> {
+        for &(slot, import) in self.programs.module_imports(frame.program) {
+            let value = match import {
+                super::program_store::ModuleImport::Value(value)
+                | super::program_store::ModuleImport::Binding(_, _, value) => value,
+            };
+            let index = usize::from(slot);
+            if frame.locals.get(index).is_none() {
+                return Err(JsError("module import slot is out of bounds".into()));
+            }
+            if frame.captured {
+                *self
+                    .heap
+                    .environment_slot_mut(frame.env, index)
+                    .ok_or_else(|| JsError("module import slot is out of bounds".into()))? = value;
+            } else {
+                frame.locals[index] = value;
+            }
+        }
+        Ok(())
+    }
+
+    /// The rest parameter's array of the arguments past the fixed parameters.
+    #[inline(never)]
+    fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
+        self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+            elements: Rc::new(rest.to_vec()),
+        })
+    }
+
+    /// A new activation's `arguments` object, mapped onto the parameters when the function's
+    /// parameter list allows it.
+    #[inline(never)]
+    fn activation_arguments_object(
+        &mut self,
+        function: &crate::bytecode::Function,
+        context: CallContext,
+        args: &[Value],
+    ) -> Result<Value, JsError> {
+        let mapped = function.arguments_are_mapped();
+        let arguments = self.heap.alloc(Cell::Array {
+            object: Self::empty_object(self.object_proto),
+            elements: Rc::new(args.to_vec()),
+        });
+        self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
+        if mapped {
+            let mapping = (0..function.params.min(args.len() as u16)).collect();
+            if let Some(object) = self.object_data_mut(arguments) {
+                object.set_arguments_map(mapping);
+            }
+        }
+        Ok(arguments)
     }
 
     pub(super) fn initialize_frame_invocation(
