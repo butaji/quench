@@ -161,16 +161,29 @@ fn observe_case_with_environment(
     if timeout.is_zero() || !fixture.is_file() {
         return Err("Node cases require an existing fixture and a positive deadline".into());
     }
+    let fixture = if skip_flag_check {
+        fs::canonicalize(fixture).map_err(|error| format!("resolve fixture: {error}"))?
+    } else {
+        fixture.to_path_buf()
+    };
     let directory = tempfile::tempdir().map_err(|error| error.to_string())?;
     let result = directory.path().join("result.json");
     let mut command = Command::new(executable);
     command
         .arg(WORKER_OPTION)
-        .arg(fixture)
+        .arg(&fixture)
         .arg(&result)
         .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
     command.envs(env.iter().cloned());
     if skip_flag_check {
+        if let Some(project) = fixture
+            .ancestors()
+            .find(|directory| directory.ends_with("test/parallel"))
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+        {
+            command.current_dir(project);
+        }
         // The official Node test runner sets this after applying fixture Env.
         command.env("NODE_SKIP_FLAG_CHECK", "true");
         // Node's common/tmpdir.js otherwise defaults every isolated fixture to
@@ -319,6 +332,29 @@ fn reap_process_group(group: libc::pid_t) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn parallel_workers_use_checkout_working_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let parallel = directory.path().join("test/parallel");
+        fs::create_dir_all(&parallel).unwrap();
+        let fixture = parallel.join("test-cwd.js");
+        fs::write(&fixture, "inert input").unwrap();
+        let executable = directory.path().join("worker");
+        fs::write(
+            &executable,
+            "#!/bin/sh\npwd\nprintf '%s' '{\"outcome\":\"pass\"}' >\"$3\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        let observation =
+            observe_parallel_case(&executable, &fixture, Duration::from_secs(5)).unwrap();
+        assert_eq!(observation.outcome(), RunResult::Pass);
+        assert_eq!(
+            String::from_utf8(observation.stdout).unwrap().trim(),
+            directory.path().to_string_lossy()
+        );
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
