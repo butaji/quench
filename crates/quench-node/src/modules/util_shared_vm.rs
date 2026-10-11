@@ -20,6 +20,21 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
     ("isTypedArray", BuiltinBrand::TypedArray),
     ("isArrayBufferView", BuiltinBrand::ArrayBufferView),
     ("isArgumentsObject", BuiltinBrand::ArgumentsObject),
+    ("isAsyncFunction", BuiltinBrand::AsyncFunction),
+    ("isGeneratorFunction", BuiltinBrand::GeneratorFunction),
+    ("isGeneratorObject", BuiltinBrand::GeneratorObject),
+    ("isMapIterator", BuiltinBrand::MapIterator),
+    ("isSetIterator", BuiltinBrand::SetIterator),
+    (
+        "isModuleNamespaceObject",
+        BuiltinBrand::ModuleNamespaceObject,
+    ),
+    ("isBooleanObject", BuiltinBrand::BooleanObject),
+    ("isNumberObject", BuiltinBrand::NumberObject),
+    ("isStringObject", BuiltinBrand::StringObject),
+    ("isSymbolObject", BuiltinBrand::SymbolObject),
+    ("isBigIntObject", BuiltinBrand::BigIntObject),
+    ("isBoxedPrimitive", BuiltinBrand::BoxedPrimitive),
     ("isUint8Array", BuiltinBrand::Uint8Array),
     ("isUint8ClampedArray", BuiltinBrand::Uint8ClampedArray),
     ("isUint16Array", BuiltinBrand::Uint16Array),
@@ -391,7 +406,19 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             | BuiltinBrand::ArrayBuffer
             | BuiltinBrand::SharedArrayBuffer
             | BuiltinBrand::AnyArrayBuffer
-            | BuiltinBrand::ArgumentsObject => ("", 0),
+            | BuiltinBrand::ArgumentsObject
+            | BuiltinBrand::AsyncFunction
+            | BuiltinBrand::GeneratorFunction
+            | BuiltinBrand::GeneratorObject
+            | BuiltinBrand::MapIterator
+            | BuiltinBrand::SetIterator
+            | BuiltinBrand::ModuleNamespaceObject
+            | BuiltinBrand::BooleanObject
+            | BuiltinBrand::NumberObject
+            | BuiltinBrand::StringObject
+            | BuiltinBrand::SymbolObject
+            | BuiltinBrand::BigIntObject
+            | BuiltinBrand::BoxedPrimitive => ("", 0),
             _ => (name, 1),
         };
         let name_value = context.string_rooted(function_name);
