@@ -546,6 +546,27 @@ pub(crate) fn inspect_quote(
     Ok(context.string_units_rooted(&output))
 }
 
+/// Shared Node AbortSignal shape validation. HasProperty observes Proxy traps
+/// and inherited aborted properties; functions and null are rejected.
+pub(crate) fn validate_abort_signal(
+    context: &mut NativeContext<'_, NodeHost>,
+    signal: RootId,
+    name: &str,
+) -> Result<(), RootedError> {
+    if context
+        .rooted_value(signal)
+        .is_some_and(|value| value.is_undefined())
+    {
+        return Ok(());
+    }
+    let valid = context.is_object_rooted(signal)? && !context.is_callable_rooted(signal)?;
+    let key = context.string_rooted("aborted");
+    if !valid || !context.has_property_rooted(signal, key)? {
+        return Err(argument_type_error(context, signal, name, "AbortSignal")?);
+    }
+    Ok(())
+}
+
 pub(crate) fn argument_type_error(
     context: &mut NativeContext<'_, NodeHost>,
     root: RootId,

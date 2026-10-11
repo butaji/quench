@@ -65,7 +65,6 @@ pub mod util_strip;
 pub(crate) mod util_style_shared_vm;
 pub(crate) mod util_system_error_shared_vm;
 pub(crate) mod util_callbackify_shared_vm;
-pub mod util_strip;
 pub(crate) mod util_env;
 pub(crate) mod vm_shared_vm;
 pub(crate) mod v8_shared_vm;

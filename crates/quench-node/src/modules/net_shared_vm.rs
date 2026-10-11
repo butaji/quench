@@ -1,6 +1,6 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 const FIRST_TRANSPORT_ID: u64 = 1;
 const TCP_READ_CHUNK: usize = 16 * 1024;
 const TCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation) => {
   const invalidArgValue = (value, message) => {
     const error = new TypeError(message || `The argument 'options' is invalid. Received ${String(value)}`);
     error.code = 'ERR_INVALID_ARG_VALUE'; return error;
@@ -36,7 +36,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       super({
         ...options, autoDestroy: true, allowHalfOpen: true,
         read() {},
-        write(chunk, encoding, callback) { try { writeOperation(this, chunk); callback(); } catch (error) { callback(error); } },
+        write(chunk, encoding, callback) { try { writeOperation(this, chunk, callback); } catch (error) { callback(error); } },
         final(callback) { try { endOperation(this); callback(); } catch (error) { callback(error); } },
         destroy(error, callback) { try { destroyOperation(this, error); callback(error); } catch (failure) { callback(failure); } },
       });
@@ -48,9 +48,6 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       this.pending = true;
       this.bytesRead = 0;
       this.bytesWritten = 0;
-      this._quenchPreconnectWrites = [];
-      this._quenchPreconnectEnd = null;
-      this._quenchConnectingEmit = false;
       this._quenchTimeout = 0;
       this._quenchTimeoutTimer = null;
       this.on('close', () => {
@@ -68,13 +65,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
         this.connecting = false;
         this.pending = false;
         this._quenchResetTimeout();
-        this._quenchConnectingEmit = true;
-        const result = super.emit(event, ...args);
-        this._quenchConnectingEmit = false;
-        for (const queued of this._quenchPreconnectWrites.splice(0)) super.write(...queued);
-        if (this._quenchPreconnectEnd) super.end(...this._quenchPreconnectEnd);
-        this._quenchPreconnectEnd = null;
-        return result;
+        return super.emit(event, ...args);
       }
       if (event === 'close') { this.pending = true; if (this._quenchTimeoutTimer !== null) clearTimeout(this._quenchTimeoutTimer); this._quenchTimeoutTimer = null; }
       if (event === 'data' && args[0]) { this.bytesRead += args[0].length || 0; this._quenchResetTimeout(); }
@@ -129,24 +120,15 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
         this._quenchTimeoutTimer = setTimeout(() => this.emit('timeout'), this._quenchTimeout);
       }
     }
-    write(chunk, encoding, callback) {
+    write(chunk, encoding, callback, internalAccounted = false) {
       if (typeof encoding === 'function') { callback = encoding; encoding = undefined; }
       this._quenchResetTimeout();
-      this.bytesWritten += typeof chunk === 'string' ? Buffer.byteLength(chunk, encoding || 'utf8') : (chunk && chunk.length || 0);
-      if ((!this.__quenchNetSocketId && !this.connecting) || this.connecting || this._quenchConnectingEmit) {
-        this._quenchPreconnectWrites.push([chunk, encoding, callback]);
-        return this.writableHighWaterMark !== 0;
-      }
-      return super.write(chunk, encoding, callback);
+      accountWriteOperation(this, chunk, encoding, internalAccounted);
+      return super.write(chunk, encoding, callback, internalAccounted);
     }
     end(chunk, encoding, callback) {
       if (typeof chunk === 'function') { callback = chunk; chunk = undefined; encoding = undefined; }
       else if (typeof encoding === 'function') { callback = encoding; encoding = undefined; }
-      if (chunk !== undefined && chunk !== null) this.bytesWritten += typeof chunk === 'string' ? Buffer.byteLength(chunk, encoding || 'utf8') : (chunk.length || 0);
-      if ((!this.__quenchNetSocketId && !this.connecting) || this.connecting || this._quenchConnectingEmit) {
-        this._quenchPreconnectEnd = [chunk, encoding, callback];
-        return this;
-      }
       return super.end(chunk, encoding, callback);
     }
     connect(port, host, callback) {
@@ -404,6 +386,7 @@ struct SharedSocket {
     stream: TcpStream,
     pending_write: Vec<u8>,
     write_offset: usize,
+    completions: VecDeque<usize>,
     end_after_write: bool,
     read_ended: bool,
     write_ended: bool,
@@ -415,12 +398,30 @@ pub(crate) enum TransportEvent {
         socket: u64,
         remote: SocketAddr,
     },
-    Connected { socket: u64 },
-    ConnectError { socket: u64, message: String },
-    Data { socket: u64, bytes: Vec<u8> },
-    End { socket: u64 },
-    Closed { socket: u64 },
-    Error { socket: u64, message: String },
+    Connected {
+        socket: u64,
+    },
+    WriteComplete {
+        socket: u64,
+    },
+    ConnectError {
+        socket: u64,
+        message: String,
+    },
+    Data {
+        socket: u64,
+        bytes: Vec<u8>,
+    },
+    End {
+        socket: u64,
+    },
+    Closed {
+        socket: u64,
+    },
+    Error {
+        socket: u64,
+        message: String,
+    },
 }
 
 impl Transport {
@@ -493,6 +494,22 @@ pub(crate) fn write(transport: &mut Transport, socket: u64, bytes: &[u8]) -> Res
     Ok(())
 }
 
+/// Record the byte boundary for a guest stream write. Raw protocol writes
+/// share the transport without creating guest completion callbacks.
+pub(crate) fn write_with_completion(
+    transport: &mut Transport,
+    socket: u64,
+    bytes: &[u8],
+) -> Result<(), String> {
+    write(transport, socket, bytes)?;
+    let stream = transport
+        .sockets
+        .get_mut(&socket)
+        .expect("write checked live socket");
+    stream.completions.push_back(stream.pending_write.len());
+    Ok(())
+}
+
 pub(crate) fn is_connected(transport: &Transport, socket: u64) -> bool {
     transport.sockets.contains_key(&socket)
 }
@@ -558,6 +575,7 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
                     SharedSocket {
                         stream,
                         pending_write: Vec::new(),
+                        completions: VecDeque::new(),
                         write_offset: 0,
                         end_after_write: false,
                         read_ended: false,
@@ -604,6 +622,7 @@ fn poll_accepts(transport: &mut Transport) -> Vec<TransportEvent> {
             SharedSocket {
                 stream,
                 pending_write: Vec::new(),
+                completions: VecDeque::new(),
                 write_offset: 0,
                 end_after_write: false,
                 read_ended: false,
@@ -652,10 +671,18 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                     continue;
                 }
             }
-            if socket.write_offset == socket.pending_write.len() {
-                socket.pending_write.clear();
-                socket.write_offset = 0;
-            }
+        }
+        while socket
+            .completions
+            .front()
+            .is_some_and(|end| *end <= socket.write_offset)
+        {
+            socket.completions.pop_front();
+            events.push(TransportEvent::WriteComplete { socket: id });
+        }
+        if socket.write_offset == socket.pending_write.len() {
+            socket.pending_write.clear();
+            socket.write_offset = 0;
         }
         if socket.end_after_write && socket.pending_write.is_empty() {
             let _ = socket.stream.shutdown(std::net::Shutdown::Write);
@@ -770,12 +797,23 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let stream = crate::host::shared_vm::commonjs::stream_module(context)?;
     let duplex_key = context.string_rooted("Duplex");
     let duplex = context.get_property_rooted(stream, duplex_key)?;
+    let buffer_module = crate::host::shared_vm::commonjs::buffer_module(context)?;
+    let key = context.string_rooted("Buffer");
+    let buffer = context.get_property_rooted(buffer_module, key)?;
+    let key = context.string_rooted("byteLength");
+    let byte_length = context.get_property_rooted(buffer, key)?;
+    let account = context.host_function_with_data(
+        crate::host::shared_vm::operation("netSocketAccountWrite"),
+        byte_length,
+    )?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
         factory,
         undefined,
-        &[duplex, connect, write, end, destroy, encoding, listen, close, address],
+        &[
+            duplex, connect, write, end, destroy, encoding, listen, close, address, account,
+        ],
     )?;
     for name in ["Socket", "Stream", "Server", "BlockList", "SocketAddress", "connect", "createConnection", "createServer"] {
         let key = context.string_rooted(name);
@@ -879,9 +917,55 @@ pub(crate) fn connect_operation(
             encoding: None,
             parent_server: None,
             connection_event_pending: false,
+            write_callbacks: VecDeque::new(),
         },
     );
     Ok(socket)
+}
+
+/// Count bytes at stream admission, once. The stream's existing private
+/// accounted handoff prevents pending chunks from being counted again.
+pub(crate) fn account_write_operation(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    if args.get(3).copied().is_some_and(|value| context.rooted_value(value).is_some_and(|value| value.as_bool() == Some(true))) {
+        return Ok(undefined);
+    }
+    let socket = args[0];
+    let chunk = args.get(1).copied().unwrap_or(undefined);
+    let count = if context.string_text(chunk)?.is_some() {
+        let byte_length = context.host_function_data()?;
+        let encoding = args.get(2).copied().unwrap_or(undefined);
+        let length = context.call_rooted(byte_length, undefined, &[chunk, encoding])?;
+        context
+            .rooted_value(length)
+            .and_then(|value| value.as_number())
+            .unwrap_or_default()
+    } else if context
+        .rooted_value(chunk)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        0.0
+    } else {
+        let key = context.string_rooted("length");
+        let length = context.get_property_rooted(chunk, key)?;
+        context
+            .rooted_value(length)
+            .and_then(|value| value.as_number())
+            .unwrap_or_default()
+    };
+    let key = context.string_rooted("bytesWritten");
+    let old = context.get_property_rooted(socket, key)?;
+    let old = context
+        .rooted_value(old)
+        .and_then(|value| value.as_number())
+        .unwrap_or_default();
+    let value = context.number(old + count);
+    context.set_property_rooted(socket, key, value, socket)?;
+    Ok(undefined)
 }
 
 pub(crate) fn write_operation(
@@ -894,15 +978,32 @@ pub(crate) fn write_operation(
         .copied()
         .ok_or_else(|| RootedError::host("net.Socket.write requires a socket"))?;
     let id = socket_id(context, socket)?;
-    let bytes = args.get(1).copied().map(|value| {
-        context
-            .view_bytes_rooted(value)
-            .unwrap_or_else(|| context.to_string(value).unwrap_or_default().into_bytes())
-    }).unwrap_or_default();
-    context
-        .host_mut()
-        .net_pending_writes
-        .push((id, bytes));
+    let bytes = args
+        .get(1)
+        .copied()
+        .map(|value| {
+            context
+                .view_bytes_rooted(value)
+                .unwrap_or_else(|| context.to_string(value).unwrap_or_default().into_bytes())
+        })
+        .unwrap_or_default();
+    let callback = args
+        .get(2)
+        .copied()
+        .ok_or_else(|| RootedError::host("socket write callback is missing"))?;
+    let state = context.host_mut().shared_state();
+    if !state.borrow().net_sockets.contains_key(&id) {
+        return Err(RootedError::host("socket is closed"));
+    }
+    let callback = context.retain(callback)?;
+    state
+        .borrow_mut()
+        .net_sockets
+        .get_mut(&id)
+        .expect("checked live socket")
+        .write_callbacks
+        .push_back(callback);
+    context.host_mut().net_pending_writes.push((id, bytes));
     Ok(context.boolean(true))
 }
 
@@ -936,8 +1037,12 @@ pub(crate) fn destroy_operation(
     context.host_mut().net_pending_writes.retain(|(socket, _)| *socket != id);
     context.host_mut().net_pending_ends.retain(|socket| *socket != id);
     let state = context.host_mut().shared_state();
+    let was_connected = is_connected(&state.borrow().tcp, id);
     close_socket(&mut state.borrow_mut().tcp, id);
-    context.host_mut().net_pending_destroys.push(id);
+    context
+        .host_mut()
+        .net_pending_destroys
+        .push((id, was_connected));
     Ok(socket)
 }
 

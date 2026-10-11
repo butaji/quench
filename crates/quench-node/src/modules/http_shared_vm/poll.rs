@@ -27,7 +27,7 @@ pub(crate) fn poll(
         let mut deferred_ends = Vec::new();
         for (socket, bytes) in pending_writes {
             if net_shared_vm::is_connected(&host.tcp, socket) {
-                net_shared_vm::write(&mut host.tcp, socket, &bytes)?;
+                net_shared_vm::write_with_completion(&mut host.tcp, socket, &bytes)?;
             } else if host.net_sockets.contains_key(&socket) {
                 deferred_writes.push((socket, bytes));
             }
@@ -48,7 +48,7 @@ pub(crate) fn poll(
         let mut host = shared_state.borrow_mut();
         pending_destroys
             .into_iter()
-            .filter_map(|socket_id| {
+            .filter_map(|(socket_id, was_connected)| {
                 let socket = host.net_sockets.remove(&socket_id)?;
                 let closed_server = socket.parent_server.and_then(|server_id| {
                     let closed = host.net_servers.get_mut(&server_id).is_some_and(|server| {
@@ -59,11 +59,45 @@ pub(crate) fn poll(
                         .then(|| host.net_servers.remove(&server_id).map(|server| server.root))
                         .flatten()
                 });
-                Some((socket.root, closed_server))
+                Some((
+                    socket.root,
+                    socket.write_callbacks,
+                    closed_server,
+                    was_connected,
+                ))
             })
             .collect::<Vec<_>>()
     };
-    for (socket, server) in destroyed {
+    for (socket, callbacks, server, was_connected) in destroyed {
+        if !callbacks.is_empty() {
+            // Destruction has already delivered its stream error. Completing
+            // a canceled write reports its callback error without emitting
+            // another error from the writable half of this Duplex.
+            let key = runtime.string_rooted("_writableState");
+            let writable = runtime
+                .get_property_rooted(socket, key)
+                .map_err(|error| error.to_string())?;
+            runtime.release_root(key);
+            set_bool(runtime, writable, "errorEmitted", true)?;
+            runtime.release_root(writable);
+            let error = if was_connected {
+                let error = net_socket_error(runtime, "write ECANCELED")?;
+                set_text(runtime, error, "syscall", "write")?;
+                #[cfg(unix)]
+                set_number(runtime, error, "errno", -f64::from(libc::ECANCELED))?;
+                error
+            } else {
+                net_socket_error_with_code(
+                    runtime,
+                    "Socket closed before the connection was established",
+                    "ERR_SOCKET_CLOSED_BEFORE_CONNECTION",
+                )?
+            };
+            for callback in callbacks {
+                queue_write_callback(runtime, shared_state, callback, Some(error));
+            }
+            runtime.release_root(error);
+        }
         runtime.release_root(socket);
         if let Some(server) = server {
             queue_net_event(runtime, shared_state, server, "close", &[])?;
@@ -142,6 +176,7 @@ pub(crate) fn poll(
                                 encoding: None,
                                 parent_server: Some(listener),
                                 connection_event_pending: true,
+                                write_callbacks: std::collections::VecDeque::new(),
                             },
                         );
                         if let Some(server) = host.net_servers.get_mut(&listener) {
@@ -152,6 +187,17 @@ pub(crate) fn poll(
                     progressed = true;
                 } else {
                     net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
+                }
+            }
+            net_shared_vm::TransportEvent::WriteComplete { socket } => {
+                let callback = shared_state
+                    .borrow_mut()
+                    .net_sockets
+                    .get_mut(&socket)
+                    .and_then(|socket| socket.write_callbacks.pop_front());
+                if let Some(callback) = callback {
+                    queue_write_callback(runtime, shared_state, callback, None);
+                    progressed = true;
                 }
             }
             net_shared_vm::TransportEvent::Connected { socket } => {
@@ -928,6 +974,9 @@ pub(crate) fn cleanup(
                 .collect::<Vec<_>>();
             roots.extend(shared.response_factory);
             roots.extend(shared.incoming_factory);
+            for socket in host.net_sockets.values_mut() {
+                roots.extend(socket.write_callbacks.drain(..));
+            }
             net_shared_vm::cleanup(&mut host.tcp);
             (roots, async_ids)
         };
@@ -939,7 +988,36 @@ pub(crate) fn cleanup(
     }
 }
 
+fn queue_write_callback(
+    runtime: &mut Runtime<NodeHost>,
+    state: &Rc<RefCell<SharedNodeState>>,
+    callback: RootId,
+    error: Option<RootId>,
+) {
+    let receiver = runtime.root(Value::UNDEFINED);
+    let args = error
+        .into_iter()
+        .map(|error| runtime.root(runtime.rooted_value(error).expect("live write error")))
+        .collect();
+    state.borrow_mut().scheduler.queue_shared_next_tick(
+        crate::modules::shared_event_loop::SharedCallback {
+            callback,
+            receiver,
+            args,
+        },
+    );
+}
+
 fn net_socket_error(runtime: &mut Runtime<NodeHost>, message: &str) -> Result<RootId, String> {
+    let code = message.split_whitespace().nth(1).unwrap_or("ECONNRESET");
+    net_socket_error_with_code(runtime, message, code)
+}
+
+fn net_socket_error_with_code(
+    runtime: &mut Runtime<NodeHost>,
+    message: &str,
+    code: &str,
+) -> Result<RootId, String> {
     let global = runtime.global_root().map_err(|error| error.to_string())?;
     let key = runtime.string_rooted("Error");
     let constructor = runtime
@@ -953,7 +1031,6 @@ fn net_socket_error(runtime: &mut Runtime<NodeHost>, message: &str) -> Result<Ro
         .map_err(|error| error.to_string())?;
     runtime.release_root(constructor);
     runtime.release_root(message_root);
-    let code = message.split_whitespace().nth(1).unwrap_or("ECONNRESET");
     set_text(runtime, error, "code", code)?;
     Ok(error)
 }

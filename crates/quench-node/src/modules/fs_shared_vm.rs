@@ -3,6 +3,14 @@ use crate::modules::fs_ops as fs_ops;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::io::Read;
 
+// Node's internal fs readFile limit, independent of Buffer's larger capacity.
+const MAX_READ_FILE_BYTES: u64 = i32::MAX as u64;
+
+enum ReadFileFailure {
+    Io(std::io::Error),
+    TooLarge(u64),
+}
+
 #[path = "fs_shared_vm/stat.rs"]
 pub(crate) mod stat;
 #[path = "fs_shared_vm/sync.rs"]
@@ -763,7 +771,8 @@ const OPENDIR_API: &str = quench_js_check::checked_js!(r#"(readdirSync) => {
   return { Dir, Dirent, opendir, opendirSync, opendirPromise };
 }"#);
 
-const ASYNC_READ_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(readFileSync) => function readFile(path, options, callback) {
+const ASYNC_READ_FILE_FACTORY: &str = quench_js_check::checked_js!(
+    r#"(readFileSync, validateSignal, completeRead) => function readFile(path, options, callback) {
   if (typeof options === "function") {
     callback = options;
     options = undefined;
@@ -781,10 +790,9 @@ const ASYNC_READ_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(readFileS
   }
   if (Buffer.isBuffer(path)) path = path.toString();
   else if (path instanceof URL) path = path.pathname;
-  queueMicrotask(() => {
-    try { Reflect.apply(callback, undefined, [null, readFileSync(path, options)]); }
-    catch (error) { Reflect.apply(callback, undefined, [error]); }
-  });
+  const signal = options?.signal;
+  validateSignal(signal);
+  queueMicrotask(() => completeRead(readFileSync, callback, path, options, signal));
 }"#);
 
 const ASYNC_WRITE_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(writeFileSync) => function writeFile(path, data, options, callback) {
@@ -2125,8 +2133,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         ASYNC_READ_FILE_FACTORY,
         "node:fs/shared-async-read-file.js",
     )?;
+    let validate = context.host_function(crate::host::shared_vm::operation("fsValidateAbortSignal"))?;
+    let complete = context.host_function(crate::host::shared_vm::operation("fsReadFileComplete"))?;
     let undefined = context.undefined();
-    let read_file_async = context.call_rooted(read_file_factory, undefined, &[read_file])?;
+    let read_file_async = context.call_rooted(read_file_factory, undefined, &[read_file, validate, complete])?;
     set(context, module, "readFile", read_file_async)?;
     let stat_host = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
     let decorate_bigint_stats =
@@ -2696,6 +2706,60 @@ pub(super) fn set(
     Ok(())
 }
 
+pub(crate) fn validate_read_signal(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let signal = args.first().copied().unwrap_or_else(|| context.undefined());
+    super::util_shared_vm::validate_abort_signal(context, signal, "options.signal")?;
+    Ok(context.undefined())
+}
+
+/// Callback invocation lives outside the read-error branch: an exception
+/// thrown by the callback escapes once rather than calling it a second time.
+pub(crate) fn complete_read_file(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let signal = args.get(4).copied().unwrap_or(undefined);
+    let aborted = if context
+        .rooted_value(signal)
+        .is_some_and(|value| value.is_undefined())
+    {
+        false
+    } else {
+        let aborted = get(context, signal, "aborted")?;
+        context.truthy_rooted(aborted)?
+    };
+    let completion = if aborted {
+        let error = context.error_rooted("The operation was aborted")?;
+        let name = context.string_rooted("AbortError");
+        set(context, error, "name", name)?;
+        let code = context.string_rooted("ABORT_ERR");
+        set(context, error, "code", code)?;
+        let cause = get(context, signal, "reason")?;
+        let key = context.string_rooted("cause");
+        context.define_data_property_rooted(error, key, cause, true, false, true)?;
+        vec![error]
+    } else {
+        match context.call_rooted(args[0], undefined, &[args[2], args[3]]) {
+            Ok(data) => vec![context.null(), data],
+            Err(error) => {
+                let exception = match error.exception {
+                    Some(exception) => exception,
+                    None => context.error_rooted(&error.error.to_string())?,
+                };
+                vec![exception]
+            }
+        }
+    };
+    context.call_rooted(args[1], undefined, &completion)?;
+    Ok(undefined)
+}
+
 pub(crate) fn read_file_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -2727,10 +2791,21 @@ pub(crate) fn read_file_sync(
     } else {
         (None, None)
     };
-    let bytes = fs_ops::open(&path, flag.as_deref(), None).and_then(|mut file| {
+    let bytes = (|| -> Result<Vec<u8>, ReadFileFailure> {
+        let file = fs_ops::open(&path, flag.as_deref(), None).map_err(ReadFileFailure::Io)?;
+        let size = file.metadata().map_err(ReadFileFailure::Io)?.len();
+        if size > MAX_READ_FILE_BYTES {
+            return Err(ReadFileFailure::TooLarge(size));
+        }
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).map(|_| bytes)
-    });
+        file.take(MAX_READ_FILE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(ReadFileFailure::Io)?;
+        if bytes.len() as u64 > MAX_READ_FILE_BYTES {
+            return Err(ReadFileFailure::TooLarge(bytes.len() as u64));
+        }
+        Ok(bytes)
+    })();
     match bytes {
         Ok(bytes) => {
             match encoding.as_deref() {
@@ -2743,7 +2818,14 @@ pub(crate) fn read_file_sync(
                 }
             }
         }
-        Err(error) => {
+        Err(ReadFileFailure::TooLarge(size)) => {
+            let error =
+                context.range_error_rooted(&format!("File size ({size}) is greater than 2 GiB"))?;
+            let code = context.string_rooted("ERR_FS_FILE_TOO_LARGE");
+            set(context, error, "code", code)?;
+            Err(context.throw(error))
+        }
+        Err(ReadFileFailure::Io(error)) => {
             let code = fs_error_code(error.kind());
             let error = context.error_rooted(&format!(
                 "{code}: {}, open '{path}'",

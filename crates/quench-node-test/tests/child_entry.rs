@@ -825,6 +825,50 @@ console.log(typeof process.stdout.on,process.stdout instanceof require('events')
 }
 
 #[test]
+fn oversized_read_file_returns_node_range_error_without_allocating() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = std::fs::File::create(directory.path().join("large")).unwrap();
+    file.set_len(i32::MAX as u64 + 1).unwrap();
+    std::fs::write(directory.path().join("small"), b"small").unwrap();
+    let source = r#"const fs=require('fs');
+function record(error){console.log(error.name,error.code,error.message)}
+try{fs.readFileSync('large')}catch(error){record(error)}
+fs.readFile('large',error=>record(error));
+fs.promises.readFile('large').catch(error=>record(error));
+console.log(fs.readFileSync('small','utf8'));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    let mut lines = observations.map(|observation| {
+        String::from_utf8(observation.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    });
+    for lines in &mut lines {
+        lines.sort();
+    }
+    assert_eq!(lines[0], lines[1]);
+}
+
+#[test]
 fn system_error_names_and_validation_match_node() {
     let source = r#"const {getSystemErrorName}=require('util');
 const numbers=[...Array.from({length:140},(_,i)=>-i-1),...Array.from({length:16},(_,i)=>-3000-i),-4094,-4095,-99999];
@@ -967,4 +1011,157 @@ fn fatal_source_excerpts_use_compiler_snapshots_and_commonjs_origins() {
     });
     assert!(positions[0].is_some());
     assert_eq!(positions[0], positions[1]);
+}
+
+#[test]
+fn read_file_abort_and_callback_exceptions_match_node() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("small"), b"small").unwrap();
+    let source = r#"const fs=require('fs'); const result=[];
+for(const signal of [null,'bad',{},()=>{}]) {
+  try {fs.readFile('small',{signal},()=>result.push('unexpected'));}
+  catch(error){result.push([error.name,error.code,error.message]);}
+}
+const marker={reason:true}; const controller=new AbortController(); controller.abort(marker);
+fs.readFile('small',{signal:controller.signal},function(error){'use strict';
+ result.push([error.name,error.code,error.cause===marker,Object.getOwnPropertyDescriptor(error,'cause').enumerable,this===undefined]);
+});
+const later=new AbortController();
+fs.readFile('small',{signal:later.signal},error=>result.push(['later',error.name]));
+process.nextTick(()=>later.abort());
+let calls=0; const thrown=new Error('callback');
+process.on('uncaughtException',error=>result.push(['uncaught',error===thrown,calls]));
+fs.readFile('small',function(error,data){calls++;throw thrown;});
+process.on('exit',()=>console.log(JSON.stringify(result.map(value=>JSON.stringify(value)).sort())));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn exposed_gc_preserves_weak_targets_until_job_checkpoint() {
+    let source = r#"const descriptor=Object.getOwnPropertyDescriptor(globalThis,'gc');
+console.log('gc',gc.name,gc.length,descriptor.writable,descriptor.enumerable,descriptor.configurable,'prototype' in gc);
+const first=new WeakRef({});
+gc(); console.log('sync',first.deref()!==undefined);
+process.nextTick(()=>{gc();console.log('tick',first.deref()!==undefined)});
+Promise.resolve().then(()=>{gc();console.log('promise',first.deref()!==undefined)});
+setTimeout(()=>{gc();console.log('timer',first.deref()===undefined);
+ const target=new WeakRef({});gc();console.log('new',target.deref()!==undefined);
+ setTimeout(()=>{const value=target.deref();gc();console.log('deref',value===undefined||target.deref()===value)},0);
+},10);
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--expose-gc", "-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn tcp_write_completion_retains_buffers_and_applies_backpressure() {
+    let source = r#"const net=require('net'); const result=[];
+let sent=0,writes=0,callbacks=0,synchronous=true,pressure=false;
+const server=net.createServer(socket=>{let received=0;
+ socket.on('data',chunk=>received+=chunk.length);
+ socket.on('end',()=>result.push(['received',received===sent]));
+ socket.resume();server.close();
+}).listen(0,()=>{
+ const socket=net.connect(server.address().port,()=>{
+  let queued=true;
+  for(let index=0;index<64&&queued;index++) {
+   writes++;sent+=262144;
+   queued=socket.write(Buffer.alloc(262144,7),()=>{
+    callbacks++;if(synchronous)result.push(['unexpected-sync']);
+    if(callbacks===writes){result.push(['callbacks',true]);socket.end();}
+   });
+  }
+  pressure=!queued; result.push(['pressure',pressure]);
+  synchronous=false;gc();
+ });
+});
+process.on('exit',()=>console.log(JSON.stringify(result.map(value=>JSON.stringify(value)).sort())));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--expose-gc", "-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn canceled_preconnect_write_matches_node_callback_error() {
+    let source = r#"const net=require('net');const result=[];
+const server=net.createServer(socket=>socket.destroy()).listen(0,()=>{
+ const socket=net.connect(server.address().port);const marker=new Error('destroy marker');
+ let calls=0;
+ socket.on('error',error=>result.push(['event',error===marker]));
+ socket.write('abc',error=>{calls++;result.push(['callback',calls,error.name,error.code,error.message,Object.keys(error)]);});
+ socket.destroy(marker);server.close();
+});process.on('exit',()=>console.log(JSON.stringify(result.map(value=>JSON.stringify(value)).sort())));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
 }
