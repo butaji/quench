@@ -245,3 +245,42 @@ fn numeric_method_arguments_flow_directly_from_caller_registers() {
     );
     assert_eq!(output(source), ["258280325"]);
 }
+
+#[test]
+fn native_stack_scopes_are_ordered_truthful_and_unwind_safe() {
+    let program = Engine::specialize(
+        "Error.prepareStackTrace = (error, sites) => JSON.stringify(sites.map(site => [site.getFunctionName(), site.isNative(), site.getFileName(), site.getLineNumber(), site.getColumnNumber()])); function capture() { const error = new Error('scope'); return error.stack; }",
+        "native-stack.js",
+    ).unwrap();
+    let mut runtime = Runtime::new(Capture::default());
+    runtime.execute(&program).unwrap();
+    let global = runtime.global_root().unwrap();
+    let key = runtime.string_rooted("capture");
+    let capture = runtime.get_property_rooted(global, key).unwrap();
+    let undefined = runtime.root(quench_runtime::Value::UNDEFINED);
+    let result = runtime
+        .with_native_stack_frame("outer", |runtime| {
+            runtime.with_native_stack_frame("inner", |runtime| {
+                runtime.call_rooted(capture, undefined, &[])
+            })
+        })
+        .unwrap();
+    let text = runtime.string_text_rooted(result).unwrap().unwrap();
+    assert!(
+        text.ends_with("[\"inner\",true,null,null,null],[\"outer\",true,null,null,null]]"),
+        "{text}"
+    );
+    runtime.release_root(result);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.with_native_stack_frame("panicking", |_| panic!("native scope unwind"));
+    }));
+    assert!(panic.is_err());
+    let result = runtime.call_rooted(capture, undefined, &[]).unwrap();
+    let text = runtime.string_text_rooted(result).unwrap().unwrap();
+    assert!(!text.contains("outer") && !text.contains("inner") && !text.contains("panicking"));
+    runtime.release_root(result);
+    runtime.release_root(capture);
+    runtime.release_root(undefined);
+    runtime.release_root(key);
+    runtime.release_root(global);
+}
