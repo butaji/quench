@@ -75,6 +75,11 @@ impl<H: Host> Runtime<H> {
         Self { vm: Vm::new(host) }
     }
 
+    /// Choose how Wasm functions execute; see [`ExecutionMode`].
+    pub fn set_execution_mode(&mut self, mode: crate::ExecutionMode) {
+        self.vm.set_execution_mode(mode);
+    }
+
     pub fn host_mut(&mut self) -> &mut H {
         &mut self.vm.host
     }

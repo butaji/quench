@@ -1,4 +1,6 @@
+mod compiled;
 mod wasm;
+pub use compiled::ExecutionMode;
 mod wasm_exception;
 mod wasm_gc;
 mod wasm_host;
@@ -682,6 +684,8 @@ pub(crate) struct Vm<H> {
     natives: Vec<(Native, Value)>,
     frames: Vec<Box<Frame>>,
     frame_pool: Vec<Box<Frame>>,
+    /// Whether Wasm functions with a compiled denotation run as native code.
+    execution_mode: ExecutionMode,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// Set by the first `with` entry and never cleared: `Native::WithEnter` is
@@ -1269,7 +1273,8 @@ impl<H: Host> Vm<H> {
         self.atom_classes.clear();
         self.regexp_subject = None;
         self.regexp_matchers.clear();
-        self.atom_classes.resize_with(self.atom_text.len(), Default::default);
+        self.atom_classes
+            .resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
         self.symbol_registry.clear();
         self.well_known_symbols.clear();

@@ -1100,6 +1100,13 @@ impl<H: Host> Vm<H> {
                     && !i.returns_from_frame() =>
             {
                 self.profile.call_source(1);
+                if let Some(result) =
+                    self.call_compiled(f, u32::from(i.known_function_index()), i.call_window())
+                {
+                    let value = result?;
+                    self.write(f, i.result_register(), value);
+                    return Ok(StepResult::Continue);
+                }
                 self.frames[f].pc = *pc;
                 let stack_guard = self.push_wasm_frame(
                     p,

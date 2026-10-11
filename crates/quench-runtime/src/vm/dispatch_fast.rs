@@ -837,6 +837,13 @@ fn lane_address<const ACC: u8>(r: Registers, i: &LaneInstruction, view: Carried)
 }
 
 /// The view of the unshared memory `binding` names, or the empty view.
+/// The bytes and length of the unshared memory `binding` names, when the
+/// lane or compiled code can access it directly.
+pub(super) fn unshared_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
+    let view = memory_view(vm, binding);
+    (!view.bytes.is_null()).then_some((view.bytes, view.len))
+}
+
 fn memory_view<H: Host>(vm: &Vm<H>, binding: Value) -> MemoryView {
     let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
         return MemoryView::NONE;
@@ -1037,7 +1044,10 @@ lane_handler! {
     /// A Wasm call to a function of the same program, pushed as the general
     /// loop's inline call would be.
     fn lane_call_known<>(cx, r, ip, i, view) {
-        if !unsafe { (*cx).inline_calls } {
+        // A compiled callee runs from the general path, which raises its traps.
+        if !unsafe { (*cx).inline_calls }
+            || unsafe { vm(cx) }.execution_mode == super::compiled::ExecutionMode::Compiled
+        {
             return exit(ip);
         }
         let vm = unsafe { vm(cx) };
@@ -1281,7 +1291,7 @@ impl<H: Host> LaneTable<H> {
 
 /// Whether the lane may run `instruction` from its view record: every
 /// register it names lies inside the register file and carries no flag.
-fn lane_fields_fit(instruction: WideInstruction, function: &Function) -> bool {
+pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function) -> bool {
     let registers = function.registers;
     let op = instruction.op();
     let fields = [
@@ -1347,7 +1357,7 @@ fn lane_operand(
 
 /// The register every direct memory access of `function` goes through, when
 /// there is exactly one.
-fn memory_register(function: &Function) -> Option<u16> {
+pub(super) fn memory_register(function: &Function) -> Option<u16> {
     let mut registers = function
         .code
         .iter()
@@ -1510,7 +1520,7 @@ fn jump_targets(function: &Function) -> Vec<bool> {
     targets
 }
 
-fn decoded_instruction(function: &Function, packed: crate::bytecode::Instr) -> WideInstruction {
+pub(super) fn decoded_instruction(function: &Function, packed: crate::bytecode::Instr) -> WideInstruction {
     if packed.is_wide() {
         function.wide[packed.wide_index()]
     } else {

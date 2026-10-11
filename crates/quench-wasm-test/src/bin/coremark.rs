@@ -4,7 +4,8 @@
 use std::{env, fs, process::ExitCode, sync::OnceLock, thread, time::Instant};
 
 use quench_runtime::{
-    Host, Runtime, WasmHostFunctionId, WasmHostValue, WasmSignature, WasmType, WasmValue,
+    ExecutionMode, Host, Runtime, WasmHostFunctionId, WasmHostValue, WasmSignature, WasmType,
+    WasmValue,
 };
 use wasmparser::{ExternalKind, Parser, Payload};
 
@@ -75,7 +76,7 @@ fn export_index(bytes: &[u8], name: &str) -> Result<u32, String> {
     Err(format!("missing function export `{name}`"))
 }
 
-fn run(path: &str) -> Result<f32, String> {
+fn run(path: &str, mode: ExecutionMode) -> Result<f32, String> {
     let bytes = fs::read(path).map_err(|error| format!("{path}: {error}"))?;
     let entry = export_index(&bytes, ENTRY_EXPORT)?;
     let module = quench_wasm::Engine::new()
@@ -84,6 +85,7 @@ fn run(path: &str) -> Result<f32, String> {
         .lower_shared_module()
         .map_err(|error| error.to_string())?;
     let mut runtime = Runtime::new(CoremarkHost);
+    runtime.set_execution_mode(mode);
     let mut imports = Vec::new();
     for import in module.imports() {
         if (import.module.as_str(), import.name.as_str()) != CLOCK_IMPORT {
@@ -113,13 +115,22 @@ fn run(path: &str) -> Result<f32, String> {
 }
 
 fn main() -> ExitCode {
-    let Some(path) = env::args().nth(1) else {
-        eprintln!("usage: coremark <coremark-minimal.wasm>");
+    let mut mode = ExecutionMode::Interpreted;
+    let mut path = None;
+    for arg in env::args().skip(1) {
+        match arg.as_str() {
+            "-jit" | "--jit" => mode = ExecutionMode::Compiled,
+            "-no-jit" | "--no-jit" => mode = ExecutionMode::Interpreted,
+            _ => path = Some(arg),
+        }
+    }
+    let Some(path) = path else {
+        eprintln!("usage: coremark [-jit|-no-jit] <coremark-minimal.wasm>");
         return ExitCode::from(2);
     };
     let outcome = thread::Builder::new()
         .stack_size(quench_stack::WORKER_STACK_SIZE)
-        .spawn(move || run(&path))
+        .spawn(move || run(&path, mode))
         .expect("reserve coremark worker stack")
         .join()
         .unwrap_or_else(|_| Err("coremark worker panicked".into()));
