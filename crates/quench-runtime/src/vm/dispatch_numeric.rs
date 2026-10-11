@@ -64,14 +64,22 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
         let function = self.frames[frame].function as usize;
-        let code = &p.functions[function].code;
+        let function_code = &p.functions[function];
+        let code = &function_code.code;
+        let decoded = function_code
+            .decoded
+            .on_entry(&function_code.code, &function_code.wide);
         let mut pc = self.frames[frame].pc;
         loop {
             // SAFETY: decoded branch targets are in range and every function
-            // terminates; the frame publishes the active instruction for GC.
+            // terminates; the frame publishes the active instruction for GC. A hot
+            // decoding has one entry per code word.
             let _instruction_pc = pc;
             self.frames[frame].pc = _instruction_pc;
-            let ins = unsafe { *code.get_unchecked(pc) };
+            let ins = match decoded {
+                Some(decoded) => unsafe { *decoded.get_unchecked(pc) },
+                None => unsafe { code.get_unchecked(pc) }.as_wide(),
+            };
             pc += 1;
             #[cfg(feature = "profile-aggregate")]
             self.profile.opcode(
@@ -380,11 +388,11 @@ impl<H: Host> Vm<H> {
         &mut self,
         p: &ResidualProgram,
         frame: usize,
-        instruction: Instr,
+        instruction: WideInstruction,
     ) -> Result<StepResult, JsError> {
         let mut pc = self.frames[frame].pc;
         self.frames[frame].pc = pc - 1;
-        let result = self.step(p, frame, instruction.as_wide(), &mut pc, false);
+        let result = self.step(p, frame, instruction, &mut pc, false);
         self.frames[frame].pc = pc;
         result
     }
