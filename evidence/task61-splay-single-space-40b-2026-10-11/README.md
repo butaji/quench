@@ -102,3 +102,39 @@ source's matching output and unit test. WAST discovery and Test262 inputs are
 absent from this checkout. A retained revision still needs the Splay gate, the
 all-eight fixed-work layout guard, and eventually a stock-harness qualification
 campaign.
+
+## Current-trunk candidate correctness checkpoint (2026-10-11)
+
+This is a separate rebase of the candidate onto trunk `61371b19c`; it does not
+reuse the earlier rejected fixture results. Candidate source is
+`89225f106cdd94a8673cd565fd7130565e0d6180`, and the production
+`quench-node` SHA-256 is
+`d764c53342176cc0e6befe4dbd40bb8b015f7520b41e6b9834d0549ed3887641`.
+The executable is pinned at
+`target/pinned/d764c53342176cc0e6befe4dbd40bb8b015f7520b41e6b9834d0549ed3887641/quench-node`.
+
+The production build and current-source correctness checks completed:
+
+- `cargo test -p quench-runtime --lib`: 547 passed, 0 failed.
+- `cargo test -p quench-wasm`: 31 passed, 0 failed.
+- `cargo test -p quench-wasm-test`: 3 passed, 0 failed after checking out its
+  exact pinned WAST submodule revision.
+- Build and unit-test command output is saved in `production-build.log`,
+  `runtime-unit.log`, `wasm-unit.log`, and `wasm-test-harness-unit.log`.
+- Full WAST corpus: 67,124 directives passed, 0 failed. Raw report:
+  [`wasm-full-current-source.json`](wasm-full-current-source.json).
+- Test262 stage 1: 263 passed, 0 failed. Stages 31–81: 23,240 passed, 36
+  failed. The only failures are one known Function cross-realm case and 35
+  Temporal `subclassing-ignored.js` cases. Trunk `61371b19c` reproduces the
+  same Function failure (508/509) and the exact same 35 Temporal failures
+  (4,568/4,603); the candidate adds no failures. Raw candidate and trunk
+  reports are in `test262-*-current.json` and `test262-trunk-stage-*.json`.
+- The expanded array-store probe's stdout is byte-identical between Node
+  v26.10.0 `--jitless` and the candidate; the current outputs are saved beside
+  the probe.
+- `git diff --check` passes.
+
+These are correctness results only. The candidate's fixed-work Splay result,
+all-eight guard, and stock-harness score/RSS qualification remain unmeasured
+for this rebased source. The M4 trunk distances therefore remain 2.32x speed
+and 2.00x RSS until clean performance gates establish candidate distances.
