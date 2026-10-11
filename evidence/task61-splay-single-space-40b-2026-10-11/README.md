@@ -124,3 +124,17 @@ probe found the inherited non-writable index case, now covered by the revised
 source's matching output and unit test. WAST discovery and Test262 inputs are
 absent from this checkout. A retained revision still needs the all-eight
 fixed-work layout guard and eventually a stock-harness qualification campaign.
+
+
+## Revised-source all-eight guard — rejected on M4
+
+Raw report: [`all-eight-fixed-work-11-revised-m4.json`](all-eight-fixed-work-11-revised-m4.json). Guard classification checkpoint: [`all-eight-guard-checkpoint-revised-m4.json`](all-eight-guard-checkpoint-revised-m4.json). This is the revised source at `ac928099b795952804f65abc8439268694f25ea5`, measured on the Apple M4 arm64 host with 11 fixed-work pairs per fixture; source was clean and stdout matched.
+
+The layout candidate is rejected for M4 integration because two fixtures have clean cycle regressions whose bootstrap intervals exclude zero:
+
+- DeltaBlue: 9/11 clean; cycles +1.886% (95% interval +0.810% to +5.188%); instructions +0.973% (above the 0.14% A/A band); max RSS −2.141%.
+- Richards: 11/11 clean; cycles +1.513% (95% interval +0.960% to +1.861%); instructions +0.049%; max RSS −0.898%.
+
+Other results: Crypto 11/11 clean, cycles +0.023%, instructions +0.136% (within the 0.14% band), RSS −0.601%; Splay 9/11 clean, cycles −2.125% (95% interval −4.534% to −0.676%), instructions +0.067%, RSS −20.745%. EarleyBoyer, NavierStokes, RayTrace and RegExp had 0/11, 3/11, 0/11 and 0/11 clean pairs respectively; their cycle outcomes remain inconclusive, and instruction changes exceeded the A/A band. No top-up was run because the clean DeltaBlue and Richards regressions already reject the candidate under the layout gate.
+
+The revised Splay-only result remains a strong Splay trade-off, not a keep: fixed-work proxy distances are 1.203× speed and 1.654× RSS versus the previous M4 bars, and the candidate has not won either bar. The pushed candidate ref remains available for the Linux lane's own-host experiment, but this M4 layout must not merge to trunk in its current form.
