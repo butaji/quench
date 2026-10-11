@@ -41,6 +41,11 @@ pub enum SharedInput {
         goal: EntryGoal,
         exec_argv: Vec<String>,
     },
+    Stdin {
+        source: String,
+        goal: EntryGoal,
+        exec_argv: Vec<String>,
+    },
     File {
         path: PathBuf,
         exec_argv: Vec<String>,
@@ -73,14 +78,23 @@ fn execute_shared_on_worker(
     input: SharedInput,
     argv: Vec<String>,
 ) -> Result<SharedCompletion, String> {
+    let inline_source = match &input {
+        SharedInput::Stdin { .. } => crate::host::node_host::InlineSource::Stdin,
+        _ => crate::host::node_host::InlineSource::Eval,
+    };
     let (source, name, kind, commonjs_entry, exec_argv, entry_goal) = match input {
         SharedInput::Eval {
             source,
             goal,
             exec_argv,
+        }
+        | SharedInput::Stdin {
+            source,
+            goal,
+            exec_argv,
         } => (
             source,
-            "<eval>".to_owned(),
+            inline_source.compilation_name().to_owned(),
             match goal {
                 EntryGoal::Module => SourceKind::Module,
                 EntryGoal::Node | EntryGoal::CommonJs => SourceKind::Script,
@@ -111,7 +125,8 @@ fn execute_shared_on_worker(
         }
     };
 
-    let host = NodeHost::new(argv).with_exec_argv(exec_argv)?;
+    let mut host = NodeHost::new(argv).with_exec_argv(exec_argv)?;
+    host.inline_source = inline_source;
     let host = match commonjs_entry {
         Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
         None => host,
@@ -256,6 +271,19 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                 });
                 break;
             }
+            "-" => {
+                guest_arguments.extend_from_slice(&args[index..]);
+                input = Some(SharedInput::Stdin {
+                    source: read_cli_stdin()?,
+                    goal: if input_type_module {
+                        EntryGoal::Module
+                    } else {
+                        EntryGoal::Node
+                    },
+                    exec_argv: exec_argv.clone(),
+                });
+                break;
+            }
             option if option.starts_with('-') => {
                 exec_argv.push(args[index].clone());
             }
@@ -286,6 +314,17 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         }
         index += 1;
     }
+    if input.is_none() && !crate::modules::tty_state::is_terminal_fd(0) {
+        input = Some(SharedInput::Stdin {
+            source: read_cli_stdin()?,
+            goal: if input_type_module {
+                EntryGoal::Module
+            } else {
+                EntryGoal::Node
+            },
+            exec_argv: exec_argv.clone(),
+        });
+    }
     let input = input.unwrap_or_else(|| SharedInput::Eval {
         source: String::new(),
         goal: if input_type_module {
@@ -299,4 +338,13 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut argv = vec![executable.to_string_lossy().into_owned()];
     argv.extend(guest_arguments);
     execute_shared(input, argv).map(SharedCompletion::exit_code)
+}
+
+fn read_cli_stdin() -> Result<String, String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("read stdin: {error}"))?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }

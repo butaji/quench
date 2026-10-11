@@ -29,13 +29,13 @@ const FACTORY: &str = quench_js_check::checked_js!(
       this.signalCode = null;
       this.killed = false;
       this.connected = false;
-      this.stdout = new PassThrough();
-      this.stderr = new PassThrough();
+      this.stdout = started.piped[1] ? new PassThrough() : null;
+      this.stderr = started.piped[2] ? new PassThrough() : null;
         for (const stream of [this.stdout, this.stderr]) {
           stream?.once("end", () => stream.destroy());
         }
       const id = started.id;
-      this.stdin = new Writable({
+      this.stdin = started.piped[0] ? new Writable({
         write(chunk, _encoding, callback) {
           try {
             write(id, Buffer.from(chunk).toString("base64"));
@@ -52,13 +52,13 @@ const FACTORY: &str = quench_js_check::checked_js!(
             callback(error);
           }
         }
-      });
+      }) : null;
       this.stdio = [this.stdin, this.stdout, this.stderr];
       this.__quenchDispatch = (type, value, value2) => {
-        if (type === "stdout") this.stdout.push(Buffer.from(value, "base64"));
-        else if (type === "stderr") this.stderr.push(Buffer.from(value, "base64"));
-        else if (type === "stdoutEnd") this.stdout.push(null);
-        else if (type === "stderrEnd") this.stderr.push(null);
+        if (type === "stdout") this.stdout?.push(Buffer.from(value, "base64"));
+        else if (type === "stderr") this.stderr?.push(Buffer.from(value, "base64"));
+        else if (type === "stdoutEnd") this.stdout?.push(null);
+        else if (type === "stderrEnd") this.stderr?.push(null);
         else if (type === "exit") {
           this.exitCode = value;
           this.signalCode = value2;
@@ -80,8 +80,8 @@ const FACTORY: &str = quench_js_check::checked_js!(
           error.path = file;
           error.spawnargs = args;
           this.emit("error", error);
-          this.stdout.push(null);
-          this.stderr.push(null);
+          this.stdout?.push(null);
+          this.stderr?.push(null);
           this.emit("close", null, null);
         });
       } else {
@@ -353,11 +353,14 @@ pub(crate) fn spawn_child(
 
     let mut command = Command::new(&file);
     set_command_arg0(&mut command, argv0.as_deref());
-    command
-        .args(&arguments)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    command.args(&arguments);
+    let stdio = super::child_process_stdio_shared_vm::normalize(context, options)?;
+    let configured = (|| -> std::io::Result<()> {
+        command.stdin(stdio[0].os()?);
+        command.stdout(stdio[1].os()?);
+        command.stderr(stdio[2].os()?);
+        Ok(())
+    })();
     if let Some(cwd) = options
         .map(|root| property_string(context, root, "cwd"))
         .transpose()?
@@ -378,22 +381,18 @@ pub(crate) fn spawn_child(
         }
     }
 
-    let start = match command.spawn() {
+    let start = match configured.and_then(|()| command.spawn()) {
         Ok(mut child) => {
             let id = NEXT_CHILD_PROCESS_ID.fetch_add(1, Ordering::Relaxed);
             let pid = child.id();
             let stdin = Arc::new(Mutex::new(child.stdin.take()));
-            let stdout = child
-                .stdout
-                .take()
-                .ok_or_else(|| RootedError::host("child process stdout pipe is missing"))?;
-            let stderr = child
-                .stderr
-                .take()
-                .ok_or_else(|| RootedError::host("child process stderr pipe is missing"))?;
             let (sender, receiver) = mpsc::channel();
-            spawn_reader(stdout, sender.clone(), true);
-            spawn_reader(stderr, sender.clone(), false);
+            if let Some(stdout) = child.stdout.take() {
+                spawn_reader(stdout, sender.clone(), true);
+            }
+            if let Some(stderr) = child.stderr.take() {
+                spawn_reader(stderr, sender.clone(), false);
+            }
             std::thread::Builder::new()
                 .name("quench-child-wait".into())
                 .spawn(move || {
@@ -419,8 +418,8 @@ pub(crate) fn spawn_child(
                         stderr: None,
                         stdin,
                         events: receiver,
-                        stdout_terminal: false,
-                        stderr_terminal: false,
+                        stdout_terminal: !stdio[1].piped(),
+                        stderr_terminal: !stdio[2].piped(),
                         exit: None,
                     },
                 );
@@ -436,6 +435,12 @@ pub(crate) fn spawn_child(
     };
 
     let result = context.object_rooted()?;
+    let flags = stdio
+        .iter()
+        .map(|specification| context.boolean(specification.piped()))
+        .collect::<Vec<_>>();
+    let flags = context.array_rooted(&flags)?;
+    set(context, result, "piped", flags)?;
     let id = context.number(start.0 as f64);
     set(context, result, "id", id)?;
     let pid = match start.1 {
@@ -501,6 +506,8 @@ fn spawn_error_code(code: Option<i32>) -> &'static str {
         Some(2) => "ENOENT",
         Some(13) => "EACCES",
         Some(8) => "ENOEXEC",
+        #[cfg(unix)]
+        Some(libc::EBADF) => "EBADF",
         _ => "UNKNOWN",
     }
 }
@@ -559,6 +566,12 @@ pub(crate) fn register_child(
         .child_processes
         .insert(id, process);
     for (stream, is_stdout) in [(stdout, true), (stderr, false)] {
+        if context
+            .rooted_value(stream)
+            .is_some_and(|value| value.is_null())
+        {
+            continue;
+        }
         let id = context.number(id as f64);
         let is_stdout = context.boolean(is_stdout);
         let data = context.array_rooted(&[id, is_stdout])?;
