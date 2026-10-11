@@ -12,10 +12,10 @@ pub(super) struct GeneralCodeCursor {
     lane: *const dispatch_fast::LaneView,
 }
 
-/// A caller suspended by an in-loop frame push, resumed when its callee completes.
 /// Values a pooled frame's vectors keep their capacity for.
 const RETAINED_FRAME_VALUES: usize = 256;
 
+/// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub(super) struct PendingGeneralCall {
     pub(super) caller: usize,
     /// The caller's cursor, still valid on resume: the residual outlives the loop and a hot
