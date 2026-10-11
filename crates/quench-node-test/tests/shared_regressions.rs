@@ -1,7 +1,7 @@
 //! Complex guest regressions not owned by the upstream conformance suites.
 
 use quench_node_test::case_process::{observe_case, CaseObservation, RunResult};
-use std::{fs, path::Path, time::Duration};
+use std::{fs, path::Path, process::Command, time::Duration};
 
 const SHARED_WORKER: &str = env!("CARGO_BIN_EXE_run-parallel");
 const REGRESSION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -11,6 +11,41 @@ fn observe_source(source: &str) -> CaseObservation {
     let fixture = directory.path().join("regression.js");
     fs::write(&fixture, source).unwrap();
     observe_case(Path::new(SHARED_WORKER), &fixture, REGRESSION_TIMEOUT).unwrap()
+}
+
+fn observe_node_source(source: &str) -> std::process::Output {
+    let directory = tempfile::tempdir().unwrap();
+    let fixture = directory.path().join("oracle.js");
+    fs::write(&fixture, source).unwrap();
+    Command::new(std::env::var_os("NODE_BIN").unwrap_or_else(|| "node".into()))
+        .arg(fixture)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn strict_call_followed_by_return_of_another_register_matches_node() {
+    let source = r#"
+function g(a, b, c, x) { return arguments.length + 90; }
+function p1(x) {
+  "use strict";
+  g(1, 2, 3, x);
+  return x;
+}
+console.log(p1(7));
+"#;
+
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(
+        quench.outcome(),
+        RunResult::Pass,
+        "Quench failed: {:?}",
+        quench.worker
+    );
+    assert_eq!(quench.stdout, node.stdout, "Node and Quench output differ");
+    assert_eq!(node.stdout, b"7\n");
 }
 
 #[test]
