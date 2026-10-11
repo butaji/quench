@@ -52,19 +52,7 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
 pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 
 const UTIL: &str = quench_js_check::checked_js!(
-    r#"(() => {
-  const quote = (value) => {
-    const escaped = value
-      .replaceAll("\\", "\\\\")
-      .replaceAll("'", "\\'")
-      .replaceAll("\n", "\\n")
-      .replaceAll("\r", "\\r")
-      .replaceAll("\t", "\\t")
-      .replaceAll("\b", "\\b")
-      .replaceAll("\f", "\\f");
-    return `'${escaped}'`;
-  };
-
+    r#"((quote) => {
   const propertyName = (key) => /^[A-Za-z_$][\w$]*$/.test(key) ? key : quote(key);
 
   function inspect(value, options = {}) {
@@ -365,11 +353,14 @@ const UTIL: &str = quench_js_check::checked_js!(
     TextEncoder: globalThis.TextEncoder,
     TextDecoder: globalThis.TextDecoder,
   };
-})()"#
+})"#
 );
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let module = context.evaluate_script_rooted(UTIL, "node:util/shared.js")?;
+    let factory = context.evaluate_script_rooted(UTIL, "node:util/shared.js")?;
+    let quote = context.host_function(crate::host::shared_vm::operation("utilInspectQuote"))?;
+    let undefined = context.undefined();
+    let module = context.call_rooted(factory, undefined, &[quote])?;
     let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
     let compare_key = context.string_rooted("isDeepStrictEqual");
     context.set_property_rooted(module, compare_key, compare, module)?;
@@ -490,6 +481,66 @@ pub(crate) fn parse_env(
         context.define_data_property_rooted(result, key, value, true, true, true)?;
     }
     Ok(result)
+}
+
+/// Node inspect string literals: pick a delimiter, escape controls and lone
+/// surrogates, and preserve valid UTF-16 pairs without host-text conversion.
+pub(crate) fn inspect_quote(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let units = context
+        .string_code_units(value)?
+        .ok_or_else(|| RootedError::host("inspect quote requires string code units"))?;
+    let delimiter = if !units.contains(&(b'\'' as u16)) {
+        b'\''
+    } else if !units.contains(&(b'"' as u16)) {
+        b'"'
+    } else if !units.contains(&(b'`' as u16))
+        && !units
+            .windows(2)
+            .any(|pair| pair == [b'$' as u16, b'{' as u16])
+    {
+        b'`'
+    } else {
+        b'\''
+    };
+    let mut output = vec![u16::from(delimiter)];
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        let escape = match unit {
+            8 => Some("\\b".to_owned()),
+            9 => Some("\\t".to_owned()),
+            10 => Some("\\n".to_owned()),
+            12 => Some("\\f".to_owned()),
+            13 => Some("\\r".to_owned()),
+            92 => Some("\\\\".to_owned()),
+            _ if unit == u16::from(delimiter) && delimiter == b'\'' => Some("\\'".to_owned()),
+            0..=31 | 127..=159 => Some(format!("\\x{unit:02X}")),
+            0xd800..=0xdbff
+                if units
+                    .get(index + 1)
+                    .is_some_and(|unit| (0xdc00..=0xdfff).contains(unit)) =>
+            {
+                output.extend_from_slice(&units[index..index + 2]);
+                index += 2;
+                continue;
+            }
+            0xd800..=0xdfff => Some(format!("\\u{unit:04x}")),
+            _ => None,
+        };
+        if let Some(escape) = escape {
+            output.extend(escape.encode_utf16());
+        } else {
+            output.push(unit);
+        }
+        index += 1;
+    }
+    output.push(u16::from(delimiter));
+    Ok(context.string_units_rooted(&output))
 }
 
 pub(crate) fn argument_type_error(
