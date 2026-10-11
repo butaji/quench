@@ -72,9 +72,39 @@ benefit.
 - `cargo test -p quench-wasm`: 31 passed; 0 failed.
 - `crates/quench-runtime/tests/subset.rs`: 6 passed; 0 failed.
 - The expanded Node v26.10.0 `--jitless` array-semantics probe now matches byte-for-byte after the `own_property` fix.
-- The Splay fixed-work attempt below has 0/11 clean rounds; the all-eight guard has not been rerun on this revised source.
+- The first revised-source Splay attempt below was contaminated; a later clean Splay-only screen is recorded next. The revised-source all-eight guard is pending.
 
-## Revised-source Splay attempt — contention rejected
+## Revised-source Splay screen — clean, all-eight pending
+
+Raw report: [`splay-fixed-work-11-m4-rerun.json`](splay-fixed-work-11-m4-rerun.json).
+The production-CJS runner used 300 `run()` calls per sample and 11 alternating
+baseline/candidate pairs. All 11 pairs were valid and clean, and stdout matched.
+Runner SHA-256: `f8e02485d1724f130fb318fdf26089896dcdc540c03131173464d92301765bfa`.
+Baseline binary SHA-256:
+`127b3fdc659ba5944bf03658d5f2e2f85b5971a4b91121e40a7e66dc00649543`.
+Candidate binary SHA-256:
+`7331fe083eba26249a4955764419a6695ec708aaf391df37645cb254544effc5`.
+
+| M4 metric | Baseline | Candidate | Candidate change |
+| --- | ---: | ---: | ---: |
+| Marginal cycles / `run()` | 5,721,421 | 5,629,649 | −1.60% |
+| Marginal instructions / `run()` | 33,087,840 | 33,116,028 | +0.085% |
+| Work max RSS | 122,765,312 B | 97,206,272 B | −20.82% |
+| Setup-only max RSS | 68,665,344 B | 55,672,832 B | −18.92% |
+
+The paired median changes are −1.117% cycles (bootstrap 95% interval
+−1.509% to +0.104%), +0.083% instructions (+0.075% to +0.116%), and
+−20.793% work max RSS (−20.877% to −20.767%). Thus the candidate has a clear
+RSS reduction and no detected cycle regression on Splay, but the point cycle
+delta is not resolved from zero by the paired interval.
+
+Against the prior M4 references (Node `--jitless` marginal cycles 4,678,660;
+Bun no-JIT max RSS 58,753,024 B), the fixed-work proxy distances are **1.203x
+speed / 1.654x RSS**. These references were not retaken in this campaign, and
+this is not the required stock-harness qualification. Splay remains unwon;
+the all-eight guard must pass before retaining this layout.
+
+## Earlier revised-source Splay attempt — contention rejected
 
 Raw report: [`splay-fixed-work-11-revised.json`](splay-fixed-work-11-revised.json).
 It used the pinned CJS fixed-work runner, 300 `run()` calls per sample, and 11
@@ -83,15 +113,8 @@ alternating pairs of baseline binary `127b3fdc…` and revised candidate binary
 detector. Sampled load ranged from 1.676 to 3.094 runnable tasks per logical
 CPU, so cycles, instructions, and elapsed-time deltas are unavailable.
 
-The valid-process max-RSS medians were 113.66 MiB baseline vs 90.50 MiB
-candidate for the work sample (−20.37%), and 63.83 MiB vs 51.52 MiB for
-setup-only (−19.29%). Treat these as directional observations from a
-contended campaign, not as the RSS gate: no paired clean-sample decision was
-made. The candidate's speed and RSS distances therefore remain unqualified.
-
-The clean-trunk M4 distances remain **1.24× speed / 2.09× RSS**. The revised
-candidate's distances are unmeasured and must be established with the
-production-CJS fixed-work gate after the host-contention detector is clean.
+Its RSS values were directional only; the clean screen above supersedes that
+attempt for the revised source.
 
 ## Initial candidate correctness and remaining requirements
 
@@ -99,6 +122,5 @@ For the initial source, the runtime and Wasm suites passed before timing, and
 the smaller Node array-semantics probe matched byte-for-byte. The expanded
 probe found the inherited non-writable index case, now covered by the revised
 source's matching output and unit test. WAST discovery and Test262 inputs are
-absent from this checkout. A retained revision still needs the Splay gate, the
-all-eight fixed-work layout guard, and eventually a stock-harness qualification
-campaign.
+absent from this checkout. A retained revision still needs the all-eight
+fixed-work layout guard and eventually a stock-harness qualification campaign.
