@@ -78,9 +78,10 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let bootstrap_require = create_require(context, &bootstrap_filename)?;
     set(context, global, "\0quench:require", bootstrap_require)?;
     context.release_root(bootstrap_require);
-    let node_primordials = std::env::current_dir()
-        .map_err(|error| RootedError::host(error.to_string()))?
-        .join("tests/node/lib/internal/per_context/primordials.js");
+    let node_primordials = context
+        .host_mut()
+        .node_library_root
+        .join("lib/internal/per_context/primordials.js");
     if node_primordials.is_file() {
         // Node 24 exposes these well-known disposal symbols before its
         // primordial snapshot is built. The runtime may not provide them yet,
@@ -91,7 +92,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         )?;
         let undefined = context.undefined();
         context.call_rooted(seed_disposal_symbols, undefined, &[])?;
-        let exports = load(context, &node_primordials, None, EntryGoal::Node)?;
+        let exports = load(context, &node_primordials, None, EntryGoal::CommonJs)?;
         let retained = context.retain(exports)?;
         roots.borrow_mut().primordials_module = Some(retained);
         context.release_root(exports);
@@ -270,10 +271,11 @@ pub(super) fn require(
             return cached_builtin(context, BuiltinModule::Vm);
         }
         Some(BuiltinModule::InternalUndici) => {
-            let filename = std::env::current_dir()
-                .map_err(|error| RootedError::host(error.to_string()))?
-                .join("tests/node/deps/undici/undici.js");
-            return load(context, &filename, None, EntryGoal::Node);
+            let filename = context
+                .host_mut()
+                .node_library_root
+                .join("deps/undici/undici.js");
+            return load(context, &filename, None, EntryGoal::CommonJs);
         }
         Some(BuiltinModule::InternalDgram) => {
             let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
@@ -444,7 +446,12 @@ pub(super) fn require(
     }
     let parent = context.host_function_data()?;
     let filename = resolve_filename(context, &specifier, parent)?;
-    load(context, &filename, Some(parent), EntryGoal::Node)
+    let goal = if filename.starts_with(context.host_mut().node_library_root.join("lib")) {
+        EntryGoal::CommonJs
+    } else {
+        EntryGoal::Node
+    };
+    load(context, &filename, Some(parent), goal)
 }
 
 fn vfs_enabled(context: &mut Context<'_>) -> bool {
@@ -979,9 +986,7 @@ fn resolve_filename(
         condition_names: vec!["node".into(), "require".into(), "default".into()],
         ..Default::default()
     });
-    let node_lib = std::env::current_dir()
-        .map_err(|error| RootedError::host(error.to_string()))?
-        .join("tests/node/lib");
+    let node_lib = context.host_mut().node_library_root.join("lib");
     let internal_specifier = specifier.strip_prefix("node:").unwrap_or(specifier);
     let node_internal = internal_specifier.starts_with("internal/")
         || (internal_specifier.starts_with('_') && node_lib.join(internal_specifier).with_extension("js").is_file());
@@ -1201,9 +1206,8 @@ fn load(
                         .unwrap_or(Path::new("."))
                         .to_string_lossy(),
                 );
-                let in_node_internal = filename
-                    .to_string_lossy()
-                    .contains("/tests/node/lib/internal/");
+                let in_node_internal =
+                    filename.starts_with(context.host_mut().node_library_root.join("lib/internal"));
                 let primordials = match primordial_seed {
                     Some(root) => root,
                     None if in_node_internal => roots

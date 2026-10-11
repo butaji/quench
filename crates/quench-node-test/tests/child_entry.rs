@@ -129,3 +129,24 @@ fn util_type_predicates_match_node_internal_brands() {
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn configured_node_library_survives_guest_cwd_changes() {
+    let directory = tempfile::tempdir().unwrap();
+    let library = directory.path().join("installation");
+    std::fs::create_dir_all(library.join("lib/internal")).unwrap();
+    std::fs::write(library.join("package.json"), r#"{"type":"module"}"#).unwrap();
+    std::fs::write(library.join("lib/internal/probe.js"), "module.exports = 'library-probe';").unwrap();
+    let cwd = directory.path().join("guest");
+    std::fs::create_dir(&cwd).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_run-parallel"));
+    command.current_dir(directory.path())
+        .env(quench_node::shared_run::CHILD_RUNNER_ENV, "1")
+        .env(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV, "installation")
+        .args(["-e", "process.chdir('guest');console.log(require('internal/probe'));console.log(require.resolve('internal/probe'))"]);
+    let observation = quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap();
+    assert!(!observation.timed_out);
+    assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+    assert_eq!(String::from_utf8(observation.stdout).unwrap(), format!("library-probe\n{}\n", library.join("lib/internal/probe.js").display()));
+    assert!(observation.stderr.is_empty());
+}

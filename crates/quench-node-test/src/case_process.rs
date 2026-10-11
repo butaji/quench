@@ -183,6 +183,7 @@ fn observe_case_with_environment(
             .and_then(Path::parent)
         {
             command.current_dir(project);
+            command.env(quench_node::shared_run::NODE_LIBRARY_ROOT_ENV, project);
         }
         // The official Node test runner sets this after applying fixture Env.
         command.env("NODE_SKIP_FLAG_CHECK", "true");

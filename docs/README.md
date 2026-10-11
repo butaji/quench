@@ -216,6 +216,12 @@ For the full inventory, use an unchanged Node checkout outside any enclosing
 JavaScript package. Otherwise a parent `package.json` can change the module
 type of upstream child scripts. Workers run from that checkout's root, matching
 the upstream harness; production module resolution uses ordinary package scopes.
+The runner supplies that checkout as `QUENCH_NODE_LIBRARY_ROOT` for Node library
+assets. The host resolves this installation root once at startup, so guest cwd
+changes cannot move its internal-module lookup. Direct CLI users can set this
+variable to an installation containing `lib/` and `deps/`; its default is the
+`node/` directory beside the executable. Node library sources use their builtin
+CommonJS wrapper contract independently of enclosing application package scopes.
 
 ```sh
 NODE_FIXTURE_WORKTREE=$(mktemp -d)
