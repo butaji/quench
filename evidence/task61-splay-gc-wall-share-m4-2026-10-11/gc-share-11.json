@@ -1,0 +1,1046 @@
+{
+  "schema": 2,
+  "source_revision": "ab6e3f8c62ca550d0ff0071410fe6c4115b733ba",
+  "runtime_source_dirty": false,
+  "runtime_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "profile_binary": "/Users/admin/Code/GitHub/quench-v2/target/pinned/a486ee1e7698546fc5d8427dd7e48a5904e676ebe9bfab6d643c5e36e67dc746/quench-node",
+  "profile_binary_sha256": "a486ee1e7698546fc5d8427dd7e48a5904e676ebe9bfab6d643c5e36e67dc746",
+  "measurement_script_sha256": "e6d3672d8062d466673dcf69514abc446a0d2dd6069f3966d6e23eca228ee794",
+  "gc_feature": "profile-gc-time",
+  "work_runs": 300,
+  "rounds_requested": 11,
+  "attempts": 11,
+  "valid_pairs": 11,
+  "max_load_per_logical_cpu": 1.0,
+  "logical_cpus": 10,
+  "host": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+  "input_hashes": {
+    "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+    "splay_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+  },
+  "warmup_samples": [
+    {
+      "round": -1,
+      "phase": "setup",
+      "exit_code": 0,
+      "marker_ok": true,
+      "timing_clean": true,
+      "load_before": [
+        5.62744140625,
+        13.828125,
+        14.71533203125
+      ],
+      "load_after": [
+        5.62744140625,
+        13.828125,
+        14.71533203125
+      ],
+      "logical_cpus": 10,
+      "elapsed_ns": 139905000,
+      "stdout": "__quenchFixedWork:Splay:1:0\n",
+      "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":13,\"mark_nanos\":18355502,\"sweep_nanos\":2599790,\"mark_clear_nanos\":1123}\n        0.13 real         0.12 user         0.00 sys\n            68960256  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4392  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                  23  involuntary context switches\n          2846492078  instructions retired\n           541081968  cycles elapsed\n            59097544  peak memory footprint\n",
+      "gc": {
+        "kind": "quench-gc-time",
+        "collections": 13,
+        "mark_nanos": 18355502,
+        "sweep_nanos": 2599790,
+        "mark_clear_nanos": 1123
+      },
+      "wall_seconds": 0.13,
+      "user_seconds": 0.12,
+      "system_seconds": 0.0,
+      "max_rss_bytes": 68960256,
+      "valid": true
+    },
+    {
+      "round": -1,
+      "phase": "work",
+      "exit_code": 0,
+      "marker_ok": true,
+      "timing_clean": true,
+      "load_before": [
+        5.62744140625,
+        13.828125,
+        14.71533203125
+      ],
+      "load_after": [
+        5.62744140625,
+        13.828125,
+        14.71533203125
+      ],
+      "logical_cpus": 10,
+      "elapsed_ns": 532035000,
+      "stdout": "__quenchFixedWork:Splay:1:300\n",
+      "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":16,\"mark_nanos\":57875834,\"sweep_nanos\":17777044,\"mark_clear_nanos\":3748}\n        0.52 real         0.52 user         0.00 sys\n           122880000  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7683  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  71  involuntary context switches\n         11689135219  instructions retired\n          2112588294  cycles elapsed\n           113050104  peak memory footprint\n",
+      "gc": {
+        "kind": "quench-gc-time",
+        "collections": 16,
+        "mark_nanos": 57875834,
+        "sweep_nanos": 17777044,
+        "mark_clear_nanos": 3748
+      },
+      "wall_seconds": 0.52,
+      "user_seconds": 0.52,
+      "system_seconds": 0.0,
+      "max_rss_bytes": 122880000,
+      "valid": true
+    }
+  ],
+  "warmup_error": null,
+  "summary": {
+    "marginal_wall_ns": 439999999.99999994,
+    "marginal_mark_ns": 43624875,
+    "marginal_sweep_ns": 16093710,
+    "marginal_mark_clear_ns": 2457,
+    "marginal_mark_sweep_share": 0.13743148444444447,
+    "marginal_all_gc_phases_share": 0.1374375977777778
+  },
+  "rounds": [
+    {
+      "round": 0,
+      "valid": true,
+      "timing_clean": true,
+      "processes_valid": true,
+      "samples": {
+        "setup": {
+          "round": 0,
+          "phase": "setup",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "load_after": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 137279000,
+          "stdout": "__quenchFixedWork:Splay:1:0\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":13,\"mark_nanos\":18598502,\"sweep_nanos\":2682126,\"mark_clear_nanos\":1249}\n        0.13 real         0.13 user         0.00 sys\n            68943872  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4391  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  11  involuntary context switches\n          2832515350  instructions retired\n           536942559  cycles elapsed\n            59097568  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 13,
+            "mark_nanos": 18598502,
+            "sweep_nanos": 2682126,
+            "mark_clear_nanos": 1249
+          },
+          "wall_seconds": 0.13,
+          "user_seconds": 0.13,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 68943872,
+          "valid": true
+        },
+        "work": {
+          "round": 0,
+          "phase": "work",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "load_after": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 538653000,
+          "stdout": "__quenchFixedWork:Splay:1:300\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":16,\"mark_nanos\":58687376,\"sweep_nanos\":17960124,\"mark_clear_nanos\":3253}\n        0.53 real         0.52 user         0.00 sys\n           122880000  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7683  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  95  involuntary context switches\n         11691640612  instructions retired\n          2138631982  cycles elapsed\n           113050104  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 16,
+            "mark_nanos": 58687376,
+            "sweep_nanos": 17960124,
+            "mark_clear_nanos": 3253
+          },
+          "wall_seconds": 0.53,
+          "user_seconds": 0.52,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 122880000,
+          "valid": true
+        }
+      },
+      "marginal": {
+        "marginal_wall_ns": 400000000.0,
+        "marginal_mark_ns": 40088874,
+        "marginal_sweep_ns": 15277998,
+        "marginal_mark_clear_ns": 2004,
+        "marginal_mark_sweep_ns": 55366872,
+        "marginal_mark_sweep_share": 0.13841718,
+        "marginal_all_gc_phases_ns": 55368876,
+        "marginal_all_gc_phases_share": 0.13842219,
+        "work_collections": 16,
+        "setup_collections": 13
+      }
+    },
+    {
+      "round": 1,
+      "valid": true,
+      "timing_clean": true,
+      "processes_valid": true,
+      "samples": {
+        "work": {
+          "round": 1,
+          "phase": "work",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "load_after": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 535212000,
+          "stdout": "__quenchFixedWork:Splay:1:300\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":16,\"mark_nanos\":59413083,\"sweep_nanos\":17782126,\"mark_clear_nanos\":3503}\n        0.53 real         0.52 user         0.00 sys\n           122880000  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7683  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 307  involuntary context switches\n         11693621110  instructions retired\n          2122704165  cycles elapsed\n           113050104  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 16,
+            "mark_nanos": 59413083,
+            "sweep_nanos": 17782126,
+            "mark_clear_nanos": 3503
+          },
+          "wall_seconds": 0.53,
+          "user_seconds": 0.52,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 122880000,
+          "valid": true
+        },
+        "setup": {
+          "round": 1,
+          "phase": "setup",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "load_after": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 136377000,
+          "stdout": "__quenchFixedWork:Splay:1:0\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":13,\"mark_nanos\":18054753,\"sweep_nanos\":2684585,\"mark_clear_nanos\":1168}\n        0.13 real         0.12 user         0.00 sys\n            68763648  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4380  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  26  involuntary context switches\n          2832452917  instructions retired\n           533983570  cycles elapsed\n            58917344  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 13,
+            "mark_nanos": 18054753,
+            "sweep_nanos": 2684585,
+            "mark_clear_nanos": 1168
+          },
+          "wall_seconds": 0.13,
+          "user_seconds": 0.12,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 68763648,
+          "valid": true
+        }
+      },
+      "marginal": {
+        "marginal_wall_ns": 400000000.0,
+        "marginal_mark_ns": 41358330,
+        "marginal_sweep_ns": 15097541,
+        "marginal_mark_clear_ns": 2335,
+        "marginal_mark_sweep_ns": 56455871,
+        "marginal_mark_sweep_share": 0.1411396775,
+        "marginal_all_gc_phases_ns": 56458206,
+        "marginal_all_gc_phases_share": 0.141145515,
+        "work_collections": 16,
+        "setup_collections": 13
+      }
+    },
+    {
+      "round": 2,
+      "valid": true,
+      "timing_clean": true,
+      "processes_valid": true,
+      "samples": {
+        "setup": {
+          "round": 2,
+          "phase": "setup",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "load_after": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 137820000,
+          "stdout": "__quenchFixedWork:Splay:1:0\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":13,\"mark_nanos\":17894789,\"sweep_nanos\":2733375,\"mark_clear_nanos\":1124}\n        0.13 real         0.13 user         0.00 sys\n            68796416  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4382  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                  13  involuntary context switches\n          2830595056  instructions retired\n           537244260  cycles elapsed\n            58950112  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 13,
+            "mark_nanos": 17894789,
+            "sweep_nanos": 2733375,
+            "mark_clear_nanos": 1124
+          },
+          "wall_seconds": 0.13,
+          "user_seconds": 0.13,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 68796416,
+          "valid": true
+        },
+        "work": {
+          "round": 2,
+          "phase": "work",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "load_after": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 575617000,
+          "stdout": "__quenchFixedWork:Splay:1:300\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":16,\"mark_nanos\":61519664,\"sweep_nanos\":18889627,\"mark_clear_nanos\":6293}\n        0.57 real         0.55 user         0.01 sys\n           122912768  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7685  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1437  involuntary context switches\n         11706262404  instructions retired\n          2196324975  cycles elapsed\n           113066464  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 16,
+            "mark_nanos": 61519664,
+            "sweep_nanos": 18889627,
+            "mark_clear_nanos": 6293
+          },
+          "wall_seconds": 0.57,
+          "user_seconds": 0.55,
+          "system_seconds": 0.01,
+          "max_rss_bytes": 122912768,
+          "valid": true
+        }
+      },
+      "marginal": {
+        "marginal_wall_ns": 439999999.99999994,
+        "marginal_mark_ns": 43624875,
+        "marginal_sweep_ns": 16156252,
+        "marginal_mark_clear_ns": 5169,
+        "marginal_mark_sweep_ns": 59781127,
+        "marginal_mark_sweep_share": 0.13586619772727274,
+        "marginal_all_gc_phases_ns": 59786296,
+        "marginal_all_gc_phases_share": 0.13587794545454548,
+        "work_collections": 16,
+        "setup_collections": 13
+      }
+    },
+    {
+      "round": 3,
+      "valid": true,
+      "timing_clean": true,
+      "processes_valid": true,
+      "samples": {
+        "work": {
+          "round": 3,
+          "phase": "work",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "load_after": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 645878000,
+          "stdout": "__quenchFixedWork:Splay:1:300\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":16,\"mark_nanos\":69588999,\"sweep_nanos\":20716376,\"mark_clear_nanos\":4415}\n        0.64 real         0.60 user         0.01 sys\n           122863616  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7681  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                3898  involuntary context switches\n         11734936560  instructions retired\n          2270963177  cycles elapsed\n           113017336  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 16,
+            "mark_nanos": 69588999,
+            "sweep_nanos": 20716376,
+            "mark_clear_nanos": 4415
+          },
+          "wall_seconds": 0.64,
+          "user_seconds": 0.6,
+          "system_seconds": 0.01,
+          "max_rss_bytes": 122863616,
+          "valid": true
+        },
+        "setup": {
+          "round": 3,
+          "phase": "setup",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "load_after": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 164718000,
+          "stdout": "__quenchFixedWork:Splay:1:0\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":13,\"mark_nanos\":22100458,\"sweep_nanos\":3122668,\"mark_clear_nanos\":1416}\n        0.16 real         0.15 user         0.00 sys\n            68960256  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4392  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 918  involuntary context switches\n          2842630847  instructions retired\n           566686048  cycles elapsed\n            59113952  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 13,
+            "mark_nanos": 22100458,
+            "sweep_nanos": 3122668,
+            "mark_clear_nanos": 1416
+          },
+          "wall_seconds": 0.16,
+          "user_seconds": 0.15,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 68960256,
+          "valid": true
+        }
+      },
+      "marginal": {
+        "marginal_wall_ns": 480000000.0,
+        "marginal_mark_ns": 47488541,
+        "marginal_sweep_ns": 17593708,
+        "marginal_mark_clear_ns": 2999,
+        "marginal_mark_sweep_ns": 65082249,
+        "marginal_mark_sweep_share": 0.13558801875,
+        "marginal_all_gc_phases_ns": 65085248,
+        "marginal_all_gc_phases_share": 0.13559426666666666,
+        "work_collections": 16,
+        "setup_collections": 13
+      }
+    },
+    {
+      "round": 4,
+      "valid": true,
+      "timing_clean": true,
+      "processes_valid": true,
+      "samples": {
+        "setup": {
+          "round": 4,
+          "phase": "setup",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "load_after": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 156479000,
+          "stdout": "__quenchFixedWork:Splay:1:0\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":13,\"mark_nanos\":21388333,\"sweep_nanos\":2999583,\"mark_clear_nanos\":1417}\n        0.15 real         0.14 user         0.00 sys\n            69287936  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4411  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 745  involuntary context switches\n          2838588029  instructions retired\n           571604380  cycles elapsed\n            59425248  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 13,
+            "mark_nanos": 21388333,
+            "sweep_nanos": 2999583,
+            "mark_clear_nanos": 1417
+          },
+          "wall_seconds": 0.15,
+          "user_seconds": 0.14,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 69287936,
+          "valid": true
+        },
+        "work": {
+          "round": 4,
+          "phase": "work",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "load_after": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 609371000,
+          "stdout": "__quenchFixedWork:Splay:1:300\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":16,\"mark_nanos\":66230333,\"sweep_nanos\":19653544,\"mark_clear_nanos\":3500}\n        0.60 real         0.56 user         0.01 sys\n           123158528  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7699  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                3203  involuntary context switches\n         11723402917  instructions retired\n          2264893906  cycles elapsed\n           113312248  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 16,
+            "mark_nanos": 66230333,
+            "sweep_nanos": 19653544,
+            "mark_clear_nanos": 3500
+          },
+          "wall_seconds": 0.6,
+          "user_seconds": 0.56,
+          "system_seconds": 0.01,
+          "max_rss_bytes": 123158528,
+          "valid": true
+        }
+      },
+      "marginal": {
+        "marginal_wall_ns": 449999999.99999994,
+        "marginal_mark_ns": 44842000,
+        "marginal_sweep_ns": 16653961,
+        "marginal_mark_clear_ns": 2083,
+        "marginal_mark_sweep_ns": 61495961,
+        "marginal_mark_sweep_share": 0.13665769111111112,
+        "marginal_all_gc_phases_ns": 61498044,
+        "marginal_all_gc_phases_share": 0.13666232000000003,
+        "work_collections": 16,
+        "setup_collections": 13
+      }
+    },
+    {
+      "round": 5,
+      "valid": true,
+      "timing_clean": true,
+      "processes_valid": true,
+      "samples": {
+        "work": {
+          "round": 5,
+          "phase": "work",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.62744140625,
+            13.828125,
+            14.71533203125
+          ],
+          "load_after": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 617949000,
+          "stdout": "__quenchFixedWork:Splay:1:300\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":16,\"mark_nanos\":66058333,\"sweep_nanos\":19231585,\"mark_clear_nanos\":3749}\n        0.61 real         0.57 user         0.02 sys\n           124551168  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7784  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                4269  involuntary context switches\n         11738190261  instructions retired\n          2273054424  cycles elapsed\n           114704888  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 16,
+            "mark_nanos": 66058333,
+            "sweep_nanos": 19231585,
+            "mark_clear_nanos": 3749
+          },
+          "wall_seconds": 0.61,
+          "user_seconds": 0.57,
+          "system_seconds": 0.02,
+          "max_rss_bytes": 124551168,
+          "valid": true
+        },
+        "setup": {
+          "round": 5,
+          "phase": "setup",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "load_after": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 152026000,
+          "stdout": "__quenchFixedWork:Splay:1:0\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":13,\"mark_nanos\":21427501,\"sweep_nanos\":3101833,\"mark_clear_nanos\":1251}\n        0.14 real         0.13 user         0.00 sys\n            68861952  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4386  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 496  involuntary context switches\n          2837698954  instructions retired\n           558009825  cycles elapsed\n            59015648  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 13,
+            "mark_nanos": 21427501,
+            "sweep_nanos": 3101833,
+            "mark_clear_nanos": 1251
+          },
+          "wall_seconds": 0.14,
+          "user_seconds": 0.13,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 68861952,
+          "valid": true
+        }
+      },
+      "marginal": {
+        "marginal_wall_ns": 470000000.0,
+        "marginal_mark_ns": 44630832,
+        "marginal_sweep_ns": 16129752,
+        "marginal_mark_clear_ns": 2498,
+        "marginal_mark_sweep_ns": 60760584,
+        "marginal_mark_sweep_share": 0.12927783829787234,
+        "marginal_all_gc_phases_ns": 60763082,
+        "marginal_all_gc_phases_share": 0.12928315319148936,
+        "work_collections": 16,
+        "setup_collections": 13
+      }
+    },
+    {
+      "round": 6,
+      "valid": true,
+      "timing_clean": true,
+      "processes_valid": true,
+      "samples": {
+        "setup": {
+          "round": 6,
+          "phase": "setup",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "load_after": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 151199000,
+          "stdout": "__quenchFixedWork:Splay:1:0\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":13,\"mark_nanos\":20466001,\"sweep_nanos\":2978665,\"mark_clear_nanos\":1166}\n        0.14 real         0.13 user         0.00 sys\n            69074944  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4397  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 419  involuntary context switches\n          2836994376  instructions retired\n           562246405  cycles elapsed\n            59179464  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 13,
+            "mark_nanos": 20466001,
+            "sweep_nanos": 2978665,
+            "mark_clear_nanos": 1166
+          },
+          "wall_seconds": 0.14,
+          "user_seconds": 0.13,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 69074944,
+          "valid": true
+        },
+        "work": {
+          "round": 6,
+          "phase": "work",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "load_after": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 601829000,
+          "stdout": "__quenchFixedWork:Splay:1:300\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":16,\"mark_nanos\":66216459,\"sweep_nanos\":19072375,\"mark_clear_nanos\":3917}\n        0.59 real         0.56 user         0.01 sys\n           122945536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7687  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                3765  involuntary context switches\n         11728446797  instructions retired\n          2240227294  cycles elapsed\n           113115640  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 16,
+            "mark_nanos": 66216459,
+            "sweep_nanos": 19072375,
+            "mark_clear_nanos": 3917
+          },
+          "wall_seconds": 0.59,
+          "user_seconds": 0.56,
+          "system_seconds": 0.01,
+          "max_rss_bytes": 122945536,
+          "valid": true
+        }
+      },
+      "marginal": {
+        "marginal_wall_ns": 449999999.99999994,
+        "marginal_mark_ns": 45750458,
+        "marginal_sweep_ns": 16093710,
+        "marginal_mark_clear_ns": 2751,
+        "marginal_mark_sweep_ns": 61844168,
+        "marginal_mark_sweep_share": 0.13743148444444447,
+        "marginal_all_gc_phases_ns": 61846919,
+        "marginal_all_gc_phases_share": 0.1374375977777778,
+        "work_collections": 16,
+        "setup_collections": 13
+      }
+    },
+    {
+      "round": 7,
+      "valid": true,
+      "timing_clean": true,
+      "processes_valid": true,
+      "samples": {
+        "work": {
+          "round": 7,
+          "phase": "work",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "load_after": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 601978000,
+          "stdout": "__quenchFixedWork:Splay:1:300\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":16,\"mark_nanos\":74837041,\"sweep_nanos\":23521460,\"mark_clear_nanos\":4623}\n        0.59 real         0.57 user         0.01 sys\n           124993536  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7812  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2172  involuntary context switches\n         11713241585  instructions retired\n          2244353438  cycles elapsed\n           115163640  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 16,
+            "mark_nanos": 74837041,
+            "sweep_nanos": 23521460,
+            "mark_clear_nanos": 4623
+          },
+          "wall_seconds": 0.59,
+          "user_seconds": 0.57,
+          "system_seconds": 0.01,
+          "max_rss_bytes": 124993536,
+          "valid": true
+        },
+        "setup": {
+          "round": 7,
+          "phase": "setup",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "load_after": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 136766000,
+          "stdout": "__quenchFixedWork:Splay:1:0\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":13,\"mark_nanos\":18322419,\"sweep_nanos\":2647293,\"mark_clear_nanos\":1040}\n        0.13 real         0.12 user         0.00 sys\n            68796416  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4381  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  16  involuntary context switches\n          2830723203  instructions retired\n           532236073  cycles elapsed\n            58933728  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 13,
+            "mark_nanos": 18322419,
+            "sweep_nanos": 2647293,
+            "mark_clear_nanos": 1040
+          },
+          "wall_seconds": 0.13,
+          "user_seconds": 0.12,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 68796416,
+          "valid": true
+        }
+      },
+      "marginal": {
+        "marginal_wall_ns": 459999999.99999994,
+        "marginal_mark_ns": 56514622,
+        "marginal_sweep_ns": 20874167,
+        "marginal_mark_clear_ns": 3583,
+        "marginal_mark_sweep_ns": 77388789,
+        "marginal_mark_sweep_share": 0.168236497826087,
+        "marginal_all_gc_phases_ns": 77392372,
+        "marginal_all_gc_phases_share": 0.16824428695652177,
+        "work_collections": 16,
+        "setup_collections": 13
+      }
+    },
+    {
+      "round": 8,
+      "valid": true,
+      "timing_clean": true,
+      "processes_valid": true,
+      "samples": {
+        "setup": {
+          "round": 8,
+          "phase": "setup",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "load_after": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 136592000,
+          "stdout": "__quenchFixedWork:Splay:1:0\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":13,\"mark_nanos\":18490917,\"sweep_nanos\":2737124,\"mark_clear_nanos\":1042}\n        0.13 real         0.12 user         0.00 sys\n            68780032  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4380  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  15  involuntary context switches\n          2832279420  instructions retired\n           532574990  cycles elapsed\n            58917344  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 13,
+            "mark_nanos": 18490917,
+            "sweep_nanos": 2737124,
+            "mark_clear_nanos": 1042
+          },
+          "wall_seconds": 0.13,
+          "user_seconds": 0.12,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 68780032,
+          "valid": true
+        },
+        "work": {
+          "round": 8,
+          "phase": "work",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "load_after": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 531912000,
+          "stdout": "__quenchFixedWork:Splay:1:300\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":16,\"mark_nanos\":58084416,\"sweep_nanos\":17815999,\"mark_clear_nanos\":3417}\n        0.52 real         0.51 user         0.00 sys\n           122929152  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7685  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                 280  involuntary context switches\n         11693345961  instructions retired\n          2107615083  cycles elapsed\n           113082872  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 16,
+            "mark_nanos": 58084416,
+            "sweep_nanos": 17815999,
+            "mark_clear_nanos": 3417
+          },
+          "wall_seconds": 0.52,
+          "user_seconds": 0.51,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 122929152,
+          "valid": true
+        }
+      },
+      "marginal": {
+        "marginal_wall_ns": 390000000.0,
+        "marginal_mark_ns": 39593499,
+        "marginal_sweep_ns": 15078875,
+        "marginal_mark_clear_ns": 2375,
+        "marginal_mark_sweep_ns": 54672374,
+        "marginal_mark_sweep_share": 0.14018557435897436,
+        "marginal_all_gc_phases_ns": 54674749,
+        "marginal_all_gc_phases_share": 0.1401916641025641,
+        "work_collections": 16,
+        "setup_collections": 13
+      }
+    },
+    {
+      "round": 9,
+      "valid": true,
+      "timing_clean": true,
+      "processes_valid": true,
+      "samples": {
+        "work": {
+          "round": 9,
+          "phase": "work",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "load_after": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 531400000,
+          "stdout": "__quenchFixedWork:Splay:1:300\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":16,\"mark_nanos\":58430498,\"sweep_nanos\":17764456,\"mark_clear_nanos\":3291}\n        0.52 real         0.52 user         0.00 sys\n           122896384  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7684  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  78  involuntary context switches\n         11691249914  instructions retired\n          2111088560  cycles elapsed\n           113050080  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 16,
+            "mark_nanos": 58430498,
+            "sweep_nanos": 17764456,
+            "mark_clear_nanos": 3291
+          },
+          "wall_seconds": 0.52,
+          "user_seconds": 0.52,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 122896384,
+          "valid": true
+        },
+        "setup": {
+          "round": 9,
+          "phase": "setup",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "load_after": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 136375000,
+          "stdout": "__quenchFixedWork:Splay:1:0\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":13,\"mark_nanos\":18226998,\"sweep_nanos\":2612459,\"mark_clear_nanos\":1333}\n        0.13 real         0.12 user         0.00 sys\n            68763648  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4379  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  17  involuntary context switches\n          2830342249  instructions retired\n           534269322  cycles elapsed\n            58900960  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 13,
+            "mark_nanos": 18226998,
+            "sweep_nanos": 2612459,
+            "mark_clear_nanos": 1333
+          },
+          "wall_seconds": 0.13,
+          "user_seconds": 0.12,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 68763648,
+          "valid": true
+        }
+      },
+      "marginal": {
+        "marginal_wall_ns": 390000000.0,
+        "marginal_mark_ns": 40203500,
+        "marginal_sweep_ns": 15151997,
+        "marginal_mark_clear_ns": 1958,
+        "marginal_mark_sweep_ns": 55355497,
+        "marginal_mark_sweep_share": 0.1419371717948718,
+        "marginal_all_gc_phases_ns": 55357455,
+        "marginal_all_gc_phases_share": 0.1419421923076923,
+        "work_collections": 16,
+        "setup_collections": 13
+      }
+    },
+    {
+      "round": 10,
+      "valid": true,
+      "timing_clean": true,
+      "processes_valid": true,
+      "samples": {
+        "setup": {
+          "round": 10,
+          "phase": "setup",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "load_after": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 137256000,
+          "stdout": "__quenchFixedWork:Splay:1:0\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":13,\"mark_nanos\":18407541,\"sweep_nanos\":2652584,\"mark_clear_nanos\":1084}\n        0.13 real         0.13 user         0.00 sys\n            68845568  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4384  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  14  involuntary context switches\n          2831795958  instructions retired\n           537362846  cycles elapsed\n            58982880  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 13,
+            "mark_nanos": 18407541,
+            "sweep_nanos": 2652584,
+            "mark_clear_nanos": 1084
+          },
+          "wall_seconds": 0.13,
+          "user_seconds": 0.13,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 68845568,
+          "valid": true
+        },
+        "work": {
+          "round": 10,
+          "phase": "work",
+          "exit_code": 0,
+          "marker_ok": true,
+          "timing_clean": true,
+          "load_before": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "load_after": [
+            5.3369140625,
+            13.63134765625,
+            14.640625
+          ],
+          "logical_cpus": 10,
+          "elapsed_ns": 534480000,
+          "stdout": "__quenchFixedWork:Splay:1:300\n",
+          "stderr": "{\"kind\":\"quench-gc-time\",\"collections\":16,\"mark_nanos\":57823918,\"sweep_nanos\":17868539,\"mark_clear_nanos\":3541}\n        0.53 real         0.52 user         0.00 sys\n           122798080  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                7678  page reclaims\n                  14  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                  77  involuntary context switches\n         11691002761  instructions retired\n          2120299596  cycles elapsed\n           112968184  peak memory footprint\n",
+          "gc": {
+            "kind": "quench-gc-time",
+            "collections": 16,
+            "mark_nanos": 57823918,
+            "sweep_nanos": 17868539,
+            "mark_clear_nanos": 3541
+          },
+          "wall_seconds": 0.53,
+          "user_seconds": 0.52,
+          "system_seconds": 0.0,
+          "max_rss_bytes": 122798080,
+          "valid": true
+        }
+      },
+      "marginal": {
+        "marginal_wall_ns": 400000000.0,
+        "marginal_mark_ns": 39416377,
+        "marginal_sweep_ns": 15215955,
+        "marginal_mark_clear_ns": 2457,
+        "marginal_mark_sweep_ns": 54632332,
+        "marginal_mark_sweep_share": 0.13658083,
+        "marginal_all_gc_phases_ns": 54634789,
+        "marginal_all_gc_phases_share": 0.1365869725,
+        "work_collections": 16,
+        "setup_collections": 13
+      }
+    }
+  ]
+}
