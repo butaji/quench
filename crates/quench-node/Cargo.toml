@@ -26,6 +26,7 @@ oxc_resolver = "2"
 url = "2"
 brotli = "7"
 encoding_rs = "0.8"
+crc32fast = "1"
 flate2 = { version = "1", features = ["zlib-rs"] }
 idna = "1"
 libc = "0.2"

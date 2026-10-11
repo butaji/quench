@@ -191,7 +191,7 @@ pub(crate) fn finish(
     let callback = *args
         .get(1)
         .ok_or_else(|| RootedError::host("zlib flush callback missing"))?;
-    let input = super::zlib_shared_vm::byte_array(context, args.first().copied())?;
+    let input = super::zlib_shared_vm::codec_input(context, args.first().copied())?;
     let state = context.host_mut().shared_state();
     let Some((mode, level)) = state
         .borrow()
@@ -375,10 +375,19 @@ fn remove(context: &mut NativeContext<'_, NodeHost>, id: u64) {
         context.release_host_weak_root(entry.api);
     }
 }
-fn codec_error(
+pub(super) fn codec_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: std::io::Error,
 ) -> Result<RootId, RootedError> {
+    if let Some(limit) = error
+        .get_ref()
+        .and_then(|error| error.downcast_ref::<super::zlib_shared_vm::OutputLimit>())
+    {
+        let error = context.range_error_rooted(&limit.to_string())?;
+        let code = context.string_rooted("ERR_BUFFER_TOO_LARGE");
+        set(context, error, "code", code)?;
+        return Ok(error);
+    }
     let code = if error.kind() == std::io::ErrorKind::UnexpectedEof {
         "Z_BUF_ERROR"
     } else {

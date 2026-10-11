@@ -971,7 +971,10 @@ fn handled_exceptions_do_not_read_stack_or_coerce_thrown_values() {
         );
         assert!(observation.stderr.is_empty());
     }
-    assert_eq!(observations[0].stdout, observations[1].stdout);
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
 }
 
 #[test]
@@ -1467,4 +1470,45 @@ fn compare_node_stream_source(source: &str) {
         );
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn zlib_crc32_and_bounded_sync_inputs_match_node_errors_and_bytes() {
+    let source = r#"
+const z=require('zlib');
+for (const data of ['hello',Buffer.from([0,127,128,255]),new Uint16Array([256,513]),new DataView(new Uint8Array([8,9]).buffer)])
+  for (const seed of [undefined,0,1,4294967295]) console.log(z.crc32(data,seed));
+for (const data of [undefined,null,true,1,[],{},function named(){},new ArrayBuffer(2)])
+  try{z.crc32(data)}catch(e){console.log(e.name,e.code,e.message)}
+for (const seed of [null,true,{},'0',-1,1.5,Infinity,NaN,4294967296])
+  try{z.crc32('hello',seed)}catch(e){console.log(e.name,e.code,e.message)}
+console.log(z.crc32.name,z.crc32.length,!!z.crc32.prototype);
+for (const data of [undefined,null,true,1,[],{},function named(){}])
+  try{z.deflateSync(data)}catch(e){console.log(e.name,e.code,e.message)}
+for (const data of [new Uint16Array([256,513]),new DataView(new Uint8Array([8,9]).buffer),new Uint8Array([1,2]).buffer])
+  console.log(z.inflateSync(z.deflateSync(data)).toString('hex'));
+const encoded=z.brotliCompressSync(Buffer.alloc(256));
+for (const limit of [64,128.5,256,undefined,NaN,null,'64',0,Infinity])
+  try{console.log('length',z.brotliDecompressSync(encoded,{maxOutputLength:limit}).length)}
+  catch(e){console.log(e.name,e.code,e.message)}
+console.log(z.gunzipSync(Buffer.concat([z.gzipSync('abc'),z.gzipSync('def')])).toString());
+"#;
+    compare_node_stream_source(source);
+}
+
+#[test]
+fn zlib_callback_exceptions_escape_once_after_initial_jobs() {
+    let source = r#"
+const z=require('zlib');
+let tick=false,promise=false,count=0;
+const marker={};
+process.nextTick(()=>tick=true);
+Promise.resolve().then(()=>promise=true);
+process.on('uncaughtException',error=>console.log('uncaught',error===marker,count));
+z.gzip('callback',function(error,buffer){
+  count++;console.log('done',error===null,z.gunzipSync(buffer).toString(),tick,promise,this===globalThis);
+  throw marker;
+});
+"#;
+    compare_node_stream_source(source);
 }
