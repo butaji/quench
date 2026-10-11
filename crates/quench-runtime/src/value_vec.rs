@@ -5,7 +5,10 @@ const START_MASK: u32 = 0x3fff_ffff;
 const NON_EXTENSIBLE: u32 = 1 << 30;
 const FROZEN: u32 = 1 << 31;
 const DICTIONARY_STORAGE: u32 = 1 << 31;
-const SHAPE_MASK: u32 = !DICTIONARY_STORAGE;
+const OBJECT_EXTRAS: u32 = 1 << 30;
+const ARRAY_ELEMENTS: u32 = 1 << 29;
+const SHAPE_CAPACITY: u32 = 1 << 29;
+const SHAPE_MASK: u32 = SHAPE_CAPACITY - 1;
 const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
@@ -37,8 +40,39 @@ impl ValueVec {
         }
     }
 
+    pub(crate) const fn array_property_storage(shape: u32) -> Self {
+        Self {
+            start: EMPTY_START,
+            auxiliary: shape | ARRAY_ELEMENTS,
+        }
+    }
+
     pub(crate) const fn auxiliary(self) -> u32 {
         self.auxiliary & SHAPE_MASK
+    }
+
+    pub(crate) const fn has_object_extras(self) -> bool {
+        self.auxiliary & OBJECT_EXTRAS != 0
+    }
+
+    pub(crate) const fn has_array_elements(self) -> bool {
+        self.auxiliary & ARRAY_ELEMENTS != 0
+    }
+
+    pub(crate) fn set_array_elements(&mut self, value: bool) {
+        if value {
+            self.auxiliary |= ARRAY_ELEMENTS;
+        } else {
+            self.auxiliary &= !ARRAY_ELEMENTS;
+        }
+    }
+
+    pub(crate) fn set_object_extras(&mut self, value: bool) {
+        if value {
+            self.auxiliary |= OBJECT_EXTRAS;
+        } else {
+            self.auxiliary &= !OBJECT_EXTRAS;
+        }
     }
 
     pub(crate) fn has_inline_property_storage(self) -> bool {
@@ -47,7 +81,8 @@ impl ValueVec {
 
     pub(crate) fn set_auxiliary(&mut self, value: u32) {
         assert!(value <= SHAPE_MASK, "object shape table exhausted");
-        self.auxiliary = (self.auxiliary & DICTIONARY_STORAGE) | value;
+        self.auxiliary =
+            (self.auxiliary & (DICTIONARY_STORAGE | OBJECT_EXTRAS | ARRAY_ELEMENTS)) | value;
     }
 
     fn is_dictionary(self) -> bool {
@@ -92,6 +127,8 @@ impl ValueVec {
     pub(crate) fn preserve_integrity_from(&mut self, previous: Self) {
         self.start = (self.start & !(NON_EXTENSIBLE | FROZEN))
             | (previous.start & (NON_EXTENSIBLE | FROZEN));
+        self.auxiliary = (self.auxiliary & !(OBJECT_EXTRAS | ARRAY_ELEMENTS))
+            | (previous.auxiliary & (OBJECT_EXTRAS | ARRAY_ELEMENTS));
     }
 
     fn start(self) -> usize {

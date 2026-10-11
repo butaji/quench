@@ -60,17 +60,16 @@ fn promoted_immutable_parameters_preserve_order_and_survive_collection() {
     assert!(program.functions[3].local_registers.is_empty());
 }
 
-
 #[test]
 fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
     use crate::heap::Cell;
     let program = Engine::specialize("", "descriptor-owner.js").unwrap();
     let mut vm = Vm::new(SilentHost);
-    let owner = vm.heap.alloc(Cell::Array {
-        object: Vm::<SilentHost>::empty_object(Value::NULL),
-        elements: Rc::new(Vec::new()),
-    });
+    let owner = vm.heap.alloc(Cell::array(
+        Value::NULL,
+        Rc::new(Vec::new()),
+    ));
     let setter = vm.native_with_env(Native::Object, owner);
     let owner_weak = vm.heap.weak_handle(owner).unwrap();
     let setter_weak = vm.heap.weak_handle(setter).unwrap();
@@ -4318,7 +4317,9 @@ fn property_copy_roots_release_after_callback_completion() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let args = match vm.heap.get(operands) {
-                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                    Some(cell @ super::Cell::Array { .. }) => {
+                        cell.array_elements().as_ref().clone()
+                    }
                     _ => panic!("operands"),
                 };
                 let handles = args
@@ -4410,7 +4411,9 @@ fn descriptor_snapshot_and_assign_root_fresh_native_arguments() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let args = match vm.heap.get(operands) {
-                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                    Some(cell @ super::Cell::Array { .. }) => {
+                        cell.array_elements().as_ref().clone()
+                    }
                     _ => panic!("operands"),
                 };
                 let source_handle = vm.heap.weak_handle(args[1]).unwrap();
@@ -4559,7 +4562,9 @@ fn for_in_roots_release_after_prototype_and_key_callbacks() {
                     }
                     Ok(result) => {
                         let elements = match vm.heap.get(result) {
-                            Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                            Some(cell @ super::Cell::Array { .. }) => {
+                                cell.array_elements().as_ref().clone()
+                            }
                             _ => panic!("key snapshot"),
                         };
                         let names = elements
@@ -4689,7 +4694,9 @@ fn proxy_introspection_roots_release_after_nested_validation() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let args = match vm.heap.get(operands) {
-                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                    Some(cell @ super::Cell::Array { .. }) => {
+                        cell.array_elements().as_ref().clone()
+                    }
                     _ => panic!("operands"),
                 };
                 let handles = args
@@ -4836,7 +4843,9 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let args = match vm.heap.get(operands) {
-                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                    Some(cell @ super::Cell::Array { .. }) => {
+                        cell.array_elements().as_ref().clone()
+                    }
                     _ => panic!("operands"),
                 };
                 let handles = args
@@ -5304,7 +5313,9 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         .call_value(&program, factory, Value::UNDEFINED, &[])
                         .unwrap();
                     let (proxy, raw) = match vm.heap.get(values) {
-                        Some(super::Cell::Array { elements, .. }) => (elements[0], elements[1]),
+                        Some(cell @ super::Cell::Array { .. }) => {
+                            (cell.array_elements()[0], cell.array_elements()[1])
+                        }
                         _ => panic!("operands"),
                     };
                     let key = if symbol {
@@ -5673,7 +5684,9 @@ fn coerced_binary_operands_restore_roots_after_each_completion() {
                         .call_value(&program, factory, Value::UNDEFINED, &[])
                         .unwrap();
                     let (left, right) = match vm.heap.get(values) {
-                        Some(super::Cell::Array { elements, .. }) => (elements[0], elements[1]),
+                        Some(cell @ super::Cell::Array { .. }) => {
+                            (cell.array_elements()[0], cell.array_elements()[1])
+                        }
                         _ => panic!("operands"),
                     };
                     let handles = [left, right].map(|value| vm.heap.weak_handle(value).unwrap());
@@ -5877,7 +5890,9 @@ fn instanceof_roots_fresh_inputs_across_lookup_and_traversal() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let (value, constructor) = match vm.heap.get(values) {
-                    Some(super::Cell::Array { elements, .. }) => (elements[0], elements[1]),
+                    Some(cell @ super::Cell::Array { .. }) => {
+                        (cell.array_elements()[0], cell.array_elements()[1])
+                    }
                     _ => panic!("operands"),
                 };
                 let handles = [value, constructor].map(|v| vm.heap.weak_handle(v).unwrap());
@@ -5950,9 +5965,11 @@ fn instanceof_roots_detached_prototype_and_restores_cursor_after_throw() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let values = match vm.heap.get(operands) {
-                    Some(super::Cell::Array { elements, .. }) => {
-                        [elements[0], elements[1], elements[2]]
-                    }
+                    Some(cell @ super::Cell::Array { .. }) => [
+                        cell.array_elements()[0],
+                        cell.array_elements()[1],
+                        cell.array_elements()[2],
+                    ],
                     _ => panic!("operands"),
                 };
                 let handles = values.map(|value| vm.heap.weak_handle(value).unwrap());
@@ -6171,17 +6188,17 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                         helper_running: false,
                         helper_started: false,
                         generator: Some(Box::new(GeneratorRecord {
-                        continuation: Some(continuation),
-                        realm,
-                        done: false,
-                        running: false,
-                        requests: [AsyncGeneratorRequest {
-                            operation: AsyncGeneratorOperation::Next,
-                            promise: request_promise,
-                            value: request_value,
-                        }]
-                        .into(),
-                    })),
+                            continuation: Some(continuation),
+                            realm,
+                            done: false,
+                            running: false,
+                            requests: [AsyncGeneratorRequest {
+                                operation: AsyncGeneratorOperation::Next,
+                                promise: request_promise,
+                                value: request_value,
+                            }]
+                            .into(),
+                        })),
                     }),
                 });
                 owner = Some(vm.heap.root(value));
@@ -6291,9 +6308,9 @@ fn array_iterator_advance_roots_owner_and_applies_index_transition() {
                             let mut value = vm.own_property(result, atom).unwrap();
                             if native == Native::ArrayEntries {
                                 value = match vm.heap.get(value) {
-                                    Some(super::Cell::Array { elements, .. }) => {
-                                        assert_eq!(elements[0].as_number(), Some(0.0));
-                                        elements[1]
+                                    Some(cell @ super::Cell::Array { .. }) => {
+                                        assert_eq!(cell.array_elements()[0].as_number(), Some(0.0));
+                                        cell.array_elements()[1]
                                     }
                                     _ => panic!("entry"),
                                 };
@@ -6504,7 +6521,9 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
                     "raw" => source,
                     "protocol" => vm.iterator_from(&program, &[source]).unwrap(),
                     _ => vm.heap.alloc(super::Cell::Iterator {
-                        object: Box::new(Vm::<Test262Host>::empty_object(vm.async_from_sync_iterator_proto)),
+                        object: Box::new(Vm::<Test262Host>::empty_object(
+                            vm.async_from_sync_iterator_proto,
+                        )),
                         source,
                         kind: super::IteratorKind::AsyncFromSync,
                         index: 0,
@@ -6709,7 +6728,9 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let iterator = vm.heap.alloc(super::Cell::Iterator {
-                    object: Box::new(Vm::<Test262Host>::empty_object(vm.regexp_string_iterator_proto)),
+                    object: Box::new(Vm::<Test262Host>::empty_object(
+                        vm.regexp_string_iterator_proto,
+                    )),
                     source: matcher,
                     kind: super::IteratorKind::RegExpStringMatchAll,
                     index: 0,
@@ -6717,12 +6738,16 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                     ext: Box::new(crate::heap::IteratorExt {
                         next_method: None,
                         helper: Some(Box::new(
-                        crate::heap::IteratorHelper::RegExpStringMatchAll {
-                            input: JsString::from_units(if full { &[0xd800, 97] } else { &[97] }),
-                            global: true,
-                            unicode: true,
-                        },
-                    )),
+                            crate::heap::IteratorHelper::RegExpStringMatchAll {
+                                input: JsString::from_units(if full {
+                                    &[0xd800, 97]
+                                } else {
+                                    &[97]
+                                }),
+                                global: true,
+                                unicode: true,
+                            },
+                        )),
                         helper_running: false,
                         helper_started: false,
                         generator: None,
@@ -7962,8 +7987,7 @@ fn regexp_entrypoints_root_receivers_and_arguments_through_callbacks() {
                             match kind {
                                 "compile" => {
                                     assert_eq!(value, values[0]);
-                                    let Some(super::Cell::RegExp { meta, .. }) =
-                                        vm.heap.get(value)
+                                    let Some(super::Cell::RegExp { meta, .. }) = vm.heap.get(value)
                                     else {
                                         panic!("compiled receiver retained");
                                     };

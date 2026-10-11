@@ -1884,7 +1884,7 @@ impl<H: Host> Vm<H> {
         let keys_value = self.object_own_keys(p, input)?;
         let keys_root = self.heap.root(keys_value);
         let keys = match self.heap.get(keys_value) {
-            Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
+            Some(cell @ Cell::Array { .. }) => cell.array_elements().as_ref().clone(),
             _ => Vec::new(),
         };
         let mut iterators = Vec::new();
@@ -2788,9 +2788,9 @@ impl<H: Host> Vm<H> {
                 return self.async_from_sync_reject(p, iterator, error, close_on_rejection);
             }
         };
-        let env = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(vec![
+        let env = self.heap.alloc(Cell::array(
+            self.array_proto,
+            Rc::new(vec![
                 if done { Value::TRUE } else { Value::FALSE },
                 iterator,
                 if close_on_rejection {
@@ -2799,7 +2799,7 @@ impl<H: Host> Vm<H> {
                     Value::FALSE
                 },
             ]),
-        });
+        ));
         let fulfilled = self.native_with_env(Native::AsyncFromSyncValue, env);
         let rejected = self.native_with_env(Native::AsyncFromSyncValueRejected, env);
         self.promise_then_intrinsic(p, value_promise, fulfilled, rejected)
@@ -2809,10 +2809,13 @@ impl<H: Host> Vm<H> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let env = self.active_native_env().unwrap_or(Value::UNDEFINED);
         let (done, iterator) = match self.heap.get(env) {
-            Some(Cell::Array { elements, .. }) => (
-                elements.first().is_some_and(|done| self.truthy(*done)),
-                elements.get(1).copied().unwrap_or(Value::UNDEFINED),
-            ),
+            Some(cell @ Cell::Array { .. }) => {
+                let elements = cell.array_elements();
+                (
+                    elements.first().is_some_and(|done| self.truthy(*done)),
+                    elements.get(1).copied().unwrap_or(Value::UNDEFINED),
+                )
+            }
             _ => (false, Value::UNDEFINED),
         };
         if done {
@@ -2831,10 +2834,13 @@ impl<H: Host> Vm<H> {
         let reason = args.first().copied().unwrap_or(Value::UNDEFINED);
         let env = self.active_native_env().unwrap_or(Value::UNDEFINED);
         let (iterator, close_on_rejection) = match self.heap.get(env) {
-            Some(Cell::Array { elements, .. }) => (
-                elements.get(1).copied().unwrap_or(Value::UNDEFINED),
-                elements.get(2).is_some_and(|close| self.truthy(*close)),
-            ),
+            Some(cell @ Cell::Array { .. }) => {
+                let elements = cell.array_elements();
+                (
+                    elements.get(1).copied().unwrap_or(Value::UNDEFINED),
+                    elements.get(2).is_some_and(|close| self.truthy(*close)),
+                )
+            }
             _ => (Value::UNDEFINED, false),
         };
         if close_on_rejection {
@@ -2922,14 +2928,20 @@ impl<H: Host> Vm<H> {
             }
             if kind == IteratorKind::RegExpStringMatchAll {
                 let (input, global, unicode) = match vm.heap.get(this) {
-                    Some(Cell::Iterator { ext, .. }) if let Some(helper) = &ext.helper => match helper.as_ref() {
-                        IteratorHelper::RegExpStringMatchAll {
-                            input,
-                            global,
-                            unicode,
-                        } => (input.clone(), *global, *unicode),
-                        _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
-                    },
+                    Some(Cell::Iterator { ext, .. }) if let Some(helper) = &ext.helper => {
+                        match helper.as_ref() {
+                            IteratorHelper::RegExpStringMatchAll {
+                                input,
+                                global,
+                                unicode,
+                            } => (input.clone(), *global, *unicode),
+                            _ => {
+                                return Err(
+                                    vm.type_error(p, "invalid RegExp string iterator".into())
+                                );
+                            }
+                        }
+                    }
                     _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
                 };
                 let input_value = vm.heap.alloc(Cell::String(input.clone()));
@@ -3042,10 +3054,10 @@ impl<H: Host> Vm<H> {
             };
             let item = selected.map(|(value, second)| {
                 second.map_or(value, |second| {
-                    vm.heap.alloc(Cell::Array {
-                        object: Self::empty_object(vm.array_proto),
-                        elements: Rc::new(vec![value, second]),
-                    })
+                    vm.heap.alloc(Cell::array(
+                        vm.array_proto,
+                        Rc::new(vec![value, second]),
+                    ))
                 })
             });
             if let Some(value) = item {
@@ -3107,10 +3119,10 @@ impl<H: Host> Vm<H> {
             Ok(match kind {
                 IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
                 IteratorKind::ArrayEntries => {
-                    let entry = vm.heap.alloc(Cell::Array {
-                        object: Self::empty_object(vm.array_proto),
-                        elements: Rc::new(vec![Value::number(index as f64), value]),
-                    });
+                    let entry = vm.heap.alloc(Cell::array(
+                        vm.array_proto,
+                        Rc::new(vec![Value::number(index as f64), value]),
+                    ));
                     Some((entry, None))
                 }
                 _ => None,

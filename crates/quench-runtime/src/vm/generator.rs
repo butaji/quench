@@ -62,7 +62,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<Value, JsError> {
-        self.profile.function(self.active_program.raw(), id as usize);
+        self.profile
+            .function(self.active_program.raw(), id as usize);
         let parameter_eval_arguments_error =
             p.functions[id as usize].parameter_eval_arguments_error;
         if parameter_eval_arguments_error {
@@ -72,24 +73,26 @@ impl<H: Host> Vm<H> {
             );
         }
         let function = &p.functions[id as usize];
-        let mut frame = self.frame_pool.pop().unwrap_or_else(|| Box::new(Frame {
-            context: CallContext::Internal,
-            original_arguments: vec![],
-            program: self.active_program,
-            function: 0,
-            pc: 0,
-            binding_site_pc: None,
-            env: Value::NULL,
-            this: Value::UNDEFINED,
-            locals: vec![],
-            dynamic_bindings: vec![],
-            captured: false,
-            registers: vec![],
-            active_iterators: vec![],
-            with_objects: Vec::new(),
-            with_base: self.with_stack.len(),
-            fixed_this: false,
-        }));
+        let mut frame = self.frame_pool.pop().unwrap_or_else(|| {
+            Box::new(Frame {
+                context: CallContext::Internal,
+                original_arguments: vec![],
+                program: self.active_program,
+                function: 0,
+                pc: 0,
+                binding_site_pc: None,
+                env: Value::NULL,
+                this: Value::UNDEFINED,
+                locals: vec![],
+                dynamic_bindings: vec![],
+                captured: false,
+                registers: vec![],
+                active_iterators: vec![],
+                with_objects: Vec::new(),
+                with_base: self.with_stack.len(),
+                fixed_this: false,
+            })
+        });
         frame
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
@@ -99,20 +102,20 @@ impl<H: Host> Vm<H> {
             frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
         }
         if function.rest {
-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(args.get(fixed..).unwrap_or_default().to_vec()),
-            });
+            frame.locals[fixed] = self.heap.alloc(Cell::array(
+                self.array_proto,
+                Rc::new(args.get(fixed..).unwrap_or_default().to_vec()),
+            ));
         }
         if let Some(slot) = function.self_binding_slot {
             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
         }
         if let Some(slot) = function.arguments_slot {
             let mapped = function.arguments_are_mapped();
-            let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.object_proto),
-                elements: Rc::new(args.to_vec()),
-            });
+            let arguments = self.heap.alloc(Cell::array(
+                self.object_proto,
+                Rc::new(args.to_vec()),
+            ));
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
             if mapped {
@@ -309,14 +312,14 @@ impl<H: Host> Vm<H> {
                         return Ok(());
                     }
                 };
-                let environment = vm.heap.alloc(Cell::Array {
-                    object: Self::empty_object(vm.array_proto),
-                    elements: Rc::new(vec![
+                let environment = vm.heap.alloc(Cell::array(
+                    vm.array_proto,
+                    Rc::new(vec![
                         generator,
                         iterator,
                         Value::number(f64::from(destination)),
                     ]),
-                });
+                ));
                 let start =
                     vm.native_with_env(Native::AsyncGeneratorDelegateReturnStart, environment);
                 let completion = vm.promise_then(p, awaited, start, Value::UNDEFINED)?;
@@ -340,10 +343,10 @@ impl<H: Host> Vm<H> {
                     return Ok(());
                 }
             };
-            let environment = vm.heap.alloc(Cell::Array {
-                object: Self::empty_object(vm.array_proto),
-                elements: Rc::new(vec![generator, promise]),
-            });
+            let environment = vm.heap.alloc(Cell::array(
+                vm.array_proto,
+                Rc::new(vec![generator, promise]),
+            ));
             let fulfilled = vm.native_with_env(Native::AsyncGeneratorReturnFulfilled, environment);
             let rejected = vm.native_with_env(Native::AsyncGeneratorReturnRejected, environment);
             vm.promise_then_intrinsic(p, awaited, fulfilled, rejected)?;
@@ -359,9 +362,10 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async generator return reaction without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+        let Some(cell @ Cell::Array { .. }) = self.heap.get(environment) else {
             return Err(JsError("async generator return state is invalid".into()));
         };
+        let elements = cell.array_elements();
         let [generator, promise] = elements.as_slice() else {
             return Err(JsError("async generator return state is malformed".into()));
         };
@@ -410,9 +414,10 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async generator return rejection without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+        let Some(cell @ Cell::Array { .. }) = self.heap.get(environment) else {
             return Err(JsError("async generator return state is invalid".into()));
         };
+        let elements = cell.array_elements();
         let [generator, promise] = elements.as_slice() else {
             return Err(JsError("async generator return state is malformed".into()));
         };
@@ -438,9 +443,10 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate return without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+        let Some(cell @ Cell::Array { .. }) = self.heap.get(environment) else {
             return Err(JsError("async delegate return state is invalid".into()));
         };
+        let elements = cell.array_elements();
         let [generator, iterator, destination] = elements.as_slice() else {
             return Err(JsError("async delegate return state is malformed".into()));
         };
@@ -719,16 +725,16 @@ impl<H: Host> Vm<H> {
             return Ok(promise);
         }
         let unwrapped = self.async_from_sync_result(p, adapter, result, false)?;
-        let env = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(vec![
+        let env = self.heap.alloc(Cell::array(
+            self.array_proto,
+            Rc::new(vec![
                 generator,
                 Value::number(f64::from(destination)),
                 Value::FALSE,
                 Value::FALSE,
                 Value::TRUE,
             ]),
-        });
+        ));
         let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
         let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
         self.promise_then(p, unwrapped, fulfilled, rejected)
@@ -919,9 +925,9 @@ impl<H: Host> Vm<H> {
                 (result, false)
             };
             let promise = self.promise_for_value(p, result)?;
-            let env = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(vec![
+            let env = self.heap.alloc(Cell::array(
+                self.array_proto,
+                Rc::new(vec![
                     generator,
                     Value::number(f64::from(destination)),
                     Value::number(if throwing { 1.0 } else { 0.0 }),
@@ -932,7 +938,7 @@ impl<H: Host> Vm<H> {
                         Value::FALSE
                     },
                 ]),
-            });
+            ));
             let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
             let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
             self.promise_then(p, promise, fulfilled, rejected)
@@ -968,9 +974,10 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate reaction without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
+        let Some(cell @ Cell::Array { .. }) = self.heap.get(env) else {
             return Err(JsError("async delegate reaction state is invalid".into()));
         };
+        let elements = cell.array_elements();
         let [generator, destination, throwing, adapter, _async_from_sync] = elements.as_slice()
         else {
             return Err(JsError("async delegate reaction state is malformed".into()));
@@ -1046,9 +1053,10 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate rejection without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
+        let Some(cell @ Cell::Array { .. }) = self.heap.get(env) else {
             return Err(JsError("async delegate rejection state is invalid".into()));
         };
+        let elements = cell.array_elements();
         let generator = elements
             .first()
             .copied()

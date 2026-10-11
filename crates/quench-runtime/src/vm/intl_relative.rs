@@ -133,10 +133,10 @@ impl<H: Host> Vm<H> {
                         Ok(object)
                     })
                     .collect::<Result<Vec<_>, JsError>>()?;
-                Ok(self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_proto),
-                    elements: Rc::new(values),
-                }))
+                Ok(self.heap.alloc(Cell::array(
+                    self.array_proto,
+                    Rc::new(values),
+                )))
             }
             _ => Err(JsError("invalid RelativeTimeFormat operation".into())),
         }

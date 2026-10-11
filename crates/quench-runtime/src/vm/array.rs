@@ -23,7 +23,8 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn array_value_at(&self, array: Value, index: usize) -> Value {
         let value = match self.heap.get(array) {
-            Some(Cell::Array { elements, .. }) => elements
+            Some(cell @ Cell::Array { .. }) => cell
+                .array_elements()
                 .get(index)
                 .copied()
                 .filter(|value| !value.is_deleted())
