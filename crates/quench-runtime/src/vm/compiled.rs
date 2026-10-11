@@ -119,10 +119,17 @@ struct CallContext {
     table: *const usize,
     vm: *mut (),
     env: u64,
+    /// The entry trampoline's stack pointer after it saved the caller's
+    /// registers; a guard fault resumes there.
+    entry_stack: usize,
+    /// The guarded memory reservation compiled code may fault in.
+    guard_start: usize,
+    guard_end: usize,
 }
 
 const CONTEXT_STACK_LIMIT: i32 = 0;
 const CONTEXT_TABLE: i32 = 8;
+const CONTEXT_ENTRY_STACK: u8 = 32;
 
 /// A compiled function's entry: (context, memory base, memory length,
 /// arguments, result) -> status.
@@ -142,6 +149,9 @@ pub(super) struct CompiledProgram {
     functions: Vec<Option<CompiledFunction>>,
     /// The environment slot of the memory compiled code accesses.
     memory_slot: Option<u32>,
+    /// Memory accesses rely on the memory's guard reservation instead of
+    /// bounds checks.
+    guarded: bool,
 }
 
 /// Executable memory holding a program's machine code.
@@ -636,6 +646,7 @@ extern "C" fn global_set_callout<H: Host>(context: *mut CallContext, binding: u6
 }
 
 struct Emitter<'a, 'b, H: Host> {
+    guarded: bool,
     analysis: &'a Analysis<'a, H>,
     builder: FunctionBuilder<'b>,
     plan: &'a Plan,
@@ -791,6 +802,13 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// The host address of a checked `width`-byte access at `address + offset`.
     fn address(&mut self, address: ir::Value, offset: u32, width: usize) -> ir::Value {
         let address = self.builder.ins().uextend(types::I64, address);
+        if self.guarded {
+            // Index plus offset plus width stays inside the reservation; past
+            // the accessible prefix the access faults, and the fault handler
+            // raises the out-of-bounds trap (see `guard_fault`).
+            let host = self.builder.ins().iadd(self.base, address);
+            return self.builder.ins().iadd_imm_s(host, i64::from(offset));
+        }
         let end = self
             .builder
             .ins()
@@ -1133,6 +1151,7 @@ impl<H: Host> Analysis<'_, H> {
         isa: &dyn cranelift_codegen::isa::TargetIsa,
         index: usize,
         plans: &[Option<Plan>],
+        guarded: bool,
     ) -> Option<Vec<u8>> {
         let plan = plans[index].as_ref()?;
         let function = &self.code.functions[index];
@@ -1158,6 +1177,7 @@ impl<H: Host> Analysis<'_, H> {
         let parameters = builder.block_params(entry).to_vec();
         let (context, base, length) = (parameters[0], parameters[1], parameters[2]);
         let mut emitter = Emitter {
+            guarded,
             analysis: self,
             builder,
             plan,
@@ -1349,6 +1369,173 @@ impl<H: Host> Analysis<'_, H> {
     }
 }
 
+/// The guard reservation of an unshared memory binding.
+fn guarded_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
+    let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
+        return None;
+    };
+    let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
+        return None;
+    };
+    state.try_borrow().ok()?.bytes.guard()
+}
+
+thread_local! {
+    /// The context of the compiled call running on this thread, which a
+    /// guard fault resumes from.
+    static ACTIVE_CONTEXT: std::cell::Cell<*mut CallContext> =
+        const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+/// Enters compiled code: (context, base, length, arguments, result, entry)
+/// -> status. It saves the caller's callee-saved registers, records its
+/// stack pointer in the context, and calls `entry`; a guard fault resumes at
+/// its landing, which returns the out-of-bounds status through the same
+/// epilogue.
+type Trampoline =
+    unsafe extern "C" fn(*mut CallContext, u64, u64, *const u64, *mut u64, Entry) -> u32;
+
+/// The trampoline and its landing, once the fault handler is installed.
+struct GuardSupport {
+    _code: CodeMemory,
+    trampoline: Trampoline,
+    landing: usize,
+}
+
+// SAFETY: immutable executable code, shared by every thread.
+unsafe impl Send for GuardSupport {}
+unsafe impl Sync for GuardSupport {}
+
+/// The x86-64 System V trampoline, as machine code. Offsets of `RESUME` and
+/// `LANDING` are into this array.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+const TRAMPOLINE_CODE: [u8; 50] = [
+    0x55, // push rbp
+    0x48, 0x89, 0xe5, // mov rbp, rsp
+    0x53, // push rbx
+    0x41, 0x54, // push r12
+    0x41, 0x55, // push r13
+    0x41, 0x56, // push r14
+    0x41, 0x57, // push r15
+    0x48, 0x83, 0xec, 0x08, // sub rsp, 8 (keeps the call aligned)
+    0x48, 0x89, 0x67, CONTEXT_ENTRY_STACK, // mov [rdi + entry_stack], rsp
+    0x41, 0xff, 0xd1, // call r9
+    // RESUME (24):
+    0x48, 0x83, 0xc4, 0x08, // add rsp, 8
+    0x41, 0x5f, // pop r15
+    0x41, 0x5e, // pop r14
+    0x41, 0x5d, // pop r13
+    0x41, 0x5c, // pop r12
+    0x5b, // pop rbx
+    0x5d, // pop rbp
+    0xc3, // ret
+    // LANDING (39):
+    0xb8, 0, 0, 0, 0, // mov eax, status (patched)
+    0xe9, 0, 0, 0, 0, // jmp RESUME (patched)
+    0xcc, // int3
+];
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+const TRAMPOLINE_RESUME: usize = 24;
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+const TRAMPOLINE_LANDING: usize = 39;
+
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+static PREVIOUS_SEGV: std::sync::OnceLock<libc::sigaction> = std::sync::OnceLock::new();
+
+/// The guard support of this host, installing the fault handler on first
+/// use; `None` where guard faults cannot be resumed.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+fn guard_support() -> Option<&'static GuardSupport> {
+    static SUPPORT: std::sync::OnceLock<Option<GuardSupport>> = std::sync::OnceLock::new();
+    SUPPORT
+        .get_or_init(|| {
+            let mut code = TRAMPOLINE_CODE;
+            let status = trap_status(crate::WasmTrap::OutOfBoundsMemory) as u32;
+            code[TRAMPOLINE_LANDING + 1..TRAMPOLINE_LANDING + 5]
+                .copy_from_slice(&status.to_le_bytes());
+            let after_jump = TRAMPOLINE_LANDING + 10;
+            let displacement = TRAMPOLINE_RESUME as i32 - after_jump as i32;
+            code[TRAMPOLINE_LANDING + 6..TRAMPOLINE_LANDING + 10]
+                .copy_from_slice(&displacement.to_le_bytes());
+            let memory = CodeMemory::new(&code)?;
+            // SAFETY: the code implements `Trampoline` for this ABI.
+            let trampoline = unsafe { std::mem::transmute::<*mut u8, Trampoline>(memory.pointer) };
+            let landing = memory.pointer as usize + TRAMPOLINE_LANDING;
+            // SAFETY: installs a handler that only redirects faults inside an
+            // active compiled call's guard and forwards every other fault to
+            // the previous handler.
+            unsafe {
+                let mut action: libc::sigaction = std::mem::zeroed();
+                action.sa_sigaction = guard_fault as *const () as usize;
+                action.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK | libc::SA_NODEFER;
+                libc::sigemptyset(&mut action.sa_mask);
+                let mut previous: libc::sigaction = std::mem::zeroed();
+                if libc::sigaction(libc::SIGSEGV, &action, &mut previous) != 0 {
+                    return None;
+                }
+                let _ = PREVIOUS_SEGV.set(previous);
+            }
+            Some(GuardSupport {
+                _code: memory,
+                trampoline,
+                landing,
+            })
+        })
+        .as_ref()
+}
+
+#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+fn guard_support() -> Option<&'static GuardSupport> {
+    None
+}
+
+fn guard_trampoline() -> Option<Trampoline> {
+    guard_support().map(|support| support.trampoline)
+}
+
+/// A fault inside the running compiled call's guard reservation resumes at
+/// the trampoline's landing with the trampoline's saved stack; anything else
+/// belongs to the previous handler.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+extern "C" fn guard_fault(signal: i32, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
+    let active = ACTIVE_CONTEXT.with(std::cell::Cell::get);
+    // SAFETY: the kernel passes valid signal information and context.
+    unsafe {
+        let address = (*info).si_addr() as usize;
+        if !active.is_null()
+            && (*active).guard_start <= address
+            && address < (*active).guard_end
+            && let Some(support) = guard_support()
+        {
+            let context = &mut *context.cast::<libc::ucontext_t>();
+            context.uc_mcontext.gregs[libc::REG_RSP as usize] = (*active).entry_stack as i64;
+            context.uc_mcontext.gregs[libc::REG_RIP as usize] = support.landing as i64;
+            return;
+        }
+        let Some(previous) = PREVIOUS_SEGV.get() else {
+            return;
+        };
+        match previous.sa_sigaction {
+            libc::SIG_DFL | libc::SIG_IGN => {
+                // Restore the previous disposition; the fault repeats on return.
+                libc::sigaction(libc::SIGSEGV, previous, std::ptr::null_mut());
+            }
+            handler if previous.sa_flags & libc::SA_SIGINFO != 0 => {
+                let handler = std::mem::transmute::<
+                    usize,
+                    extern "C" fn(i32, *mut libc::siginfo_t, *mut libc::c_void),
+                >(handler);
+                handler(signal, info, context);
+            }
+            handler => {
+                let handler = std::mem::transmute::<usize, extern "C" fn(i32)>(handler);
+                handler(signal);
+            }
+        }
+    }
+}
+
 /// Code alignment for each compiled function.
 const FUNCTION_ALIGNMENT: usize = 64;
 
@@ -1405,6 +1592,15 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let isa = target_isa()?;
+        // Accesses may rely on the guard when the memory has one and this
+        // host resumes guard faults.
+        let guarded = guard_trampoline().is_some()
+            && memory_slot.is_some_and(|slot| {
+                self.heap
+                    .environment_slot(env, slot as usize)
+                    .and_then(|binding| guarded_memory(self, binding))
+                    .is_some()
+            });
         let mut bytes = Vec::new();
         let mut offsets = vec![None; count];
         let mut entries = vec![None; count];
@@ -1418,7 +1614,7 @@ impl<H: Host> Vm<H> {
             if plans[index].is_none() {
                 continue;
             }
-            let body = analysis.compile_function(&*isa, index, &plans)?;
+            let body = analysis.compile_function(&*isa, index, &plans, guarded)?;
             offsets[index] = Some(place(&mut bytes, body));
             let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?)?;
             entries[index] = Some(place(&mut bytes, entry));
@@ -1450,6 +1646,7 @@ impl<H: Host> Vm<H> {
             table,
             functions,
             memory_slot,
+            guarded,
         })
     }
 
@@ -1502,13 +1699,18 @@ impl<H: Host> Vm<H> {
         if args.len() != function.params.len() {
             return None;
         }
-        let (base, length) = match compiled.memory_slot {
+        let (base, length, guard) = match compiled.memory_slot {
             Some(slot) => {
                 let binding = self.heap.environment_slot(env, slot as usize)?;
                 let view = super::dispatch_fast::unshared_memory(self, binding)?;
-                (view.0 as u64, view.1 as u64)
+                let guard = guarded_memory(self, binding);
+                // Code compiled without bounds checks needs this memory's guard.
+                if compiled.guarded && guard.is_none() {
+                    return None;
+                }
+                (view.0 as u64, view.1 as u64, guard)
             }
-            None => (0, 0),
+            None => (0, 0, None),
         };
         let mut raw: smallvec::SmallVec<[u64; 8]> = smallvec::SmallVec::new();
         for (value, ty) in args.iter().zip(&function.params) {
@@ -1522,18 +1724,45 @@ impl<H: Host> Vm<H> {
         }
         let marker = 0u8;
         let stack_pointer = std::hint::black_box(&marker as *const u8 as usize);
+        let (guard_start, guard_end) = guard.map_or((0, 0), |(start, size)| {
+            (start as usize, start as usize + size)
+        });
         let mut context = CallContext {
             stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
             table: compiled.table.as_ptr(),
             vm: (self as *mut Self).cast(),
             env: env.to_bits(),
+            entry_stack: 0,
+            guard_start,
+            guard_end,
         };
         let mut out = 0u64;
-        // SAFETY: the entry is compiled code for this function's signature;
-        // the context, arguments and result outlive the call, and the memory
-        // view stays valid because compiled code never grows memory.
-        let status =
-            unsafe { (function.entry)(&mut context, base, length, raw.as_ptr(), &mut out) };
+        let status = match guard_trampoline() {
+            Some(trampoline) => {
+                // Compiled calls nest only through the interpreter, so the
+                // outer context returns when this call does.
+                let outer = ACTIVE_CONTEXT.with(|active| active.replace(&mut context));
+                // SAFETY: as below; the trampoline saves the caller's registers
+                // and records where a guard fault resumes.
+                let status = unsafe {
+                    trampoline(
+                        &mut context,
+                        base,
+                        length,
+                        raw.as_ptr(),
+                        &mut out,
+                        function.entry,
+                    )
+                };
+                ACTIVE_CONTEXT.with(|active| active.set(outer));
+                status
+            }
+            // SAFETY: the entry is compiled code for this function's
+            // signature; the context, arguments and result outlive the call,
+            // and the memory view stays valid because compiled code never
+            // grows memory.
+            None => unsafe { (function.entry)(&mut context, base, length, raw.as_ptr(), &mut out) },
+        };
         if status != 0 {
             let trap = TRAPS[status as usize - 1];
             return Some(Err(JsError::wasm_trap_error(trap)));
