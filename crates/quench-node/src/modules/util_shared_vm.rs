@@ -573,6 +573,21 @@ pub(crate) fn argument_type_error(
     name: &str,
     expected: &str,
 ) -> Result<RootedError, RootedError> {
+    let expected = if expected.chars().next().is_some_and(char::is_uppercase) {
+        format!("an instance of {expected}")
+    } else {
+        format!("of type {expected}")
+    };
+    argument_type_error_with_expected(context, root, name, &expected)
+}
+
+/// Already formatted union of accepted Node argument types.
+pub(crate) fn argument_type_error_with_expected(
+    context: &mut NativeContext<'_, NodeHost>,
+    root: RootId,
+    name: &str,
+    expected: &str,
+) -> Result<RootedError, RootedError> {
     let value = context
         .rooted_value(root)
         .ok_or_else(|| RootedError::host("invalid argument root"))?;
@@ -600,10 +615,22 @@ pub(crate) fn argument_type_error(
         let key = context.string_rooted("name");
         let name = context.get_property_rooted(root, key)?;
         format!("function {}", context.to_string(name)?)
-    } else if context.is_array_rooted(root)? {
-        "an instance of Array".to_owned()
     } else if context.is_object_rooted(root)? {
-        "an instance of Object".to_owned()
+        let key = context.string_rooted("constructor");
+        let constructor = context.get_property_rooted(root, key)?;
+        let name = context.string_rooted("name");
+        if context.truthy_rooted(constructor)? {
+            let constructor = context.get_property_rooted(root, key)?;
+            if context.has_property_rooted(constructor, name)? {
+                let constructor = context.get_property_rooted(root, key)?;
+                let name = context.get_property_rooted(constructor, name)?;
+                format!("an instance of {}", context.to_string(name)?)
+            } else {
+                "an instance of Object".to_owned()
+            }
+        } else {
+            "an instance of Object".to_owned()
+        }
     } else {
         format!("type bigint ({}n)", context.to_string(root)?)
     };
@@ -613,11 +640,6 @@ pub(crate) fn argument_type_error(
         format!("\"{name}\" property")
     } else {
         format!("\"{name}\" argument")
-    };
-    let expected = if expected.chars().next().is_some_and(char::is_uppercase) {
-        format!("an instance of {expected}")
-    } else {
-        format!("of type {expected}")
     };
     let error = context.type_error_rooted(&format!(
         "The {label} must be {expected}. Received {received}"
