@@ -884,7 +884,7 @@ impl FunctionCompiler<'_, '_> {
         let close = self.emit(Op::JumpFalse, iterator.done, 0, 0, 0);
         let end = self.emit(Op::Jump, 0, 0, 0, 0);
         self.patch(close);
-        self.emit(Op::IteratorClose, 0, iterator.iterator, 0, 0);
+        self.close_iterator(iterator.iterator);
         self.patch(end);
     }
 
@@ -929,7 +929,7 @@ impl FunctionCompiler<'_, '_> {
         let close_exit = self.emit(Op::Jump, 0, 0, 0, 0);
         self.patch(close);
         let close_start = self.code.len() as u32;
-        self.emit(Op::IteratorClose, 0, iterator.iterator, 0, 0);
+        self.close_iterator(iterator.iterator);
         let close_end = self.code.len() as u32;
         let close_normal = self.emit(Op::Jump, 0, 0, 0, 0);
         let ignored_atom = self.hidden_local("\0quench:binding-iterator-close-error");
