@@ -3,7 +3,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-const DEFAULT_MAX_BUFFER: f64 = (1024 * 1024) as f64;
+pub(crate) const DEFAULT_MAX_BUFFER: f64 = (1024 * 1024) as f64;
 use super::util_shared_vm::MAX_SAFE_INTEGER;
 
 pub(crate) fn function(
@@ -441,7 +441,7 @@ pub(crate) fn event(
     Ok(undefined)
 }
 
-fn validate_limit(
+pub(crate) fn validate_limit(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
     name: &str,
