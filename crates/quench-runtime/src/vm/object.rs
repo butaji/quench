@@ -575,6 +575,19 @@ impl<H: Host> Vm<H> {
                 .field_cache_hit(usize::from(hit.tier), hit.depth);
             return Ok(hit.value);
         }
+        self.get_field_uncached(p, object, atom, site)
+    }
+
+    /// The receiver-shape miss path of `get_field_cached`: strings, proxies, prototype holders,
+    /// cache population and generic lookup.
+    #[inline(never)]
+    fn get_field_uncached(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+    ) -> Result<Value, JsError> {
         let lookup = match self.heap.get(object) {
             Some(Cell::String(_)) if self.specialized && p.specialized => {
                 if !self.field_cache_atom_eligible(atom) {
