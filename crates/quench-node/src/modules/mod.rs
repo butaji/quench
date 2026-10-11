@@ -12,6 +12,8 @@ pub(crate) mod buffer_shared_vm;
 pub(crate) mod clone_shared_vm;
 pub(crate) mod child_process_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
+#[cfg(unix)]
+pub(crate) mod child_process_sync;
 pub(crate) mod console_shared_vm;
 pub(crate) mod console_source;
 pub(crate) mod crypto_sha1;

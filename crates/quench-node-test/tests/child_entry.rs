@@ -697,6 +697,45 @@ const child=cp.exec(command,{maxBuffer:0,killSignal:'SIGKILL'},(error,out,err)=>
 }
 
 #[test]
+#[cfg(unix)]
+fn synchronous_child_output_limits_match_node_values_and_errors() {
+    let source = r#"const {spawnSync,execFileSync}=require('child_process');
+for(const maxBuffer of [0,1,Infinity]) {
+  const args=['-e','process.stdout.write("hello")'];
+  const result=spawnSync(process.execPath,args,{maxBuffer});
+  const error=result.error;
+  console.log(JSON.stringify([maxBuffer,result.stdout.toString(),error?[error.name,error.code,error.errno,error.syscall===`spawnSync ${process.execPath}`,error.path===process.execPath,error.spawnargs]:null]));
+  try{console.log(execFileSync(process.execPath,args,{maxBuffer}).toString())}catch(error){console.log(error.name,error.code,error.errno,error.stdout.toString())}
+}
+const combined=spawnSync(process.execPath,['-e','process.stdout.write("a".repeat(16));process.stderr.write("b".repeat(16))'],{maxBuffer:24});
+console.log(combined.error.code,combined.stdout.length+combined.stderr.length>24);
+for(const maxBuffer of [-1,NaN,'2',null])try{spawnSync(process.execPath,[],{maxBuffer})}catch(error){console.log(error.name,error.code,error.message)}
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
 fn system_error_names_and_validation_match_node() {
     let source = r#"const {getSystemErrorName}=require('util');
 const numbers=[...Array.from({length:140},(_,i)=>-i-1),...Array.from({length:16},(_,i)=>-3000-i),-4094,-4095,-99999];

@@ -891,6 +891,30 @@ pub(crate) fn spawn_sync(
         .map(|root| property_string(context, root, "cwd"))
         .transpose()?
         .flatten();
+    let max_buffer = if let Some(options) = options {
+        let value = property(context, options, "maxBuffer")?;
+        if context
+            .rooted_value(value)
+            .is_some_and(|value| value.is_undefined())
+        {
+            super::child_process_exec_shared_vm::DEFAULT_MAX_BUFFER
+        } else {
+            super::child_process_exec_shared_vm::validate_limit(
+                context,
+                value,
+                "options.maxBuffer",
+                false,
+            )?;
+            context
+                .rooted_value(value)
+                .and_then(quench_runtime::Value::as_number)
+                // Node's synchronous binding treats an accepted null limit
+                // as zero, its unlimited-buffer sentinel.
+                .unwrap_or(0.0)
+        }
+    } else {
+        super::child_process_exec_shared_vm::DEFAULT_MAX_BUFFER
+    };
 
     let mut process = Command::new(&command);
     let argv0 = options
@@ -898,7 +922,7 @@ pub(crate) fn spawn_sync(
         .transpose()?
         .flatten();
     set_command_arg0(&mut process, argv0.as_deref());
-    process.args(arguments);
+    process.args(&arguments);
     process.stdout(Stdio::piped()).stderr(Stdio::piped());
     if let Some(cwd) = cwd {
         process.current_dir(cwd);
@@ -918,15 +942,27 @@ pub(crate) fn spawn_sync(
     let output = match process.spawn() {
         Ok(child) => {
             let pid = child.id();
-            match child.wait_with_output() {
-                Ok(output) => make_result(
+            #[cfg(unix)]
+            let collected = super::child_process_sync::collect(child, max_buffer)
+                .map(|result| (result.output, result.limit_exceeded));
+            #[cfg(not(unix))]
+            let collected = {
+                let _ = max_buffer;
+                child.wait_with_output().map(|output| (output, false))
+            };
+            match collected {
+                Ok((output, limit_exceeded)) => make_result(
                     context,
                     Some(pid),
-                    output.status.code(),
+                    if limit_exceeded {
+                        None
+                    } else {
+                        output.status.code()
+                    },
                     signal_name(&output.status),
                     &output.stdout,
                     &output.stderr,
-                    None,
+                    limit_exceeded.then(|| ("ENOBUFS", format!("spawnSync {command} ENOBUFS"))),
                 )?,
                 Err(error) => make_result(
                     context,
@@ -948,6 +984,33 @@ pub(crate) fn spawn_sync(
             make_result(context, None, None, None, &[], &[], Some((code, error.to_string())))?
         }
     };
+    #[cfg(unix)]
+    {
+        let error = property(context, output, "error")?;
+        if !context
+            .rooted_value(error)
+            .is_some_and(|value| value.is_null())
+        {
+            let code = property_string(context, error, "code")?.unwrap_or_default();
+            let number = match code.as_str() {
+                "ENOBUFS" => libc::ENOBUFS,
+                "ENOENT" => libc::ENOENT,
+                "EACCES" => libc::EACCES,
+                "EIO" => libc::EIO,
+                _ => libc::EINVAL,
+            };
+            let errno = context.number(f64::from(-number));
+            set(context, error, "errno", errno)?;
+            set_string(context, error, "syscall", &format!("spawnSync {command}"))?;
+            set(context, error, "path", command_arg)?;
+            let values = arguments
+                .iter()
+                .map(|argument| context.string_rooted(argument))
+                .collect::<Vec<_>>();
+            let spawnargs = context.array_rooted(&values)?;
+            set(context, error, "spawnargs", spawnargs)?;
+        }
+    }
     Ok(output)
 }
 
@@ -991,7 +1054,7 @@ fn make_result(
     set(context, result, "stdout", stdout)?;
     set(context, result, "stderr", stderr)?;
     let error_value = if let Some((code, message)) = error {
-        let value = context.object_rooted()?;
+        let value = context.error_rooted(&message)?;
         set_string(context, value, "code", code)?;
         set_string(context, value, "message", &message)?;
         value
