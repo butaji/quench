@@ -46,7 +46,10 @@ fn node_cli_separates_runtime_options_from_guest_arguments() {
             assert_eq!(observation.exit_code, Some(0));
             assert!(observation.stderr.is_empty());
         }
-        assert_eq!(observations[0].stdout, observations[1].stdout);
+        assert_eq!(
+            String::from_utf8_lossy(&observations[0].stdout),
+            String::from_utf8_lossy(&observations[1].stdout)
+        );
     }
 }
 
@@ -136,7 +139,10 @@ fn util_type_predicates_match_node_internal_brands() {
         );
         assert!(observation.stderr.is_empty());
     }
-    assert_eq!(observations[0].stdout, observations[1].stdout);
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
 }
 
 #[test]
@@ -428,6 +434,95 @@ fn error_constructors_capture_stack_at_the_node_observable_phase() {
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
         command.current_dir(directory.path()).args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn exec_file_matches_node_output_limits_errors_and_completion() {
+    let source = r#"const {execFile}=require('child_process');
+const {Buffer}=require('buffer');
+const results=[];
+function record(name,error,stdout,stderr){
+  results.push([name,error ? [error.name,error.code,error.signal??null,error.killed??null,typeof error.cmd==='string',Object.hasOwn(error,'stdout')] : null,
+    typeof stdout,Buffer.isBuffer(stdout)?stdout.toString('hex'):stdout,
+    typeof stderr,Buffer.isBuffer(stderr)?stderr.toString('hex'):stderr]);
+  if(results.length===7)console.log(JSON.stringify(results.sort((a,b)=>a[0].localeCompare(b[0]))));
+}
+execFile(process.execPath,['-e','process.stdout.write("out");process.stderr.write("err")'],(err,out,e)=>record('text',err,out,e));
+execFile(process.execPath,['-e','process.stdout.write("é")'],{encoding:null},(err,out,e)=>record('bytes',err,out,e));
+execFile(process.execPath,['-e','process.stderr.write("failure");process.exitCode=3'],(err,out,e)=>record('failure',err,out,e));
+execFile('/quench-nonexistent-exec-file',[],(err,out,e)=>record('missing',err,out,e));
+try{execFile(process.execPath,[],{},123)}catch(error){console.log(error.code,error.name)}
+
+execFile(process.execPath,['-e','process.stdout.write("abcdefghij")'],{maxBuffer:4},(err,out,e)=>record('limit',err,out,e));
+execFile(process.execPath,['-e','setInterval(()=>{},1000)'],{timeout:20},(err,out,e)=>record('timeout',err,out,e));
+const changed=execFile(process.execPath,['-e','process.stdout.write("é")'],{encoding:null},(err,out,e)=>record('changed',err,out,e));
+changed.stdout.setEncoding('utf8');
+for(const signal of [null,'hello',{},()=>{}]) {
+  try{execFile(process.execPath,[],{signal},()=>{})}catch(error){console.log(error.name,error.code,error.message)}
+}
+const marker={};
+try{execFile(process.execPath,[],{signal:new Proxy({},{has(){throw marker}})},()=>{})}catch(error){console.log(error===marker)}
+const descriptor=Object.getOwnPropertyDescriptor(require('stream').Readable.prototype,'readableEncoding');
+console.log(descriptor.get.name,descriptor.enumerable,descriptor.configurable,descriptor.get.call({}));
+
+"#;
+    let directory = tempfile::tempdir().unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn system_error_names_and_validation_match_node() {
+    let source = r#"const {getSystemErrorName}=require('util');
+const numbers=[...Array.from({length:140},(_,i)=>-i-1),...Array.from({length:16},(_,i)=>-3000-i),-4094,-4095,-99999];
+const result=numbers.map(value=>[value,getSystemErrorName(value)]);
+for(const value of [0,1,1.5,-1.5,NaN,-Infinity,undefined,'x',-0,-9007199254740992,-1e100]){
+ try{result.push(['invalid',getSystemErrorName(value)])}catch(error){result.push(['invalid',error.name,error.code,error.message])}
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
         if executable != "node" {
             command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
         }

@@ -390,6 +390,13 @@ impl<H: Host> Vm<H> {
         Ok(self.detail_string(value))
     }
 
+    pub(crate) fn embedding_has_property(&mut self, object: RootId, key: RootId) -> Result<bool, JsError> {
+        let object = self.embedding_value(object)?;
+        let key = self.embedding_value(key)?;
+        let program = self.embedding_program()?;
+        self.has_property(&program, object, key)
+    }
+
     pub(crate) fn embedding_has_own_property(
         &self,
         root: RootId,
