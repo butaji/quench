@@ -36,6 +36,32 @@ fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_host_weak_root(&mut self, target: RootId) -> Result<RootId, JsError> {
+        let value = self.embedding_value(target)?;
+        let target = self
+            .heap
+            .weak_handle(value)
+            .ok_or_else(|| JsError("host weak reference requires a live heap value".into()))?;
+        // The existing WeakRef cell owns target pruning before slot reuse. This
+        // private cell has no guest prototype and never adds a kept object.
+        let reference = self.heap.alloc(Cell::WeakRef {
+            object: Box::new(Self::empty_object(Value::NULL)),
+            target: Some(target),
+        });
+        Ok(self.heap.root(reference))
+    }
+
+    pub(crate) fn embedding_host_weak_value(&self, reference: RootId) -> Option<Value> {
+        let value = self.heap.root_value(reference)?;
+        match self.heap.get(value)? {
+            Cell::WeakRef {
+                target: Some(target),
+                ..
+            } => self.heap.weak_value(*target),
+            _ => None,
+        }
+    }
+
     pub(crate) fn embedding_push_native_stack_frame(&mut self, name: &str) {
         self.native_stack_frames
             .push((self.frames.len(), name.to_owned()));

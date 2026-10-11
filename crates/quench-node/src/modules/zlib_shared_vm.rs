@@ -1,6 +1,7 @@
 //! Shared-VM Node zlib surface backed by the same Rust codec crates as the
-//! legacy module. Stream instances buffer their input until flush, then emit
-//! one valid encoded member; synchronous and callback APIs share that codec.
+//! legacy module. Stream input is collected until flush; decoded output is
+//! read in bounded chunks under Readable pressure. Synchronous and callback
+//! APIs share the codec authority.
 
 use std::io::{Cursor, Read, Write};
 
@@ -15,8 +16,46 @@ const DEFAULT_BROTLI_QUALITY: u32 = 11;
 const DEFAULT_BROTLI_WINDOW_BITS: u32 = 22;
 const DEFAULT_ZSTD_LEVEL: i32 = 3;
 
+#[derive(Clone, Copy)]
+pub(super) enum Codec {
+    Gzip,
+    Gunzip,
+    Deflate,
+    Inflate,
+    DeflateRaw,
+    InflateRaw,
+    Unzip,
+    BrotliCompress,
+    BrotliDecompress,
+    ZstdCompress,
+    ZstdDecompress,
+}
+pub(super) const CODECS: &[(&str, &str, Codec)] = &[
+    ("gzip", "Gzip", Codec::Gzip),
+    ("gunzip", "Gunzip", Codec::Gunzip),
+    ("deflate", "Deflate", Codec::Deflate),
+    ("inflate", "Inflate", Codec::Inflate),
+    ("deflateRaw", "DeflateRaw", Codec::DeflateRaw),
+    ("inflateRaw", "InflateRaw", Codec::InflateRaw),
+    ("unzip", "Unzip", Codec::Unzip),
+    ("brotliCompress", "BrotliCompress", Codec::BrotliCompress),
+    (
+        "brotliDecompress",
+        "BrotliDecompress",
+        Codec::BrotliDecompress,
+    ),
+    ("zstdCompress", "ZstdCompress", Codec::ZstdCompress),
+    ("zstdDecompress", "ZstdDecompress", Codec::ZstdDecompress),
+];
+const GZIP_HEADER: &[u8] = &[0x1f, 0x8b];
+pub(super) fn codec(name: &str) -> Option<Codec> {
+    CODECS
+        .iter()
+        .find_map(|(candidate, _, codec)| (*candidate == name).then_some(*codec))
+}
+
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(Transform, Buffer, transform, constants) => {
+    r#"(Transform, Buffer, transform, constants, codecs, open) => {
   const CRC32_POLYNOMIAL = 0xedb88320;
   const inputBuffer = (input, options) => {
     const encoding = options && typeof options.encoding === "string"
@@ -28,19 +67,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
   };
   const minZstdLevel = -(2 ** 31);
   const maxZstdLevel = 2 ** 31 - 1;
-  const codecs = [
-    ["gzip", "Gzip"],
-    ["gunzip", "Gunzip"],
-    ["deflate", "Deflate"],
-    ["inflate", "Inflate"],
-    ["deflateRaw", "DeflateRaw"],
-    ["inflateRaw", "InflateRaw"],
-    ["unzip", "Unzip"],
-    ["brotliCompress", "BrotliCompress"],
-    ["brotliDecompress", "BrotliDecompress"],
-    ["zstdCompress", "ZstdCompress"],
-    ["zstdDecompress", "ZstdDecompress"],
-  ];
+  const nativeStreams = new WeakMap();
   const levelFor = (mode, options) => {
     if (options == null) return undefined;
     if (["gzip", "deflate", "deflateRaw"].includes(mode)) {
@@ -82,7 +109,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
   };
   const encode = (mode, input, options) => Buffer.from(transform(
     mode,
-    Array.from(inputBuffer(input, options)),
+    inputBuffer(input, options),
     levelFor(mode, options),
   ));
   const checksum = (input, seed = 0) => {
@@ -103,6 +130,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
       this._zlibMode = mode;
       this._zlibOptions = options;
       this._zlibChunks = [];
+      nativeStreams.set(this, open(this, mode, levelFor(mode, options), options));
     }
 
     _transform(chunk, encoding, callback) {
@@ -114,15 +142,15 @@ const FACTORY: &str = quench_js_check::checked_js!(
       }
     }
 
+    _read(size) { return nativeStreams.get(this).read(size); }
     _flush(callback) {
-      try {
-        const input = Buffer.concat(this._zlibChunks);
-        this._zlibChunks = [];
-        callback(null, encode(this._zlibMode, input, this._zlibOptions));
-      } catch (error) {
-        callback(error);
-      }
+      const input = Buffer.concat(this._zlibChunks);
+      this._zlibChunks = [];
+      return nativeStreams.get(this).finish(input, callback);
     }
+    _destroy(error, callback) { return nativeStreams.get(this).destroy(error, callback); }
+    close(callback) { return nativeStreams.get(this).close(callback); }
+
   }
 
   const codecClass = (name, mode) => {
@@ -189,11 +217,23 @@ pub(crate) fn module(
     let buffer = get(context, global, "Buffer")?;
     let stream_transform = get(context, stream, "Transform")?;
     let constants = constants(context)?;
+    let mut rows = Vec::with_capacity(CODECS.len());
+    for (mode, name, _) in CODECS {
+        let mode = context.string_rooted(mode);
+        let name = context.string_rooted(name);
+        rows.push(context.array_rooted(&[mode, name])?);
+    }
+    let codecs = context.array_rooted(&rows)?;
+    let finished = get(context, stream, "finished")?;
+    let open = context.host_function_with_data(
+        crate::host::shared_vm::operation("zlibStreamOpen"),
+        finished,
+    )?;
     let undefined = context.undefined();
     context.call_rooted(
         factory,
         undefined,
-        &[stream_transform, buffer, transform, constants],
+        &[stream_transform, buffer, transform, constants, codecs, open],
     )
 }
 
@@ -224,7 +264,10 @@ pub(crate) fn transform(
         .and_then(|value| value.as_number())
         .filter(|number| number.is_finite())
         .map(|number| number as i32);
-    let output = match transform_bytes(&mode, &input, level) {
+    let Some(mode) = codec(&mode) else {
+        return Err(RootedError::host("unsupported zlib operation"));
+    };
+    let output = match transform_bytes(mode, &input, level) {
         Ok(output) => output,
         Err(error) => {
             let exception = context.error_rooted(&error.to_string())?;
@@ -234,15 +277,11 @@ pub(crate) fn transform(
             return Err(context.throw(exception));
         }
     };
-    let values = output
-        .into_iter()
-        .map(|byte| context.number(f64::from(byte)))
-        .collect::<Vec<_>>();
-    context.array_rooted(&values)
+    context.uint8_array_rooted(&output)
 }
 
 fn transform_bytes(
-    mode: &str,
+    mode: Codec,
     input: &[u8],
     level: Option<i32>,
 ) -> Result<Vec<u8>, std::io::Error> {
@@ -255,27 +294,27 @@ fn transform_bytes(
         Some(_) => Compression::default(),
     };
     match mode {
-        "gzip" => {
+        Codec::Gzip => {
             let mut encoder = GzEncoder::new(Vec::new(), flate_level);
             encoder.write_all(input)?;
             encoder.finish()
         }
-        "gunzip" => read_all(GzDecoder::new(input)),
-        "deflate" => {
+        Codec::Gunzip => read_all(GzDecoder::new(input)),
+        Codec::Deflate => {
             let mut encoder = ZlibEncoder::new(Vec::new(), flate_level);
             encoder.write_all(input)?;
             encoder.finish()
         }
-        "inflate" => read_all(ZlibDecoder::new(input)),
-        "deflateRaw" => {
+        Codec::Inflate => read_all(ZlibDecoder::new(input)),
+        Codec::DeflateRaw => {
             let mut encoder = DeflateEncoder::new(Vec::new(), flate_level);
             encoder.write_all(input)?;
             encoder.finish()
         }
-        "inflateRaw" => read_all(DeflateDecoder::new(Cursor::new(input))),
-        "unzip" if input.starts_with(&[0x1f, 0x8b]) => read_all(GzDecoder::new(input)),
-        "unzip" => read_all(ZlibDecoder::new(input)),
-        "brotliCompress" => {
+        Codec::InflateRaw => read_all(DeflateDecoder::new(Cursor::new(input))),
+        Codec::Unzip if input.starts_with(GZIP_HEADER) => read_all(GzDecoder::new(input)),
+        Codec::Unzip => read_all(ZlibDecoder::new(input)),
+        Codec::BrotliCompress => {
             let mut output = Vec::new();
             {
                 let quality = level
@@ -291,16 +330,12 @@ fn transform_bytes(
             }
             Ok(output)
         }
-        "brotliDecompress" => read_all(brotli::Decompressor::new(
+        Codec::BrotliDecompress => read_all(brotli::Decompressor::new(
             Cursor::new(input),
             DEFAULT_BROTLI_BUFFER_BYTES,
         )),
-        "zstdCompress" => zstd::stream::encode_all(input, level.unwrap_or(DEFAULT_ZSTD_LEVEL)),
-        "zstdDecompress" => zstd::stream::decode_all(input),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "unsupported zlib operation",
-        )),
+        Codec::ZstdCompress => zstd::stream::encode_all(input, level.unwrap_or(DEFAULT_ZSTD_LEVEL)),
+        Codec::ZstdDecompress => zstd::stream::decode_all(input),
     }
 }
 
@@ -310,7 +345,7 @@ fn read_all(mut reader: impl Read) -> Result<Vec<u8>, std::io::Error> {
     Ok(output)
 }
 
-fn byte_array(
+pub(super) fn byte_array(
     context: &mut NativeContext<'_, NodeHost>,
     input: Option<RootId>,
 ) -> Result<Vec<u8>, RootedError> {
@@ -318,6 +353,9 @@ fn byte_array(
         let error = context.type_error_rooted("zlib input must be a byte array")?;
         return Err(context.throw(error));
     };
+    if let Some(bytes) = context.view_bytes_rooted(input) {
+        return Ok(bytes);
+    }
     let length_key = context.string_rooted("length");
     let length = context.get_property_rooted(input, length_key)?;
     let length = context
@@ -369,4 +407,27 @@ fn get(
 ) -> Result<RootId, RootedError> {
     let key = context.string_rooted(name);
     context.get_property_rooted(object, key)
+}
+
+pub(super) fn stream_reader(
+    mode: Codec,
+    input: Vec<u8>,
+    level: Option<i32>,
+) -> std::io::Result<Box<dyn Read>> {
+    use flate2::read::{DeflateDecoder, MultiGzDecoder, ZlibDecoder};
+    let gzip = input.starts_with(GZIP_HEADER);
+    let cursor = Cursor::new(input);
+    Ok(match mode {
+        Codec::Gunzip => Box::new(MultiGzDecoder::new(cursor)),
+        Codec::Inflate => Box::new(ZlibDecoder::new(cursor)),
+        Codec::InflateRaw => Box::new(DeflateDecoder::new(cursor)),
+        Codec::Unzip if gzip => Box::new(MultiGzDecoder::new(cursor)),
+        Codec::Unzip => Box::new(ZlibDecoder::new(cursor)),
+        Codec::BrotliDecompress => Box::new(brotli::Decompressor::new(
+            cursor,
+            DEFAULT_BROTLI_BUFFER_BYTES,
+        )),
+        Codec::ZstdDecompress => Box::new(zstd::stream::read::Decoder::new(cursor)?),
+        mode => Box::new(Cursor::new(transform_bytes(mode, cursor.get_ref(), level)?)),
+    })
 }

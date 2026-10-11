@@ -7,7 +7,8 @@ pub use embedding::RootedError;
 #[path = "api_native.rs"]
 mod native;
 pub use native::{
-    BuiltinBrand, BuiltinData, HostFunction, HostFunctionId, NativeContext, RootedIterator,
+    BuiltinBrand, BuiltinData, HostFunction, HostFunctionId, HostWeakRoot, NativeContext,
+    RootedIterator,
 };
 
 /// The syntax context used when compiling source. Script and Module use
@@ -338,6 +339,21 @@ impl<H: Host> Runtime<H> {
 
     pub fn root(&mut self, value: Value) -> RootId {
         self.vm.root(value)
+    }
+
+    /// A private weak reference is live only while its target remains reachable.
+    pub fn host_weak_root_is_live(&self, reference: HostWeakRoot) -> bool {
+        self.vm.embedding_host_weak_value(reference.0).is_some()
+    }
+
+    pub fn resolve_host_weak_root(&mut self, reference: HostWeakRoot) -> Option<RootId> {
+        self.vm
+            .embedding_host_weak_value(reference.0)
+            .map(|value| self.vm.root(value))
+    }
+
+    pub fn release_host_weak_root(&mut self, reference: HostWeakRoot) -> bool {
+        self.vm.release_root(reference.0)
     }
 
     pub fn update_root(&mut self, root: RootId, value: Value) -> bool {
