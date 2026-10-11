@@ -149,11 +149,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     set_text(context, process, "platform", &process_state::platform())?;
     let executable = std::env::current_exe()
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let node_executable = executable
-        .parent()
-        .map(|parent| parent.join(if cfg!(windows) { "quench-node.exe" } else { "quench-node" }))
-        .filter(|path| path.is_file())
-        .unwrap_or_else(|| executable.clone());
+    let node_executable = crate::shared_run::executable_path()
+        .map_err(|error| RootedError::host(error.to_string()))?;
     set_text(context, process, "execPath", &node_executable.to_string_lossy())?;
     let host_argv0 = std::env::args_os().next().map(std::path::PathBuf::from);
     let argv0_is_runtime = host_argv0

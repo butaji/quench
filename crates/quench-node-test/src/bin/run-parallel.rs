@@ -215,6 +215,7 @@ fn run_all(
     jobs: usize,
     results_path: Option<&String>,
 ) -> ExitCode {
+    let runtime_commit = command_output("git", &["rev-parse", "HEAD"]);
     let root = PathBuf::from(PARALLEL_DIR);
     let mut entries = match quench_node_test::stages::discover_fixtures(&root) {
         Ok(entries) => entries,
@@ -233,6 +234,7 @@ fn run_all(
                     .is_some_and(|name| name.contains(needle))
             })
     });
+    let inventory_hash = inventory_hash(&entries);
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let next_entry = AtomicUsize::new(0);
     let (sender, receiver) = mpsc::channel();
@@ -257,30 +259,40 @@ fn run_all(
         }
         drop(sender);
         for (index, observation) in receiver {
+            let result = observation
+                .as_ref()
+                .map(|record| record.outcome())
+                .unwrap_or(RunResult::Unclassified);
+            println!("{:?} {}", result, entries[index].display());
             observations[index] = Some(observation);
         }
     });
     let mut counts = [0usize; RunResult::COUNT];
     let mut results = Vec::with_capacity(entries.len());
     for (path, observation) in entries.iter().zip(observations) {
-        let observation = observation
-            .unwrap_or_else(|| Err("fixture worker did not return a result".into()));
+        let observation =
+            observation.unwrap_or_else(|| Err("fixture worker did not return a result".into()));
         let result = observation
             .as_ref()
             .map(|record| record.outcome())
             .unwrap_or(RunResult::Unclassified);
         counts[result as usize] += 1;
         results.push((path, observation));
-        println!("{:?} {}", result, path.display());
     }
-    let inventory_hash = inventory_hash(&entries);
     let [passed, skipped, failed, timeout, crash, unclassified] = counts;
     println!(
         "all: pass={passed} skip={skipped} fail={failed} timeout={timeout} crash={crash} unclassified={unclassified} total={} inventory_hash={inventory_hash:016x}",
         entries.len()
     );
     if let Some(path) = results_path {
-        if let Err(error) = write_results(path, &results, inventory_hash, timeout_secs, jobs) {
+        if let Err(error) = write_results(
+            path,
+            &results,
+            inventory_hash,
+            timeout_secs,
+            jobs,
+            &runtime_commit,
+        ) {
             eprintln!("error: cannot write {path}: {error}");
             return ExitCode::from(2);
         }
@@ -305,6 +317,7 @@ fn write_results(
     inventory_hash: u64,
     timeout_secs: u64,
     jobs: usize,
+    runtime_commit: &str,
 ) -> std::io::Result<()> {
     let records: Vec<_> = results
         .iter()
@@ -319,7 +332,7 @@ fn write_results(
     let report = serde_json::json!({
         "schema_version":2,"inventory_hash":format!("{inventory_hash:016x}"),"timeout_secs":timeout_secs,"jobs":jobs,
         "node_version":command_output("node", &["--version"]),
-        "runtime_commit":command_output("git", &["rev-parse", "HEAD"]),
+        "runtime_commit":runtime_commit,
         "tests_node_commit":command_output("git", &["-C", "tests/node", "rev-parse", "HEAD"]),
         "platform":format!("{}-{}",std::env::consts::OS,std::env::consts::ARCH),
         "results":records,
