@@ -46,6 +46,7 @@ impl<H: Host> Vm<H> {
             weak_map_proto: Value::NULL,
             weak_set_proto: Value::NULL,
             weak_ref_proto: Value::NULL,
+            kept_alive: Vec::new(),
             finalization_registry_proto: Value::NULL,
             iterator_proto: Value::NULL,
             string_iterator_proto: Value::NULL,

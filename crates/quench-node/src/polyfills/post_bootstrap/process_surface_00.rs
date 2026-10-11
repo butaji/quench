@@ -154,7 +154,6 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
         return emitWarning(message, options);
       };
     }
-    globalThis.gc ||= () => undefined;
     const activeTimers = new Map();
     const originalSetTimeout = globalThis.setTimeout;
     const originalClearTimeout = globalThis.clearTimeout;

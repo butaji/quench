@@ -12,6 +12,12 @@ pub(crate) fn module(
         "node:stream/shared.js",
     )?;
     let dependencies = context.object_rooted()?;
+    let replay_state = context.null_object_rooted()?;
+    let replay = context.host_function_with_data(
+        crate::host::shared_vm::operation("streamReplayWrite"),
+        replay_state,
+    )?;
+    set(context, dependencies, "replayWrite", replay)?;
     let events = context.object_rooted()?;
     let global = context.global_root()?;
     let emitter_key = context.string_rooted("__nodeEventEmitter");
@@ -23,6 +29,13 @@ pub(crate) fn module(
 
     let undefined = context.undefined();
     let module = context.call_rooted(factory, undefined, &[dependencies])?;
+    let key = context.string_rooted("Writable");
+    let writable = context.get_property_rooted(module, key)?;
+    let key = context.string_rooted("prototype");
+    let prototype = context.get_property_rooted(writable, key)?;
+    let key = context.string_rooted("write");
+    let write = context.get_property_rooted(prototype, key)?;
+    set(context, replay_state, "write", write)?;
     let key = context.string_rooted("Readable");
     let readable = context.get_property_rooted(module, key)?;
     let key = context.string_rooted("prototype");
@@ -66,4 +79,24 @@ pub(crate) fn readable_encoding(
     }
     let key = context.string_rooted("encoding");
     context.get_property_rooted(state, key)
+}
+
+/// A queued chunk already belongs to the writable buffered total. Replay via
+/// the captured intrinsic without admitting or accounting for it a second time.
+pub(crate) fn replay_write(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let key = context.string_rooted("write");
+    let write = context.get_property_rooted(data, key)?;
+    let undefined = context.undefined();
+    let values = [
+        args.get(1).copied().unwrap_or(undefined),
+        args.get(2).copied().unwrap_or(undefined),
+        args.get(3).copied().unwrap_or(undefined),
+        context.boolean(true),
+    ];
+    context.call_rooted(write, args[0], &values)
 }

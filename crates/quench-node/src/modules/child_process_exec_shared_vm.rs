@@ -231,21 +231,7 @@ pub(crate) fn exec_file(
     let spawn = get(context, data, "0")?;
     let buffer = get(context, data, "1")?;
     let signal = get(context, options, "signal")?;
-    if !context
-        .rooted_value(signal)
-        .is_some_and(|value| value.is_undefined())
-    {
-        let valid = context.is_object_rooted(signal)? && !context.is_callable_rooted(signal)?;
-        let key = context.string_rooted("aborted");
-        if !valid || !context.has_property_rooted(signal, key)? {
-            return Err(super::util_shared_vm::argument_type_error(
-                context,
-                signal,
-                "options.signal",
-                "AbortSignal",
-            )?);
-        }
-    }
+    super::util_shared_vm::validate_abort_signal(context, signal, "options.signal")?;
     let child = context.call_rooted(spawn, undefined, &[file, arguments, options])?;
     let mut encoding = get(context, options, "encoding")?;
     let is_encoding = method(context, buffer, "isEncoding", &[encoding])?;

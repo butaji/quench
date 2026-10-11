@@ -653,6 +653,8 @@ pub(crate) struct Vm<H> {
     weak_map_proto: Value,
     weak_set_proto: Value,
     weak_ref_proto: Value,
+    /// ECMAScript [[KeptAlive]] targets, held until the host ends a job turn.
+    kept_alive: Vec<RootId>,
     finalization_registry_proto: Value,
     iterator_proto: Value,
     string_iterator_proto: Value,

@@ -1882,6 +1882,8 @@ fn definition_batch_roots_release_after_each_completion() {
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
             let result = vm.object_define_properties(&program, &values[..2]);
+            // End this direct host job before checking temporary-root cleanup.
+            vm.clear_kept_objects();
             match phase {
                 "success" => assert_eq!(result.unwrap(), values[0]),
                 "invalid-late" | "define-reject" => {
@@ -9076,6 +9078,38 @@ fn number_format_legacy_views_release_after_bound_or_options_completion() {
             assert!(vm.heap.weak_value(result_weak).is_none());
             assert_eq!(vm.active_call_roots.len(), calls);
             assert_eq!(vm.heap.root_count_for_test(), roots - 1);
+        }
+    }
+}
+
+#[test]
+fn weak_ref_targets_are_kept_until_host_checkpoint() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for dereference in [false, true] {
+            let mut vm = Vm::new(SilentHost);
+            let program = compile("var weak = new WeakRef({});", "weak-ref-job.js").unwrap();
+            vm.execute(&program).unwrap();
+            let key = vm.intern_atom("weak");
+            let weak = vm.own_property(vm.realm.globals, key).unwrap();
+            let target = match vm.heap.get(weak) {
+                Some(super::Cell::WeakRef { target, .. }) => target.unwrap(),
+                _ => panic!("expected weak reference"),
+            };
+            if dereference {
+                vm.clear_kept_objects();
+                let value = vm
+                    .call_collection_native(&program, Native::WeakRefDeref, weak, &[])
+                    .unwrap();
+                assert!(!value.is_undefined());
+            }
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(target).is_some());
+            vm.clear_kept_objects();
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(target).is_none());
         }
     }
 }
