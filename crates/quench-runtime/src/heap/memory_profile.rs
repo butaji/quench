@@ -31,6 +31,7 @@ pub(crate) struct HeapMemoryComposition {
     pub cell_variant_names: Vec<&'static str>,
     pub cell_variant_counts: Vec<usize>,
     pub slot_arena_reserved_bytes: usize,
+    pub free_slot_metadata_bytes: usize,
     pub slot_size_bytes: usize,
     pub cell_size_bytes: usize,
     pub object_header_size_bytes: usize,
@@ -447,6 +448,8 @@ impl Heap {
             cell_variant_names: cell_variant_counts.keys().copied().collect(),
             cell_variant_counts: cell_variant_counts.values().copied().collect(),
             slot_arena_reserved_bytes: self.slots.capacity() * size_of::<Slot>(),
+            free_slot_metadata_bytes: self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
+                + self.free_slabs.capacity() * size_of::<u32>(),
             slot_size_bytes: size_of::<Slot>(),
             cell_size_bytes: size_of::<Cell>(),
             object_header_size_bytes: size_of::<Object>(),
