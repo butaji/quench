@@ -13,9 +13,11 @@
 //! (threaded dispatch), so each opcode predicts its successor at its own
 //! branch. Where the build forms sibling calls (`quench_lane_tail_calls`), that
 //! dispatch is a jump and a run of handlers shares one stack frame; otherwise
-//! every handler returns to the lane loop. Taken safepoint and backward jumps
-//! always return to the lane loop, which bounds stack use by the straight-line
-//! run length even if a sibling call is not formed.
+//! every handler returns to the lane loop. A taken safepoint jump compares the
+//! stack pointer with the run's stack floor: should a build not form a sibling
+//! call, the stack reaches the floor and the jump returns to the lane loop,
+//! which unwinds it; a due collection raises the floor so that the next
+//! safepoint jump leaves the lane.
 
 use super::*;
 use super::dispatch_frame::PendingGeneralCall;
@@ -191,10 +193,58 @@ thread_local! {
 }
 
 thread_local! {
-    /// Safepoint jumps the running lane dispatches directly before returning
-    /// to the lane loop. Kept apart from the context so a taken safepoint
-    /// jump updates it without loading the context.
-    static SAFEPOINT_BUDGET: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// The running lane's stack floor: a taken safepoint jump below it
+    /// returns to the lane loop. The maximum address marks a due collection.
+    /// A safepoint only reads it, so loops carry no dependence through it.
+    static LANE_FLOOR: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Stack a lane run may use below its entry before a safepoint jump returns
+/// to the lane loop; only reachable should a build not form sibling calls.
+const LANE_STACK_SLACK: usize = 64 * 1024;
+
+/// The floor that sends the next safepoint jump through the slow path.
+const COLLECTION_DUE_FLOOR: usize = usize::MAX;
+
+/// The current stack address.
+#[cfg(quench_lane_tail_calls)]
+#[inline(always)]
+fn stack_pointer() -> usize {
+    let sp: usize;
+    // SAFETY: reads the stack pointer register; no memory, stack or flags.
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        std::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack, preserves_flags));
+    }
+    // SAFETY: as above.
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        std::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
+    }
+    sp
+}
+
+/// Without sibling calls every handler returns to the lane loop, so a run's
+/// stack cannot grow; this address lies above every stack floor and below
+/// the due-collection floor.
+#[cfg(not(quench_lane_tail_calls))]
+#[inline(always)]
+fn stack_pointer() -> usize {
+    COLLECTION_DUE_FLOOR - 1
+}
+
+/// Whether a taken safepoint jump takes the slow path.
+#[inline(always)]
+fn below_floor() -> bool {
+    stack_pointer() < LANE_FLOOR.with(std::cell::Cell::get)
+}
+
+/// After a lane allocation, a due collection raises the floor.
+#[inline(always)]
+fn note_allocation<H: Host>(vm: &Vm<H>) {
+    if vm.heap.should_collect() {
+        LANE_FLOOR.with(|floor| floor.set(COLLECTION_DUE_FLOOR));
+    }
 }
 
 /// The running lane's context.
@@ -250,7 +300,7 @@ macro_rules! next {
 #[cfg(not(quench_lane_tail_calls))]
 macro_rules! next {
     ($cx:expr, $r:expr, $ip:expr, $view:expr) => {{
-        let _ = ($r, $view);
+        let _ = ($cx, $r, $view);
         return $ip;
     }};
 }
@@ -364,23 +414,6 @@ lane_handler! {
         let value = unsafe { vm(cx).read_validated_local((*cx).frame, i.imm() as usize) };
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
-    }
-}
-
-/// Taken safepoint jumps dispatched directly between returns to the lane
-/// loop. Sibling calls keep a lane run in one stack frame; the periodic
-/// return bounds the stack should a build not form one.
-const DIRECT_SAFEPOINT_JUMPS: u32 = 64;
-
-/// The safepoint budget a lane run starts with. A collection can only
-/// become due inside the lane through a lane allocation, which zeroes the
-/// budget, so the heap is consulted only when the budget runs out.
-#[inline(always)]
-fn safepoint_budget<H: Host>(vm: &Vm<H>) -> u32 {
-    if vm.heap.should_collect() {
-        0
-    } else {
-        DIRECT_SAFEPOINT_JUMPS
     }
 }
 
@@ -521,9 +554,12 @@ fn lane_set_field<H: Host>(
 ) -> Ip {
     // SAFETY: the context's program outlives the lane run.
     let code = unsafe { &*(*cx).code };
-    if !unsafe { vm(cx) }.set_field_cache_hit(code, object, i.imm(), r.get(i.a), i.c) {
+    let vm = unsafe { vm(cx) };
+    if !vm.set_field_cache_hit(code, object, i.imm(), r.get(i.a), i.c) {
         return exit(ip);
     }
+    // Adding a property can allocate.
+    note_allocation(vm);
     next!(cx, r, following(ip), view)
 }
 
@@ -556,7 +592,7 @@ lane_handler! {
             return exit(ip);
         };
         if !holds {
-            return lane_jump(cx, r, ip, BACKWARD, view, || {});
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
         }
         next!(cx, r, following(ip), view)
     }
@@ -565,8 +601,8 @@ lane_handler! {
 /// A taken jump. Safepoint jumps (every `Jump`, and backward conditionals,
 /// whose direction the view fixes per record) leave the lane when a
 /// collection is due; forward conditionals dispatch directly. Leaving hands
-/// the whole instruction to the general path, so `commit`, the
-/// instruction's own effect before its jump, applies only when the lane
+/// the whole instruction to the general path, so `commit`, the register
+/// write the instruction makes before its jump, applies only when the lane
 /// takes the jump itself.
 #[inline(always)]
 fn lane_jump<H: Host>(
@@ -575,31 +611,23 @@ fn lane_jump<H: Host>(
     ip: Ip,
     safepoint: bool,
     view: Carried,
-    commit: impl FnOnce(),
+    commit: Option<(u16, Value)>,
 ) -> Ip {
     let jump = unsafe { (*ip).jump() };
     // SAFETY: the view records the distance to a validated jump target.
     let target = unsafe { ip.byte_offset(jump) };
-    if safepoint {
-        let (remaining, exhausted) = SAFEPOINT_BUDGET.with(std::cell::Cell::get).overflowing_sub(1);
-        SAFEPOINT_BUDGET.with(|budget| budget.set(remaining));
-        if exhausted {
-            let vm = unsafe { vm(cx) };
-            if vm.heap.should_collect() {
-                return exit(ip);
-            }
-            SAFEPOINT_BUDGET.with(|budget| budget.set(safepoint_budget(vm)));
-            commit();
-            return target;
-        }
+    if safepoint && below_floor() {
+        return lane_safepoint::<H>(r, ip, target, commit);
     }
-    commit();
+    if let Some((register, value)) = commit {
+        r.set(register, value);
+    }
     next!(cx, r, target, view)
 }
 
 lane_handler! {
     fn lane_jump_always<>(cx, r, ip, i, view) {
-        lane_jump(cx, r, ip, true, view, || {})
+        lane_jump(cx, r, ip, true, view, None)
     }
 }
 
@@ -607,7 +635,7 @@ lane_handler! {
     fn lane_jump_false<>(cx, r, ip, i, view) {
         let truthy = unsafe { vm(cx) }.truthy(r.get(i.a));
         if !truthy {
-            return lane_jump(cx, r, ip, true, view, || {});
+            return lane_jump(cx, r, ip, true, view, None);
         }
         next!(cx, r, following(ip), view)
     }
@@ -620,7 +648,7 @@ lane_handler! {
         let case = r.get(i.a).wasm_bits32().min(i.imm());
         // SAFETY: validation places `imm + 1` entries after the table.
         let entry = unsafe { ip.add(1 + case as usize) };
-        lane_jump(cx, r, entry, true, view, || {})
+        lane_jump(cx, r, entry, true, view, None)
     }
 }
 
@@ -640,9 +668,7 @@ lane_handler! {
     fn lane_add_jump_nonzero<BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
         let sum = read_i32::<ACC, ACC_B>(r, i.b, view).wrapping_add(i32::from(i.c as i16));
         if sum != 0 {
-            return lane_jump(cx, r, ip, BACKWARD, view, || {
-                r.set(i.a, view.integers.encode(sum));
-            });
+            return lane_jump(cx, r, ip, BACKWARD, view, Some((i.a, view.integers.encode(sum))));
         }
         // Falling through, the step is an accumulator producer.
         produce!(cx, r, ip, i.a, view.integers.encode(sum), view)
@@ -653,7 +679,7 @@ lane_handler! {
     /// `WasmJumpI32Zero` and `WasmJumpI32NonZero`.
     fn lane_jump_i32_zero<WHEN_ZERO: bool, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
         if (read_i32::<ACC, ACC_A>(r, i.a, view) == 0) == WHEN_ZERO {
-            return lane_jump(cx, r, ip, BACKWARD, view, || {});
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
         }
         next!(cx, r, following(ip), view)
     }
@@ -680,7 +706,7 @@ lane_handler! {
             return exit(ip);
         };
         if taken != 0 {
-            return lane_jump(cx, r, ip, BACKWARD, view, || {});
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
         }
         next!(cx, r, following(ip), view)
     }
@@ -837,6 +863,28 @@ fn frame_memory_view<H: Host>(
     })
 }
 
+/// A taken safepoint jump below the stack floor: leave the lane when a
+/// collection is due, otherwise dispatch the target from the lane loop,
+/// which unwinds the stack. Out of line and reached by a sibling call, so a
+/// safepoint's fast path neither loads the context nor saves registers.
+#[cold]
+#[inline(never)]
+fn lane_safepoint<H: Host>(
+    r: Registers,
+    ip: Ip,
+    target: Ip,
+    commit: Option<(u16, Value)>,
+) -> Ip {
+    // SAFETY: called only while a lane runs, from one of its handlers.
+    if unsafe { vm(lane_context::<H>()) }.heap.should_collect() {
+        return exit(ip);
+    }
+    if let Some((register, value)) = commit {
+        r.set(register, value);
+    }
+    target
+}
+
 /// Boxing a 64-bit result allocates; kept out of line with scalar arguments
 /// so the hot handlers keep their registers and sibling calls.
 #[cold]
@@ -844,8 +892,8 @@ fn frame_memory_view<H: Host>(
 fn lane_box_bits64<H: Host>(cx: *mut LaneContext<H>, bits: u64) -> Value {
     let vm = unsafe { vm(cx) };
     let value = vm.heap.alloc(Cell::WasmBits64(bits));
-    // A due collection waits for the next safepoint, which checks the heap.
-    SAFEPOINT_BUDGET.with(|budget| budget.set(safepoint_budget(vm)));
+    // A due collection waits for the next safepoint.
+    note_allocation(vm);
     value
 }
 
@@ -1473,7 +1521,12 @@ impl<H: Host> Vm<H> {
         let view = unsafe { &*view };
         let base = view.records();
         let registers = Registers(self.frames[*frame].registers.as_mut_ptr());
-        SAFEPOINT_BUDGET.with(|budget| budget.set(safepoint_budget(self)));
+        let floor = if self.heap.should_collect() {
+            COLLECTION_DUE_FLOOR
+        } else {
+            stack_pointer().saturating_sub(LANE_STACK_SLACK)
+        };
+        let outer_floor = LANE_FLOOR.with(|current| current.replace(floor));
         let mut context = LaneContext {
             vm: self,
             code,
@@ -1507,6 +1560,7 @@ impl<H: Host> Vm<H> {
             ip = next.map_addr(|address| address & !EXIT_TAG);
             if next.addr() & EXIT_TAG != 0 {
                 LANE_CONTEXT.with(|current| current.set(outer));
+                LANE_FLOOR.with(|current| current.set(outer_floor));
                 // SAFETY: as above.
                 *frame = unsafe { (*cx).frame };
                 // SAFETY: handlers only return records of the active view.
