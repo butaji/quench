@@ -1,11 +1,14 @@
 //! Derive a linker symbol order from executed code, so the functions a run
 //! executes share pages instead of each faulting in its own neighbourhood.
 //!
-//! Inputs are callgrind profiles recorded with `--dump-instr=yes
-//! --compress-pos=no` of the binary the order is for (symbol names carry the
-//! build's crate hashes, so train and link the same profile). Functions are
-//! listed in first-execution order across profiles; layout changes, behavior
-//! does not.
+//! Inputs are valgrind profiles of the binary the order is for (symbol names
+//! carry the build's crate hashes, so train and link the same profile):
+//! callgrind with `--dump-instr=yes --compress-pos=no` names executed
+//! instruction addresses, and cachegrind or callgrind with `--demangle=no`
+//! name executed functions (`fn=` records). Cachegrind keeps no call stack,
+//! so it profiles long sibling-call chains that exhaust callgrind's.
+//! Functions are listed in first-appearance order across profiles; layout
+//! changes, behavior does not.
 
 use std::{collections::HashSet, env, fs, process::Command, process::ExitCode};
 
@@ -47,31 +50,58 @@ fn symbols(binary: &str) -> Result<Vec<Symbol>, String> {
     Ok(symbols)
 }
 
-/// Instruction addresses of a callgrind profile, in file order.
-fn executed(profile: &str) -> Result<impl Iterator<Item = u64>, String> {
+/// What a profile record says executed.
+enum Executed {
+    Address(u64),
+    Function(String),
+}
+
+/// The executed addresses and function names of a profile, in file order.
+fn executed(profile: &str) -> Result<Vec<Executed>, String> {
     let text = fs::read_to_string(profile).map_err(|error| format!("{profile}: {error}"))?;
-    let addresses: Vec<u64> = text
+    Ok(text
         .lines()
         .filter_map(|line| {
+            if let Some(function) = line.strip_prefix("fn=") {
+                // Callgrind compresses repeated names to `(id)`; the first
+                // record of an id carries the name after it.
+                let name = match function.strip_prefix('(') {
+                    Some(rest) => rest.split_once(") ")?.1,
+                    None => function,
+                };
+                return Some(Executed::Function(name.to_owned()));
+            }
             let address = line.split_whitespace().next()?.strip_prefix("0x")?;
-            u64::from_str_radix(address, 16).ok()
+            u64::from_str_radix(address, 16).ok().map(Executed::Address)
         })
-        .collect();
-    Ok(addresses.into_iter())
+        .collect())
 }
 
 fn run(binary: &str, out: &str, profiles: &[String]) -> Result<(), String> {
     let symbols = symbols(binary)?;
     let mut seen = HashSet::new();
     let mut order = Vec::new();
+    let names: HashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
     for profile in profiles {
-        for address in executed(profile)? {
-            let index = symbols.partition_point(|symbol| symbol.start <= address);
-            let Some(symbol) = index.checked_sub(1).map(|index| &symbols[index]) else {
-                continue;
+        for record in executed(profile)? {
+            let name = match record {
+                Executed::Address(address) => {
+                    let index = symbols.partition_point(|symbol| symbol.start <= address);
+                    let Some(symbol) = index.checked_sub(1).map(|index| &symbols[index]) else {
+                        continue;
+                    };
+                    if address >= symbol.start + symbol.size {
+                        continue;
+                    }
+                    symbol.name.as_str()
+                }
+                Executed::Function(function) => match names.get(function.as_str()) {
+                    Some(name) => name,
+                    None => continue,
+                },
             };
-            if address < symbol.start + symbol.size && seen.insert(symbol.name.as_str()) {
-                order.push(symbol.name.as_str());
+            if seen.insert(name) {
+                order.push(name);
             }
         }
     }

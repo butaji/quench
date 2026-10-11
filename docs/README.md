@@ -485,13 +485,16 @@ pages instead of each faulting in its own fault-around window, which bounds
 resident text. The order is layout only. Symbol names carry the profile's crate
 hashes, so train on the profile you link (debug info and stripping change them;
 `production` keeps its symbol table for this). Retrain after large changes from
-callgrind profiles of every Wasm kernel and CoreMark in both modes:
+cachegrind profiles of every Wasm kernel and CoreMark in both modes. Profiles
+name executed functions (`--demangle=no`), so they stay valid across relinks;
+cachegrind keeps no call stack, which the lane's sibling-call chains would
+exhaust in callgrind:
 
 ```sh
 cargo build --profile production -p quench-wasm-test --bin coremark --bin symbol-order
 for module in KERNELS...; do for mode in no-jit jit; do
-  COREMARK_CLOCK_STEPS_MS=1,1,2000 valgrind --tool=callgrind --dump-instr=yes \
-    --compress-pos=no --callgrind-out-file=train/$(basename $module)-$mode.out \
+  COREMARK_CLOCK_STEPS_MS=1,1,2000 valgrind --tool=cachegrind --cache-sim=no \
+    --demangle=no --cachegrind-out-file=train/$(basename $module)-$mode.out \
     target/production/coremark -$mode $module
 done; done
 target/production/symbol-order target/production/coremark \
