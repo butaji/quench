@@ -20,10 +20,10 @@ impl<H: Host> Vm<H> {
             .iter()
             .filter_map(|root| self.heap.root_value(*root))
             .collect::<Vec<_>>();
-        let result = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(keys),
-        });
+        let result = self.heap.alloc(Cell::array(
+            self.array_proto,
+            Rc::new(keys),
+        ));
         roots.into_iter().for_each(|root| {
             self.heap.release_root(root);
         });
@@ -72,8 +72,7 @@ impl<H: Host> Vm<H> {
         proxy: Value,
     ) -> Result<Vec<Value>, JsError> {
         let _stack = self.enter_stack()?;
-        let Some((target, handler)) = self.proxy_parts(proxy)
-        else {
+        let Some((target, handler)) = self.proxy_parts(proxy) else {
             unreachable!("Proxy own-key dispatch");
         };
         if handler.is_null() {
@@ -180,7 +179,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<Vec<Value>, JsError> {
         let keys = self.object_own_keys(p, object)?;
         Ok(match self.heap.get(keys) {
-            Some(Cell::Array { elements, .. }) => elements
+            Some(cell @ Cell::Array { .. }) => cell
+                .array_elements()
                 .iter()
                 .copied()
                 .filter(|key| {
@@ -207,7 +207,7 @@ impl<H: Host> Vm<H> {
         exclusions: Value,
     ) -> Result<(), JsError> {
         let excluded = match self.heap.get(exclusions) {
-            Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
+            Some(cell @ Cell::Array { .. }) => cell.array_elements().as_ref().clone(),
             _ => Vec::new(),
         };
         self.copy_enumerable_properties(
@@ -318,8 +318,7 @@ impl<H: Host> Vm<H> {
         let outcome = (|| {
             let mut current = target;
             loop {
-                if let Some((target, handler)) = self.proxy_parts(current)
-                {
+                if let Some((target, handler)) = self.proxy_parts(current) {
                     return self.proxy_set(
                         p,
                         target,
@@ -401,10 +400,10 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
             .collect();
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
+        Ok(self.heap.alloc(Cell::array(
+            self.array_proto,
+            Rc::new(values),
+        )))
     }
 
     pub(super) fn object_own_keys(
