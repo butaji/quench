@@ -1341,7 +1341,7 @@ impl<H: Host> Vm<H> {
     fn materialize_constant(&mut self, constant: &Constant) -> Value {
         match constant {
             Constant::Number(v) => Value::number(*v),
-            Constant::WasmBits64(bits) => self.heap.alloc(Cell::WasmBits64(*bits)),
+            Constant::WasmBits64(bits) => self.encode_bits64(*bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
             Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
             Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
