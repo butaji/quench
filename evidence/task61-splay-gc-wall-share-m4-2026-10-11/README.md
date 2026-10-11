@@ -1,0 +1,7 @@
+# Splay GC share of marginal wall time (M4)
+
+This diagnostic pairs the exact V8-v7 Splay fixed-work input at 300 `run()` calls with its setup-only `K=0` twin. The `profile-gc-time` build times only the collector's mark, sweep, and mark-clear phases; it does not enable per-opcode aggregation. Each measured series first runs an excluded K=0/K=300 warm-up pair to prime process and input pages. It alternates setup/work order and accepts only pairs with clean load, successful markers, positive marginal wall time, nonnegative marginal GC phase time, and at least as many collections in K=300 as K=0. Schema 2 records valid-pair count and rejected attempts.
+
+The feature adds three `Instant` timers around GC phases and a small three-counter record to diagnostic builds only. It does not change production builds. The runner refuses a sample when one-minute load exceeds 1.0 per logical CPU and records pre/post load for every process. Use `cargo build --profile production -p quench-node --features quench-runtime/profile-gc-time --bin quench-node` before running `measure.py`; set `QUENCH_GC_PROFILE_BINARY` to override the default binary path.
+
+`gc-share-first-pass-cold-start.json` preserves the initial schema-1 attempt. Its first pair had a cold-start anomaly (K=0 wall exceeded K=300 despite lower CPU use), so it is not used for the derived share. The warmed schema-2 retake has not run yet; the current host is contended, so no GC-share conclusion is claimed.
