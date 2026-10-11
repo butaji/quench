@@ -53,6 +53,22 @@ impl<H: Host> Runtime<H> {
         }
     }
 
+    /// Format a retained exception after refreshing its value through its live
+    /// root. Guest hooks may run; exception reporting must hold this root.
+    pub fn format_rooted_error(
+        &mut self,
+        program: &crate::ResidualProgram,
+        error: &mut RootedError,
+    ) -> String {
+        if let Some(root) = error.exception {
+            match self.vm.embedding_value(root) {
+                Ok(value) => error.error.replace_thrown_value(value),
+                Err(_) => return error.error.to_string(),
+            }
+        }
+        self.vm.format_error(program, &error.error)
+    }
+
     /// Retain the current realm's global object. Requires initialized execution.
     pub fn global_root(&mut self) -> Result<RootId, JsError> {
         self.vm.global_root()

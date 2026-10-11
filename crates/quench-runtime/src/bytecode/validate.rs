@@ -1172,6 +1172,7 @@ mod tests {
             module_imports: Vec::new(),
             module_link_plan: None,
             source_name: String::new(),
+            source: None,
             atoms: AtomTable::default(),
             constants: vec![],
             functions: vec![function],

@@ -1888,17 +1888,7 @@ impl<H: Host> Vm<H> {
             Op::WasmThrowRef => return Err(self.wasm_throw_ref(self.read(f, i.register_a()))),
             Op::Throw => {
                 let value = self.read(f, i.register_a());
-                let message = if self.object_data(value).is_some() {
-                    let atom = self.intern_atom("message");
-                    match self.get_property(p, value, atom)? {
-                        value if matches!(self.heap.get(value), Some(Cell::String(_))) => {
-                            self.to_string(p, value)?
-                        }
-                        _ => self.to_string(p, value)?,
-                    }
-                } else {
-                    self.to_string(p, value)?
-                };
+                let message = self.detail_string(value);
                 return Err(JsError::thrown(value, message));
             }
         }

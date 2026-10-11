@@ -118,6 +118,7 @@ fn decoder_rejects_out_of_range_local_load() {
         module_imports: Vec::new(),
         module_link_plan: None,
         source_name: String::new(),
+        source: None,
         atoms: AtomTable::default(),
         constants: vec![],
         functions: vec![Function {
@@ -194,6 +195,7 @@ fn decoder_rejects_runtime_abi_mismatch_before_tables() {
         module_imports: Vec::new(),
         module_link_plan: None,
         source_name: String::new(),
+        source: None,
         atoms: AtomTable::default(),
         constants: vec![],
         functions: vec![Function {

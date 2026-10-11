@@ -9,10 +9,6 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Instant;
 
-struct CallbackFailure {
-    exception: Option<RootId>,
-    message: String,
-}
 
 const STDOUT_FD: i32 = 1;
 const STDERR_FD: i32 = 2;
@@ -1948,7 +1944,7 @@ fn invoke_timer_callback(
     program: &quench_runtime::ResidualProgram,
     callback: &crate::modules::shared_event_loop::SharedCallback,
 ) -> Result<(), String> {
-    match call_shared_callback(runtime, program, callback) {
+    match call_shared_callback(runtime, callback) {
         Ok(()) => Ok(()),
         Err(failure) => route_callback_failure(runtime, program, failure),
     }
@@ -1959,7 +1955,7 @@ fn invoke_async_callback(
     program: &quench_runtime::ResidualProgram,
     callback: crate::modules::shared_event_loop::SharedCallback,
 ) -> Result<(), String> {
-    let result = call_shared_callback(runtime, program, &callback);
+    let result = call_shared_callback(runtime, &callback);
     release_callback(runtime, callback);
     match result {
         Ok(()) => Ok(()),
@@ -1969,20 +1965,18 @@ fn invoke_async_callback(
 
 fn call_shared_callback(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
-    program: &quench_runtime::ResidualProgram,
     callback: &crate::modules::shared_event_loop::SharedCallback,
-) -> Result<(), CallbackFailure> {
+) -> Result<(), RootedError> {
     match runtime.call_rooted(callback.callback, callback.receiver, &callback.args) {
         Ok(result) => {
             runtime.release_root(result);
             Ok(())
         }
-        Err(error) => {
-            let message = runtime.format_error(program, &error.error);
-            let exception = error
-                .exception
-                .or_else(|| error.error.thrown_value().map(|value| runtime.root(value)));
-            Err(CallbackFailure { exception, message })
+        Err(mut error) => {
+            if error.exception.is_none() {
+                error.exception = error.error.thrown_value().map(|value| runtime.root(value));
+            }
+            Err(error)
         }
     }
 }
@@ -1990,18 +1984,78 @@ fn call_shared_callback(
 fn route_callback_failure(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
-    failure: CallbackFailure,
+    mut failure: RootedError,
 ) -> Result<(), String> {
     let Some(exception) = failure.exception else {
-        return Err(failure.message);
+        return Err(runtime.format_rooted_error(program, &mut failure));
     };
     let routed = route_uncaught_exception_value(runtime, program, exception, "uncaughtException");
-    runtime.release_root(exception);
-    match routed {
+    let result = match routed {
         Ok(true) => Ok(()),
-        Ok(false) => Err(failure.message),
+        Ok(false) => Err(format_uncaught_error(runtime, program, &mut failure)),
         Err(handler_error) => Err(handler_error),
+    };
+    runtime.release_root(exception);
+    result
+}
+
+/// Build fatal output only after exception handlers decline it. Source text is
+/// the compiler snapshot; a guest can rewrite or remove its file after loading.
+pub(crate) fn format_uncaught_error(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    error: &mut RootedError,
+) -> String {
+    let stack = error.exception.and_then(|exception| {
+        if !runtime.is_error_rooted(exception).ok()? {
+            return None;
+        }
+        let key = runtime.string_rooted("stack");
+        let value = runtime.get_property_rooted(exception, key);
+        runtime.release_root(key);
+        match value {
+            Ok(value) => {
+                let text = runtime.string_text_rooted(value).ok().flatten();
+                runtime.release_root(value);
+                text
+            }
+            Err(error) => {
+                if let Some(exception) = error.exception {
+                    runtime.release_root(exception);
+                }
+                None
+            }
+        }
+    });
+    let body = stack.unwrap_or_else(|| runtime.format_rooted_error(program, error));
+    let mut output = String::new();
+    if let Some((file, line, column, source)) = error.error.source_location() {
+        output.push_str(&format!("{file}:{line}\n"));
+        if let Some(source) = source {
+            output.push_str(source);
+            output.push('\n');
+            let mut remaining = column.saturating_sub(1) as usize;
+            for character in source.chars() {
+                if remaining == 0 {
+                    break;
+                }
+                if character == '\t' {
+                    output.push('\t');
+                } else {
+                    output.extend(std::iter::repeat_n(
+                        ' ',
+                        character.len_utf16().min(remaining),
+                    ));
+                }
+                remaining = remaining.saturating_sub(character.len_utf16());
+            }
+            output.push_str("^\n");
+        }
+        output.push('\n');
     }
+    output.push_str(&body);
+    output.push_str(&format!("\n\nNode.js v{}", process_state::NODE_VERSION));
+    output
 }
 
 fn drain_shared_jobs(
@@ -2058,19 +2112,23 @@ pub(crate) fn run_host_jobs_with_uncaught(
             Ok(()) => return Ok(()),
             Err(error) => error,
         };
-        let message = runtime.format_error(program, &error);
         let Some(value) = error.thrown_value() else {
-            return Err(message);
+            return Err(runtime.format_error(program, &error));
         };
         let exception = runtime.root(value);
+        let mut failure = RootedError {
+            error,
+            exception: Some(exception),
+        };
         let routed =
             route_uncaught_exception_value(runtime, program, exception, "uncaughtException");
+        let result = match routed {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(format_uncaught_error(runtime, program, &mut failure)),
+            Err(handler_error) => Err(handler_error),
+        };
         runtime.release_root(exception);
-        match routed {
-            Ok(true) => {}
-            Ok(false) => return Err(message),
-            Err(handler_error) => return Err(handler_error),
-        }
+        result?;
     }
 }
 

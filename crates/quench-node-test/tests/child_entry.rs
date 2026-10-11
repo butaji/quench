@@ -582,3 +582,75 @@ fn shell_argument_deprecation_is_shared_and_emitted_once() {
         String::from_utf8_lossy(&observations[1].stdout)
     );
 }
+
+#[test]
+fn handled_exceptions_do_not_read_stack_or_coerce_thrown_values() {
+    let source = r#"
+      let reads=0,coercions=0;
+      const marker={get message(){reads++;throw 1},toString(){coercions++;throw 2}};
+      try{throw marker}catch(error){console.log(error===marker,reads,coercions)}
+      const error=new Error('handled');
+      Object.defineProperty(error,'stack',{get(){reads++;throw 3}});
+      error.toString=()=>{coercions++;throw 4};
+      process.on('uncaughtException',value=>console.log(value===error,reads,coercions));
+      process.nextTick(()=>{throw error});
+    "#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn fatal_source_excerpts_use_compiler_snapshots_and_commonjs_origins() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("rewritten.cjs");
+    let source = "require('fs').writeFileSync(__filename,'rewritten after compilation');\nthrow new Error('source snapshot');\n";
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        std::fs::write(&path, source).unwrap();
+        let mut command = Command::new(executable);
+        command.arg(&path);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(1));
+        assert!(observation.stdout.is_empty());
+    }
+    let diagnostics =
+        observations.map(|observation| String::from_utf8(observation.stderr).unwrap());
+    assert_eq!(
+        diagnostics[0].lines().take(3).collect::<Vec<_>>(),
+        diagnostics[1].lines().take(3).collect::<Vec<_>>()
+    );
+    for diagnostic in &diagnostics {
+        assert!(diagnostic.contains("Error: source snapshot"));
+    }
+    let location = format!("{}:2:", path.display());
+    let positions = diagnostics.each_ref().map(|diagnostic| {
+        diagnostic.lines().find_map(|line| {
+            line.find(&location)
+                .map(|start| line[start..].trim_end_matches(')').to_owned())
+        })
+    });
+    assert!(positions[0].is_some());
+    assert_eq!(positions[0], positions[1]);
+}
