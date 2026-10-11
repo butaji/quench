@@ -322,8 +322,10 @@ mod tests {
             decoded: Default::default(),
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
+            undefined_register: None,
         };
         let roots = analyze(&function, &[], &[], &[]).unwrap();
         assert_eq!(roots[3], bit(1));

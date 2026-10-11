@@ -9,7 +9,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<Value>, JsError> {
         let destination = instruction.result_register();
         let site = instruction.superinstruction_index();
-        let [array, first, second, object] = program.superinstructions[site].wide;
+        let parts = &program.superinstructions[site].wide;
+        let [array, first, second, object] = [&parts[0], &parts[1], &parts[2], &parts[3]];
         debug_assert_eq!(array.op(), Op::MakeConstArray);
         debug_assert_eq!(first.op(), Op::Binary);
         debug_assert_eq!(second.op(), Op::Binary);
@@ -27,8 +28,8 @@ impl<H: Host> Vm<H> {
         });
         self.write(frame, array.result_register(), array_value);
 
-        self.execute_super_binary(program, frame, first)?;
-        self.execute_super_binary(program, frame, second)?;
+        self.execute_super_binary(program, frame, *first)?;
+        self.execute_super_binary(program, frame, *second)?;
         let value = self.object_pair(
             program,
             object.object_site_index(),

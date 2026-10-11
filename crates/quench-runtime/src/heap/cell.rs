@@ -1284,6 +1284,14 @@ impl EnvironmentSlots {
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+    /// The value of a slot this environment owns; a shared slot lives in its owner.
+    #[inline(always)]
+    pub(crate) fn owned(&self, slot: usize) -> Option<Value> {
+        match self.0.get(slot)? {
+            EnvironmentSlot::Owned(value) => Some(*value),
+            EnvironmentSlot::Shared(_) => None,
+        }
+    }
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
         self.0.iter().map(|slot| match slot {
             EnvironmentSlot::Owned(value) | EnvironmentSlot::Shared(value) => *value,
