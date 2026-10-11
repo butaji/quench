@@ -254,6 +254,7 @@ mod tests {
             dispatch: crate::bytecode::DispatchClass::Numeric,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            activation_bindings: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
         };
@@ -330,6 +331,7 @@ mod tests {
             dispatch: crate::bytecode::DispatchClass::Numeric,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            activation_bindings: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
         };

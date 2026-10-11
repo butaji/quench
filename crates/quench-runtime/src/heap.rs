@@ -104,6 +104,13 @@ pub(crate) struct GcProfile {
     pub sweep_slots: u64,
     pub mark_nanos: u64,
     pub sweep_nanos: u64,
+    pub mark_clear_nanos: u64,
+    pub allocations_between_collections_total: u64,
+    pub allocations_between_collections_min: u64,
+    pub allocations_between_collections_max: u64,
+    pub survivors_total: u64,
+    pub survivors_min: u64,
+    pub survivors_max: u64,
     pub marked_kinds: [u64; CellKind::COUNT],
 }
 #[cfg(feature = "profile-aggregate")]
@@ -121,6 +128,13 @@ impl Default for GcProfile {
             sweep_slots: 0,
             mark_nanos: 0,
             sweep_nanos: 0,
+            mark_clear_nanos: 0,
+            allocations_between_collections_total: 0,
+            allocations_between_collections_min: u64::MAX,
+            allocations_between_collections_max: 0,
+            survivors_total: 0,
+            survivors_min: u64::MAX,
+            survivors_max: 0,
             marked_kinds: [0; CellKind::COUNT],
         }
     }
@@ -249,6 +263,10 @@ impl Heap {
         self.roots.values().count()
     }
 
+    /// Slots that currently hold a cell.
+    pub(crate) fn live_slots(&self) -> usize {
+        self.slots.len() - self.free.len() - self.retired_slots
+    }
     pub fn alloc(&mut self, cell: Cell) -> Value {
         #[cfg(feature = "profile-aggregate")]
         {
@@ -267,12 +285,13 @@ impl Heap {
                 continue;
             };
             self.generations[index as usize] = generation;
-            self.slots.get_mut(index as usize).unwrap().cell = Some(cell);
+            let slot = &mut self.slots.get_mut(index as usize).unwrap().cell;
+            debug_assert!(slot.is_none(), "free-list slots hold no cell");
+            // SAFETY: `slot` is a valid, exclusively borrowed place. Sweeping empties a slot
+            // before freeing it, so overwriting it without dropping discards nothing.
+            unsafe { std::ptr::write(slot, Some(cell)) };
             #[cfg(feature = "profile-memory")]
             self.profile_allocation(index as usize);
-            self.peak_live = self
-                .peak_live
-                .max(self.slots.len() - self.free.len() - self.retired_slots);
             return Value::heap(index);
         }
         let index = self.slots.len();
@@ -283,9 +302,6 @@ impl Heap {
             self.marks.push(0);
         }
         self.generations.push(1);
-        self.peak_live = self
-            .peak_live
-            .max(self.slots.len() - self.free.len() - self.retired_slots);
         Value::heap(index as u32)
     }
     pub(crate) fn alloc_object_pair(
@@ -444,7 +460,20 @@ impl Heap {
         roots: impl IntoIterator<Item = Value>,
         mut object_roots: impl FnMut(Value, u32, &mut Vec<Value>),
     ) -> Vec<(Value, Value)> {
+        // Live slots grow only by allocation and shrink only by sweeping, so the peak is
+        // observed here and when it is reported rather than on every allocation.
+        self.peak_live = self.peak_live.max(self.live_slots());
         self.collections += 1;
+        #[cfg(feature = "profile-aggregate")]
+        {
+            let allocations = self.allocations as u64;
+            let profile = &mut self.gc_profile;
+            profile.allocations_between_collections_total += allocations;
+            profile.allocations_between_collections_min =
+                profile.allocations_between_collections_min.min(allocations);
+            profile.allocations_between_collections_max =
+                profile.allocations_between_collections_max.max(allocations);
+        }
         #[cfg(feature = "profile-aggregate")]
         let mark_started = std::time::Instant::now();
         let mut work: Vec<Value> = roots.into_iter().chain(self.roots.values()).collect();
@@ -498,6 +527,7 @@ impl Heap {
                     if let Some(arrays) = &mut self.sparse_arrays {
                         arrays.remove(&(index as u32));
                     }
+                    // Reused slots enter `free` only after their side-table entries are gone.
                     self.free.push(index as u32);
                     #[cfg(feature = "profile-aggregate")]
                     {
@@ -511,7 +541,18 @@ impl Heap {
         {
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
+        #[cfg(feature = "profile-aggregate")]
+        let clear_started = std::time::Instant::now();
         self.marks.fill(0);
+        #[cfg(feature = "profile-aggregate")]
+        {
+            let survivors = live as u64;
+            let profile = &mut self.gc_profile;
+            profile.mark_clear_nanos += clear_started.elapsed().as_nanos() as u64;
+            profile.survivors_total += survivors;
+            profile.survivors_min = profile.survivors_min.min(survivors);
+            profile.survivors_max = profile.survivors_max.max(survivors);
+        }
         self.allocations = 0;
         // `threshold` counts allocations after collection. The selected growth
         // factor is added to the live set to describe the occupied high-water.
