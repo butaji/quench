@@ -13,6 +13,9 @@ pub(super) struct GeneralCodeCursor {
 }
 
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
+/// Values a pooled frame's vectors keep their capacity for.
+const RETAINED_FRAME_VALUES: usize = 256;
+
 pub(super) struct PendingGeneralCall {
     pub(super) caller: usize,
     /// The caller's cursor, still valid on resume: the residual outlives the loop and a hot
@@ -473,9 +476,7 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let placeholder = self.frame_pool.pop().unwrap_or_else(|| {
-            self.empty_frame()
-        });
+        let placeholder = self.frame_pool.pop().unwrap_or_else(|| self.empty_frame());
         let old = std::mem::replace(&mut self.frames[frame_index], placeholder);
         self.with_stack.truncate(old.with_base);
         let mut frame = old;
@@ -857,6 +858,19 @@ impl<H: Host> Vm<H> {
         self.pool_frame(frame);
     }
 
+    /// Return a Wasm frame the lane pushed to the pool. A Wasm activation
+    /// touches only its locals and registers and runs no global lexical
+    /// declarations, so only its register storage needs bounding.
+    pub(super) fn retire_wasm_frame(&mut self) {
+        let mut frame = self.frames.pop().expect("pending frame is active");
+        self.with_stack.truncate(frame.with_base);
+        if frame.registers.capacity() > RETAINED_FRAME_VALUES {
+            frame.registers.clear();
+            frame.registers.shrink_to(RETAINED_FRAME_VALUES);
+        }
+        self.frame_pool.push(frame);
+    }
+
     pub(super) fn pool_frame(&mut self, frame: impl Into<Box<Frame>>) {
         let mut frame = frame.into();
         Self::recycle_frame(&mut frame);
@@ -867,7 +881,7 @@ impl<H: Host> Vm<H> {
         frame.context = CallContext::Internal;
         frame.original_arguments.clear();
         frame.with_objects = Vec::new();
-        const RETAINED_VALUES: usize = 256;
+        const RETAINED_VALUES: usize = RETAINED_FRAME_VALUES;
         if frame.original_arguments.capacity() > RETAINED_VALUES {
             frame.original_arguments.shrink_to(RETAINED_VALUES);
         }
@@ -931,7 +945,10 @@ impl<H: Host> Vm<H> {
             // Parameter-initialization stops and instruction profiling observe
             // every PC, so they run the general path only.
             let fast_lane = stop_pc.is_none()
-                && !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"));
+                && !cfg!(any(
+                    feature = "profile-aggregate",
+                    feature = "profile-memory"
+                ));
             let initial_function = self.frames[frame].function as usize;
             let mut executing_program = self.frames[frame].program;
             let mut cursor = self.general_cursor(
@@ -1024,7 +1041,11 @@ impl<H: Host> Vm<H> {
                         continue;
                     }
                     Op::Move => {
-                        self.write(frame, ins.result_register(), self.read(frame, ins.register_b()));
+                        self.write(
+                            frame,
+                            ins.result_register(),
+                            self.read(frame, ins.register_b()),
+                        );
                         continue;
                     }
                     _ => {}
