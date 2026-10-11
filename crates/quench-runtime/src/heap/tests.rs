@@ -46,6 +46,26 @@ fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
 }
 
 #[test]
+fn property_write_remembers_only_old_to_young_edges() {
+    let mut heap = Heap::new();
+    let owner = heap.alloc(Cell::Object(plain_object()));
+    let old_value = heap.alloc(Cell::String("old value".into()));
+    heap.property_push(owner, old_value);
+    heap.collect([owner]);
+
+    let young_value = heap.alloc(Cell::String("young value".into()));
+    heap.property_set(owner, 0, Value::number(7.0));
+    assert!(heap.remembered.is_empty());
+    heap.property_set(owner, 0, old_value);
+    assert!(heap.remembered.is_empty());
+
+    heap.property_set(owner, 0, young_value);
+    assert_eq!(heap.remembered, [owner.heap_index().unwrap()]);
+    collect_minor(&mut heap, [owner]);
+    assert!(heap.get(young_value).is_some());
+}
+
+#[test]
 fn minor_collection_handles_old_weak_maps_and_weak_refs() {
     let mut heap = Heap::new();
     let old_key = heap.alloc(Cell::Object(plain_object()));
@@ -121,7 +141,7 @@ fn gc_headroom_factors_scale_live_cells_without_overflow() {
     );
     assert_eq!(
         gc_allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS),
-        65_536
+        32_768
     );
 }
 
