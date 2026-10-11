@@ -67,8 +67,9 @@ impl<H: Host> Vm<H> {
         if let Some(index) = self.array_index_key(key) {
             let index = index as usize;
             // Accessor indices are stored as holes, so a present dense element is a data property.
-            if let Some(Cell::Array { elements, .. }) = self.heap.get(object)
-                && let Some(value) = elements
+            if let Some(cell @ Cell::Array { .. }) = self.heap.get(object)
+                && let Some(value) = cell
+                    .array_elements()
                     .get(index)
                     .copied()
                     .filter(|value| !value.is_deleted())
@@ -156,10 +157,13 @@ impl<H: Host> Vm<H> {
             let index = index as usize;
             // Descriptors, accessors and frozen state are the only things that make replacing a
             // present dense element differ from a plain store, and a plain array has none.
-            if let Some(Cell::Array { object: data, elements }) = self.heap.get(object)
-                && !data.has_indexed_descriptors()
+            if let Some(cell @ Cell::Array { object: data }) = self.heap.get(object)
+                && !cell.array_has_indexed_descriptors()
                 && !data.is_frozen()
-                && elements.get(index).is_some_and(|value| !value.is_deleted())
+                && cell
+                    .array_elements()
+                    .get(index)
+                    .is_some_and(|value| !value.is_deleted())
             {
                 self.replace_dense_element(object, index, value);
                 return Ok(());
@@ -188,7 +192,8 @@ impl<H: Host> Vm<H> {
                     Ok(())
                 };
             }
-            if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
+            if let Some(cell @ Cell::Array { .. }) = self.heap.get(object) {
+                let elements = cell.array_elements();
                 let existing = index < elements.len()
                     && elements.get(index).is_some_and(|value| !value.is_deleted())
                     || self
@@ -218,8 +223,11 @@ impl<H: Host> Vm<H> {
             }
             let replaces = matches!(
                 self.heap.get(object),
-                Some(Cell::Array { elements, .. })
-                    if elements.get(index).is_some_and(|value| !value.is_deleted())
+                Some(cell @ Cell::Array { .. })
+                    if cell
+                        .array_elements()
+                        .get(index)
+                        .is_some_and(|value| !value.is_deleted())
             );
             if replaces {
                 self.replace_dense_element(object, index, value);
@@ -232,9 +240,10 @@ impl<H: Host> Vm<H> {
     /// Overwrites a present dense array element after every guard has passed.
     #[inline(always)]
     fn replace_dense_element(&mut self, object: Value, index: usize, value: Value) {
-        let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) else {
+        let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(object) else {
             unreachable!("dense element replacement requires an array")
         };
+        let elements = cell.array_elements_mut();
         #[cfg(feature = "profile-aggregate")]
         self.profile
             .array_write_ownership(Rc::strong_count(elements) != 1);
@@ -356,17 +365,19 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
+        let Some(cell @ Cell::Array { .. }) = self.heap.get(object) else {
             return false;
         };
+        let elements = cell.array_elements();
         if self.check_array_element_write(object, index).is_err() {
             return false;
         }
         let dense_len = elements.len();
         if index < dense_len {
-            let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) else {
+            let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(object) else {
                 unreachable!()
             };
+            let elements = cell.array_elements_mut();
             #[cfg(feature = "profile-aggregate")]
             self.profile
                 .array_write_ownership(Rc::strong_count(elements) != 1);
@@ -377,7 +388,8 @@ impl<H: Host> Vm<H> {
         let sparse = self.array_index_uses_sparse_storage(object, index, dense_len);
         if sparse {
             self.heap.sparse_set(object, index, value);
-        } else if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) {
+        } else if let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(object) {
+            let elements = cell.array_elements_mut();
             #[cfg(feature = "profile-aggregate")]
             self.profile
                 .array_write_ownership(Rc::strong_count(elements) != 1);
@@ -418,9 +430,10 @@ impl<H: Host> Vm<H> {
         object: Value,
         index: usize,
     ) -> Result<(), JsError> {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
+        let Some(cell @ Cell::Array { .. }) = self.heap.get(object) else {
             return Err(JsError("array receiver is not array".into()));
         };
+        let elements = cell.array_elements();
         let existing = index < elements.len()
             && elements.get(index).is_some_and(|value| !value.is_deleted())
             || self
@@ -452,14 +465,12 @@ mod tests {
     #[test]
     fn high_array_index_stays_out_of_dense_storage() {
         let mut vm = Vm::new(SilentHost);
-        let array = vm.heap.alloc(Cell::Array {
-            object: Vm::<SilentHost>::empty_object(Value::NULL),
-            elements: Rc::new(vec![]),
-        });
+        let array = vm.heap.alloc(Cell::array(Value::NULL, Rc::new(vec![])));
         assert!(vm.set_array_element(array, 1_000_000, Value::TRUE));
-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+        let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
             panic!("array cell")
         };
+        let elements = cell.array_elements();
         assert!(elements.is_empty());
         assert_eq!(vm.heap.sparse_length(array), Some(1_000_001));
     }
@@ -470,17 +481,19 @@ mod tests {
         let mut vm = Vm::new(SilentHost);
         let array = vm.array_create(&program, 16_900).unwrap();
 
-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+        let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
             panic!("array cell")
         };
+        let elements = cell.array_elements();
         assert_eq!(elements.len(), 16_900);
         assert!(elements.iter().all(|value| value.is_deleted()));
         assert_eq!(vm.heap.sparse_length(array), None);
 
         assert!(vm.set_array_element(array, 16_899, Value::TRUE));
-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+        let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
             panic!("array cell")
         };
+        let elements = cell.array_elements();
         assert_eq!(elements[16_899], Value::TRUE);
         assert!(elements[16_898].is_deleted());
         assert_eq!(vm.heap.sparse_length(array), None);
@@ -489,16 +502,14 @@ mod tests {
     #[test]
     fn bounded_sparse_write_promotes_to_dense_storage() {
         let mut vm = Vm::new(SilentHost);
-        let array = vm.heap.alloc(Cell::Array {
-            object: Vm::<SilentHost>::empty_object(Value::NULL),
-            elements: Rc::new(Vec::new()),
-        });
+        let array = vm.heap.alloc(Cell::array(Value::NULL, Rc::new(Vec::new())));
 
         assert!(vm.set_array_element(array, 2_048, Value::TRUE));
 
-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+        let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
             panic!("array cell")
         };
+        let elements = cell.array_elements();
         assert_eq!(elements.len(), 2_049);
         assert!(elements[..2_048].iter().all(|value| value.is_deleted()));
         assert_eq!(elements[2_048], Value::TRUE);
@@ -508,19 +519,17 @@ mod tests {
     #[test]
     fn shrinking_large_sparse_array_promotes_and_preserves_values() {
         let mut vm = Vm::new(SilentHost);
-        let array = vm.heap.alloc(Cell::Array {
-            object: Vm::<SilentHost>::empty_object(Value::NULL),
-            elements: Rc::new(Vec::new()),
-        });
+        let array = vm.heap.alloc(Cell::array(Value::NULL, Rc::new(Vec::new())));
         vm.heap.sparse_set_length(array, 1_000_000);
         vm.heap.sparse_set(array, 3, Value::TRUE);
         vm.heap.sparse_set(array, 999_999, Value::FALSE);
 
         vm.heap.sparse_set_length(array, 16_900);
 
-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+        let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
             panic!("array cell")
         };
+        let elements = cell.array_elements();
         assert_eq!(elements.len(), 16_900);
         assert_eq!(elements[3], Value::TRUE);
         assert!(elements[4].is_deleted());
@@ -531,10 +540,7 @@ mod tests {
     fn ordinary_indexed_writes_do_not_intern_property_names() {
         let program = crate::Engine::specialize("", "array-index-atoms.js").unwrap();
         let mut vm = Vm::new(SilentHost);
-        let array = vm.heap.alloc(Cell::Array {
-            object: Vm::<SilentHost>::empty_object(Value::NULL),
-            elements: Rc::new(Vec::new()),
-        });
+        let array = vm.heap.alloc(Cell::array(Value::NULL, Rc::new(Vec::new())));
         let atom_count = vm.dynamic_atoms.len();
         vm.heap.retain_allocations_for_test();
         let cell_count = vm.heap.occupied_cell_count_for_test();
@@ -557,17 +563,17 @@ mod tests {
     #[test]
     fn deleting_an_uninterned_present_index_does_not_create_an_atom() {
         let mut vm = Vm::new(SilentHost);
-        let array = vm.heap.alloc(Cell::Array {
-            object: Vm::<SilentHost>::empty_object(Value::NULL),
-            elements: Rc::new(vec![Value::FALSE; 1024]),
-        });
+        let array = vm
+            .heap
+            .alloc(Cell::array(Value::NULL, Rc::new(vec![Value::FALSE; 1024])));
         let atom_count = vm.dynamic_atoms.len();
 
         assert_eq!(vm.delete_array_index(array, 1023), Value::TRUE);
 
-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+        let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
             panic!("array cell")
         };
+        let elements = cell.array_elements();
         assert!(elements[1023].is_deleted());
         assert_eq!(vm.dynamic_atoms.len(), atom_count);
         assert!(vm.lookup_array_index_atom(1023).is_none());
@@ -597,6 +603,29 @@ mod tests {
             }
         "#;
         let program = crate::Engine::specialize(source, "array-index-setter.js").unwrap();
+        let mut vm = Vm::new(SilentHost);
+        vm.execute(&program).unwrap();
+    }
+
+    #[test]
+    fn reflect_set_rejects_inherited_readonly_array_index() {
+        let source = r#"
+            Object.defineProperty(Array.prototype, "9", {
+                value: 90,
+                writable: false,
+                configurable: true,
+            });
+            var array = [];
+            array.length = 9;
+            if (Reflect.set(array, "9", 99)
+                || array.length !== 9
+                || Object.prototype.hasOwnProperty.call(array, "9")) {
+                throw new Error("Reflect.set ignored an inherited read-only index");
+            }
+            delete Array.prototype[9];
+        "#;
+        let program =
+            crate::Engine::specialize(source, "inherited-readonly-array-index.js").unwrap();
         let mut vm = Vm::new(SilentHost);
         vm.execute(&program).unwrap();
     }

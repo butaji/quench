@@ -25,9 +25,10 @@ impl<H: Host> Vm<H> {
                 kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
                 ..
             }) => self.programs.get(*program_id).is_some_and(|program| {
-                program.functions.get(*id as usize).is_some_and(|function| {
-                    function.has_restricted_legacy_caller_access()
-                })
+                program
+                    .functions
+                    .get(*id as usize)
+                    .is_some_and(|function| function.has_restricted_legacy_caller_access())
             }),
             Some(Cell::Function {
                 kind: FunctionKind::Native(_),
@@ -101,10 +102,10 @@ impl<H: Host> Vm<H> {
             })
             .unwrap_or(false);
         let args = Rc::new(frame.original_arguments.clone());
-        let arguments = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.realm_object_prototype(self.realm.globals)),
-            elements: args.clone(),
-        });
+        let arguments = self.heap.alloc(Cell::array(
+            self.realm_object_prototype(self.realm.globals),
+            args.clone(),
+        ));
         self.with_call_roots([arguments], |vm| {
             vm.initialize_arguments_object(arguments, Some(function), &args, expose_callee)?;
             Ok(arguments)
@@ -130,10 +131,10 @@ impl<H: Host> Vm<H> {
             this_atom,
             args.first().copied().unwrap_or(Value::UNDEFINED),
         )?;
-        let bound_args = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(args.get(1..).unwrap_or_default().to_vec()),
-        });
+        let bound_args = self.heap.alloc(Cell::array(
+            self.array_proto,
+            Rc::new(args.get(1..).unwrap_or_default().to_vec()),
+        ));
         self.set_property(env, args_atom, bound_args)?;
         let function = self.native_with_env(Native::FunctionBoundCall, env);
         let function_root = self.heap.root(function);
@@ -251,7 +252,7 @@ impl<H: Host> Vm<H> {
         let bound_args = self
             .own_property(env, args_atom)
             .and_then(|value| match self.heap.get(value) {
-                Some(Cell::Array { elements, .. }) => Some(elements.as_ref().clone()),
+                Some(cell @ Cell::Array { .. }) => Some(cell.array_elements().as_ref().clone()),
                 _ => None,
             })
             .unwrap_or_default();

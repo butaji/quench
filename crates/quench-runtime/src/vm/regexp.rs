@@ -622,7 +622,8 @@ impl<H: Host> Vm<H> {
             return Ok(matcher);
         }
         let matcher = Rc::new(Self::compile_regexp(source, flags)?);
-        self.regexp_matchers.insert(source, flags, Rc::clone(&matcher));
+        self.regexp_matchers
+            .insert(source, flags, Rc::clone(&matcher));
         Ok(matcher)
     }
 
@@ -1031,10 +1032,10 @@ impl<H: Host> Vm<H> {
                         ext: Box::new(crate::heap::IteratorExt {
                             next_method: None,
                             helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
-                            input,
-                            global: flags.contains('g'),
-                            unicode: flags.contains('u') || flags.contains('v'),
-                        })),
+                                input,
+                                global: flags.contains('g'),
+                                unicode: flags.contains('u') || flags.contains('v'),
+                            })),
                             helper_running: false,
                             helper_started: false,
                             generator: None,
@@ -1115,9 +1116,10 @@ impl<H: Host> Vm<H> {
                     loop {
                         let result = vm.regexp_exec_value(p, receiver, input_value)?;
                         if result.is_null() {
-                            let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+                            let Some(cell @ Cell::Array { .. }) = vm.heap.get(array) else {
                                 unreachable!("match owns its fresh result array");
                             };
+                            let elements = cell.array_elements();
                             return Ok(if elements.is_empty() {
                                 Value::NULL
                             } else {
@@ -1182,9 +1184,9 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         match (native, self.heap.get(this)) {
-            (Native::RegExpSource, Some(Cell::RegExp { meta, .. })) => {
-                Ok(self.heap.alloc(Cell::String(escape_regexp_source(&meta.source))))
-            }
+            (Native::RegExpSource, Some(Cell::RegExp { meta, .. })) => Ok(self
+                .heap
+                .alloc(Cell::String(escape_regexp_source(&meta.source)))),
             (Native::RegExpSource, _)
                 if self
                     .realm
@@ -1705,7 +1707,9 @@ impl<H: Host> Vm<H> {
             let last_index = vm.get_property(p, this, last_index_atom)?;
             let last_index = vm.regexp_to_length_value(p, last_index)?;
             let (regex, flags) = match vm.heap.get(this) {
-                Some(Cell::RegExp { matcher, meta, .. }) => (Rc::clone(matcher), meta.flags.clone()),
+                Some(Cell::RegExp { matcher, meta, .. }) => {
+                    (Rc::clone(matcher), meta.flags.clone())
+                }
                 _ => {
                     return Err(
                         vm.type_error(p, "RegExp method called on incompatible receiver".into())
@@ -1758,10 +1762,10 @@ impl<H: Host> Vm<H> {
                     })
                 })
                 .collect::<Vec<_>>();
-            let result = vm.heap.alloc(Cell::Array {
-                object: Self::empty_object(vm.array_proto),
-                elements: Rc::new(values),
-            });
+            let result = vm.heap.alloc(Cell::array(
+                vm.array_proto,
+                Rc::new(values),
+            ));
             let named = regexp_named_capture_ranges(&matched);
             let groups = vm.regexp_groups_object(&named, input.units())?;
             let index = matched.range.start;
@@ -1838,10 +1842,10 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .map(|range| self.regexp_index_pair(range))
             .collect::<Vec<_>>();
-        let indices = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(entries),
-        });
+        let indices = self.heap.alloc(Cell::array(
+            self.array_proto,
+            Rc::new(entries),
+        ));
         let groups = if !named.is_empty() {
             let groups = self
                 .heap
@@ -1868,10 +1872,10 @@ impl<H: Host> Vm<H> {
             Value::number(range.start as f64),
             Value::number(range.end as f64),
         ];
-        self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(pair.into()),
-        })
+        self.heap.alloc(Cell::array(
+            self.array_proto,
+            Rc::new(pair.into()),
+        ))
     }
 
     pub(super) fn compile_regexp(
