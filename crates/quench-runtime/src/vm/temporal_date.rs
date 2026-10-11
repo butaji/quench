@@ -603,8 +603,11 @@ impl<H: Host> Vm<H> {
             ..
         }) = self.heap.get(value)
         {
-            let (epoch_nanoseconds, time_zone, calendar) =
-                (**epoch_nanoseconds, time_zone.to_string(), calendar.to_string());
+            let (epoch_nanoseconds, time_zone, calendar) = (
+                **epoch_nanoseconds,
+                time_zone.to_string(),
+                calendar.to_string(),
+            );
             let _ = self.plain_date_overflow(p, options)?;
             let fields = super::temporal_zoned_date_time::zoned_date_time_fields(
                 epoch_nanoseconds,

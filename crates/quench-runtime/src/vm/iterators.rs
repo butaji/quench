@@ -2922,14 +2922,20 @@ impl<H: Host> Vm<H> {
             }
             if kind == IteratorKind::RegExpStringMatchAll {
                 let (input, global, unicode) = match vm.heap.get(this) {
-                    Some(Cell::Iterator { ext, .. }) if let Some(helper) = &ext.helper => match helper.as_ref() {
-                        IteratorHelper::RegExpStringMatchAll {
-                            input,
-                            global,
-                            unicode,
-                        } => (input.clone(), *global, *unicode),
-                        _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
-                    },
+                    Some(Cell::Iterator { ext, .. }) if let Some(helper) = &ext.helper => {
+                        match helper.as_ref() {
+                            IteratorHelper::RegExpStringMatchAll {
+                                input,
+                                global,
+                                unicode,
+                            } => (input.clone(), *global, *unicode),
+                            _ => {
+                                return Err(
+                                    vm.type_error(p, "invalid RegExp string iterator".into())
+                                );
+                            }
+                        }
+                    }
                     _ => return Err(vm.type_error(p, "invalid RegExp string iterator".into())),
                 };
                 let input_value = vm.heap.alloc(Cell::String(input.clone()));
