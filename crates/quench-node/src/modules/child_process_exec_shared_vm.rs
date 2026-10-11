@@ -15,6 +15,97 @@ pub(crate) fn function(
     context.host_function_with_data(crate::host::shared_vm::operation("execFile"), data)
 }
 
+pub(crate) fn install_promisified(
+    context: &mut NativeContext<'_, NodeHost>,
+    originals: &[RootId],
+) -> Result<(), RootedError> {
+    let factory = context.evaluate_script_rooted(
+        "(invoke) => function(...args) { return invoke(args); }",
+        "node:child_process/promisified.js",
+    )?;
+    let global = context.global_root()?;
+    let promise = get(context, global, "Promise")?;
+    let with_resolvers = get(context, promise, "withResolvers")?;
+    let symbol = get(context, global, "Symbol")?;
+    let name = context.string_rooted("nodejs.util.promisify.custom");
+    let custom = method(context, symbol, "for", &[name])?;
+    let undefined = context.undefined();
+    for &original in originals {
+        let data = context.array_rooted(&[original, promise, with_resolvers])?;
+        let invoke = context.host_function_with_data(
+            crate::host::shared_vm::operation("childProcessPromiseExec"),
+            data,
+        )?;
+        let function = context.call_rooted(factory, undefined, &[invoke])?;
+        let key = context.string_rooted("name");
+        let name = get(context, original, "name")?;
+        context.define_data_property_rooted(function, key, name, false, false, true)?;
+        context.define_data_property_rooted(original, custom, function, false, false, false)?;
+    }
+    Ok(())
+}
+
+/// Create the capability before calling the original outside a Promise
+/// executor: validation throws synchronously, and the returned promise owns
+/// the child handle even when the completion callback has already run.
+pub(crate) fn promise_exec(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let original = get(context, data, "0")?;
+    let constructor = get(context, data, "1")?;
+    let with_resolvers = get(context, data, "2")?;
+    let capability = context.call_rooted(with_resolvers, constructor, &[])?;
+    let resolve = get(context, capability, "resolve")?;
+    let reject = get(context, capability, "reject")?;
+    let callback_data = context.array_rooted(&[resolve, reject])?;
+    let callback = context.host_function_with_data(
+        crate::host::shared_vm::operation("childProcessPromiseExecSettled"),
+        callback_data,
+    )?;
+    let array = args[0];
+    let length = get(context, array, "length")?;
+    let length = number(context, length).unwrap_or(0.0) as usize;
+    let mut arguments = (0..length)
+        .map(|index| get(context, array, &index.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    arguments.push(callback);
+    let undefined = context.undefined();
+    let child = context.call_rooted(original, undefined, &arguments)?;
+    let promise = get(context, capability, "promise")?;
+    set(context, promise, "child", child)?;
+    Ok(promise)
+}
+
+pub(crate) fn promise_settled(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let undefined = context.undefined();
+    let error = args.first().copied().unwrap_or(undefined);
+    let stdout = args.get(1).copied().unwrap_or(undefined);
+    let stderr = args.get(2).copied().unwrap_or(undefined);
+    let (function, value) = if context
+        .rooted_value(error)
+        .is_some_and(|value| value.is_null())
+    {
+        let result = context.object_rooted()?;
+        set(context, result, "stdout", stdout)?;
+        set(context, result, "stderr", stderr)?;
+        (get(context, data, "0")?, result)
+    } else {
+        set(context, error, "stdout", stdout)?;
+        set(context, error, "stderr", stderr)?;
+        (get(context, data, "1")?, error)
+    };
+    context.call_rooted(function, undefined, &[value])?;
+    Ok(undefined)
+}
+
 /// exec normalizes shell policy, then delegates through the public execFile
 /// property just as Node does. Output and completion have one shared owner.
 pub(crate) fn exec(

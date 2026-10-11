@@ -567,6 +567,59 @@ cp.exec('sleep 1',{timeout:20},(e,o,s)=>record('timeout',e,o,s));
 }
 
 #[test]
+fn promisified_child_execution_matches_node_capabilities_and_validation() {
+    let source = r#"const cp=require('child_process');
+const {promisify}=require('util');
+for(const original of [cp.exec,cp.execFile]) {
+  const descriptor=Object.getOwnPropertyDescriptor(original,promisify.custom);
+  const fn=promisify(original);
+  console.log(JSON.stringify([fn===descriptor.value,fn===promisify(original),fn.name,fn.length,Object.hasOwn(fn,'prototype'),descriptor.writable,descriptor.enumerable,descriptor.configurable]));
+  for(const signal of [{},()=>{}]) {
+    try{fn('printf hello',{signal})}catch(error){console.log(error.name,error.code)}
+  }
+}
+const exec=promisify(cp.exec), execFile=promisify(cp.execFile);
+Promise.withResolvers=()=>{throw new Error('replaced public capability factory')};
+const results=[];
+function record(name,promise) {
+  console.log(name,typeof promise.child.pid);
+  promise.then(({stdout,stderr})=>{
+    results.push([name,null,stdout,stderr]);finish();
+  },error=>{
+    results.push([name,[error.name,error.code,Object.hasOwn(error,'stdout'),Object.hasOwn(error,'stderr')],error.stdout,error.stderr]);finish();
+  });
+}
+function finish(){if(results.length===3)console.log(JSON.stringify(results.sort((a,b)=>a[0].localeCompare(b[0]))));}
+record('exec',exec('printf out; printf err >&2'));
+record('file',execFile(process.execPath,['-e','process.stdout.write("file")']));
+record('failure',exec('printf failure >&2; exit 3'));
+"#;
+    let directory = tempfile::tempdir().unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
 fn system_error_names_and_validation_match_node() {
     let source = r#"const {getSystemErrorName}=require('util');
 const numbers=[...Array.from({length:140},(_,i)=>-i-1),...Array.from({length:16},(_,i)=>-3000-i),-4094,-4095,-99999];
