@@ -3643,8 +3643,8 @@ fn closure_identity_cache_rejects_reused_function_slots() {
     let old = vm.closure(&program, 1, Value::NULL).unwrap();
     let key = (super::program_store::ProgramId::MAIN, 1);
     let allocation_bound = vm.heap.stats().2 + 1;
-    // Bypass cache pruning to prove lookup itself checks the heap generation.
-    vm.heap.collect([]);
+    vm.collect_now(&program);
+    assert!(!vm.function_values.contains_key(&key));
     let mut reused = false;
     for _ in 0..allocation_bound {
         let replacement = vm.heap.alloc(crate::heap::Cell::Function {
@@ -3666,6 +3666,64 @@ fn closure_identity_cache_rejects_reused_function_slots() {
     );
     vm.prune_function_values();
     assert!(!vm.function_values.contains_key(&key));
+}
+
+#[test]
+fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
+    let mut vm = Vm::new(SilentHost);
+    let program = Engine::specialize("", "finalization-token-reuse.js").unwrap();
+    let target = vm.heap.alloc(crate::heap::Cell::Object(Vm::<SilentHost>::empty_object(
+        Value::NULL,
+    )));
+    let token = vm.heap.alloc(crate::heap::Cell::Object(Vm::<SilentHost>::empty_object(
+        Value::NULL,
+    )));
+    let target_handle = vm.heap.weak_handle(target).unwrap();
+    let token_handle = vm.heap.weak_handle(token).unwrap();
+    let registry = vm.heap.alloc(crate::heap::Cell::FinalizationRegistry {
+        object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
+        callback: Value::UNDEFINED,
+        entries: Box::new(crate::heap::FinalizationEntries(vec![
+            crate::heap::FinalizationEntry {
+                target: target_handle,
+                held: Value::number(1.0),
+                token: Some(token_handle),
+            },
+        ])),
+    });
+    let target_root = vm.heap.root(target);
+    let registry_root = vm.heap.root(registry);
+
+    assert!(vm.heap.collect([target, registry]).is_empty());
+    assert!(vm.heap.get(target).is_some());
+    let crate::heap::Cell::FinalizationRegistry { entries, .. } = vm.heap.get(registry).unwrap()
+    else {
+        panic!("registry remains live");
+    };
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].token, None);
+
+    let allocation_bound = vm.heap.stats().2 + 1;
+    let replacement = (0..allocation_bound)
+        .map(|_| {
+            vm.heap.alloc(crate::heap::Cell::Object(Vm::<SilentHost>::empty_object(
+                Value::NULL,
+            )))
+        })
+        .find(|value| *value == token)
+        .expect("freed token slot is reused");
+    assert_eq!(
+        vm.call_finalization_registry_native(
+            &program,
+            Native::FinalizationRegistryUnregister,
+            registry,
+            &[replacement],
+        )
+        .unwrap(),
+        Value::FALSE
+    );
+    assert!(vm.heap.release_root(target_root));
+    assert!(vm.heap.release_root(registry_root));
 }
 
 #[test]

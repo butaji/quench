@@ -72,8 +72,6 @@ pub(crate) struct Heap {
     slots: SlotArena,
     marks: Vec<u64>,
     free: Vec<u32>,
-    retired_slots: usize,
-    generations: Vec<u32>,
     external_bytes: usize,
     allocations: usize,
     threshold: usize,
@@ -297,7 +295,7 @@ impl Heap {
 
     /// Slots that currently hold a cell.
     pub(crate) fn live_slots(&self) -> usize {
-        self.slots.len() - self.free.len() - self.retired_slots
+        self.slots.len() - self.free.len()
     }
     pub fn alloc(&mut self, cell: Cell) -> Value {
         #[cfg(feature = "profile-aggregate")]
@@ -311,14 +309,11 @@ impl Heap {
         self.allocations += 1;
         self.total_allocations += 1;
         self.external_bytes += cell.external_bytes();
-        while let Some(index) = self.free.pop() {
-            let Some(generation) = self.generations[index as usize].checked_add(1) else {
-                self.retired_slots += 1;
-                continue;
-            };
-            self.generations[index as usize] = generation;
+        if let Some(index) = self.free.pop() {
             let slot = &mut self.slots.get_mut(index as usize).unwrap().cell;
             debug_assert!(slot.is_none(), "free-list slots hold no cell");
+            // Collection clears heap weak owners before adding a dead slot here;
+            // the VM clears its weak closure cache before control can allocate.
             // SAFETY: `slot` is a valid, exclusively borrowed place. Sweeping empties a slot
             // before freeing it, so overwriting it without dropping discards nothing.
             unsafe { std::ptr::write(slot, Some(cell)) };
@@ -333,7 +328,6 @@ impl Heap {
         if index / 64 == self.marks.len() {
             self.marks.push(0);
         }
-        self.generations.push(1);
         Value::heap(index as u32)
     }
     pub(crate) fn alloc_object_pair(
@@ -449,8 +443,6 @@ impl Heap {
         self.slots.clear();
         self.marks.clear();
         self.free.clear();
-        self.retired_slots = 0;
-        self.generations.clear();
         self.external_bytes = 0;
         self.allocations = 0;
         self.threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
