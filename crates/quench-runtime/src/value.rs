@@ -73,6 +73,22 @@ impl Value {
         IntegerEncoding::TAG.encode(value)
     }
 
+    /// A 64-bit Wasm payload held in place. Every payload outside the tag
+    /// space already reads as an untagged value, so only tag-space payloads
+    /// need a heap box (`Cell::WasmBits64`); a static Wasm type tells the
+    /// two encodings of a slot apart from its 32-bit integer encoding.
+    #[inline(always)]
+    pub(crate) fn from_bits64(bits: u64) -> Option<Self> {
+        let value = Self(bits);
+        (!value.is_tagged()).then_some(value)
+    }
+
+    /// The 64-bit Wasm payload a value holds in place.
+    #[inline(always)]
+    pub(crate) fn bits64(self) -> Option<u64> {
+        (!self.is_tagged()).then_some(self.0)
+    }
+
     #[inline(always)]
     pub(crate) fn as_int(self) -> Option<i32> {
         ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)
