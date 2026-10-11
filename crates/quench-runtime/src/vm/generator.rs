@@ -136,7 +136,7 @@ impl<H: Host> Vm<H> {
         frame.prepare_registers(register_count);
         if function.parameter_end_pc != 0 {
             self.frames.push(frame);
-            let result = self.run_frame_general_until(
+            let result = self.run_frame_general_until::<true>(
                 p,
                 self.frames.len() - 1,
                 Some(function.parameter_end_pc as usize),
