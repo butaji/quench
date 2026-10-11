@@ -351,10 +351,10 @@ impl<H: Host> Vm<H> {
             }
             values.push(object);
         }
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
-        }))
+        Ok(self.heap.alloc(Cell::array(
+            self.array_proto,
+            Rc::new(values),
+        )))
     }
 
     fn duration_format_parts(
