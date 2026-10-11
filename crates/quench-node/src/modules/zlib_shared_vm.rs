@@ -10,7 +10,6 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 use crate::host::NodeHost;
 
-const MAX_ZLIB_INPUT_BYTES: f64 = u32::MAX as f64;
 const DEFAULT_BROTLI_BUFFER_BYTES: usize = 4096;
 const DEFAULT_BROTLI_QUALITY: u32 = 11;
 const DEFAULT_BROTLI_WINDOW_BITS: u32 = 22;
@@ -55,16 +54,8 @@ pub(super) fn codec(name: &str) -> Option<Codec> {
 }
 
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(Transform, Buffer, transform, constants, codecs, open) => {
-  const CRC32_POLYNOMIAL = 0xedb88320;
-  const inputBuffer = (input, options) => {
-    const encoding = options && typeof options.encoding === "string"
-      ? options.encoding
-      : undefined;
-    return typeof input === "string"
-      ? Buffer.from(input, encoding)
-      : Buffer.from(input);
-  };
+    r#"(Transform, Buffer, transform, constants, codecs, open, crc32Operation, queueCallback) => {
+  function crc32(data, value = 0) { return crc32Operation(data, value); }
   const minZstdLevel = -(2 ** 31);
   const maxZstdLevel = 2 ** 31 - 1;
   const nativeStreams = new WeakMap();
@@ -109,21 +100,10 @@ const FACTORY: &str = quench_js_check::checked_js!(
   };
   const encode = (mode, input, options) => Buffer.from(transform(
     mode,
-    inputBuffer(input, options),
+    input,
     levelFor(mode, options),
+    options,
   ));
-  const checksum = (input, seed = 0) => {
-    const bytes = inputBuffer(input);
-    let crc = (~Number(seed)) >>> 0;
-    for (const byte of bytes) {
-      crc ^= byte;
-      for (let bit = 0; bit < 8; bit++) {
-        crc = (crc >>> 1) ^ ((crc & 1) ? CRC32_POLYNOMIAL : 0);
-      }
-    }
-    return (~crc) >>> 0;
-  };
-
   class Zlib extends Transform {
     constructor(mode, options) {
       super(options);
@@ -163,30 +143,16 @@ const FACTORY: &str = quench_js_check::checked_js!(
     return Codec;
   };
   const sync = (mode) => (input, options) => encode(mode, input, options);
-  const callbackCodec = (mode) => (input, options, callback) => {
-    if (typeof options === "function") {
-      callback = options;
-      options = undefined;
-    }
-    if (typeof callback !== "function") {
-      throw new TypeError("The callback argument must be of type function");
-    }
-    process.nextTick(() => {
-      try {
-        callback(null, encode(mode, input, options));
-      } catch (error) {
-        callback(error);
-      }
-    });
-  };
+  const callbackCodec = (mode, Codec) => (input, options, callback) =>
+    queueCallback(encode, mode, input, options, callback, Codec);
   const api = {
-    crc32: checksum,
+    crc32,
   };
   for (const [mode, name] of codecs) {
     const Codec = codecClass(name, mode);
     api[name] = Codec;
     api[`${mode}Sync`] = sync(mode);
-    api[mode] = callbackCodec(mode);
+    api[mode] = callbackCodec(mode, Codec);
     api[`create${name}`] = (options) => new Codec(options);
   }
   Object.defineProperty(api, "constants", {
@@ -212,7 +178,12 @@ pub(crate) fn module(
     stream: RootId,
 ) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(FACTORY, "node:zlib/shared.js")?;
-    let transform = context.host_function(crate::host::shared_vm::operation("zlibTransform"))?;
+    let buffer_module = crate::host::shared_vm::commonjs::buffer_module(context)?;
+    let max_output = get(context, buffer_module, "kMaxLength")?;
+    let transform = context.host_function_with_data(
+        crate::host::shared_vm::operation("zlibTransform"),
+        max_output,
+    )?;
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let stream_transform = get(context, stream, "Transform")?;
@@ -229,11 +200,23 @@ pub(crate) fn module(
         crate::host::shared_vm::operation("zlibStreamOpen"),
         finished,
     )?;
+    let queue_callback =
+        context.host_function(crate::host::shared_vm::operation("zlibCallbackQueue"))?;
+    let crc32 = context.host_function(crate::host::shared_vm::operation("zlibCrc32"))?;
     let undefined = context.undefined();
     context.call_rooted(
         factory,
         undefined,
-        &[stream_transform, buffer, transform, constants, codecs, open],
+        &[
+            stream_transform,
+            buffer,
+            transform,
+            constants,
+            codecs,
+            open,
+            crc32,
+            queue_callback,
+        ],
     )
 }
 
@@ -256,7 +239,9 @@ pub(crate) fn transform(
             return Err(context.throw(error));
         }
     };
-    let input = byte_array(context, args.get(1).copied())?;
+    let default_max = context.host_function_data()?;
+    let max_output = output_limit(context, args.get(3).copied(), default_max)?;
+    let input = codec_input(context, args.get(1).copied())?;
     let level = args
         .get(2)
         .copied()
@@ -267,16 +252,18 @@ pub(crate) fn transform(
     let Some(mode) = codec(&mode) else {
         return Err(RootedError::host("unsupported zlib operation"));
     };
-    let output = match transform_bytes(mode, &input, level) {
+    let output = match transform_bytes(mode, &input, level, Some(max_output)) {
         Ok(output) => output,
         Err(error) => {
-            let exception = context.error_rooted(&error.to_string())?;
-            let key = context.string_rooted("code");
-            let value = context.string_rooted("Z_DATA_ERROR");
-            context.set_property_rooted(exception, key, value, exception)?;
+            let exception = super::zlib_stream_shared_vm::codec_error(context, error)?;
             return Err(context.throw(exception));
         }
     };
+    if output.len() as f64 > max_output {
+        let error =
+            super::zlib_stream_shared_vm::codec_error(context, output_limit_error(max_output))?;
+        return Err(context.throw(error));
+    }
     context.uint8_array_rooted(&output)
 }
 
@@ -284,8 +271,9 @@ fn transform_bytes(
     mode: Codec,
     input: &[u8],
     level: Option<i32>,
+    max_output: Option<f64>,
 ) -> Result<Vec<u8>, std::io::Error> {
-    use flate2::read::{DeflateDecoder, GzDecoder, ZlibDecoder};
+    use flate2::read::{DeflateDecoder, MultiGzDecoder, ZlibDecoder};
     use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
 
     let flate_level = match level {
@@ -299,21 +287,21 @@ fn transform_bytes(
             encoder.write_all(input)?;
             encoder.finish()
         }
-        Codec::Gunzip => read_all(GzDecoder::new(input)),
+        Codec::Gunzip => read_all(MultiGzDecoder::new(input), max_output),
         Codec::Deflate => {
             let mut encoder = ZlibEncoder::new(Vec::new(), flate_level);
             encoder.write_all(input)?;
             encoder.finish()
         }
-        Codec::Inflate => read_all(ZlibDecoder::new(input)),
+        Codec::Inflate => read_all(ZlibDecoder::new(input), max_output),
         Codec::DeflateRaw => {
             let mut encoder = DeflateEncoder::new(Vec::new(), flate_level);
             encoder.write_all(input)?;
             encoder.finish()
         }
-        Codec::InflateRaw => read_all(DeflateDecoder::new(Cursor::new(input))),
-        Codec::Unzip if input.starts_with(GZIP_HEADER) => read_all(GzDecoder::new(input)),
-        Codec::Unzip => read_all(ZlibDecoder::new(input)),
+        Codec::InflateRaw => read_all(DeflateDecoder::new(Cursor::new(input)), max_output),
+        Codec::Unzip if input.starts_with(GZIP_HEADER) => read_all(MultiGzDecoder::new(input), max_output),
+        Codec::Unzip => read_all(ZlibDecoder::new(input), max_output),
         Codec::BrotliCompress => {
             let mut output = Vec::new();
             {
@@ -330,62 +318,55 @@ fn transform_bytes(
             }
             Ok(output)
         }
-        Codec::BrotliDecompress => read_all(brotli::Decompressor::new(
-            Cursor::new(input),
-            DEFAULT_BROTLI_BUFFER_BYTES,
-        )),
+        Codec::BrotliDecompress => read_all(
+            brotli::Decompressor::new(Cursor::new(input), DEFAULT_BROTLI_BUFFER_BYTES),
+            max_output,
+        ),
         Codec::ZstdCompress => zstd::stream::encode_all(input, level.unwrap_or(DEFAULT_ZSTD_LEVEL)),
-        Codec::ZstdDecompress => zstd::stream::decode_all(input),
+        Codec::ZstdDecompress => read_all(zstd::stream::read::Decoder::new(input)?, max_output),
     }
 }
 
-fn read_all(mut reader: impl Read) -> Result<Vec<u8>, std::io::Error> {
+fn read_all(mut reader: impl Read, max_output: Option<f64>) -> Result<Vec<u8>, std::io::Error> {
     let mut output = Vec::new();
-    reader.read_to_end(&mut output)?;
+    if let Some(limit) = max_output {
+        reader
+            .take((limit as u64).saturating_add(1))
+            .read_to_end(&mut output)?;
+        if output.len() as f64 > limit {
+            return Err(output_limit_error(limit));
+        }
+    } else {
+        reader.read_to_end(&mut output)?;
+    }
     Ok(output)
 }
 
-pub(super) fn byte_array(
+pub(super) fn codec_input(
     context: &mut NativeContext<'_, NodeHost>,
     input: Option<RootId>,
 ) -> Result<Vec<u8>, RootedError> {
-    let Some(input) = input else {
-        let error = context.type_error_rooted("zlib input must be a byte array")?;
-        return Err(context.throw(error));
-    };
+    let undefined = context.undefined();
+    let input = input.unwrap_or(undefined);
+    if let Some(text) = context.string_text(input)? {
+        return Ok(text.into_bytes());
+    }
     if let Some(bytes) = context.view_bytes_rooted(input) {
         return Ok(bytes);
     }
-    let length_key = context.string_rooted("length");
-    let length = context.get_property_rooted(input, length_key)?;
-    let length = context
-        .rooted_value(length)
-        .and_then(|value| value.as_number())
-        .filter(|number| {
-            number.is_finite()
-                && *number >= 0.0
-                && number.fract() == 0.0
-                && *number <= MAX_ZLIB_INPUT_BYTES
-        });
-    let Some(length) = length.map(|length| length as usize) else {
-        let error = context.type_error_rooted("zlib input must be a byte array")?;
-        return Err(context.throw(error));
-    };
-    let mut bytes = Vec::with_capacity(length);
-    for index in 0..length {
-        let key = context.string_rooted(&index.to_string());
-        let value = context.get_property_rooted(input, key)?;
-        let byte = context
-            .rooted_value(value)
-            .and_then(|value| value.as_number())
-            .filter(|number| number.is_finite() && *number >= 0.0 && *number <= 255.0);
-        let Some(byte) = byte else {
-            let error = context.type_error_rooted("zlib input must contain bytes")?;
-            return Err(context.throw(error));
-        };
-        bytes.push(byte as u8);
+    if context.has_builtin_brand_rooted(input, quench_runtime::BuiltinBrand::AnyArrayBuffer)? {
+        if let Some(quench_runtime::BuiltinData::Bytes { bytes, .. }) =
+            context.builtin_data_rooted(input)?
+        {
+            return Ok(bytes);
+        }
     }
-    Ok(bytes)
+    Err(super::util_shared_vm::argument_type_error_with_expected(
+        context,
+        input,
+        "buffer",
+        "of type string or an instance of Buffer, TypedArray, DataView, or ArrayBuffer",
+    )?)
 }
 
 fn constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
@@ -428,6 +409,229 @@ pub(super) fn stream_reader(
             DEFAULT_BROTLI_BUFFER_BYTES,
         )),
         Codec::ZstdDecompress => Box::new(zstd::stream::read::Decoder::new(cursor)?),
-        mode => Box::new(Cursor::new(transform_bytes(mode, cursor.get_ref(), level)?)),
+        mode => Box::new(Cursor::new(transform_bytes(
+            mode,
+            cursor.get_ref(),
+            level,
+            None,
+        )?)),
     })
+}
+
+pub(crate) fn crc32(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let data = args.first().copied().unwrap_or(undefined);
+    let bytes = if let Some(text) = context.string_text(data)? {
+        text.into_bytes()
+    } else if let Some(bytes) = context.view_bytes_rooted(data) {
+        bytes
+    } else {
+        return Err(super::util_shared_vm::argument_type_error_with_expected(
+            context,
+            data,
+            "data",
+            "of type string or an instance of Buffer, TypedArray, or DataView",
+        )?);
+    };
+    let value = args.get(1).copied().unwrap_or(undefined);
+    let seed = if context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_undefined())
+    {
+        0
+    } else {
+        let Some(number) = context
+            .rooted_value(value)
+            .and_then(|value| value.as_number())
+        else {
+            return Err(super::util_shared_vm::argument_type_error(
+                context, value, "value", "number",
+            )?);
+        };
+        let constraint = if !number.is_finite() || number.fract() != 0.0 {
+            Some("an integer".to_owned())
+        } else if !(0.0..=f64::from(u32::MAX)).contains(&number) {
+            Some(format!(">= 0 && <= {}", u32::MAX))
+        } else {
+            None
+        };
+        if let Some(constraint) = constraint {
+            let received = super::util_shared_vm::range_error_received(context, value)?;
+            let error = context.range_error_rooted(&format!("The value of \"value\" is out of range. It must be {constraint}. Received {received}"))?;
+            let code = context.string_rooted("ERR_OUT_OF_RANGE");
+            set(context, error, "code", code)?;
+            return Err(context.throw(error));
+        }
+        number as u32
+    };
+    let mut crc = crc32fast::Hasher::new_with_initial(seed);
+    crc.update(&bytes);
+    Ok(context.number(f64::from(crc.finalize())))
+}
+
+#[derive(Debug)]
+pub(super) struct OutputLimit(f64);
+impl std::fmt::Display for OutputLimit {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Cannot create a Buffer larger than {} bytes",
+            self.0
+        )
+    }
+}
+impl std::error::Error for OutputLimit {}
+fn output_limit_error(limit: f64) -> std::io::Error {
+    std::io::Error::other(OutputLimit(limit))
+}
+fn output_limit(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: Option<RootId>,
+    default: RootId,
+) -> Result<f64, RootedError> {
+    let max = context
+        .rooted_value(default)
+        .and_then(|value| value.as_number())
+        .ok_or_else(|| RootedError::host("zlib captured buffer limit missing"))?;
+    let undefined = context.undefined();
+    let options = options.unwrap_or(undefined);
+    if !context.truthy_rooted(options)? {
+        return Ok(max);
+    }
+    let value = get(context, options, "maxOutputLength")?;
+    if context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_undefined())
+    {
+        return Ok(max);
+    }
+    let Some(number) = context
+        .rooted_value(value)
+        .and_then(|value| value.as_number())
+    else {
+        return Err(super::util_shared_vm::argument_type_error(
+            context,
+            value,
+            "options.maxOutputLength",
+            "number",
+        )?);
+    };
+    if number.is_nan() {
+        return Ok(max);
+    }
+    let constraint = if !number.is_finite() {
+        Some("a finite number".to_owned())
+    } else if number < 1.0 || number > max {
+        Some(format!(">= 1 and <= {max}"))
+    } else {
+        None
+    };
+    if let Some(constraint) = constraint {
+        let received = super::util_shared_vm::range_error_received(context, value)?;
+        let error=context.range_error_rooted(&format!("The value of \"options.maxOutputLength\" is out of range. It must be {constraint}. Received {received}"))?;
+        let code = context.string_rooted("ERR_OUT_OF_RANGE");
+        set(context, error, "code", code)?;
+        return Err(context.throw(error));
+    }
+    Ok(number)
+}
+fn set(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+    value: RootId,
+) -> Result<(), RootedError> {
+    let key = context.string_rooted(name);
+    if context.set_property_rooted(object, key, value, object)? {
+        Ok(())
+    } else {
+        Err(RootedError::host(format!("cannot set zlib {name}")))
+    }
+}
+
+pub(crate) fn queue_callback(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let encode = *args
+        .first()
+        .ok_or_else(|| RootedError::host("zlib callback encoder missing"))?;
+    let mode = *args
+        .get(1)
+        .ok_or_else(|| RootedError::host("zlib callback mode missing"))?;
+    let mut options = args.get(3).copied().unwrap_or(undefined);
+    let callback = if context.is_callable_rooted(options)? {
+        let callback = options;
+        options = undefined;
+        callback
+    } else {
+        args.get(4).copied().unwrap_or(undefined)
+    };
+    let constructor = *args
+        .get(5)
+        .ok_or_else(|| RootedError::host("zlib callback constructor missing"))?;
+    let engine = context.construct_rooted(constructor, constructor, &[options])?;
+    if !context.is_callable_rooted(callback)? {
+        return Err(super::util_shared_vm::argument_type_error(
+            context, callback, "callback", "function",
+        )?);
+    }
+    let input = codec_input(context, args.get(2).copied())?;
+    let input = context.uint8_array_rooted(&input)?;
+    let data = context.array_rooted(&[encode, mode, input, options, callback, engine])?;
+    let pump = context
+        .host_function_with_data(crate::host::shared_vm::operation("zlibCallbackRun"), data)?;
+    let state = context.host_mut().shared_state();
+    let id = state
+        .borrow_mut()
+        .scheduler
+        .reserve_shared_immediate_id()
+        .ok_or_else(|| RootedError::host("zlib completion identifiers exhausted"))?;
+    let pump = context.retain(pump)?;
+    let receiver = context.retain(undefined)?;
+    state.borrow_mut().scheduler.queue_shared_immediate(
+        id,
+        crate::modules::shared_event_loop::SharedImmediateOwner::Host,
+        crate::modules::shared_event_loop::SharedCallback {
+            callback: pump,
+            receiver,
+            args: Vec::new(),
+        },
+    );
+    Ok(undefined)
+}
+pub(crate) fn run_callback(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let encode = get(context, data, "0")?;
+    let mode = get(context, data, "1")?;
+    let input = get(context, data, "2")?;
+    let options = get(context, data, "3")?;
+    let callback = get(context, data, "4")?;
+    let engine = get(context, data, "5")?;
+    let undefined = context.undefined();
+    match context.call_rooted(encode, undefined, &[mode, input, options]) {
+        Ok(result) => {
+            let close = get(context, engine, "close")?;
+            context.call_rooted(close, engine, &[])?;
+            let null = context.null();
+            context.call_rooted(callback, engine, &[null, result])?;
+        }
+        Err(error)=>{
+            let Some(exception)=error.exception else {return Err(error)};
+            let close=get(context,engine,"close")?;context.call_rooted(close,engine,&[])?;
+            let result=context.call_rooted(callback,engine,&[exception]);
+            context.release_root(exception);result?;
+        }
+    }
+    Ok(undefined)
 }
