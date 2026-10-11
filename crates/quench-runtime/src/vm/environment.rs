@@ -181,6 +181,12 @@ impl<H: Host> Vm<H> {
             return Err(self.reference_error(p, "this binding is unavailable".into()));
         }
         for index in 0..=frame {
+            // An ordinary activation's receiver is authoritative even when it
+            // omits unobservable lexical-this bindings. Only activations that
+            // resolve this through an environment can inherit super()'s update.
+            if self.frames[index].fixed_this {
+                continue;
+            }
             if let Some(value) = self.dynamic_binding(index, atom) {
                 self.frames[index].this = value;
             }

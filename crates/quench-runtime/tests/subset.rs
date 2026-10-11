@@ -21,6 +21,41 @@ fn output(source: &str) -> Vec<String> {
 }
 
 #[test]
+fn nested_super_initialization_preserves_caller_receivers() {
+    let source = r#"
+      (() => {
+        class Base {}
+        class Derived extends Base {}
+        const make = () => new Derived();
+        class Caller {
+          constructor() { this.value = 42; }
+          read(reason = make()) { return this.value; }
+        }
+        print(new Caller().read());
+        class Captured extends Base {
+          constructor() {
+            const read = () => this;
+            super();
+            print(read() === this);
+          }
+        }
+        new Captured();
+      })();
+    "#;
+    for generic in [false, true] {
+        let host = Capture::default();
+        let program = if generic {
+            Engine::specialize_unspecialized(source, "nested-super.js")
+        } else {
+            Engine::specialize(source, "nested-super.js")
+        }
+        .unwrap();
+        Runtime::new(host.clone()).execute(&program).unwrap();
+        assert_eq!(*host.0.borrow(), ["42", "true"]);
+    }
+}
+
+#[test]
 fn residual_binary_round_trip_preserves_execution() {
     let path =
         std::env::temp_dir().join(format!("quench-roundtrip-{}.residual", std::process::id()));
