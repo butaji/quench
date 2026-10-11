@@ -442,9 +442,10 @@ impl<H: Host> Vm<H> {
             }
             if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
                 && let Some(index) = super::object_static::array_index(self.atom_name(atom))
-                && let Some(Cell::Array { elements, .. }) = self.heap.get(object)
+                && let Some(cell @ Cell::Array { .. }) = self.heap.get(object)
             {
-                let value = elements
+                let value = cell
+                    .array_elements()
                     .get(index as usize)
                     .copied()
                     .filter(|value| !value.is_deleted())

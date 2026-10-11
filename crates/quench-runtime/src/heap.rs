@@ -600,10 +600,10 @@ impl Heap {
         }
     }
     pub(crate) fn sparse_set_length(&mut self, array: Value, length: usize) {
-        let Some(Cell::Array { elements, .. }) = self.get(array) else {
+        let Some(cell @ Cell::Array { .. }) = self.get(array) else {
             return;
         };
-        let dense_length = elements.len();
+        let dense_length = cell.array_elements().len();
         let sparse_length = self.sparse_length(array);
         if sparse_length.is_none() && length == dense_length {
             return;
@@ -634,9 +634,10 @@ impl Heap {
         {
             self.sparse_arrays = None;
         }
-        let Some(Cell::Array { elements, .. }) = self.get_mut(array) else {
+        let Some(cell @ Cell::Array { .. }) = self.get_mut(array) else {
             return;
         };
+        let elements = cell.array_elements_mut();
         let dense_length = elements.len();
         let elements = Rc::make_mut(elements);
         elements.resize(length, Value::DELETED);
@@ -788,12 +789,14 @@ impl Heap {
         }
         match cell {
             Cell::Object(value) => object(value),
-            Cell::Array {
-                object: value,
-                elements,
-            } => {
+            Cell::Array { object: value } => {
                 object(value);
-                work.extend(elements.iter().copied().filter(|value| value.is_heap()));
+                work.extend(
+                    cell.array_elements()
+                        .iter()
+                        .copied()
+                        .filter(|value| value.is_heap()),
+                );
             }
             Cell::ArrayBuffer { object: value, .. } => object(value),
             Cell::RegExp {
@@ -1085,7 +1088,10 @@ impl Heap {
                     ..
                 } => time_zone.capacity() + calendar.capacity(),
                 Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
-                Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
+                cell @ Cell::Array { .. } => {
+                    let elements = cell.array_elements();
+                    elements.capacity() * size_of::<Value>()
+                }
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
                 Cell::WasmMemory { bytes, .. } => bytes.capacity(),
                 Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),

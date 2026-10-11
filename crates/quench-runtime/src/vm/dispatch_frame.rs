@@ -199,24 +199,26 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let mut frame = self.frame_pool.pop().unwrap_or_else(|| Box::new(Frame {
-            context: CallContext::Internal,
-            original_arguments: vec![],
-            program: self.active_program,
-            function: 0,
-            pc: 0,
-            binding_site_pc: None,
-            env: Value::NULL,
-            this: Value::UNDEFINED,
-            locals: vec![],
-            dynamic_bindings: vec![],
-            captured: false,
-            registers: vec![],
-            active_iterators: vec![],
-            with_objects: Vec::new(),
-            with_base: self.with_stack.len(),
-            fixed_this: false,
-        }));
+        let mut frame = self.frame_pool.pop().unwrap_or_else(|| {
+            Box::new(Frame {
+                context: CallContext::Internal,
+                original_arguments: vec![],
+                program: self.active_program,
+                function: 0,
+                pc: 0,
+                binding_site_pc: None,
+                env: Value::NULL,
+                this: Value::UNDEFINED,
+                locals: vec![],
+                dynamic_bindings: vec![],
+                captured: false,
+                registers: vec![],
+                active_iterators: vec![],
+                with_objects: Vec::new(),
+                with_base: self.with_stack.len(),
+                fixed_this: false,
+            })
+        });
         frame
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
@@ -229,20 +231,20 @@ impl<H: Host> Vm<H> {
         }
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                elements: Rc::new(elements),
-            });
+            frame.locals[fixed] = self.heap.alloc(Cell::array(
+                self.array_prototype_for_realm(self.realm.globals),
+                Rc::new(elements),
+            ));
         }
         if let Some(slot) = function.self_binding_slot {
             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
         }
         if let Some(slot) = function.arguments_slot {
             let mapped = function.arguments_are_mapped();
-            let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.object_proto),
-                elements: Rc::new(args.to_vec()),
-            });
+            let arguments = self.heap.alloc(Cell::array(
+                self.object_proto,
+                Rc::new(args.to_vec()),
+            ));
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
             if mapped {
@@ -445,20 +447,20 @@ impl<H: Host> Vm<H> {
         }
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
-            frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                elements: Rc::new(elements),
-            });
+            frame.locals[fixed] = self.heap.alloc(Cell::array(
+                self.array_prototype_for_realm(self.realm.globals),
+                Rc::new(elements),
+            ));
         }
         if let Some(slot) = function.self_binding_slot {
             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
         }
         if let Some(slot) = function.arguments_slot {
             let mapped = function.arguments_are_mapped();
-            let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.object_proto),
-                elements: Rc::new(args.to_vec()),
-            });
+            let arguments = self.heap.alloc(Cell::array(
+                self.object_proto,
+                Rc::new(args.to_vec()),
+            ));
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
             if mapped {
@@ -939,7 +941,11 @@ impl<H: Host> Vm<H> {
                         continue;
                     }
                     Op::Move => {
-                        self.write(frame, ins.result_register(), self.read(frame, ins.register_b()));
+                        self.write(
+                            frame,
+                            ins.result_register(),
+                            self.read(frame, ins.register_b()),
+                        );
                         continue;
                     }
                     _ => {}
