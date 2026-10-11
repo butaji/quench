@@ -283,6 +283,16 @@ impl<H: Host> Vm<H> {
                             pc = ins.jump_target() as usize;
                         }
                     }
+                    Op::JumpTrue => {
+                        let value = self.read(frame, ins.register_a());
+                        let truthy = self.truthy(value);
+                        #[cfg(feature = "profile-aggregate")]
+                        self.profile
+                            .branch_value(value.profile_kind() as usize, truthy);
+                        if truthy {
+                            pc = ins.jump_target() as usize;
+                        }
+                    }
                     Op::JumpBinaryFalse => {
                         let operator = ins.binary_operator_field();
                         let left_operand = ins.operand_b();
