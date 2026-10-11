@@ -399,14 +399,23 @@ impl<H: Host> Vm<H> {
             PropertyKey::Symbol(_) => {}
         }
     }
+    #[inline(always)]
     pub(super) fn checked_this_binding(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
     ) -> Result<Value, JsError> {
-        if self.frames[frame].fixed_this {
-            return Ok(self.frames[frame].this);
+        let activation = &self.frames[frame];
+        if activation.fixed_this {
+            return Ok(activation.this);
         }
+        self.resolved_this_binding(p, frame)
+    }
+
+    /// `this` through the activation's lexical-this binding, for frames whose own `this` is
+    /// not authoritative.
+    #[inline(never)]
+    fn resolved_this_binding(&mut self, p: &ResidualProgram, frame: usize) -> Result<Value, JsError> {
         let atom = self.runtime_atoms.lexical_this;
         let value = self
             .dynamic_binding(frame, atom)
