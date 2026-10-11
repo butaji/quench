@@ -33,7 +33,8 @@ impl Module {
 
     /// Lower validated module functions into the single shared VM.
     pub fn lower_shared(&self, export: &str) -> Result<WasmFunction, Error> {
-        let (module, index) = self.lower_shared_definition(Some(export))?;
+        let (module, index) =
+            self.lower_shared_definition(Some(export), quench_runtime::ExecutionMode::Interpreted)?;
         index
             .and_then(|index| module.function(index))
             .ok_or_else(|| Error::Unsupported(format!("unknown function export: {export}")))
@@ -41,12 +42,22 @@ impl Module {
 
     /// Lower module facts without requiring a function or an export.
     pub fn lower_shared_module(&self) -> Result<WasmModule, Error> {
-        self.lower_shared_definition(None).map(|(module, _)| module)
+        self.lower_shared_module_for(quench_runtime::ExecutionMode::Interpreted)
+    }
+
+    /// Lower module facts for the execution mode that will run them.
+    pub fn lower_shared_module_for(
+        &self,
+        mode: quench_runtime::ExecutionMode,
+    ) -> Result<WasmModule, Error> {
+        self.lower_shared_definition(None, mode)
+            .map(|(module, _)| module)
     }
 
     fn lower_shared_definition(
         &self,
         export: Option<&str>,
+        mode: quench_runtime::ExecutionMode,
     ) -> Result<(WasmModule, Option<u32>), Error> {
         let mut types = WasmTypes::default();
         let mut functions = Vec::new();
@@ -253,7 +264,8 @@ impl Module {
                 operators: body.get_operators_reader().map_err(parse_error)?,
             });
         }
-        Engine::lower_wasm_module_with_tags(
+        Engine::lower_wasm_module_for(
+            mode,
             export.unwrap_or("wasm-instance"),
             inputs,
             &types,

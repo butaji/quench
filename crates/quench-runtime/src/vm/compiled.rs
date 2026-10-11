@@ -2236,6 +2236,10 @@ impl<H: Host> Vm<H> {
         self.execution_mode = mode;
     }
 
+    pub(crate) fn execution_mode(&self) -> ExecutionMode {
+        self.execution_mode
+    }
+
     /// Compile every function of `program` that has a compiled denotation,
     /// with `env` as the instance whose bindings fix global types and memory.
     fn compile_program(&self, program: ProgramId, env: Value) -> Option<CompiledProgram> {
