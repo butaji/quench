@@ -160,8 +160,14 @@ impl<'a, H: Host> NativeContext<'a, H> {
     }
 
     /// Apply [[HasProperty]], including prototype lookup and Proxy has traps.
-    pub fn has_property_rooted(&mut self, object: RootId, key: RootId) -> Result<bool, RootedError> {
-        self.vm.embedding_has_property(object, key).map_err(|error| self.error(error))
+    pub fn has_property_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+    ) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_has_property(object, key)
+            .map_err(|error| self.error(error))
     }
 
     /// Check whether a live rooted value is a JavaScript Symbol primitive.
@@ -322,6 +328,24 @@ impl<'a, H: Host> NativeContext<'a, H> {
         name: &str,
     ) -> Result<RootId, RootedError> {
         let result = self.vm.evaluate_embedding_specialized_script(source, name);
+        self.completion(result)
+    }
+
+    /// Compile host-wrapped source with an explicit original-source origin.
+    /// The offsets remove wrapper lines and its first-line UTF-16 columns from
+    /// compiler-owned locations and diagnostic excerpts, not executable code.
+    pub fn evaluate_specialized_script_with_origin_rooted(
+        &mut self,
+        source: &str,
+        name: &str,
+        line_offset: u32,
+        column_offset: u32,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_specialized_script_with_origin(
+            source,
+            name,
+            Some((line_offset, column_offset)),
+        );
         self.completion(result)
     }
 

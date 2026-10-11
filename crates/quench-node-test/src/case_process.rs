@@ -78,7 +78,7 @@ pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
                 match quench_node::shared_run::run_shared_cli(arguments.iter().cloned()) {
                     Ok(code) => code,
                     Err(error) => {
-                        eprintln!("quench-node: {error}");
+                        eprintln!("{error}");
                         ExitCode::from(1)
                     }
                 },

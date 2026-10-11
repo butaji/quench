@@ -418,7 +418,7 @@ impl<H: Host> Vm<H> {
         Ok(self.error_is_error(self.embedding_value(root)?))
     }
 
-    fn detail_string(&self, value: Value) -> String {
+    pub(super) fn detail_string(&self, value: Value) -> String {
         if let Some(number) = value.as_number() {
             return crate::number_to_string::format(number);
         }

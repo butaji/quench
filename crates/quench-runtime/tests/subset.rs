@@ -284,3 +284,38 @@ fn native_stack_scopes_are_ordered_truthful_and_unwind_safe() {
     runtime.release_root(key);
     runtime.release_root(global);
 }
+
+#[test]
+fn throw_preserves_identity_without_hooks_and_retains_source_through_binary() {
+    const SOURCE: &str = "let touches=0;\nconst marker={get message(){touches++;throw 1},toString(){touches++;throw 2}};\nfunction handled(){throw marker}\ntry{handled()}catch(error){if(error!==marker||touches!==0)throw 'wrong throw effects'}\nfunction escaping(){\n  throw new Error('snapshot');\n}\nescaping();";
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let program = compile(SOURCE, "throw-snapshot.js").unwrap();
+        let mut runtime = Runtime::new(Capture::default());
+        let error = runtime.execute(&program).unwrap_err();
+        let (file, line, column, text) = error.source_location().expect("escaping throw location");
+        assert_eq!(
+            (file, line, text),
+            (
+                "throw-snapshot.js",
+                6,
+                Some("  throw new Error('snapshot');")
+            )
+        );
+        assert!(column > 0 && column as usize <= text.unwrap().encode_utf16().count() + 1);
+        let expected = (file.to_owned(), line, column, text.map(str::to_owned));
+        let path =
+            std::env::temp_dir().join(format!("quench-throw-snapshot-{}.qbc", std::process::id()));
+        program.write_binary(&path).unwrap();
+        let restored = quench_runtime::ResidualProgram::read_binary(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let error = runtime.execute(&restored).unwrap_err();
+        let (file, line, column, text) = error.source_location().unwrap();
+        assert_eq!(
+            (file.to_owned(), line, column, text.map(str::to_owned)),
+            expected
+        );
+    }
+}

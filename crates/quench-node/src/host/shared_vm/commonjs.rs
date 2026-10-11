@@ -1323,9 +1323,31 @@ const getLinkedBinding = () => ({});
                 } else {
                     ""
                 };
-                let wrapper_source =
-                    format!("{WRAPPER_PREFIX}{internal_binding}{text}{WRAPPER_SUFFIX}");
-                let wrapper = context.evaluate_specialized_script_rooted(&wrapper_source, &key)?;
+                let prefix = format!("{WRAPPER_PREFIX}{internal_binding}");
+                let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
+                let line_offset = u32::try_from(
+                    prefix.bytes().filter(|byte| *byte == b'\n').count(),
+                )
+                .map_err(|_| {
+                    RootedError::host("CommonJS wrapper line origin exceeds compiler positions")
+                })?;
+                let column_offset = u32::try_from(
+                    prefix
+                        .rsplit('\n')
+                        .next()
+                        .unwrap_or("")
+                        .encode_utf16()
+                        .count(),
+                )
+                .map_err(|_| {
+                    RootedError::host("CommonJS wrapper column origin exceeds compiler positions")
+                })?;
+                let wrapper = context.evaluate_specialized_script_with_origin_rooted(
+                    &wrapper_source,
+                    &key,
+                    line_offset,
+                    column_offset,
+                )?;
                 context.call_rooted(
                     wrapper,
                     exports,

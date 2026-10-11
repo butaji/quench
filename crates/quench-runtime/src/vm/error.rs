@@ -72,6 +72,15 @@ pub(crate) struct ErrorMessage {
 struct ErrorPayload {
     description: ErrorDescription,
     thrown: Option<Value>,
+    source_location: Option<ErrorSourceLocation>,
+}
+
+#[derive(Debug)]
+struct ErrorSourceLocation {
+    file: String,
+    line: u32,
+    column: u32,
+    source_line: Option<String>,
 }
 
 #[derive(Debug)]
@@ -100,6 +109,7 @@ impl From<String> for ErrorMessage {
                     eval_parser_diagnostic: false,
                 },
                 thrown: None,
+                source_location: None,
             }),
         }
     }
@@ -126,8 +136,46 @@ impl JsError {
                     eval_parser_diagnostic: false,
                 },
                 thrown: Some(value),
+                source_location: None,
             }),
         })
+    }
+
+    /// The first escaping throw site, owned by compiler source metadata.
+    pub fn source_location(&self) -> Option<(&str, u32, u32, Option<&str>)> {
+        self.0.payload.source_location.as_ref().map(|location| {
+            (
+                location.file.as_str(),
+                location.line,
+                location.column,
+                location.source_line.as_deref(),
+            )
+        })
+    }
+
+    pub(super) fn capture_source_location(
+        &mut self,
+        program: &ResidualProgram,
+        function: u32,
+        pc: u32,
+    ) {
+        if self.0.payload.source_location.is_some() {
+            return;
+        }
+        let Some(position) = program.source_position(function, pc) else {
+            return;
+        };
+        let source_line = program
+            .source
+            .as_ref()
+            .and_then(|source| source.source_line(position.line))
+            .map(str::to_owned);
+        self.0.payload.source_location = Some(ErrorSourceLocation {
+            file: program.source_name.clone(),
+            line: position.line,
+            column: position.column,
+            source_line,
+        });
     }
 
     pub fn thrown_value(&self) -> Option<Value> {
@@ -171,6 +219,7 @@ impl JsError {
             payload: Box::new(ErrorPayload {
                 description: ErrorDescription::WasmException,
                 thrown: Some(value),
+                source_location: None,
             }),
         })
     }
@@ -190,6 +239,7 @@ impl JsError {
             payload: Box::new(ErrorPayload {
                 description: ErrorDescription::WasmTrap(trap),
                 thrown: None,
+                source_location: None,
             }),
         })
     }
@@ -207,6 +257,7 @@ impl JsError {
             payload: Box::new(ErrorPayload {
                 description: ErrorDescription::WasmLink(message.into()),
                 thrown: None,
+                source_location: None,
             }),
         })
     }
@@ -394,13 +445,8 @@ impl<H: Host> Vm<H> {
                 continue;
             }
             // A PC without compiler-owned source metadata has no truthful JS location.
-            let pc = u32::try_from(frame.pc).unwrap_or(u32::MAX);
-            let position = function
-                .source_positions
-                .partition_point(|position| position.pc <= pc)
-                .checked_sub(1)
-                .and_then(|index| function.source_positions.get(index));
-            let Some(position) = position else {
+            let pc = u32::try_from(frame.pc.saturating_sub(1)).unwrap_or(u32::MAX);
+            let Some(position) = residual.source_position(frame.function, pc) else {
                 continue;
             };
             let function_name = function
