@@ -305,6 +305,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Apply shared bitwise OR, preserving ToNumeric hooks and BigInt errors.
+    pub fn bitwise_or_rooted(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_bitwise_or(left, right);
+        self.completion(result)
+    }
+
     /// Acquire the shared VM iterator protocol and cache its next method once.
     pub fn iterator_rooted(&mut self, source: RootId) -> Result<RootedIterator, RootedError> {
         let result = self.vm.embedding_iterator_record(source);

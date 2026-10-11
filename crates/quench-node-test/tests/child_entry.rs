@@ -1165,3 +1165,104 @@ const server=net.createServer(socket=>socket.destroy()).listen(0,()=>{
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn process_kill_matches_node_coercion_errors_and_mutable_native_hook() {
+    let source = r#"const result=[];const original=process._kill;
+function attempt(pid,signal){const trace=[];process._kill=function(actual,number){trace.push(['native',actual===pid,number,this===process]);return 0};
+ try{result.push(['success',typeof pid,typeof signal,process.kill(pid,signal),trace]);}
+ catch(error){result.push(['error',error.name,error.code,error.message,trace]);}}
+for(const pid of [null,undefined,'SIGTERM',NaN,Infinity,-Infinity,1.5,2147483648,0,'0',false,true,1n,Symbol('pid')])attempt(pid,0);
+for(const signal of [undefined,null,false,NaN,0,1,65,-1,1.5,'SIGINT','sigint','foo',{},Symbol('sig')])attempt(7,signal);
+const coercions=[];const pid={ [Symbol.toPrimitive](hint){coercions.push(['pid',hint]);return 7} };
+const signal={ [Symbol.toPrimitive](hint){coercions.push(['signal',hint]);return hint==='number'?0:'SIGINT'} };
+attempt(pid,signal);result.push(['coercions',coercions]);
+const lookupTrace=[];let lookup=0;const dynamicSignal={ [Symbol.toPrimitive](hint){lookupTrace.push(hint);return hint==='number'?0:(++lookup===1?'SIGINT':'missing')} };
+Object.defineProperty(process,'_kill',{configurable:true,get(){lookupTrace.push('get');return function(actual,number){lookupTrace.push(['call',actual,typeof number,this===process]);return 0}}});
+process.kill(7,dynamicSignal);result.push(['lookup-order',lookupTrace]);
+Object.defineProperty(process,'_kill',{value:original,writable:true,configurable:true});
+process._kill=function(){return 0};const constructed=new process.kill(7,0);result.push(['shape',process.kill.name,process.kill.length,constructed instanceof process.kill]);
+const marker={};process._kill=()=>{throw marker};try{process.kill(7,0)}catch(error){result.push(['throw',error===marker])}
+process._kill=()=>-3;try{process.kill(7,0)}catch(error){result.push(['errno',error.name,error.code,error.message,error.errno,error.syscall])}
+process._kill=original;console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn process_signals_preserve_delivery_order_listener_lifetime_and_uncaught_identity() {
+    let source = r#"const result=[];
+for(const name of ['SIGTERM','SIGINT','SIGHUP'])process.once(name,function(signal){result.push([signal,this===process])});
+for(const name of ['SIGHUP','SIGTERM','SIGINT'])process.kill(process.pid,name);
+process.nextTick(()=>result.push(['tick']));Promise.resolve().then(()=>result.push(['promise']));
+for(const name of ['SIGKILL','SIGSTOP']){try{process.on(name,()=>{})}catch(error){result.push([name,error.name,error.code,error.errno,error.syscall,error.message])}}
+const marker={};process.on('uncaughtException',error=>result.push(['uncaught',error===marker]));
+process.once('SIGWINCH',()=>{throw marker});process.kill(process.pid,'SIGWINCH');
+setImmediate(()=>{result.push(['immediate']);console.log(JSON.stringify(result))});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn exit_from_timer_abandons_remaining_callbacks_without_uncaught_exception() {
+    let source = r#"process.on('uncaughtException',()=>console.log('unexpected uncaught'));
+process.on('exit',code=>console.log('exit',code));
+setTimeout(()=>process.exit(0),0);setTimeout(()=>console.log('unexpected timer'),5);"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(0));
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
