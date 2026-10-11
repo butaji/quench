@@ -9113,3 +9113,59 @@ fn weak_ref_targets_are_kept_until_host_checkpoint() {
         }
     }
 }
+
+#[test]
+fn host_byte_views_preserve_intrinsics_backing_and_gc_edges() {
+    for compile in [Engine::specialize as fn(&str,&str)->_,Engine::specialize_unspecialized] {
+        let mut vm=Vm::new(SilentHost);let program=compile("0;","host-bytes.js").unwrap();vm.execute(&program).unwrap();
+        for bytes in [vec![],vec![0,127,128,255]] {
+            let view=vm.embedding_uint8_array(&bytes).unwrap();let root=vm.heap.root(view);
+            let prototype=match vm.heap.get(view) {Some(super::Cell::TypedArray{object,kind,buffer,..})=>{
+                assert_eq!(*kind,TypedArrayKind::Uint8);
+                assert!(matches!(vm.heap.get(*buffer),Some(super::Cell::ArrayBuffer{shared:false,detached:false,resizable:false,immutable:false,..})));
+                object.proto
+            },_=>panic!("expected Uint8Array")};
+            assert_eq!(prototype,vm.typed_array_proto(TypedArrayKind::Uint8));
+            vm.collect_now(&program);let view=vm.heap.root_value(root).unwrap();
+            assert_eq!(vm.embedding_view_bytes(view).unwrap(),bytes);
+            vm.heap.release_root(root);
+        }
+    }
+}
+
+#[test]
+fn private_host_weak_roots_clear_before_slot_reuse_without_kept_objects() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let mut vm = Vm::new(SilentHost);
+        let program = compile("0;", "host-weak.js").unwrap();
+        vm.execute(&program).unwrap();
+        let target = vm
+            .heap
+            .alloc(super::Cell::Object(Vm::<SilentHost>::empty_object(
+                Value::NULL,
+            )));
+        let strong = vm.heap.root(target);
+        let weak = vm.embedding_host_weak_root(strong).unwrap();
+        vm.collect_now(&program);
+        assert_eq!(
+            vm.embedding_host_weak_value(weak),
+            Some(vm.heap.root_value(strong).unwrap())
+        );
+        vm.heap.release_root(strong);
+        vm.collect_now(&program);
+        assert!(vm.embedding_host_weak_value(weak).is_none());
+        let replacement = vm
+            .heap
+            .alloc(super::Cell::Object(Vm::<SilentHost>::empty_object(
+                Value::NULL,
+            )));
+        assert!(vm.heap.get(replacement).is_some());
+        assert!(vm.embedding_host_weak_value(weak).is_none());
+        let other = Vm::new(SilentHost);
+        assert!(other.embedding_host_weak_value(weak).is_none());
+        vm.heap.release_root(weak);
+    }
+}

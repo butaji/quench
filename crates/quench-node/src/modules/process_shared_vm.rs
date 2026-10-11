@@ -2177,6 +2177,7 @@ fn drain_shared_jobs(
         let unhandled = runtime.take_promise_rejection_unhandled_events();
         if unhandled.is_empty() {
             runtime.clear_kept_objects();
+            crate::modules::zlib_stream_shared_vm::prune(runtime);
             return Ok(());
         }
         dispatch_promise_rejection_batch(runtime, program, unhandled)?;

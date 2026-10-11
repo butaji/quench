@@ -12,6 +12,15 @@ pub(crate) fn module(
         "node:stream/shared.js",
     )?;
     let dependencies = context.object_rooted()?;
+    let default_hwm = context.host_function(crate::host::shared_vm::operation(
+        "streamGetDefaultHighWaterMark",
+    ))?;
+    set(
+        context,
+        dependencies,
+        "getDefaultHighWaterMark",
+        default_hwm,
+    )?;
     let replay_state = context.null_object_rooted()?;
     let replay = context.host_function_with_data(
         crate::host::shared_vm::operation("streamReplayWrite"),
@@ -36,6 +45,25 @@ pub(crate) fn module(
     let key = context.string_rooted("write");
     let write = context.get_property_rooted(prototype, key)?;
     set(context, replay_state, "write", write)?;
+    for (name, operation, factory) in [
+        (
+            "getDefaultHighWaterMark",
+            "streamGetDefaultHighWaterMark",
+            "operation => function getDefaultHighWaterMark(objectMode) { return operation(objectMode); }",
+        ),
+        (
+            "setDefaultHighWaterMark",
+            "streamSetDefaultHighWaterMark",
+            "operation => function setDefaultHighWaterMark(objectMode, value) { return operation(objectMode, value); }",
+        ),
+    ] {
+        let operation = context.host_function(crate::host::shared_vm::operation(operation))?;
+        let factory =
+            context.evaluate_script_rooted(factory, "node:stream/default-high-water-mark.js")?;
+        let undefined = context.undefined();
+        let function = context.call_rooted(factory, undefined, &[operation])?;
+        set(context, module, name, function)?;
+    }
     let key = context.string_rooted("Readable");
     let readable = context.get_property_rooted(module, key)?;
     let key = context.string_rooted("prototype");
@@ -99,4 +127,71 @@ pub(crate) fn replay_write(
         context.boolean(true),
     ];
     context.call_rooted(write, args[0], &values)
+}
+
+pub(crate) fn get_default_high_water_mark(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let object_mode = context.truthy_rooted(args.first().copied().unwrap_or(undefined))?;
+    let value = {
+        let state = context.host_mut().shared_state();
+        let state = state.borrow();
+        if object_mode {
+            state.stream_high_water_marks.objects
+        } else {
+            state.stream_high_water_marks.bytes
+        }
+    };
+    Ok(context.number(value))
+}
+
+pub(crate) fn set_default_high_water_mark(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let value = args.get(1).copied().unwrap_or(undefined);
+    let Some(number) = context
+        .rooted_value(value)
+        .and_then(|value| value.as_number())
+    else {
+        return Err(super::util_shared_vm::argument_type_error(
+            context, value, "value", "number",
+        )?);
+    };
+    let constraint = if !number.is_finite() || number.fract() != 0.0 {
+        Some("an integer".to_owned())
+    } else if !(0.0..=super::stream_state::MAX_SAFE_HIGH_WATER_MARK).contains(&number) {
+        Some(format!(
+            ">= 0 && <= {}",
+            super::stream_state::MAX_SAFE_HIGH_WATER_MARK
+        ))
+    } else {
+        None
+    };
+    if let Some(constraint) = constraint {
+        let received = context.to_string(value)?;
+        let error = context.range_error_rooted(&format!(
+            "The value of \"value\" is out of range. It must be {constraint}. Received {received}"
+        ))?;
+        let key = context.string_rooted("code");
+        let code = context.string_rooted("ERR_OUT_OF_RANGE");
+        context.set_property_rooted(error, key, code, error)?;
+        return Err(context.throw(error));
+    }
+    let object_mode = context.truthy_rooted(args.first().copied().unwrap_or(undefined))?;
+    {
+        let state = context.host_mut().shared_state();
+        let mut state = state.borrow_mut();
+        if object_mode {
+            state.stream_high_water_marks.objects = number;
+        } else {
+            state.stream_high_water_marks.bytes = number;
+        }
+    }
+    Ok(undefined)
 }

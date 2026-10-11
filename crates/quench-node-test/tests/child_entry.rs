@@ -1389,3 +1389,82 @@ child.on('error',error=>{throw error});child.on('close',(code,signal)=>{record.p
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn stream_defaults_match_node_mutation_descriptors_and_validation() {
+    let source = r#"
+const s = require('stream');
+function snapshot() {
+  console.log(JSON.stringify([s.getDefaultHighWaterMark(), s.getDefaultHighWaterMark(true),
+    new s.Readable({read(){}}).readableHighWaterMark,
+    new s.Writable({write(c,e,cb){cb()}}).writableHighWaterMark]));
+}
+snapshot();
+for (const [mode,value] of [[false,1024],[true,7],[false,0]]) {
+  s.setDefaultHighWaterMark(mode,value); snapshot();
+}
+for (const value of [undefined,null,'2',1.5,-1,Infinity,NaN]) {
+  try { s.setDefaultHighWaterMark(false,value); console.log('accepted'); }
+  catch (e) { console.log(JSON.stringify([e.name,e.code,e.message])); }
+}
+for (const name of ['getDefaultHighWaterMark','setDefaultHighWaterMark']) {
+  const f=s[name],d=Object.getOwnPropertyDescriptor(s,name);
+  console.log(JSON.stringify([f.name,f.length,!!f.prototype,d.writable,d.enumerable,d.configurable]));
+}
+"#;
+    compare_node_stream_source(source);
+}
+
+#[test]
+fn bounded_zlib_streams_match_node_roundtrips_and_close_lifecycle() {
+    let source = r#"
+const z=require('zlib');
+const input=Buffer.from('hello bounded codecs '.repeat(4096));
+const modes=[['gzip','gunzip'],['deflate','inflate'],['deflateRaw','inflateRaw'],
+  ['brotliCompress','brotliDecompress'],['zstdCompress','zstdDecompress']];
+function next() {
+  if (!modes.length) return closeStream();
+  const [compress,decompress]=modes.shift();
+  const encoded=z[compress+'Sync'](input);
+  const decoder=z['create'+decompress[0].toUpperCase()+decompress.slice(1)]();
+  const chunks=[];
+  decoder.on('data',chunk=>chunks.push(chunk));
+  decoder.on('end',()=>{console.log(decompress,Buffer.concat(chunks).equals(input));next();});
+  decoder.end(encoded);
+}
+function closeStream() {
+const closed=z.createGzip();
+closed.on('data',()=>closed.close());
+closed.on('close',()=>console.log('closed',closed.destroyed));
+closed.end(input);
+}
+next();
+"#;
+    compare_node_stream_source(source);
+}
+
+fn compare_node_stream_source(source: &str) {
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(
+            observation.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
