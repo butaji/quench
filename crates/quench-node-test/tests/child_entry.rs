@@ -511,6 +511,62 @@ console.log(descriptor.get.name,descriptor.enumerable,descriptor.configurable,de
 }
 
 #[test]
+fn exec_normalization_and_collection_match_node() {
+    let source = r#"const cp=require('child_process');
+const inspect=require('util').inspect;
+for(const text of [...Array.from({length:256},(_,i)=>String.fromCharCode(i)),"a'b",'a\'"b','a\'"`b','a\'"${b}', '\ud800x\udfff', '\ud83d\ude00']) console.log(JSON.stringify(inspect(text)));
+const original=cp.execFile;
+const callback=()=>{};
+const marker={};
+cp.execFile=function(command,options,cb){
+  console.log(JSON.stringify([this===cp,command,Object.getPrototypeOf(options)===null,Object.keys(options),options.shell,cb===callback]));
+  return marker;
+};
+for(const options of [undefined,null,false,1,'x',{shell:false},{shell:'/bin/sh'},callback]) {
+  console.log(cp.exec('printf hello',options,callback)===marker);
+}
+const options={shell:false}; cp.exec('printf hello',options,callback); console.log(options.shell===false);
+for(const command of [undefined,null,1,{},'a\0b']) {
+  try{cp.exec(command)}catch(error){console.log(JSON.stringify([error.name,error.code,error.message]))}
+}
+cp.execFile=original;
+const results=[];
+function record(name,error,out,err){
+  results.push([name,error?[error.name,error.code,error.signal??null,error.killed??null]:null,typeof out,Buffer.isBuffer(out)?out.toString('hex'):out,typeof err,Buffer.isBuffer(err)?err.toString('hex'):err]);
+  if(results.length===5)console.log(JSON.stringify(results.sort((a,b)=>a[0].localeCompare(b[0]))));
+}
+cp.exec('printf out; printf err >&2',(e,o,s)=>record('text',e,o,s));
+cp.exec('printf out',{encoding:null},(e,o,s)=>record('bytes',e,o,s));
+cp.exec('printf failure >&2; exit 3',(e,o,s)=>record('failure',e,o,s));
+cp.exec('printf abcdef',{maxBuffer:3},(e,o,s)=>record('limit',e,o,s));
+cp.exec('sleep 1',{timeout:20},(e,o,s)=>record('timeout',e,o,s));
+"#;
+    let directory = tempfile::tempdir().unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
 fn system_error_names_and_validation_match_node() {
     let source = r#"const {getSystemErrorName}=require('util');
 const numbers=[...Array.from({length:140},(_,i)=>-i-1),...Array.from({length:16},(_,i)=>-3000-i),-4094,-4095,-99999];

@@ -15,6 +15,52 @@ pub(crate) fn function(
     context.host_function_with_data(crate::host::shared_vm::operation("execFile"), data)
 }
 
+/// exec normalizes shell policy, then delegates through the public execFile
+/// property just as Node does. Output and completion have one shared owner.
+pub(crate) fn exec(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let command = args.first().copied().unwrap_or(undefined);
+    let Some(text) = context.string_text(command)? else {
+        return Err(super::util_shared_vm::argument_type_error(
+            context, command, "command", "string",
+        )?);
+    };
+    if text.contains('\0') {
+        let received = super::util_shared_vm::inspect_quote(context, undefined, &[command])?;
+        let received = context.to_string(received)?;
+        let error = context.type_error_rooted(&format!(
+            "The argument 'command' must be a string without null bytes. Received {received}"
+        ))?;
+        let code = context.string_rooted("ERR_INVALID_ARG_VALUE");
+        set(context, error, "code", code)?;
+        return Err(context.throw(error));
+    }
+    let mut source_options = args.get(1).copied().unwrap_or(undefined);
+    let mut callback = args.get(2).copied().unwrap_or(undefined);
+    if context.is_callable_rooted(source_options)? {
+        callback = source_options;
+        source_options = undefined;
+    }
+    let options = context.null_object_rooted()?;
+    if !nullish(context, source_options) {
+        for key in context.enumerable_own_keys_rooted(source_options, true, true)? {
+            let value = context.get_property_rooted(source_options, key)?;
+            context.set_property_rooted(options, key, value, options)?;
+        }
+    }
+    let shell = get(context, options, "shell")?;
+    if context.string_text(shell)?.is_none() {
+        let shell = context.boolean(true);
+        set(context, options, "shell", shell)?;
+    }
+    let module = context.host_function_data()?;
+    method(context, module, "execFile", &[command, options, callback])
+}
+
 pub(crate) fn exec_file(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
