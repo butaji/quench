@@ -73,14 +73,6 @@ impl Value {
         IntegerEncoding::TAG.encode(value)
     }
 
-    /// The value's 64-bit representation, which compiled code passes across
-    /// its boundary.
-    #[inline(always)]
-    pub(crate) const fn to_bits(self) -> u64 {
-        self.0
-    }
-
-
     #[inline(always)]
     pub(crate) fn as_int(self) -> Option<i32> {
         ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)

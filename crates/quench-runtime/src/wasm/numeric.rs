@@ -43,7 +43,7 @@ pub(super) const fn sign_mask(bit_width: u32) -> u64 {
     1 << (bit_width - 1)
 }
 
-pub(super) const fn canonical_nan_bits(precision: u32, infinity: u64) -> u64 {
+pub(crate) const fn canonical_nan_bits(precision: u32, infinity: u64) -> u64 {
     let fraction_width = precision - IEEE_IMPLICIT_SIGNIFICAND_BITS;
     let quiet_bit = 1 << (fraction_width - 1);
     infinity | quiet_bit

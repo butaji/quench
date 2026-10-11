@@ -40,7 +40,7 @@ pub(crate) mod conversion;
 pub(crate) mod float;
 pub(crate) mod i31;
 pub(crate) mod integer;
-mod numeric;
+pub(crate) mod numeric;
 pub(crate) mod reference;
 use control::{Control, Reachability};
 use conversion::ScalarConversionOperator;
