@@ -71,11 +71,10 @@ impl FullCollectionGrowthFactor {
 }
 
 // Bound total allocations between full collections. Minor collections may
-// run earlier to sweep the young cells. The 5/4 screen allows one young sweep
-// at 1x live allocations, then only another quarter-set before a full mark.
+// run earlier to sweep the young cells.
 const FULL_COLLECTION_GROWTH: FullCollectionGrowthFactor = FullCollectionGrowthFactor {
-    numerator: 5,
-    denominator: 4,
+    numerator: 1,
+    denominator: 1,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
