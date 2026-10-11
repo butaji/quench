@@ -67,6 +67,7 @@ mod cell_layout_tests {
         let Cell::Array { object } = &mut array else {
             unreachable!()
         };
+        assert!(object.inline_properties().is_none());
         object.set_arguments_object();
         object.mark_indexed_descriptors();
         assert!(object.is_arguments_object());
@@ -1226,7 +1227,8 @@ impl Object {
     }
 
     pub(crate) fn inline_properties(&self) -> Option<&[Value; INLINE_PROPERTY_COUNT]> {
-        (!self.properties.has_array_elements() && self.properties.has_inline_property_storage())
+        self.properties
+            .has_inline_property_storage()
             .then(|| self.inline_property_values())
     }
 
