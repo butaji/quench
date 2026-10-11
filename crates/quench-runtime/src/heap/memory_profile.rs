@@ -1,4 +1,4 @@
-use super::{Cell, CellKind, Heap, Object, Slot};
+use super::{Cell, CellKind, FreeSlotBitmap, Heap, Object, Slot};
 use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use rustc_hash::FxHashMap;
@@ -519,12 +519,7 @@ impl Heap {
         (
             self.slots.len(),
             self.slots.capacity() * size_of::<super::Slot>(),
-            self.free_by_slab.capacity() * size_of::<Vec<u16>>()
-                + self
-                    .free_by_slab
-                    .iter()
-                    .map(|free| free.capacity() * size_of::<u16>())
-                    .sum::<usize>()
+            self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
             dynamic,
             property.0,
