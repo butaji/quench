@@ -1,0 +1,86 @@
+diff --git a/crates/quench-runtime/src/heap.rs b/crates/quench-runtime/src/heap.rs
+index 168ce4b72..3b3993263 100644
+--- a/crates/quench-runtime/src/heap.rs
++++ b/crates/quench-runtime/src/heap.rs
+@@ -604,6 +604,7 @@ impl Heap {
+                             value,
+                             cell,
+                             properties,
++                            &self.marks,
+                             &mut work,
+                             &mut object_roots,
+                             GcTraceKind::Collection,
+@@ -864,7 +865,15 @@ impl Heap {
+                 self.gc_profile.marked += 1;
+                 self.gc_profile.marked_kinds[Self::cell_kind(cell) as usize] += 1;
+             }
+-            Self::children(value, cell, &self.properties, work, object_roots, trace_kind);
++            Self::children(
++                value,
++                cell,
++                &self.properties,
++                &self.marks,
++                work,
++                object_roots,
++                trace_kind,
++            );
+             ephemerons.newly_marked(index as u32, cell, &self.marks, work);
+             if let Some(arrays) = self.sparse_arrays.as_ref()
+                 && matches!(cell, Cell::Array { .. })
+@@ -1082,12 +1091,12 @@ impl Heap {
+         owner: Value,
+         cell: &Cell,
+         properties: &ValueArena,
++        marks: &[u64],
+         work: &mut Vec<Value>,
+         object_roots: &mut impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
+         trace_kind: GcTraceKind,
+     ) {
+         let mut object = |object: &Object| {
+-            work.push(object.proto);
+             object_roots(trace_kind, owner, object.shape(), work);
+             work.extend(object.private_names().iter().map(|brand| brand.home));
+             if let Some(values) = object.inline_properties() {
+@@ -1101,6 +1110,12 @@ impl Heap {
+                 properties.append_heap_references(object.properties, work);
+             }
+             object.visit_stack_data_roots(|value| work.push(value));
++            if let Some(index) = object.proto.heap_index().map(|index| index as usize)
++                && index / 64 < marks.len()
++                && !Self::marked(marks, index)
++            {
++                work.push(object.proto);
++            }
+         };
+         if let Some((value, buffer)) = cell.typed_array_backing() {
+             object(value);
+diff --git a/crates/quench-runtime/src/heap/tests.rs b/crates/quench-runtime/src/heap/tests.rs
+index 9c92a5f16..9167e996e 100644
+--- a/crates/quench-runtime/src/heap/tests.rs
++++ b/crates/quench-runtime/src/heap/tests.rs
+@@ -88,6 +88,25 @@ fn minor_collection_handles_old_weak_maps_and_weak_refs() {
+     assert!(heap.get(old_value).is_none());
+ }
+ 
++#[test]
++fn full_mark_traces_shared_prototype_edges_across_collections() {
++    let mut heap = Heap::new();
++    let prototype = heap.alloc(Cell::Object(plain_object()));
++    let child = heap.alloc(Cell::String("prototype child".into()));
++    heap.property_push(prototype, child);
++    let first = heap.alloc(Cell::Object(Object::new(prototype)));
++    let second = heap.alloc(Cell::Object(Object::new(prototype)));
++
++    heap.collect([first, second]);
++    assert!(heap.get(prototype).is_some());
++    assert!(heap.get(child).is_some());
++
++    heap.property_set(prototype, 0, Value::UNDEFINED);
++    heap.collect([first]);
++    assert!(heap.get(prototype).is_some());
++    assert!(heap.get(child).is_none());
++}
++
+ #[test]
+ fn gc_headroom_factors_scale_live_cells_without_overflow() {
+     let live = 781_054usize;
