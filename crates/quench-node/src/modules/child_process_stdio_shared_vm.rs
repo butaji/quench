@@ -11,6 +11,7 @@ pub(crate) enum Specification {
     Ignore,
     Inherit,
     Descriptor(i32),
+    Ipc,
 }
 
 impl Specification {
@@ -24,6 +25,10 @@ impl Specification {
             Self::Ignore => Ok(Stdio::null()),
             Self::Inherit => Ok(Stdio::inherit()),
             Self::Descriptor(fd) => descriptor(fd),
+            Self::Ipc => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "IPC requires a duplex channel",
+            )),
         }
     }
 }
@@ -50,8 +55,8 @@ fn descriptor(_: i32) -> std::io::Result<Stdio> {
 pub(crate) fn normalize(
     context: &mut NativeContext<'_, NodeHost>,
     options: Option<RootId>,
-) -> Result<[Specification; STANDARD_CHANNELS], RootedError> {
-    let mut result = [Specification::Pipe; STANDARD_CHANNELS];
+) -> Result<Vec<Specification>, RootedError> {
+    let mut result = vec![Specification::Pipe; STANDARD_CHANNELS];
     let Some(options) = options else {
         return Ok(result);
     };
@@ -67,7 +72,7 @@ pub(crate) fn normalize(
             "inherit" => Specification::Inherit,
             _ => return Err(invalid(context, value, false)?),
         };
-        return Ok([specification; STANDARD_CHANNELS]);
+        return Ok(vec![specification; STANDARD_CHANNELS]);
     }
     if !context.is_array_rooted(value)? {
         return Err(invalid(context, value, false)?);
@@ -78,6 +83,8 @@ pub(crate) fn normalize(
         .rooted_value(length)
         .and_then(|value| value.as_number())
         .unwrap_or_default() as usize;
+    result.resize(length.max(STANDARD_CHANNELS), Specification::Ignore);
+    let mut ipc = false;
     for (index, specification) in result.iter_mut().enumerate() {
         let key = context.string_rooted(&index.to_string());
         let item = if index >= length {
@@ -87,7 +94,25 @@ pub(crate) fn normalize(
         } else {
             context.get_property_rooted(value, key)?
         };
-        *specification = channel(context, item)?;
+        *specification = if index >= STANDARD_CHANNELS
+            && context
+                .rooted_value(item)
+                .is_some_and(|value| value.is_null() || value.is_undefined())
+        {
+            Specification::Ignore
+        } else {
+            channel(context, item)?
+        };
+        if matches!(*specification, Specification::Ipc) {
+            if ipc {
+                let error = context.error_rooted("Child process can have only one IPC pipe")?;
+                let key = context.string_rooted("code");
+                let code = context.string_rooted("ERR_IPC_ONE_PIPE");
+                context.set_property_rooted(error, key, code, error)?;
+                return Err(context.throw(error));
+            }
+            ipc = true;
+        }
     }
     Ok(result)
 }
@@ -107,6 +132,7 @@ fn channel(
             "pipe" | "overlapped" => Ok(Specification::Pipe),
             "ignore" => Ok(Specification::Ignore),
             "inherit" => Ok(Specification::Inherit),
+            "ipc" => Ok(Specification::Ipc),
             _ => Err(invalid(context, value, true)?),
         };
     }
@@ -180,4 +206,123 @@ fn invalid(
     let code = context.string_rooted(code);
     context.set_property_rooted(error, key, code, error)?;
     Ok(context.throw(error))
+}
+
+/// A duplex IPC endpoint stays owned by the parent until the child is reaped.
+/// Its peer is mapped to the requested child descriptor before exec.
+pub(crate) struct IpcChannel {
+    #[cfg(unix)]
+    pub(crate) socket: std::os::unix::net::UnixStream,
+}
+
+pub(crate) fn configure(
+    command: &mut std::process::Command,
+    specifications: &[Specification],
+) -> std::io::Result<Option<IpcChannel>> {
+    let ipc_index = specifications
+        .iter()
+        .position(|value| matches!(value, Specification::Ipc));
+    let channel = match ipc_index {
+        Some(index) => Some(ipc_channel(command, index, specifications.len())?),
+        None => None,
+    };
+    for (index, specification) in specifications
+        .iter()
+        .copied()
+        .take(STANDARD_CHANNELS)
+        .enumerate()
+    {
+        if matches!(specification, Specification::Ipc) {
+            continue;
+        }
+        let descriptor = specification.os()?;
+        match index {
+            0 => {
+                command.stdin(descriptor);
+            }
+            1 => {
+                command.stdout(descriptor);
+            }
+            2 => {
+                command.stderr(descriptor);
+            }
+            _ => unreachable!(),
+        }
+    }
+    // NODE_CHANNEL_FD is a child bootstrap contract, never inherited into a
+    // grandchild that was spawned without its own channel.
+    command.env_remove("NODE_CHANNEL_FD");
+    command.env_remove("NODE_CHANNEL_SERIALIZATION_MODE");
+    if let Some(index) = ipc_index {
+        command.env("NODE_CHANNEL_FD", index.to_string());
+        command.env("NODE_CHANNEL_SERIALIZATION_MODE", "json");
+    }
+    Ok(channel)
+}
+
+#[cfg(unix)]
+fn ipc_channel(
+    command: &mut std::process::Command,
+    index: usize,
+    count: usize,
+) -> std::io::Result<IpcChannel> {
+    use std::os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd},
+        unix::{net::UnixStream, process::CommandExt},
+    };
+    let (parent, child) = UnixStream::pair()?;
+    parent.set_nonblocking(true)?;
+    if index < STANDARD_CHANNELS {
+        let descriptor: OwnedFd = child.into();
+        match index {
+            0 => {
+                command.stdin(Stdio::from(descriptor));
+            }
+            1 => {
+                command.stdout(Stdio::from(descriptor));
+            }
+            2 => {
+                command.stderr(Stdio::from(descriptor));
+            }
+            _ => unreachable!(),
+        }
+    } else {
+        // Move the source beyond the entire child descriptor layout, so dup2
+        // cannot clobber it or collide with a standard-stream mapping.
+        let minimum =
+            i32::try_from(count).map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+        let target =
+            i32::try_from(index).map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+        let duplicate = unsafe { libc::fcntl(child.as_raw_fd(), libc::F_DUPFD_CLOEXEC, minimum) };
+        if duplicate < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let source = unsafe { OwnedFd::from_raw_fd(duplicate) };
+        // The closure owns the descriptor until spawn finishes. Only dup2,
+        // an async-signal-safe syscall, runs in the forked child.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::dup2(source.as_raw_fd(), target) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    Ok(IpcChannel { socket: parent })
+}
+
+#[cfg(not(unix))]
+fn ipc_channel(_: &mut std::process::Command, _: usize, _: usize) -> std::io::Result<IpcChannel> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "IPC channels are unavailable on this platform",
+    ))
+}
+
+impl Drop for IpcChannel {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        let _ = self.socket.shutdown(std::net::Shutdown::Both);
+    }
 }

@@ -53,7 +53,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
           }
         }
       }) : null;
-      this.stdio = [this.stdin, this.stdout, this.stderr];
+      this.stdio = [this.stdin, this.stdout, this.stderr, ...started.piped.slice(3).map(() => null)];
       this.__quenchDispatch = (type, value, value2) => {
         if (type === "stdout") this.stdout?.push(Buffer.from(value, "base64"));
         else if (type === "stderr") this.stderr?.push(Buffer.from(value, "base64"));
@@ -355,12 +355,6 @@ pub(crate) fn spawn_child(
     set_command_arg0(&mut command, argv0.as_deref());
     command.args(&arguments);
     let stdio = super::child_process_stdio_shared_vm::normalize(context, options)?;
-    let configured = (|| -> std::io::Result<()> {
-        command.stdin(stdio[0].os()?);
-        command.stdout(stdio[1].os()?);
-        command.stderr(stdio[2].os()?);
-        Ok(())
-    })();
     if let Some(cwd) = options
         .map(|root| property_string(context, root, "cwd"))
         .transpose()?
@@ -381,8 +375,9 @@ pub(crate) fn spawn_child(
         }
     }
 
-    let start = match configured.and_then(|()| command.spawn()) {
-        Ok(mut child) => {
+    let configured = super::child_process_stdio_shared_vm::configure(&mut command, &stdio);
+    let start = match configured.and_then(|ipc| command.spawn().map(|child| (child, ipc))) {
+        Ok((mut child, ipc)) => {
             let id = NEXT_CHILD_PROCESS_ID.fetch_add(1, Ordering::Relaxed);
             let pid = child.id();
             let stdin = Arc::new(Mutex::new(child.stdin.take()));
@@ -417,6 +412,7 @@ pub(crate) fn spawn_child(
                         stdout: None,
                         stderr: None,
                         stdin,
+                        ipc,
                         events: receiver,
                         stdout_terminal: !stdio[1].piped(),
                         stderr_terminal: !stdio[2].piped(),
@@ -769,7 +765,8 @@ pub(crate) fn poll(
         if let Some((code, signal)) = close {
             dispatch_exit(runtime, program, child, "close", code, signal.as_deref())?;
             let process = shared_state.borrow_mut().child_processes.remove(&id);
-            if let Some(process) = process {
+            if let Some(mut process) = process {
+                drop(process.ipc.take());
                 for root in [process.child, process.stdout, process.stderr].into_iter().flatten() {
                     runtime.release_root(root);
                 }
