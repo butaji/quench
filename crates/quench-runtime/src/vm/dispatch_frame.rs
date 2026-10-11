@@ -883,6 +883,8 @@ impl<H: Host> Vm<H> {
             && p.kind != crate::bytecode::ProgramKind::Wasm;
         let previous_program = self.replace_active_program(frame_program);
         let previous_global = self.realm.globals;
+        // A nested loop leaves the caller's register file active again.
+        let caller_registers = self.active_registers;
         let outcome = self.run_general_loop::<STOPS>(
             p,
             frame,
@@ -890,6 +892,7 @@ impl<H: Host> Vm<H> {
             initial_error,
             allow_inline_calls,
         );
+        self.active_registers = caller_registers;
         self.set_active_program(previous_program);
         self.realm.globals = previous_global;
         outcome
@@ -927,6 +930,7 @@ impl<H: Host> Vm<H> {
         // The active frame's published PC. Frames are boxed, so the slot stays put while that
         // frame is active; every frame change below re-derives it.
         let mut published_pc: *mut usize = &mut self.frames[frame].pc;
+        self.active_registers = self.frames[frame].registers.as_mut_ptr();
         if let Some(error) = initial_error {
             pc = self.exception_handler_target(
                 p,
@@ -1011,6 +1015,7 @@ impl<H: Host> Vm<H> {
                         self.persist_global_lexical_bindings(p, &completed_frame);
                         self.pool_frame(completed_frame);
                         frame = pending.caller;
+                        self.active_registers = self.frames[frame].registers.as_mut_ptr();
                         // [[Construct]] of an ordinary constructor yields its returned object,
                         // otherwise the receiver it allocated.
                         let value = match pending.construct_this {
@@ -1048,6 +1053,7 @@ impl<H: Host> Vm<H> {
                     cursor =
                         GeneralCodeCursor::new(callee_program, p, self.frames[frame].function);
                     published_pc = &mut self.frames[frame].pc;
+                    self.active_registers = self.frames[frame].registers.as_mut_ptr();
                 }
                 Ok(StepResult::TailCall) => {
                     let replacement_program = self.frames[frame].program;
@@ -1067,6 +1073,7 @@ impl<H: Host> Vm<H> {
                         self.frames[frame].function,
                     );
                     published_pc = &mut self.frames[frame].pc;
+                    self.active_registers = self.frames[frame].registers.as_mut_ptr();
                     // The replacement frame publishes all callee roots before this back edge.
                     self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
                 }
@@ -1121,6 +1128,7 @@ impl<H: Host> Vm<H> {
                                     pc = self.frames[frame].pc;
                                     cursor = pending.caller_cursor;
                                     published_pc = &mut self.frames[frame].pc;
+                                    self.active_registers = self.frames[frame].registers.as_mut_ptr();
                                     throwing_pc = pending.call_pc;
                                     drop(pending.call_guard);
                                     error = match result {
@@ -1217,27 +1225,20 @@ impl<H: Host> Vm<H> {
 
     #[inline(always)]
     pub(super) fn read(&self, f: usize, r: u16) -> Value {
-        // SAFETY: compiler-issued registers are defined before use; each frame
-        // is sized to the verified maximum register before interpretation.
-        unsafe {
-            *self
-                .frames
-                .get_unchecked(f)
-                .registers
-                .get_unchecked(r as usize)
-        }
+        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(usize::from(r) < self.frames[f].registers.len());
+        // SAFETY: register access happens only while dispatching frame `f`, whose register file
+        // `active_registers` names (see `run_general_loop`); compiler-issued registers are below
+        // the verified register count the file was sized to.
+        unsafe { *self.active_registers.add(usize::from(r)) }
     }
 
     #[inline(always)]
     pub(super) fn write(&mut self, f: usize, r: u16, v: Value) {
-        // SAFETY: same compiler/frame invariant as `read`; mutation stays here.
-        unsafe {
-            *self
-                .frames
-                .get_unchecked_mut(f)
-                .registers
-                .get_unchecked_mut(r as usize) = v;
-        }
+        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(usize::from(r) < self.frames[f].registers.len());
+        // SAFETY: same active-frame invariant as `read`; mutation stays here.
+        unsafe { *self.active_registers.add(usize::from(r)) = v };
     }
 
     #[inline(always)]

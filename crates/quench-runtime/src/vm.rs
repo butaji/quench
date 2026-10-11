@@ -746,6 +746,8 @@ pub(crate) struct Vm<H> {
     test262_agent: Test262AgentState,
     programs: ProgramStore,
     program_cache_layouts: Vec<ProgramCacheLayout>,
+    /// The register file of the frame the general loop dispatches; see `run_general_loop`.
+    active_registers: *mut Value,
     /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
     active_layout: ProgramCacheLayout,
     active_program: ProgramId,
