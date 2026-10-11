@@ -65,7 +65,7 @@ impl<H: Host> Vm<H> {
             Op::LoadConst => {
                 let value = self
                     .programs
-                    .constant(self.frames[f].program, i.constant_index())
+                    .constant(self.executing_program(f), i.constant_index())
                     .ok_or_else(|| {
                         JsError::validation("constant index is outside program".into())
                     })?;
@@ -1907,6 +1907,14 @@ impl<H: Host> Vm<H> {
         }
         Ok(StepResult::Continue)
     }
+    /// The program `frame` executes: dispatch keeps `active_program` on the running frame's
+    /// program, as the cache-layout lookups also assume.
+    #[inline(always)]
+    fn executing_program(&self, frame: usize) -> ProgramId {
+        debug_assert_eq!(self.active_program, self.frames[frame].program);
+        self.active_program
+    }
+
     #[inline(always)]
     pub(super) fn resolve_operand(
         &mut self,
@@ -1922,7 +1930,7 @@ impl<H: Host> Vm<H> {
             }
             Some(crate::bytecode::OperandKind::Constant) => self
                 .programs
-                .constant(self.frames[frame].program, operand.payload() as usize)
+                .constant(self.executing_program(frame), operand.payload() as usize)
                 .ok_or_else(|| JsError::validation("constant operand is outside program".into())),
             Some(crate::bytecode::OperandKind::Field) => {
                 self.resolve_field(p, frame, usize::from(operand.payload()))
