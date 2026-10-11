@@ -1,0 +1,854 @@
+{
+  "schema": 1,
+  "host": {
+    "os": "Darwin",
+    "machine": "arm64",
+    "load_average": [
+      31.23876953125,
+      21.6650390625,
+      15.34814453125
+    ]
+  },
+  "source_revision": "e2445fc1f99b6993a142ba5fa3c2e396535eda89",
+  "source_metric_origin": "evidence/task61-splay-refresh-ba3-2026-10-11/stock-harness-splay-11.json",
+  "stock_source_sha256": "89e1ef3481e29ebd68d59afc226b950575e61a698433bf189afa97316d21f1f5",
+  "stock_k0_source_sha256": "54a6957c757ebeb4318d4009d69e9e23e34a723339bab686a4a6ab0aace9a338",
+  "runs_per_engine_phase": 3,
+  "method": "stock BenchmarkSuite.RunSuites; one-second warmup plus one-second measured phase; report existing n loop counter once per Measure; K0 performs both stock Setup calls and TearDown without Measure",
+  "results": [
+    {
+      "round": 0,
+      "engine": "quench",
+      "phase": "stock-k0",
+      "argv": [
+        "/Users/admin/Code/GitHub/quench-v2/target/pinned/b1222e3d7f636d9d9863f90eeb1d5b63b7ce0f1fb8833657cd0818ecc9a5cd62/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-k0-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 2523056000,
+      "host_load_before": [
+        28.4111328125,
+        18.87939453125,
+        13.95947265625
+      ],
+      "host_load_after": [
+        29.0185546875,
+        19.16357421875,
+        14.08837890625
+      ],
+      "stdout": "__stock_k0_done\n",
+      "stderr": "        2.51 real         0.53 user         0.04 sys\n            93143040  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                8620  page reclaims\n                 342  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   5  voluntary context switches\n                1743  involuntary context switches\n          5453893777  instructions retired\n          1689471130  cycles elapsed\n            90014176  peak memory footprint\n",
+      "instructions": 5453893777,
+      "cycles": 1689471130,
+      "peak_rss_bytes": 93143040,
+      "measure_counts": [],
+      "total_run_calls": 0
+    },
+    {
+      "round": 0,
+      "engine": "quench",
+      "phase": "stock-work",
+      "argv": [
+        "/Users/admin/Code/GitHub/quench-v2/target/pinned/b1222e3d7f636d9d9863f90eeb1d5b63b7ce0f1fb8833657cd0818ecc9a5cd62/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-instrumented-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 3097872000,
+      "host_load_before": [
+        29.0185546875,
+        19.16357421875,
+        14.08837890625
+      ],
+      "host_load_after": [
+        29.8974609375,
+        19.50927734375,
+        14.23974609375
+      ],
+      "stdout": "__stock_result:Splay:523\n__stock_score:523\n__stock_measure_counts:[{\"benchmark\":\"Splay\",\"phase\":\"warmup\",\"calls\":97,\"elapsed_ms\":1013.47802734375},{\"benchmark\":\"Splay\",\"phase\":\"measured\",\"calls\":67,\"elapsed_ms\":1043.112060546875}]\n",
+      "stderr": "        3.09 real         0.74 user         0.04 sys\n           117669888  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9867  page reclaims\n                  21  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   4  voluntary context switches\n                2462  involuntary context switches\n          7879167909  instructions retired\n          2292864202  cycles elapsed\n           116130272  peak memory footprint\n",
+      "instructions": 7879167909,
+      "cycles": 2292864202,
+      "peak_rss_bytes": 117669888,
+      "measure_counts": [
+        {
+          "benchmark": "Splay",
+          "phase": "warmup",
+          "calls": 97,
+          "elapsed_ms": 1013.47802734375
+        },
+        {
+          "benchmark": "Splay",
+          "phase": "measured",
+          "calls": 67,
+          "elapsed_ms": 1043.112060546875
+        }
+      ],
+      "total_run_calls": 164
+    },
+    {
+      "round": 0,
+      "engine": "node",
+      "phase": "stock-k0",
+      "argv": [
+        "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+        "--jitless",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-k0-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 1051233000,
+      "host_load_before": [
+        29.8974609375,
+        19.50927734375,
+        14.23974609375
+      ],
+      "host_load_after": [
+        29.8974609375,
+        19.50927734375,
+        14.23974609375
+      ],
+      "stdout": "__stock_k0_done\n",
+      "stderr": "        1.04 real         0.36 user         0.07 sys\n           152829952  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               12978  page reclaims\n                 191  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  62  voluntary context switches\n                2185  involuntary context switches\n          3580449243  instructions retired\n          1369163628  cycles elapsed\n           150016880  peak memory footprint\n",
+      "instructions": 3580449243,
+      "cycles": 1369163628,
+      "peak_rss_bytes": 152829952,
+      "measure_counts": [],
+      "total_run_calls": 0
+    },
+    {
+      "round": 0,
+      "engine": "node",
+      "phase": "stock-work",
+      "argv": [
+        "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+        "--jitless",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-instrumented-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 2642466000,
+      "host_load_before": [
+        29.8974609375,
+        19.50927734375,
+        14.23974609375
+      ],
+      "host_load_after": [
+        29.8974609375,
+        19.50927734375,
+        14.23974609375
+      ],
+      "stdout": "__stock_result:Splay:1346\n__stock_score:1346\n__stock_measure_counts:[{\"benchmark\":\"Splay\",\"phase\":\"warmup\",\"calls\":178,\"elapsed_ms\":1002},{\"benchmark\":\"Splay\",\"phase\":\"measured\",\"calls\":167,\"elapsed_ms\":1011}]\n",
+      "stderr": "        2.63 real         0.90 user         0.11 sys\n           213696512  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21337  page reclaims\n                  88  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2985  involuntary context switches\n          7441605113  instructions retired\n          3086169840  cycles elapsed\n           265636904  peak memory footprint\n",
+      "instructions": 7441605113,
+      "cycles": 3086169840,
+      "peak_rss_bytes": 213696512,
+      "measure_counts": [
+        {
+          "benchmark": "Splay",
+          "phase": "warmup",
+          "calls": 178,
+          "elapsed_ms": 1002
+        },
+        {
+          "benchmark": "Splay",
+          "phase": "measured",
+          "calls": 167,
+          "elapsed_ms": 1011
+        }
+      ],
+      "total_run_calls": 345
+    },
+    {
+      "round": 0,
+      "engine": "bun",
+      "phase": "stock-k0",
+      "argv": [
+        "/opt/homebrew/Cellar/bun/1.4.2/bin/bun",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-k0-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 1297905000,
+      "host_load_before": [
+        29.8974609375,
+        19.50927734375,
+        14.23974609375
+      ],
+      "host_load_after": [
+        30.9462890625,
+        19.89892578125,
+        14.408203125
+      ],
+      "stdout": "__stock_k0_done\n",
+      "stderr": "        1.28 real         0.38 user         0.03 sys\n            62963712  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4605  page reclaims\n                  92  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                  17  voluntary context switches\n                3897  involuntary context switches\n          3871579605  instructions retired\n          1258301294  cycles elapsed\n            39223848  peak memory footprint\n",
+      "instructions": 3871579605,
+      "cycles": 1258301294,
+      "peak_rss_bytes": 62963712,
+      "measure_counts": [],
+      "total_run_calls": 0
+    },
+    {
+      "round": 0,
+      "engine": "bun",
+      "phase": "stock-work",
+      "argv": [
+        "/opt/homebrew/Cellar/bun/1.4.2/bin/bun",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-instrumented-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 2566510000,
+      "host_load_before": [
+        30.9462890625,
+        19.89892578125,
+        14.408203125
+      ],
+      "host_load_after": [
+        30.9462890625,
+        19.89892578125,
+        14.408203125
+      ],
+      "stdout": "__stock_result:Splay:866\n__stock_score:866\n__stock_measure_counts:[{\"benchmark\":\"Splay\",\"phase\":\"warmup\",\"calls\":131,\"elapsed_ms\":1003},{\"benchmark\":\"Splay\",\"phase\":\"measured\",\"calls\":108,\"elapsed_ms\":1016}]\n",
+      "stderr": "        2.54 real         0.87 user         0.05 sys\n            57163776  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3835  page reclaims\n                  43  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   3  voluntary context switches\n                7171  involuntary context switches\n          7959802388  instructions retired\n          2677941490  cycles elapsed\n            45433408  peak memory footprint\n",
+      "instructions": 7959802388,
+      "cycles": 2677941490,
+      "peak_rss_bytes": 57163776,
+      "measure_counts": [
+        {
+          "benchmark": "Splay",
+          "phase": "warmup",
+          "calls": 131,
+          "elapsed_ms": 1003
+        },
+        {
+          "benchmark": "Splay",
+          "phase": "measured",
+          "calls": 108,
+          "elapsed_ms": 1016
+        }
+      ],
+      "total_run_calls": 239
+    },
+    {
+      "round": 0,
+      "engine": "quickjs",
+      "phase": "stock-k0",
+      "argv": [
+        "/opt/homebrew/Cellar/quickjs/2026-06-04/bin/qjs",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-k0-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 3329373000,
+      "host_load_before": [
+        30.9462890625,
+        19.89892578125,
+        14.408203125
+      ],
+      "host_load_after": [
+        31.6708984375,
+        20.232421875,
+        14.55810546875
+      ],
+      "stdout": "__stock_k0_done\n",
+      "stderr": "        3.28 real         0.63 user         0.07 sys\n           150749184  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               10346  page reclaims\n                  46  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   3  voluntary context switches\n                2342  involuntary context switches\n          4030314699  instructions retired\n          2085719835  cycles elapsed\n           149733808  peak memory footprint\n",
+      "instructions": 4030314699,
+      "cycles": 2085719835,
+      "peak_rss_bytes": 150749184,
+      "measure_counts": [],
+      "total_run_calls": 0
+    },
+    {
+      "round": 0,
+      "engine": "quickjs",
+      "phase": "stock-work",
+      "argv": [
+        "/opt/homebrew/Cellar/quickjs/2026-06-04/bin/qjs",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-instrumented-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 3908695000,
+      "host_load_before": [
+        31.6708984375,
+        20.232421875,
+        14.55810546875
+      ],
+      "host_load_after": [
+        30.81591796875,
+        20.2451171875,
+        14.595703125
+      ],
+      "stdout": "__stock_result:Splay:842\n__stock_score:842\n__stock_measure_counts:[{\"benchmark\":\"Splay\",\"phase\":\"warmup\",\"calls\":110,\"elapsed_ms\":1006},{\"benchmark\":\"Splay\",\"phase\":\"measured\",\"calls\":104,\"elapsed_ms\":1007}]\n",
+      "stderr": "        3.90 real         0.83 user         0.06 sys\n           150405120  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               10506  page reclaims\n                   3  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2634  involuntary context switches\n          6200380359  instructions retired\n          2601082533  cycles elapsed\n           150028720  peak memory footprint\n",
+      "instructions": 6200380359,
+      "cycles": 2601082533,
+      "peak_rss_bytes": 150405120,
+      "measure_counts": [
+        {
+          "benchmark": "Splay",
+          "phase": "warmup",
+          "calls": 110,
+          "elapsed_ms": 1006
+        },
+        {
+          "benchmark": "Splay",
+          "phase": "measured",
+          "calls": 104,
+          "elapsed_ms": 1007
+        }
+      ],
+      "total_run_calls": 214
+    },
+    {
+      "round": 1,
+      "engine": "node",
+      "phase": "stock-k0",
+      "argv": [
+        "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+        "--jitless",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-k0-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 1124432000,
+      "host_load_before": [
+        30.81591796875,
+        20.2451171875,
+        14.595703125
+      ],
+      "host_load_after": [
+        30.81591796875,
+        20.2451171875,
+        14.595703125
+      ],
+      "stdout": "__stock_k0_done\n",
+      "stderr": "        1.11 real         0.39 user         0.08 sys\n           154157056  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               11753  page reclaims\n                 191  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                2382  involuntary context switches\n          3578691377  instructions retired\n          1445010188  cycles elapsed\n           150918072  peak memory footprint\n",
+      "instructions": 3578691377,
+      "cycles": 1445010188,
+      "peak_rss_bytes": 154157056,
+      "measure_counts": [],
+      "total_run_calls": 0
+    },
+    {
+      "round": 1,
+      "engine": "node",
+      "phase": "stock-work",
+      "argv": [
+        "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+        "--jitless",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-instrumented-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 2990057000,
+      "host_load_before": [
+        30.81591796875,
+        20.2451171875,
+        14.595703125
+      ],
+      "host_load_after": [
+        30.81591796875,
+        20.2451171875,
+        14.595703125
+      ],
+      "stdout": "__stock_result:Splay:1257\n__stock_score:1257\n__stock_measure_counts:[{\"benchmark\":\"Splay\",\"phase\":\"warmup\",\"calls\":158,\"elapsed_ms\":1007},{\"benchmark\":\"Splay\",\"phase\":\"measured\",\"calls\":155,\"elapsed_ms\":1005}]\n",
+      "stderr": "        2.98 real         0.87 user         0.14 sys\n           203522048  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               21311  page reclaims\n                  92  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                4051  involuntary context switches\n          6989540704  instructions retired\n          3051638781  cycles elapsed\n           246399904  peak memory footprint\n",
+      "instructions": 6989540704,
+      "cycles": 3051638781,
+      "peak_rss_bytes": 203522048,
+      "measure_counts": [
+        {
+          "benchmark": "Splay",
+          "phase": "warmup",
+          "calls": 158,
+          "elapsed_ms": 1007
+        },
+        {
+          "benchmark": "Splay",
+          "phase": "measured",
+          "calls": 155,
+          "elapsed_ms": 1005
+        }
+      ],
+      "total_run_calls": 313
+    },
+    {
+      "round": 1,
+      "engine": "bun",
+      "phase": "stock-k0",
+      "argv": [
+        "/opt/homebrew/Cellar/bun/1.4.2/bin/bun",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-k0-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 1445882000,
+      "host_load_before": [
+        30.81591796875,
+        20.2451171875,
+        14.595703125
+      ],
+      "host_load_after": [
+        31.95166015625,
+        20.65576171875,
+        14.7734375
+      ],
+      "stdout": "__stock_k0_done\n",
+      "stderr": "        1.44 real         0.41 user         0.03 sys\n            55558144  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4491  page reclaims\n                  82  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                4170  involuntary context switches\n          3790339035  instructions retired\n          1362591556  cycles elapsed\n            37519960  peak memory footprint\n",
+      "instructions": 3790339035,
+      "cycles": 1362591556,
+      "peak_rss_bytes": 55558144,
+      "measure_counts": [],
+      "total_run_calls": 0
+    },
+    {
+      "round": 1,
+      "engine": "bun",
+      "phase": "stock-work",
+      "argv": [
+        "/opt/homebrew/Cellar/bun/1.4.2/bin/bun",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-instrumented-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 2536518000,
+      "host_load_before": [
+        31.95166015625,
+        20.65576171875,
+        14.7734375
+      ],
+      "host_load_after": [
+        31.95166015625,
+        20.65576171875,
+        14.7734375
+      ],
+      "stdout": "__stock_result:Splay:750\n__stock_score:750\n__stock_measure_counts:[{\"benchmark\":\"Splay\",\"phase\":\"warmup\",\"calls\":111,\"elapsed_ms\":1026},{\"benchmark\":\"Splay\",\"phase\":\"measured\",\"calls\":92,\"elapsed_ms\":1000}]\n",
+      "stderr": "        2.52 real         0.83 user         0.05 sys\n            54542336  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3653  page reclaims\n                  49  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                6763  involuntary context switches\n          7176639387  instructions retired\n          2497851217  cycles elapsed\n            43844136  peak memory footprint\n",
+      "instructions": 7176639387,
+      "cycles": 2497851217,
+      "peak_rss_bytes": 54542336,
+      "measure_counts": [
+        {
+          "benchmark": "Splay",
+          "phase": "warmup",
+          "calls": 111,
+          "elapsed_ms": 1026
+        },
+        {
+          "benchmark": "Splay",
+          "phase": "measured",
+          "calls": 92,
+          "elapsed_ms": 1000
+        }
+      ],
+      "total_run_calls": 203
+    },
+    {
+      "round": 1,
+      "engine": "quickjs",
+      "phase": "stock-k0",
+      "argv": [
+        "/opt/homebrew/Cellar/quickjs/2026-06-04/bin/qjs",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-k0-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 4114987000,
+      "host_load_before": [
+        31.95166015625,
+        20.65576171875,
+        14.7734375
+      ],
+      "host_load_after": [
+        32.8359375,
+        21.0263671875,
+        14.9384765625
+      ],
+      "stdout": "__stock_k0_done\n",
+      "stderr": "        4.10 real         0.66 user         0.14 sys\n           150568960  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               18765  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                3689  involuntary context switches\n          4138261020  instructions retired\n          2501561369  cycles elapsed\n           150127072  peak memory footprint\n",
+      "instructions": 4138261020,
+      "cycles": 2501561369,
+      "peak_rss_bytes": 150568960,
+      "measure_counts": [],
+      "total_run_calls": 0
+    },
+    {
+      "round": 1,
+      "engine": "quickjs",
+      "phase": "stock-work",
+      "argv": [
+        "/opt/homebrew/Cellar/quickjs/2026-06-04/bin/qjs",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-instrumented-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 5367418000,
+      "host_load_before": [
+        32.8359375,
+        21.0263671875,
+        14.9384765625
+      ],
+      "host_load_after": [
+        33.9697265625,
+        21.45751953125,
+        15.1259765625
+      ],
+      "stdout": "__stock_result:Splay:749\n__stock_score:749\n__stock_measure_counts:[{\"benchmark\":\"Splay\",\"phase\":\"warmup\",\"calls\":84,\"elapsed_ms\":1034},{\"benchmark\":\"Splay\",\"phase\":\"measured\",\"calls\":92,\"elapsed_ms\":1001}]\n",
+      "stderr": "        5.35 real         0.84 user         0.09 sys\n           150470656  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               15243  page reclaims\n                  11  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                2863  involuntary context switches\n          5590334369  instructions retired\n          2781796869  cycles elapsed\n           150028720  peak memory footprint\n",
+      "instructions": 5590334369,
+      "cycles": 2781796869,
+      "peak_rss_bytes": 150470656,
+      "measure_counts": [
+        {
+          "benchmark": "Splay",
+          "phase": "warmup",
+          "calls": 84,
+          "elapsed_ms": 1034
+        },
+        {
+          "benchmark": "Splay",
+          "phase": "measured",
+          "calls": 92,
+          "elapsed_ms": 1001
+        }
+      ],
+      "total_run_calls": 176
+    },
+    {
+      "round": 1,
+      "engine": "quench",
+      "phase": "stock-k0",
+      "argv": [
+        "/Users/admin/Code/GitHub/quench-v2/target/pinned/b1222e3d7f636d9d9863f90eeb1d5b63b7ce0f1fb8833657cd0818ecc9a5cd62/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-k0-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 2411699000,
+      "host_load_before": [
+        33.9697265625,
+        21.45751953125,
+        15.1259765625
+      ],
+      "host_load_after": [
+        33.2509765625,
+        21.51611328125,
+        15.18359375
+      ],
+      "stdout": "__stock_k0_done\n",
+      "stderr": "        2.40 real         0.50 user         0.04 sys\n            97107968  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                8535  page reclaims\n                 354  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                1830  involuntary context switches\n          5453461748  instructions retired\n          1619164809  cycles elapsed\n            89948640  peak memory footprint\n",
+      "instructions": 5453461748,
+      "cycles": 1619164809,
+      "peak_rss_bytes": 97107968,
+      "measure_counts": [],
+      "total_run_calls": 0
+    },
+    {
+      "round": 1,
+      "engine": "quench",
+      "phase": "stock-work",
+      "argv": [
+        "/Users/admin/Code/GitHub/quench-v2/target/pinned/b1222e3d7f636d9d9863f90eeb1d5b63b7ce0f1fb8833657cd0818ecc9a5cd62/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-instrumented-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 2725049000,
+      "host_load_before": [
+        33.2509765625,
+        21.51611328125,
+        15.18359375
+      ],
+      "host_load_after": [
+        33.2509765625,
+        21.51611328125,
+        15.18359375
+      ],
+      "stdout": "__stock_result:Splay:878\n__stock_score:878\n__stock_measure_counts:[{\"benchmark\":\"Splay\",\"phase\":\"warmup\",\"calls\":119,\"elapsed_ms\":1026.464111328125},{\"benchmark\":\"Splay\",\"phase\":\"measured\",\"calls\":115,\"elapsed_ms\":1067.6669921875}]\n",
+      "stderr": "        2.71 real         0.89 user         0.04 sys\n           122142720  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                8784  page reclaims\n                  19  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2516  involuntary context switches\n         10013270135  instructions retired\n          2685991884  cycles elapsed\n           114524664  peak memory footprint\n",
+      "instructions": 10013270135,
+      "cycles": 2685991884,
+      "peak_rss_bytes": 122142720,
+      "measure_counts": [
+        {
+          "benchmark": "Splay",
+          "phase": "warmup",
+          "calls": 119,
+          "elapsed_ms": 1026.464111328125
+        },
+        {
+          "benchmark": "Splay",
+          "phase": "measured",
+          "calls": 115,
+          "elapsed_ms": 1067.6669921875
+        }
+      ],
+      "total_run_calls": 234
+    },
+    {
+      "round": 2,
+      "engine": "bun",
+      "phase": "stock-k0",
+      "argv": [
+        "/opt/homebrew/Cellar/bun/1.4.2/bin/bun",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-k0-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 693643000,
+      "host_load_before": [
+        33.2509765625,
+        21.51611328125,
+        15.18359375
+      ],
+      "host_load_after": [
+        33.2509765625,
+        21.51611328125,
+        15.18359375
+      ],
+      "stdout": "__stock_k0_done\n",
+      "stderr": "        0.67 real         0.38 user         0.03 sys\n            56639488  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                4225  page reclaims\n                  90  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   2  voluntary context switches\n                4358  involuntary context switches\n          3817756491  instructions retired\n          1244683925  cycles elapsed\n            39305792  peak memory footprint\n",
+      "instructions": 3817756491,
+      "cycles": 1244683925,
+      "peak_rss_bytes": 56639488,
+      "measure_counts": [],
+      "total_run_calls": 0
+    },
+    {
+      "round": 2,
+      "engine": "bun",
+      "phase": "stock-work",
+      "argv": [
+        "/opt/homebrew/Cellar/bun/1.4.2/bin/bun",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-instrumented-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 2322098000,
+      "host_load_before": [
+        33.2509765625,
+        21.51611328125,
+        15.18359375
+      ],
+      "host_load_after": [
+        33.470703125,
+        21.75634765625,
+        15.30517578125
+      ],
+      "stdout": "__stock_result:Splay:1227\n__stock_score:1227\n__stock_measure_counts:[{\"benchmark\":\"Splay\",\"phase\":\"warmup\",\"calls\":151,\"elapsed_ms\":1000},{\"benchmark\":\"Splay\",\"phase\":\"measured\",\"calls\":151,\"elapsed_ms\":1003}]\n",
+      "stderr": "        2.31 real         1.05 user         0.06 sys\n            56803328  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                3812  page reclaims\n                  41  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                8299  involuntary context switches\n          9439401132  instructions retired\n          3224344982  cycles elapsed\n            46121536  peak memory footprint\n",
+      "instructions": 9439401132,
+      "cycles": 3224344982,
+      "peak_rss_bytes": 56803328,
+      "measure_counts": [
+        {
+          "benchmark": "Splay",
+          "phase": "warmup",
+          "calls": 151,
+          "elapsed_ms": 1000
+        },
+        {
+          "benchmark": "Splay",
+          "phase": "measured",
+          "calls": 151,
+          "elapsed_ms": 1003
+        }
+      ],
+      "total_run_calls": 302
+    },
+    {
+      "round": 2,
+      "engine": "quickjs",
+      "phase": "stock-k0",
+      "argv": [
+        "/opt/homebrew/Cellar/quickjs/2026-06-04/bin/qjs",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-k0-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 2227990000,
+      "host_load_before": [
+        33.470703125,
+        21.75634765625,
+        15.30517578125
+      ],
+      "host_load_after": [
+        33.470703125,
+        21.75634765625,
+        15.30517578125
+      ],
+      "stdout": "__stock_k0_done\n",
+      "stderr": "        2.22 real         0.60 user         0.06 sys\n           150781952  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9783  page reclaims\n                   4  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                1609  involuntary context switches\n          3995143246  instructions retired\n          1914822326  cycles elapsed\n           149717424  peak memory footprint\n",
+      "instructions": 3995143246,
+      "cycles": 1914822326,
+      "peak_rss_bytes": 150781952,
+      "measure_counts": [],
+      "total_run_calls": 0
+    },
+    {
+      "round": 2,
+      "engine": "quickjs",
+      "phase": "stock-work",
+      "argv": [
+        "/opt/homebrew/Cellar/quickjs/2026-06-04/bin/qjs",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-instrumented-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 3280918000,
+      "host_load_before": [
+        33.470703125,
+        21.75634765625,
+        15.30517578125
+      ],
+      "host_load_after": [
+        32.3916015625,
+        21.72705078125,
+        15.33251953125
+      ],
+      "stdout": "__stock_result:Splay:1246\n__stock_score:1246\n__stock_measure_counts:[{\"benchmark\":\"Splay\",\"phase\":\"warmup\",\"calls\":174,\"elapsed_ms\":1005},{\"benchmark\":\"Splay\",\"phase\":\"measured\",\"calls\":153,\"elapsed_ms\":1001}]\n",
+      "stderr": "        3.27 real         1.08 user         0.04 sys\n           150765568  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                9429  page reclaims\n                   3  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2947  involuntary context switches\n          8163480781  instructions retired\n          3214773435  cycles elapsed\n           150077896  peak memory footprint\n",
+      "instructions": 8163480781,
+      "cycles": 3214773435,
+      "peak_rss_bytes": 150765568,
+      "measure_counts": [
+        {
+          "benchmark": "Splay",
+          "phase": "warmup",
+          "calls": 174,
+          "elapsed_ms": 1005
+        },
+        {
+          "benchmark": "Splay",
+          "phase": "measured",
+          "calls": 153,
+          "elapsed_ms": 1001
+        }
+      ],
+      "total_run_calls": 327
+    },
+    {
+      "round": 2,
+      "engine": "quench",
+      "phase": "stock-k0",
+      "argv": [
+        "/Users/admin/Code/GitHub/quench-v2/target/pinned/b1222e3d7f636d9d9863f90eeb1d5b63b7ce0f1fb8833657cd0818ecc9a5cd62/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-k0-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 1399112000,
+      "host_load_before": [
+        32.3916015625,
+        21.72705078125,
+        15.33251953125
+      ],
+      "host_load_after": [
+        32.3916015625,
+        21.72705078125,
+        15.33251953125
+      ],
+      "stdout": "__stock_k0_done\n",
+      "stderr": "        1.39 real         0.50 user         0.02 sys\n            99893248  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                6268  page reclaims\n                  27  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 988  involuntary context switches\n          5391145645  instructions retired\n          1458144274  cycles elapsed\n            90096120  peak memory footprint\n",
+      "instructions": 5391145645,
+      "cycles": 1458144274,
+      "peak_rss_bytes": 99893248,
+      "measure_counts": [],
+      "total_run_calls": 0
+    },
+    {
+      "round": 2,
+      "engine": "quench",
+      "phase": "stock-work",
+      "argv": [
+        "/Users/admin/Code/GitHub/quench-v2/target/pinned/b1222e3d7f636d9d9863f90eeb1d5b63b7ce0f1fb8833657cd0818ecc9a5cd62/quench-node",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-instrumented-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 2732796000,
+      "host_load_before": [
+        32.3916015625,
+        21.72705078125,
+        15.33251953125
+      ],
+      "host_load_after": [
+        31.23876953125,
+        21.6650390625,
+        15.34814453125
+      ],
+      "stdout": "__stock_result:Splay:774\n__stock_score:774\n__stock_measure_counts:[{\"benchmark\":\"Splay\",\"phase\":\"warmup\",\"calls\":133,\"elapsed_ms\":1001.851806640625},{\"benchmark\":\"Splay\",\"phase\":\"measured\",\"calls\":101,\"elapsed_ms\":1063.949951171875}]\n",
+      "stderr": "        2.72 real         0.94 user         0.04 sys\n           122634240  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n                8657  page reclaims\n                  19  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                2479  involuntary context switches\n         10018932627  instructions retired\n          2762870928  cycles elapsed\n           115687928  peak memory footprint\n",
+      "instructions": 10018932627,
+      "cycles": 2762870928,
+      "peak_rss_bytes": 122634240,
+      "measure_counts": [
+        {
+          "benchmark": "Splay",
+          "phase": "warmup",
+          "calls": 133,
+          "elapsed_ms": 1001.851806640625
+        },
+        {
+          "benchmark": "Splay",
+          "phase": "measured",
+          "calls": 101,
+          "elapsed_ms": 1063.949951171875
+        }
+      ],
+      "total_run_calls": 234
+    },
+    {
+      "round": 2,
+      "engine": "node",
+      "phase": "stock-k0",
+      "argv": [
+        "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+        "--jitless",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-k0-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 661922000,
+      "host_load_before": [
+        31.23876953125,
+        21.6650390625,
+        15.34814453125
+      ],
+      "host_load_after": [
+        31.23876953125,
+        21.6650390625,
+        15.34814453125
+      ],
+      "stdout": "__stock_k0_done\n",
+      "stderr": "        0.65 real         0.41 user         0.06 sys\n           166395904  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               10757  page reclaims\n                  91  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   0  voluntary context switches\n                 956  involuntary context switches\n          3509408796  instructions retired\n          1344294550  cycles elapsed\n           150328368  peak memory footprint\n",
+      "instructions": 3509408796,
+      "cycles": 1344294550,
+      "peak_rss_bytes": 166395904,
+      "measure_counts": [],
+      "total_run_calls": 0
+    },
+    {
+      "round": 2,
+      "engine": "node",
+      "phase": "stock-work",
+      "argv": [
+        "/opt/homebrew/Cellar/node/26.10.0_1/bin/node",
+        "--jitless",
+        "/Users/admin/Code/GitHub/quench-v2/evidence/task61-splay-stock-vs-fixed-diagnostic-2026-10-11/stock-instrumented-splay.js"
+      ],
+      "exit_code": 0,
+      "elapsed_ns": 2366367000,
+      "host_load_before": [
+        31.23876953125,
+        21.6650390625,
+        15.34814453125
+      ],
+      "host_load_after": [
+        31.23876953125,
+        21.6650390625,
+        15.34814453125
+      ],
+      "stdout": "__stock_result:Splay:1968\n__stock_score:1968\n__stock_measure_counts:[{\"benchmark\":\"Splay\",\"phase\":\"warmup\",\"calls\":260,\"elapsed_ms\":1002},{\"benchmark\":\"Splay\",\"phase\":\"measured\",\"calls\":243,\"elapsed_ms\":1006}]\n",
+      "stderr": "        2.35 real         1.23 user         0.12 sys\n           295141376  maximum resident set size\n                   0  average shared memory size\n                   0  average unshared data size\n                   0  average unshared stack size\n               22044  page reclaims\n                 192  page faults\n                   0  swaps\n                   0  block input operations\n                   0  block output operations\n                   0  messages sent\n                   0  messages received\n                   0  signals received\n                   1  voluntary context switches\n                3897  involuntary context switches\n          9716663862  instructions retired\n          3861888875  cycles elapsed\n           343043752  peak memory footprint\n",
+      "instructions": 9716663862,
+      "cycles": 3861888875,
+      "peak_rss_bytes": 295141376,
+      "measure_counts": [
+        {
+          "benchmark": "Splay",
+          "phase": "warmup",
+          "calls": 260,
+          "elapsed_ms": 1002
+        },
+        {
+          "benchmark": "Splay",
+          "phase": "measured",
+          "calls": 243,
+          "elapsed_ms": 1006
+        }
+      ],
+      "total_run_calls": 503
+    }
+  ]
+}
