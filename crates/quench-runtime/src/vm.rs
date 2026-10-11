@@ -1399,7 +1399,12 @@ impl<H: Host> Vm<H> {
     }
     #[inline(always)]
     fn active_cache_layout(&self) -> ProgramCacheLayout {
-        self.program_cache_layouts[self.active_program.raw() as usize]
+        let program = self.active_program.raw() as usize;
+        debug_assert!(program < self.program_cache_layouts.len());
+        // SAFETY: program ids come only from the main-program reset and the module and dynamic
+        // program stores, each of which appends that program's layout; layouts are never
+        // removed while ids live.
+        unsafe { *self.program_cache_layouts.get_unchecked(program) }
     }
     #[inline(always)]
     pub(super) fn field_cache_index(&self, site: u16) -> usize {
