@@ -27,11 +27,12 @@ pub struct RootId {
     generation: u32,
 }
 
-/// A non-owning heap reference whose slot generation must still match.
+/// A non-owning heap reference whose owner is pruned before its slot is reused.
+/// Heap cells are pruned during collection; the VM prunes external weak caches
+/// immediately after collection and before it can allocate into freed slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct WeakHandle {
-    pub(crate) slot: u32,
-    pub(crate) generation: u32,
+    pub(super) slot: u32,
 }
 
 pub(crate) struct RootTable {

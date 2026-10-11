@@ -18,6 +18,7 @@ default = []
 profile-aggregate = []
 profile-trace = ["profile-aggregate"]
 profile-memory = []
+profile-gc-time = []
 reference = []
 
 [dependencies]
