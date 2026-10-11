@@ -790,6 +790,7 @@ impl Engine {
                 dispatch: DispatchClass::General,
                 decoded: Default::default(),
                 plain_locals: Default::default(),
+                activation_bindings: Default::default(),
                 handlers: lowering.handlers,
                 register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
             };
