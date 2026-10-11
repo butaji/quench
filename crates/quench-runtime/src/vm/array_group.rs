@@ -9,9 +9,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let length = match self.heap.get(this) {
-            Some(Cell::Array { elements, .. }) => {
-                self.heap.sparse_length(this).unwrap_or(elements.len())
-            }
+            Some(cell @ Cell::Array { .. }) => self
+                .heap
+                .sparse_length(this)
+                .unwrap_or(cell.array_elements().len()),
             _ => return Err(JsError("array group receiver is not array".into())),
         };
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -53,16 +54,16 @@ impl<H: Host> Vm<H> {
                     })
                 });
             if let Some(existing) = existing {
-                let Some(Cell::Array { elements, .. }) = self.heap.get_mut(existing) else {
+                let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(existing) else {
                     return Err(JsError("array group bucket is not an array".into()));
                 };
-                Rc::make_mut(elements).push(value);
+                Rc::make_mut(cell.array_elements_mut()).push(value);
                 continue;
             }
-            let bucket = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(vec![value]),
-            });
+            let bucket = self.heap.alloc(Cell::array(
+                self.array_proto,
+                Rc::new(vec![value]),
+            ));
             if let Some(atom) = key_atom {
                 self.set_property(grouped, atom, bucket)?;
             } else if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(grouped) {

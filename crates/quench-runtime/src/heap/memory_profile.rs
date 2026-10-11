@@ -398,7 +398,8 @@ impl Heap {
             }
             let payload_bytes = Self::cell_payload_bytes(cell);
             match cell {
-                Cell::Array { elements, .. } => {
+                cell @ Cell::Array { .. } => {
+                    let elements = cell.array_elements();
                     let element_bytes = elements.capacity() * size_of::<Value>();
                     other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
                     let identity = Rc::as_ptr(elements) as usize;
@@ -541,7 +542,10 @@ impl Heap {
         self.slots
             .iter()
             .filter_map(|slot| match slot.cell.as_ref()? {
-                Cell::Array { elements, .. } => Some((elements.len(), elements.capacity())),
+                cell @ Cell::Array { .. } => {
+                    let elements = cell.array_elements();
+                    Some((elements.len(), elements.capacity()))
+                }
                 _ => None,
             })
             .fold((0, 0), |(len, capacity), value| {
@@ -592,7 +596,9 @@ fn cell_bytes(cell: &Cell) -> usize {
             | Cell::WasmGc {
                 fields: elements, ..
             } => elements.capacity() * size_of::<Value>(),
-            Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
+            cell @ Cell::Array { .. } => {
+                cell.array_elements().capacity() * size_of::<Value>()
+            }
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::WasmMemory { bytes, .. } => bytes.capacity(),
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),

@@ -1248,9 +1248,10 @@ impl<H: Host> Vm<H> {
                 .decode_wasm_value_in(result, *ty, declarations)
                 .map(|value| vec![value]),
             types => {
-                let Some(Cell::Array { elements, .. }) = self.heap.get(result) else {
+                let Some(cell @ Cell::Array { .. }) = self.heap.get(result) else {
                     return Err(JsError::validation("invalid Wasm result bundle".into()));
                 };
+                let elements = cell.array_elements();
                 if elements.len() != types.len() {
                     return Err(JsError::validation("Wasm result count mismatch".into()));
                 }

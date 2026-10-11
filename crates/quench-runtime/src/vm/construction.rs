@@ -522,7 +522,11 @@ impl<H: Host> Vm<H> {
                     let bound_args = vm
                         .own_property(env, args_atom)
                         .and_then(|value| match vm.heap.get(value) {
-                            Some(Cell::Array { elements, .. }) => Some(elements.as_ref().clone()),
+                            Some(cell @ Cell::Array { .. }) => Some(
+                                cell.array_elements()
+                                    .as_ref()
+                                    .clone(),
+                            ),
                             _ => None,
                         })
                         .unwrap_or_default();
@@ -671,7 +675,11 @@ impl<H: Host> Vm<H> {
         ))
     }
 
-    pub(super) fn own_function_prototype_data(&self, constructor: Value, prototype_atom: Atom) -> Option<Value> {
+    pub(super) fn own_function_prototype_data(
+        &self,
+        constructor: Value,
+        prototype_atom: Atom,
+    ) -> Option<Value> {
         if !matches!(self.heap.get(constructor), Some(Cell::Function { .. })) {
             return None;
         }
@@ -1092,17 +1100,17 @@ impl<H: Host> Vm<H> {
             {
                 return Err(self.range_error(p, "Invalid array length".into()));
             }
-            let array = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(prototype),
-                elements: Rc::new(Vec::new()),
-            });
+            let array = self.heap.alloc(Cell::array(
+                prototype,
+                Rc::new(Vec::new()),
+            ));
             self.heap.sparse_set_length(array, length as usize);
             return Ok(array);
         }
 
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(prototype),
-            elements: Rc::new(args.to_vec()),
-        }))
+        Ok(self.heap.alloc(Cell::array(
+            prototype,
+            Rc::new(args.to_vec()),
+        )))
     }
 }

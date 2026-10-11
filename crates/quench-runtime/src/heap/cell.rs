@@ -6,6 +6,7 @@ use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
+use std::{fmt, mem::ManuallyDrop};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WeakMapEntries {
@@ -17,16 +18,74 @@ pub(crate) struct WeakMapEntries {
 mod cell_layout_tests {
     use super::*;
 
+    const OBJECT_HEADER_BYTES: usize =
+        std::mem::size_of::<Value>() + INLINE_PROPERTY_COUNT * std::mem::size_of::<Value>();
     /// Every heap slot stores an `Option<Cell>`. The M4 object layout includes
-    /// two inline properties, and arrays add their shared element handle.
+    /// two inline properties, with array backing stored in their spare words.
     const CELL_TAG_WORD_BYTES: usize = std::mem::size_of::<Value>();
-    const MAX_CELL_BYTES: usize = std::mem::size_of::<Object>()
-        + std::mem::size_of::<Rc<Vec<Value>>>()
-        + CELL_TAG_WORD_BYTES;
+    const ARRAY_STORAGE_BYTES: usize =
+        std::mem::size_of::<Rc<Vec<Value>>>() + std::mem::size_of::<Option<Box<ObjectExtras>>>();
+    const MAX_CELL_BYTES: usize = std::mem::size_of::<Object>() + CELL_TAG_WORD_BYTES;
 
     #[test]
     fn cells_stay_compact() {
+        assert_eq!(
+            std::mem::size_of::<Object>(),
+            OBJECT_HEADER_BYTES + std::mem::size_of::<ValueVec>()
+        );
+        assert_eq!(std::mem::size_of::<ArrayStorage>(), ARRAY_STORAGE_BYTES);
+        assert_eq!(std::mem::size_of::<ObjectStorage>(), ARRAY_STORAGE_BYTES);
         assert_eq!(std::mem::size_of::<Option<Cell>>(), MAX_CELL_BYTES);
+    }
+
+    #[test]
+    fn object_extras_preserve_inline_properties_across_clone_and_drop() {
+        let first = Value::integer(17);
+        let second = Value::integer(29);
+        let mut object = Object::with_property_storage(
+            Value::NULL,
+            ValueVec::inline_property_storage(0),
+            [first, second],
+        );
+
+        object.set_arguments_object();
+        assert!(object.is_arguments_object());
+        assert_eq!(object.inline_properties(), Some(&[first, second]));
+
+        let clone = object.clone();
+        assert!(clone.is_arguments_object());
+        assert_eq!(clone.inline_properties(), Some(&[first, second]));
+    }
+
+    #[test]
+    fn array_backing_survives_extras_clone_and_drop() {
+        let values = Rc::new(vec![Value::integer(17), Value::integer(29)]);
+        let mut array = Cell::array(Value::NULL, values);
+        assert_eq!(Rc::strong_count(array.array_elements()), 1);
+        assert!(!array.array_has_indexed_descriptors());
+
+        let Cell::Array { object } = &mut array else {
+            unreachable!()
+        };
+        object.set_arguments_object();
+        object.mark_indexed_descriptors();
+        assert!(object.is_arguments_object());
+        assert!(array.array_has_indexed_descriptors());
+        assert_eq!(
+            array.array_elements().as_slice(),
+            &[Value::integer(17), Value::integer(29)]
+        );
+
+        let clone = array.clone();
+        assert_eq!(Rc::strong_count(clone.array_elements()), 2);
+        let Cell::Array { object } = &clone else {
+            unreachable!()
+        };
+        assert!(object.is_arguments_object());
+        assert_eq!(clone.array_elements()[0], Value::integer(17));
+
+        drop(array);
+        assert_eq!(Rc::strong_count(clone.array_elements()), 1);
     }
 }
 
@@ -950,13 +1009,23 @@ pub(crate) enum IteratorConsumer {
     Find,
     Some,
 }
-#[derive(Clone, Debug)]
 pub(crate) struct Object {
     pub proto: Value,
     // Property names live once in the VM's immutable shape table; objects keep
     // only the data vector selected by that shape.
     pub properties: ValueVec,
+    storage: ObjectStorage,
+}
+
+union ObjectStorage {
     inline_properties: [Value; INLINE_PROPERTY_COUNT],
+    array_storage: ManuallyDrop<ArrayStorage>,
+    out_of_line: ManuallyDrop<Box<ObjectExtraStorage>>,
+}
+
+#[derive(Clone, Debug)]
+struct ArrayStorage {
+    elements: Rc<Vec<Value>>,
     extras: Option<Box<ObjectExtras>>,
 }
 
@@ -989,14 +1058,70 @@ struct ObjectExtras {
     /// An index-keyed property descriptor has been recorded for this object; never cleared.
     indexed_descriptors: bool,
 }
+
+#[derive(Clone, Debug)]
+struct ObjectExtraStorage {
+    inline_properties: [Value; INLINE_PROPERTY_COUNT],
+    extras: ObjectExtras,
+}
+
+impl Clone for Object {
+    fn clone(&self) -> Self {
+        let storage = if self.properties.has_array_elements() {
+            // SAFETY: Cell::Array initializes this union arm before exposing
+            // its Object header, and the array-kind bit remains set for life.
+            let array = unsafe { &*self.storage.array_storage };
+            ObjectStorage {
+                array_storage: ManuallyDrop::new(array.clone()),
+            }
+        } else if let Some(out_of_line) = self.out_of_line() {
+            ObjectStorage {
+                out_of_line: ManuallyDrop::new(Box::new(out_of_line.clone())),
+            }
+        } else {
+            ObjectStorage {
+                inline_properties: *self.inline_property_values(),
+            }
+        };
+        Self {
+            proto: self.proto,
+            properties: self.properties,
+            storage,
+        }
+    }
+}
+
+impl fmt::Debug for Object {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Object")
+            .field("proto", &self.proto)
+            .field("properties", &self.properties)
+            .field("inline_properties", self.inline_property_values())
+            .field("extras", &self.extras())
+            .finish()
+    }
+}
+
+impl Drop for Object {
+    fn drop(&mut self) {
+        if self.properties.has_array_elements() {
+            // SAFETY: Cell::Array initializes this union arm and keeps its
+            // array-kind bit set until the record is dropped.
+            unsafe { ManuallyDrop::drop(&mut self.storage.array_storage) };
+        } else if self.properties.has_object_extras() {
+            // SAFETY: the object-extras bit is set only after `storage` is
+            // initialized with the matching out-of-line allocation.
+            unsafe { ManuallyDrop::drop(&mut self.storage.out_of_line) };
+        }
+    }
+}
 impl ObjectExtras {
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     fn allocated_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + self
-                .arguments_map
-                .as_ref()
-                .map_or(0, |mapping| mapping.capacity() * std::mem::size_of::<u16>())
+        self.arguments_map
+            .as_ref()
+            .map_or(0, |mapping| mapping.capacity() * std::mem::size_of::<u16>())
             + self.module_bindings.capacity() * std::mem::size_of::<(Atom, ProgramId, u16)>()
             + self.deferred_module.as_ref().map_or(0, |module| {
                 module.name.capacity() + module.source.capacity() + module.bytes.capacity()
@@ -1006,6 +1131,13 @@ impl ObjectExtras {
                 .stack_data
                 .as_ref()
                 .map_or(0, StackData::allocated_bytes)
+    }
+}
+
+impl ObjectExtraStorage {
+    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
+    fn allocated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.extras.allocated_bytes()
     }
 }
 impl StackData {
@@ -1053,34 +1185,76 @@ impl Object {
         Self {
             proto,
             properties: ValueVec::inline_property_storage(0),
-            inline_properties: [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
-            extras: None,
+            storage: ObjectStorage {
+                inline_properties: [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+            },
         }
     }
 
     pub(crate) fn with_property_storage(
         proto: Value,
-        properties: ValueVec,
+        mut properties: ValueVec,
         inline_properties: [Value; INLINE_PROPERTY_COUNT],
     ) -> Self {
+        properties.set_object_extras(false);
+        properties.set_array_elements(false);
         Self {
             proto,
             properties,
-            inline_properties,
-            extras: None,
+            storage: ObjectStorage { inline_properties },
         }
     }
 
+    fn into_array_elements(mut self, elements: Rc<Vec<Value>>) -> Self {
+        debug_assert!(!self.properties.has_object_extras());
+        debug_assert!(!self.properties.has_array_elements());
+        debug_assert!(self.properties.has_inline_property_storage());
+        debug_assert!(
+            self.inline_property_values()
+                .iter()
+                .all(|value| *value == Value::UNDEFINED)
+        );
+        let properties = ValueVec::array_property_storage(self.shape());
+        self.storage = ObjectStorage {
+            array_storage: ManuallyDrop::new(ArrayStorage {
+                elements,
+                extras: None,
+            }),
+        };
+        self.properties = properties;
+        self
+    }
+
     pub(crate) fn inline_properties(&self) -> Option<&[Value; INLINE_PROPERTY_COUNT]> {
-        self.properties
-            .has_inline_property_storage()
-            .then_some(&self.inline_properties)
+        (!self.properties.has_array_elements() && self.properties.has_inline_property_storage())
+            .then(|| self.inline_property_values())
+    }
+
+    #[inline(always)]
+    fn array_elements(&self) -> &Rc<Vec<Value>> {
+        debug_assert!(self.properties.has_array_elements());
+        // SAFETY: Cell::Array is the authority for this union arm. Its
+        // elements pointer stays at this offset whether or not extras exist.
+        unsafe { &self.storage.array_storage.elements }
+    }
+
+    #[inline(always)]
+    fn array_elements_mut(&mut self) -> &mut Rc<Vec<Value>> {
+        debug_assert!(self.properties.has_array_elements());
+        // SAFETY: Cell::Array is the authority for this union arm. Its
+        // elements pointer stays at this offset whether or not extras exist.
+        unsafe { &mut (*self.storage.array_storage).elements }
     }
 
     pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
         debug_assert!(self.properties.has_inline_property_storage());
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
-        self.inline_properties[slot] = value;
+        if let Some(out_of_line) = self.out_of_line_mut() {
+            out_of_line.inline_properties[slot] = value;
+        } else {
+            // SAFETY: without object extras, the union stores inline values.
+            unsafe { self.storage.inline_properties[slot] = value };
+        }
     }
 
     pub(crate) fn replace_property_storage(
@@ -1091,13 +1265,29 @@ impl Object {
         let previous = self.properties;
         properties.preserve_integrity_from(previous);
         self.properties = properties;
-        self.inline_properties = inline_properties;
+        if !self.properties.has_array_elements() {
+            if let Some(out_of_line) = self.out_of_line_mut() {
+                out_of_line.inline_properties = inline_properties;
+            } else {
+                self.storage.inline_properties = inline_properties;
+            }
+        }
         previous
     }
 
     pub(crate) fn copy_property_storage_from(&mut self, source: &Self) {
-        self.properties = source.properties;
-        self.inline_properties = source.inline_properties;
+        let mut properties = source.properties;
+        properties.set_object_extras(self.properties.has_object_extras());
+        properties.set_array_elements(self.properties.has_array_elements());
+        self.properties = properties;
+        if !self.properties.has_array_elements() {
+            let inline_properties = *source.inline_property_values();
+            if let Some(out_of_line) = self.out_of_line_mut() {
+                out_of_line.inline_properties = inline_properties;
+            } else {
+                self.storage.inline_properties = inline_properties;
+            }
+        }
     }
 
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
@@ -1108,13 +1298,11 @@ impl Object {
     }
 
     pub(crate) fn has_error_data(&self) -> bool {
-        self.extras
-            .as_deref()
-            .is_some_and(|extras| extras.error_data)
+        self.extras().is_some_and(|extras| extras.error_data)
     }
 
     pub(crate) fn stack_data(&self) -> Option<&StackData> {
-        self.extras.as_deref()?.stack_data.as_ref()
+        self.extras()?.stack_data.as_ref()
     }
 
     pub(crate) fn set_stack_data(&mut self, data: StackData) {
@@ -1122,17 +1310,13 @@ impl Object {
     }
 
     pub(crate) fn clear_stack_data(&mut self) {
-        if let Some(extras) = self.extras.as_deref_mut() {
+        if let Some(extras) = self.extras_mut_if_present() {
             extras.stack_data = None;
         }
     }
 
     pub(crate) fn visit_stack_data_roots(&self, mut visit: impl FnMut(Value)) {
-        match self
-            .extras
-            .as_deref()
-            .and_then(|extras| extras.stack_data.as_ref())
-        {
+        match self.extras().and_then(|extras| extras.stack_data.as_ref()) {
             Some(StackData::Captured(records)) => {
                 for record in records {
                     visit(record.this_value);
@@ -1162,14 +1346,44 @@ impl Object {
         self.properties.set_frozen(value);
     }
     fn extras_mut(&mut self) -> &mut ObjectExtras {
-        self.extras
-            .get_or_insert_with(|| Box::new(ObjectExtras::default()))
+        if self.properties.has_array_elements() {
+            // Array records keep their elements pointer fixed and place only
+            // rare extras behind the second word of the same storage arm.
+            // SAFETY: the array-kind bit selects the initialized ArrayStorage.
+            let array = unsafe { &mut *self.storage.array_storage };
+            let extras = array
+                .extras
+                .get_or_insert_with(|| Box::new(ObjectExtras::default()));
+            return extras;
+        }
+        if !self.properties.has_object_extras() {
+            // SAFETY: before the mode bit changes, the union stores the two
+            // inline property values. They move into the out-of-line record
+            // with the rare extras, keeping ordinary objects at 32 bytes.
+            let inline_properties = if self.properties.has_inline_property_storage() {
+                // SAFETY: without object extras, the union stores inline values.
+                unsafe { self.storage.inline_properties }
+            } else {
+                [Value::UNDEFINED; INLINE_PROPERTY_COUNT]
+            };
+            self.storage = ObjectStorage {
+                out_of_line: ManuallyDrop::new(Box::new(ObjectExtraStorage {
+                    inline_properties,
+                    extras: ObjectExtras::default(),
+                })),
+            };
+            self.properties.set_object_extras(true);
+        }
+        &mut self
+            .out_of_line_mut()
+            .expect("object extras mode has out-of-line storage")
+            .extras
     }
     pub(crate) fn arguments_map(&self) -> Option<&[u16]> {
-        self.extras.as_deref()?.arguments_map.as_deref()
+        self.extras()?.arguments_map.as_deref()
     }
     pub(crate) fn arguments_map_mut(&mut self) -> Option<&mut Vec<u16>> {
-        self.extras.as_deref_mut()?.arguments_map.as_mut()
+        self.extras_mut_if_present()?.arguments_map.as_mut()
     }
     pub(crate) fn set_arguments_map(&mut self, mapping: Vec<u16>) {
         self.extras_mut().arguments_map = Some(mapping);
@@ -1178,51 +1392,42 @@ impl Object {
         self.extras_mut().arguments_object = true;
     }
     pub(crate) fn is_arguments_object(&self) -> bool {
-        self.extras
-            .as_deref()
-            .is_some_and(|extras| extras.arguments_object)
+        self.extras().is_some_and(|extras| extras.arguments_object)
     }
-    pub(crate) fn has_indexed_descriptors(&self) -> bool {
-        self.extras
-            .as_deref()
+    fn array_has_indexed_descriptors(&self) -> bool {
+        self.array_extras()
             .is_some_and(|extras| extras.indexed_descriptors)
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
         self.extras_mut().indexed_descriptors = true;
     }
     pub(crate) fn is_raw_json(&self) -> bool {
-        self.extras.as_deref().is_some_and(|extras| extras.raw_json)
+        self.extras().is_some_and(|extras| extras.raw_json)
     }
     pub(crate) fn set_raw_json(&mut self) {
         self.extras_mut().raw_json = true;
     }
 
     pub(crate) fn is_module_namespace(&self) -> bool {
-        self.extras
-            .as_deref()
-            .is_some_and(|extras| extras.module_namespace)
+        self.extras().is_some_and(|extras| extras.module_namespace)
     }
     pub(crate) fn set_module_namespace(&mut self) {
         self.extras_mut().module_namespace = true;
     }
     pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
-        self.extras
-            .as_deref()
-            .map_or(&[], |extras| &extras.module_bindings)
+        self.extras().map_or(&[], |extras| &extras.module_bindings)
     }
     pub(crate) fn set_module_bindings(&mut self, bindings: Vec<(Atom, ProgramId, u16)>) {
         self.extras_mut().module_bindings = bindings;
     }
     pub(crate) fn deferred_module(&self) -> Option<&crate::ModuleSource> {
-        self.extras.as_deref()?.deferred_module.as_ref()
+        self.extras()?.deferred_module.as_ref()
     }
     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
         self.extras_mut().deferred_module = module;
     }
     pub(crate) fn private_names(&self) -> &[PrivateBrand] {
-        self.extras
-            .as_deref()
-            .map_or(&[], |extras| &extras.private_names)
+        self.extras().map_or(&[], |extras| &extras.private_names)
     }
     pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
         self.private_names().contains(&brand)
@@ -1235,15 +1440,71 @@ impl Object {
     }
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     pub(crate) fn allocated_extra_bytes(&self) -> usize {
-        self.extras
-            .as_deref()
-            .map_or(0, ObjectExtras::allocated_bytes)
+        if self.properties.has_array_elements() {
+            self.array_extras().map_or(0, |extras| {
+                std::mem::size_of::<ObjectExtras>() + extras.allocated_bytes()
+            })
+        } else {
+            self.out_of_line()
+                .map_or(0, ObjectExtraStorage::allocated_bytes)
+        }
     }
 
     pub(crate) fn module_binding(&self, atom: Atom) -> Option<(ProgramId, u16)> {
         self.module_bindings()
             .iter()
             .find_map(|(name, program, slot)| (*name == atom).then_some((*program, *slot)))
+    }
+
+    fn inline_property_values(&self) -> &[Value; INLINE_PROPERTY_COUNT] {
+        if self.properties.has_array_elements() {
+            // Arrays store named properties in ValueArena and elements in the
+            // array storage arm, so they have no inline named-property slots.
+            &[Value::UNDEFINED; INLINE_PROPERTY_COUNT]
+        } else if let Some(out_of_line) = self.out_of_line() {
+            &out_of_line.inline_properties
+        } else {
+            // SAFETY: without object extras, the union stores inline values.
+            unsafe { &self.storage.inline_properties }
+        }
+    }
+
+    fn extras(&self) -> Option<&ObjectExtras> {
+        if self.properties.has_array_elements() {
+            self.array_extras()
+        } else {
+            self.out_of_line().map(|storage| &storage.extras)
+        }
+    }
+
+    fn extras_mut_if_present(&mut self) -> Option<&mut ObjectExtras> {
+        if self.properties.has_array_elements() {
+            // SAFETY: the array-kind bit selects the initialized ArrayStorage.
+            return unsafe { &mut (*self.storage.array_storage).extras }.as_deref_mut();
+        }
+        self.out_of_line_mut().map(|storage| &mut storage.extras)
+    }
+
+    fn array_extras(&self) -> Option<&ObjectExtras> {
+        debug_assert!(self.properties.has_array_elements());
+        // SAFETY: the array-kind bit selects the initialized ArrayStorage.
+        unsafe { &self.storage.array_storage.extras }.as_deref()
+    }
+
+    fn out_of_line(&self) -> Option<&ObjectExtraStorage> {
+        if self.properties.has_array_elements() || !self.properties.has_object_extras() {
+            return None;
+        }
+        // SAFETY: the mode bit selects the initialized boxed union field.
+        Some(unsafe { &self.storage.out_of_line })
+    }
+
+    fn out_of_line_mut(&mut self) -> Option<&mut ObjectExtraStorage> {
+        if self.properties.has_array_elements() || !self.properties.has_object_extras() {
+            return None;
+        }
+        // SAFETY: the mode bit selects the initialized boxed union field.
+        Some(unsafe { &mut self.storage.out_of_line })
     }
 }
 /// Internal methods installed by ProxyCreate, retained after target release.
@@ -1350,7 +1611,6 @@ pub(crate) enum Cell {
     Object(Object),
     Array {
         object: Object,
-        elements: Rc<Vec<Value>>,
     },
     ArrayBuffer {
         object: Box<Object>,
@@ -1521,6 +1781,38 @@ pub(crate) enum Cell {
         object: Box<Object>,
         epoch_nanoseconds: Box<i128>,
     },
+}
+
+impl Cell {
+    #[inline(always)]
+    pub(crate) fn array_has_indexed_descriptors(&self) -> bool {
+        match self {
+            Self::Array { object } => object.array_has_indexed_descriptors(),
+            _ => unreachable!("array descriptors requested from a non-array cell"),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn array_elements(&self) -> &Rc<Vec<Value>> {
+        match self {
+            Self::Array { object } => object.array_elements(),
+            _ => unreachable!("array elements requested from a non-array cell"),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn array_elements_mut(&mut self) -> &mut Rc<Vec<Value>> {
+        match self {
+            Self::Array { object } => object.array_elements_mut(),
+            _ => unreachable!("array elements requested from a non-array cell"),
+        }
+    }
+
+    pub(crate) fn array(proto: Value, elements: Rc<Vec<Value>>) -> Self {
+        Self::Array {
+            object: Object::new(proto).into_array_elements(elements),
+        }
+    }
 }
 
 #[cfg(feature = "profile-memory")]

@@ -97,10 +97,7 @@ fn scope_slot_owners_survive_collection_and_release() {
 fn object_storage_keeps_two_values_inline_in_the_cell() {
     assert_eq!(
         size_of::<Object>(),
-        size_of::<Value>()
-            + size_of::<ValueVec>()
-            + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
-            + size_of::<Option<Box<()>>>()
+        size_of::<Value>() + size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
     );
     assert_eq!(size_of::<Cell>(), size_of::<Slot>());
 }
@@ -248,10 +245,7 @@ fn stale_weak_handles_cannot_resolve_reused_slots() {
 #[test]
 fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
     let mut heap = Heap::new();
-    let array = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::new(Vec::new()),
-    });
+    let array = heap.alloc(Cell::array(Value::NULL, Rc::new(Vec::new())));
     let slot = array.heap_index().unwrap();
     let index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
     heap.sparse_set(array, index, Value::number(7.0));
@@ -259,10 +253,7 @@ fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
 
     heap.collect([]);
 
-    let reused = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::new(Vec::new()),
-    });
+    let reused = heap.alloc(Cell::array(Value::NULL, Rc::new(Vec::new())));
     assert_eq!(reused.heap_index(), Some(slot));
     assert_eq!(heap.sparse_get(reused, index), None);
     assert_eq!(heap.sparse_length(reused), None);
@@ -305,6 +296,25 @@ fn out_of_line_private_brand_keeps_its_home_alive() {
 
     assert!(heap.get(instance).is_none());
     assert!(heap.get(home).is_none());
+}
+
+#[test]
+fn array_backing_in_out_of_line_storage_remains_a_gc_edge() {
+    let mut heap = Heap::new();
+    let element = heap.alloc(Cell::String("array element".into()));
+    let array = heap.alloc(Cell::array(Value::NULL, Rc::new(vec![element])));
+    heap.get_mut(array)
+        .and_then(Cell::object_mut)
+        .unwrap()
+        .set_arguments_object();
+
+    heap.collect([array]);
+    assert!(heap.get(array).is_some());
+    assert!(heap.get(element).is_some());
+
+    heap.collect([]);
+    assert!(heap.get(array).is_none());
+    assert!(heap.get(element).is_none());
 }
 
 #[test]

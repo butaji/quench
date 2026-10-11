@@ -4463,11 +4463,12 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "dynamic import attributes must be an object".into()));
         }
         let keys = self.object_own_keys(p, attributes)?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(keys) else {
+        let Some(cell @ Cell::Array { .. }) = self.heap.get(keys) else {
             return Err(JsError(
                 "dynamic import own keys result is not an array".into(),
             ));
         };
+        let elements = cell.array_elements();
         let keys = elements.as_ref().clone();
         let mut module_type = None;
         for key in keys {
