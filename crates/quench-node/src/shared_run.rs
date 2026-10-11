@@ -204,6 +204,15 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                 });
                 break;
             }
+            "-pe" | "-ep" => {
+                index += 1;
+                input = Some(SharedInput::Eval {
+                    source: format!("console.log({});", args.get(index).cloned().unwrap_or_default()),
+                    goal: EntryGoal::Node,
+                    exec_argv: exec_argv.clone(),
+                });
+                break;
+            }
             "-p" | "--print" => {
                 index += 1;
                 input = Some(SharedInput::Eval {
