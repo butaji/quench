@@ -1452,7 +1452,13 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), value);
             }
             Op::Unary => {
-                let v = self.unary(p, i.unary_operator(), self.read(f, i.register_b()))?;
+                let operator = i.unary_operator();
+                let operand = self.read(f, i.register_b());
+                let v = if operator == super::coercion::LOGICAL_NOT {
+                    self.logical_not(operand)
+                } else {
+                    self.unary(p, operator, operand)?
+                };
                 self.write(f, i.result_register(), v);
             }
             Op::Delete => {
