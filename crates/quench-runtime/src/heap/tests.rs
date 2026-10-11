@@ -407,6 +407,26 @@ fn overflowing_heap_generations_keep_weak_handle_lifetime() {
 }
 
 #[test]
+fn slab_local_free_offsets_reuse_slots_across_slab_boundaries() {
+    let mut heap = Heap::new();
+    let slot_count = super::slots::SLOTS_PER_SLAB + 2;
+    for _ in 0..slot_count {
+        heap.alloc(Cell::String("temporary".into()));
+    }
+
+    assert_eq!(heap.collect([]), []);
+    assert_eq!(heap.free_slots, slot_count);
+
+    let first = heap.alloc(Cell::String("first".into()));
+    let second = heap.alloc(Cell::String("second".into()));
+    let third = heap.alloc(Cell::String("third".into()));
+    assert_eq!(first.heap_index(), Some((slot_count - 1) as u32));
+    assert_eq!(second.heap_index(), Some((slot_count - 2) as u32));
+    assert_eq!(third.heap_index(), Some((slot_count - 3) as u32));
+    assert_eq!(heap.free_slots, slot_count - 3);
+}
+
+#[test]
 fn stale_weak_handles_cannot_resolve_reused_slots() {
     let mut heap = Heap::new();
     let first = heap.alloc(Cell::String("first".into()));
