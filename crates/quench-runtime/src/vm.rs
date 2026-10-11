@@ -1016,6 +1016,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
+        #[cfg(feature = "profile-gc-time")]
+        self.report_gc_time_if_enabled();
         #[cfg(feature = "profile-aggregate")]
         if self
             .profile
@@ -1031,6 +1033,18 @@ impl<H: Host> Vm<H> {
             .report(&self.heap, ProgramId::MAIN.raw(), program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("complete");
+    }
+    #[cfg(feature = "profile-gc-time")]
+    fn report_gc_time_if_enabled(&self) {
+        if std::env::var_os("QUENCH_GC_TIME_PROFILE").is_none() {
+            return;
+        }
+        let (_, collections, _, _, _, _) = self.heap.stats();
+        let gc = self.heap.gc_profile();
+        eprintln!(
+            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{}}}",
+            gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos,
+        );
     }
     #[cfg(feature = "profile-memory")]
     pub(crate) fn report_memory_if_enabled(&self, phase: &str) {
