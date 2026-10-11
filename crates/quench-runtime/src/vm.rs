@@ -314,14 +314,71 @@ const EMPTY_CACHE: FieldCache = FieldCache {
     holder: NO_FIELD_HOLDER,
     slot: 0,
 };
-#[derive(Clone)]
+/// One cached property-add transition: an extensible ordinary object of `source_shape` whose
+/// prototype chain still has exactly `prototype_shapes[..prototype_depth]` gains `atom` at `slot`
+/// and moves to `target_shape`.
+#[derive(Clone, Copy)]
 struct FieldAddCache {
     atom: Atom,
     source_shape: u32,
     target_shape: u32,
     slot: u16,
-    prototype_shapes: Vec<u32>,
+    prototype_depth: u8,
+    prototype_shapes: [u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
 }
+impl FieldAddCache {
+    const EMPTY: Self = Self {
+        atom: u32::MAX,
+        source_shape: NO_FIELD_RECEIVER,
+        target_shape: NO_FIELD_RECEIVER,
+        slot: 0,
+        prototype_depth: 0,
+        prototype_shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
+    };
+    fn prototype_shapes(&self) -> &[u32] {
+        &self.prototype_shapes[..usize::from(self.prototype_depth)]
+    }
+}
+/// The add transitions one site remembers, oldest first.
+#[derive(Clone, Copy)]
+struct FieldAddCacheSet {
+    len: u8,
+    entries: [FieldAddCache; FIELD_ADD_CACHE_WAYS],
+}
+impl FieldAddCacheSet {
+    const EMPTY: Self = Self {
+        len: 0,
+        entries: [FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS],
+    };
+    #[inline(always)]
+    fn find(&self, source_shape: u32, atom: Atom) -> Option<&FieldAddCache> {
+        self.entries[..usize::from(self.len)]
+            .iter()
+            .find(|cache| cache.source_shape == source_shape && cache.atom == atom)
+    }
+    /// Replaces the entry for the same source shape and atom, else appends, evicting the oldest
+    /// entry when the set is full.
+    fn insert(&mut self, cache: FieldAddCache) {
+        let len = usize::from(self.len);
+        let kept = match self.entries[..len]
+            .iter()
+            .position(|entry| entry.source_shape == cache.source_shape && entry.atom == cache.atom)
+        {
+            Some(index) => {
+                self.entries.copy_within(index + 1..len, index);
+                len - 1
+            }
+            None if len == FIELD_ADD_CACHE_WAYS => {
+                self.entries.copy_within(1..len, 0);
+                len - 1
+            }
+            None => len,
+        };
+        self.entries[kept] = cache;
+        self.len = (kept + 1) as u8;
+    }
+}
+const NO_FIELD_ADD_SET: u32 = u32::MAX;
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
 const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 // Bound each site's overflow to 256 recorded shapes; unseen shapes keep the generic fallback.
@@ -485,7 +542,13 @@ struct Shape {
     /// Lookups that walked at least `SHAPE_INDEX_WALK_DISTANCE` transitions
     /// from this shape before it had an index.
     long_walks: std::cell::Cell<u8>,
+    /// Memo of this immutable shape's own data `prototype` slot, which every `new F` reads:
+    /// `PROTOTYPE_SLOT_UNKNOWN` until first derived, `PROTOTYPE_SLOT_NONE` when absent or an
+    /// accessor. Dictionary shapes never memoize.
+    prototype_slot: std::cell::Cell<u32>,
 }
+const PROTOTYPE_SLOT_UNKNOWN: u32 = u32::MAX;
+const PROTOTYPE_SLOT_NONE: u32 = u32::MAX - 1;
 impl Shape {
     fn root() -> Self {
         Self::child(None, ShapeTransition::Root, 0, None, false)
@@ -506,6 +569,7 @@ impl Shape {
             may_have_gc_roots: parent_may_have_gc_roots || transition.introduces_gc_roots(),
             lookup_index: OnceCell::new(),
             long_walks: std::cell::Cell::new(0),
+            prototype_slot: std::cell::Cell::new(PROTOTYPE_SLOT_UNKNOWN),
         }
     }
 }
@@ -693,16 +757,13 @@ pub(crate) struct Vm<H> {
     well_known_symbols: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
     field_caches: Vec<FieldCache>,
-    field_add_caches: FxHashMap<usize, Vec<FieldAddCache>>,
+    field_add_indices: Vec<u32>,
+    field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
     megamorphic_fields: Vec<FieldCacheSet>,
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
-    size_atom: Atom,
-    byte_length_atom: Atom,
-    byte_offset_atom: Atom,
-    buffer_atom: Atom,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
@@ -1110,19 +1171,8 @@ impl<H: Host> Vm<H> {
                     + frame.registers.capacity() * size_of::<Value>()
             })
             .sum();
-        let field_add_cache_bytes = self.field_add_caches.capacity()
-            * size_of::<(usize, Vec<FieldAddCache>)>()
-            + self
-                .field_add_caches
-                .values()
-                .map(|caches| {
-                    caches.capacity() * size_of::<FieldAddCache>()
-                        + caches
-                            .iter()
-                            .map(|cache| cache.prototype_shapes.capacity() * size_of::<u32>())
-                            .sum::<usize>()
-                })
-                .sum::<usize>();
+        let field_add_cache_bytes = self.field_add_indices.capacity() * size_of::<u32>()
+            + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>();
         eprintln!(
             "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
             self.shapes.len(),
@@ -1158,7 +1208,8 @@ impl<H: Host> Vm<H> {
             * size_of::<((Value, property_key::PropertyKey), PropertyAttributes)>();
         let cache_side_table_bytes = self.field_caches.capacity() * size_of::<FieldCache>()
             + self.megamorphic_field_indices.capacity() * size_of::<u32>()
-            + self.field_add_caches.capacity() * size_of::<(usize, FieldAddCache)>()
+            + self.field_add_indices.capacity() * size_of::<u32>()
+            + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
             + self.method_caches.capacity() * size_of::<[MethodCache; 2]>();
         let atom_side_table_bytes = self.atoms.capacity() * size_of::<(u64, Atom)>()
             + self.atom_collisions.capacity() * size_of::<(u64, Vec<Atom>)>()
@@ -1276,7 +1327,8 @@ impl<H: Host> Vm<H> {
         self.atom_classes.clear();
         self.regexp_subject = None;
         self.regexp_matchers.clear();
-        self.atom_classes.resize_with(self.atom_text.len(), Default::default);
+        self.atom_classes
+            .resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
@@ -1292,15 +1344,12 @@ impl<H: Host> Vm<H> {
             new_target,
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
-        self.field_add_caches.clear();
+        self.field_add_indices = vec![NO_FIELD_ADD_SET; program.cache_sites as usize];
+        self.field_add_sets.clear();
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
         self.prototype_atom = self.intern_atom("prototype");
-        self.size_atom = self.intern_atom("size");
-        self.byte_length_atom = self.intern_atom("byteLength");
-        self.byte_offset_atom = self.intern_atom("byteOffset");
-        self.buffer_atom = self.intern_atom("buffer");
         self.to_fixed_atom = self.intern_atom("toFixed");
         self.to_precision_atom = self.intern_atom("toPrecision");
         self.method_caches = vec![[EMPTY_METHOD_CACHE; 2]; program.method_sites.len()];
@@ -1389,6 +1438,10 @@ impl<H: Host> Vm<H> {
         self.megamorphic_field_indices.resize(
             self.megamorphic_field_indices.len() + usize::from(program.cache_sites),
             NO_MEGAMORPHIC_FIELD,
+        );
+        self.field_add_indices.resize(
+            self.field_add_indices.len() + usize::from(program.cache_sites),
+            NO_FIELD_ADD_SET,
         );
         self.method_caches.resize(
             self.method_caches.len() + program.method_sites.len(),
