@@ -20,7 +20,7 @@ struct PendingGeneralCall {
     destination: Register,
     /// Set for an in-loop `new`; see `StepResult::PushFrame`.
     construct_this: Option<Value>,
-    stack_guard: crate::stack::StackGuard,
+    call_guard: crate::stack::GuestCallGuard,
 }
 
 impl GeneralCodeCursor {
@@ -177,7 +177,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
         context: CallContext,
-    ) -> Result<crate::stack::StackGuard, JsError> {
+    ) -> Result<crate::stack::GuestCallGuard, JsError> {
         match self.call_user_frame_mode(p, id, parent, this, args, context, false, true)? {
             UserFrameStart::Pushed(guard) => Ok(guard),
             UserFrameStart::Outcome(_) => {
@@ -278,10 +278,12 @@ impl<H: Host> Vm<H> {
                 .set_module_environment(self.frames[frame_index].program, environment);
         }
         if push_to_dispatch {
-            let stack_guard = match self.enter_stack() {
+            // An in-loop activation grows the frame stack, not the native stack, so it counts
+            // against the live guest-call budget rather than a native transition.
+            let call_guard = match crate::stack::GuestCallGuard::enter() {
                 Ok(guard) => guard,
-                Err(error) => {
-                    let outcome = Err(error);
+                Err(()) => {
+                    let outcome = Err(self.stack_exhaustion_error());
                     let mut frame = self.frames.pop().unwrap();
                     self.deactivate_frame(&mut frame, &outcome);
                     self.persist_global_lexical_bindings(p, &frame);
@@ -291,7 +293,7 @@ impl<H: Host> Vm<H> {
                     };
                 }
             };
-            return Ok(UserFrameStart::Pushed(stack_guard));
+            return Ok(UserFrameStart::Pushed(call_guard));
         }
         // Numeric dispatch changes the body loop only. Frame activation and cleanup
         // remain shared; unsupported tail-call and suspension completions use general.
@@ -991,7 +993,7 @@ impl<H: Host> Vm<H> {
                             self.write(frame, pending.destination, value);
                             pc = self.frames[frame].pc;
                             cursor = pending.caller_cursor;
-                            drop(pending.stack_guard);
+                            drop(pending.call_guard);
                         } else {
                             self.frames[frame].pc = pc;
                             return Ok(FrameOutcome::Complete(value));
@@ -1000,7 +1002,7 @@ impl<H: Host> Vm<H> {
                     Ok(StepResult::Continue) => {}
                     Ok(StepResult::PushFrame {
                         destination,
-                        stack_guard,
+                        call_guard,
                         construct_this,
                     }) => {
                         pending_calls.push(PendingGeneralCall {
@@ -1009,7 +1011,7 @@ impl<H: Host> Vm<H> {
                             call_pc: instruction_pc as u32,
                             destination,
                             construct_this,
-                            stack_guard,
+                            call_guard,
                         });
                         frame += 1;
                         pc = self.frames[frame].pc;
@@ -1089,7 +1091,7 @@ impl<H: Host> Vm<H> {
                                         pc = self.frames[frame].pc;
                                         cursor = pending.caller_cursor;
                                         throwing_pc = pending.call_pc;
-                                        drop(pending.stack_guard);
+                                        drop(pending.call_guard);
                                         error = match result {
                                             Err(error) => error,
                                             Ok(_) => unreachable!(),
