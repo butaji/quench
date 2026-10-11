@@ -559,8 +559,7 @@ fn deep_equal(
     }
     seen.push((actual, expected));
     let array = context.is_array_rooted(actual)?;
-    if (mode == ComparisonMode::Strict
-        && !same_prototype(context, actual, expected)?)
+    if (mode == ComparisonMode::Strict && !same_prototype(context, actual, expected)?)
         || array != context.is_array_rooted(expected)?
     {
         return Ok(false);
@@ -569,28 +568,26 @@ fn deep_equal(
         let actual_length = get(context, actual, "length")?;
         let expected_length = get(context, expected, "length")?;
         if mode == ComparisonMode::Partial {
-            let actual_length: usize = context.to_string(actual_length)?.parse().unwrap_or(0);
-            let expected_length: usize = context.to_string(expected_length)?.parse().unwrap_or(0);
-            if actual_length < expected_length {
+            let actual_length = context
+                .rooted_value(actual_length)
+                .and_then(|value| value.as_number())
+                .unwrap_or(0.0) as usize;
+            let expected_length = context
+                .rooted_value(expected_length)
+                .and_then(|value| value.as_number())
+                .unwrap_or(0.0) as usize;
+            if actual_length < expected_length
+                || !partial_array_equal(
+                    context,
+                    actual,
+                    expected,
+                    actual_length,
+                    expected_length,
+                    mode,
+                    seen,
+                )?
+            {
                 return Ok(false);
-            }
-            let mut cursor = 0;
-            for index in 0..expected_length {
-                let expected_value = get(context, expected, &index.to_string())?;
-                let mut matched = false;
-                while cursor < actual_length {
-                    let actual_value = get(context, actual, &cursor.to_string())?;
-                    cursor += 1;
-                    let mut trial = seen.clone();
-                    if deep_equal(context, actual_value, expected_value, mode, &mut trial)? {
-                        *seen = trial;
-                        matched = true;
-                        break;
-                    }
-                }
-                if !matched {
-                    return Ok(false);
-                }
             }
         } else if !context.same_value_rooted(actual_length, expected_length)? {
             return Ok(false);
@@ -653,6 +650,90 @@ fn deep_equal(
     Ok(true)
 }
 
+fn partial_array_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    actual: RootId,
+    expected: RootId,
+    actual_length: usize,
+    expected_length: usize,
+    mode: ComparisonMode,
+    seen: &mut Vec<(RootId, RootId)>,
+) -> Result<bool, RootedError> {
+    let undefined = context.undefined();
+    let mut cursor = 0;
+    for index in 0..expected_length {
+        let key = context.string_rooted(&index.to_string());
+        let right = context.get_property_rooted(expected, key)?;
+        let descriptor = context.own_property_descriptor_rooted(expected, key)?;
+        if context.same_value_rooted(right, undefined)? && !context.truthy_rooted(descriptor)? {
+            return partial_sparse_array_equal(
+                context, actual, expected, cursor, index, mode, seen,
+            );
+        }
+        loop {
+            let key = context.string_rooted(&cursor.to_string());
+            let left = context.get_property_rooted(actual, key)?;
+            let descriptor = context.own_property_descriptor_rooted(actual, key)?;
+            if context.same_value_rooted(left, undefined)? && !context.truthy_rooted(descriptor)? {
+                return partial_sparse_array_equal(
+                    context, actual, expected, cursor, index, mode, seen,
+                );
+            }
+            let mut trial = seen.clone();
+            if deep_equal(context, left, right, mode, &mut trial)? {
+                *seen = trial;
+                break;
+            }
+            cursor += 1;
+            if cursor > actual_length - expected_length + index {
+                return Ok(false);
+            }
+        }
+        cursor += 1;
+    }
+    Ok(true)
+}
+
+fn partial_sparse_array_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    actual: RootId,
+    expected: RootId,
+    start_actual: usize,
+    start_expected: usize,
+    mode: ComparisonMode,
+    seen: &mut Vec<(RootId, RootId)>,
+) -> Result<bool, RootedError> {
+    let actual_keys = context.enumerable_own_keys_rooted(actual, false, true)?;
+    let expected_keys = context.enumerable_own_keys_rooted(expected, false, true)?;
+    let actual_remaining = actual_keys.len() as isize - start_actual as isize;
+    let expected_remaining = expected_keys.len() as isize - start_expected as isize;
+    if actual_remaining < expected_remaining {
+        return Ok(false);
+    }
+    if expected_remaining <= 0 {
+        return Ok(true);
+    }
+    let mut cursor = start_actual;
+    for key in expected_keys.into_iter().skip(start_expected) {
+        let right = context.get_property_rooted(expected, key)?;
+        let mut matched = false;
+        while let Some(key) = actual_keys.get(cursor) {
+            cursor += 1;
+            let left = context.get_property_rooted(actual, *key)?;
+            let mut trial = seen.clone();
+            if deep_equal(context, left, right, mode, &mut trial)? {
+                *seen = trial;
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn builtin_equal(
     context: &mut NativeContext<'_, NodeHost>,
     actual: RootId,
@@ -664,7 +745,15 @@ fn builtin_equal(
 ) -> Result<bool, RootedError> {
     use BuiltinData::*;
     match (left, right) {
-        (None, None) => Ok(true),
+        (None, None) => {
+            let left = crate::modules::url_shared_vm::comparison_href(context, actual)?;
+            let right = crate::modules::url_shared_vm::comparison_href(context, expected)?;
+            match (left, right) {
+                (Some(left), Some(right)) => context.strict_equal_rooted(left, right),
+                (None, None) => Ok(true),
+                _ => Ok(false),
+            }
+        }
         (Some(Primitive { brand: a, value: x }), Some(Primitive { brand: b, value: y })) => {
             Ok(a == b && context.same_value_rooted(x, y)?)
         }
@@ -704,9 +793,38 @@ fn builtin_equal(
             Ok(true)
         }
         (Some(Error), Some(Error)) => {
-            for key in ["name", "message", "cause", "errors"] {
-                let x = get(context, actual, key)?;
+            for key in ["message", "name", "cause", "errors"] {
+                let property = context.string_rooted(key);
+                let expected_descriptor =
+                    context.own_property_descriptor_rooted(expected, property)?;
+                if key == "cause" {
+                    let actual_descriptor =
+                        context.own_property_descriptor_rooted(actual, property)?;
+                    let actual_owns = context.truthy_rooted(actual_descriptor)?;
+                    let expected_owns = context.truthy_rooted(expected_descriptor)?;
+                    if actual_owns != expected_owns
+                        && (mode != ComparisonMode::Partial || expected_owns)
+                    {
+                        return Ok(false);
+                    }
+                }
+                if context.truthy_rooted(expected_descriptor)? {
+                    let enumerable = get(context, expected_descriptor, "enumerable")?;
+                    if context.truthy_rooted(enumerable)? {
+                        continue;
+                    }
+                }
                 let y = get(context, expected, key)?;
+                if mode == ComparisonMode::Partial {
+                    let undefined = context.undefined();
+                    if context.same_value_rooted(y, undefined)? {
+                        continue;
+                    }
+                    if key == "message" && context.string_text(y)?.as_deref() == Some("") {
+                        continue;
+                    }
+                }
+                let x = get(context, actual, key)?;
                 if !deep_equal(context, x, y, mode, seen)? {
                     return Ok(false);
                 }

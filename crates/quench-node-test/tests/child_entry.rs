@@ -187,6 +187,7 @@ fn deep_comparison_modes_match_node_values_keys_and_prototypes() {
       const cases = [[new Date(1),new Date(2)],[new Date(NaN),new Date(NaN)],
         [Object(1),Object(2)],[Object(0),Object(-0)],[Object(NaN),Object(NaN)],
         [/a/g,/b/g],[/a/g,/a/g],[new Error('a'),new Error('b')],
+        [new Error('a'),new Error('a',{cause:undefined})],
         [new Map([[{x:1},2]]),new Map([[{x:1},2]])],
         [new Map([[1,2]]),new Map([[1,3]])],
         [new Set([{x:1},2]),new Set([2,{x:1}])],
@@ -198,6 +199,7 @@ fn deep_comparison_modes_match_node_values_keys_and_prototypes() {
         [new Float64Array([NaN]),new Float64Array([NaN])],
         [bytes([1,2]),bytes([1,3])],
         [new DataView(bytes([1,2])),new DataView(bytes([1,3]))],
+        [new URL('http://foo'),new URL('http://bar')],[new URL('http://foo'),new URL('http://foo')],
         [1,'1'],[NaN,NaN],[0,-0],[1n,1],[Symbol(),Symbol()],
         [()=>{},()=>{}],[new A(),new B()],[a,b],[new Array(1),new Array(2)],
         [[,],[undefined]],[[,],[,]], [{[symbol]:1},{[symbol]:2}],
@@ -209,8 +211,11 @@ fn deep_comparison_modes_match_node_values_keys_and_prototypes() {
         outcome(()=>assert.deepStrictEqual(a,b)),outcome(()=>assert.notDeepStrictEqual(a,b)),
         util.isDeepStrictEqual(a,b),util.isDeepStrictEqual(a,b,true)])));
       console.log(JSON.stringify([
+        [new Error('a'),new Error('a',{cause:undefined})],
+        [new Error('a',{cause:1}),new Error()],
         [{x:1,y:2},{x:1}], [{x:1},{x:1,y:2}],
-        [[1,2,3],[1,3]], [[1,2],[2,1]],
+        [[1,2,3],[1,3]], [[,1,,2],[,1,1]], [[,1,,2],[,1,2]],
+        [[undefined],[,]], [[,],[undefined]], [[1,2],[2,1]],
         [new Uint8Array([1,2,3]),new Uint8Array([1,3])],
         [new Set([{x:1,y:2},3]),new Set([{x:1}])],
         [new Map([[{x:1,y:2},{a:1,b:2}]]),new Map([[{x:1},{a:1}]])]

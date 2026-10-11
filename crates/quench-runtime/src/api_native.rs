@@ -215,6 +215,22 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Read a WeakMap entry through its internal slots, without guest hooks.
+    pub fn weak_map_get_rooted(&mut self, map: RootId, key: RootId) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_weak_map_get(map, key);
+        self.completion(result)
+    }
+
+    /// Read an own property descriptor through the object's internal method.
+    pub fn own_property_descriptor_rooted(
+        &mut self,
+        root: RootId,
+        key: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_own_descriptor(root, key);
+        self.completion(result)
+    }
+
     /// Enumerable own string keys, optionally including Symbols, through internal methods.
     pub fn enumerable_own_keys_rooted(
         &mut self,
