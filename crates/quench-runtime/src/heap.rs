@@ -24,6 +24,9 @@ const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
 const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
+const FIRST_HEAP_SLOT_GENERATION: u16 = 1;
+const OVERFLOW_HEAP_SLOT_GENERATION: u16 = 0;
+const FIRST_WIDE_HEAP_SLOT_GENERATION: u32 = u16::MAX as u32 + 1;
 
 #[derive(Clone, Copy)]
 struct GcHeadroomFactor {
@@ -115,7 +118,8 @@ pub(crate) struct Heap {
     young: Vec<u32>,
     free: Vec<u32>,
     retired_slots: usize,
-    generations: Vec<u32>,
+    generations: Vec<u16>,
+    generation_overflow: FxHashMap<u32, u32>,
     external_bytes: usize,
     allocations: usize,
     allocations_since_full: usize,
@@ -339,11 +343,25 @@ impl Heap {
         self.total_allocations += 1;
         self.external_bytes += cell.external_bytes();
         while let Some(index) = self.free.pop() {
-            let Some(generation) = self.generations[index as usize].checked_add(1) else {
-                self.retired_slots += 1;
-                continue;
-            };
-            self.generations[index as usize] = generation;
+            let slot = index as usize;
+            let current = self.generations[slot];
+            if current == OVERFLOW_HEAP_SLOT_GENERATION {
+                let Some(current) = self.generation_overflow.get_mut(&index) else {
+                    self.retired_slots += 1;
+                    continue;
+                };
+                let Some(next) = current.checked_add(1) else {
+                    self.retired_slots += 1;
+                    continue;
+                };
+                *current = next;
+            } else if let Some(next) = current.checked_add(1) {
+                self.generations[slot] = next;
+            } else {
+                self.generations[slot] = OVERFLOW_HEAP_SLOT_GENERATION;
+                self.generation_overflow
+                    .insert(index, FIRST_WIDE_HEAP_SLOT_GENERATION);
+            }
             self.slots.get_mut(index as usize).unwrap().cell = Some(cell);
             if track_young {
                 self.young.push(index);
@@ -362,7 +380,7 @@ impl Heap {
         if index / 64 == self.marks.len() {
             self.marks.push(0);
         }
-        self.generations.push(1);
+        self.generations.push(FIRST_HEAP_SLOT_GENERATION);
         if track_young {
             self.young.push(index as u32);
         }
@@ -486,6 +504,7 @@ impl Heap {
         self.free.clear();
         self.retired_slots = 0;
         self.generations.clear();
+        self.generation_overflow.clear();
         self.external_bytes = 0;
         self.allocations = 0;
         self.allocations_since_full = 0;

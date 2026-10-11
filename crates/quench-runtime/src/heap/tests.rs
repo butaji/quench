@@ -271,6 +271,70 @@ fn finalization_jobs_are_created_for_unmarked_targets() {
 }
 
 #[test]
+fn finalization_registry_tracks_overflowed_slot_generations() {
+    let mut heap = Heap::new();
+    let stale_target = heap.alloc(Cell::Object(plain_object()));
+    let slot = stale_target.heap_index().unwrap() as usize;
+    heap.generations[slot] = u16::MAX;
+    heap.collect([]);
+
+    let target = heap.alloc(Cell::Object(plain_object()));
+    let target_handle = heap.weak_handle(target).unwrap();
+    let callback = Value::number(1.0);
+    let held = Value::number(2.0);
+    let registry = heap.alloc(Cell::FinalizationRegistry {
+        object: Box::new(plain_object()),
+        callback,
+        entries: Box::new(FinalizationEntries(vec![FinalizationEntry {
+            target: target_handle,
+            held,
+            token: None,
+        }])),
+    });
+    let registry_root = heap.root(registry);
+    let target_root = heap.root(target);
+
+    assert!(heap.collect([]).is_empty());
+    assert!(heap.release_root(target_root));
+    assert_eq!(heap.collect([]), [(callback, held)]);
+    assert!(heap.release_root(registry_root));
+}
+
+#[test]
+fn weak_ref_tracks_overflowed_slot_generations() {
+    let mut heap = Heap::new();
+    let stale_target = heap.alloc(Cell::String("old".into()));
+    let slot = stale_target.heap_index().unwrap() as usize;
+    heap.generations[slot] = u16::MAX;
+    heap.collect([]);
+
+    let target = heap.alloc(Cell::String("new".into()));
+    let target_handle = heap.weak_handle(target).unwrap();
+    let reference = heap.alloc(Cell::WeakRef {
+        object: Box::new(plain_object()),
+        target: Some(target_handle),
+    });
+    let reference_root = heap.root(reference);
+    let target_root = heap.root(target);
+
+    heap.collect([]);
+    assert!(matches!(
+        heap.get(reference),
+        Some(Cell::WeakRef {
+            target: Some(handle),
+            ..
+        }) if *handle == target_handle
+    ));
+    assert!(heap.release_root(target_root));
+    heap.collect([]);
+    assert!(matches!(
+        heap.get(reference),
+        Some(Cell::WeakRef { target: None, .. })
+    ));
+    assert!(heap.release_root(reference_root));
+}
+
+#[test]
 fn weak_map_values_follow_ephemeron_key_reachability() {
     let mut heap = Heap::new();
     let weak_map = heap.alloc(Cell::WeakMap {
@@ -314,11 +378,11 @@ fn weak_ref_target_is_cleared_after_collection() {
 }
 
 #[test]
-fn exhausted_heap_generations_retire_slots_without_weak_handle_aliasing() {
+fn overflowing_heap_generations_keep_weak_handle_lifetime() {
     let mut heap = Heap::new();
     let target = heap.alloc(Cell::String("old".into()));
     let slot = target.heap_index().unwrap() as usize;
-    heap.generations[slot] = u32::MAX;
+    heap.generations[slot] = u16::MAX;
     let stale = heap.weak_handle(target).unwrap();
 
     heap.collect([]);
@@ -326,13 +390,20 @@ fn exhausted_heap_generations_retire_slots_without_weak_handle_aliasing() {
     assert_eq!(heap.weak_value(stale), None);
 
     let replacement = heap.alloc(Cell::String("new".into()));
-    assert_ne!(replacement.heap_index(), Some(slot as u32));
+    assert_eq!(replacement.heap_index(), Some(slot as u32));
     assert_eq!(heap.weak_value(stale), None);
-    assert_eq!(heap.retired_slots, 1);
+    let current = heap.weak_handle(replacement).unwrap();
+    assert_eq!(current.generation, u32::from(u16::MAX) + 1);
+    assert_eq!(heap.weak_value(current), Some(replacement));
+
+    heap.collect([]);
+    assert_eq!(heap.weak_value(current), None);
+    heap.generation_overflow.insert(slot as u32, u32::MAX);
 
     let next = heap.alloc(Cell::String("next".into()));
     assert_ne!(next.heap_index(), Some(slot as u32));
     assert_eq!(heap.retired_slots, 1);
+    assert_eq!(heap.weak_value(current), None);
 }
 
 #[test]
