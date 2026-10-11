@@ -1349,10 +1349,8 @@ impl<H: Host> Vm<H> {
         {
             // Only a slotless, function-less, non-eval layer can be a lexical-this wrapper, so
             // its dynamic bindings are read only after those field checks pass.
-            let lexical_this_wrapper = !scope.root_eval_scope
-                && *function == u32::MAX
-                && slots.is_empty()
-                && {
+            let lexical_this_wrapper =
+                !scope.root_eval_scope && *function == u32::MAX && slots.is_empty() && {
                     let dynamic_bindings = self.heap.environment_bindings(env)?;
                     dynamic_bindings.is_empty()
                         || (dynamic_bindings.len() == 1

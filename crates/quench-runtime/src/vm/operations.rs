@@ -1463,8 +1463,7 @@ impl<H: Host> Vm<H> {
         {
             return Ok(Value::number(numeric_number_result(operator, a, b)));
         }
-        if op == BinaryOperator::Addition as u32
-            && (self.is_string(left) || self.is_string(right))
+        if op == BinaryOperator::Addition as u32 && (self.is_string(left) || self.is_string(right))
         {
             return self.concatenate(p, left, right);
         }
