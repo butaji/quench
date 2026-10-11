@@ -316,6 +316,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.host_function_with_data(crate::host::shared_vm::operation("exec"), module)?;
     let key = context.string_rooted("exec");
     context.set_property_rooted(module, key, exec, module)?;
+    super::child_process_exec_shared_vm::install_promisified(context, &[exec, exec_file])?;
     Ok(module)
 }
 
