@@ -126,17 +126,26 @@ fn execute_shared_on_worker(
             {
                 crate::modules::process_shared_vm::finish_requested_exit(&mut runtime, &program)
             } else {
-                let message = runtime.format_error(&program, &error);
+                let exception = error.thrown_value().map(|value| runtime.root(value));
+                let mut failure = quench_runtime::RootedError { error, exception };
                 let exit = crate::modules::process_shared_vm::finish_after_uncaught_error(
                     &mut runtime,
                     &program,
-                    &error,
+                    &failure.error,
                 );
-                match exit {
+                let outcome = match exit {
                     Ok(true) => Ok(()),
-                    Ok(false) => Err(message),
-                    Err(exit_error) => Err(format!("{message}; exit handler failed: {exit_error}")),
+                    Ok(false) => Err(crate::modules::process_shared_vm::format_uncaught_error(
+                        &mut runtime,
+                        &program,
+                        &mut failure,
+                    )),
+                    Err(exit_error) => Err(exit_error),
+                };
+                if let Some(exception) = exception {
+                    runtime.release_root(exception);
                 }
+                outcome
             }
         }
     };
