@@ -1553,13 +1553,7 @@ impl<H: Host> Vm<H> {
                     .then(|| std::mem::replace(&mut self.frames[f].this, this));
                 let caller_function = &p.functions[self.frames[f].function as usize];
                 let terminal = i.returns_from_frame()
-                    || caller_function.code.get(*pc).is_some_and(|packed| {
-                        if packed.is_wide() {
-                            caller_function.wide[packed.wide_index()].op() == Op::Return
-                        } else {
-                            packed.op() == Op::Return
-                        }
-                    });
+                    || caller_function.returns_register_at(*pc, i.result_register());
                 if allow_inline_calls
                     && i.op() == Op::Call
                     && !direct_eval
@@ -1732,18 +1726,7 @@ impl<H: Host> Vm<H> {
                 self.frames[f].pc = *pc;
                 let terminal = i.returns_from_frame()
                     || p.functions[self.frames[f].function as usize]
-                        .code
-                        .get(*pc)
-                        .is_some_and(|packed| {
-                            if packed.is_wide() {
-                                p.functions[self.frames[f].function as usize].wide
-                                    [packed.wide_index()]
-                                .op()
-                                    == Op::Return
-                            } else {
-                                packed.op() == Op::Return
-                            }
-                        });
+                        .returns_register_at(*pc, i.result_register());
                 if ((p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame())
                     || (p.kind != crate::bytecode::ProgramKind::Wasm
                         && terminal
