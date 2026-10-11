@@ -365,18 +365,30 @@ impl Drop for CodeMemory {
 struct Plan {
     params: Vec<crate::WasmType>,
     result: Option<crate::WasmType>,
-    /// The register state on entry to each reachable instruction.
-    states: Vec<Option<Vec<Slot>>>,
+    /// Per instruction, `None` when unreachable, else what its `b` register
+    /// holds on entry: the one analysis fact a denotation reads (a moved or
+    /// selected value's kind, a global's binding, an import reference). The
+    /// full register states exist only while planning.
+    operands: Vec<Option<Slot>>,
 }
 
 impl Plan {
-    /// The plan as its callers see it: register states are per instruction
-    /// and per register, so only the function being compiled holds them.
+    /// The plan as its callers see it: only the function being compiled
+    /// holds its per-instruction facts.
     fn interface(self) -> Self {
         Self {
-            states: Vec::new(),
+            operands: Vec::new(),
             ..self
         }
+    }
+
+    fn reachable(&self, pc: usize) -> bool {
+        self.operands[pc].is_some()
+    }
+
+    /// The analysis fact for the `b` register of reachable instruction `pc`.
+    fn operand(&self, pc: usize) -> Slot {
+        self.operands[pc].expect("reachable")
     }
 }
 
@@ -543,10 +555,23 @@ impl<H: Host> Analysis<'_, H> {
                 }
             }
         }
+        let operands = states
+            .iter()
+            .zip(&instructions)
+            .map(|(state, instruction)| {
+                let state = state.as_ref()?;
+                Some(
+                    state
+                        .get(usize::from(instruction.b()))
+                        .copied()
+                        .unwrap_or(Slot::Conflict),
+                )
+            })
+            .collect();
         Some(Plan {
             params,
             result,
-            states,
+            operands,
         })
     }
 
@@ -930,8 +955,9 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.builder.def_var(variables[view(float_type)], float);
     }
 
-    fn kind_at(&self, pc: usize, register: u16) -> Kind {
-        match self.plan.states[pc].as_ref().expect("reachable")[usize::from(register)] {
+    /// The kind of the `b` register of instruction `pc`.
+    fn operand_kind(&self, pc: usize) -> Kind {
+        match self.plan.operand(pc) {
             Slot::Value(kind) => kind,
             _ => Kind::I32,
         }
@@ -1256,8 +1282,9 @@ impl<H: Host> Emitter<'_, '_, H> {
         )
     }
 
-    fn binding_slot(&self, pc: usize, register: u16) -> u32 {
-        match self.plan.states[pc].as_ref().expect("reachable")[usize::from(register)] {
+    /// The binding the `b` register of instruction `pc` holds.
+    fn binding_slot(&self, pc: usize) -> u32 {
+        match self.plan.operand(pc) {
             Slot::Binding(slot) => slot,
             _ => unreachable!("planned global accesses read a binding"),
         }
@@ -1288,9 +1315,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// An imported call: arguments go to the VM in a stack array, through
     /// the context's callout.
     fn callout(&mut self, pc: usize, instruction: WideInstruction) {
-        let Slot::Import(function) =
-            self.plan.states[pc].as_ref().expect("reachable")[usize::from(instruction.b())]
-        else {
+        let Slot::Import(function) = self.plan.operand(pc) else {
             unreachable!("planned imported calls read an import reference");
         };
         let signature = self
@@ -1503,7 +1528,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.write_typed(a, operator.result_type(), value);
             }
             Op::Move => {
-                let kind = self.kind_at(pc, b);
+                let kind = self.operand_kind(pc);
                 let value = self.read(b, kind);
                 self.write(a, kind, value);
             }
@@ -1588,7 +1613,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             }
             Op::WasmSelect => {
                 let (condition, _) = instruction.register_pair();
-                let kind = self.kind_at(pc, b);
+                let kind = self.operand_kind(pc);
                 let condition = self.read(condition, Kind::I32);
                 let taken = self.read(b, kind);
                 let other = self.read(c, kind);
@@ -1656,7 +1681,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             // names are reached through the context.
             Op::WasmInstanceBinding => {}
             Op::WasmGlobalGet => {
-                let slot = self.binding_slot(pc, b);
+                let slot = self.binding_slot(pc);
                 let address = self.global_address(slot);
                 let value = self.builder.ins().load(
                     types::I32,
@@ -1667,7 +1692,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                 self.write(a, Kind::I32, value);
             }
             Op::WasmGlobalSet => {
-                let slot = self.binding_slot(pc, b);
+                let slot = self.binding_slot(pc);
                 let address = self.global_address(slot);
                 let value = self.read(a, Kind::I32);
                 let wide = self.builder.ins().uextend(types::I64, value);
@@ -1760,7 +1785,7 @@ impl<H: Host> Analysis<'_, H> {
         // Every jump target starts a block, created before emission so a
         // backward jump finds its target's block already placed.
         for (pc, instruction) in instructions.iter().copied().enumerate() {
-            if plan.states[pc].is_none() {
+            if !plan.reachable(pc) {
                 continue;
             }
             let targets = match instruction.op().control_flow_layout() {
@@ -1775,14 +1800,14 @@ impl<H: Host> Analysis<'_, H> {
                 _ => vec![],
             };
             for target in targets {
-                if target < instructions.len() && plan.states[target].is_some() {
+                if target < instructions.len() && plan.reachable(target) {
                     emitter.block(target);
                 }
             }
         }
         let mut open = false;
         for (pc, instruction) in instructions.iter().copied().enumerate() {
-            if plan.states[pc].is_none() {
+            if !plan.reachable(pc) {
                 open = false;
                 continue;
             }
@@ -2263,9 +2288,7 @@ impl<H: Host> Vm<H> {
                 if !matches!(instruction.op(), Op::WasmGlobalGet | Op::WasmGlobalSet) {
                     continue;
                 }
-                if let Some(Slot::Binding(slot)) = plan.states[pc]
-                    .as_ref()
-                    .map(|state| state[usize::from(instruction.b())])
+                if let Some(Slot::Binding(slot)) = plan.operands[pc]
                     && !globals.contains(&slot)
                 {
                     globals.push(slot);
