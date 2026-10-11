@@ -8,11 +8,33 @@ use crate::shared_run::EntryGoal;
 /// Output callback owned by the canonical Node host boundary.
 pub type NodeOutputSink = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 
+#[derive(Clone, Copy, Default)]
+pub(crate) enum InlineSource {
+    #[default]
+    Eval,
+    Stdin,
+}
+impl InlineSource {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Eval => "[eval]",
+            Self::Stdin => "[stdin]",
+        }
+    }
+    pub(crate) fn compilation_name(self) -> &'static str {
+        match self {
+            Self::Eval => "<eval>",
+            Self::Stdin => "[stdin]",
+        }
+    }
+}
+
 pub struct NodeHost {
     /// Immutable installation asset root, independent of guest cwd changes.
     pub(crate) node_library_root: std::path::PathBuf,
     pub(crate) shared_state: Rc<RefCell<SharedNodeState>>,
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
+    pub(crate) inline_source: InlineSource,
     pub(crate) net_pending_writes: Vec<(u64, Vec<u8>)>,
     pub(crate) net_pending_ends: Vec<u64>,
     pub(crate) net_pending_destroys: Vec<(u64, bool)>,
@@ -37,6 +59,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) process_argv: crate::modules::process_state::ProcessArgs,
     pub(crate) process_control: crate::modules::process_state::ProcessControl,
     pub(crate) process_signals: crate::modules::process_signals_state::SignalState,
+    pub(crate) stdin: crate::modules::process_stdin_shared_vm::State,
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
     pub(crate) output: Option<NodeOutputSink>,
     pub(crate) net_auto_select_family_attempt_timeout: u64,
@@ -116,6 +139,7 @@ impl SharedNodeState {
             process_argv,
             process_control,
             process_signals: crate::modules::process_signals_state::SignalState::default(),
+            stdin: crate::modules::process_stdin_shared_vm::State::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
             output: None,
             net_auto_select_family_attempt_timeout:
@@ -185,6 +209,7 @@ impl NodeHost {
                 async_identity,
             ))),
             commonjs_entry: None,
+            inline_source: InlineSource::default(),
             net_pending_writes: Vec::new(),
             net_pending_ends: Vec::new(),
             net_pending_destroys: Vec::new(),

@@ -11,6 +11,7 @@ pub(crate) mod buffer_codec;
 pub(crate) mod buffer_shared_vm;
 pub(crate) mod clone_shared_vm;
 pub(crate) mod child_process_shared_vm;
+pub(crate) mod child_process_stdio_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
 #[cfg(unix)]
 pub(crate) mod child_process_sync;
@@ -41,6 +42,7 @@ pub(crate) mod path_shared_vm;
 pub(crate) mod perf_hooks;
 pub(crate) mod process_shared_vm;
 pub(crate) mod process_signals_state;
+pub(crate) mod process_stdin_shared_vm;
 pub(crate) mod process_state;
 pub(crate) mod readline_shared_vm;
 pub(crate) mod querystring_data;

@@ -42,6 +42,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "exit", exit)?;
     let stdout = create_stream(context, STDOUT_FD)?;
     install(context, process, "stdout", stdout)?;
+    crate::modules::process_stdin_shared_vm::install(context, process)?;
     let stderr = create_stream(context, STDERR_FD)?;
     install(context, process, "stderr", stderr)?;
     let event_count = context.number(0.0);
@@ -1804,6 +1805,9 @@ fn drain_checkpoint(
     let shared_state = runtime.host_mut().shared_state();
     loop {
         drain_shared_jobs(runtime, program, &shared_state)?;
+        if crate::modules::process_stdin_shared_vm::poll(runtime)? {
+            continue;
+        }
         if poll_process_signals(runtime, program, &shared_state)? {
             continue;
         }
@@ -1922,7 +1926,8 @@ fn drain_checkpoint(
 }
 
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
-    crate::modules::fetch_shared_vm::has_pending(shared_state)
+    crate::modules::process_stdin_shared_vm::has_work(&shared_state.borrow().stdin)
+        || crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
         || crate::modules::http_shared_vm::has_work(shared_state)
         || !shared_state.borrow().net_sockets.is_empty()
