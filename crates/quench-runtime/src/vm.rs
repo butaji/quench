@@ -213,16 +213,21 @@ impl Frame {
         function: &crate::bytecode::Function,
         args: &[Value],
     ) {
+        debug_assert_eq!(self.locals.len(), usize::from(function.locals));
+        debug_assert_eq!(self.registers.len(), usize::from(function.registers));
         for entry in &function.local_registers {
-            let initial = if entry.local < function.params {
-                args.get(usize::from(entry.local))
-                    .copied()
-                    .unwrap_or(Value::UNDEFINED)
-            } else {
-                Value::UNDEFINED
-            };
-            self.locals[usize::from(entry.local)] = Value::UNDEFINED;
-            self.registers[usize::from(entry.register)] = initial;
+            // Residual validation admits only parameters as promoted locals, each below the
+            // function's local and register counts that frame setup sized these buffers to.
+            debug_assert!(entry.local < function.params);
+            let initial = args
+                .get(usize::from(entry.local))
+                .copied()
+                .unwrap_or(Value::UNDEFINED);
+            // SAFETY: see above; `entry.local < locals` and `entry.register < registers`.
+            unsafe {
+                *self.locals.get_unchecked_mut(usize::from(entry.local)) = Value::UNDEFINED;
+                *self.registers.get_unchecked_mut(usize::from(entry.register)) = initial;
+            }
         }
     }
 }
