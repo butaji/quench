@@ -223,7 +223,7 @@ impl<H: Host> Vm<H> {
                     || self
                         .atom_name(*candidate)
                         .strip_prefix(name)
-                        .is_some_and(|suffix| suffix.starts_with("\0quench:self-binding:"))
+                        .is_some_and(|suffix| suffix.starts_with(crate::bytecode::SELF_BINDING_MARKER))
             })
     }
 
@@ -634,7 +634,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn is_self_binding(&self, atom: Atom) -> bool {
-        self.atom_name(atom).contains("\0quench:self-binding:")
+        self.atom_class(atom).contains(AtomClass::SELF_BINDING)
     }
 
     pub(super) fn captured_lexical_this(&self, mut env: Value) -> Option<Value> {
@@ -775,7 +775,8 @@ impl<H: Host> Vm<H> {
         frame: usize,
         atom: Atom,
     ) -> Result<Option<(Value, Value)>, JsError> {
-        if self.atom_name(atom).starts_with('\0') {
+        // Object environments exist only after some `with` statement was entered.
+        if !self.with_scope_entered || self.atom_class(atom).contains(AtomClass::INTERNAL) {
             return Ok(None);
         }
         let objects = self.with_objects_before_binding(frame, atom);
@@ -1691,33 +1692,15 @@ impl<H: Host> Vm<H> {
         cache: Option<u16>,
         allow_unresolvable: bool,
     ) -> Result<Value, JsError> {
+        let internal = self.atom_class(atom).contains(AtomClass::INTERNAL);
         let name = self.atom_name(atom);
-        if name == "\0quench:dynamic-import" {
-            return Ok(self.native_value(Native::DynamicImport));
-        }
-        if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
-            return Ok(self.regexp_intrinsic_constructor());
-        }
-        if name == "\0quench:intrinsic-promise" {
-            return Ok(self.native_value(Native::Promise));
-        }
-        if name == "\0quench:super-get" {
-            return Ok(self.native_value(Native::ReflectGet));
-        }
-        if name == "\0quench:super-set" {
-            return Ok(self.native_value(Native::SuperSet));
-        }
-        if name == "\0quench:super-base" {
-            return Ok(self.native_value(Native::ReflectGetPrototypeOf));
-        }
-        if name == "\0quench:object-literal-prototype" {
-            return Ok(self.native_value(Native::ObjectLiteralPrototype));
-        }
-        if name == "\0quench:object-define-property" {
-            return Ok(self.native_value(Native::ObjectDefineProperty));
-        }
-        if name == "\0quench:object-freeze" {
-            return Ok(self.native_value(Native::ObjectFreeze));
+        if internal {
+            if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
+                return Ok(self.regexp_intrinsic_constructor());
+            }
+            if let Some(native) = internal_name_native(name) {
+                return Ok(self.native_value(native));
+            }
         }
         if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
             return self.checked_binding_read(p, atom, value);
@@ -1727,7 +1710,7 @@ impl<H: Host> Vm<H> {
         {
             return self.load_name_binding(p, frame, binding);
         }
-        if !name.starts_with('\0') {
+        if !internal {
             if let Some(frame) = self.frames.last()
                 && (self.function_environment_binding(p, frame.function, atom)
                     || p.functions[frame.function as usize]
@@ -2080,4 +2063,19 @@ impl<H: Host> Vm<H> {
             }
         }
     }
+}
+
+/// The built-in each engine-internal binding name the compiler emits resolves to.
+fn internal_name_native(name: &str) -> Option<Native> {
+    Some(match name {
+        "\0quench:dynamic-import" => Native::DynamicImport,
+        "\0quench:intrinsic-promise" => Native::Promise,
+        "\0quench:super-get" => Native::ReflectGet,
+        "\0quench:super-set" => Native::SuperSet,
+        "\0quench:super-base" => Native::ReflectGetPrototypeOf,
+        "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
+        "\0quench:object-define-property" => Native::ObjectDefineProperty,
+        "\0quench:object-freeze" => Native::ObjectFreeze,
+        _ => return None,
+    })
 }

@@ -162,6 +162,9 @@ mod tests;
 pub(super) struct Frame {
     // Actual callable identity is distinct from the code ID and captured environment.
     context: CallContext,
+    /// Leading actual arguments that legacy `f.arguments` reflects live from the parameter
+    /// storage; `original_arguments` holds the arguments after them.
+    reflected_parameters: u16,
     original_arguments: Vec<Value>,
     program: ProgramId,
     function: u32,
