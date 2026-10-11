@@ -198,6 +198,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut exec_argv = Vec::new();
     let mut input_type_module = false;
     let mut input = None;
+    let mut guest_arguments = Vec::new();
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -212,11 +213,20 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
             "--experimental-vfs" | "--no-experimental-vfs" => {
                 exec_argv.push(args[index].clone());
             }
-            "-e" | "--eval" => {
+            "-e" | "--eval" | "-pe" | "-ep" | "-p" | "--print" => {
+                let option = args[index].clone();
+                let print = matches!(option.as_str(), "-pe" | "-ep" | "-p" | "--print");
                 index += 1;
+                let source = args.get(index).cloned().unwrap_or_default();
+                exec_argv.extend([option, source.clone()]);
+                guest_arguments.extend_from_slice(args.get(index + 1..).unwrap_or_default());
                 input = Some(SharedInput::Eval {
-                    source: args.get(index).cloned().unwrap_or_default(),
-                    goal: if input_type_module {
+                    source: if print {
+                        format!("console.log({source});")
+                    } else {
+                        source
+                    },
+                    goal: if input_type_module && !print {
                         EntryGoal::Module
                     } else {
                         EntryGoal::Node
@@ -225,34 +235,26 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                 });
                 break;
             }
-            "-pe" | "-ep" => {
-                index += 1;
-                input = Some(SharedInput::Eval {
-                    source: format!(
-                        "console.log({});",
-                        args.get(index).cloned().unwrap_or_default()
-                    ),
-                    goal: EntryGoal::Node,
-                    exec_argv: exec_argv.clone(),
-                });
-                break;
-            }
-            "-p" | "--print" => {
-                index += 1;
-                input = Some(SharedInput::Eval {
-                    source: format!(
-                        "console.log({});",
-                        args.get(index).cloned().unwrap_or_default()
-                    ),
-                    goal: EntryGoal::Node,
-                    exec_argv: exec_argv.clone(),
-                });
-                break;
-            }
             option if option.starts_with('-') => {
                 exec_argv.push(args[index].clone());
             }
             path => {
+                let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+                let cwd = cwd.to_string_lossy();
+                let paths = [path.to_owned()];
+                let path = if cfg!(windows) {
+                    crate::modules::path_algorithms::win32::resolve_strings(
+                        &paths,
+                        &cwd,
+                        |device| {
+                            std::env::var(format!("={device}")).unwrap_or_else(|_| cwd.to_string())
+                        },
+                    )
+                } else {
+                    crate::modules::path_algorithms::posix::resolve_strings(&paths, &cwd)
+                };
+                guest_arguments.push(path.clone());
+                guest_arguments.extend_from_slice(&args[index + 1..]);
                 input = Some(SharedInput::File {
                     path: PathBuf::from(path),
                     exec_argv: exec_argv.clone(),
@@ -272,5 +274,8 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         },
         exec_argv,
     });
-    execute_shared(input, std::env::args().collect()).map(SharedCompletion::exit_code)
+    let executable = executable_path().map_err(|error| error.to_string())?;
+    let mut argv = vec![executable.to_string_lossy().into_owned()];
+    argv.extend(guest_arguments);
+    execute_shared(input, argv).map(SharedCompletion::exit_code)
 }
