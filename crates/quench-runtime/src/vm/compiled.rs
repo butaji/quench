@@ -12,21 +12,32 @@
 //! variables) and the per-run memory-view resolution.
 //!
 //! Each operator keeps one semantic authority. Integer operators come from
-//! `I32BinaryOperator`/`I32UnaryOperator`, memory accesses from
+//! the integer, float and conversion selectors of `crate::wasm` (an i32
+//! operator is its i64 namesake at the narrower width), memory accesses from
 //! `MemoryLoad`/`MemoryStore`, traps from `WasmTrap`. A function compiles only
 //! when every instruction it can reach has a compiled denotation and every
 //! function it calls compiles; anything else stays interpreted, so the mode
-//! never changes behavior, only speed. Compiled code never allocates, calls
-//! the host or collects, so it holds no heap roots; values cross its boundary
-//! in their Wasm encoding, and a trap leaves as a status that becomes the
-//! interpreter's `WasmTrap`.
+//! never changes behavior, only speed. Compiled code never allocates or
+//! collects itself and holds no heap roots: values cross its boundary in
+//! their Wasm encoding, a trap leaves as a status that becomes the
+//! interpreter's `WasmTrap`, and an imported call is a callout through which
+//! the VM makes the call exactly as the interpreter would (`import_callout`).
 
 use super::*;
 use crate::bytecode::{ControlFlowLayout, Function, WideInstruction};
-use crate::wasm::integer::{I32BinaryOperator, I32UnaryOperator};
+use crate::wasm::conversion::ScalarConversionOperator;
+use crate::wasm::float::{
+    F32BinaryOperator, F32UnaryOperator, F64BinaryOperator, F64UnaryOperator,
+};
+use crate::wasm::integer::{
+    I32BinaryOperator, I32UnaryOperator, I64BinaryOperator, I64UnaryOperator,
+};
 use crate::wasm::memory::{MemoryLoad, MemoryStore};
 use cranelift_codegen::ir::{
-    self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName, condcodes::IntCC, types,
+    self, AbiParam, InstBuilder, MemFlagsData, Signature, UserFuncName,
+    condcodes::{FloatCC, IntCC},
+    immediates::{Ieee32, Ieee64},
+    types,
 };
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
@@ -43,8 +54,9 @@ pub enum ExecutionMode {
     Compiled,
 }
 
-/// A value's machine representation inside compiled code: f32 bits travel
-/// as i32 and f64 bits as i64, since compiled code only moves them.
+/// A value's width inside compiled code. Each register has an integer and a
+/// float view per width (`View`); a write defines both, so the analysis
+/// tracks only the width and a reinterpretation is free.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     I32,
@@ -67,8 +79,92 @@ impl Kind {
         }
     }
 
-    fn index(self) -> usize {
-        self as usize
+    fn integer(self) -> crate::WasmType {
+        match self {
+            Self::I32 => crate::WasmType::I32,
+            Self::I64 => crate::WasmType::I64,
+        }
+    }
+
+    fn of_ir(ty: ir::Type) -> Self {
+        if ty.bits() == types::I32.bits() {
+            Self::I32
+        } else {
+            Self::I64
+        }
+    }
+}
+
+/// The views of a register's value, integer and float per width, in the
+/// order of a register's variables.
+const VIEW_TYPES: [crate::WasmType; 4] = [
+    crate::WasmType::I32,
+    crate::WasmType::I64,
+    crate::WasmType::F32,
+    crate::WasmType::F64,
+];
+
+/// The variable index of a register's view as Wasm type `ty`.
+fn view(ty: crate::WasmType) -> usize {
+    VIEW_TYPES
+        .iter()
+        .position(|candidate| *candidate == ty)
+        .expect("compiled values are numeric scalars")
+}
+
+/// The machine type of a scalar Wasm type.
+fn scalar_ir(ty: crate::WasmType) -> ir::Type {
+    match ty {
+        crate::WasmType::I32 => types::I32,
+        crate::WasmType::I64 => types::I64,
+        crate::WasmType::F32 => types::F32,
+        crate::WasmType::F64 => types::F64,
+        _ => unreachable!("compiled values are numeric scalars"),
+    }
+}
+
+/// The type of the other view of the same bits.
+fn counterpart(ty: crate::WasmType) -> crate::WasmType {
+    match ty {
+        crate::WasmType::I32 => crate::WasmType::F32,
+        crate::WasmType::I64 => crate::WasmType::F64,
+        crate::WasmType::F32 => crate::WasmType::I32,
+        crate::WasmType::F64 => crate::WasmType::I64,
+        _ => unreachable!("compiled values are numeric scalars"),
+    }
+}
+
+/// An i32 integer operator is its i64 namesake: the i64 selectors extend the
+/// shared declaration (`crate::wasm::integer`), so tags agree.
+fn widen_binary(operator: I32BinaryOperator) -> I64BinaryOperator {
+    I64BinaryOperator::from_tag(operator as u32).expect("i64 selectors extend i32's")
+}
+
+fn widen_unary(operator: I32UnaryOperator) -> I64UnaryOperator {
+    I64UnaryOperator::from_tag(operator as u32).expect("i64 selectors extend i32's")
+}
+
+/// A float operator and its operand type; both widths share one declaration
+/// (`crate::wasm::float`), so tags agree.
+fn float_binary_operator(op: Op, tag: u32) -> Option<(F64BinaryOperator, crate::WasmType)> {
+    match op {
+        Op::WasmF32Binary => Some((
+            F64BinaryOperator::from_tag(F32BinaryOperator::from_tag(tag)? as u32)?,
+            crate::WasmType::F32,
+        )),
+        Op::WasmF64Binary => Some((F64BinaryOperator::from_tag(tag)?, crate::WasmType::F64)),
+        _ => None,
+    }
+}
+
+fn float_unary_operator(op: Op, tag: u32) -> Option<(F64UnaryOperator, crate::WasmType)> {
+    match op {
+        Op::WasmF32Unary => Some((
+            F64UnaryOperator::from_tag(F32UnaryOperator::from_tag(tag)? as u32)?,
+            crate::WasmType::F32,
+        )),
+        Op::WasmF64Unary => Some((F64UnaryOperator::from_tag(tag)?, crate::WasmType::F64)),
+        _ => None,
     }
 }
 
@@ -80,6 +176,8 @@ enum Slot {
     Binding(u32),
     /// The function's memory binding; only direct accesses read it.
     Memory,
+    /// A reference to imported function `index`; only a call reads it.
+    Import(u32),
     /// Paths disagree; no compiled instruction may read it.
     Conflict,
 }
@@ -92,12 +190,17 @@ impl Slot {
 
 /// Traps compiled code can raise, by status (index + 1); status 0 is a
 /// normal return.
-const TRAPS: [crate::WasmTrap; 4] = [
+const TRAPS: [crate::WasmTrap; 5] = [
     crate::WasmTrap::OutOfBoundsMemory,
     crate::WasmTrap::IntegerDivideByZero,
     crate::WasmTrap::IntegerOverflow,
     crate::WasmTrap::CallStackExhausted,
+    crate::WasmTrap::InvalidConversionToInteger,
 ];
+
+/// The status of a callout that raised: the VM's error (or panic) waits in
+/// the context.
+const RAISED_STATUS: i64 = TRAPS.len() as i64 + 1;
 
 fn trap_status(trap: crate::WasmTrap) -> i64 {
     TRAPS
@@ -118,7 +221,7 @@ struct CallContext {
     stack_limit: usize,
     table: *const usize,
     vm: *mut (),
-    env: u64,
+    env: Value,
     /// The entry trampoline's stack pointer after it saved the caller's
     /// registers; a guard fault resumes there.
     entry_stack: usize,
@@ -126,14 +229,67 @@ struct CallContext {
     guard_start: usize,
     guard_end: usize,
     /// Per global the program accesses (`CompiledProgram::globals`), the
-    /// address of the global's value in this instance.
+    /// address of the global's value in this instance. Heap cells never move,
+    /// so the addresses outlive callouts.
     globals: *const *mut Value,
+    /// `import_callout` for the VM's host type.
+    callout: usize,
+    // Fields below are the VM's, never read by compiled code.
+    program: ProgramId,
+    /// What a callout that returned `RAISED_STATUS` raised.
+    raised: Option<Raised>,
 }
 
-const CONTEXT_STACK_LIMIT: i32 = 0;
-const CONTEXT_TABLE: i32 = 8;
-const CONTEXT_ENTRY_STACK: u8 = 32;
-const CONTEXT_GLOBALS: i32 = 56;
+/// An error, or a panic to resume once compiled frames are gone.
+enum Raised {
+    Error(JsError),
+    Panic(Box<dyn std::any::Any + Send>),
+}
+
+const CONTEXT_STACK_LIMIT: i32 = std::mem::offset_of!(CallContext, stack_limit) as i32;
+const CONTEXT_TABLE: i32 = std::mem::offset_of!(CallContext, table) as i32;
+const CONTEXT_ENTRY_STACK: u8 = std::mem::offset_of!(CallContext, entry_stack) as u8;
+const CONTEXT_GLOBALS: i32 = std::mem::offset_of!(CallContext, globals) as i32;
+const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
+
+/// The callout's signature: (context, function index, arguments, result) ->
+/// status; arguments and result are Wasm bits, one word each.
+type Callout = unsafe extern "C" fn(*mut CallContext, u64, *const u64, *mut u64) -> i64;
+
+/// Make imported call `function` for compiled code, as the interpreter's
+/// `Op::Call` does.
+unsafe extern "C" fn import_callout<H: Host>(
+    context: *mut CallContext,
+    function: u64,
+    args: *const u64,
+    out: *mut u64,
+) -> i64 {
+    // SAFETY: compiled code passes the context `run_compiled` made, whose
+    // VM is suspended in that call.
+    let context = unsafe { &mut *context };
+    let vm = unsafe { &mut *context.vm.cast::<Vm<H>>() };
+    // The VM's own code runs outside compiled code: no guard fault is ours.
+    let active = ACTIVE_CONTEXT.with(|current| current.replace(std::ptr::null_mut()));
+    let program = context.program;
+    let env = context.env;
+    let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: compiled code passes one word per parameter and a result
+        // word.
+        unsafe { vm.call_import(program, env, function as u32, args, out) }
+    }));
+    ACTIVE_CONTEXT.with(|current| current.set(active));
+    match called {
+        Ok(Ok(())) => 0,
+        Ok(Err(error)) => {
+            context.raised = Some(Raised::Error(error));
+            RAISED_STATUS
+        }
+        Err(panic) => {
+            context.raised = Some(Raised::Panic(panic));
+            RAISED_STATUS
+        }
+    }
+}
 
 /// A compiled function's entry: (context, memory base, memory length,
 /// arguments, result) -> status.
@@ -213,6 +369,17 @@ struct Plan {
     states: Vec<Option<Vec<Slot>>>,
 }
 
+impl Plan {
+    /// The plan as its callers see it: register states are per instruction
+    /// and per register, so only the function being compiled holds them.
+    fn interface(self) -> Self {
+        Self {
+            states: Vec::new(),
+            ..self
+        }
+    }
+}
+
 /// The register a direct access of `instruction` reads its memory through.
 fn direct_access(op: Op) -> bool {
     MemoryLoad::from_direct_op(op).is_some() || MemoryStore::from_direct_op(op).is_some()
@@ -242,6 +409,9 @@ struct Analysis<'a, H: Host> {
     program: ProgramId,
     code: &'a ResidualProgram,
     env: Value,
+    /// Whether imported calls may compile: a callee may grow memory, which
+    /// moves an unguarded memory's bytes.
+    callouts: bool,
 }
 
 impl<H: Host> Analysis<'_, H> {
@@ -290,6 +460,15 @@ impl<H: Host> Analysis<'_, H> {
         self.vm
             .programs
             .wasm_function_signature(self.program, index)
+    }
+
+    /// The signature of `function` when it is imported.
+    fn import_signature(&self, function: u32) -> Option<&crate::WasmSignature> {
+        let signatures = self.vm.programs.wasm_signatures(self.program)?;
+        signatures
+            .defined_index(function)
+            .is_none()
+            .then(|| signatures.get(function as usize))?
     }
 
     /// The function's plan, assuming every function in `callable` compiles.
@@ -435,7 +614,11 @@ impl<H: Host> Analysis<'_, H> {
                 return None;
             }
             i32_value(state, instruction.c())?;
-            return set(state, instruction.a(), Slot::Value(load_kind(load)?));
+            return set(
+                state,
+                instruction.a(),
+                Slot::Value(Kind::of(load_type(load)?)?),
+            );
         }
         if let Some(store) = MemoryStore::from_direct_op(op) {
             if Some(instruction.b()) != memory_register
@@ -446,7 +629,42 @@ impl<H: Host> Analysis<'_, H> {
             i32_value(state, instruction.c())?;
             return (value(state, instruction.a())? == Kind::of(store.value_type())?).then_some(());
         }
+        // Result widths are read off the operators' own semantics:
+        // comparisons produce an i32.
+        if let Some((operator, ty)) = float_binary_operator(op, instruction.imm()) {
+            let kind = Kind::of(ty)?;
+            (value(state, instruction.b())? == kind).then_some(())?;
+            (value(state, instruction.c())? == kind).then_some(())?;
+            let comparison = operator.apply(0.0, 0.0).ty() == crate::WasmType::I32;
+            let result = if comparison { Kind::I32 } else { kind };
+            return set(state, instruction.a(), Slot::Value(result));
+        }
+        if let Some((_, ty)) = float_unary_operator(op, instruction.imm()) {
+            let kind = Kind::of(ty)?;
+            (value(state, instruction.b())? == kind).then_some(())?;
+            return set(state, instruction.a(), Slot::Value(kind));
+        }
         match op {
+            Op::WasmI64Binary => {
+                let operator = I64BinaryOperator::from_tag(instruction.imm())?;
+                (value(state, instruction.b())? == Kind::I64).then_some(())?;
+                (value(state, instruction.c())? == Kind::I64).then_some(())?;
+                let result = Kind::of(operator.apply(1, 1).ok()?.ty())?;
+                set(state, instruction.a(), Slot::Value(result))
+            }
+            Op::WasmI64Unary => {
+                let operator = I64UnaryOperator::from_tag(instruction.imm())?;
+                (value(state, instruction.b())? == Kind::I64).then_some(())?;
+                let result = Kind::of(operator.apply(0).ty())?;
+                set(state, instruction.a(), Slot::Value(result))
+            }
+            Op::WasmScalarConvert => {
+                let operator = ScalarConversionOperator::from_tag(instruction.imm())?;
+                (value(state, instruction.b())? == Kind::of(operator.source_type())?)
+                    .then_some(())?;
+                let result = Kind::of(operator.result_type())?;
+                set(state, instruction.a(), Slot::Value(result))
+            }
             Op::Move => {
                 let kind = value(state, instruction.b())?;
                 set(state, instruction.a(), Slot::Value(kind))
@@ -517,6 +735,31 @@ impl<H: Host> Analysis<'_, H> {
                 };
                 set(state, instruction.result_register(), Slot::Value(kind))
             }
+            Op::WasmRefFunc if self.callouts => {
+                let function = instruction.imm();
+                self.import_signature(function)?;
+                set(state, instruction.a(), Slot::Import(function))
+            }
+            Op::Call => {
+                let Slot::Import(function) = *state.get(usize::from(instruction.b()))? else {
+                    return None;
+                };
+                let signature = self.import_signature(function)?;
+                let window = instruction.call_window();
+                if usize::from(window.count) != signature.params.len()
+                    || signature.results.len() > 1
+                {
+                    return None;
+                }
+                for (offset, ty) in signature.params.iter().enumerate() {
+                    (value(state, window.base + offset as u16)? == Kind::of(*ty)?).then_some(())?;
+                }
+                let kind = match signature.results.first() {
+                    Some(ty) => Kind::of(*ty)?,
+                    None => Kind::I32,
+                };
+                set(state, instruction.result_register(), Slot::Value(kind))
+            }
             Op::Return => match result {
                 Some(ty) => (value(state, instruction.a())? == Kind::of(ty)?).then_some(()),
                 None => Some(()),
@@ -554,23 +797,23 @@ impl<H: Host> Analysis<'_, H> {
     }
 }
 
-/// The machine kind a direct load produces.
-fn load_kind(load: MemoryLoad) -> Option<Kind> {
+/// The Wasm type a direct load produces.
+fn load_type(load: MemoryLoad) -> Option<crate::WasmType> {
     Some(match load {
         MemoryLoad::I32Load
-        | MemoryLoad::F32Load
         | MemoryLoad::I32Load8S
         | MemoryLoad::I32Load8U
         | MemoryLoad::I32Load16S
-        | MemoryLoad::I32Load16U => Kind::I32,
+        | MemoryLoad::I32Load16U => crate::WasmType::I32,
+        MemoryLoad::F32Load => crate::WasmType::F32,
         MemoryLoad::I64Load
-        | MemoryLoad::F64Load
         | MemoryLoad::I64Load8S
         | MemoryLoad::I64Load8U
         | MemoryLoad::I64Load16S
         | MemoryLoad::I64Load16U
         | MemoryLoad::I64Load32S
-        | MemoryLoad::I64Load32U => Kind::I64,
+        | MemoryLoad::I64Load32U => crate::WasmType::I64,
+        MemoryLoad::F64Load => crate::WasmType::F64,
         _ => return None,
     })
 }
@@ -621,33 +864,70 @@ fn internal_signature(
     signature
 }
 
-
 struct Emitter<'a, 'b, H: Host> {
     guarded: bool,
     globals: &'a [u32],
     analysis: &'a Analysis<'a, H>,
     builder: FunctionBuilder<'b>,
     plan: &'a Plan,
-    variables: Vec<[Variable; 2]>,
+    variables: Vec<[Variable; VIEW_TYPES.len()]>,
     blocks: Vec<Option<ir::Block>>,
     context: ir::Value,
     base: ir::Value,
     length: ir::Value,
     trap_blocks: [Option<ir::Block>; TRAPS.len()],
-    signatures: Vec<Option<ir::SigRef>>,
+    /// Per callee, its imported name in this function.
+    callees: Vec<Option<ir::FuncRef>>,
+    callout_signature: Option<ir::SigRef>,
     plans: &'a [Option<Plan>],
     call_conv: cranelift_codegen::isa::CallConv,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
     fn read(&mut self, register: u16, kind: Kind) -> ir::Value {
-        self.builder
-            .use_var(self.variables[usize::from(register)][kind.index()])
+        self.read_typed(register, kind.integer())
     }
 
     fn write(&mut self, register: u16, kind: Kind, value: ir::Value) {
+        self.write_typed(register, kind.integer(), value);
+    }
+
+    /// The register's value viewed as `ty`.
+    fn read_typed(&mut self, register: u16, ty: crate::WasmType) -> ir::Value {
         self.builder
-            .def_var(self.variables[usize::from(register)][kind.index()], value);
+            .use_var(self.variables[usize::from(register)][view(ty)])
+    }
+
+    /// Define the register as `value` of type `ty`, in both views; a view no
+    /// instruction reads costs nothing, since its conversion is dead.
+    fn write_typed(&mut self, register: u16, ty: crate::WasmType, value: ir::Value) {
+        let other = counterpart(ty);
+        let converted = self
+            .builder
+            .ins()
+            .bitcast(scalar_ir(other), MemFlagsData::new(), value);
+        let variables = self.variables[usize::from(register)];
+        self.builder.def_var(variables[view(ty)], value);
+        self.builder.def_var(variables[view(other)], converted);
+    }
+
+    /// Define the register as the constant `bits` of width `kind`.
+    fn write_constant(&mut self, register: u16, kind: Kind, bits: i64) {
+        let (integer, float) = match kind {
+            Kind::I32 => (
+                self.builder.ins().iconst(types::I32, bits),
+                self.builder.ins().f32const(Ieee32::with_bits(bits as u32)),
+            ),
+            Kind::I64 => (
+                self.builder.ins().iconst(types::I64, bits),
+                self.builder.ins().f64const(Ieee64::with_bits(bits as u64)),
+            ),
+        };
+        let float_type = counterpart(kind.integer());
+        let variables = self.variables[usize::from(register)];
+        self.builder
+            .def_var(variables[view(kind.integer())], integer);
+        self.builder.def_var(variables[view(float_type)], float);
     }
 
     fn kind_at(&self, pc: usize, register: u16) -> Kind {
@@ -695,13 +975,15 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
     }
 
-    fn i32_binary(
+    /// An integer operator at the operands' width.
+    fn integer_binary(
         &mut self,
-        operator: I32BinaryOperator,
+        operator: I64BinaryOperator,
         left: ir::Value,
         right: ir::Value,
     ) -> ir::Value {
-        use I32BinaryOperator as B;
+        use I64BinaryOperator as B;
+        let ty = self.builder.func.dfg.value_type(left);
         let compare = |this: &mut Self, cc: IntCC| {
             let flag = this.builder.ins().icmp(cc, left, right);
             this.builder.ins().uextend(types::I32, flag)
@@ -718,6 +1000,8 @@ impl<H: Host> Emitter<'_, '_, H> {
             B::ShiftRightUnsigned => self.builder.ins().ushr(left, right),
             B::RotateLeft => self.builder.ins().rotl(left, right),
             B::RotateRight => self.builder.ins().rotr(left, right),
+            B::MultiplyHighSigned => self.builder.ins().smulhi(left, right),
+            B::MultiplyHighUnsigned => self.builder.ins().umulhi(left, right),
             B::Equal => compare(self, IntCC::Equal),
             B::NotEqual => compare(self, IntCC::NotEqual),
             B::LessSigned => compare(self, IntCC::SignedLessThan),
@@ -735,19 +1019,21 @@ impl<H: Host> Emitter<'_, '_, H> {
                     B::DivideUnsigned => self.builder.ins().udiv(left, right),
                     B::RemainderUnsigned => self.builder.ins().urem(left, right),
                     B::DivideSigned => {
-                        let minimum =
-                            self.builder
-                                .ins()
-                                .icmp_imm_s(IntCC::Equal, left, i64::from(i32::MIN));
+                        let minimum = if ty == types::I32 {
+                            i64::from(i32::MIN)
+                        } else {
+                            i64::MIN
+                        };
+                        let minimum = self.builder.ins().icmp_imm_s(IntCC::Equal, left, minimum);
                         let negative_one = self.builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
                         let overflow = self.builder.ins().band(minimum, negative_one);
                         self.trap_if(overflow, crate::WasmTrap::IntegerOverflow);
                         self.builder.ins().sdiv(left, right)
                     }
                     _ => {
-                        // `i32::MIN % -1` is 0; the machine division would fault.
+                        // `MIN % -1` is 0; the machine division would fault.
                         let negative_one = self.builder.ins().icmp_imm_s(IntCC::Equal, right, -1);
-                        let one = self.builder.ins().iconst(types::I32, 1);
+                        let one = self.builder.ins().iconst(ty, 1);
                         let divisor = self.builder.ins().select(negative_one, one, right);
                         self.builder.ins().srem(left, divisor)
                     }
@@ -756,8 +1042,14 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
     }
 
-    fn i32_unary(&mut self, operator: I32UnaryOperator, value: ir::Value) -> ir::Value {
-        use I32UnaryOperator as U;
+    /// An integer unary operator at the operand's width.
+    fn integer_unary(&mut self, operator: I64UnaryOperator, value: ir::Value) -> ir::Value {
+        use I64UnaryOperator as U;
+        let ty = self.builder.func.dfg.value_type(value);
+        let mut extend = |narrow_type| {
+            let narrow = self.builder.ins().ireduce(narrow_type, value);
+            self.builder.ins().sextend(ty, narrow)
+        };
         match operator {
             U::EqualZero => {
                 let flag = self.builder.ins().icmp_imm_s(IntCC::Equal, value, 0);
@@ -766,14 +1058,157 @@ impl<H: Host> Emitter<'_, '_, H> {
             U::LeadingZeros => self.builder.ins().clz(value),
             U::TrailingZeros => self.builder.ins().ctz(value),
             U::PopulationCount => self.builder.ins().popcnt(value),
-            U::ExtendSigned8 => {
-                let narrow = self.builder.ins().ireduce(types::I8, value);
-                self.builder.ins().sextend(types::I32, narrow)
+            U::ExtendSigned8 => extend(types::I8),
+            U::ExtendSigned16 => extend(types::I16),
+            U::ExtendSigned32 => extend(types::I32),
+        }
+    }
+
+    /// The canonical NaN of float type `ty`, as `crate::wasm::float` produces.
+    fn canonical_nan(&mut self, ty: ir::Type) -> ir::Value {
+        use crate::wasm::numeric::canonical_nan_bits;
+        if ty == types::F32 {
+            let bits = canonical_nan_bits(f32::MANTISSA_DIGITS, u64::from(f32::INFINITY.to_bits()));
+            self.builder.ins().f32const(Ieee32::with_bits(bits as u32))
+        } else {
+            let bits = canonical_nan_bits(f64::MANTISSA_DIGITS, f64::INFINITY.to_bits());
+            self.builder.ins().f64const(Ieee64::with_bits(bits))
+        }
+    }
+
+    /// A float operator at the operands' width.
+    fn float_binary(
+        &mut self,
+        operator: F64BinaryOperator,
+        left: ir::Value,
+        right: ir::Value,
+    ) -> ir::Value {
+        use F64BinaryOperator as F;
+        let compare = |this: &mut Self, cc: FloatCC| {
+            let flag = this.builder.ins().fcmp(cc, left, right);
+            this.builder.ins().uextend(types::I32, flag)
+        };
+        match operator {
+            F::Add => self.builder.ins().fadd(left, right),
+            F::Subtract => self.builder.ins().fsub(left, right),
+            F::Multiply => self.builder.ins().fmul(left, right),
+            F::Divide => self.builder.ins().fdiv(left, right),
+            F::Minimum | F::Maximum => {
+                // Signed zeros order as Wasm requires; a NaN operand gives
+                // the canonical NaN.
+                let extremum = if operator == F::Minimum {
+                    self.builder.ins().fmin(left, right)
+                } else {
+                    self.builder.ins().fmax(left, right)
+                };
+                let unordered = self.builder.ins().fcmp(FloatCC::Unordered, left, right);
+                let ty = self.builder.func.dfg.value_type(left);
+                let nan = self.canonical_nan(ty);
+                self.builder.ins().select(unordered, nan, extremum)
             }
-            U::ExtendSigned16 => {
-                let narrow = self.builder.ins().ireduce(types::I16, value);
-                self.builder.ins().sextend(types::I32, narrow)
+            F::CopySign => self.builder.ins().fcopysign(left, right),
+            F::Equal => compare(self, FloatCC::Equal),
+            F::NotEqual => compare(self, FloatCC::NotEqual),
+            F::Less => compare(self, FloatCC::LessThan),
+            F::Greater => compare(self, FloatCC::GreaterThan),
+            F::LessEqual => compare(self, FloatCC::LessThanOrEqual),
+            F::GreaterEqual => compare(self, FloatCC::GreaterThanOrEqual),
+        }
+    }
+
+    /// A float unary operator at the operand's width. The machine rounding
+    /// and square root quiet a signaling NaN, as the operators do.
+    fn float_unary(&mut self, operator: F64UnaryOperator, value: ir::Value) -> ir::Value {
+        use F64UnaryOperator as U;
+        match operator {
+            U::Absolute => self.builder.ins().fabs(value),
+            U::Negate => self.builder.ins().fneg(value),
+            U::Ceiling => self.builder.ins().ceil(value),
+            U::Floor => self.builder.ins().floor(value),
+            U::Truncate => self.builder.ins().trunc(value),
+            U::Nearest => self.builder.ins().nearest(value),
+            U::SquareRoot => self.builder.ins().sqrt(value),
+        }
+    }
+
+    /// A scalar conversion of `value`, already viewed as the source type.
+    fn convert(&mut self, operator: ScalarConversionOperator, value: ir::Value) -> ir::Value {
+        use ScalarConversionOperator as C;
+        let result = scalar_ir(operator.result_type());
+        let source = operator.source_type();
+        match operator {
+            C::WrapI64 => self.builder.ins().ireduce(result, value),
+            C::ExtendI32Signed => self.builder.ins().sextend(result, value),
+            C::ExtendI32Unsigned => self.builder.ins().uextend(result, value),
+            C::TruncateF32SignedI32
+            | C::TruncateF64SignedI32
+            | C::TruncateF32SignedI64
+            | C::TruncateF64SignedI64 => self.truncate(value, source, result, true),
+            C::TruncateF32UnsignedI32
+            | C::TruncateF64UnsignedI32
+            | C::TruncateF32UnsignedI64
+            | C::TruncateF64UnsignedI64 => self.truncate(value, source, result, false),
+            C::SaturateF32SignedI32
+            | C::SaturateF64SignedI32
+            | C::SaturateF32SignedI64
+            | C::SaturateF64SignedI64 => self.builder.ins().fcvt_to_sint_sat(result, value),
+            C::SaturateF32UnsignedI32
+            | C::SaturateF64UnsignedI32
+            | C::SaturateF32UnsignedI64
+            | C::SaturateF64UnsignedI64 => self.builder.ins().fcvt_to_uint_sat(result, value),
+            C::ConvertI32SignedF32
+            | C::ConvertI64SignedF32
+            | C::ConvertI32SignedF64
+            | C::ConvertI64SignedF64 => self.builder.ins().fcvt_from_sint(result, value),
+            C::ConvertI32UnsignedF32
+            | C::ConvertI64UnsignedF32
+            | C::ConvertI32UnsignedF64
+            | C::ConvertI64UnsignedF64 => self.builder.ins().fcvt_from_uint(result, value),
+            C::PromoteF32 => self.builder.ins().fpromote(result, value),
+            C::DemoteF64 => self.builder.ins().fdemote(result, value),
+            C::ReinterpretF32I32
+            | C::ReinterpretF64I64
+            | C::ReinterpretI32F32
+            | C::ReinterpretI64F64 => {
+                self.builder
+                    .ins()
+                    .bitcast(result, MemFlagsData::new(), value)
             }
+        }
+    }
+
+    /// A trapping truncation: NaN and out-of-range inputs trap, in the
+    /// order and bounds of `crate::wasm::conversion`; the machine conversion
+    /// then sees only representable values.
+    fn truncate(
+        &mut self,
+        value: ir::Value,
+        source: crate::WasmType,
+        result: ir::Type,
+        signed: bool,
+    ) -> ir::Value {
+        let wide = if source == crate::WasmType::F32 {
+            self.builder.ins().fpromote(types::F64, value)
+        } else {
+            value
+        };
+        let nan = self.builder.ins().fcmp(FloatCC::Unordered, wide, wide);
+        self.trap_if(nan, crate::WasmTrap::InvalidConversionToInteger);
+        let truncated = self.builder.ins().trunc(wide);
+        let (lower, limit) = crate::wasm::conversion::truncation_bounds(result.bits(), signed);
+        let lower = self.builder.ins().f64const(lower);
+        let limit = self.builder.ins().f64const(limit);
+        let below = self.builder.ins().fcmp(FloatCC::LessThan, truncated, lower);
+        let above = self
+            .builder
+            .ins()
+            .fcmp(FloatCC::GreaterThanOrEqual, truncated, limit);
+        let overflow = self.builder.ins().bor(below, above);
+        self.trap_if(overflow, crate::WasmTrap::IntegerOverflow);
+        if signed {
+            self.builder.ins().fcvt_to_sint_sat(result, truncated)
+        } else {
+            self.builder.ins().fcvt_to_uint_sat(result, truncated)
         }
     }
 
@@ -828,6 +1263,115 @@ impl<H: Host> Emitter<'_, '_, H> {
         }
     }
 
+    /// A nonzero status from a call (a trap or a raised callout) unwinds
+    /// this activation too.
+    fn propagate(&mut self, status: ir::Value) {
+        let unwound = self.builder.create_block();
+        self.builder.set_cold_block(unwound);
+        let next = self.builder.create_block();
+        self.builder.ins().brif(status, unwound, &[], next, &[]);
+        self.builder.switch_to_block(unwound);
+        self.builder.seal_block(unwound);
+        let mut values = vec![status];
+        if let Some(ty) = self.plan.result {
+            values.push(
+                self.builder
+                    .ins()
+                    .iconst(Kind::of(ty).expect("planned").ir(), 0),
+            );
+        }
+        self.builder.ins().return_(&values);
+        self.builder.switch_to_block(next);
+        self.builder.seal_block(next);
+    }
+
+    /// An imported call: arguments go to the VM in a stack array, through
+    /// the context's callout.
+    fn callout(&mut self, pc: usize, instruction: WideInstruction) {
+        let Slot::Import(function) =
+            self.plan.states[pc].as_ref().expect("reachable")[usize::from(instruction.b())]
+        else {
+            unreachable!("planned imported calls read an import reference");
+        };
+        let signature = self
+            .analysis
+            .import_signature(function)
+            .expect("planned")
+            .clone();
+        let word = types::I64.bytes();
+        let words = signature.params.len() + 1;
+        let slot = self.builder.create_sized_stack_slot(ir::StackSlotData::new(
+            ir::StackSlotKind::ExplicitSlot,
+            word * words as u32,
+            word.trailing_zeros() as u8,
+        ));
+        let window = instruction.call_window();
+        for (offset, ty) in signature.params.iter().enumerate() {
+            let kind = Kind::of(*ty).expect("planned");
+            let value = self.read(window.base + offset as u16, kind);
+            let value = match kind {
+                Kind::I32 => self.builder.ins().uextend(types::I64, value),
+                Kind::I64 => value,
+            };
+            let address =
+                self.builder
+                    .ins()
+                    .stack_addr(types::I64, slot, (offset as u32 * word) as i32);
+            self.builder
+                .ins()
+                .store(MemFlagsData::trusted(), value, address, 0);
+        }
+        let result_offset = (signature.params.len() as u32 * word) as i32;
+        let args = self.builder.ins().stack_addr(types::I64, slot, 0);
+        let out = self
+            .builder
+            .ins()
+            .stack_addr(types::I64, slot, result_offset);
+        let callout_signature = match self.callout_signature {
+            Some(signature) => signature,
+            None => {
+                let mut callout = Signature::new(self.call_conv);
+                for _ in 0..4 {
+                    callout.params.push(AbiParam::new(types::I64));
+                }
+                callout.returns.push(AbiParam::new(types::I64));
+                let callout = self.builder.import_signature(callout);
+                self.callout_signature = Some(callout);
+                callout
+            }
+        };
+        let target = self.builder.ins().load(
+            types::I64,
+            MemFlagsData::trusted().with_readonly(),
+            self.context,
+            CONTEXT_CALLOUT,
+        );
+        let function = self.builder.ins().iconst(types::I64, i64::from(function));
+        let call = self.builder.ins().call_indirect(
+            callout_signature,
+            target,
+            &[self.context, function, args, out],
+        );
+        let status = self.builder.inst_results(call)[0];
+        self.propagate(status);
+        let destination = instruction.result_register();
+        match signature.results.first() {
+            Some(ty) => {
+                let kind = Kind::of(*ty).expect("planned");
+                let bits = self
+                    .builder
+                    .ins()
+                    .load(types::I64, MemFlagsData::trusted(), out, 0);
+                let value = match kind {
+                    Kind::I32 => self.builder.ins().ireduce(types::I32, bits),
+                    Kind::I64 => bits,
+                };
+                self.write(destination, kind, value);
+            }
+            None => self.write_constant(destination, Kind::I32, 0),
+        }
+    }
+
     fn jump(&mut self, target: usize) {
         let block = self.block(target);
         self.builder.ins().jump(block, &[]);
@@ -851,7 +1395,7 @@ impl<H: Host> Emitter<'_, '_, H> {
         if let Some(operator) = I32BinaryOperator::from_register_op(op) {
             let left = self.read(b, Kind::I32);
             let right = self.read(c, Kind::I32);
-            let value = self.i32_binary(operator, left, right);
+            let value = self.integer_binary(widen_binary(operator), left, right);
             self.write(a, Kind::I32, value);
             return true;
         }
@@ -861,31 +1405,36 @@ impl<H: Host> Emitter<'_, '_, H> {
                 .builder
                 .ins()
                 .iconst(types::I32, i64::from(instruction.imm() as i32));
-            let value = self.i32_binary(operator, left, right);
+            let value = self.integer_binary(widen_binary(operator), left, right);
             self.write(a, Kind::I32, value);
             return true;
         }
         if let Some(operator) = I32BinaryOperator::from_jump_op(op) {
             let left = self.read(a, Kind::I32);
             let right = self.read(b, Kind::I32);
-            let holds = self.i32_binary(operator, left, right);
+            let holds = self.integer_binary(widen_binary(operator), left, right);
             self.branch(holds, instruction.jump_target() as usize, pc + 1);
             return false;
         }
         if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
             let left = self.read(a, Kind::I32);
             let right = self.builder.ins().iconst(types::I32, i64::from(b as i16));
-            let holds = self.i32_binary(operator, left, right);
+            let holds = self.integer_binary(widen_binary(operator), left, right);
             self.branch(holds, instruction.jump_target() as usize, pc + 1);
             return false;
         }
         if let Some(load) = MemoryLoad::from_direct_op(op) {
-            let kind = load_kind(load).expect("planned");
+            let result = load_type(load).expect("planned");
+            let kind = Kind::of(result).expect("planned");
             let address = self.read(c, Kind::I32);
             let host = self.address(address, instruction.imm(), load.width());
             let flags = MemFlagsData::trusted().with_endianness(ir::Endianness::Little);
             let ty = kind.ir();
             let value = match (load.width(), load_signed(load)) {
+                // A float loads straight into its view.
+                _ if result != kind.integer() => {
+                    self.builder.ins().load(scalar_ir(result), flags, host, 0)
+                }
                 (1, false) => self.builder.ins().uload8(ty, flags, host, 0),
                 (1, true) => self.builder.ins().sload8(ty, flags, host, 0),
                 (2, false) => self.builder.ins().uload16(ty, flags, host, 0),
@@ -894,12 +1443,12 @@ impl<H: Host> Emitter<'_, '_, H> {
                 (4, true) if kind == Kind::I64 => self.builder.ins().sload32(flags, host, 0),
                 _ => self.builder.ins().load(ty, flags, host, 0),
             };
-            self.write(a, kind, value);
+            self.write_typed(a, result, value);
             return true;
         }
         if let Some(store) = MemoryStore::from_direct_op(op) {
             let kind = Kind::of(store.value_type()).expect("planned");
-            let value = self.read(a, kind);
+            let value = self.read_typed(a, store.value_type());
             let address = self.read(c, Kind::I32);
             let width = store_width(store);
             let host = self.address(address, instruction.imm(), width);
@@ -912,7 +1461,47 @@ impl<H: Host> Emitter<'_, '_, H> {
             };
             return true;
         }
+        if let Some((operator, ty)) = float_binary_operator(op, instruction.imm()) {
+            let left = self.read_typed(b, ty);
+            let right = self.read_typed(c, ty);
+            let value = self.float_binary(operator, left, right);
+            let result = if self.builder.func.dfg.value_type(value) == types::I32 {
+                crate::WasmType::I32
+            } else {
+                ty
+            };
+            self.write_typed(a, result, value);
+            return true;
+        }
+        if let Some((operator, ty)) = float_unary_operator(op, instruction.imm()) {
+            let input = self.read_typed(b, ty);
+            let value = self.float_unary(operator, input);
+            self.write_typed(a, ty, value);
+            return true;
+        }
         match op {
+            Op::WasmI64Binary => {
+                let operator = I64BinaryOperator::from_tag(instruction.imm()).expect("planned");
+                let left = self.read(b, Kind::I64);
+                let right = self.read(c, Kind::I64);
+                let value = self.integer_binary(operator, left, right);
+                let kind = Kind::of_ir(self.builder.func.dfg.value_type(value));
+                self.write(a, kind, value);
+            }
+            Op::WasmI64Unary => {
+                let operator = I64UnaryOperator::from_tag(instruction.imm()).expect("planned");
+                let input = self.read(b, Kind::I64);
+                let value = self.integer_unary(operator, input);
+                let kind = Kind::of_ir(self.builder.func.dfg.value_type(value));
+                self.write(a, kind, value);
+            }
+            Op::WasmScalarConvert => {
+                let operator =
+                    ScalarConversionOperator::from_tag(instruction.imm()).expect("planned");
+                let input = self.read_typed(b, operator.source_type());
+                let value = self.convert(operator, input);
+                self.write_typed(a, operator.result_type(), value);
+            }
             Op::Move => {
                 let kind = self.kind_at(pc, b);
                 let value = self.read(b, kind);
@@ -925,31 +1514,31 @@ impl<H: Host> Emitter<'_, '_, H> {
                     .expect("planned");
                 let kind = self.analysis.constant_kind(constant);
                 let bits = self.analysis.constant_bits(constant);
-                let value = self.builder.ins().iconst(kind.ir(), bits);
                 if op == Op::LoadConst {
-                    self.write(a, kind, value);
+                    self.write_constant(a, kind, bits);
                 } else {
                     let window = instruction.register_window();
                     for offset in 0..window.count {
-                        self.write(window.base + offset, kind, value);
+                        self.write_constant(window.base + offset, kind, bits);
                     }
                 }
             }
             Op::WasmI32Unary => {
                 let operator = I32UnaryOperator::from_tag(instruction.imm()).expect("planned");
                 let input = self.read(b, Kind::I32);
-                let value = self.i32_unary(operator, input);
+                let value = self.integer_unary(widen_unary(operator), input);
                 self.write(a, Kind::I32, value);
             }
             Op::WasmI32ShiftRightUnsignedAndImmediate => {
                 let input = self.read(b, Kind::I32);
                 let shift = self.builder.ins().iconst(types::I32, i64::from(c as i16));
-                let shifted = self.i32_binary(I32BinaryOperator::ShiftRightUnsigned, input, shift);
+                let shifted =
+                    self.integer_binary(I64BinaryOperator::ShiftRightUnsigned, input, shift);
                 let mask = self
                     .builder
                     .ins()
                     .iconst(types::I32, i64::from(instruction.imm() as i32));
-                let value = self.i32_binary(I32BinaryOperator::And, shifted, mask);
+                let value = self.integer_binary(I64BinaryOperator::And, shifted, mask);
                 self.write(a, Kind::I32, value);
             }
             Op::WasmI32AddImmediateJumpNonZero => {
@@ -1015,8 +1604,10 @@ impl<H: Host> Emitter<'_, '_, H> {
                     let kind = Kind::of(*ty).expect("planned");
                     args.push(self.read(window.base + offset as u16, kind));
                 }
-                let signature = match self.signatures[callee] {
-                    Some(signature) => signature,
+                // Compiled functions share one code buffer: a direct call,
+                // linked at placement (`link`).
+                let target = match self.callees[callee] {
+                    Some(target) => target,
                     None => {
                         let signature = internal_signature(
                             &callee_plan.params,
@@ -1024,42 +1615,23 @@ impl<H: Host> Emitter<'_, '_, H> {
                             self.call_conv,
                         );
                         let signature = self.builder.import_signature(signature);
-                        self.signatures[callee] = Some(signature);
-                        signature
+                        let name = self
+                            .builder
+                            .func
+                            .declare_imported_user_function(function_name(callee));
+                        let target = self.builder.import_function(ir::ExtFuncData {
+                            name: ir::ExternalName::User(name),
+                            signature,
+                            colocated: true,
+                            patchable: false,
+                        });
+                        self.callees[callee] = Some(target);
+                        target
                     }
                 };
-                let table = self.builder.ins().load(
-                    types::I64,
-                    MemFlagsData::trusted(),
-                    self.context,
-                    CONTEXT_TABLE,
-                );
-                let target = self.builder.ins().load(
-                    types::I64,
-                    MemFlagsData::trusted().with_readonly(),
-                    table,
-                    (callee * 8) as i32,
-                );
-                let call = self.builder.ins().call_indirect(signature, target, &args);
+                let call = self.builder.ins().call(target, &args);
                 let results = self.builder.inst_results(call).to_vec();
-                // A trap in the callee unwinds this activation too.
-                let trapped = self.builder.create_block();
-                self.builder.set_cold_block(trapped);
-                let next = self.builder.create_block();
-                self.builder.ins().brif(results[0], trapped, &[], next, &[]);
-                self.builder.switch_to_block(trapped);
-                self.builder.seal_block(trapped);
-                let mut values = vec![results[0]];
-                if let Some(ty) = self.plan.result {
-                    values.push(
-                        self.builder
-                            .ins()
-                            .iconst(Kind::of(ty).expect("planned").ir(), 0),
-                    );
-                }
-                self.builder.ins().return_(&values);
-                self.builder.switch_to_block(next);
-                self.builder.seal_block(next);
+                self.propagate(results[0]);
                 let destination = instruction.result_register();
                 match callee_plan.result {
                     Some(ty) => self.write(destination, Kind::of(ty).expect("planned"), results[1]),
@@ -1069,6 +1641,8 @@ impl<H: Host> Emitter<'_, '_, H> {
                     }
                 }
             }
+            Op::WasmRefFunc => {}
+            Op::Call => self.callout(pc, instruction),
             Op::Return => {
                 let status = self.builder.ins().iconst(types::I64, 0);
                 let mut values = vec![status];
@@ -1084,10 +1658,12 @@ impl<H: Host> Emitter<'_, '_, H> {
             Op::WasmGlobalGet => {
                 let slot = self.binding_slot(pc, b);
                 let address = self.global_address(slot);
-                let value = self
-                    .builder
-                    .ins()
-                    .load(types::I32, MemFlagsData::trusted().with_endianness(ir::Endianness::Little), address, 0);
+                let value = self.builder.ins().load(
+                    types::I32,
+                    MemFlagsData::trusted().with_endianness(ir::Endianness::Little),
+                    address,
+                    0,
+                );
                 self.write(a, Kind::I32, value);
             }
             Op::WasmGlobalSet => {
@@ -1108,31 +1684,26 @@ impl<H: Host> Emitter<'_, '_, H> {
 
 impl<H: Host> Analysis<'_, H> {
     /// Compile `index` with `plan`; `None` when Cranelift refuses it or its
-    /// code needs relocation.
+    /// code needs a relocation other than a call to a compiled function.
     fn compile_function(
         &self,
         isa: &dyn cranelift_codegen::isa::TargetIsa,
         index: usize,
+        plan: &Plan,
         plans: &[Option<Plan>],
         guarded: bool,
         globals: &[u32],
-    ) -> Option<Vec<u8>> {
-        let plan = plans[index].as_ref()?;
+    ) -> Option<(Vec<u8>, Vec<Call>)> {
         let function = &self.code.functions[index];
         let call_conv = isa.default_call_conv();
         let mut func = ir::Function::with_name_signature(
-            UserFuncName::user(0, index as u32),
+            UserFuncName::User(function_name(index)),
             internal_signature(&plan.params, plan.result, call_conv),
         );
         let mut builder_context = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
-        let variables: Vec<[Variable; 2]> = (0..function.registers)
-            .map(|_| {
-                [
-                    builder.declare_var(types::I32),
-                    builder.declare_var(types::I64),
-                ]
-            })
+        let variables: Vec<[Variable; VIEW_TYPES.len()]> = (0..function.registers)
+            .map(|_| VIEW_TYPES.map(|ty| builder.declare_var(scalar_ir(ty))))
             .collect();
         let entry = builder.create_block();
         builder.append_block_params_for_function_params(entry);
@@ -1152,16 +1723,15 @@ impl<H: Host> Analysis<'_, H> {
             base,
             length,
             trap_blocks: [None; TRAPS.len()],
-            signatures: vec![None; plans.len()],
+            callees: vec![None; plans.len()],
+            callout_signature: None,
             plans,
             call_conv,
         };
         // Registers start at i32 zero, as an activation's register file does.
-        let zero32 = emitter.builder.ins().iconst(types::I32, 0);
-        let zero64 = emitter.builder.ins().iconst(types::I64, 0);
         for register in 0..function.registers {
-            emitter.write(register, Kind::I32, zero32);
-            emitter.write(register, Kind::I64, zero64);
+            emitter.write_constant(register, Kind::I32, 0);
+            emitter.write_constant(register, Kind::I64, 0);
         }
         let parameter_base = function.parameter_registers.expect("planned");
         for (offset, ty) in plan.params.iter().enumerate() {
@@ -1246,10 +1816,28 @@ impl<H: Host> Analysis<'_, H> {
                 &mut cranelift_codegen::control::ControlPlane::default(),
             )
             .ok()?;
-        if !compiled.buffer.relocs().is_empty() {
-            return None;
-        }
-        Some(compiled.code_buffer().to_vec())
+        let code = compiled.code_buffer().to_vec();
+        let relocations = compiled.buffer.relocs().to_vec();
+        let names = context.func.params.user_named_funcs();
+        let calls = relocations
+            .iter()
+            .map(|relocation| {
+                let cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(
+                    name,
+                )) = relocation.target
+                else {
+                    return None;
+                };
+                let name = names.get(name)?;
+                (name.namespace == FUNCTION_NAMESPACE).then_some(Call {
+                    offset: relocation.offset as usize,
+                    kind: relocation.kind,
+                    addend: relocation.addend,
+                    callee: name.index as usize,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some((code, calls))
     }
 
     /// The C entry of `index`: unpack arguments, call through the table and
@@ -1266,8 +1854,10 @@ impl<H: Host> Analysis<'_, H> {
             signature.params.push(AbiParam::new(types::I64));
         }
         signature.returns.push(AbiParam::new(types::I32));
-        let mut func =
-            ir::Function::with_name_signature(UserFuncName::user(1, index as u32), signature);
+        let mut func = ir::Function::with_name_signature(
+            UserFuncName::user(ENTRY_NAMESPACE, index as u32),
+            signature,
+        );
         let mut builder_context = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
         let block = builder.create_block();
@@ -1376,27 +1966,56 @@ unsafe impl Sync for GuardSupport {}
 #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const TRAMPOLINE_CODE: [u8; 50] = [
     0x55, // push rbp
-    0x48, 0x89, 0xe5, // mov rbp, rsp
+    0x48,
+    0x89,
+    0xe5, // mov rbp, rsp
     0x53, // push rbx
-    0x41, 0x54, // push r12
-    0x41, 0x55, // push r13
-    0x41, 0x56, // push r14
-    0x41, 0x57, // push r15
-    0x48, 0x83, 0xec, 0x08, // sub rsp, 8 (keeps the call aligned)
-    0x48, 0x89, 0x67, CONTEXT_ENTRY_STACK, // mov [rdi + entry_stack], rsp
-    0x41, 0xff, 0xd1, // call r9
+    0x41,
+    0x54, // push r12
+    0x41,
+    0x55, // push r13
+    0x41,
+    0x56, // push r14
+    0x41,
+    0x57, // push r15
+    0x48,
+    0x83,
+    0xec,
+    0x08, // sub rsp, 8 (keeps the call aligned)
+    0x48,
+    0x89,
+    0x67,
+    CONTEXT_ENTRY_STACK, // mov [rdi + entry_stack], rsp
+    0x41,
+    0xff,
+    0xd1, // call r9
     // RESUME (24):
-    0x48, 0x83, 0xc4, 0x08, // add rsp, 8
-    0x41, 0x5f, // pop r15
-    0x41, 0x5e, // pop r14
-    0x41, 0x5d, // pop r13
-    0x41, 0x5c, // pop r12
+    0x48,
+    0x83,
+    0xc4,
+    0x08, // add rsp, 8
+    0x41,
+    0x5f, // pop r15
+    0x41,
+    0x5e, // pop r14
+    0x41,
+    0x5d, // pop r13
+    0x41,
+    0x5c, // pop r12
     0x5b, // pop rbx
     0x5d, // pop rbp
     0xc3, // ret
     // LANDING (39):
-    0xb8, 0, 0, 0, 0, // mov eax, status (patched)
-    0xe9, 0, 0, 0, 0, // jmp RESUME (patched)
+    0xb8,
+    0,
+    0,
+    0,
+    0, // mov eax, status (patched)
+    0xe9,
+    0,
+    0,
+    0,
+    0,    // jmp RESUME (patched)
     0xcc, // int3
 ];
 
@@ -1501,6 +2120,57 @@ extern "C" fn guard_fault(signal: i32, info: *mut libc::siginfo_t, context: *mut
     }
 }
 
+/// The name namespace of compiled function bodies; their C entries use
+/// `ENTRY_NAMESPACE`.
+const FUNCTION_NAMESPACE: u32 = 0;
+const ENTRY_NAMESPACE: u32 = 1;
+
+fn function_name(index: usize) -> ir::UserExternalName {
+    ir::UserExternalName::new(FUNCTION_NAMESPACE, index as u32)
+}
+
+/// A direct call in a function body, linked once bodies are placed.
+struct Call {
+    /// The relocated field, from the start of the body.
+    offset: usize,
+    kind: cranelift_codegen::binemit::Reloc,
+    addend: i64,
+    callee: usize,
+}
+
+/// Point `call` in the body at `body` to the callee placed at `callee`; all
+/// are offsets in one buffer, so the relative displacement is final.
+fn link(bytes: &mut [u8], body: usize, call: &Call, callee: usize) -> Option<()> {
+    use cranelift_codegen::binemit::Reloc;
+    let site = body + call.offset;
+    let displacement = callee as i64 - site as i64 + call.addend;
+    match call.kind {
+        Reloc::X86CallPCRel4 => {
+            let field = i32::try_from(displacement).ok()?;
+            bytes
+                .get_mut(site..site + size_of::<i32>())?
+                .copy_from_slice(&field.to_le_bytes());
+        }
+        Reloc::Arm64Call => {
+            /// A BL immediate: a signed word displacement in the low bits.
+            const IMMEDIATE_BITS: u32 = 26;
+            const WORD_SHIFT: u32 = 2;
+            let words = displacement >> WORD_SHIFT;
+            let range = 1i64 << (IMMEDIATE_BITS - 1);
+            if displacement & ((1 << WORD_SHIFT) - 1) != 0 || !(-range..range).contains(&words) {
+                return None;
+            }
+            let field = bytes.get_mut(site..site + size_of::<u32>())?;
+            let mask = (1u32 << IMMEDIATE_BITS) - 1;
+            let instruction = u32::from_le_bytes(field.try_into().ok()?);
+            let instruction = (instruction & !mask) | (words as u32 & mask);
+            field.copy_from_slice(&instruction.to_le_bytes());
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
 /// Code alignment for each compiled function.
 const FUNCTION_ALIGNMENT: usize = 64;
 
@@ -1524,43 +2194,69 @@ impl<H: Host> Vm<H> {
         if code.kind != crate::bytecode::ProgramKind::Wasm {
             return None;
         }
-        let analysis = Analysis {
+        let mut analysis = Analysis {
             vm: self,
             program,
             code: &code,
             env,
+            callouts: true,
         };
         let count = code.functions.len();
         // The callable set is the greatest fixpoint: assume every function
         // compiles, drop those that cannot, until nothing changes.
-        let mut callable = vec![true; count];
+        let mut callable;
         let mut plans: Vec<Option<Plan>>;
         let mut memory_slot;
+        let mut guarded;
         loop {
-            memory_slot = None;
-            plans = (0..count)
-                .map(|index| {
-                    if callable[index] {
-                        analysis.plan(index, &callable, &mut memory_slot)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let next: Vec<bool> = plans.iter().map(Option::is_some).collect();
-            if next == callable {
+            callable = vec![true; count];
+            loop {
+                memory_slot = None;
+                plans = (0..count)
+                    .map(|index| {
+                        if callable[index] {
+                            analysis
+                                .plan(index, &callable, &mut memory_slot)
+                                .map(Plan::interface)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let next: Vec<bool> = plans.iter().map(Option::is_some).collect();
+                if next == callable {
+                    break;
+                }
+                callable = next;
+            }
+            // Accesses may rely on the guard when the memory has one and
+            // this host resumes guard faults.
+            guarded = guard_trampoline().is_some()
+                && memory_slot.is_some_and(|slot| {
+                    self.heap
+                        .environment_slot(env, slot as usize)
+                        .and_then(|binding| guarded_memory(self, binding))
+                        .is_some()
+                });
+            // Callouts need a memory whose bytes stay put.
+            if !analysis.callouts || guarded || memory_slot.is_none() {
                 break;
             }
-            callable = next;
+            analysis.callouts = false;
         }
         if plans.iter().all(Option::is_none) {
             return None;
         }
         let isa = target_isa()?;
+        // The full plan of a callable function, derived again where needed.
+        let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
         // The globals compiled code accesses, each once.
         let mut globals: Vec<u32> = Vec::new();
-        for (index, plan) in plans.iter().enumerate() {
-            let Some(plan) = plan else { continue };
+        for index in 0..count {
+            if plans[index].is_none() {
+                continue;
+            }
+            let plan = plan(index)?;
             let function = &code.functions[index];
             for (pc, packed) in function.code.iter().enumerate() {
                 let instruction = super::dispatch_fast::decoded_instruction(function, *packed);
@@ -1576,18 +2272,10 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        // Accesses may rely on the guard when the memory has one and this
-        // host resumes guard faults.
-        let guarded = guard_trampoline().is_some()
-            && memory_slot.is_some_and(|slot| {
-                self.heap
-                    .environment_slot(env, slot as usize)
-                    .and_then(|binding| guarded_memory(self, binding))
-                    .is_some()
-            });
         let mut bytes = Vec::new();
         let mut offsets = vec![None; count];
         let mut entries = vec![None; count];
+        let mut calls = Vec::new();
         let place = |bytes: &mut Vec<u8>, code: Vec<u8>| {
             bytes.resize(bytes.len().next_multiple_of(FUNCTION_ALIGNMENT), 0);
             let offset = bytes.len();
@@ -1598,10 +2286,22 @@ impl<H: Host> Vm<H> {
             if plans[index].is_none() {
                 continue;
             }
-            let body = analysis.compile_function(&*isa, index, &plans, guarded, &globals)?;
-            offsets[index] = Some(place(&mut bytes, body));
+            let (body, function_calls) = analysis.compile_function(
+                &*isa,
+                index,
+                &plan(index)?,
+                &plans,
+                guarded,
+                &globals,
+            )?;
+            let offset = place(&mut bytes, body);
+            offsets[index] = Some(offset);
+            calls.extend(function_calls.into_iter().map(|call| (offset, call)));
             let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?)?;
             entries[index] = Some(place(&mut bytes, entry));
+        }
+        for (offset, call) in calls {
+            link(&mut bytes, offset, &call, offsets[call.callee]?)?;
         }
         let memory = CodeMemory::new(&bytes)?;
         let base = memory.pointer as usize;
@@ -1724,11 +2424,14 @@ impl<H: Host> Vm<H> {
             stack_limit: stack_pointer.saturating_sub(COMPILED_STACK_BUDGET),
             table: compiled.table.as_ptr(),
             vm: (self as *mut Self).cast(),
-            env: env.to_bits(),
+            env,
             entry_stack: 0,
             guard_start,
             guard_end,
             globals: globals.as_ptr(),
+            callout: import_callout::<H> as Callout as usize,
+            program,
+            raised: None,
         };
         let mut out = 0u64;
         let status = match guard_trampoline() {
@@ -1757,6 +2460,12 @@ impl<H: Host> Vm<H> {
             // grows memory.
             None => unsafe { (function.entry)(&mut context, base, length, raw.as_ptr(), &mut out) },
         };
+        if i64::from(status) == RAISED_STATUS {
+            return match context.raised.take()? {
+                Raised::Error(error) => Some(Err(error)),
+                Raised::Panic(panic) => std::panic::resume_unwind(panic),
+            };
+        }
         if status != 0 {
             let trap = TRAPS[status as usize - 1];
             return Some(Err(JsError::wasm_trap_error(trap)));
@@ -1771,8 +2480,101 @@ impl<H: Host> Vm<H> {
     }
 }
 
+impl<H: Host> Vm<H> {
+    /// Call imported `function` of `program` in instance `env` with the Wasm
+    /// bits at `args`, storing its result's bits at `out`.
+    ///
+    /// # Safety
+    /// `args` holds a word per parameter of the import and `out` one word.
+    unsafe fn call_import(
+        &mut self,
+        program: ProgramId,
+        env: Value,
+        function: u32,
+        args: *const u64,
+        out: *mut u64,
+    ) -> Result<(), JsError> {
+        let code = self
+            .programs
+            .get(program)
+            .ok_or_else(|| JsError::validation("missing compiled Wasm program".into()))?;
+        let signature = self
+            .programs
+            .wasm_signatures(program)
+            .and_then(|signatures| signatures.get(function as usize))
+            .cloned()
+            .ok_or_else(|| JsError::validation("missing Wasm import signature".into()))?;
+        let active_program = std::mem::replace(&mut self.active_program, program);
+        let callee = self.wasm_function_reference(&code, function, env);
+        self.active_program = active_program;
+        let callee = callee?;
+        // Allocation never collects, so the encoded arguments stay live until
+        // the call roots them.
+        let mut values: smallvec::SmallVec<[Value; 8]> = smallvec::SmallVec::new();
+        for (offset, ty) in signature.params.iter().enumerate() {
+            // SAFETY: the caller passes a word per parameter.
+            let bits = unsafe { *args.add(offset) };
+            values.push(self.encode_wasm_value(crate::WasmValue::from_bits(*ty, bits)));
+        }
+        let receiver = self
+            .programs
+            .constant(program, VOID_RESULT_CONSTANT)
+            .ok_or_else(|| JsError::validation("missing Wasm void constant".into()))?;
+        let result = self.call_value(&code, callee, receiver, &values)?;
+        if let Some(ty) = signature.results.first() {
+            let bits = match self.decode_wasm_value(result, *ty)?.bits() {
+                Some(crate::wasm::ScalarBits::Bits32(bits)) => u64::from(bits),
+                Some(crate::wasm::ScalarBits::Bits64(bits)) => bits,
+                _ => return Err(JsError::validation("non-scalar Wasm import result".into())),
+            };
+            // SAFETY: the caller passes a result word.
+            unsafe { *out = bits };
+        }
+        Ok(())
+    }
+}
+
 /// The tag bits of an encoded i32, which a global's value carries.
 const INTEGER_TAG: u64 = crate::value::INTEGER_TAG_BITS;
 
 /// The constant a void Wasm function returns (see the Wasm lowering).
 const VOID_RESULT_CONSTANT: usize = 1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each i32 integer operator widens to its namesake, and each f32 float
+    /// operator to its f64 namesake.
+    #[test]
+    fn narrow_selectors_name_their_wide_namesakes() {
+        let mut tag = 0;
+        while let Some(operator) = I32BinaryOperator::from_tag(tag) {
+            assert_eq!(
+                format!("{operator:?}"),
+                format!("{:?}", widen_binary(operator))
+            );
+            tag += 1;
+        }
+        let mut tag = 0;
+        while let Some(operator) = I32UnaryOperator::from_tag(tag) {
+            assert_eq!(
+                format!("{operator:?}"),
+                format!("{:?}", widen_unary(operator))
+            );
+            tag += 1;
+        }
+        let mut tag = 0;
+        while let Some(operator) = F32BinaryOperator::from_tag(tag) {
+            let (wide, _) = float_binary_operator(Op::WasmF32Binary, tag).expect("f32 selector");
+            assert_eq!(format!("{operator:?}"), format!("{wide:?}"));
+            tag += 1;
+        }
+        let mut tag = 0;
+        while let Some(operator) = F32UnaryOperator::from_tag(tag) {
+            let (wide, _) = float_unary_operator(Op::WasmF32Unary, tag).expect("f32 selector");
+            assert_eq!(format!("{operator:?}"), format!("{wide:?}"));
+            tag += 1;
+        }
+    }
+}
