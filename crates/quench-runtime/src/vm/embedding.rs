@@ -48,6 +48,30 @@ impl<H: Host> Vm<H> {
         self.object_get_prototype_of(&program, value)
     }
 
+    pub(crate) fn embedding_weak_map_get(
+        &self,
+        map: RootId,
+        key: RootId,
+    ) -> Result<Value, JsError> {
+        let map = self.embedding_value(map)?;
+        let key = self.embedding_value(key)?;
+        let Some(Cell::WeakMap { entries, .. }) = self.heap.get(map) else {
+            return Err(JsError("WeakMap method receiver is not a WeakMap".into()));
+        };
+        Ok(entries.get(key).unwrap_or(Value::UNDEFINED))
+    }
+
+    pub(crate) fn embedding_own_descriptor(
+        &mut self,
+        root: RootId,
+        key: RootId,
+    ) -> Result<Value, JsError> {
+        let value = self.embedding_value(root)?;
+        let key = self.embedding_value(key)?;
+        let program = self.embedding_program()?;
+        self.object_get_own_property_descriptor(&program, &[value, key])
+    }
+
     pub(crate) fn embedding_enumerable_own_keys(
         &mut self,
         root: RootId,
