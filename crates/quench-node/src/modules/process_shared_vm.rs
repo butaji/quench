@@ -153,8 +153,19 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         .parent()
         .map(|parent| parent.join(if cfg!(windows) { "quench-node.exe" } else { "quench-node" }))
         .filter(|path| path.is_file())
-        .unwrap_or(executable);
+        .unwrap_or_else(|| executable.clone());
     set_text(context, process, "execPath", &node_executable.to_string_lossy())?;
+    let host_argv0 = std::env::args_os().next().map(std::path::PathBuf::from);
+    let argv0_is_runtime = host_argv0
+        .as_deref()
+        .and_then(|argv0| std::fs::canonicalize(argv0).ok())
+        .is_some_and(|argv0| argv0 == executable);
+    let argv0 = if argv0_is_runtime {
+        node_executable.clone()
+    } else {
+        host_argv0.unwrap_or_else(|| node_executable.clone())
+    };
+    set_text(context, process, "argv0", &argv0.to_string_lossy())?;
     let pid = context.number(std::process::id() as f64);
     install(context, process, "pid", pid)?;
     #[cfg(unix)]
@@ -1791,6 +1802,9 @@ fn drain_checkpoint(
     loop {
         drain_shared_jobs(runtime, program, &shared_state)?;
 
+        if crate::modules::child_process_shared_vm::poll(runtime, program, &shared_state)? {
+            continue;
+        }
         if crate::modules::fetch_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
         }
@@ -1835,7 +1849,8 @@ fn drain_checkpoint(
             let next_timer = shared_state.borrow().scheduler.next_shared_timer_due();
             if has_referenced_shared_work(&shared_state) {
                 let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
-                    .min(crate::modules::net_shared_vm::poll_interval());
+                    .min(crate::modules::net_shared_vm::poll_interval())
+                    .min(crate::modules::child_process_shared_vm::poll_interval());
                 let wait = next_timer
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
@@ -1883,7 +1898,8 @@ fn drain_checkpoint(
             let next_timer = shared_state.borrow().scheduler.next_shared_timer_due();
             if has_referenced_shared_work(&shared_state) {
                 let poll_interval = crate::modules::fetch_shared_vm::poll_interval()
-                    .min(crate::modules::net_shared_vm::poll_interval());
+                    .min(crate::modules::net_shared_vm::poll_interval())
+                    .min(crate::modules::child_process_shared_vm::poll_interval());
                 let wait = next_timer
                     .map(|due| due.saturating_duration_since(std::time::Instant::now()))
                     .map_or(poll_interval, |delay| delay.min(poll_interval));
@@ -1901,6 +1917,7 @@ fn drain_checkpoint(
 
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
     crate::modules::fetch_shared_vm::has_pending(shared_state)
+        || crate::modules::child_process_shared_vm::has_pending(shared_state)
         || crate::modules::http_shared_vm::has_work(shared_state)
         || !shared_state.borrow().net_sockets.is_empty()
         || !shared_state.borrow().net_servers.is_empty()

@@ -51,6 +51,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) tcp: crate::modules::net_shared_vm::Transport,
     pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
     pub(crate) net_servers: std::collections::HashMap<u64, NetServer>,
+    pub(crate) child_processes:
+        std::collections::HashMap<u64, SharedChildProcess>,
     pub(crate) net_socket_constructor: Option<quench_runtime::RootId>,
 }
 
@@ -67,6 +69,25 @@ pub(crate) struct NetServer {
     pub(crate) connections: std::collections::HashSet<u64>,
     pub(crate) closing: bool,
     pub(crate) listening_pending: bool,
+}
+
+pub(crate) struct SharedChildProcess {
+    pub(crate) child: Option<quench_runtime::RootId>,
+    pub(crate) stdout: Option<quench_runtime::RootId>,
+    pub(crate) stderr: Option<quench_runtime::RootId>,
+    pub(crate) stdin: std::sync::Arc<std::sync::Mutex<Option<std::process::ChildStdin>>>,
+    pub(crate) events: std::sync::mpsc::Receiver<ChildProcessEvent>,
+    pub(crate) stdout_ended: bool,
+    pub(crate) stderr_ended: bool,
+    pub(crate) exit: Option<(Option<i32>, Option<String>)>,
+}
+
+pub(crate) enum ChildProcessEvent {
+    Stdout(Vec<u8>),
+    Stderr(Vec<u8>),
+    StdoutEnd,
+    StderrEnd,
+    Exit(Option<i32>, Option<String>),
 }
 
 impl SharedNodeState {
@@ -106,6 +127,7 @@ impl SharedNodeState {
             tcp: crate::modules::net_shared_vm::Transport::new(),
             net_sockets: std::collections::HashMap::new(),
             net_servers: std::collections::HashMap::new(),
+            child_processes: std::collections::HashMap::new(),
             net_socket_constructor: None,
         }
     }
