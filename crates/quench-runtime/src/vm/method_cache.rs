@@ -11,6 +11,13 @@ impl<H: Host> Vm<H> {
         self.snapshot_method_caches(_reason);
         self.method_caches.fill([EMPTY_METHOD_CACHE; 2]);
         self.megamorphic_methods.clear();
+        self.method_cache_atoms = 0;
+    }
+
+    /// Whether any method cache may name `atom`; `false` proves that none does.
+    #[inline(always)]
+    pub(super) fn method_caches_may_name(&self, atom: Atom) -> bool {
+        self.method_cache_atoms & method_cache_atom_bit(atom) != 0
     }
 
     pub(super) fn invalidate_method_caches_for_atom(&mut self, atom: Atom) {
@@ -178,6 +185,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn record_method_cache(&mut self, site: usize, cache: MethodCache) {
+        self.method_cache_atoms |= method_cache_atom_bit(cache.atom);
         if let Some(set) = self
             .megamorphic_methods
             .iter_mut()
@@ -474,4 +482,10 @@ impl<H: Host> Vm<H> {
         }
         self.call_value_with_target_from_frame(p, callee, this, arguments.as_slice(), None)
     }
+}
+
+/// The `method_cache_atoms` filter bit for `atom`.
+#[inline(always)]
+fn method_cache_atom_bit(atom: Atom) -> u64 {
+    1 << (atom % u64::BITS)
 }
