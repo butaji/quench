@@ -60,6 +60,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) process_control: crate::modules::process_state::ProcessControl,
     pub(crate) process_signals: crate::modules::process_signals_state::SignalState,
     pub(crate) stdin: crate::modules::process_stdin_shared_vm::State,
+    pub(crate) zlib_streams: crate::modules::zlib_stream_shared_vm::State,
+    pub(crate) stream_high_water_marks: crate::modules::stream_state::HighWaterMarks,
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
     pub(crate) output: Option<NodeOutputSink>,
     pub(crate) net_auto_select_family_attempt_timeout: u64,
@@ -140,6 +142,8 @@ impl SharedNodeState {
             process_control,
             process_signals: crate::modules::process_signals_state::SignalState::default(),
             stdin: crate::modules::process_stdin_shared_vm::State::default(),
+            zlib_streams: crate::modules::zlib_stream_shared_vm::State::default(),
+            stream_high_water_marks: crate::modules::stream_state::HighWaterMarks::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
             output: None,
             net_auto_select_family_attempt_timeout:

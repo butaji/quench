@@ -267,7 +267,7 @@
     const objectMode = side === "readable"
       ? options.objectMode || options.readableObjectMode
       : options.objectMode || options.writableObjectMode;
-    return objectMode ? 16 : 16384;
+    return deps.getDefaultHighWaterMark(objectMode);
   }
 
   function growReadableHwm(state, size) {

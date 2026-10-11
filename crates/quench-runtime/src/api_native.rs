@@ -5,6 +5,11 @@ use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
 
+/// Private weak host reference, pruned by the core collector before slot reuse.
+/// Its persistent root must be released when the host resource is discarded.
+#[derive(Clone, Copy, Debug)]
+pub struct HostWeakRoot(pub(super) RootId);
+
 /// Iterator and cached next method, owned by its NativeContext's live roots.
 pub struct RootedIterator {
     iterator: RootId,
@@ -494,6 +499,32 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     pub fn rooted_value(&self, root: RootId) -> Option<Value> {
         self.vm.root_value(root)
+    }
+
+    /// Copy native bytes into an intrinsic Uint8Array with its own fixed backing.
+    /// No guest constructor, iterator, or indexed property hook is invoked.
+    pub fn uint8_array_rooted(&mut self, bytes: &[u8]) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_uint8_array(bytes);
+        self.completion(result)
+    }
+
+    /// Retain a private weak reference without ECMAScript kept-object effects.
+    pub fn host_weak_root(&mut self, target: RootId) -> Result<HostWeakRoot, RootedError> {
+        self.vm
+            .embedding_host_weak_root(target)
+            .map(HostWeakRoot)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Resolve a host weak reference into this callback's temporary root scope.
+    pub fn resolve_host_weak_root(&mut self, reference: HostWeakRoot) -> Option<RootId> {
+        self.vm
+            .embedding_host_weak_value(reference.0)
+            .map(|value| self.scoped_value(value))
+    }
+
+    pub fn release_host_weak_root(&mut self, reference: HostWeakRoot) -> bool {
+        self.vm.release_root(reference.0)
     }
 
     /// Copy the raw bytes from a typed array or DataView without per-index guest property reads.

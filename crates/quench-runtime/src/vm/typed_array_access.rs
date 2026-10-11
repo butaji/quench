@@ -6,6 +6,29 @@ pub(super) enum TypedArrayElement {
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_uint8_array(&mut self, bytes: &[u8]) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        let buffer = self.new_fixed_array_buffer(&program, bytes.len(), false)?;
+        let buffer_root = self.heap.root(buffer);
+        if let Some(Cell::ArrayBuffer { bytes: backing, .. }) = self.heap.get_mut(buffer) {
+            Rc::make_mut(backing).copy_from_slice(bytes);
+        } else {
+            unreachable!("fixed ArrayBuffer allocation");
+        }
+        let view = self.heap.alloc(Cell::TypedArray {
+            kind: TypedArrayKind::Uint8,
+            object: Box::new(Self::empty_object(
+                self.typed_array_proto(TypedArrayKind::Uint8),
+            )),
+            buffer: self.heap.root_value(buffer_root).unwrap(),
+            offset: 0,
+            length: bytes.len(),
+            length_tracking: false,
+        });
+        self.heap.release_root(buffer_root);
+        Ok(view)
+    }
+
     pub(crate) fn embedding_view_bytes(&self, value: Value) -> Option<Vec<u8>> {
         let (buffer, offset, byte_length) = match self.heap.get(value)? {
             Cell::TypedArray {
