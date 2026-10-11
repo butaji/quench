@@ -1,6 +1,6 @@
 use super::Slot;
 
-const SLOTS_PER_SLAB: usize = 2_048;
+pub(super) const SLOTS_PER_SLAB: usize = 2_048;
 
 #[derive(Default)]
 pub(super) struct SlotArena {
