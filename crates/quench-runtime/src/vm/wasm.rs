@@ -1270,7 +1270,7 @@ impl<H: Host> Vm<H> {
     fn register_wasm_program(&mut self, module: &crate::WasmModule) -> Result<ProgramId, JsError> {
         let program = &module.program;
         if self.programs.len() == 0 {
-            self.initialize_shared(program)?;
+            self.initialize_shared(program, super::builtins::RealmScope::Core)?;
         }
         let id = if let Some(id) = self.programs.find_shared(program) {
             id
