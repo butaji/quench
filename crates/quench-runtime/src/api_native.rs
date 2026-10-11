@@ -5,6 +5,12 @@ use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
 
+/// Iterator and cached next method, owned by its NativeContext's live roots.
+pub struct RootedIterator {
+    iterator: RootId,
+    next: RootId,
+}
+
 /// Builtin internal-slot brands, independent of prototypes and guest property hooks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BuiltinBrand {
@@ -286,6 +292,43 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub fn to_string(&mut self, root: RootId) -> Result<String, RootedError> {
         let result = self.vm.embedding_to_string(root);
         result.map_err(|error| self.error(error))
+    }
+
+    /// Apply the shared greater-than operation, including string/BigInt
+    /// comparison and ordinary guest primitive-conversion hooks.
+    pub fn greater_than_rooted(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_greater_than(left, right);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Acquire the shared VM iterator protocol and cache its next method once.
+    pub fn iterator_rooted(&mut self, source: RootId) -> Result<RootedIterator, RootedError> {
+        let result = self.vm.embedding_iterator_record(source);
+        let (iterator, next) = result.map_err(|error| self.error(error))?;
+        self.roots.extend([iterator, next]);
+        Ok(RootedIterator { iterator, next })
+    }
+
+    pub fn iterator_step_rooted(
+        &mut self,
+        iterator: &RootedIterator,
+    ) -> Result<Option<RootId>, RootedError> {
+        let result = self
+            .vm
+            .embedding_iterator_step(iterator.iterator, iterator.next);
+        let value = result.map_err(|error| self.error(error))?;
+        Ok(value.map(|value| self.scoped_value(value)))
+    }
+
+    pub fn iterator_close_rooted(&mut self, iterator: &RootedIterator) -> Result<(), RootedError> {
+        let result = self.vm.embedding_iterator_close(iterator.iterator);
+        let value = self.completion(result)?;
+        self.release_root(value);
+        Ok(())
     }
 
     /// Apply ToBoolean without invoking guest coercion hooks.

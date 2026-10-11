@@ -781,6 +781,50 @@ check(a,e);console.log(JSON.stringify(events));
 }
 
 #[test]
+fn util_styles_match_node_ansi_aliases_cache_and_iterator_protocol() {
+    let source = r#"const util=require('util');const colors=util.inspect.colors;
+function print(format,text,options){try{console.log(JSON.stringify(util.styleText(format,text,options)))}catch(error){console.log(error.name,error.code,error.message)}}
+for(const format of Object.getOwnPropertyNames(colors))print(format,'text',{validateStream:false});
+for(const format of ['#fc0','#AAbbCc','#xyz','invalid',null,undefined])print(format,'text',{validateStream:false});
+print(['bold','red'],'A'+util.styleText('blue','B',{validateStream:false})+'C',{validateStream:false});
+print('dim',util.styleText('bold','bold',{validateStream:false})+'dim',{validateStream:false});
+print('red','\ud800',{validateStream:false});
+print('red','text',{validateStream:0});print(['red'],'text',{validateStream:0});
+print('red','text',{stream:{}});
+const alias=Object.getOwnPropertyDescriptor(colors,'grey');console.log(alias.enumerable,alias.configurable,alias.get.name,alias.set.name,colors.grey===colors.gray);
+colors.red=[99,39];print('red','cached',{validateStream:false});print(['red'],'live',{validateStream:false});
+const events=[];const formats=['unused'];formats[Symbol.iterator]=()=>({get next(){events.push('next getter');let n=0;return()=>{events.push('next');return n++?{done:true}:{done:false,value:'blue'}}}});
+print(formats,'iterator',{validateStream:false});console.log(JSON.stringify(events));
+const failing=['unused'];failing[Symbol.iterator]=()=>({next(){return {done:false,value:'invalid'}},return(){console.log('closed iterator');return {}}});print(failing,'text',{validateStream:false});
+const stream={write(){},on(){},isTTY:true,getColorDepth(){return {valueOf(){return 4}}}};print('red','stream',{stream});
+stream.getColorDepth=()=>3n;print('red','bigint depth',{stream});
+console.log(typeof process.stdout.on,process.stdout instanceof require('events').EventEmitter);
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
 fn system_error_names_and_validation_match_node() {
     let source = r#"const {getSystemErrorName}=require('util');
 const numbers=[...Array.from({length:140},(_,i)=>-i-1),...Array.from({length:16},(_,i)=>-3000-i),-4094,-4095,-99999];
