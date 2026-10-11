@@ -63,6 +63,7 @@ impl<H: Host> Vm<H> {
             temporal_plain_year_month_proto: Value::NULL,
             natives: vec![],
             frames: vec![],
+            native_stack_frames: vec![],
             frame_pool: vec![],
             active_call_roots: vec![],
             with_stack: vec![],
