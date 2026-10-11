@@ -598,7 +598,7 @@ impl<H: Host> Vm<H> {
             )
         )
     }
-    #[inline(never)]
+    #[inline(always)]
     pub(super) fn get_field_cached(
         &mut self,
         p: &ResidualProgram,
@@ -1314,7 +1314,47 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    #[inline(always)]
     pub(super) fn set_field_cached(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+        strict: bool,
+    ) -> Result<(), JsError> {
+        // An own-data store that no method cache can observe is dispatched in place; adds,
+        // method-observable stores and misses continue out of line.
+        if self.specialized
+            && p.specialized
+            && !self.method_caches_may_name(atom)
+            && let Some(Cell::Object(data)) = self.heap.get(object)
+            && !data.is_module_namespace()
+            && !data.is_arguments_object()
+        {
+            let index = self.field_cache_index(site);
+            let shape = data.shape();
+            // SAFETY: the active program's layout reserves every compiler-emitted site.
+            let cache = unsafe { *self.field_caches.get_unchecked(index) };
+            let slot = if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
+                Some(cache.slot)
+            } else {
+                self.inline_megamorphic_field_slot(index, shape)
+            };
+            if let Some(slot) = slot {
+                // SAFETY: a matching immutable shape proves the cached slot layout.
+                unsafe { self.heap.property_set_unchecked(object, slot as usize, value) };
+                self.profile.field_cache_hit(0, 0);
+                return Ok(());
+            }
+        }
+        self.set_field_polymorphic(p, object, atom, value, site, strict)
+    }
+
+    /// `set_field_cached` past the inline own-data store hits.
+    #[inline(never)]
+    fn set_field_polymorphic(
         &mut self,
         p: &ResidualProgram,
         object: Value,
