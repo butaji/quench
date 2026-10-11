@@ -7,8 +7,7 @@ use std::path::{Component, Path, PathBuf};
 
 const URL_CONSTRUCTOR_SOURCE: &str = "(class Url {})";
 const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(parse, URLSearchParams) => {
-  const state = new WeakMap();
+    r#"(parse, URLSearchParams, state) => {
   const fields = [
     "href", "origin", "protocol", "username", "password", "host",
     "hostname", "port", "pathname", "search", "hash",
@@ -789,10 +788,23 @@ fn url_constructor(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, 
     let search_params = url_search_params_constructor(context)?;
     let factory = context.evaluate_script_rooted(WHATWG_URL_FACTORY, "node:url/whatwg.js")?;
     let undefined = context.undefined();
-    let constructor = context.call_rooted(factory, undefined, &[parser, search_params])?;
+    let state = context.evaluate_script_rooted("new WeakMap()", "node:url/state")?;
+    let constructor = context.call_rooted(factory, undefined, &[parser, search_params, state])?;
+    let retained_state = context.retain(state)?;
+    roots.borrow_mut().url_state = Some(retained_state);
     let retained = context.retain(constructor)?;
     roots.borrow_mut().url_constructor = Some(retained);
     Ok(constructor)
+}
+
+pub(crate) fn comparison_href(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<Option<RootId>, RootedError> {
+    let state = context.host_mut().shared_state().borrow().url_state;
+    let Some(state) = state else { return Ok(None); };
+    let data = context.weak_map_get_rooted(state, value)?;
+    let undefined = context.undefined();
+    if context.same_value_rooted(data, undefined)? { return Ok(None); }
+    let key = context.string_rooted("href");
+    context.get_property_rooted(value, key).map(Some)
 }
 
 pub(crate) fn parse(
