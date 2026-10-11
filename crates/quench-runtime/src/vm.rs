@@ -519,7 +519,7 @@ pub(super) enum StepResult {
     TailCall,
     PushFrame {
         destination: Register,
-        stack_guard: crate::stack::StackGuard,
+        call_guard: crate::stack::GuestCallGuard,
         /// For `new`: the allocated receiver, the result unless the callee returns an object.
         construct_this: Option<Value>,
     },
@@ -555,7 +555,7 @@ pub(super) enum FrameOutcome {
 }
 enum UserFrameStart {
     Outcome(FrameOutcome),
-    Pushed(crate::stack::StackGuard),
+    Pushed(crate::stack::GuestCallGuard),
 }
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
