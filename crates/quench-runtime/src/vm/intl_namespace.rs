@@ -675,10 +675,10 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .map(|value| self.heap.alloc(Cell::String(value.into())))
             .collect::<Vec<_>>();
-        self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-            elements: Rc::new(elements),
-        })
+        self.heap.alloc(Cell::array(
+            self.array_prototype_for_realm(self.realm.globals),
+            Rc::new(elements),
+        ))
     }
 
     fn intl_supported_values_of(

@@ -248,10 +248,10 @@ impl<H: Host> Vm<H> {
     pub(crate) fn create_embedding_array(&mut self, values: &[RootId]) -> Result<Value, JsError> {
         self.embedding_program()?;
         let elements = self.embedding_arguments(values)?;
-        Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(elements),
-        }))
+        Ok(self.heap.alloc(Cell::array(
+            self.array_proto,
+            Rc::new(elements),
+        )))
     }
 
     pub(crate) fn create_embedding_exception(
