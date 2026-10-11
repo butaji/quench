@@ -108,6 +108,7 @@ fn execute_shared_on_worker(
             exec_argv,
             goal,
         } => {
+            let path = crate::host::shared_vm::commonjs::entry_path(&path)?;
             let kind = match goal {
                 EntryGoal::Node => NodeHost::source_kind(&path)?,
                 EntryGoal::CommonJs => SourceKind::Script,

@@ -208,12 +208,7 @@ fn invalid(
     Ok(context.throw(error))
 }
 
-/// A duplex IPC endpoint stays owned by the parent until the child is reaped.
-/// Its peer is mapped to the requested child descriptor before exec.
-pub(crate) struct IpcChannel {
-    #[cfg(unix)]
-    pub(crate) socket: std::os::unix::net::UnixStream,
-}
+use super::child_process_ipc_shared_vm::IpcChannel;
 
 pub(crate) fn configure(
     command: &mut std::process::Command,
@@ -271,6 +266,25 @@ fn ipc_channel(
         unix::{net::UnixStream, process::CommandExt},
     };
     let (parent, child) = UnixStream::pair()?;
+    // Match libuv's spawned pipe endpoints, including the Linux kernel's
+    // doubling of these requested socket buffer capacities.
+    const SPAWN_PIPE_SOCKET_BUFFER_BYTES: libc::c_int = 64 * 1024;
+    for socket in [&parent, &child] {
+        for option in [libc::SO_RCVBUF, libc::SO_SNDBUF] {
+            let result = unsafe {
+                libc::setsockopt(
+                    socket.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    option,
+                    (&SPAWN_PIPE_SOCKET_BUFFER_BYTES as *const libc::c_int).cast(),
+                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                )
+            };
+            if result != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+    }
     parent.set_nonblocking(true)?;
     if index < STANDARD_CHANNELS {
         let descriptor: OwnedFd = child.into();
@@ -309,7 +323,7 @@ fn ipc_channel(
             });
         }
     }
-    Ok(IpcChannel { socket: parent })
+    Ok(IpcChannel::new(parent))
 }
 
 #[cfg(not(unix))]
@@ -318,11 +332,4 @@ fn ipc_channel(_: &mut std::process::Command, _: usize, _: usize) -> std::io::Re
         std::io::ErrorKind::Unsupported,
         "IPC channels are unavailable on this platform",
     ))
-}
-
-impl Drop for IpcChannel {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        let _ = self.socket.shutdown(std::net::Shutdown::Both);
-    }
 }

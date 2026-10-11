@@ -16,7 +16,7 @@ use std::time::Duration;
 static NEXT_CHILD_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs) => {
+    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan) => {
     const { EventEmitter } = globalThis.process.getBuiltinModule("events");
     class ChildProcess extends EventEmitter {
       constructor(file, args, started, options) {
@@ -261,10 +261,10 @@ const FACTORY: &str = quench_js_check::checked_js!(
     }
     return [args, options, callback];
   };
-  const fork = (file, args, options) => {
-    [args, options] = parseFileArguments(args, options);
-    return spawn(globalThis.process.execPath, [file, ...args], options);
-  };
+  function fork(modulePath, args = [], options) {
+    const plan = forkPlan(modulePath, args, options);
+    return spawn(plan.file, plan.args, plan.options);
+  }
   const synchronousCommand = (command, args, options, useShell) => {
     const result = spawnSyncFunction(command, args, { ...(options || {}), shell: useShell });
     const encoding = options?.encoding;
@@ -303,10 +303,24 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let register = context.host_function(crate::host::shared_vm::operation("childProcessRegister"))?;
     let write = context.host_function(crate::host::shared_vm::operation("childProcessWrite"))?;
     let end = context.host_function(crate::host::shared_vm::operation("childProcessEnd"))?;
-    let warning = context.host_function(crate::host::shared_vm::operation("childProcessShellArgsWarning"))?;
+    let warning = context.host_function(crate::host::shared_vm::operation(
+        "childProcessShellArgsWarning",
+    ))?;
+    let key = context.string_rooted("isBuffer");
+    let is_buffer = context.get_property_rooted(buffer, key)?;
+    let fork_plan = context.host_function_with_data(
+        crate::host::shared_vm::operation("childProcessForkPlan"),
+        is_buffer,
+    )?;
     let factory = context.evaluate_script_rooted(FACTORY, "node:child_process/shared.js")?;
     let undefined = context.undefined();
-    let module = context.call_rooted(factory, undefined, &[spawn_sync, spawn, register, write, end, buffer, warning])?;
+    let module = context.call_rooted(
+        factory,
+        undefined,
+        &[
+            spawn_sync, spawn, register, write, end, buffer, warning, fork_plan,
+        ],
+    )?;
     let key = context.string_rooted("spawn");
     let spawn = context.get_property_rooted(module, key)?;
     let exec_file = super::child_process_exec_shared_vm::function(context, spawn, buffer)?;
@@ -561,6 +575,7 @@ pub(crate) fn register_child(
         .borrow_mut()
         .child_processes
         .insert(id, process);
+    super::child_process_ipc_shared_vm::install(context, id, child)?;
     for (stream, is_stdout) in [(stdout, true), (stderr, false)] {
         if context
             .rooted_value(stream)
@@ -721,8 +736,10 @@ pub(crate) fn poll(
                     _ => {}
                 }
             }
-            let close =
-                process.stdout_terminal && process.stderr_terminal && process.exit.is_some();
+            let close = process.stdout_terminal
+                && process.stderr_terminal
+                && process.exit.is_some()
+                && process.ipc.as_ref().is_none_or(|channel| channel.closed());
             let exit_for_close = process.exit.clone();
             (
                 process.child,
