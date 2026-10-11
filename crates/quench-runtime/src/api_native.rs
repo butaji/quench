@@ -227,6 +227,25 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Reflect all own keys through the object's internal method.
+    pub fn own_keys_rooted(&mut self, root: RootId) -> Result<Vec<RootId>, RootedError> {
+        let result = self.vm.embedding_own_keys(root);
+        let roots = result.map_err(|error| self.error(error))?;
+        self.roots.extend(roots.iter().copied());
+        Ok(roots)
+    }
+
+    /// Apply Object.defineProperty semantics to a rooted descriptor.
+    pub fn define_property_descriptor_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        descriptor: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_define_descriptor(object, key, descriptor);
+        self.completion(result)
+    }
+
     /// Read an own property descriptor through the object's internal method.
     pub fn own_property_descriptor_rooted(
         &mut self,

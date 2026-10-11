@@ -304,3 +304,63 @@ fn util_text_operations_match_node_without_utf16_loss() {
         String::from_utf8_lossy(&observations[1].stdout)
     );
 }
+
+#[test]
+fn callbackify_matches_node_descriptors_receivers_and_tick_order() {
+    let source = r#"
+      const { callbackify } = require('util');
+      const marker = Symbol('marker'), log = [];
+      function original(a) { log.push(['original', this.tag, a]); return Promise.resolve(a); }
+      Object.defineProperty(original, 'hidden', {value:marker, enumerable:false});
+      original[marker] = 17;
+      const cb = callbackify(original);
+      console.log(JSON.stringify([cb.name,cb.length,cb.prototype===original.prototype,
+        Object.getPrototypeOf(cb)===Function.prototype,cb.hidden===marker,cb[marker],
+        Object.getOwnPropertyDescriptor(cb,'hidden'),
+        Object.getOwnPropertyDescriptor(cb,'name'),Object.getOwnPropertyDescriptor(cb,'length')]));
+      const receiver = {tag:'receiver'};
+      console.log(cb.call(receiver, 7, function(err,value){log.push(['resolved',this.tag,err,value,arguments.length])}));
+      callbackify(function(){'use strict';return Promise.resolve(this===undefined)})(function(err,value){'use strict';log.push(['plain',this===undefined,err,value])});
+      const thenable = callbackify(function(){return {then(resolve){resolve('thenable')}}});
+      thenable.call(receiver, function(err,value){log.push(['thenable',this.tag,err,value])});
+      for (const value of [null,undefined,false,0,-0,'',NaN,0n]) {
+        callbackify(()=>Promise.reject(value)).call(receiver, function(err){
+          log.push(['rejected',this.tag,err.code,err.message,Object.is(err.reason,value),arguments.length]);
+        });
+      }
+      function getterName(){return Promise.resolve(1)}
+      Object.defineProperty(getterName,'name',{get(){return 'getter-name'},enumerable:true});
+      const copied = callbackify(getterName);
+      console.log(copied.name,Object.getOwnPropertyDescriptor(copied,'name').get===Object.getOwnPropertyDescriptor(getterName,'name').get);
+      for (const value of [undefined,null,'foo',false,0,{},Symbol(),[]]) {
+        try{callbackify(value)}catch(e){console.log(e.name,e.code,e.message)}
+      }
+      try{cb(1)}catch(e){console.log(e.name,e.code,e.message)}
+      process.nextTick(()=>log.push(['tick']));
+      Promise.resolve().then(()=>log.push(['microtask']));
+      process.on('exit',()=>console.log(JSON.stringify(log)));
+    "#;
+    let directory = tempfile::tempdir().unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}

@@ -61,6 +61,28 @@ impl<H: Host> Vm<H> {
         Ok(entries.get(key).unwrap_or(Value::UNDEFINED))
     }
 
+    pub(crate) fn embedding_own_keys(&mut self, root: RootId) -> Result<Vec<RootId>, JsError> {
+        let value = self.embedding_value(root)?;
+        let program = self.embedding_program()?;
+        let keys = self.object_own_key_values(&program, value)?;
+        Ok(keys.into_iter().map(|key| self.root(key)).collect())
+    }
+
+    pub(crate) fn embedding_define_descriptor(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        descriptor: RootId,
+    ) -> Result<Value, JsError> {
+        let args = [
+            self.embedding_value(object)?,
+            self.embedding_value(key)?,
+            self.embedding_value(descriptor)?,
+        ];
+        let program = self.embedding_program()?;
+        self.object_define_property(&program, &args)
+    }
+
     pub(crate) fn embedding_own_descriptor(
         &mut self,
         root: RootId,
