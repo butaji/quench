@@ -82,7 +82,7 @@ fn run(path: &str, mode: ExecutionMode) -> Result<f32, String> {
     let module = quench_wasm::Engine::new()
         .compile(&bytes)
         .map_err(|error| error.to_string())?
-        .lower_shared_module()
+        .lower_shared_module_for(mode)
         .map_err(|error| error.to_string())?;
     let mut runtime = Runtime::new(CoremarkHost);
     runtime.set_execution_mode(mode);

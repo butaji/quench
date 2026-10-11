@@ -80,6 +80,10 @@ impl<H: Host> Runtime<H> {
         self.vm.set_execution_mode(mode);
     }
 
+    pub fn execution_mode(&self) -> crate::ExecutionMode {
+        self.vm.execution_mode()
+    }
+
     pub fn host_mut(&mut self) -> &mut H {
         &mut self.vm.host
     }

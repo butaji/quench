@@ -222,7 +222,7 @@ impl Store {
         // remaining unsupported operators are ported.
         let lowered = if has_instance_state {
             let definition = module
-                .lower_shared_module()
+                .lower_shared_module_for(self.runtime.execution_mode())
                 .map_err(|error| LinkError::Unsupported(error.to_string()))?;
             Some(self.instantiate_definition(&definition)?)
         } else {
@@ -345,7 +345,7 @@ impl Store {
     ) -> Result<&'a WasmInstance, String> {
         if lowered.is_none() {
             let lowered_module = module
-                .lower_shared_module()
+                .lower_shared_module_for(runtime.execution_mode())
                 .map_err(|error| error.to_string())?;
             *lowered = Some(
                 runtime
@@ -616,7 +616,7 @@ impl Store {
                 Some(instance) => instance,
                 None => {
                     let definition = module
-                        .lower_shared_module()
+                        .lower_shared_module_for(self.runtime.execution_mode())
                         .map_err(|error| LinkError::Unsupported(error.to_string()))?;
                     self.instantiate_definition(&definition)?
                 }

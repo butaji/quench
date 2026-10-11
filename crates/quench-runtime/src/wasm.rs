@@ -563,6 +563,41 @@ impl Engine {
     where
         I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
     {
+        Self::lower_wasm_module_for(
+            crate::ExecutionMode::Interpreted,
+            name,
+            bodies,
+            types,
+            globals,
+            memories,
+            data,
+            tables,
+            elements,
+            imports,
+            tags,
+        )
+    }
+
+    /// Lower a module for the execution mode that will run it: the residual
+    /// shape (which calls are inlined) follows the mode's cost of a call;
+    /// its meaning does not.
+    #[allow(clippy::too_many_arguments)]
+    pub fn lower_wasm_module_for<'a, I>(
+        mode: crate::ExecutionMode,
+        name: &str,
+        bodies: impl IntoIterator<Item = WasmFunctionBody<I>>,
+        types: &WasmTypes,
+        globals: &[WasmGlobal],
+        memories: &[WasmMemory],
+        data: &[WasmData],
+        tables: &[WasmTable],
+        elements: &[WasmElement],
+        imports: &[WasmFunctionImport],
+        tags: &[WasmTag],
+    ) -> Result<WasmModule, Diagnostic>
+    where
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+    {
         if tables
             .iter()
             .any(|table| !table::supported_table(&table.ty, types))
@@ -696,7 +731,7 @@ impl Engine {
                 Ok((locals, operators))
             })
             .collect::<Result<Vec<_>, Diagnostic>>()?;
-        let bodies = inline::inline_leaf_calls(bodies, &signature_pool)
+        let bodies = inline::inline_leaf_calls(bodies, &signature_pool, inline::leaf_budget(mode))
             .ok_or_else(|| Diagnostic::unsupported(name, "too many Wasm locals"))?;
         for (index, (locals, operators)) in bodies.into_iter().enumerate() {
             let index = u32::try_from(index)
