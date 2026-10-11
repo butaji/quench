@@ -9,6 +9,8 @@ use crate::shared_run::EntryGoal;
 pub type NodeOutputSink = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 
 pub struct NodeHost {
+    /// Immutable installation asset root, independent of guest cwd changes.
+    pub(crate) node_library_root: std::path::PathBuf,
     pub(crate) shared_state: Rc<RefCell<SharedNodeState>>,
     pub(crate) commonjs_entry: Option<CommonJsEntry>,
     pub(crate) net_pending_writes: Vec<(u64, Vec<u8>)>,
@@ -135,6 +137,24 @@ impl SharedNodeState {
 
 impl NodeHost {
     pub fn new(argv: Vec<String>) -> Self {
+        let node_library_root = std::env::var_os(crate::shared_run::NODE_LIBRARY_ROOT_ENV)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::current_exe()
+                    .ok()
+                    .and_then(|path| path.parent().map(|parent| parent.join("node")))
+                    .unwrap_or_else(|| std::path::PathBuf::from("node"))
+            });
+        let node_library_root = if node_library_root.is_absolute() {
+            node_library_root
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("/"))
+                .join(node_library_root)
+        };
+        let node_library_root = node_library_root
+            .canonicalize()
+            .unwrap_or(node_library_root);
         // The Node test common/tmpdir helper exposes a per-process host path.
         // Materialize that parent at host construction so fixtures can create
         // files there even when the helper's JS-side refresh hook is absent
@@ -149,6 +169,7 @@ impl NodeHost {
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")),
         );
         Self {
+            node_library_root,
             shared_state: Rc::new(RefCell::new(SharedNodeState::new(
                 fs,
                 cwd,

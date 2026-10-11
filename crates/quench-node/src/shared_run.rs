@@ -7,6 +7,8 @@ use std::{path::PathBuf, process::ExitCode};
 const UNSETTLED_TOP_LEVEL_AWAIT_EXIT: u8 = 13;
 /// Select the child process's raw stdout/stderr boundary for Quench workers.
 pub const CHILD_RUNNER_ENV: &str = "QUENCH_CHILD_RUNNER";
+/// Optional installation root containing Node's lib/ and deps/ source assets.
+pub const NODE_LIBRARY_ROOT_ENV: &str = "QUENCH_NODE_LIBRARY_ROOT";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntryGoal {
