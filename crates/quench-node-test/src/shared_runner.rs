@@ -24,7 +24,7 @@ fn run_shared_file(path: &Path, goal: EntryGoal) -> NodeOutcome {
             };
         }
     };
-    let executable = match std::env::current_exe() {
+    let executable = match quench_node::shared_run::executable_path() {
         Ok(path) => path.to_string_lossy().into_owned(),
         Err(error) => {
             return NodeOutcome::Fail {
