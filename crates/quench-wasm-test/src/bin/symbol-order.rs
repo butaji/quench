@@ -1,107 +1,72 @@
 //! Derive a linker symbol order from executed code, so the functions a run
 //! executes share pages instead of each faulting in its own neighbourhood.
 //!
-//! Inputs are valgrind profiles of the binary the order is for (symbol names
-//! carry the build's crate hashes, so train and link the same profile):
-//! callgrind with `--dump-instr=yes --compress-pos=no` names executed
-//! instruction addresses, and cachegrind or callgrind with `--demangle=no`
-//! name executed functions (`fn=` records). Cachegrind keeps no call stack,
-//! so it profiles long sibling-call chains that exhaust callgrind's.
-//! Functions are listed in first-appearance order across profiles; layout
-//! changes, behavior does not.
+//! Inputs are cachegrind profiles (`--cache-sim=no --demangle=no`) of the
+//! binary the order is for: symbol names carry the build's crate hashes, so
+//! train and link the same profile. Names survive relinking, and cachegrind
+//! keeps no call stack, which the lane's sibling-call chains would exhaust.
+//! Functions are listed in first-appearance order across profiles, so a run
+//! of the first profile's kind touches one contiguous region. (Ordering hot
+//! functions first within a profile's group measured more resident pages.)
+//! Layout changes, behavior does not.
 
 use std::{collections::HashSet, env, fs, process::Command, process::ExitCode};
 
-/// A function symbol: start address, size and mangled name.
-struct Symbol {
-    start: u64,
-    size: u64,
-    name: String,
+/// The suffix thin LTO gives a promoted local symbol: a module hash, which
+/// changes between builds while the function is the same.
+const LTO_LOCAL_SUFFIX: &str = ".llvm.";
+
+/// A symbol's name without its LTO module hash.
+fn stable_name(name: &str) -> &str {
+    name.split_once(LTO_LOCAL_SUFFIX)
+        .map_or(name, |(stable, _)| stable)
 }
 
 /// `nm` symbol kinds that name code.
 const CODE_KINDS: &[&str] = &["t", "T", "w", "W"];
 
-fn symbols(binary: &str) -> Result<Vec<Symbol>, String> {
+/// The binary's code symbols, by mangled name.
+fn code_symbols(binary: &str) -> Result<Vec<String>, String> {
     let output = Command::new("nm")
-        .args(["--defined-only", "-S", binary])
+        .args(["--defined-only", binary])
         .output()
         .map_err(|error| format!("nm: {error}"))?;
     let text = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
-    let mut symbols: Vec<Symbol> = text
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let (start, size, kind, name) = (
-                fields.next()?,
-                fields.next()?,
-                fields.next()?,
-                fields.next()?,
-            );
-            CODE_KINDS.contains(&kind).then_some(())?;
-            Some(Symbol {
-                start: u64::from_str_radix(start, 16).ok()?,
-                size: u64::from_str_radix(size, 16).ok()?,
-                name: name.to_owned(),
-            })
-        })
-        .collect();
-    symbols.sort_by_key(|symbol| symbol.start);
-    Ok(symbols)
-}
-
-/// What a profile record says executed.
-enum Executed {
-    Address(u64),
-    Function(String),
-}
-
-/// The executed addresses and function names of a profile, in file order.
-fn executed(profile: &str) -> Result<Vec<Executed>, String> {
-    let text = fs::read_to_string(profile).map_err(|error| format!("{profile}: {error}"))?;
     Ok(text
         .lines()
         .filter_map(|line| {
-            if let Some(function) = line.strip_prefix("fn=") {
-                // Callgrind compresses repeated names to `(id)`; the first
-                // record of an id carries the name after it.
-                let name = match function.strip_prefix('(') {
-                    Some(rest) => rest.split_once(") ")?.1,
-                    None => function,
-                };
-                return Some(Executed::Function(name.to_owned()));
-            }
-            let address = line.split_whitespace().next()?.strip_prefix("0x")?;
-            u64::from_str_radix(address, 16).ok().map(Executed::Address)
+            let mut fields = line.split_whitespace();
+            let (_, kind, name) = (fields.next()?, fields.next()?, fields.next()?);
+            CODE_KINDS.contains(&kind).then(|| name.to_owned())
         })
         .collect())
 }
 
+/// The functions a profile executed, in first-appearance order.
+fn executed(profile: &str) -> Result<Vec<String>, String> {
+    let text = fs::read_to_string(profile).map_err(|error| format!("{profile}: {error}"))?;
+    Ok(text
+        .lines()
+        .filter_map(|line| line.strip_prefix("fn=").map(str::to_owned))
+        .collect())
+}
+
 fn run(binary: &str, out: &str, profiles: &[String]) -> Result<(), String> {
-    let symbols = symbols(binary)?;
+    let symbols = code_symbols(binary)?;
+    // Profiles may come from an earlier link of the same build: match names
+    // without LTO module hashes, and write the binary's current names.
+    let known: std::collections::HashMap<&str, &str> = symbols
+        .iter()
+        .map(|name| (stable_name(name), name.as_str()))
+        .collect();
     let mut seen = HashSet::new();
-    let mut order = Vec::new();
-    let names: HashSet<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
+    let mut order: Vec<&str> = Vec::new();
     for profile in profiles {
-        for record in executed(profile)? {
-            let name = match record {
-                Executed::Address(address) => {
-                    let index = symbols.partition_point(|symbol| symbol.start <= address);
-                    let Some(symbol) = index.checked_sub(1).map(|index| &symbols[index]) else {
-                        continue;
-                    };
-                    if address >= symbol.start + symbol.size {
-                        continue;
-                    }
-                    symbol.name.as_str()
+        for name in executed(profile)? {
+            if let Some(name) = known.get(stable_name(&name)).copied() {
+                if seen.insert(name) {
+                    order.push(name);
                 }
-                Executed::Function(function) => match names.get(function.as_str()) {
-                    Some(name) => name,
-                    None => continue,
-                },
-            };
-            if seen.insert(name) {
-                order.push(name);
             }
         }
     }
@@ -115,7 +80,7 @@ fn run(binary: &str, out: &str, profiles: &[String]) -> Result<(), String> {
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let [binary, out, profiles @ ..] = args.as_slice() else {
-        eprintln!("usage: symbol-order <binary> <out.order> <callgrind.out>...");
+        eprintln!("usage: symbol-order <binary> <out.order> <cachegrind.out>...");
         return ExitCode::from(2);
     };
     match run(binary, out, profiles) {
