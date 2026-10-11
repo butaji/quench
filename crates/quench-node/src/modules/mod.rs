@@ -13,6 +13,7 @@ pub(crate) mod clone_shared_vm;
 pub(crate) mod child_process_shared_vm;
 pub(crate) mod child_process_stdio_shared_vm;
 pub(crate) mod child_process_ipc_shared_vm;
+pub(crate) mod child_process_input_shared_vm;
 pub(crate) mod child_process_fork_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
 #[cfg(unix)]
