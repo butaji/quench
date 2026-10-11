@@ -617,7 +617,13 @@ fn lane_jump<H: Host>(
     // SAFETY: the view records the distance to a validated jump target.
     let target = unsafe { ip.byte_offset(jump) };
     if safepoint && below_floor() {
-        return lane_safepoint::<H>(r, ip, target, commit);
+        // Scalar arguments only, so the slow path stays a sibling call.
+        return match commit {
+            None => lane_safepoint::<H>(ip, target),
+            Some((register, value)) => {
+                lane_safepoint_writing::<H>(r, ip, target, register, value)
+            }
+        };
     }
     if let Some((register, value)) = commit {
         r.set(register, value);
@@ -869,20 +875,29 @@ fn frame_memory_view<H: Host>(
 /// safepoint's fast path neither loads the context nor saves registers.
 #[cold]
 #[inline(never)]
-fn lane_safepoint<H: Host>(
-    r: Registers,
-    ip: Ip,
-    target: Ip,
-    commit: Option<(u16, Value)>,
-) -> Ip {
+fn lane_safepoint<H: Host>(ip: Ip, target: Ip) -> Ip {
     // SAFETY: called only while a lane runs, from one of its handlers.
     if unsafe { vm(lane_context::<H>()) }.heap.should_collect() {
         return exit(ip);
     }
-    if let Some((register, value)) = commit {
+    target
+}
+
+/// `lane_safepoint` for a jump that writes `register` when taken.
+#[cold]
+#[inline(never)]
+fn lane_safepoint_writing<H: Host>(
+    r: Registers,
+    ip: Ip,
+    target: Ip,
+    register: u16,
+    value: Value,
+) -> Ip {
+    let next = lane_safepoint::<H>(ip, target);
+    if next == target {
         r.set(register, value);
     }
-    target
+    next
 }
 
 /// Boxing a 64-bit result allocates; kept out of line with scalar arguments
