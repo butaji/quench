@@ -191,7 +191,7 @@ impl<H: Host> Vm<H> {
                 .get(program_id)
                 .ok_or_else(|| JsError("constructor program is unavailable".into()))?;
             if let Some(initializer) = program.functions[function as usize].instance_initializer {
-                let previous = std::mem::replace(&mut self.active_program, program_id);
+                let previous = self.replace_active_program(program_id);
                 let result = self.call_user(
                     &program,
                     initializer,
@@ -200,7 +200,7 @@ impl<H: Host> Vm<H> {
                     &[],
                     CallContext::Internal,
                 );
-                self.active_program = previous;
+                self.set_active_program(previous);
                 result?;
             }
         }
@@ -223,7 +223,7 @@ impl<H: Host> Vm<H> {
                     || self
                         .atom_name(*candidate)
                         .strip_prefix(name)
-                        .is_some_and(|suffix| suffix.starts_with("\0quench:self-binding:"))
+                        .is_some_and(|suffix| suffix.starts_with(crate::bytecode::SELF_BINDING_MARKER))
             })
     }
 
@@ -634,7 +634,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn is_self_binding(&self, atom: Atom) -> bool {
-        self.atom_name(atom).contains("\0quench:self-binding:")
+        self.atom_class(atom).contains(AtomClass::SELF_BINDING)
     }
 
     pub(super) fn captured_lexical_this(&self, mut env: Value) -> Option<Value> {
@@ -775,7 +775,8 @@ impl<H: Host> Vm<H> {
         frame: usize,
         atom: Atom,
     ) -> Result<Option<(Value, Value)>, JsError> {
-        if self.atom_name(atom).starts_with('\0') {
+        // Object environments exist only after some `with` statement was entered.
+        if !self.with_scope_entered || self.atom_class(atom).contains(AtomClass::INTERNAL) {
             return Ok(None);
         }
         let objects = self.with_objects_before_binding(frame, atom);
@@ -1381,7 +1382,63 @@ impl<H: Host> Vm<H> {
         Some(env)
     }
 
+    #[inline(always)]
     pub(super) fn capture(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        depth: u16,
+        slot: u16,
+    ) -> Result<Value, JsError> {
+        match self.direct_capture(frame, depth, slot) {
+            Some(value) => Ok(value),
+            None => self.walked_capture(p, frame, depth, slot),
+        }
+    }
+
+    /// The capture read when every layer on the walk belongs to a function, so no with-object
+    /// or lexical-this wrapper is skipped, and the binding is an initialized slot its non-root
+    /// environment owns. One cell read per layer; anything else is `None`.
+    #[inline(always)]
+    fn direct_capture(&self, frame: usize, depth: u16, slot: u16) -> Option<Value> {
+        let frame = &self.frames[frame];
+        let mut cell = self.heap.get(frame.env)?;
+        if frame.captured {
+            let Cell::Environment { parent, .. } = cell else {
+                return None;
+            };
+            cell = self.heap.get(*parent)?;
+        }
+        let mut remaining = depth;
+        loop {
+            let Cell::Environment {
+                parent,
+                function,
+                slots,
+                ..
+            } = cell
+            else {
+                return None;
+            };
+            if *function == u32::MAX {
+                return None;
+            }
+            if remaining == 0 {
+                if *function == super::ROOT_FUNCTION_ID {
+                    return None;
+                }
+                return slots
+                    .owned(usize::from(slot))
+                    .filter(|value| !value.is_deleted());
+            }
+            remaining -= 1;
+            cell = self.heap.get(*parent)?;
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn walked_capture(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -1635,33 +1692,15 @@ impl<H: Host> Vm<H> {
         cache: Option<u16>,
         allow_unresolvable: bool,
     ) -> Result<Value, JsError> {
+        let internal = self.atom_class(atom).contains(AtomClass::INTERNAL);
         let name = self.atom_name(atom);
-        if name == "\0quench:dynamic-import" {
-            return Ok(self.native_value(Native::DynamicImport));
-        }
-        if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
-            return Ok(self.regexp_intrinsic_constructor());
-        }
-        if name == "\0quench:intrinsic-promise" {
-            return Ok(self.native_value(Native::Promise));
-        }
-        if name == "\0quench:super-get" {
-            return Ok(self.native_value(Native::ReflectGet));
-        }
-        if name == "\0quench:super-set" {
-            return Ok(self.native_value(Native::SuperSet));
-        }
-        if name == "\0quench:super-base" {
-            return Ok(self.native_value(Native::ReflectGetPrototypeOf));
-        }
-        if name == "\0quench:object-literal-prototype" {
-            return Ok(self.native_value(Native::ObjectLiteralPrototype));
-        }
-        if name == "\0quench:object-define-property" {
-            return Ok(self.native_value(Native::ObjectDefineProperty));
-        }
-        if name == "\0quench:object-freeze" {
-            return Ok(self.native_value(Native::ObjectFreeze));
+        if internal {
+            if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
+                return Ok(self.regexp_intrinsic_constructor());
+            }
+            if let Some(native) = internal_name_native(name) {
+                return Ok(self.native_value(native));
+            }
         }
         if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
             return self.checked_binding_read(p, atom, value);
@@ -1671,7 +1710,7 @@ impl<H: Host> Vm<H> {
         {
             return self.load_name_binding(p, frame, binding);
         }
-        if !name.starts_with('\0') {
+        if !internal {
             if let Some(frame) = self.frames.last()
                 && (self.function_environment_binding(p, frame.function, atom)
                     || p.functions[frame.function as usize]
@@ -2024,4 +2063,19 @@ impl<H: Host> Vm<H> {
             }
         }
     }
+}
+
+/// The built-in each engine-internal binding name the compiler emits resolves to.
+fn internal_name_native(name: &str) -> Option<Native> {
+    Some(match name {
+        "\0quench:dynamic-import" => Native::DynamicImport,
+        "\0quench:intrinsic-promise" => Native::Promise,
+        "\0quench:super-get" => Native::ReflectGet,
+        "\0quench:super-set" => Native::SuperSet,
+        "\0quench:super-base" => Native::ReflectGetPrototypeOf,
+        "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
+        "\0quench:object-define-property" => Native::ObjectDefineProperty,
+        "\0quench:object-freeze" => Native::ObjectFreeze,
+        _ => return None,
+    })
 }
