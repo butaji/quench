@@ -671,16 +671,39 @@ impl<H: Host> Vm<H> {
         ))
     }
 
-    pub(super) fn own_function_prototype_data(&self, constructor: Value, prototype_atom: Atom) -> Option<Value> {
-        if !matches!(self.heap.get(constructor), Some(Cell::Function { .. })) {
+    pub(super) fn own_function_prototype_data(
+        &self,
+        constructor: Value,
+        prototype_atom: Atom,
+    ) -> Option<Value> {
+        debug_assert_eq!(self.known_prototype_atom(), Some(prototype_atom));
+        let Some(cell @ Cell::Function { .. }) = self.heap.get(constructor) else {
+            return None;
+        };
+        let object = cell.object()?;
+        let shape = object.shape();
+        let key = PropertyKey::string(prototype_atom);
+        let data_slot = || {
+            self.property_attributes(constructor, key)
+                .filter(|attributes| !attributes.accessor)
+                .and_then(|_| self.property_shape_slot(shape, key))
+        };
+        if self.shape_is_dictionary(shape) {
+            return self.heap.property_get(object, data_slot()?);
+        }
+        let memo = &self.shapes[shape as usize].prototype_slot;
+        let slot = match memo.get() {
+            PROTOTYPE_SLOT_UNKNOWN => {
+                let slot = data_slot().map_or(PROTOTYPE_SLOT_NONE, |slot| slot as u32);
+                memo.set(slot);
+                slot
+            }
+            slot => slot,
+        };
+        if slot == PROTOTYPE_SLOT_NONE {
             return None;
         }
-        let attributes =
-            self.property_attributes(constructor, PropertyKey::string(prototype_atom))?;
-        if attributes.accessor {
-            return None;
-        }
-        self.own_property(constructor, prototype_atom)
+        self.heap.property_get(object, slot as usize)
     }
 
     fn prototype_from_constructor(

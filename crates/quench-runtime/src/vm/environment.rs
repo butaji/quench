@@ -1381,7 +1381,63 @@ impl<H: Host> Vm<H> {
         Some(env)
     }
 
+    #[inline(never)]
     pub(super) fn capture(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        depth: u16,
+        slot: u16,
+    ) -> Result<Value, JsError> {
+        match self.direct_capture(frame, depth, slot) {
+            Some(value) => Ok(value),
+            None => self.walked_capture(p, frame, depth, slot),
+        }
+    }
+
+    /// The capture read when every layer on the walk belongs to a function, so no with-object
+    /// or lexical-this wrapper is skipped, and the binding is an initialized slot its non-root
+    /// environment owns. One cell read per layer; anything else is `None`.
+    #[inline(always)]
+    fn direct_capture(&self, frame: usize, depth: u16, slot: u16) -> Option<Value> {
+        let frame = &self.frames[frame];
+        let mut cell = self.heap.get(frame.env)?;
+        if frame.captured {
+            let Cell::Environment { parent, .. } = cell else {
+                return None;
+            };
+            cell = self.heap.get(*parent)?;
+        }
+        let mut remaining = depth;
+        loop {
+            let Cell::Environment {
+                parent,
+                function,
+                slots,
+                ..
+            } = cell
+            else {
+                return None;
+            };
+            if *function == u32::MAX {
+                return None;
+            }
+            if remaining == 0 {
+                if *function == super::ROOT_FUNCTION_ID {
+                    return None;
+                }
+                return slots
+                    .owned(usize::from(slot))
+                    .filter(|value| !value.is_deleted());
+            }
+            remaining -= 1;
+            cell = self.heap.get(*parent)?;
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn walked_capture(
         &mut self,
         p: &ResidualProgram,
         frame: usize,

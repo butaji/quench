@@ -118,6 +118,7 @@ pub(super) fn apply(
 ) {
     let input = function.code.len();
     thread_jumps(function);
+    invert_branches_over_jumps(function);
     let mut changed_passes = 0;
     while rewrite_super_window(function, superinstructions) {
         changed_passes += 1;
@@ -157,6 +158,37 @@ fn thread_jumps(function: &mut BcFunction) {
         if target != instruction.jump_target() && instruction.try_set_jump_target(target) {
             function.code[pc] = instruction;
         }
+    }
+}
+
+/// Folds a truthiness branch over a forward unconditional jump into one inverted branch:
+/// `JumpTrue a, L; Jump M; L:` becomes `JumpFalse a, M` (and symmetrically). The skipped `Jump`
+/// becomes a `Nop` that compaction removes; it must be unreachable except by fallthrough, and
+/// must not be a back edge, which is the collection safepoint that `thread_jumps` preserves.
+fn invert_branches_over_jumps(function: &mut BcFunction) {
+    let protected = protected_positions(
+        &function.code,
+        &function.handlers,
+        function.parameter_end_pc,
+        &function.binding_sites,
+    );
+    for pc in 0..function.code.len().saturating_sub(1) {
+        let (branch, skipped) = (function.code[pc], function.code[pc + 1]);
+        let inverted = match branch.op() {
+            Op::JumpTrue => Op::JumpFalse,
+            Op::JumpFalse => Op::JumpTrue,
+            _ => continue,
+        };
+        let target = skipped.jump_target();
+        if protected[pc + 1]
+            || skipped.op() != Op::Jump
+            || branch.jump_target() as usize != pc + 2
+            || target as usize <= pc + 1
+        {
+            continue;
+        }
+        function.code[pc] = Instr::new(inverted, branch.register_a(), 0, 0, target);
+        function.code[pc + 1] = Instr::new(Op::Nop, 0, 0, 0, 0);
     }
 }
 
@@ -494,6 +526,50 @@ mod tests {
 
         let other = Instr::new(Op::JumpFalse, 8, 0, 0, 41);
         assert!(apply_recipe(Recipe::BinaryJumpFalse, binary, other, &mut vec![]).is_none());
+    }
+
+    #[test]
+    fn inverts_a_branch_only_over_an_unreachable_forward_jump() {
+        let ops = |code: &[Instr]| {
+            code.iter()
+                .map(|instruction| (instruction.op(), instruction.a(), instruction.imm()))
+                .collect::<Vec<_>>()
+        };
+        let mut program = Engine::specialize_unspecialized("", "invert-branch.js").unwrap();
+        let function = &mut program.functions[0];
+        let move_ = Instr::new(Op::Move, 1, 0, 0, 0);
+        function.code = vec![
+            Instr::new(Op::JumpTrue, 0, 0, 0, 2),
+            Instr::new(Op::Jump, 0, 0, 0, 4),
+            move_,
+            Instr::new(Op::JumpFalse, 0, 0, 0, 5),
+            Instr::new(Op::Jump, 0, 0, 0, 0),
+            move_,
+        ];
+        invert_branches_over_jumps(function);
+        assert_eq!(
+            ops(&function.code),
+            [
+                (Op::JumpFalse, 0, 4),
+                (Op::Nop, 0, 0),
+                (Op::Move, 1, 0),
+                // The skipped jump is a back edge, so the branch keeps it.
+                (Op::JumpFalse, 0, 5),
+                (Op::Jump, 0, 0),
+                (Op::Move, 1, 0),
+            ]
+        );
+
+        // A jump some other branch also reaches stays.
+        function.code = vec![
+            Instr::new(Op::JumpFalse, 0, 0, 0, 2),
+            Instr::new(Op::Jump, 0, 0, 0, 3),
+            Instr::new(Op::JumpTrue, 0, 0, 0, 1),
+            move_,
+        ];
+        let before = ops(&function.code);
+        invert_branches_over_jumps(function);
+        assert_eq!(ops(&function.code), before);
     }
 
     fn rewrite_fixture(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
