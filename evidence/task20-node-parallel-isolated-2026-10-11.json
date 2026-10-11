@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "1e51ca4121020d14",
+  "timeout_secs": 10,
+  "jobs": 4,
+  "node_version": "v24.19.0",
+  "runtime_commit": "446c96e81bc714de7d408e13bb0f216de7698672",
+  "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "platform": "linux-x86_64",
+  "counts": {
+    "timeout": 133,
+    "fail": 2863,
+    "pass": 1054,
+    "skip": 674,
+    "crash": 3
+  },
+  "total": 4727,
+  "scope": "Full isolated checkout sweep; Node library resolution still used old cwd-relative path, causing internal-module regressions. Not an all-pass claim.",
+  "binary_sha256": [
+    "fd40070d5467380bd7a3d6f6df74fee0b7ddef11d90d6893ff220db774607965  work/sweep-isolated-bin/quench-node",
+    "226fa1b8087b21db4d5d09d1d3710ade3d41bd386b36ccd2eecf5e5212800a9f  work/sweep-isolated-bin/run-parallel"
+  ]
+}
