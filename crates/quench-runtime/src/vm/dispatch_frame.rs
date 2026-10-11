@@ -1263,9 +1263,6 @@ fn numeric_frame_is_safe(
         || !function.code.iter().enumerate().any(|(pc, instruction)| {
             instruction.op().control_flow_layout() == crate::bytecode::ControlFlowLayout::Call
                 && (instruction.returns_from_frame()
-                    || function
-                        .code
-                        .get(pc + 1)
-                        .is_some_and(|next| next.op() == Op::Return))
+                    || function.returns_register_at(pc + 1, instruction.result_register()))
         })
 }
