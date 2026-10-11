@@ -75,6 +75,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "childProcessSpawnSync" (3) => crate::modules::child_process_shared_vm::spawn_sync,
         method "execFile" (4) => crate::modules::child_process_exec_shared_vm::exec_file,
         method "exec" (3) => crate::modules::child_process_exec_shared_vm::exec,
+        method "childProcessPromiseExec" (1) => crate::modules::child_process_exec_shared_vm::promise_exec,
+        method "childProcessPromiseExecSettled" (3) => crate::modules::child_process_exec_shared_vm::promise_settled,
         method "utilInspectQuote" (1) => crate::modules::util_shared_vm::inspect_quote,
         method "readableEncoding" (0) => crate::modules::stream_shared_vm::readable_encoding,
         method "execFileEvent" (2) => crate::modules::child_process_exec_shared_vm::event,
