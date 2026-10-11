@@ -2259,6 +2259,49 @@ var cause={}, E=Error;Error=function(){throw 'replaced';};try{null.x;}catch(e){p
     }
 
     #[test]
+    fn regression_destructuring_iterator_close_preserves_live_parameters_and_abrupt_values() {
+        let source = r#"
+var kept={value:11}, reason={}, closed=0;
+function assignment(first,second){[second]=[7];print(first===kept && second===7);}
+function binding(first){const [local]=[2];print(first===kept && local===2);}
+function nested(first,second){[second]=[[3]];const [nested]=second;print(first===kept && nested===3);}
+function exhausted(first){const [a,...rest]=[];print(first===kept && a===undefined && rest.length===0);}
+function abrupt(first){
+ const iterator={[Symbol.iterator](){return this},next(){return {value:undefined,done:false}},return(){closed++;throw 'close-error'}};
+ try{let [value=(()=>{throw reason})()]=iterator;}catch(error){print(first===kept && error===reason && closed===1);}
+}
+function closeFailure(first){const iterator={[Symbol.iterator](){return this},next(){return {value:1,done:false}},return(){throw reason}};
+ try{let [value]=iterator;}catch(error){print(first===kept && error===reason);}
+}
+assignment(kept,0);binding(kept);nested(kept,0);exhausted(kept);abrupt(kept);closeFailure(kept);
+function* suspended(first){let value;[value]=[9];yield first===kept;const [other]=[4];return first===kept && value===9 && other===4;}
+const generator=suspended(kept);print(generator.next().value);print(generator.next().value);
+"#;
+        for compile in [
+            Engine::specialize as fn(&str, &str) -> _,
+            Engine::specialize_unspecialized,
+        ] {
+            let program = compile(source, "destructuring-live-parameters.js").unwrap();
+            let path = std::env::temp_dir()
+                .join(format!("quench-destructure-live-{}", std::process::id()));
+            program.write_binary(&path).unwrap();
+            let decoded = ResidualProgram::read_binary(&path).unwrap();
+            std::fs::remove_file(path).unwrap();
+            for program in [program, decoded] {
+                let host = Capture::default();
+                let output = host.clone();
+                Runtime::new(host).execute(&program).unwrap();
+                assert_eq!(
+                    output.0.borrow().as_slice(),
+                    &[
+                        "true", "true", "true", "true", "true", "true", "true", "true"
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
     fn regression_destructuring_iterator_steps_validate_results_and_mark_abrupt_completion() {
         let source = r#"var cases=[['array-spread',v=>[...v]],['call-spread',v=>(()=>{})(...v)],['for-of',v=>{for(var x of v){}}],['destructure',v=>{var [a]=v;}],['rest',v=>{var [...a]=v;}],['array-from',v=>Array.from(v)],['map',v=>new Map(v)],['set',v=>new Set(v)],['weak-map',v=>new WeakMap(v)],['weak-set',v=>new WeakSet(v)],['typed-array',v=>new Int8Array(v)],['typed-from',v=>Int8Array.from(v)],['yield-star',v=>{var g=(function*(){yield* v;})();g.next();}]];
 for(var entry of cases){var iterable={[Symbol.iterator](){return {next(){return 1;}};}};try {entry[1](iterable);print(entry[0]+':no-error');}catch(e){print(entry[0]+':'+(e instanceof TypeError));}}
