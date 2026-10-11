@@ -79,7 +79,7 @@ fusion_recipes! {
             ))
         };
     ReturnResult: [
-        Binary, Return; GetField, Return; Call, Return; CallKnown, Return;
+        Binary, Return; Unary, Return; GetField, Return; Call, Return; CallKnown, Return;
         CallMethod, Return; CallThisMethod, Return; Construct, Return;
         MakeObject2, Return; MakeObjectLiteral, Return; SuperConstArrayObject2, Return
     ] => |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
@@ -123,6 +123,9 @@ pub(super) fn apply(
     invert_branches_over_jumps(function);
     let mut changed_passes = 0;
     while rewrite_super_window(function, superinstructions) {
+        changed_passes += 1;
+    }
+    while coalesce_distant_producer_moves(function, methods, field_sites, superinstructions) {
         changed_passes += 1;
     }
     while rewrite_once(function, methods, field_sites, superinstructions) {
@@ -192,6 +195,101 @@ fn invert_branches_over_jumps(function: &mut BcFunction) {
         function.code[pc] = Instr::new(inverted, branch.register_a(), 0, 0, target);
         function.code[pc + 1] = Instr::new(Op::Nop, 0, 0, 0, 0);
     }
+}
+
+/// Retargets a producer to the destination of a later `Move` of its result, the
+/// non-adjacent form of `ProducerMove`: `src = producer; ...; dst = Move src` becomes
+/// `dst = producer; ...; Nop`. Call arguments are evaluated before their window is
+/// reserved, so each argument computed ahead of another argument's evaluation ends in such
+/// a move. Writing `dst` earlier is unobservable when the span between the two is one
+/// handler-free basic block that neither reads nor writes `dst` or `src`, `src` is dead
+/// after the move, and neither register is promoted local storage (which legacy
+/// `f.arguments` reflection reads). Spans coalesced in one pass are disjoint, so each
+/// candidate's liveness facts are unaffected by the others.
+fn coalesce_distant_producer_moves(
+    function: &mut BcFunction,
+    methods: &[MethodSiteSpec],
+    field_sites: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) -> bool {
+    let Some(live) = liveness::analyze(function, methods, field_sites, superinstructions) else {
+        return false;
+    };
+    let protected = protected_positions(
+        &function.code,
+        &function.handlers,
+        function.parameter_end_pc,
+        &function.binding_sites,
+    );
+    let storage = function
+        .local_registers
+        .iter()
+        .fold(0_u64, |mask, entry| mask | register_bit(entry.register));
+    let mut claimed_until = 0;
+    let mut changed = false;
+    for target in 0..function.code.len() {
+        let mov = function.code[target];
+        if mov.op() != Op::Move || protected[target] {
+            continue;
+        }
+        let (source, destination) = (mov.register_b(), mov.result_register());
+        let pair = register_bit(source) | register_bit(destination);
+        if source == destination
+            || pair.count_ones() != 2
+            || pair & storage != 0
+            || liveness::live_out(function, &live, target, mov) & register_bit(source) != 0
+        {
+            continue;
+        }
+        let Some(producer) = (claimed_until..target).rev().find(|&pc| {
+            let instruction = function.code[pc];
+            (liveness::uses(instruction, methods, field_sites, superinstructions)
+                | liveness::definitions(instruction, superinstructions))
+                & pair
+                != 0
+        }) else {
+            continue;
+        };
+        let instruction = function.code[producer];
+        let span_is_block = (producer + 1..=target).all(|pc| !protected[pc])
+            && (producer..target).all(|pc| {
+                let op = function.code[pc].op();
+                matches!(
+                    op.control_flow_layout(),
+                    crate::bytecode::ControlFlowLayout::Fallthrough
+                        | crate::bytecode::ControlFlowLayout::Call
+                ) && !function.code[pc].returns_from_frame()
+            })
+            && function.handlers.iter().all(|handler| {
+                handler.end as usize <= producer || handler.start as usize > target
+            });
+        if !span_is_block
+            || !is_move_producer(instruction.op())
+            || instruction.result_register() != source
+            || liveness::definitions(instruction, superinstructions) != register_bit(source)
+            || liveness::uses(instruction, methods, field_sites, superinstructions) & pair != 0
+        {
+            continue;
+        }
+        let mut retargeted = instruction;
+        retargeted.set_result_register(destination);
+        function.code[producer] = retargeted;
+        function.code[target] = Instr::new(Op::Nop, 0, 0, 0, 0);
+        claimed_until = target + 1;
+        changed = true;
+    }
+    changed
+}
+
+/// The producers `ProducerMove` may retarget.
+fn is_move_producer(op: Op) -> bool {
+    RULES.iter().any(|rule| {
+        matches!(rule.recipe, Recipe::ProducerMove) && rule.pattern == [op, Op::Move]
+    })
+}
+
+fn register_bit(register: Register) -> u64 {
+    1_u64.checked_shl(u32::from(register)).unwrap_or(0)
 }
 
 struct SuperRule {
@@ -574,6 +672,98 @@ mod tests {
         assert_eq!(ops(&function.code), before);
     }
 
+    fn coalesce_fixture(
+        code: Vec<Instr>,
+        registers: u16,
+        storage: &[Register],
+    ) -> Vec<(Op, Register)> {
+        let mut program = Engine::specialize_unspecialized("", "rewrite-coalesce.js").unwrap();
+        let function = &mut program.functions[0];
+        function.code = code;
+        function.registers = registers;
+        function.local_registers = storage
+            .iter()
+            .enumerate()
+            .map(|(local, &register)| crate::bytecode::LocalRegister {
+                local: local as u16,
+                register,
+            })
+            .collect();
+        while coalesce_distant_producer_moves(function, &[], &[], &[]) {}
+        function
+            .code
+            .iter()
+            .map(|instruction| (instruction.op(), instruction.a()))
+            .collect()
+    }
+
+    fn sum_and_return(left: Register, right: Register, result: Register) -> [Instr; 2] {
+        [
+            Instr::new(
+                Op::Binary,
+                result,
+                Operand::register(left).0,
+                Operand::register(right).0,
+                BinaryOperator::Addition as u32,
+            ),
+            Instr::new(Op::Return, result, 0, 0, 0),
+        ]
+    }
+
+    #[test]
+    fn coalesces_producers_into_later_overlapping_moves() {
+        let mut code = vec![
+            Instr::new(Op::LoadConst, 3, 0, 0, 0),
+            Instr::new(Op::LoadConst, 4, 0, 0, 0),
+            Instr::new(Op::Move, 5, 3, 0, 0),
+            Instr::new(Op::Move, 6, 4, 0, 0),
+        ];
+        code.extend(sum_and_return(5, 6, 7));
+        assert_eq!(
+            coalesce_fixture(code, 8, &[]),
+            [
+                (Op::LoadConst, 5),
+                (Op::LoadConst, 6),
+                (Op::Nop, 0),
+                (Op::Nop, 0),
+                (Op::Binary, 7),
+                (Op::Return, 7),
+            ]
+        );
+    }
+
+    #[test]
+    fn keeps_moves_whose_span_or_registers_forbid_an_early_write() {
+        let destination_read_in_span = vec![
+            Instr::new(Op::LoadConst, 3, 0, 0, 0),
+            Instr::new(Op::Move, 4, 5, 0, 0),
+            Instr::new(Op::Move, 5, 3, 0, 0),
+        ];
+        let mut source_live_after = vec![
+            Instr::new(Op::LoadConst, 3, 0, 0, 0),
+            Instr::new(Op::LoadConst, 6, 0, 0, 0),
+            Instr::new(Op::Move, 5, 3, 0, 0),
+        ];
+        source_live_after.extend(sum_and_return(5, 3, 7));
+        let mut promoted_destination = vec![
+            Instr::new(Op::LoadConst, 3, 0, 0, 0),
+            Instr::new(Op::LoadConst, 6, 0, 0, 0),
+            Instr::new(Op::Move, 5, 3, 0, 0),
+        ];
+        promoted_destination.extend(sum_and_return(5, 6, 7));
+        for (code, storage) in [
+            (destination_read_in_span, &[][..]),
+            (source_live_after, &[][..]),
+            (promoted_destination, &[5][..]),
+        ] {
+            let expected = code
+                .iter()
+                .map(|instruction| (instruction.op(), instruction.a()))
+                .collect::<Vec<_>>();
+            assert_eq!(coalesce_fixture(code, 8, storage), expected);
+        }
+    }
+
     fn rewrite_fixture(code: Vec<Instr>, registers: u16) -> Vec<Instr> {
         let mut program = Engine::specialize_unspecialized("", "rewrite-liveness.js").unwrap();
         let function = &mut program.functions[0];
@@ -657,7 +847,7 @@ mod tests {
 
     #[test]
     fn recipe_schema_generates_ordered_pattern_rows() {
-        assert_eq!(RULES.len(), 32);
+        assert_eq!(RULES.len(), 33);
         assert_eq!(RULES[0].pattern, [Op::LoadConst, Op::Binary]);
         assert_eq!(RULES[1].pattern, [Op::LoadConst, Op::Binary]);
         assert!(matches!(RULES[0].recipe, Recipe::ConstantLeft));
