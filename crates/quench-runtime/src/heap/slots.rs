@@ -55,7 +55,7 @@ impl SlotArena {
         }
     }
 
-    #[cfg(any(test, feature = "profile-memory"))]
+    #[cfg(any(debug_assertions, test, feature = "profile-memory"))]
     pub(super) fn iter(&self) -> impl Iterator<Item = &Slot> {
         self.slabs
             .iter()

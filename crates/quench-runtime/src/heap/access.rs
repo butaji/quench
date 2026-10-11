@@ -49,13 +49,21 @@ impl Heap {
     }
 
     pub(crate) fn environment_slot(&self, environment: Value, slot: usize) -> Option<Value> {
-        let owner = self.environment_slot_owner(environment, slot)?;
-        let Cell::Environment { slots, .. } = self.get(owner)? else {
+        let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
         match slots.0.get(slot)? {
             EnvironmentSlot::Owned(value) => Some(*value),
-            EnvironmentSlot::Shared(_) => None,
+            // A shared slot names its owner, which holds the slot itself.
+            EnvironmentSlot::Shared(owner) => {
+                let Cell::Environment { slots, .. } = self.get(*owner)? else {
+                    return None;
+                };
+                match slots.0.get(slot)? {
+                    EnvironmentSlot::Owned(value) => Some(*value),
+                    EnvironmentSlot::Shared(_) => None,
+                }
+            }
         }
     }
 

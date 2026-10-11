@@ -78,7 +78,13 @@ impl<H: Host> Vm<H> {
         frame: &mut Frame,
         arrow: bool,
         new_target: Value,
+        observable: bool,
     ) {
+        if !observable {
+            // Nothing reads the implicit bindings, and the frame's own `this` is authoritative.
+            frame.fixed_this = !arrow && !frame.this.is_deleted();
+            return;
+        }
         if !arrow && frame.function != super::ROOT_FUNCTION_ID {
             let atom = self.runtime_atoms.new_target;
             frame.dynamic_bindings.push((atom, new_target));
@@ -222,11 +228,11 @@ impl<H: Host> Vm<H> {
             .resize(function.locals as usize, Value::UNDEFINED);
         frame.locals[function.params as usize..].fill(Value::UNDEFINED);
         let fixed = usize::from(function.params) - usize::from(function.rest);
-        for index in 0..fixed {
-            if function.promoted_register(index as u16).is_none() {
-                frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
-            }
-        }
+        // Promoted parameters live in registers; `initialize_promoted_registers` clears their
+        // local slots once the frame is set up, so every fixed parameter is copied here.
+        let passed = fixed.min(args.len());
+        frame.locals[..passed].copy_from_slice(&args[..passed]);
+        frame.locals[passed..fixed].fill(Value::UNDEFINED);
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
@@ -305,11 +311,15 @@ impl<H: Host> Vm<H> {
             }
         }
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
-        self.initialize_activation_bindings(&mut frame, arrow, new_target);
-        let register_count = function.registers as usize;
+        self.initialize_activation_bindings(
+            &mut frame,
+            arrow,
+            new_target,
+            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(),
+        );
         let run_numeric = numeric_frame_is_safe(function, capture_constructor_this);
         debug_assert!(!push_to_dispatch || !run_numeric);
-        frame.prepare_registers(register_count);
+        frame.prepare_registers_for(function);
         frame.initialize_promoted_registers(function, args);
         self.frames.push(frame);
         let frame_index = self.frames.len() - 1;
@@ -438,11 +448,11 @@ impl<H: Host> Vm<H> {
             .resize(function.locals as usize, Value::UNDEFINED);
         frame.locals[function.params as usize..].fill(Value::UNDEFINED);
         let fixed = usize::from(function.params) - usize::from(function.rest);
-        for index in 0..fixed {
-            if function.promoted_register(index as u16).is_none() {
-                frame.locals[index] = args.get(index).copied().unwrap_or(Value::UNDEFINED);
-            }
-        }
+        // Promoted parameters live in registers; `initialize_promoted_registers` clears their
+        // local slots once the frame is set up, so every fixed parameter is copied here.
+        let passed = fixed.min(args.len());
+        frame.locals[..passed].copy_from_slice(&args[..passed]);
+        frame.locals[passed..fixed].fill(Value::UNDEFINED);
         if function.rest {
             let elements = args.get(fixed..).unwrap_or_default().to_vec();
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
@@ -495,9 +505,13 @@ impl<H: Host> Vm<H> {
         self.with_stack
             .extend(self.captured_with_objects_for_function(parent, function, p.kind));
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
-        self.initialize_activation_bindings(&mut frame, arrow, new_target);
-        let register_count = function.registers as usize;
-        frame.prepare_registers(register_count);
+        self.initialize_activation_bindings(
+            &mut frame,
+            arrow,
+            new_target,
+            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(),
+        );
+        frame.prepare_registers_for(function);
         frame.initialize_promoted_registers(function, args);
         let placeholder = std::mem::replace(&mut self.frames[frame_index], frame);
         self.frame_pool.push(placeholder);
@@ -864,6 +878,9 @@ impl<H: Host> Vm<H> {
         let previous_global = self.realm.globals;
         let outcome = (|| {
             let mut current_program: Option<Rc<ResidualProgram>> = None;
+            // The residual being executed: the entry program, or the one `current_program`
+            // retains after a cross-program tail call. Updated only where that switch happens.
+            let mut executing_residual: *const ResidualProgram = entry_program;
             let mut frame = frame;
             let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
             let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
@@ -887,7 +904,10 @@ impl<H: Host> Vm<H> {
                 )?;
             }
             loop {
-                let p = current_program.as_deref().unwrap_or(p);
+                // SAFETY: `executing_residual` points at `entry_program`, borrowed for the whole
+                // call, or at the residual `current_program` keeps alive until it is replaced,
+                // and it is re-derived at that replacement.
+                let p = unsafe { &*executing_residual };
                 if stop_pc == Some(pc) {
                     self.frames[frame].pc = pc;
                     return Ok(FrameOutcome::ParameterInitializationComplete);
@@ -945,7 +965,9 @@ impl<H: Host> Vm<H> {
                     _ => {}
                 }
                 // GC inside a getter or native operation needs this instruction's root map.
-                self.frames[frame].pc = instruction_pc;
+                // SAFETY: `frame` names the active activation, which stays on the frame stack
+                // for every iteration that dispatches it.
+                unsafe { self.frames.get_unchecked_mut(frame).pc = instruction_pc };
                 match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
                     Ok(StepResult::Return(value)) => {
                         if let Some(pending) = pending_calls.pop() {
@@ -1002,6 +1024,7 @@ impl<H: Host> Vm<H> {
                                 })?);
                         }
                         executing_program = replacement_program;
+                        executing_residual = current_program.as_deref().unwrap_or(entry_program);
                         pc = self.frames[frame].pc;
                         cursor = GeneralCodeCursor::new(
                             replacement_program,

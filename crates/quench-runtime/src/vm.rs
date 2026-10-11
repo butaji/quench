@@ -191,6 +191,23 @@ impl Frame {
         self.registers.fill(Value::UNDEFINED);
     }
 
+    /// Sizes the register file for `function`. Compiled code writes every register before
+    /// reading it, so stale values from a pooled frame are unobservable to the program; they
+    /// matter only to a collector that scans the whole file. A function with a liveness root
+    /// map is scanned through it, so only functions without one, and generator or async
+    /// activations whose suspended registers are scanned whole, are cleared.
+    fn prepare_registers_for(&mut self, function: &crate::bytecode::Function) {
+        let register_count = usize::from(function.registers);
+        if function.register_root_offset == crate::bytecode::NO_REGISTER_ROOT_MAP
+            || function.is_generator
+            || function.is_async
+        {
+            self.prepare_registers(register_count);
+        } else {
+            self.registers.resize(register_count, Value::UNDEFINED);
+        }
+    }
+
     fn initialize_promoted_registers(
         &mut self,
         function: &crate::bytecode::Function,
@@ -999,6 +1016,8 @@ impl<H: Host> Vm<H> {
     }
 
     fn report_execution(&mut self, program: &ResidualProgram) {
+        #[cfg(feature = "profile-gc-time")]
+        self.report_gc_time_if_enabled();
         #[cfg(feature = "profile-aggregate")]
         if self
             .profile
@@ -1014,6 +1033,18 @@ impl<H: Host> Vm<H> {
             .report(&self.heap, ProgramId::MAIN.raw(), program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("complete");
+    }
+    #[cfg(feature = "profile-gc-time")]
+    fn report_gc_time_if_enabled(&self) {
+        if std::env::var_os("QUENCH_GC_TIME_PROFILE").is_none() {
+            return;
+        }
+        let (_, collections, _, _, _, _) = self.heap.stats();
+        let gc = self.heap.gc_profile();
+        eprintln!(
+            "{{\"kind\":\"quench-gc-time\",\"collections\":{collections},\"mark_nanos\":{},\"sweep_nanos\":{},\"mark_clear_nanos\":{}}}",
+            gc.mark_nanos, gc.sweep_nanos, gc.mark_clear_nanos,
+        );
     }
     #[cfg(feature = "profile-memory")]
     pub(crate) fn report_memory_if_enabled(&self, phase: &str) {
