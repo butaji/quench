@@ -74,6 +74,29 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     let kill = context.host_function(crate::host::shared_vm::operation("processKillNative"))?;
     install(context, process, "_kill", kill)?;
+    #[cfg(target_os = "linux")]
+    {
+        let signals = context.null_object_rooted()?;
+        for (name, number) in super::process_signals_state::SIGNALS {
+            let key = context.string_rooted(name);
+            let value = context.number(f64::from(*number));
+            context.define_data_property_rooted(signals, key, value, false, true, false)?;
+        }
+        let util = crate::host::shared_vm::commonjs::util_module(context)?;
+        let key = context.string_rooted("inspect");
+        let inspect = context.get_property_rooted(util, key)?;
+        let data = context.array_rooted(&[process, signals, inspect])?;
+        let operation = context
+            .host_function_with_data(crate::host::shared_vm::operation("processKill"), data)?;
+        let factory = context.evaluate_script_rooted(
+            "operation => function kill(pid, signal) { return operation(pid, signal); }",
+            "node:process/shared-kill.js",
+        )?;
+        let undefined = context.undefined();
+        let kill = context.call_rooted(factory, undefined, &[operation])?;
+        install(context, process, "kill", kill)?;
+    }
+
     let raw_debug = context.host_function(crate::host::shared_vm::operation("processRawDebug"))?;
     install(context, process, "_rawDebug", raw_debug)?;
     let set_capture = context.host_function(crate::host::shared_vm::operation("processSetUncaughtExceptionCaptureCallback"))?;
@@ -1248,8 +1271,29 @@ pub(crate) fn kill_native(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let pid = integer_argument(context, args.first().copied(), "pid")?;
-    let signal = integer_argument(context, args.get(1).copied(), "signal")?;
+    #[cfg(target_os = "linux")]
+    let (pid, signal) = {
+        let undefined = context.undefined();
+        let zero = context.number(0.0);
+        let pid = args.first().copied().unwrap_or(undefined);
+        let signal = args.get(1).copied().unwrap_or(undefined);
+        let pid = context.bitwise_or_rooted(pid, zero)?;
+        let signal = context.bitwise_or_rooted(signal, zero)?;
+        let pid = context
+            .rooted_value(pid)
+            .and_then(|value| value.as_number())
+            .expect("bitwise number") as i32;
+        let signal = context
+            .rooted_value(signal)
+            .and_then(|value| value.as_number())
+            .expect("bitwise number") as i32;
+        (pid, signal)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let (pid, signal) = (
+        integer_argument(context, args.first().copied(), "pid")?,
+        integer_argument(context, args.get(1).copied(), "signal")?,
+    );
     #[cfg(unix)]
     let error = if unsafe { libc::kill(pid, signal) } == 0 {
         0
@@ -1260,6 +1304,8 @@ pub(crate) fn kill_native(
     };
     #[cfg(not(unix))]
     let error = libc::ENOSYS;
+    #[cfg(target_os = "linux")]
+    let error = -error;
     Ok(context.number(error as f64))
 }
 
@@ -1560,6 +1606,7 @@ fn format_raw_debug(
     Ok(output)
 }
 
+#[cfg(not(target_os = "linux"))]
 fn integer_argument(
     context: &mut NativeContext<'_, NodeHost>,
     value: Option<RootId>,
@@ -1595,6 +1642,9 @@ pub(crate) fn finish_execution(
         .process_control
         .clone();
     let checkpoint = drain_checkpoint(runtime, program);
+    if process_control.requested_exit_code().is_some() {
+        return finish_requested_exit(runtime, program);
+    }
     let shared_state = runtime.host_mut().shared_state();
     crate::modules::http_shared_vm::cleanup(runtime, &shared_state);
     let exit_code = match checkpoint {
@@ -1754,6 +1804,9 @@ fn drain_checkpoint(
     let shared_state = runtime.host_mut().shared_state();
     loop {
         drain_shared_jobs(runtime, program, &shared_state)?;
+        if poll_process_signals(runtime, program, &shared_state)? {
+            continue;
+        }
 
         if crate::modules::child_process_shared_vm::poll(runtime, program, &shared_state)? {
             continue;
@@ -1994,6 +2047,19 @@ fn route_callback_failure(
     program: &quench_runtime::ResidualProgram,
     mut failure: RootedError,
 ) -> Result<(), String> {
+    if runtime
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .requested_exit_code()
+        .is_some()
+    {
+        if let Some(exception) = failure.exception {
+            runtime.release_root(exception);
+        }
+        return Err("process.exit".to_owned());
+    }
     let Some(exception) = failure.exception else {
         return Err(runtime.format_rooted_error(program, &mut failure));
     };
@@ -2824,6 +2890,7 @@ pub(crate) fn remove_listener(
         context.release_root(event_root);
     }
     if event_removed {
+        unwatch_process_signal(context, Some(&event));
         update_process_event_count(context, receiver)?;
     }
     Ok(receiver)
@@ -2856,6 +2923,7 @@ pub(crate) fn remove_all_listeners(
     for root in event_roots {
         context.release_root(root);
     }
+    unwatch_process_signal(context, event.as_ref());
     update_process_event_count(context, receiver)?;
     Ok(receiver)
 }
@@ -2882,6 +2950,17 @@ fn register_process_listener(
         .scheduler
         .reserve_shared_listener_id()
         .ok_or_else(|| RootedError::host("process listener identifier space exhausted"))?;
+    if let crate::modules::shared_event_loop::SharedEventKey::String(name) = &event {
+        let result = context
+            .host_mut()
+            .shared_state()
+            .borrow_mut()
+            .process_signals
+            .watch(name);
+        if let Err(error) = result {
+            return Err(signal_start_error(context, error)?);
+        }
+    }
     let callback = context.retain(callback)?;
     let retained_receiver = context.retain(receiver)?;
     let event = retain_process_event_name(context, event, event_root)?;
@@ -2969,6 +3048,7 @@ pub(crate) fn emit(
                 context.release_root(event_root);
             }
             if event_removed {
+                unwatch_process_signal(context, Some(&event));
                 if let Err(error) = update_process_event_count(context, receiver) {
                     context.release_root(callback);
                     context.release_root(retained_receiver);
@@ -3271,3 +3351,147 @@ fn received_type(
 #[cfg(test)]
 #[path = "process/shared_vm_tests.rs"]
 mod tests;
+
+fn unwatch_process_signal(
+    context: &mut NativeContext<'_, NodeHost>,
+    event: Option<&crate::modules::shared_event_loop::SharedEventKey>,
+) {
+    let name = match event {
+        Some(crate::modules::shared_event_loop::SharedEventKey::String(name)) => Some(name.as_str()),
+        Some(_) => return,
+        None => None,
+    };
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .process_signals
+        .unwatch(name);
+}
+
+fn signal_start_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: std::io::Error,
+) -> Result<RootedError, RootedError> {
+    let Some(errno) = error.raw_os_error() else {
+        return Ok(RootedError::host(error.to_string()));
+    };
+    let code = super::util_system_error_shared_vm::system_error_name(-f64::from(errno));
+    let error = context.error_rooted(&format!("uv_signal_start {code}"))?;
+    let syscall = context.string_rooted("uv_signal_start");
+    install(context, error, "syscall", syscall)?;
+    let number = context.number(-f64::from(errno));
+    install(context, error, "errno", number)?;
+    Ok(throw_with_code(context, error, &code))
+}
+
+fn poll_process_signals(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    state: &Rc<RefCell<crate::host::SharedNodeState>>,
+) -> Result<bool, String> {
+    let pending = state
+        .borrow_mut()
+        .process_signals
+        .take_pending()
+        .map_err(|error| error.to_string())?;
+    if pending.is_empty() {
+        return Ok(false);
+    }
+    let Some(process) = shared_process_root(runtime) else {
+        return Ok(false);
+    };
+    for name in pending {
+        let callback = get_rooted_property(runtime, program, process, "emit")?;
+        let receiver = runtime.root(
+            runtime
+                .rooted_value(process)
+                .ok_or("process root is unavailable")?,
+        );
+        let event = runtime.string_rooted(&name);
+        let signal = runtime.string_rooted(&name);
+        state.borrow_mut().scheduler.queue_shared_next_tick(
+            crate::modules::shared_event_loop::SharedCallback {
+                callback,
+                receiver,
+                args: vec![event, signal],
+            },
+        );
+    }
+    Ok(true)
+}
+
+/// Node's public kill overloads and mutable _kill delegation. PID validation
+/// follows the shared bitwise/abstract equality operations, including hooks.
+pub(crate) fn kill(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let key = context.string_rooted("0");
+    let process = context.get_property_rooted(data, key)?;
+    let key = context.string_rooted("1");
+    let signals = context.get_property_rooted(data, key)?;
+    let undefined = context.undefined();
+    let pid = args.first().copied().unwrap_or(undefined);
+    let zero = context.number(0.0);
+    let integer = context.bitwise_or_rooted(pid, zero)?;
+    if !context.equal_rooted(pid, integer)? {
+        return Err(super::util_shared_vm::argument_type_error(
+            context, pid, "pid", "number",
+        )?);
+    }
+    let signal = args.get(1).copied().unwrap_or(undefined);
+    let integer_signal = context.bitwise_or_rooted(signal, zero)?;
+    enum KillSignal {
+        Number(RootId),
+        Name(RootId),
+    }
+    let signal = if context.strict_equal_rooted(signal, integer_signal)? {
+        KillSignal::Number(signal)
+    } else {
+        let signal = if context.truthy_rooted(signal)? {
+            signal
+        } else {
+            context.string_rooted("SIGTERM")
+        };
+        let number = context.get_property_rooted(signals, signal)?;
+        if !context.truthy_rooted(number)? {
+            let message = if context.is_object_rooted(signal)? {
+                let key = context.string_rooted("2");
+                let inspect = context.get_property_rooted(data, key)?;
+                let options = context.null_object_rooted()?;
+                let depth = context.number(0.0);
+                install(context, options, "depth", depth)?;
+                let text = context.call_rooted(inspect, undefined, &[signal, options])?;
+                context.to_string(text)?
+            } else {
+                context.to_string(signal)?
+            };
+            let error = context.type_error_rooted(&format!("Unknown signal: {message}"))?;
+            return Err(throw_with_code(context, error, "ERR_UNKNOWN_SIGNAL"));
+        }
+        KillSignal::Name(signal)
+    };
+    let key = context.string_rooted("_kill");
+    let operation = context.get_property_rooted(process, key)?;
+    let number = match signal {
+        KillSignal::Number(number) => number,
+        KillSignal::Name(name) => context.get_property_rooted(signals, name)?,
+    };
+    let returned = context.call_rooted(operation, process, &[pid, number])?;
+    if context.truthy_rooted(returned)? {
+        let errno = context
+            .rooted_value(returned)
+            .and_then(|value| value.as_number())
+            .ok_or_else(|| RootedError::host("process._kill returned a non-numeric error"))?;
+        let code = super::util_system_error_shared_vm::system_error_name(errno);
+        let error = context.error_rooted(&format!("kill {code}"))?;
+        let syscall = context.string_rooted("kill");
+        install(context, error, "syscall", syscall)?;
+        install(context, error, "errno", returned)?;
+        return Err(throw_with_code(context, error, &code));
+    }
+    Ok(context.boolean(true))
+}
