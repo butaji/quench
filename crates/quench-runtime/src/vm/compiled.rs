@@ -865,6 +865,27 @@ fn store_width(store: MemoryStore) -> usize {
     }
 }
 
+/// Disjoint state compiled code accesses: an access to one never aliases an
+/// access to another, so loads of one survive stores to the other.
+#[derive(Clone, Copy, Debug)]
+enum Region {
+    /// The instance's linear memory.
+    LinearMemory,
+    /// Global values, which live in heap cells.
+    Globals,
+}
+
+impl Region {
+    const ALL: [Self; 2] = [Self::LinearMemory, Self::Globals];
+    const COUNT: usize = Self::ALL.len();
+}
+
+/// Flags of a load of context state fixed for the whole call (the stack
+/// limit, the callout, global addresses): it may be reused and hoisted.
+fn invariant() -> MemFlagsData {
+    MemFlagsData::trusted().with_readonly().with_can_move()
+}
+
 /// The internal signature of a compiled function.
 fn internal_signature(
     plan_params: &[crate::WasmType],
@@ -891,6 +912,8 @@ fn internal_signature(
 
 struct Emitter<'a, 'b, H: Host> {
     guarded: bool,
+    /// Per `Region`, its alias region in this function.
+    regions: [ir::AliasRegion; Region::COUNT],
     globals: &'a [u32],
     analysis: &'a Analysis<'a, H>,
     builder: FunctionBuilder<'b>,
@@ -909,6 +932,13 @@ struct Emitter<'a, 'b, H: Host> {
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
+    /// The flags of an access to `region`.
+    fn flags(&self, region: Region) -> MemFlagsData {
+        MemFlagsData::trusted()
+            .with_endianness(ir::Endianness::Little)
+            .with_alias_region(Some(self.regions[region as usize]))
+    }
+
     fn read(&mut self, register: u16, kind: Kind) -> ir::Value {
         self.read_typed(register, kind.integer())
     }
@@ -1268,18 +1298,13 @@ impl<H: Host> Emitter<'_, '_, H> {
             .iter()
             .position(|candidate| *candidate == slot)
             .expect("planned globals are collected");
-        let table = self.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            self.context,
-            CONTEXT_GLOBALS,
-        );
-        self.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted().with_readonly(),
-            table,
-            (position * 8) as i32,
-        )
+        let table = self
+            .builder
+            .ins()
+            .load(types::I64, invariant(), self.context, CONTEXT_GLOBALS);
+        self.builder
+            .ins()
+            .load(types::I64, invariant(), table, (position * 8) as i32)
     }
 
     /// The binding the `b` register of instruction `pc` holds.
@@ -1365,12 +1390,10 @@ impl<H: Host> Emitter<'_, '_, H> {
                 callout
             }
         };
-        let target = self.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted().with_readonly(),
-            self.context,
-            CONTEXT_CALLOUT,
-        );
+        let target =
+            self.builder
+                .ins()
+                .load(types::I64, invariant(), self.context, CONTEXT_CALLOUT);
         let function = self.builder.ins().iconst(types::I64, i64::from(function));
         let call = self.builder.ins().call_indirect(
             callout_signature,
@@ -1453,7 +1476,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             let kind = Kind::of(result).expect("planned");
             let address = self.read(c, Kind::I32);
             let host = self.address(address, instruction.imm(), load.width());
-            let flags = MemFlagsData::trusted().with_endianness(ir::Endianness::Little);
+            let flags = self.flags(Region::LinearMemory);
             let ty = kind.ir();
             let value = match (load.width(), load_signed(load)) {
                 // A float loads straight into its view.
@@ -1477,7 +1500,7 @@ impl<H: Host> Emitter<'_, '_, H> {
             let address = self.read(c, Kind::I32);
             let width = store_width(store);
             let host = self.address(address, instruction.imm(), width);
-            let flags = MemFlagsData::trusted().with_endianness(ir::Endianness::Little);
+            let flags = self.flags(Region::LinearMemory);
             match width {
                 1 => self.builder.ins().istore8(flags, value, host, 0),
                 2 => self.builder.ins().istore16(flags, value, host, 0),
@@ -1683,12 +1706,8 @@ impl<H: Host> Emitter<'_, '_, H> {
             Op::WasmGlobalGet => {
                 let slot = self.binding_slot(pc);
                 let address = self.global_address(slot);
-                let value = self.builder.ins().load(
-                    types::I32,
-                    MemFlagsData::trusted().with_endianness(ir::Endianness::Little),
-                    address,
-                    0,
-                );
+                let flags = self.flags(Region::Globals);
+                let value = self.builder.ins().load(types::I32, flags, address, 0);
                 self.write(a, Kind::I32, value);
             }
             Op::WasmGlobalSet => {
@@ -1697,9 +1716,8 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let value = self.read(a, Kind::I32);
                 let wide = self.builder.ins().uextend(types::I64, value);
                 let encoded = self.builder.ins().bor_imm_u(wide, INTEGER_TAG as i64);
-                self.builder
-                    .ins()
-                    .store(MemFlagsData::trusted(), encoded, address, 0);
+                let flags = self.flags(Region::Globals);
+                self.builder.ins().store(flags, encoded, address, 0);
             }
             _ => unreachable!("planned instructions have a denotation"),
         }
@@ -1736,8 +1754,15 @@ impl<H: Host> Analysis<'_, H> {
         builder.seal_block(entry);
         let parameters = builder.block_params(entry).to_vec();
         let (context, base, length) = (parameters[0], parameters[1], parameters[2]);
+        let regions = Region::ALL.map(|region| {
+            builder.func.dfg.alias_regions.insert(ir::AliasRegionData {
+                user_id: region as u32,
+                description: format!("{region:?}").into(),
+            })
+        });
         let mut emitter = Emitter {
             guarded,
+            regions,
             globals,
             analysis: self,
             builder,
@@ -1765,12 +1790,11 @@ impl<H: Host> Analysis<'_, H> {
         }
         // Each activation checks the stack it may still use.
         let stack_pointer = emitter.builder.ins().get_stack_pointer(types::I64);
-        let limit = emitter.builder.ins().load(
-            types::I64,
-            MemFlagsData::trusted(),
-            context,
-            CONTEXT_STACK_LIMIT,
-        );
+        let limit =
+            emitter
+                .builder
+                .ins()
+                .load(types::I64, invariant(), context, CONTEXT_STACK_LIMIT);
         let exhausted = emitter
             .builder
             .ins()
