@@ -8,8 +8,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const CHECKPOINT_SCHEMA: u32 = 1;
-const FIXED_WORK_REPORT_SCHEMA: u64 = 4;
+const CHECKPOINT_SCHEMA: u32 = 2;
+const FIXED_WORK_REPORT_SCHEMA: u64 = 5;
 const MIN_CLEAN_PAIRS: usize = 7;
 const TOP_UP_ROUNDS: usize = 7;
 const MAX_TOP_UP_BATCHES_PER_FIXTURE: usize = 2;
@@ -659,7 +659,7 @@ fn validate_report(report: &Value, expected: Option<&Checkpoint>) -> Result<(), 
     if required_u64(report, "schema")? != FIXED_WORK_REPORT_SCHEMA
         || required_string(report, "measurement_mode")? != "fixed_work_diagnostic"
     {
-        return Err("expected a schema-4 fixed-work diagnostic report".into());
+        return Err("expected a schema-5 fixed-work diagnostic report".into());
     }
     let fixtures = report
         .get("fixtures")
