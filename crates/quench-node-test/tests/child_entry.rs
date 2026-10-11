@@ -543,3 +543,42 @@ console.log(JSON.stringify(result));
         String::from_utf8_lossy(&observations[1].stdout)
     );
 }
+
+#[test]
+fn shell_argument_deprecation_is_shared_and_emitted_once() {
+    let source = r#"
+      const {spawnSync,execFile}=require('child_process');
+      const seen=[];
+      process.emitWarning=(...args)=>seen.push(args);
+      spawnSync(process.execPath,[],{shell:true});
+      console.log(seen.length);
+      spawnSync(process.execPath,['--version'],{shell:true});
+      console.log(seen.length);
+      execFile(process.execPath,['--version'],{shell:true},(error)=>{
+        console.log(error===null,JSON.stringify(seen));
+      });
+    "#;
+    let directory = tempfile::tempdir().unwrap();
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}

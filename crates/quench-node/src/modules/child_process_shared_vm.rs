@@ -16,7 +16,7 @@ use std::time::Duration;
 static NEXT_CHILD_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(spawnSync, spawnNative, register, write, end, Buffer) => {
+    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs) => {
   const spawn = (file, args, options) => {
     if (typeof file !== "string") {
       throw Object.assign(new TypeError('The "file" argument must be of type string.'), {
@@ -179,12 +179,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
         ? options.shell
         : (globalThis.process.platform === "win32" ? "cmd.exe" : "/bin/sh");
       const command = [file, ...args].join(" ");
-      if (args.length > 0 && options.shell === true) {
-        globalThis.process.emitWarning(
-          "Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.",
-          { type: "DeprecationWarning", code: "DEP0190" }
-        );
-      }
+      warnShellArgs(args);
       const shellArgs = globalThis.process.platform === "win32"
         ? ["/d", "/s", "/c", command]
         : ["-c", command];
@@ -217,6 +212,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
       const shell = typeof options.shell === "string"
         ? options.shell
         : (globalThis.process.platform === "win32" ? "cmd.exe" : "/bin/sh");
+      warnShellArgs(actualArgs);
       const commandString = [command, ...actualArgs].join(" ");
       file = shell;
       actualArgs = globalThis.process.platform === "win32"
@@ -335,9 +331,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let register = context.host_function(crate::host::shared_vm::operation("childProcessRegister"))?;
     let write = context.host_function(crate::host::shared_vm::operation("childProcessWrite"))?;
     let end = context.host_function(crate::host::shared_vm::operation("childProcessEnd"))?;
+    let warning = context.host_function(crate::host::shared_vm::operation("childProcessShellArgsWarning"))?;
     let factory = context.evaluate_script_rooted(FACTORY, "node:child_process/shared.js")?;
     let undefined = context.undefined();
-    let module = context.call_rooted(factory, undefined, &[spawn_sync, spawn, register, write, end, buffer])?;
+    let module = context.call_rooted(factory, undefined, &[spawn_sync, spawn, register, write, end, buffer, warning])?;
     let key = context.string_rooted("spawn");
     let spawn = context.get_property_rooted(module, key)?;
     let exec_file = super::child_process_exec_shared_vm::function(context, spawn, buffer)?;
@@ -1052,3 +1049,27 @@ fn signal_name(status: &std::process::ExitStatus) -> Option<&'static str> {
 
 #[cfg(not(unix))]
 fn signal_name(_: &std::process::ExitStatus) -> Option<&'static str> { None }
+
+/// normalizeSpawnArguments emits DEP0190 once across sync and async calls.
+pub(crate) fn shell_args_warning(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let arguments = args.first().copied().unwrap_or(undefined);
+    let key = context.string_rooted("length");
+    let length = context.get_property_rooted(arguments, key)?;
+    if !context.rooted_value(length).and_then(|value| value.as_number()).is_some_and(|length| length > 0.0) {
+        return Ok(undefined);
+    }
+    let shared = context.host_mut().shared_state();
+    if shared.borrow().child_process_shell_args_warning_emitted { return Ok(undefined); }
+    let global = context.global_root()?;
+    let key = context.string_rooted("process");
+    let process = context.get_property_rooted(global, key)?;
+    let key = context.string_rooted("emitWarning");
+    let emit = context.get_property_rooted(process, key)?;
+    let message = context.string_rooted("Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.");
+    let kind = context.string_rooted("DeprecationWarning");
+    let code = context.string_rooted("DEP0190");
+    context.call_rooted(emit, process, &[message, kind, code])?;
+    shared.borrow_mut().child_process_shell_args_warning_emitted = true;
+    Ok(undefined)
+}

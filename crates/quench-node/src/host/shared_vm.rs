@@ -76,6 +76,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "execFile" (4) => crate::modules::child_process_exec_shared_vm::exec_file,
         method "readableEncoding" (0) => crate::modules::stream_shared_vm::readable_encoding,
         method "execFileEvent" (2) => crate::modules::child_process_exec_shared_vm::event,
+        method "childProcessShellArgsWarning" (1) => crate::modules::child_process_shared_vm::shell_args_warning,
         method "childProcessSpawn" (3) => crate::modules::child_process_shared_vm::spawn_child,
         method "childProcessRegister" (4) => crate::modules::child_process_shared_vm::register_child,
         method "childProcessWrite" (2) => crate::modules::child_process_shared_vm::write_child,
