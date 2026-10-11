@@ -620,6 +620,45 @@ record('failure',exec('printf failure >&2; exit 3'));
 }
 
 #[test]
+#[cfg(unix)]
+fn destroyed_child_streams_release_shell_descendant_close_waiting() {
+    let source = r#"const {exec}=require('child_process');
+const {promisify}=require('util');
+let finished=0;
+function done(){if(++finished===2)console.log('closed');}
+exec('sleep 3',{timeout:30},(error,stdout,stderr)=>{
+  console.log(error.code,error.signal,error.killed,JSON.stringify(stdout),JSON.stringify(stderr));done();
+});
+const controller=new AbortController();
+const promise=promisify(exec)('sleep 3',{signal:controller.signal});
+promise.catch(error=>{console.log(error.name,error.code,error.cause,JSON.stringify(error.stdout),JSON.stringify(error.stderr));done();});
+controller.abort('cause');
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(2)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
 fn system_error_names_and_validation_match_node() {
     let source = r#"const {getSystemErrorName}=require('util');
 const numbers=[...Array.from({length:140},(_,i)=>-i-1),...Array.from({length:16},(_,i)=>-3000-i),-4094,-4095,-99999];
