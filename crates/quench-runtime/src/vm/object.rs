@@ -504,6 +504,22 @@ impl<H: Host> Vm<H> {
         {
             return Some(Value::number(length as f64));
         }
+        // Canonical array indices live in the element backing, not a shape
+        // slot; expose that representation through the shared own-property view.
+        if let Some(cell @ Cell::Array { .. }) = self.heap.get(object)
+            && let Some(index) = super::object_static::array_index(self.atom_name(atom))
+        {
+            return cell
+                .array_elements()
+                .get(index as usize)
+                .copied()
+                .filter(|value| !value.is_deleted())
+                .or_else(|| {
+                    self.heap
+                        .sparse_get(object, index as usize)
+                        .filter(|value| !value.is_deleted())
+                });
+        }
         let object = self.object_data(object)?;
         let slot = self.shape_slot(object.shape(), atom)?;
         self.heap.property_get(object, slot)
@@ -857,8 +873,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        if let Some((target, handler)) = self.proxy_parts(target)
-        {
+        if let Some((target, handler)) = self.proxy_parts(target) {
             return self.proxy_set(
                 p,
                 target,
@@ -903,8 +918,7 @@ impl<H: Host> Vm<H> {
                     super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
                 }
             }
-            if let Some((target, handler)) = self.proxy_parts(current)
-            {
+            if let Some((target, handler)) = self.proxy_parts(current) {
                 return self.proxy_set(
                     p,
                     target,

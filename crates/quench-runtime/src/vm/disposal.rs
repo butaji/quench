@@ -310,10 +310,7 @@ impl<H: Host> Vm<H> {
         };
         let stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let root = self.heap.root(stack);
-        let entries = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(vec![]),
-        });
+        let entries = self.heap.alloc(Cell::array(self.array_proto, Rc::new(vec![])));
         let entries_atom = self.intern_atom(ENTRIES);
         let disposed_atom = self.intern_atom(DISPOSED);
         self.set_property(stack, entries_atom, entries)?;
@@ -558,7 +555,9 @@ impl<H: Host> Vm<H> {
         self.require_open_stack(p, stack)?;
         let entries = self.stack_entries(stack)?;
         let moved = match self.heap.get_mut(entries) {
-            Some(Cell::Array { elements, .. }) => std::mem::replace(elements, Rc::new(vec![])),
+            Some(cell @ Cell::Array { .. }) => {
+                std::mem::replace(cell.array_elements_mut(), Rc::new(vec![]))
+            }
             _ => return Err(JsError("DisposableStack entries are invalid".into())),
         };
         let disposed_atom = self.intern_atom(DISPOSED);
@@ -574,10 +573,7 @@ impl<H: Host> Vm<H> {
             .unwrap_or(self.object_proto);
         let moved_stack = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let root = self.heap.root(moved_stack);
-        let entries = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: moved,
-        });
+        let entries = self.heap.alloc(Cell::array(self.array_proto, moved));
         let entries_atom = self.intern_atom(ENTRIES);
         self.set_property(moved_stack, entries_atom, entries)?;
         self.set_property(moved_stack, disposed_atom, Value::FALSE)?;
@@ -709,18 +705,16 @@ impl<H: Host> Vm<H> {
         await_result: bool,
     ) -> Result<(), JsError> {
         let entries = self.stack_entries(stack)?;
-        let entry = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(vec![
+        let entry = self.heap.alloc(Cell::array(self.array_proto, Rc::new(vec![
                 callback,
                 value,
                 Value::integer(mode),
                 if await_result { Value::TRUE } else { Value::FALSE },
-            ]),
-        });
-        let Some(Cell::Array { elements, .. }) = self.heap.get_mut(entries) else {
+            ])));
+        let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(entries) else {
             return Err(JsError("DisposableStack entries are invalid".into()));
         };
+        let elements = cell.array_elements_mut();
         let mut values = (**elements).clone();
         values.push(entry);
         *elements = Rc::new(values);
@@ -758,13 +752,16 @@ impl<H: Host> Vm<H> {
         self.set_property(stack, disposed_atom, Value::TRUE)?;
         let entries = self.stack_entries(stack)?;
         let values = match self.heap.get_mut(entries) {
-            Some(Cell::Array { elements, .. }) => std::mem::replace(elements, Rc::new(vec![])),
+            Some(cell @ Cell::Array { .. }) => {
+                std::mem::replace(cell.array_elements_mut(), Rc::new(vec![]))
+            }
             _ => return Err(JsError("DisposableStack entries are invalid".into())),
         };
         for entry in values.iter().rev().copied() {
-            let Some(Cell::Array { elements, .. }) = self.heap.get(entry) else {
+            let Some(cell @ Cell::Array { .. }) = self.heap.get(entry) else {
                 continue;
             };
+            let elements = cell.array_elements();
             let callback = elements
                 .get(DISPOSAL_ENTRY_CALLBACK_SLOT)
                 .copied()
@@ -847,38 +844,35 @@ impl<H: Host> Vm<H> {
         self.set_property(stack, disposed_atom, Value::TRUE)?;
         let entries = self.stack_entries(stack)?;
         let values = match self.heap.get_mut(entries) {
-            Some(Cell::Array { elements, .. }) => std::mem::replace(elements, Rc::new(vec![])),
+            Some(cell @ Cell::Array { .. }) => {
+                std::mem::replace(cell.array_elements_mut(), Rc::new(vec![]))
+            }
             _ => return Err(JsError("DisposableStack entries are invalid".into())),
         };
         let resource_count = values.len();
-        let resources = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: values,
-        });
+        let resources = self.heap.alloc(Cell::array(self.array_proto, values));
         let result = self.promise_object();
-        let state = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(vec![
+        let state = self.heap.alloc(Cell::array(self.array_proto, Rc::new(vec![
                 resources,
                 Value::number(resource_count as f64),
                 completion,
                 result,
-            ]),
-        });
+            ])));
         self.continue_async_disposal(p, state)?;
         Ok(result)
     }
 
     fn async_disposal_state_value(&self, state: Value, slot: usize) -> Value {
         match self.heap.get(state) {
-            Some(Cell::Array { elements, .. }) => elements.get(slot).copied(),
+            Some(cell @ Cell::Array { .. }) => cell.array_elements().get(slot).copied(),
             _ => None,
         }
         .unwrap_or(Value::UNDEFINED)
     }
 
     fn set_async_disposal_state_value(&mut self, state: Value, slot: usize, value: Value) {
-        if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(state) {
+        if let Some(cell @ Cell::Array { .. }) = self.heap.get_mut(state) {
+            let elements = cell.array_elements_mut();
             let mut updated = (**elements).clone();
             updated[slot] = value;
             *elements = Rc::new(updated);
@@ -937,11 +931,13 @@ impl<H: Host> Vm<H> {
                 );
                 let resources = self.async_disposal_state_value(state, ASYNC_DISPOSAL_ENTRIES_SLOT);
                 let entry = match self.heap.get(resources) {
-                    Some(Cell::Array { elements, .. }) => elements[cursor],
+                    Some(cell @ Cell::Array { .. }) => cell.array_elements()[cursor],
                     _ => return Err(JsError("DisposableStack entries are invalid".into())),
                 };
                 let (callback, value, mode, await_result) = match self.heap.get(entry) {
-                    Some(Cell::Array { elements, .. }) => (
+                    Some(cell @ Cell::Array { .. }) => {
+                        let elements = cell.array_elements();
+                        (
                         elements
                             .get(DISPOSAL_ENTRY_CALLBACK_SLOT)
                             .copied()
@@ -957,7 +953,8 @@ impl<H: Host> Vm<H> {
                         elements
                             .get(DISPOSAL_ENTRY_AWAIT_RESULT_SLOT)
                             .is_some_and(|value| self.truthy(*value)),
-                    ),
+                        )
+                    }
                     _ => continue,
                 };
                 let result = match mode {

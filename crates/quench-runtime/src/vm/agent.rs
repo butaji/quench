@@ -49,10 +49,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let agent = self.object();
         for (method, name, length) in AGENT_METHODS {
-            let state = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(vec![Value::number(*method as u8 as f64)]),
-            });
+            let state = self.heap.alloc(Cell::array(
+                self.array_proto,
+                Rc::new(vec![Value::number(*method as u8 as f64)]),
+            ));
             let function = self.native_with_env(Native::Test262Agent, state);
             self.set_builtin_function_name(function, name)?;
             self.set_agent_function_length(function, *length);
@@ -94,9 +94,10 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let method = self.active_native_env().and_then(|env| {
-            let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
+            let Some(cell @ Cell::Array { .. }) = self.heap.get(env) else {
                 return None;
             };
+            let elements = cell.array_elements();
             elements.first().and_then(|value| value.as_number())
         });
         match method.and_then(AgentMethod::from_index) {
