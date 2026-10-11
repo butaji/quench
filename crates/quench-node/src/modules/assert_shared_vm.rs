@@ -38,30 +38,22 @@ pub(crate) fn module(
     let inspect = get(context, util, "inspect")?;
     let if_error =
         context.host_function_with_data(crate::host::shared_vm::operation("ifError"), inspect)?;
-    let assertion_error = context.evaluate_script_rooted(
+    let initialize = context.host_function(crate::host::shared_vm::operation(
+        "assertionErrorInitialize",
+    ))?;
+    let assertion_factory = context.evaluate_script_rooted(
         quench_js_check::checked_js!(
-            r#"class AssertionError extends Error {
+            r#"(initialize) => class AssertionError extends Error {
   constructor(options = {}) {
     super(options.message);
-    this.generatedMessage = options.generatedMessage ?? !options.message;
-    Object.defineProperty(this, "name", {
-      value: "AssertionError [ERR_ASSERTION]",
-      writable: true,
-      configurable: true,
-    });
-    this.code = options.code ?? "ERR_ASSERTION";
-    this.actual = options.actual;
-    this.expected = options.expected;
-    this.operator = options.operator;
-    this.stack;
-    this.name = "AssertionError";
-    this.diff = options.diff ?? "simple";
+    initialize(this, options);
   }
-}
-AssertionError"#
+}"#
         ),
         "node:assert/AssertionError.js",
     )?;
+    let undefined = context.undefined();
+    let assertion_error = context.call_rooted(assertion_factory, undefined, &[initialize])?;
     let rejects_factory = context.evaluate_script_rooted(
         crate::modules::assert_rejects_source::ASSERT_REJECTS,
         "node:assert/rejects.js",
@@ -129,7 +121,12 @@ AssertionError"#
     )?;
     let partial_deep_strict_equal =
         context.call_rooted(partial_factory, undefined, &[deep_strict_equal])?;
-    set(context, assert, "partialDeepStrictEqual", partial_deep_strict_equal)?;
+    set(
+        context,
+        assert,
+        "partialDeepStrictEqual",
+        partial_deep_strict_equal,
+    )?;
     set(context, assert, "match", match_string)?;
     set(context, assert, "doesNotMatch", does_not_match)?;
     set(context, assert, "fail", fail)?;
@@ -182,13 +179,19 @@ AssertionError"#
         "node:assert/Assert.js",
     )?;
     let strict_module = get(context, assert, "strict")?;
-    let assert_constructor = context.call_rooted(assert_factory, undefined, &[assert, strict_module])?;
+    let assert_constructor =
+        context.call_rooted(assert_factory, undefined, &[assert, strict_module])?;
     set(context, assert, "Assert", assert_constructor)?;
     set(context, strict, "ok", ok)?;
     set(context, strict, "strictEqual", strict_equal)?;
     set(context, strict, "notStrictEqual", not_strict_equal)?;
     set(context, strict, "deepStrictEqual", deep_strict_equal)?;
-    set(context, strict, "partialDeepStrictEqual", partial_deep_strict_equal)?;
+    set(
+        context,
+        strict,
+        "partialDeepStrictEqual",
+        partial_deep_strict_equal,
+    )?;
     set(context, strict, "notDeepStrictEqual", not_deep_strict_equal)?;
     set(context, strict, "match", match_string)?;
     set(context, strict, "doesNotMatch", does_not_match)?;
@@ -205,6 +208,62 @@ AssertionError"#
     let retained = context.retain(assert)?;
     context.host_mut().shared_state().borrow_mut().assert_module = Some(retained);
     Ok(assert)
+}
+
+/// Set host-owned assertion fields directly, without guest property-descriptor
+/// objects that can inherit polluted accessor fields from Object.prototype.
+pub(crate) fn initialize_assertion_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (error, options) = (args[0], args[1]);
+    let generated = get(context, options, "generatedMessage")?;
+    let generated = if nullish(context, generated) {
+        let message = get(context, options, "message")?;
+        let generated = !context.truthy_rooted(message)?;
+        context.boolean(generated)
+    } else {
+        generated
+    };
+    set(context, error, "generatedMessage", generated)?;
+    let key = context.string_rooted("name");
+    let name = context.string_rooted("AssertionError [ERR_ASSERTION]");
+    if !context.define_data_property_rooted(error, key, name, true, false, true)? {
+        return Err(RootedError::host("cannot define assertion error name"));
+    }
+    let code = assertion_option(context, options, "code", "ERR_ASSERTION")?;
+    set(context, error, "code", code)?;
+    for name in ["actual", "expected", "operator"] {
+        let value = get(context, options, name)?;
+        set(context, error, name, value)?;
+    }
+    let _ = get(context, error, "stack")?;
+    let name = context.string_rooted("AssertionError");
+    set(context, error, "name", name)?;
+    let diff = assertion_option(context, options, "diff", ASSERTION_DIFF)?;
+    set(context, error, "diff", diff)?;
+    Ok(context.undefined())
+}
+
+fn assertion_option(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: RootId,
+    name: &str,
+    fallback: &str,
+) -> Result<RootId, RootedError> {
+    let value = get(context, options, name)?;
+    Ok(if nullish(context, value) {
+        context.string_rooted(fallback)
+    } else {
+        value
+    })
+}
+
+fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
+    context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_undefined() || value.is_null())
 }
 
 pub(crate) fn ok(
@@ -404,11 +463,18 @@ pub(crate) fn does_not_match(
                 args.get(2).copied(),
                 "The input was expected not to match the regular expression",
             )?;
-            assertion_error(context, actual, expected, "doesNotMatch", &message, generated)
+            assertion_error(
+                context,
+                actual,
+                expected,
+                "doesNotMatch",
+                &message,
+                generated,
+            )
         }
         None => {
-            let error =
-                context.type_error_rooted("The \"regexp\" argument must be an instance of RegExp")?;
+            let error = context
+                .type_error_rooted("The \"regexp\" argument must be an instance of RegExp")?;
             Err(context.throw(error))
         }
     }
@@ -436,9 +502,7 @@ fn deep_equal(
         return Ok(false);
     }
     for (left, right) in seen.iter().copied() {
-        if context.same_value_rooted(actual, left)?
-            && context.same_value_rooted(expected, right)?
-        {
+        if context.same_value_rooted(actual, left)? && context.same_value_rooted(expected, right)? {
             return Ok(true);
         }
     }
@@ -768,6 +832,11 @@ pub(crate) fn fail(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
+    if let Some(message) = args.first().copied() {
+        if error_instance(context, message)? {
+            return Err(context.throw(message));
+        }
+    }
     let (message, generated) = match args.first().copied() {
         Some(message)
             if !context
