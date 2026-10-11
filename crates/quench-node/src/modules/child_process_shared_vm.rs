@@ -265,34 +265,6 @@ const FACTORY: &str = quench_js_check::checked_js!(
     [args, options] = parseFileArguments(args, options);
     return spawn(globalThis.process.execPath, [file, ...args], options);
   };
-  const exec = (command, options, callback) => {
-    if (typeof options === "function") {
-      callback = options;
-      options = {};
-    }
-    options ||= {};
-    const child = spawn(command, [], { ...options, shell: options.shell ?? true });
-    if (typeof callback === "function") {
-      const stdout = [];
-      const stderr = [];
-      child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
-      child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
-      child.on("error", (error) => callback(error, null, null));
-      child.on("close", (code, signal) => {
-        if (code === 0) {
-          callback(null, Buffer.concat(stdout), Buffer.concat(stderr));
-          return;
-        }
-        const error = new Error(`Command failed: ${command}`);
-        error.code = code;
-        error.signal = signal;
-        error.stdout = Buffer.concat(stdout);
-        error.stderr = Buffer.concat(stderr);
-        callback(error, error.stdout, error.stderr);
-      });
-    }
-    return child;
-  };
   const synchronousCommand = (command, args, options, useShell) => {
     const result = spawnSyncFunction(command, args, { ...(options || {}), shell: useShell });
     const encoding = options?.encoding;
@@ -316,7 +288,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
     }
     return synchronousCommand(file, args, options, false);
   };
-  return { spawn, spawnSync: spawnSyncFunction, fork, exec, execSync, execFileSync };
+  return { spawn, spawnSync: spawnSyncFunction, fork, execSync, execFileSync };
 }"#
 );
 
@@ -340,6 +312,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let exec_file = super::child_process_exec_shared_vm::function(context, spawn, buffer)?;
     let key = context.string_rooted("execFile");
     context.set_property_rooted(module, key, exec_file, module)?;
+    let exec =
+        context.host_function_with_data(crate::host::shared_vm::operation("exec"), module)?;
+    let key = context.string_rooted("exec");
+    context.set_property_rooted(module, key, exec, module)?;
     Ok(module)
 }
 
