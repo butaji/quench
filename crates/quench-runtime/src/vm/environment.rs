@@ -1382,7 +1382,7 @@ impl<H: Host> Vm<H> {
         Some(env)
     }
 
-    #[inline(never)]
+    #[inline(always)]
     pub(super) fn capture(
         &mut self,
         p: &ResidualProgram,

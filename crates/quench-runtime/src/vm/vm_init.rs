@@ -72,6 +72,7 @@ impl<H: Host> Vm<H> {
             test262_agent: Default::default(),
             programs: ProgramStore::default(),
             program_cache_layouts: Vec::new(),
+            active_registers: std::ptr::null_mut(),
             active_layout: Default::default(),
             active_program: ProgramId::MAIN,
             #[cfg(feature = "profile-aggregate")]
