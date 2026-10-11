@@ -169,6 +169,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Starts an activation that the dispatch loop runs in place.
+    ///
+    /// `args` may borrow the caller's register window: setup only pushes the new activation,
+    /// never touching or resizing another frame's register buffer, and frame-stack growth moves
+    /// the boxed frames' pointers rather than their buffers.
     pub(super) fn push_general_user_frame(
         &mut self,
         p: &ResidualProgram,
