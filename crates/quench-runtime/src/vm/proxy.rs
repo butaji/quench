@@ -9,8 +9,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        let Some((target, handler)) = self.proxy_parts(proxy)
-        else {
+        let Some((target, handler)) = self.proxy_parts(proxy) else {
             return Err(JsError("proxy call target is invalid".into()));
         };
         if handler.is_null() {
@@ -49,8 +48,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        let Some((target, handler)) = self.proxy_parts(proxy)
-        else {
+        let Some((target, handler)) = self.proxy_parts(proxy) else {
             return Err(JsError("proxy construct target is invalid".into()));
         };
         if handler.is_null() {
