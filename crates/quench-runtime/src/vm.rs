@@ -198,6 +198,7 @@ impl Frame {
     /// matter only to a collector that scans the whole file. A function with a liveness root
     /// map is scanned through it, so only functions without one, and generator or async
     /// activations whose suspended registers are scanned whole, are cleared.
+    #[inline(always)]
     fn prepare_registers_for(&mut self, function: &crate::bytecode::Function) {
         let register_count = usize::from(function.registers);
         if function.register_root_offset == crate::bytecode::NO_REGISTER_ROOT_MAP
