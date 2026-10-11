@@ -1189,6 +1189,7 @@ mod tests {
             dispatch: DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            activation_bindings: Default::default(),
             handlers: vec![],
             register_root_offset: root,
         }

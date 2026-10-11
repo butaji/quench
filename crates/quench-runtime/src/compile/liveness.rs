@@ -321,6 +321,7 @@ mod tests {
             dispatch: crate::bytecode::DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            activation_bindings: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
         };

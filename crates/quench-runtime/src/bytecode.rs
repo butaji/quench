@@ -844,6 +844,8 @@ pub struct Function {
     pub(crate) decoded: HotDecoding,
     /// Lazily derived `plain_local_slots`; never serialized.
     pub(crate) plain_locals: std::cell::OnceCell<Box<[bool]>>,
+    /// Lazily derived `activation_bindings_observable`; never serialized.
+    pub(crate) activation_bindings: std::cell::OnceCell<bool>,
     pub(crate) handlers: Vec<Handler>,
     pub(crate) register_root_offset: u32,
 }
@@ -982,6 +984,54 @@ impl Function {
                 .is_some_and(|name| self.plain_local_slot_is_safe(slot, name, tdz_slots[slot]));
         }
         plain
+    }
+
+    /// Whether anything can read an activation's implicit `new.target` and lexical-this
+    /// bindings: by-name resolution or direct eval in the body, closures or cloned scopes
+    /// that can capture the activation, `with` scopes, and constructors, initializers,
+    /// generators or async bodies whose `this` or activation outlives ordinary dispatch.
+    /// Otherwise the frame's own `this` is authoritative and the bindings are never read.
+    pub(crate) fn activation_bindings_observable(&self) -> bool {
+        *self.activation_bindings.get_or_init(|| {
+            self.is_async
+                || self.is_generator
+                || self.is_class_constructor
+                || self.derived_constructor
+                || self.class_field_initializer
+                || self.instance_initializer.is_some()
+                || self.inherited_with_scope
+                || !self.binding_sites.is_empty()
+                || self
+                    .code
+                    .iter()
+                    .map(|packed| {
+                        if packed.is_wide() {
+                            self.wide[packed.wide_index()]
+                        } else {
+                            packed.as_wide()
+                        }
+                    })
+                    .any(|instruction| {
+                        matches!(
+                            instruction.op(),
+                            Op::LoadName
+                                | Op::LoadNameCall
+                                | Op::LoadNameTypeof
+                                | Op::ResolveName
+                                | Op::LoadResolvedName
+                                | Op::DeleteName
+                                | Op::StoreName
+                                | Op::StoreResolvedName
+                                | Op::StoreVarBinding
+                                | Op::MakeClosure
+                                | Op::CloneEnv
+                                | Op::CallDirectEvalArray
+                                | Op::InitializeThis
+                                | Op::SuperCallCheck
+                        ) || (instruction.op() == Op::Call
+                            && (instruction.direct_eval() || instruction.parameter_eval()))
+                    })
+        })
     }
 
     /// The memoized `plain_local_slots` projection for this residual's atoms.

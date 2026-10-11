@@ -78,7 +78,13 @@ impl<H: Host> Vm<H> {
         frame: &mut Frame,
         arrow: bool,
         new_target: Value,
+        observable: bool,
     ) {
+        if !observable {
+            // Nothing reads the implicit bindings, and the frame's own `this` is authoritative.
+            frame.fixed_this = !arrow && !frame.this.is_deleted();
+            return;
+        }
         if !arrow && frame.function != super::ROOT_FUNCTION_ID {
             let atom = self.runtime_atoms.new_target;
             frame.dynamic_bindings.push((atom, new_target));
@@ -305,7 +311,12 @@ impl<H: Host> Vm<H> {
             }
         }
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
-        self.initialize_activation_bindings(&mut frame, arrow, new_target);
+        self.initialize_activation_bindings(
+            &mut frame,
+            arrow,
+            new_target,
+            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(),
+        );
         let run_numeric = numeric_frame_is_safe(function, capture_constructor_this);
         debug_assert!(!push_to_dispatch || !run_numeric);
         frame.prepare_registers_for(function);
@@ -494,7 +505,12 @@ impl<H: Host> Vm<H> {
         self.with_stack
             .extend(self.captured_with_objects_for_function(parent, function, p.kind));
         let new_target = self.construct_target.take().unwrap_or(Value::UNDEFINED);
-        self.initialize_activation_bindings(&mut frame, arrow, new_target);
+        self.initialize_activation_bindings(
+            &mut frame,
+            arrow,
+            new_target,
+            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(),
+        );
         frame.prepare_registers_for(function);
         frame.initialize_promoted_registers(function, args);
         let placeholder = std::mem::replace(&mut self.frames[frame_index], frame);

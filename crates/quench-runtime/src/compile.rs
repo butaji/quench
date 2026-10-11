@@ -2745,6 +2745,7 @@ impl<'a> Compiler<'a> {
             dispatch: DispatchClass::General,
             decoded: Default::default(),
             plain_locals: Default::default(),
+            activation_bindings: Default::default(),
             handlers: function.handlers,
             register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
         };

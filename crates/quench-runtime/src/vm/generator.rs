@@ -128,7 +128,7 @@ impl<H: Host> Vm<H> {
         frame.binding_site_pc = None;
         frame.env = parent;
         frame.this = self.call_this_value(this, function.strict)?;
-        self.initialize_activation_bindings(&mut frame, false, Value::UNDEFINED);
+        self.initialize_activation_bindings(&mut frame, false, Value::UNDEFINED, true);
         frame.captured = false;
         frame.with_base = self.with_stack.len();
         let register_count = function.registers as usize;
