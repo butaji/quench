@@ -85,56 +85,88 @@ pub(crate) struct Heap {
     properties: ValueArena,
     roots: RootTable,
     sparse_arrays: Option<Box<FxHashMap<u32, SparseElements>>>,
-    #[cfg(feature = "profile-aggregate")]
+    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
     memory_profile: memory_profile::MemoryProfile,
 }
-#[cfg(feature = "profile-aggregate")]
+#[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
 #[derive(Clone, Copy)]
 pub(crate) struct GcProfile {
+    #[cfg(feature = "profile-aggregate")]
     pub allocated_kinds: [u64; CellKind::COUNT],
+    #[cfg(feature = "profile-aggregate")]
     pub allocated_payload_bytes: [u64; CellKind::COUNT],
+    #[cfg(feature = "profile-aggregate")]
     pub allocated_size_buckets: [[u64; 8]; CellKind::COUNT],
+    #[cfg(feature = "profile-aggregate")]
     pub roots: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub work_items: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub max_worklist: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub marked: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub freed: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub sweep_slots: u64,
     pub mark_nanos: u64,
     pub sweep_nanos: u64,
     pub mark_clear_nanos: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub allocations_between_collections_total: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub allocations_between_collections_min: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub allocations_between_collections_max: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub survivors_total: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub survivors_min: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub survivors_max: u64,
+    #[cfg(feature = "profile-aggregate")]
     pub marked_kinds: [u64; CellKind::COUNT],
 }
-#[cfg(feature = "profile-aggregate")]
+#[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
 impl Default for GcProfile {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "profile-aggregate")]
             allocated_kinds: [0; CellKind::COUNT],
+            #[cfg(feature = "profile-aggregate")]
             allocated_payload_bytes: [0; CellKind::COUNT],
+            #[cfg(feature = "profile-aggregate")]
             allocated_size_buckets: [[0; 8]; CellKind::COUNT],
+            #[cfg(feature = "profile-aggregate")]
             roots: 0,
+            #[cfg(feature = "profile-aggregate")]
             work_items: 0,
+            #[cfg(feature = "profile-aggregate")]
             max_worklist: 0,
+            #[cfg(feature = "profile-aggregate")]
             marked: 0,
+            #[cfg(feature = "profile-aggregate")]
             freed: 0,
+            #[cfg(feature = "profile-aggregate")]
             sweep_slots: 0,
             mark_nanos: 0,
             sweep_nanos: 0,
             mark_clear_nanos: 0,
+            #[cfg(feature = "profile-aggregate")]
             allocations_between_collections_total: 0,
+            #[cfg(feature = "profile-aggregate")]
             allocations_between_collections_min: u64::MAX,
+            #[cfg(feature = "profile-aggregate")]
             allocations_between_collections_max: 0,
+            #[cfg(feature = "profile-aggregate")]
             survivors_total: 0,
+            #[cfg(feature = "profile-aggregate")]
             survivors_min: u64::MAX,
+            #[cfg(feature = "profile-aggregate")]
             survivors_max: 0,
+            #[cfg(feature = "profile-aggregate")]
             marked_kinds: [0; CellKind::COUNT],
         }
     }
@@ -474,7 +506,7 @@ impl Heap {
             profile.allocations_between_collections_max =
                 profile.allocations_between_collections_max.max(allocations);
         }
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let mark_started = std::time::Instant::now();
         let mut work: Vec<Value> = roots.into_iter().chain(self.roots.values()).collect();
         #[cfg(feature = "profile-aggregate")]
@@ -487,11 +519,11 @@ impl Heap {
             self.mark_work(&mut work, &mut object_roots, &mut ephemerons);
         }
         let finalization_jobs = self.prune_weak_entries();
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             self.gc_profile.mark_nanos += mark_started.elapsed().as_nanos() as u64;
         }
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
         let mut live = 0;
         let properties = &mut self.properties;
@@ -537,18 +569,21 @@ impl Heap {
             }
         }
         self.compact_property_arena(property_owners);
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
         }
-        #[cfg(feature = "profile-aggregate")]
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let clear_started = std::time::Instant::now();
         self.marks.fill(0);
+        #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
+        {
+            self.gc_profile.mark_clear_nanos += clear_started.elapsed().as_nanos() as u64;
+        }
         #[cfg(feature = "profile-aggregate")]
         {
             let survivors = live as u64;
             let profile = &mut self.gc_profile;
-            profile.mark_clear_nanos += clear_started.elapsed().as_nanos() as u64;
             profile.survivors_total += survivors;
             profile.survivors_min = profile.survivors_min.min(survivors);
             profile.survivors_max = profile.survivors_max.max(survivors);
@@ -610,7 +645,7 @@ impl Heap {
     fn mark(marks: &mut [u64], index: usize) {
         marks[index / 64] |= 1 << (index % 64);
     }
-    #[cfg(feature = "profile-aggregate")]
+    #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     pub(crate) const fn gc_profile(&self) -> GcProfile {
         self.gc_profile
     }

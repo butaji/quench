@@ -43,6 +43,18 @@ fn gc_headroom_factors_scale_live_cells_without_overflow() {
     );
 }
 
+#[cfg(feature = "profile-gc-time")]
+#[test]
+fn gc_time_profile_records_collection_phases_without_aggregate_counters() {
+    let mut heap = Heap::new();
+    let kept = heap.alloc(Cell::String("kept".into()));
+    heap.collect([kept]);
+
+    let profile = heap.gc_profile();
+    assert!(profile.mark_nanos + profile.sweep_nanos + profile.mark_clear_nanos > 0);
+    assert_eq!(heap.stats().1, 1);
+}
+
 #[test]
 fn scope_slot_owners_survive_collection_and_release() {
     let mut heap = Heap::new();
