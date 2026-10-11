@@ -553,10 +553,6 @@ pub(super) enum FrameOutcome {
         frame: Option<Frame>,
     },
 }
-enum UserFrameStart {
-    Outcome(FrameOutcome),
-    Pushed(crate::stack::GuestCallGuard),
-}
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct MethodCacheKey {
