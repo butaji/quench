@@ -3,7 +3,7 @@ use crate::value_vec::ValueVec;
 use std::rc::Rc;
 
 fn plain_object() -> Object {
-    Object::new(Value::NULL)
+    Object::new(0)
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn scope_slot_owners_survive_collection_and_release() {
 fn ordinary_object_payloads_live_in_compact_records() {
     assert_eq!(
         size_of::<Object>(),
-        size_of::<Value>() + size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
+        size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
     );
     assert_eq!(size_of::<Slot>(), size_of::<Option<Cell>>());
 }
@@ -532,7 +532,7 @@ fn inline_property_values_are_gc_roots_until_deleted_or_the_owner_dies() {
     heap.register_property_shape(1, INLINE_PROPERTY_COUNT);
     let kept = heap.alloc(Cell::String("kept".into()));
     let deleted = heap.alloc(Cell::String("deleted".into()));
-    let object = heap.alloc_object_pair(Value::NULL, 1, kept, deleted);
+    let object = heap.alloc_object_pair(1, kept, deleted);
     heap.property_set(object, 1, Value::DELETED);
 
     heap.collect([object]);
@@ -553,7 +553,7 @@ fn out_of_line_object_metadata_is_included_in_live_memory_totals() {
     let mut heap = Heap::new();
     let object = heap.alloc(Cell::Object(plain_object()));
     let before = heap.memory_stats().3;
-    let data = heap.get_mut(object).unwrap().object_mut().unwrap();
+    let data = heap.object_mut(object).unwrap();
     data.set_arguments_object();
     data.set_arguments_map(vec![0; 32]);
     data.set_module_namespace();

@@ -323,7 +323,7 @@ impl<H: Host> Vm<H> {
             .get(&(self.realm.globals, Native::Object))
             .copied()
             .unwrap_or(self.object_proto);
-        let descriptor = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let descriptor = self.heap.alloc(Cell::Object(self.shapes.empty_object(prototype)));
         let descriptor = self.heap.root(descriptor);
         let outcome = (|| {
             let fields = record.resolve(&self.heap);

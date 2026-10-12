@@ -11,7 +11,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "Symbol")?;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.set_named_constant(program, constructor, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(global, "Symbol", constructor)?;

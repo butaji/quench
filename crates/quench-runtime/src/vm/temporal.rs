@@ -298,7 +298,7 @@ impl<H: Host> Vm<H> {
         }
         self.validate_duration_fields(p, &fields)?;
         Ok(self.heap.alloc(Cell::TemporalDuration {
-            object: Box::new(Self::empty_object(self.object_proto)),
+            object: Box::new(self.shapes.empty_object(self.object_proto)),
             fields: Box::new(fields),
         }))
     }
@@ -587,12 +587,10 @@ impl<H: Host> Vm<H> {
         let prototype_atom = self.prototype_atom();
         let prototype = self.get_property(p, constructor, prototype_atom)?;
         let value = self.heap.alloc(Cell::TemporalDuration {
-            object: Box::new(Self::empty_object(self.object_proto)),
+            object: Box::new(self.shapes.empty_object(self.object_proto)),
             fields: Box::new(fields),
         });
-        if let Some(Cell::TemporalDuration { object, .. }) = self.heap.get_mut(value) {
-            object.proto = prototype;
-        }
+        self.set_object_prototype(value, prototype);
         Ok(value)
     }
 
@@ -636,7 +634,7 @@ impl<H: Host> Vm<H> {
         relative: &super::temporal_zoned_date_time::ZonedDateTimeRecord,
     ) -> Result<(), JsError> {
         let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
-            object: Box::new(Self::empty_object(self.object_proto)),
+            object: Box::new(self.shapes.empty_object(self.object_proto)),
             epoch_nanoseconds: Box::new(relative.epoch_nanoseconds),
             time_zone: Box::new(relative.time_zone.to_string()),
             calendar: Box::new(relative.calendar.to_string()),
@@ -681,7 +679,7 @@ impl<H: Host> Vm<H> {
             .any(|value| *value != 0.0)
         {
             let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
-                object: Box::new(Self::empty_object(self.object_proto)),
+                object: Box::new(self.shapes.empty_object(self.object_proto)),
                 epoch_nanoseconds: Box::new(zoned.epoch_nanoseconds),
                 time_zone: Box::new(zoned.time_zone.to_string()),
                 calendar: Box::new(zoned.calendar.to_string()),
@@ -1385,7 +1383,7 @@ impl<H: Host> Vm<H> {
             });
             let date_duration = self.temporal_duration_construct(p, &date_fields)?;
             let start = self.heap.alloc(Cell::TemporalZonedDateTime {
-                object: Box::new(Self::empty_object(self.object_proto)),
+                object: Box::new(self.shapes.empty_object(self.object_proto)),
                 epoch_nanoseconds: Box::new(zoned.epoch_nanoseconds),
                 time_zone: Box::new(zoned.time_zone.to_string()),
                 calendar: Box::new(zoned.calendar.to_string()),
@@ -1418,7 +1416,7 @@ impl<H: Host> Vm<H> {
             day_fields[super::temporal_date_arithmetic::DURATION_DAYS_FIELD] = Value::number(1.0);
             let next_day_duration = self.temporal_duration_construct(p, &day_fields)?;
             let date_endpoint = self.heap.alloc(Cell::TemporalZonedDateTime {
-                object: Box::new(Self::empty_object(self.object_proto)),
+                object: Box::new(self.shapes.empty_object(self.object_proto)),
                 epoch_nanoseconds: Box::new(date_endpoint_epoch),
                 time_zone: Box::new(time_zone),
                 calendar: Box::new(calendar),

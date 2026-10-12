@@ -42,7 +42,7 @@ impl<H: Host> Vm<H> {
         let constructor = self.native_with_realm(Native::IntlDisplayNames, global, global);
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.realm
             .intrinsics
             .intl_display_names_constructors
@@ -94,7 +94,7 @@ impl<H: Host> Vm<H> {
                 let locales = vm.canonical_locale_list(p, args.first().copied())?;
                 let locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
                 let options = vm.display_names_options(p, args.get(1).copied())?;
-                let instance = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                let instance = vm.heap.alloc(Cell::Object(vm.shapes.empty_object(prototype)));
                 for (slot, value) in [
                     (DISPLAY_NAMES_LOCALE_SLOT, locale),
                     (DISPLAY_NAMES_TYPE_SLOT, options.display_type),

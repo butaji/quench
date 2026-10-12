@@ -362,7 +362,7 @@ impl<H: Host> Vm<H> {
             self.object_proto
         };
         Ok(self.heap.alloc(Cell::TemporalZonedDateTime {
-            object: Box::new(Self::empty_object(prototype)),
+            object: Box::new(self.shapes.empty_object(prototype)),
             epoch_nanoseconds: Box::new(epoch),
             time_zone: Box::new(timezone),
             calendar: Box::new(calendar),
@@ -1276,7 +1276,9 @@ impl<H: Host> Vm<H> {
         let is_plain_time = self
             .heap
             .object_record(partial)
-            .is_some_and(|object| object.proto == self.temporal_plain_time_proto);
+            .is_some_and(|object| {
+                self.prototype_for_data(object) == self.temporal_plain_time_proto
+            });
         if !self.is_object_like(partial)
             || self.heap.array(partial).is_some()
             || is_plain_time
@@ -1392,7 +1394,7 @@ impl<H: Host> Vm<H> {
             nanosecond,
         ] = fields;
         let base_date = self.heap.alloc(Cell::TemporalPlainDate {
-            object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
+            object: Box::new(self.shapes.empty_object(self.temporal_plain_date_proto)),
             year,
             month: month as u32,
             day: day as u32,
@@ -2385,7 +2387,7 @@ impl<H: Host> Vm<H> {
             self.object_proto
         };
         Ok(self.heap.alloc(Cell::TemporalZonedDateTime {
-            object: Box::new(Self::empty_object(prototype)),
+            object: Box::new(self.shapes.empty_object(prototype)),
             epoch_nanoseconds: Box::new(record.epoch_nanoseconds),
             time_zone: Box::new(record.time_zone),
             calendar: Box::new(record.calendar),

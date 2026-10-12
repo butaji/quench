@@ -1196,7 +1196,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn native_with_realm(&mut self, kind: Native, env: Value, realm: Value) -> Value {
         let function = self.heap.alloc(Cell::Function {
-            object: Box::new(Self::empty_object(self.realm_function_prototype(realm))),
+            object: Box::new(self.shapes.empty_object(self.realm_function_prototype(realm))),
             kind: FunctionKind::Native(kind),
             env,
             realm,
@@ -1339,7 +1339,7 @@ impl<H: Host> Vm<H> {
             .get(&(self.realm.globals, Native::Promise))
             .copied()
             .unwrap_or(Value::NULL);
-        let promise = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let promise = self.heap.alloc(Cell::Object(self.shapes.empty_object(prototype)));
         self.realm.promise.records.insert(
             promise,
             PromiseRecord {
@@ -2106,7 +2106,7 @@ impl<H: Host> Vm<H> {
                 let length = bytes.len();
                 let kind = crate::heap::TypedArrayKind::Uint8;
                 let buffer = self.heap.alloc(Cell::ArrayBuffer {
-                    object: Box::new(Self::empty_object(self.array_buffer_proto)),
+                    object: Box::new(self.shapes.empty_object(self.array_buffer_proto)),
                     bytes: std::rc::Rc::new(bytes),
                     shared: false,
                     detached: false,
@@ -2116,7 +2116,7 @@ impl<H: Host> Vm<H> {
                 });
                 let value = self.heap.alloc(Cell::TypedArray {
                     kind,
-                    object: Box::new(Self::empty_object(self.typed_array_proto(kind))),
+                    object: Box::new(self.shapes.empty_object(self.typed_array_proto(kind))),
                     buffer,
                     offset: 0,
                     length,
@@ -2161,7 +2161,7 @@ impl<H: Host> Vm<H> {
         let prototype = self
             .own_property(constructor, prototype_atom)
             .unwrap_or(self.object_proto);
-        let value = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+        let value = self.heap.alloc(Cell::Object(self.shapes.empty_object(prototype)));
         self.realm.promise.module_sources.insert(identity, value);
         Ok(value)
     }
@@ -2399,8 +2399,8 @@ impl<H: Host> Vm<H> {
         let Some(source) = self.object_data(source).cloned() else {
             return Err(self.type_error(p, "evaluated module namespace is invalid".into()));
         };
+        let prototype = self.prototype_for_data(&source);
         if let Some(target) = self.object_data_mut(target) {
-            target.proto = source.proto;
             target.copy_property_storage_from(&source);
             if source.is_module_namespace() {
                 target.set_module_namespace();
@@ -2408,6 +2408,7 @@ impl<H: Host> Vm<H> {
             target.set_module_bindings(source.module_bindings().to_vec());
             target.set_deferred_module(None);
         }
+        self.set_object_prototype(target, prototype);
         self.invalidate_field_caches();
         self.invalidate_method_caches();
         Ok(())
@@ -4513,7 +4514,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let namespace = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc(Cell::Object(self.shapes.empty_object(Value::NULL)));
         if let Some(object) = self.object_data_mut(namespace) {
             object.set_module_namespace();
         }

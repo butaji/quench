@@ -25,7 +25,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         for (name, native, length) in [
             ("evaluate", Native::ShadowRealmEvaluate, 1.0),
             ("importValue", Native::ShadowRealmImportValue, 2.0),
@@ -362,7 +362,7 @@ impl<H: Host> Vm<H> {
         let global_atom = self.intern_atom("global");
         let realm_global = self.get_property(p, realm_record, global_atom)?;
         let realm_global_root = self.heap.root(realm_global);
-        let object = Self::empty_object(prototype);
+        let object = self.shapes.empty_object(prototype);
         let shadow_realm = self.heap.alloc(Cell::ShadowRealm {
             object: Box::new(object),
             caller_global,
@@ -504,9 +504,7 @@ impl<H: Host> Vm<H> {
         let constructor = self.get_property(p, caller, function_atom)?;
         let prototype_atom = self.prototype_atom();
         let function_prototype = self.get_property(p, constructor, prototype_atom)?;
-        if let Some(object) = self.object_data_mut(wrapper) {
-            object.proto = function_prototype;
-        }
+        self.set_object_prototype(wrapper, function_prototype);
         self.set_function_metadata_value(wrapper, name_atom, name)?;
         self.set_function_metadata_value(wrapper, length_atom, length)?;
         self.heap.release_root(target_root);

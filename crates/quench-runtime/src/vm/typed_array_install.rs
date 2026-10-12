@@ -79,7 +79,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(typed_array, "TypedArray")?;
         let typed_array_proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.typed_array_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.typed_array_proto)));
         self.set_builtin_value_named(typed_array, "prototype", typed_array_proto)?;
         self.set_builtin_value_named(typed_array_proto, "constructor", typed_array)?;
         self.install_typed_array_species(typed_array, typed_array_proto, global)?;
@@ -87,13 +87,11 @@ impl<H: Host> Vm<H> {
 
         for &(kind, native, name) in TYPED_ARRAY_INSTALLS {
             let constructor = self.native_with_realm(native, Value::NULL, global);
-            self.object_data_mut(constructor)
-                .expect("typed array constructor")
-                .proto = typed_array;
+            self.set_object_prototype(constructor, typed_array);
             self.set_builtin_function_name(constructor, name)?;
             let prototype = self
                 .heap
-                .alloc(Cell::Object(Self::empty_object(typed_array_proto)));
+                .alloc(Cell::Object(self.shapes.empty_object(typed_array_proto)));
             self.realm
                 .intrinsics
                 .builtin_prototypes
@@ -130,12 +128,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let constructor = self.native_value(native);
         let typed_array = self.native_value(Native::TypedArray);
-        self.object_data_mut(constructor)
-            .expect("typed array constructor")
-            .proto = typed_array;
+        self.set_object_prototype(constructor, typed_array);
         let proto = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(self.typed_array_proto)));
+            .alloc(Cell::Object(self.shapes.empty_object(self.typed_array_proto)));
         match kind {
             TypedArrayKind::Uint8Clamped => self.uint8_clamped_array_proto = proto,
             TypedArrayKind::Uint16 => self.uint16_array_proto = proto,

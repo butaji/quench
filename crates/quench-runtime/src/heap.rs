@@ -314,6 +314,12 @@ impl Heap {
             + self.array_records.live_count()
     }
     pub fn alloc(&mut self, cell: Cell) -> Value {
+        match &cell {
+            Cell::Object(object) | Cell::Array { object, .. } => {
+                self.properties.ensure_empty_shape(object.shape());
+            }
+            _ => {}
+        }
         #[cfg(feature = "profile-aggregate")]
         {
             let kind = Self::cell_kind(&cell) as usize;
@@ -380,23 +386,20 @@ impl Heap {
     }
     pub(crate) fn alloc_object_pair(
         &mut self,
-        proto: Value,
         shape: u32,
         first: Value,
         second: Value,
     ) -> Value {
         let values = [first, second];
-        self.alloc_object_with_properties(proto, shape, &values)
+        self.alloc_object_with_properties(shape, &values)
     }
     pub(crate) fn alloc_object_with_properties(
         &mut self,
-        proto: Value,
         shape: u32,
         values: &[Value],
     ) -> Value {
         let (properties, inline_properties) = self.initial_object_storage(shape, values);
         self.alloc(Cell::Object(Object::with_property_storage(
-            proto,
             properties,
             inline_properties,
         )))
@@ -1302,7 +1305,6 @@ impl Heap {
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(Value, u32, &mut Vec<Value>),
     ) {
-        work.push(object.proto);
         object_roots(owner, object.shape(), work);
         work.extend(object.private_names().iter().map(|brand| brand.home));
         if let Some(values) = object.inline_properties() {

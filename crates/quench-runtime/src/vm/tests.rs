@@ -68,7 +68,7 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     let program = Engine::specialize("", "descriptor-owner.js").unwrap();
     let mut vm = Vm::new(SilentHost);
     let owner = vm.heap.alloc(Cell::Array {
-        object: Vm::<SilentHost>::empty_object(Value::NULL),
+        object: vm.shapes.empty_object(Value::NULL),
         elements: Rc::new(Vec::new()),
     });
     let setter = vm.native_with_env(Native::Object, owner);
@@ -90,7 +90,7 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     assert_eq!(vm.heap.weak_value(setter_weak), Some(setter));
     assert!(vm.heap.release_root(root));
     let map = vm.heap.alloc(Cell::WeakMap {
-        object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
+        object: Box::new(vm.shapes.empty_object(Value::NULL)),
         entries: Box::default(),
     });
     let map_key = vm.object();
@@ -122,10 +122,10 @@ fn shape_roots_keep_symbols_and_active_accessors_alive() {
     let symbol_shape = vm.transition_property_shape(0, PropertyKey::symbol(symbol));
     let first =
         vm.heap
-            .alloc_object_with_properties(Value::NULL, symbol_shape, &[Value::UNDEFINED]);
+            .alloc_object_with_properties(symbol_shape, &[Value::UNDEFINED]);
     let second =
         vm.heap
-            .alloc_object_with_properties(Value::NULL, symbol_shape, &[Value::UNDEFINED]);
+            .alloc_object_with_properties(symbol_shape, &[Value::UNDEFINED]);
     let first_root = vm.heap.root(first);
     let second_root = vm.heap.root(second);
 
@@ -140,7 +140,7 @@ fn shape_roots_keep_symbols_and_active_accessors_alive() {
     let data_shape = vm.transition_shape(0, atom);
     let owner = vm
         .heap
-        .alloc_object_with_properties(Value::NULL, data_shape, &[Value::UNDEFINED]);
+        .alloc_object_with_properties(data_shape, &[Value::UNDEFINED]);
     let getter = vm.heap.alloc(Cell::String("getter".into()));
     let getter_weak = vm.heap.weak_handle(getter).unwrap();
     vm.set_property_attributes(
@@ -2267,8 +2267,8 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 super::property_key::PropertyKey::string(atom),
                 attributes,
             );
+            vm.set_object_prototype(namespace, Value::NULL);
             let object = vm.object_data_mut(namespace).unwrap();
-            object.proto = Value::NULL;
             object.set_module_namespace();
             object.set_module_bindings(vec![(
                 atom,
@@ -2714,7 +2714,7 @@ fn dynamic_constructor_roots_release_after_prototype_completion() {
                 assert_eq!(vm.active_call_roots.len(), calls);
                 let weak_result = result.ok().map(|result| {
                     assert!(vm.is_function(result));
-                    assert_eq!(vm.object_data(result).unwrap().proto, prototype);
+                    assert_eq!(vm.object_prototype(result), prototype);
                     vm.heap.weak_handle(result).unwrap()
                 });
                 vm.collect_now(&program);
@@ -3549,7 +3549,7 @@ fn bound_function_proxy_metadata_roots_survive_gc_and_abrupt_completion() {
             match outcome {
                 Ok(function) => {
                     assert_eq!(phase, "accept");
-                    assert!(vm.object_data(function).unwrap().proto.is_null());
+                    assert!(vm.object_prototype(function).is_null());
                     let atom = vm.intern_atom("length");
                     assert_eq!(vm.own_property(function, atom), Some(Value::number(3.0)));
                     let handle = vm.heap.weak_handle(function).unwrap();
@@ -3649,7 +3649,7 @@ fn closure_identity_cache_rejects_reused_function_slots() {
     let mut reused = false;
     for _ in 0..allocation_bound {
         let replacement = vm.heap.alloc(crate::heap::Cell::Function {
-            object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
+            object: Box::new(vm.shapes.empty_object(Value::NULL)),
             kind: crate::heap::FunctionKind::User(key.0, key.1),
             env: Value::NULL,
             realm: Value::NULL,
@@ -3675,18 +3675,18 @@ fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
     let program = Engine::specialize("", "finalization-token-reuse.js").unwrap();
     let target = vm
         .heap
-        .alloc(crate::heap::Cell::Object(Vm::<SilentHost>::empty_object(
+        .alloc(crate::heap::Cell::Object(vm.shapes.empty_object(
             Value::NULL,
         )));
     let token = vm
         .heap
-        .alloc(crate::heap::Cell::Object(Vm::<SilentHost>::empty_object(
+        .alloc(crate::heap::Cell::Object(vm.shapes.empty_object(
             Value::NULL,
         )));
     let target_handle = vm.heap.weak_handle(target).unwrap();
     let token_handle = vm.heap.weak_handle(token).unwrap();
     let registry = vm.heap.alloc(crate::heap::Cell::FinalizationRegistry {
-        object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
+        object: Box::new(vm.shapes.empty_object(Value::NULL)),
         callback: Value::UNDEFINED,
         entries: Box::new(crate::heap::FinalizationEntries(vec![
             crate::heap::FinalizationEntry {
@@ -3712,7 +3712,7 @@ fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
     let replacement = (0..allocation_bound)
         .map(|_| {
             vm.heap
-                .alloc(crate::heap::Cell::Object(Vm::<SilentHost>::empty_object(
+                .alloc(crate::heap::Cell::Object(vm.shapes.empty_object(
                     Value::NULL,
                 )))
         })
@@ -4123,10 +4123,10 @@ fn aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm() {
             let reason_weak = vm.heap.weak_handle(reason).unwrap();
             let error = vm.aggregate_error(vec![reason]).unwrap();
             assert!(vm.error_is_error(error));
-            assert_eq!(vm.object_data(error).unwrap().proto, error_prototype);
+            assert_eq!(vm.object_prototype(error), error_prototype);
             let errors_atom = vm.intern_atom("errors");
             let errors = vm.own_property(error, errors_atom).unwrap();
-            assert_eq!(vm.object_data(errors).unwrap().proto, array_prototype);
+            assert_eq!(vm.object_prototype(errors), array_prototype);
             let error_weak = vm.heap.weak_handle(error).unwrap();
             let errors_weak = vm.heap.weak_handle(errors).unwrap();
             let root = vm.heap.root(error);
@@ -4247,7 +4247,7 @@ fn promise_constructor_intrinsics_survive_guest_binding_and_prototype_mutation()
         let result = vm
             .promise_then(&program, source, Value::UNDEFINED, Value::UNDEFINED)
             .unwrap();
-        assert_eq!(vm.object_data(result).unwrap().proto, prototype);
+        assert_eq!(vm.object_prototype(result), prototype);
         assert_eq!(vm.heap.root_count_for_test(), roots);
         let value = vm.object();
         assert!(
@@ -5152,7 +5152,7 @@ fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
                                 assert_eq!(vm.own_property(proto, rank), Some(Value::number(42.0)));
                                 if success {
                                     let raw = vm.proxy_target(target);
-                                    assert_eq!(vm.object_data(raw).unwrap().proto, proto);
+                                    assert_eq!(vm.object_prototype(raw), proto);
                                 }
                             } else if success {
                                 let raw = vm.proxy_target(target);
@@ -6235,7 +6235,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
             let mut token = None;
             if generator {
                 let value = vm.heap.alloc(super::Cell::Iterator {
-                    object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
+                    object: Box::new(vm.shapes.empty_object(Value::NULL)),
                     source: Value::NULL,
                     kind: super::IteratorKind::AsyncGenerator,
                     index: 0,
@@ -6580,7 +6580,7 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
                     "raw" => source,
                     "protocol" => vm.iterator_from(&program, &[source]).unwrap(),
                     _ => vm.heap.alloc(super::Cell::Iterator {
-                        object: Box::new(Vm::<Test262Host>::empty_object(
+                        object: Box::new(vm.shapes.empty_object(
                             vm.async_from_sync_iterator_proto,
                         )),
                         source,
@@ -6787,7 +6787,7 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let iterator = vm.heap.alloc(super::Cell::Iterator {
-                    object: Box::new(Vm::<Test262Host>::empty_object(
+                    object: Box::new(vm.shapes.empty_object(
                         vm.regexp_string_iterator_proto,
                     )),
                     source: matcher,
@@ -7922,7 +7922,7 @@ fn regexp_construction_roots_protocol_inputs_and_initialization_projections() {
                             assert_eq!(source.units(), &[u16::from(b'a')]);
                             assert_eq!(flags, "i");
                             if construct {
-                                let proto = object.proto;
+                                let proto = vm.prototype_for_data(object);
                                 let atom = vm.intern_atom("tag");
                                 let tag = vm.own_property(proto, atom).unwrap();
                                 assert_eq!(tag, Value::number(42.0));

@@ -10,13 +10,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let Some(keys) = keys else {
             return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+                object: self.shapes.empty_object(self.array_proto),
                 elements: std::rc::Rc::new(values),
             }));
         };
         let result = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc(Cell::Object(self.shapes.empty_object(Value::NULL)));
         for (key, value) in keys.into_iter().zip(values) {
             let key = match self.heap.get(key).cloned() {
                 Some(Cell::String(name)) => PropertyKey::string(self.intern_js_atom(&name)),
@@ -31,13 +31,14 @@ impl<H: Host> Vm<H> {
     pub(super) fn aggregate_error(&mut self, errors: Vec<Value>) -> Result<Value, JsError> {
         let array_prototype = self.array_prototype_for_realm(self.realm.globals);
         let errors = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(array_prototype),
+            object: self.shapes.empty_object(array_prototype),
             elements: std::rc::Rc::new(errors),
         });
         let errors = self.heap.root(errors);
         let prototype =
             self.realm.intrinsics.builtin_prototypes[&(self.realm.globals, Native::AggregateError)];
-        let error = self.heap.alloc(Cell::Object(Object::error(prototype)));
+        let shape = self.shapes.root_for_prototype(prototype);
+        let error = self.heap.alloc(Cell::Object(Object::error(shape)));
         let error = self.heap.root(error);
         let result = (|| {
             let error = self.heap.root_value(error).unwrap_or(Value::UNDEFINED);

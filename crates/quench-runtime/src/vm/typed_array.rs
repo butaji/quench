@@ -27,12 +27,8 @@ impl<H: Host> Vm<H> {
         let typed_array = self.native_value(Native::TypedArray);
         self.uint8_array_proto = self.object();
         self.typed_array_proto = self.object();
-        self.object_data_mut(self.uint8_array_proto)
-            .expect("Uint8Array prototype")
-            .proto = self.typed_array_proto;
-        self.object_data_mut(typed_array)
-            .expect("TypedArray constructor")
-            .proto = self.function_proto;
+        self.set_object_prototype(self.uint8_array_proto, self.typed_array_proto);
+        self.set_object_prototype(typed_array, self.function_proto);
         self.set_named(program, typed_array, "prototype", self.typed_array_proto)?;
         self.set_builtin_value_named(self.typed_array_proto, "constructor", typed_array)?;
         let typed_name = self.heap.alloc(Cell::String("TypedArray".into()));
@@ -52,9 +48,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        self.object_data_mut(uint8_array)
-            .expect("Uint8Array constructor")
-            .proto = typed_array;
+        self.set_object_prototype(uint8_array, typed_array);
         self.set_named(program, uint8_array, "prototype", self.uint8_array_proto)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(

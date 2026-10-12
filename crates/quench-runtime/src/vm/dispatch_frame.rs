@@ -476,7 +476,7 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
         self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+            object: self.shapes.empty_object(self.array_prototype_for_realm(self.realm.globals)),
             elements: Rc::new(rest.to_vec()),
         })
     }
@@ -492,7 +492,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let mapped = function.arguments_are_mapped();
         let arguments = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.object_proto),
+            object: self.shapes.empty_object(self.object_proto),
             elements: Rc::new(args.to_vec()),
         });
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
@@ -674,14 +674,11 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.object_data(arguments) else {
             return;
         };
-        let proto = object.proto;
         let Some(iterator_method) = self.heap.property_get(object, iterator_slot) else {
             return;
         };
         properties[iterator_slot] = iterator_method;
-        let anchor = self
-            .heap
-            .alloc_object_with_properties(proto, shape, &properties);
+        let anchor = self.heap.alloc_object_with_properties(shape, &properties);
         self.realm.intrinsics.arguments_objects.insert(
             key,
             ArgumentsObjectTemplate {

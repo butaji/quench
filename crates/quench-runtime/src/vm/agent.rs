@@ -50,7 +50,7 @@ impl<H: Host> Vm<H> {
         let agent = self.object();
         for (method, name, length) in AGENT_METHODS {
             let state = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+                object: self.shapes.empty_object(self.array_proto),
                 elements: Rc::new(vec![Value::number(*method as u8 as f64)]),
             });
             let function = self.native_with_env(Native::Test262Agent, state);

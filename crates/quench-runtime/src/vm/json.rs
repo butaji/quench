@@ -388,7 +388,7 @@ fn hex_digit(unit: u16) -> Option<u16> {
 impl<H: Host> Vm<H> {
     fn json_object(&mut self) -> Value {
         let prototype = self.realm_object_prototype(self.realm.globals);
-        self.heap.alloc(Cell::Object(Self::empty_object(prototype)))
+        self.heap.alloc(Cell::Object(self.shapes.empty_object(prototype)))
     }
 
     pub(super) fn json_raw_json(
@@ -424,9 +424,9 @@ impl<H: Host> Vm<H> {
         let object = self.json_object();
         let object_root = self.heap.root(object);
         if let Some(data) = self.object_data_mut(object) {
-            data.proto = Value::NULL;
             data.set_raw_json();
         }
+        self.set_object_prototype(object, Value::NULL);
         let raw_atom = self.intern_atom("rawJSON");
         let raw_text_value = self.heap.alloc(Cell::String(text));
         let raw_text_root = self.heap.root(raw_text_value);
@@ -509,7 +509,7 @@ impl<H: Host> Vm<H> {
                     .map(|value| self.parse_json_value(value))
                     .collect::<Result<Vec<_>, _>>()?;
                 self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                    object: self.shapes.empty_object(self.array_prototype_for_realm(self.realm.globals)),
                     elements: Rc::new(values),
                 })
             }
