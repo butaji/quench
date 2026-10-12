@@ -153,6 +153,13 @@ pub(crate) fn initialize_targets(
     let description = context.string_rooted("events.maxEventTargetListenersWarned");
     let warned_key = context.call_rooted(symbol, undefined, &[description])?;
     let data = context.null_object_rooted()?;
+    for (field, description) in [("captureKey", "kCapture"), ("shapeKey", "shapeMode")] {
+        let key = context.symbol_rooted(Some(description));
+        set(context, data, field, key)?;
+    }
+    let description = context.string_rooted("nodejs.rejection");
+    let rejection_key = context.call_rooted(registry, symbol, &[description])?;
+    set(context, data, "rejectionKey", rejection_key)?;
     let maximum = context.number(super::event_limits_shared_vm::DEFAULT_MAX_LISTENERS);
     set(context, data, "defaultMaxListeners", maximum)?;
     set(context, data, "maxKey", max_key)?;
