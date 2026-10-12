@@ -315,6 +315,99 @@ fn inherited_field_cache_reads_live_object_prototype_data() {
 }
 
 #[test]
+fn direct_object_field_cache_probes_nonordinary_prototype_holder() {
+    let source = r#"
+      function holder() {}
+      holder.inherited = 41;
+      var receiver = Object.create(holder);
+      function readValue(value) { return value.inherited; }
+      print(readValue(receiver));
+      print(readValue(receiver));
+      print(readValue(receiver));
+    "#;
+    for (mode, compile) in [
+        ("specialized", Engine::specialize as fn(&str, &str) -> _),
+        ("unspecialized", Engine::specialize_unspecialized),
+    ] {
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        let program = compile(source, "direct-object-holder-cache.js").unwrap();
+        #[cfg(feature = "profile-aggregate")]
+        let depth_one_hits_before = vm.profile.field_cache_depths[1];
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), ["41", "41", "41"], "{mode}");
+
+        if vm.specialized {
+            let receiver_atom = vm.intern_atom("receiver");
+            let holder_atom = vm.intern_atom("holder");
+            let receiver = vm.own_property(vm.realm.globals, receiver_atom).unwrap();
+            let holder = vm.own_property(vm.realm.globals, holder_atom).unwrap();
+            assert!(vm.heap.object_record(receiver).is_some());
+            assert!(vm.heap.object_record(holder).is_none());
+
+            let inherited = vm.intern_atom("inherited");
+            assert!(
+                field_cache_entries(&vm, &program, inherited)
+                    .iter()
+                    .any(|entry| entry.holder != NO_FIELD_HOLDER)
+            );
+            #[cfg(feature = "profile-aggregate")]
+            assert!(vm.profile.field_cache_depths[1] - depth_one_hits_before >= 2);
+        }
+    }
+}
+
+#[test]
+fn direct_object_field_cache_probes_megamorphic_prototype_holders() {
+    let source = r#"
+      function firstHolder() {}
+      firstHolder.inherited = 41;
+      firstHolder.first = 1;
+      function secondHolder() {}
+      secondHolder.inherited = 42;
+      secondHolder.second = 1;
+      function thirdHolder() {}
+      thirdHolder.inherited = 43;
+      thirdHolder.third = 1;
+      var first = Object.create(firstHolder);
+      var second = Object.create(secondHolder);
+      var third = Object.create(thirdHolder);
+      function readValue(value) { return value.inherited; }
+      print(readValue(first));
+      print(readValue(second));
+      print(readValue(third));
+      print(readValue(second));
+      print(readValue(third));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "direct-object-megamorphic-holder-cache.js").unwrap();
+    #[cfg(feature = "profile-aggregate")]
+    let tier_two_hits_before = vm.profile.field_cache_tiers[2];
+    vm.execute(&program).unwrap();
+    assert_eq!(output.borrow().as_slice(), ["41", "42", "43", "42", "43"]);
+
+    let first_atom = vm.intern_atom("first");
+    let second_atom = vm.intern_atom("second");
+    let third_atom = vm.intern_atom("third");
+    for atom in [first_atom, second_atom, third_atom] {
+        let value = vm.own_property(vm.realm.globals, atom).unwrap();
+        assert!(vm.heap.object_record(value).is_some());
+    }
+    let inherited = vm.intern_atom("inherited");
+    let mut holder_shapes = field_cache_entries(&vm, &program, inherited)
+        .into_iter()
+        .filter_map(|entry| (entry.holder != NO_FIELD_HOLDER).then_some(entry.holder))
+        .collect::<Vec<_>>();
+    holder_shapes.sort_unstable();
+    holder_shapes.dedup();
+    assert!(holder_shapes.len() >= 3, "{holder_shapes:?}");
+
+    #[cfg(feature = "profile-aggregate")]
+    assert!(vm.profile.field_cache_tiers[2] > tier_two_hits_before);
+}
+
+#[test]
 fn custom_prototype_fallback_reads_live_data_and_keeps_accessor_fallback() {
     let source = r#"
       var getterCalls = 0;

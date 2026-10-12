@@ -487,9 +487,9 @@ impl<H: Host> Vm<H> {
     }
 
     fn require_stack(&mut self, p: &ResidualProgram, stack: Value) -> Result<(), JsError> {
-        let Some(Cell::Object(_)) = self.heap.get(stack) else {
+        if self.heap.object_record(stack).is_none() {
             return Err(self.type_error(p, "DisposableStack receiver is invalid".into()));
-        };
+        }
         let entries = self
             .lookup_atom(ENTRIES)
             .and_then(|atom| self.own_property(stack, atom))

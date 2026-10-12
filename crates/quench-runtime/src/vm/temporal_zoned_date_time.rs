@@ -629,7 +629,11 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let (epoch, zone, calendar) = (**epoch_nanoseconds, time_zone.to_string(), calendar.to_string());
+        let (epoch, zone, calendar) = (
+            **epoch_nanoseconds,
+            time_zone.to_string(),
+            calendar.to_string(),
+        );
         match native {
             Native::TemporalZonedDateTimeEpochNanosecondsGetter => {
                 Ok(self.heap.alloc(Cell::BigInt(epoch.to_string())))
@@ -1177,8 +1181,11 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let (epoch_nanoseconds, time_zone, calendar) =
-            (**epoch_nanoseconds, time_zone.to_string(), calendar.to_string());
+        let (epoch_nanoseconds, time_zone, calendar) = (
+            **epoch_nanoseconds,
+            time_zone.to_string(),
+            calendar.to_string(),
+        );
         let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
         let epoch = if argument.is_undefined() {
             round_zoned_date_time_day(epoch_nanoseconds, &time_zone, "trunc")
@@ -1260,13 +1267,16 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let (epoch_nanoseconds, time_zone, calendar) =
-            (**epoch_nanoseconds, time_zone.to_string(), calendar.to_string());
-        let partial = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let is_plain_time = matches!(
-            self.heap.get(partial),
-            Some(Cell::Object(object)) if object.proto == self.temporal_plain_time_proto
+        let (epoch_nanoseconds, time_zone, calendar) = (
+            **epoch_nanoseconds,
+            time_zone.to_string(),
+            calendar.to_string(),
         );
+        let partial = args.first().copied().unwrap_or(Value::UNDEFINED);
+        let is_plain_time = self
+            .heap
+            .object_record(partial)
+            .is_some_and(|object| object.proto == self.temporal_plain_time_proto);
         if !self.is_object_like(partial)
             || is_plain_time
             || matches!(
@@ -1317,10 +1327,8 @@ impl<H: Host> Vm<H> {
                 FieldValue::Undefined
             } else if matches!(name, "monthCode" | "offset" | "era") {
                 if name == "offset"
-                    && !matches!(
-                        self.heap.get(value),
-                        Some(Cell::String(_) | Cell::Object(_))
-                    )
+                    && !matches!(self.heap.get(value), Some(Cell::String(_)))
+                    && self.heap.object_record(value).is_none()
                 {
                     return Err(self.type_error(p, "Invalid offset".into()));
                 }
@@ -1886,7 +1894,8 @@ impl<H: Host> Vm<H> {
             Value::number(f64::from(fields[6])),
             Value::number(f64::from(fields[7])),
             Value::number(f64::from(fields[8])),
-            self.heap.alloc(Cell::String(value.calendar.to_string().into())),
+            self.heap
+                .alloc(Cell::String(value.calendar.to_string().into())),
         ];
         self.temporal_plain_date_time_construct(p, &args, constructor)
     }
@@ -1962,6 +1971,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         options: Value,
     ) -> Result<ZonedDateTimeRecord, JsError> {
+        if self.heap.object_record(value).is_some() {
+            return self.temporal_zoned_date_time_property_bag(p, value, options);
+        }
         match self.heap.get(value).cloned() {
             Some(Cell::TemporalZonedDateTime {
                 epoch_nanoseconds,
@@ -1985,7 +1997,7 @@ impl<H: Host> Vm<H> {
                 resolve_zoned_date_time_string(parsed, &options.offset, &options.disambiguation)
                     .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))
             }
-            Some(Cell::Object(_)) | Some(Cell::Function { .. }) | Some(Cell::Proxy { .. }) => {
+            Some(Cell::Function { .. } | Cell::Proxy { .. }) => {
                 self.temporal_zoned_date_time_property_bag(p, value, options)
             }
             _ => Err(self.type_error(p, "Invalid ZonedDateTime value".into())),

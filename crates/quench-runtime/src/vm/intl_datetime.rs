@@ -651,7 +651,11 @@ impl<H: Host> Vm<H> {
                     ..
                 }) => (
                     DateTimeDefaults::TemporalZonedDateTime(ZONED_DATE_TIME_DEFAULTS),
-                    Some((**epoch_nanoseconds, time_zone.to_string(), calendar.to_string())),
+                    Some((
+                        **epoch_nanoseconds,
+                        time_zone.to_string(),
+                        calendar.to_string(),
+                    )),
                 ),
                 _ => return Err(self.type_error(p, "Invalid Temporal value".into())),
             }

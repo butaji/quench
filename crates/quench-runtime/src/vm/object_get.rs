@@ -469,69 +469,76 @@ impl<H: Host> Vm<H> {
             if let Some(v) = self.own_property(object, atom) {
                 return Ok(v);
             }
-            match self.heap.get(object) {
-                Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,
-                Some(Cell::TypedArray { object: x, .. }) => object = x.proto,
-                Some(Cell::DataView { object: x, .. }) => object = x.proto,
-                Some(Cell::String(v)) => {
-                    if let Ok(index) = self.atom_name(atom).parse::<usize>()
-                        && let Some(unit) = v.units().get(index).copied()
-                    {
-                        return Ok(self.heap.alloc(Cell::String(JsString::from_units(&[unit]))));
-                    }
-                    if atom == self.length_atom {
-                        return Ok(Value::number(v.units().len() as f64));
-                    }
-                    let prototype = self
-                        .primitive_prototype(object)
-                        .unwrap_or(self.string_proto);
-                    return self.get_property_with_receiver(p, prototype, atom, object);
-                }
-                Some(Cell::Symbol(description)) => {
-                    let description = description.clone();
-                    match self.atom_name(atom) {
-                        "description" => {
-                            return Ok(description
-                                .as_ref()
-                                .map(|value| self.heap.alloc(Cell::String(value.clone().into())))
-                                .unwrap_or(Value::UNDEFINED));
+            if let Some(data) = self.heap.object_record(object) {
+                object = data.proto;
+            } else {
+                match self.heap.get(object) {
+                    Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,
+                    Some(Cell::TypedArray { object: x, .. }) => object = x.proto,
+                    Some(Cell::DataView { object: x, .. }) => object = x.proto,
+                    Some(Cell::String(v)) => {
+                        if let Ok(index) = self.atom_name(atom).parse::<usize>()
+                            && let Some(unit) = v.units().get(index).copied()
+                        {
+                            return Ok(self
+                                .heap
+                                .alloc(Cell::String(JsString::from_units(&[unit]))));
                         }
-                        "toString" => return Ok(self.native_value(Native::SymbolToString)),
-                        "valueOf" => return Ok(self.native_value(Native::SymbolValueOf)),
-                        _ => {
-                            object = self
-                                .primitive_prototype(object)
-                                .unwrap_or(self.object_proto)
+                        if atom == self.length_atom {
+                            return Ok(Value::number(v.units().len() as f64));
+                        }
+                        let prototype = self
+                            .primitive_prototype(object)
+                            .unwrap_or(self.string_proto);
+                        return self.get_property_with_receiver(p, prototype, atom, object);
+                    }
+                    Some(Cell::Symbol(description)) => {
+                        let description = description.clone();
+                        match self.atom_name(atom) {
+                            "description" => {
+                                return Ok(description
+                                    .as_ref()
+                                    .map(|value| {
+                                        self.heap.alloc(Cell::String(value.clone().into()))
+                                    })
+                                    .unwrap_or(Value::UNDEFINED));
+                            }
+                            "toString" => return Ok(self.native_value(Native::SymbolToString)),
+                            "valueOf" => return Ok(self.native_value(Native::SymbolValueOf)),
+                            _ => {
+                                object = self
+                                    .primitive_prototype(object)
+                                    .unwrap_or(self.object_proto)
+                            }
                         }
                     }
+                    Some(Cell::BigInt(_)) => {
+                        object = self
+                            .primitive_prototype(object)
+                            .unwrap_or(self.object_proto)
+                    }
+                    Some(Cell::Date { object: x, .. })
+                    | Some(Cell::TemporalDuration { object: x, .. })
+                    | Some(Cell::TemporalPlainDate { object: x, .. })
+                    | Some(Cell::TemporalPlainDateTime { object: x, .. })
+                    | Some(Cell::TemporalPlainMonthDay { object: x, .. })
+                    | Some(Cell::TemporalPlainYearMonth { object: x, .. })
+                    | Some(Cell::TemporalZonedDateTime { object: x, .. })
+                    | Some(Cell::TemporalInstant { object: x, .. }) => object = x.proto,
+                    Some(Cell::Array { object: x, .. }) => object = x.proto,
+                    Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto,
+                    Some(Cell::RegExp { object: x, .. }) => object = x.proto,
+                    Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
+                        object = x.proto
+                    }
+                    Some(Cell::WeakMap { object: x, .. })
+                    | Some(Cell::WeakSet { object: x, .. }) => object = x.proto,
+                    Some(Cell::WeakRef { object: x, .. }) => object = x.proto,
+                    Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto,
+                    Some(Cell::Iterator { object: x, .. }) => object = x.proto,
+                    Some(Cell::Function { object: x, .. }) => object = x.proto,
+                    _ => return Ok(Value::UNDEFINED),
                 }
-                Some(Cell::BigInt(_)) => {
-                    object = self
-                        .primitive_prototype(object)
-                        .unwrap_or(self.object_proto)
-                }
-                Some(Cell::Date { object: x, .. })
-                | Some(Cell::TemporalDuration { object: x, .. })
-                | Some(Cell::TemporalPlainDate { object: x, .. })
-                | Some(Cell::TemporalPlainDateTime { object: x, .. })
-                | Some(Cell::TemporalPlainMonthDay { object: x, .. })
-                | Some(Cell::TemporalPlainYearMonth { object: x, .. })
-                | Some(Cell::TemporalZonedDateTime { object: x, .. })
-                | Some(Cell::TemporalInstant { object: x, .. }) => object = x.proto,
-                Some(Cell::Object(x)) | Some(Cell::Array { object: x, .. }) => object = x.proto,
-                Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto,
-                Some(Cell::RegExp { object: x, .. }) => object = x.proto,
-                Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
-                    object = x.proto
-                }
-                Some(Cell::WeakMap { object: x, .. }) | Some(Cell::WeakSet { object: x, .. }) => {
-                    object = x.proto
-                }
-                Some(Cell::WeakRef { object: x, .. }) => object = x.proto,
-                Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto,
-                Some(Cell::Iterator { object: x, .. }) => object = x.proto,
-                Some(Cell::Function { object: x, .. }) => object = x.proto,
-                _ => return Ok(Value::UNDEFINED),
             }
             if object.is_null() {
                 return if private_name {

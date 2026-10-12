@@ -61,7 +61,6 @@ fn promoted_locals_preserve_order_and_survive_collection() {
     assert!(program.functions[3].local_registers.is_empty());
 }
 
-
 #[test]
 fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
@@ -370,8 +369,8 @@ fn realm_lexical_state_follows_the_active_global_and_stays_rooted() {
 
     let program = Engine::specialize("print(0);", "realm-switch.js").unwrap();
     vm.collect_now(&program);
-    assert!(vm.heap.get(first_global).is_some());
-    assert!(vm.heap.get(second_global).is_some());
+    assert!(vm.heap.is_live(first_global));
+    assert!(vm.heap.is_live(second_global));
 
     assert_eq!(vm.switch_realm_global(first_global), second_global);
     assert!(
@@ -476,7 +475,7 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
         first_segmenter_prototype,
         second_segmenter_prototype,
     ] {
-        assert!(vm.heap.get(object).is_some());
+        assert!(vm.heap.is_live(object));
     }
     assert_eq!(
         vm.realm
@@ -611,8 +610,8 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let promise_root = vm.heap.root(promise);
     vm.collect_now(&program);
 
-    assert!(vm.heap.get(promise).is_some());
-    assert!(vm.heap.get(result).is_some());
+    assert!(vm.heap.is_live(promise));
+    assert!(vm.heap.is_live(result));
     assert_eq!(
         vm.realm
             .promise
@@ -958,13 +957,13 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
     }));
 
     vm.collect_now(&program);
-    assert!(vm.heap.get(live).is_some());
-    assert!(vm.heap.get(original).is_some());
+    assert!(vm.heap.is_live(live));
+    assert!(vm.heap.is_live(original));
 
     vm.frames.pop();
     vm.collect_now(&program);
-    assert!(vm.heap.get(live).is_none());
-    assert!(vm.heap.get(original).is_none());
+    assert!(!vm.heap.is_live(live));
+    assert!(!vm.heap.is_live(original));
 }
 
 #[test]
@@ -3638,8 +3637,8 @@ fn closure_identity_cache_prunes_collected_cells_and_keeps_rooted_cells() {
     let kept = vm.closure(&program, 1, Value::NULL).unwrap();
     let root = vm.root(kept);
     vm.collect_now(&program);
-    assert!(vm.heap.get(dead).is_none());
-    assert!(vm.heap.get(kept).is_some());
+    assert!(!vm.heap.is_live(dead));
+    assert!(vm.heap.is_live(kept));
     assert!(
         !vm.function_values
             .contains_key(&(super::program_store::ProgramId::MAIN, 0))
@@ -3693,12 +3692,16 @@ fn closure_identity_cache_rejects_reused_function_slots() {
 fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
     let mut vm = Vm::new(SilentHost);
     let program = Engine::specialize("", "finalization-token-reuse.js").unwrap();
-    let target = vm.heap.alloc(crate::heap::Cell::Object(Vm::<SilentHost>::empty_object(
-        Value::NULL,
-    )));
-    let token = vm.heap.alloc(crate::heap::Cell::Object(Vm::<SilentHost>::empty_object(
-        Value::NULL,
-    )));
+    let target = vm
+        .heap
+        .alloc(crate::heap::Cell::Object(Vm::<SilentHost>::empty_object(
+            Value::NULL,
+        )));
+    let token = vm
+        .heap
+        .alloc(crate::heap::Cell::Object(Vm::<SilentHost>::empty_object(
+            Value::NULL,
+        )));
     let target_handle = vm.heap.weak_handle(target).unwrap();
     let token_handle = vm.heap.weak_handle(token).unwrap();
     let registry = vm.heap.alloc(crate::heap::Cell::FinalizationRegistry {
@@ -3716,7 +3719,7 @@ fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
     let registry_root = vm.heap.root(registry);
 
     assert!(vm.heap.collect([target, registry]).is_empty());
-    assert!(vm.heap.get(target).is_some());
+    assert!(vm.heap.is_live(target));
     let crate::heap::Cell::FinalizationRegistry { entries, .. } = vm.heap.get(registry).unwrap()
     else {
         panic!("registry remains live");
@@ -3727,9 +3730,10 @@ fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
     let allocation_bound = vm.heap.stats().2 + 1;
     let replacement = (0..allocation_bound)
         .map(|_| {
-            vm.heap.alloc(crate::heap::Cell::Object(Vm::<SilentHost>::empty_object(
-                Value::NULL,
-            )))
+            vm.heap
+                .alloc(crate::heap::Cell::Object(Vm::<SilentHost>::empty_object(
+                    Value::NULL,
+                )))
         })
         .find(|value| *value == token)
         .expect("freed token slot is reused");
@@ -3937,20 +3941,20 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         promise: Value::UNDEFINED,
     });
     vm.collect_now(&program);
-    assert!(vm.heap.get(live).is_some());
-    assert!(vm.heap.get(held).is_some());
-    assert!(vm.heap.get(original).is_some());
-    assert!(vm.heap.get(scope).is_some());
+    assert!(vm.heap.is_live(live));
+    assert!(vm.heap.is_live(held));
+    assert!(vm.heap.is_live(original));
+    assert!(vm.heap.is_live(scope));
     assert_eq!(
         vm.resume_continuation(id).unwrap().original_arguments,
         [original]
     );
     assert!(vm.resume_continuation(id).is_none());
     vm.collect_now(&program);
-    assert!(vm.heap.get(live).is_none());
-    assert!(vm.heap.get(held).is_none());
-    assert!(vm.heap.get(original).is_none());
-    assert!(vm.heap.get(scope).is_none());
+    assert!(!vm.heap.is_live(live));
+    assert!(!vm.heap.is_live(held));
+    assert!(!vm.heap.is_live(original));
+    assert!(!vm.heap.is_live(scope));
 }
 
 #[test]
@@ -4135,7 +4139,7 @@ fn aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm() {
                 vm.set_property(global, atom, Value::NULL).unwrap();
             }
             vm.collect_now(&program);
-            assert!(vm.heap.get(promise_prototype).is_some());
+            assert!(vm.heap.is_live(promise_prototype));
             let roots = vm.heap.root_count_for_test();
             let reason = vm.object();
             let reason_weak = vm.heap.weak_handle(reason).unwrap();
@@ -6257,17 +6261,17 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                         helper_running: false,
                         helper_started: false,
                         generator: Some(Box::new(GeneratorRecord {
-                        continuation: Some(continuation),
-                        realm,
-                        done: false,
-                        running: false,
-                        requests: [AsyncGeneratorRequest {
-                            operation: AsyncGeneratorOperation::Next,
-                            promise: request_promise,
-                            value: request_value,
-                        }]
-                        .into(),
-                    })),
+                            continuation: Some(continuation),
+                            realm,
+                            done: false,
+                            running: false,
+                            requests: [AsyncGeneratorRequest {
+                                operation: AsyncGeneratorOperation::Next,
+                                promise: request_promise,
+                                value: request_value,
+                            }]
+                            .into(),
+                        })),
                     }),
                 });
                 owner = Some(vm.heap.root(value));
@@ -6590,7 +6594,9 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
                     "raw" => source,
                     "protocol" => vm.iterator_from(&program, &[source]).unwrap(),
                     _ => vm.heap.alloc(super::Cell::Iterator {
-                        object: Box::new(Vm::<Test262Host>::empty_object(vm.async_from_sync_iterator_proto)),
+                        object: Box::new(Vm::<Test262Host>::empty_object(
+                            vm.async_from_sync_iterator_proto,
+                        )),
                         source,
                         kind: super::IteratorKind::AsyncFromSync,
                         index: 0,
@@ -6795,7 +6801,9 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
                 let iterator = vm.heap.alloc(super::Cell::Iterator {
-                    object: Box::new(Vm::<Test262Host>::empty_object(vm.regexp_string_iterator_proto)),
+                    object: Box::new(Vm::<Test262Host>::empty_object(
+                        vm.regexp_string_iterator_proto,
+                    )),
                     source: matcher,
                     kind: super::IteratorKind::RegExpStringMatchAll,
                     index: 0,
@@ -6803,12 +6811,16 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                     ext: Box::new(crate::heap::IteratorExt {
                         next_method: None,
                         helper: Some(Box::new(
-                        crate::heap::IteratorHelper::RegExpStringMatchAll {
-                            input: JsString::from_units(if full { &[0xd800, 97] } else { &[97] }),
-                            global: true,
-                            unicode: true,
-                        },
-                    )),
+                            crate::heap::IteratorHelper::RegExpStringMatchAll {
+                                input: JsString::from_units(if full {
+                                    &[0xd800, 97]
+                                } else {
+                                    &[97]
+                                }),
+                                global: true,
+                                unicode: true,
+                            },
+                        )),
                         helper_running: false,
                         helper_started: false,
                         generator: None,
@@ -8048,8 +8060,7 @@ fn regexp_entrypoints_root_receivers_and_arguments_through_callbacks() {
                             match kind {
                                 "compile" => {
                                     assert_eq!(value, values[0]);
-                                    let Some(super::Cell::RegExp { meta, .. }) =
-                                        vm.heap.get(value)
+                                    let Some(super::Cell::RegExp { meta, .. }) = vm.heap.get(value)
                                     else {
                                         panic!("compiled receiver retained");
                                     };
@@ -9202,7 +9213,7 @@ fn private_host_weak_roots_clear_before_slot_reuse_without_kept_objects() {
             .alloc(super::Cell::Object(Vm::<SilentHost>::empty_object(
                 Value::NULL,
             )));
-        assert!(vm.heap.get(replacement).is_some());
+        assert!(vm.heap.is_live(replacement));
         assert!(vm.embedding_host_weak_value(weak).is_none());
         let other = Vm::new(SilentHost);
         assert!(other.embedding_host_weak_value(weak).is_none());

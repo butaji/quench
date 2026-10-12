@@ -563,8 +563,7 @@ impl<H: Host> Vm<H> {
         key: Value,
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        let Some((target, handler)) = self.proxy_parts(proxy)
-        else {
+        let Some((target, handler)) = self.proxy_parts(proxy) else {
             unreachable!("Proxy descriptor dispatch")
         };
         if handler.is_null() {
