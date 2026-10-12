@@ -175,6 +175,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netIsIP" (1) => crate::modules::net_shared_vm::is_ip,
         method "netIsIPv4" (1) => crate::modules::net_shared_vm::is_ipv4,
         method "netIsIPv6" (1) => crate::modules::net_shared_vm::is_ipv6,
+        method "netListenError" (2) => crate::modules::net_shared_vm::listen_error,
+        method "netNormalizeEndpoint" (4) => crate::modules::net_endpoint_shared_vm::normalize,
         method "netConnect" (3) => crate::modules::net_shared_vm::connect_operation,
         method "streamPipePlan" (3) => crate::modules::stream_pipe_shared_vm::plan,
         method "emitterInitialize" (2) => crate::modules::event_constructor_shared_vm::initialize,

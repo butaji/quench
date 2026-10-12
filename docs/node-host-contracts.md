@@ -167,6 +167,27 @@ contribute independently to loop liveness. The current handle adapter covers
 reference ownership; complete ProcessWrap construction/spawn/close methods and
 internal channel ref-count semantics remain separate work.
 
+## Local socket transport
+
+On Unix, `net` path endpoints use OS Unix-domain listeners and streams. TCP
+and local streams share the same native byte reads, queued write completions,
+half-close operations and socket ownership. Accepted local sockets have no
+fabricated IP peer address. Listener ownership unlinks a filesystem socket on
+close; Linux abstract addresses use the kernel namespace and own no path.
+Connect failures preserve OS errno, code, syscall and the requested path.
+Listen failures enter the canonical next-tick queue, including bind conflicts
+and overlong-path rejection. Endpoint overload selection is native; connect
+and listen retain their different port/path precedence.
+
+Oracle checks cover bytes exchanged with an external AF_UNIX process,
+filesystem unlink, ordinary path overloads, ENOENT, asynchronous EADDRINUSE,
+EINVAL for long paths, and Linux abstract close/rebind. Relative paths resolve
+against the live working-directory path. Resolving a relative path to an
+absolute pathname can still change the socket address length limit, and does
+not preserve directory-fd semantics through concurrent renames. Server fd
+adoption, the complete option/property-access surface, permissions flags,
+reference ownership and Windows named pipes remain separate work.
+
 ## TLS material validation
 
 Secure-context CRL and PKCS12 checks use native OpenSSL parsers. CRLs use
