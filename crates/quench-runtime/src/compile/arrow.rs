@@ -163,6 +163,7 @@ impl Compiler<'_> {
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
             plain_activation: Default::default(),
             handlers: function.handlers,
             register_root_offset: u32::MAX,

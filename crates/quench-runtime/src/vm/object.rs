@@ -95,6 +95,15 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
     }
 }
 
+/// What the inline field caches know about one read.
+pub(super) enum FieldCacheProbe {
+    Hit(Value),
+    /// An ordinary object the caches do not cover yet.
+    OrdinaryMiss,
+    /// A receiver or program outside the field caches.
+    Ineligible,
+}
+
 impl<H: Host> Vm<H> {
     /// Name-derived property classes, computed from the atom text once per atom.
     #[inline(always)]
@@ -606,41 +615,60 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
-        // A site is only populated after the atom and non-dictionary receiver and holder shapes
-        // passed `shape_property_lookup_cell`, and an ordinary object is eligible whenever those
-        // hold, so an own-data hit on ordinary objects needs no further eligibility probe. These
-        // hits stay a leaf function; every other case continues out of line.
-        if self.specialized
-            && p.specialized
-            && let Some(Cell::Object(receiver)) = self.heap.get(object)
-            && !receiver.is_module_namespace()
-        {
-            let index = self.field_cache_index(site);
-            let shape = receiver.shape();
-            // SAFETY: the active program's layout reserves every compiler-emitted site.
-            let cache = unsafe { *self.field_caches.get_unchecked(index) };
-            let slot = if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
-                self.profile.field_cache_hit(0, 0);
-                Some(cache.slot)
-            } else {
-                let slot = self.inline_megamorphic_field_slot(index, shape);
-                if slot.is_some() {
-                    self.profile.field_cache_hit(2, 0);
-                }
-                slot
-            };
-            if let Some(slot) = slot {
-                // SAFETY: receiver shape and slot were recorded together for an own data
-                // property on the cache miss path.
-                return Ok(unsafe { self.heap.property_get_unchecked(receiver, slot as usize) });
-            }
-            if let Some(hit) = self.cached_ordinary_holder_field_value(index, receiver) {
-                self.profile.field_cache_hit(usize::from(hit.tier), hit.depth);
-                return Ok(hit.value);
-            }
-            return self.get_field_polymorphic(p, object, atom, site);
+        match self.cached_field_hit(p, object, site) {
+            FieldCacheProbe::Hit(value) => Ok(value),
+            FieldCacheProbe::OrdinaryMiss => self.get_field_polymorphic(p, object, atom, site),
+            FieldCacheProbe::Ineligible => self.get_field_uncached(p, object, atom, site),
         }
-        self.get_field_uncached(p, object, atom, site)
+    }
+
+    /// The inline field cache hits for `object` at `site`. A site is only populated after the
+    /// atom and non-dictionary receiver and holder shapes passed `shape_property_lookup_cell`,
+    /// and an ordinary object is eligible whenever those hold, so an own-data hit on ordinary
+    /// objects needs no further eligibility probe; a hit also proves the property exists.
+    /// These hits stay a leaf function; every other case continues out of line.
+    #[inline(always)]
+    pub(super) fn cached_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> FieldCacheProbe {
+        if !(self.specialized && p.specialized) {
+            return FieldCacheProbe::Ineligible;
+        }
+        let Some(Cell::Object(receiver)) = self.heap.get(object) else {
+            return FieldCacheProbe::Ineligible;
+        };
+        if receiver.is_module_namespace() {
+            return FieldCacheProbe::Ineligible;
+        }
+        let index = self.field_cache_index(site);
+        let shape = receiver.shape();
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(index) };
+        let slot = if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
+            self.profile.field_cache_hit(0, 0);
+            Some(cache.slot)
+        } else {
+            let slot = self.inline_megamorphic_field_slot(index, shape);
+            if slot.is_some() {
+                self.profile.field_cache_hit(2, 0);
+            }
+            slot
+        };
+        if let Some(slot) = slot {
+            // SAFETY: receiver shape and slot were recorded together for an own data
+            // property on the cache miss path.
+            return FieldCacheProbe::Hit(unsafe {
+                self.heap.property_get_unchecked(receiver, slot as usize)
+            });
+        }
+        if let Some(hit) = self.cached_ordinary_holder_field_value(index, receiver) {
+            self.profile.field_cache_hit(usize::from(hit.tier), hit.depth);
+            return FieldCacheProbe::Hit(hit.value);
+        }
+        FieldCacheProbe::OrdinaryMiss
     }
 
     /// An own-data slot from a site's inline megamorphic entries; the hashed overflow is
@@ -1328,32 +1356,49 @@ impl<H: Host> Vm<H> {
         site: u16,
         strict: bool,
     ) -> Result<(), JsError> {
-        // An own-data store that no method cache can observe is dispatched in place; adds,
-        // method-observable stores and misses continue out of line.
-        if self.specialized
-            && p.specialized
-            && !self.method_caches_may_name(atom)
-            && let Some(Cell::Object(data)) = self.heap.get(object)
-            && !data.is_module_namespace()
-            && !data.is_arguments_object()
-        {
-            let index = self.field_cache_index(site);
-            let shape = data.shape();
-            // SAFETY: the active program's layout reserves every compiler-emitted site.
-            let cache = unsafe { *self.field_caches.get_unchecked(index) };
-            let slot = if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
-                Some(cache.slot)
-            } else {
-                self.inline_megamorphic_field_slot(index, shape)
-            };
-            if let Some(slot) = slot {
-                // SAFETY: a matching immutable shape proves the cached slot layout.
-                unsafe { self.heap.property_set_unchecked(object, slot as usize, value) };
-                self.profile.field_cache_hit(0, 0);
-                return Ok(());
-            }
+        if self.cached_field_store_hit(p, object, atom, value, site) {
+            return Ok(());
         }
         self.set_field_polymorphic(p, object, atom, value, site, strict)
+    }
+
+    /// Stores `value` when it is an own-data store hit that no method cache can observe,
+    /// which writes the cached slot in place and neither allocates nor throws. Adds,
+    /// method-observable stores and misses return false for `set_field_polymorphic`.
+    #[inline(always)]
+    pub(super) fn cached_field_store_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+    ) -> bool {
+        if !(self.specialized && p.specialized) || self.method_caches_may_name(atom) {
+            return false;
+        }
+        let Some(Cell::Object(data)) = self.heap.get(object) else {
+            return false;
+        };
+        if data.is_module_namespace() || data.is_arguments_object() {
+            return false;
+        }
+        let index = self.field_cache_index(site);
+        let shape = data.shape();
+        // SAFETY: the active program's layout reserves every compiler-emitted site.
+        let cache = unsafe { *self.field_caches.get_unchecked(index) };
+        let slot = if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
+            Some(cache.slot)
+        } else {
+            self.inline_megamorphic_field_slot(index, shape)
+        };
+        let Some(slot) = slot else {
+            return false;
+        };
+        // SAFETY: a matching immutable shape proves the cached slot layout.
+        unsafe { self.heap.property_set_unchecked(object, slot as usize, value) };
+        self.profile.field_cache_hit(0, 0);
+        true
     }
 
     /// `set_field_cached` past the inline own-data store hits.
