@@ -215,5 +215,8 @@ pub(crate) fn signal_constants(
         let value = context.number(f64::from(*number));
         context.define_data_property_rooted(signals, key, value, false, true, false)?;
     }
+    if !context.prevent_extensions_rooted(signals)? {
+        return Err(RootedError::host("cannot seal OS signal constants"));
+    }
     Ok(signals)
 }
