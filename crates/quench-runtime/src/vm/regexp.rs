@@ -666,7 +666,8 @@ impl<H: Host> Vm<H> {
             return Ok(matcher);
         }
         let matcher = Rc::new(Self::compile_regexp(source, flags)?);
-        self.regexp_matchers.insert(source, flags, Rc::clone(&matcher));
+        self.regexp_matchers
+            .insert(source, flags, Rc::clone(&matcher));
         Ok(matcher)
     }
 
@@ -1220,10 +1221,10 @@ impl<H: Host> Vm<H> {
                         ext: Box::new(crate::heap::IteratorExt {
                             next_method: None,
                             helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
-                            input,
-                            global: flags.contains('g'),
-                            unicode: flags.contains('u') || flags.contains('v'),
-                        })),
+                                input,
+                                global: flags.contains('g'),
+                                unicode: flags.contains('u') || flags.contains('v'),
+                            })),
                             helper_running: false,
                             helper_started: false,
                             generator: None,
@@ -1371,9 +1372,9 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         match (native, self.heap.get(this)) {
-            (Native::RegExpSource, Some(Cell::RegExp { meta, .. })) => {
-                Ok(self.heap.alloc(Cell::String(escape_regexp_source(&meta.source))))
-            }
+            (Native::RegExpSource, Some(Cell::RegExp { meta, .. })) => Ok(self
+                .heap
+                .alloc(Cell::String(escape_regexp_source(&meta.source)))),
             (Native::RegExpSource, _)
                 if self
                     .realm
@@ -1894,7 +1895,9 @@ impl<H: Host> Vm<H> {
             let last_index = vm.get_property(p, this, last_index_atom)?;
             let last_index = vm.regexp_to_length_value(p, last_index)?;
             let (regex, flags) = match vm.heap.get(this) {
-                Some(Cell::RegExp { matcher, meta, .. }) => (Rc::clone(matcher), meta.flags.clone()),
+                Some(Cell::RegExp { matcher, meta, .. }) => {
+                    (Rc::clone(matcher), meta.flags.clone())
+                }
                 _ => {
                     return Err(
                         vm.type_error(p, "RegExp method called on incompatible receiver".into())

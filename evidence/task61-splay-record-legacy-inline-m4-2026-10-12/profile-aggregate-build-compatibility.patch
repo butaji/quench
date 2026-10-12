@@ -1,0 +1,48 @@
+diff --git a/crates/quench-runtime/src/heap.rs b/crates/quench-runtime/src/heap.rs
+index e1563847e..6ff17edff 100644
+--- a/crates/quench-runtime/src/heap.rs
++++ b/crates/quench-runtime/src/heap.rs
+@@ -423,7 +423,6 @@ impl<'heap> ReadOnlyHeapView<'heap> {
+     }
+ }
+ 
+-#[derive(Default)]
+ struct ParallelMarkBatch {
+     weak_maps: Vec<u32>,
+     object_roots: Vec<(Value, u32)>,
+@@ -434,6 +433,20 @@ struct ParallelMarkBatch {
+     marked_kinds: [u64; CellKind::COUNT],
+ }
+ 
++impl Default for ParallelMarkBatch {
++    fn default() -> Self {
++        Self {
++            weak_maps: Vec::new(),
++            object_roots: Vec::new(),
++            work_items: 0,
++            max_worklist: 0,
++            marked_count: 0,
++            #[cfg(feature = "profile-aggregate")]
++            marked_kinds: [0; CellKind::COUNT],
++        }
++    }
++}
++
+ fn parallel_mark_pool() -> Option<&'static ThreadPool> {
+     static POOL: OnceLock<Option<ThreadPool>> = OnceLock::new();
+     POOL.get_or_init(|| {
+diff --git a/crates/quench-runtime/src/vm/wasm.rs b/crates/quench-runtime/src/vm/wasm.rs
+index 644a570c2..b17bf8ec6 100644
+--- a/crates/quench-runtime/src/vm/wasm.rs
++++ b/crates/quench-runtime/src/vm/wasm.rs
+@@ -1362,8 +1362,8 @@ impl<H: Host> Vm<H> {
+         };
+         self.set_active_program(previous);
+         #[cfg(feature = "profile-aggregate")]
+-        if !self.profile.report_dispatch_census_if_enabled() {
+-            self.profile.report(&self.heap, program);
++        if !self.profile.report_dispatch_census_if_enabled(id.raw()) {
++            self.profile.report(&self.heap, id.raw(), program);
+         }
+         result
+     }

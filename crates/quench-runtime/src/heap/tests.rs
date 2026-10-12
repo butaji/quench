@@ -126,18 +126,18 @@ fn minor_collection_handles_old_weak_maps_and_weak_refs() {
     }
 
     collect_minor(&mut heap, [map, key, weak_ref]);
-    assert!(heap.get(value).is_some());
+    assert!(heap.is_live(value));
     assert!(matches!(
         heap.get(weak_ref),
         Some(Cell::WeakRef { target: None, .. })
     ));
-    assert!(heap.get(referent).is_none());
+    assert!(!heap.is_live(referent));
 
     heap.collect([map, weak_ref]);
-    assert!(heap.get(key).is_none());
-    assert!(heap.get(value).is_none());
-    assert!(heap.get(old_key).is_none());
-    assert!(heap.get(old_value).is_none());
+    assert!(!heap.is_live(key));
+    assert!(!heap.is_live(value));
+    assert!(!heap.is_live(old_key));
+    assert!(!heap.is_live(old_value));
 }
 
 #[test]
@@ -249,27 +249,24 @@ fn scope_slot_owners_survive_collection_and_release() {
     assert_eq!(heap.environment_slot_owner(view, 1), Some(owner));
     heap.collect([reference]);
     assert_eq!(heap.environment_slot(view, 1), Some(kept));
-    assert!(heap.get(kept).is_some());
+    assert!(heap.is_live(kept));
     *heap.environment_slot_mut(view, 1).unwrap() = Value::FALSE;
     assert_eq!(heap.environment_slot(owner, 1), Some(Value::FALSE));
     heap.collect([reference]);
-    assert!(heap.get(kept).is_none());
+    assert!(!heap.is_live(kept));
     heap.collect([]);
-    assert!(heap.get(owner).is_none());
-    assert!(heap.get(view).is_none());
-    assert!(heap.get(reference).is_none());
+    assert!(!heap.is_live(owner));
+    assert!(!heap.is_live(view));
+    assert!(!heap.is_live(reference));
 }
 
 #[test]
-fn object_storage_keeps_two_values_inline_in_the_cell() {
+fn ordinary_object_payloads_live_in_compact_records() {
     assert_eq!(
         size_of::<Object>(),
-        size_of::<Value>()
-            + size_of::<ValueVec>()
-            + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
-            + size_of::<Option<Box<()>>>()
+        size_of::<Value>() + size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
     );
-    assert_eq!(size_of::<Cell>(), size_of::<Slot>());
+    assert_eq!(size_of::<Slot>(), size_of::<Option<Cell>>());
 }
 
 #[test]
@@ -280,18 +277,18 @@ fn strong_root_keeps_cell_alive_until_release() {
     let root = heap.root(kept);
 
     heap.collect([]);
-    assert!(heap.get(kept).is_some());
-    assert!(heap.get(dead).is_none());
+    assert!(heap.is_live(kept));
+    assert!(!heap.is_live(dead));
 
     assert!(heap.release_root(root));
     heap.collect([]);
-    assert!(heap.get(kept).is_none());
+    assert!(!heap.is_live(kept));
 }
 
 #[test]
 fn forged_heap_indices_are_rejected_at_the_access_boundary() {
     let mut heap = Heap::new();
-    assert!(heap.get(Value::heap(99_999)).is_none());
+    assert!(!heap.is_live(Value::heap(99_999)));
     assert!(heap.get_mut(Value::heap(99_999)).is_none());
 }
 
@@ -367,13 +364,44 @@ fn weak_map_values_follow_ephemeron_key_reachability() {
     let map_root = heap.root(weak_map);
     let key_root = heap.root(key);
     heap.collect([]);
-    assert!(heap.get(key).is_some());
-    assert!(heap.get(value).is_some());
+    assert!(heap.is_live(key));
+    assert!(heap.is_live(value));
     assert!(heap.release_root(key_root));
     heap.collect([]);
-    assert!(heap.get(key).is_none());
-    assert!(heap.get(value).is_none());
+    assert!(!heap.is_live(key));
+    assert!(!heap.is_live(value));
     assert!(heap.release_root(map_root));
+}
+
+#[test]
+fn object_space_identity_does_not_alias_legacy_slot_identity() {
+    let mut heap = Heap::new();
+    let map = heap.alloc(Cell::WeakMap {
+        object: Box::new(plain_object()),
+        entries: Box::default(),
+    });
+    let key = heap.alloc(Cell::Object(plain_object()));
+    let value = heap.alloc(Cell::Object(plain_object()));
+
+    assert_eq!(map.legacy_heap_index(), Some(0));
+    assert_eq!(key.direct_object_index(), Some(0));
+    assert_ne!(map, key);
+
+    if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
+        entries.insert(key, value);
+    }
+    heap.collect([map, key]);
+    assert!(heap.is_live(map));
+    assert!(heap.is_live(key));
+    assert!(heap.is_live(value));
+
+    heap.collect([map]);
+    assert!(heap.is_live(map));
+    assert!(!heap.is_live(key));
+    assert!(!heap.is_live(value));
+    assert!(
+        matches!(heap.get(map), Some(Cell::WeakMap { entries, .. }) if entries.iter().next().is_none())
+    );
 }
 
 #[test]
@@ -387,7 +415,7 @@ fn weak_ref_target_is_cleared_after_collection() {
     });
     let reference_root = heap.root(reference);
     heap.collect([]);
-    assert!(heap.get(target).is_none());
+    assert!(!heap.is_live(target));
     assert!(matches!(
         heap.get(reference),
         Some(Cell::WeakRef { target: None, .. })
@@ -508,7 +536,7 @@ fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
 fn object_integrity_metadata_survives_collection() {
     let mut heap = Heap::new();
     let object = heap.alloc(Cell::Object(plain_object()));
-    if let Some(Cell::Object(data)) = heap.get_mut(object) {
+    if let Some(data) = heap.object_record_mut(object) {
         data.set_extensible(false);
         data.set_frozen(true);
     }
@@ -517,9 +545,10 @@ fn object_integrity_metadata_survives_collection() {
         .collect::<Vec<_>>();
     heap.collect([object]);
     assert!(
-        matches!(heap.get(object), Some(Cell::Object(data)) if !data.is_extensible() && data.is_frozen())
+        heap.object_record(object)
+            .is_some_and(|data| !data.is_extensible() && data.is_frozen())
     );
-    assert!(garbage.iter().all(|value| heap.get(*value).is_none()));
+    assert!(garbage.iter().all(|value| !heap.is_live(*value)));
 }
 
 #[test]
@@ -527,20 +556,19 @@ fn out_of_line_private_brand_keeps_its_home_alive() {
     let mut heap = Heap::new();
     let home = heap.alloc(Cell::Object(plain_object()));
     let instance = heap.alloc(Cell::Object(plain_object()));
-    heap.get_mut(instance)
-        .and_then(Cell::object_mut)
+    heap.object_record_mut(instance)
         .unwrap()
         .add_private_name(PrivateBrand { home, name: 0 });
 
     heap.collect([instance]);
 
-    assert!(heap.get(instance).is_some());
-    assert!(heap.get(home).is_some());
+    assert!(heap.is_live(instance));
+    assert!(heap.is_live(home));
 
     heap.collect([]);
 
-    assert!(heap.get(instance).is_none());
-    assert!(heap.get(home).is_none());
+    assert!(!heap.is_live(instance));
+    assert!(!heap.is_live(home));
 }
 
 #[test]
@@ -554,61 +582,37 @@ fn object_property_storage_migration_preserves_writes_and_gc_roots() {
     let replacement = heap.alloc(Cell::String("replacement".into()));
     let third = heap.alloc(Cell::String("third".into()));
     let object = heap.alloc(Cell::Object(plain_object()));
-    assert!(
-        heap.get(object)
-            .unwrap()
-            .object()
-            .unwrap()
-            .inline_properties()
-            .is_some()
-    );
-    heap.get_mut(object)
-        .and_then(Cell::object_mut)
+    assert!(heap.object(object).unwrap().inline_properties().is_some());
+    heap.object_record_mut(object)
         .unwrap()
         .set_extensible(false);
     heap.property_push(object, first);
-    heap.get_mut(object)
-        .and_then(Cell::object_mut)
-        .unwrap()
-        .set_shape(1);
+    heap.object_record_mut(object).unwrap().set_shape(1);
     heap.property_push(object, replaced);
-    heap.get_mut(object)
-        .and_then(Cell::object_mut)
-        .unwrap()
-        .set_shape(2);
-    assert!(
-        heap.get(object)
-            .unwrap()
-            .object()
-            .unwrap()
-            .inline_properties()
-            .is_some()
-    );
+    heap.object_record_mut(object).unwrap().set_shape(2);
+    assert!(heap.object(object).unwrap().inline_properties().is_some());
     heap.property_set(object, 1, replacement);
     heap.property_push(object, third);
-    heap.get_mut(object)
-        .and_then(Cell::object_mut)
-        .unwrap()
-        .set_shape(3);
+    heap.object_record_mut(object).unwrap().set_shape(3);
 
     heap.collect([object]);
-    let data = heap.get(object).unwrap().object().unwrap();
+    let data = heap.object(object).unwrap();
     assert_eq!(data.shape(), 3);
     assert!(data.inline_properties().is_none());
     assert!(!data.is_extensible());
     assert_eq!(heap.property_get(data, 0), Some(first));
     assert_eq!(heap.property_get(data, 1), Some(replacement));
     assert_eq!(heap.property_get(data, 2), Some(third));
-    assert!(heap.get(first).is_some());
-    assert!(heap.get(replaced).is_none());
-    assert!(heap.get(replacement).is_some());
-    assert!(heap.get(third).is_some());
+    assert!(heap.is_live(first));
+    assert!(!heap.is_live(replaced));
+    assert!(heap.is_live(replacement));
+    assert!(heap.is_live(third));
 
     heap.collect([]);
-    assert!(heap.get(object).is_none());
-    assert!(heap.get(first).is_none());
-    assert!(heap.get(replacement).is_none());
-    assert!(heap.get(third).is_none());
+    assert!(!heap.is_live(object));
+    assert!(!heap.is_live(first));
+    assert!(!heap.is_live(replacement));
+    assert!(!heap.is_live(third));
 }
 
 #[test]
@@ -622,14 +626,14 @@ fn inline_property_values_are_gc_roots_until_deleted_or_the_owner_dies() {
 
     heap.collect([object]);
 
-    assert!(heap.get(object).is_some());
-    assert!(heap.get(kept).is_some());
-    assert!(heap.get(deleted).is_none());
+    assert!(heap.is_live(object));
+    assert!(heap.is_live(kept));
+    assert!(!heap.is_live(deleted));
 
     heap.collect([]);
 
-    assert!(heap.get(object).is_none());
-    assert!(heap.get(kept).is_none());
+    assert!(!heap.is_live(object));
+    assert!(!heap.is_live(kept));
 }
 
 #[cfg(feature = "profile-memory")]
@@ -682,18 +686,18 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     });
     let root = heap.root(exception);
     heap.collect([]);
-    assert!(heap.get(tag).is_some());
-    assert!(heap.get(owner).is_some());
-    assert!(heap.get(descriptor).is_some());
+    assert!(heap.is_live(tag));
+    assert!(heap.is_live(owner));
+    assert!(heap.is_live(descriptor));
     assert!(matches!(heap.get(value), Some(Cell::WasmBits64(actual)) if *actual == bits));
     assert!(heap.release_root(root));
     heap.collect([]);
-    assert!(heap.get(value).is_none());
-    assert!(heap.get(owner).is_none());
-    assert!(heap.get(external).is_none());
-    assert!(heap.get(descriptor).is_none());
-    assert!(heap.get(tag).is_none());
-    assert!(heap.get(exception).is_none());
+    assert!(!heap.is_live(value));
+    assert!(!heap.is_live(owner));
+    assert!(!heap.is_live(external));
+    assert!(!heap.is_live(descriptor));
+    assert!(!heap.is_live(tag));
+    assert!(!heap.is_live(exception));
 }
 
 #[test]
@@ -719,7 +723,7 @@ fn regexp_legacy_constructor_is_traced_through_live_instances() {
         assert!(heap.release_root(root));
         heap.collect([]);
         assert!(heap.weak_value(weak_constructor).is_none());
-        assert!(heap.get(regexp).is_none());
+        assert!(!heap.is_live(regexp));
     }
 }
 
@@ -745,12 +749,12 @@ fn resolved_binding_reference_keeps_its_slot_owner_alive() {
         kind: crate::bytecode::LexicalBindingKind::Mutable,
     });
     heap.collect([reference]);
-    assert!(heap.get(environment).is_some());
-    assert!(heap.get(value).is_some());
+    assert!(heap.is_live(environment));
+    assert!(heap.is_live(value));
     heap.collect([]);
-    assert!(heap.get(reference).is_none());
-    assert!(heap.get(environment).is_none());
-    assert!(heap.get(value).is_none());
+    assert!(!heap.is_live(reference));
+    assert!(!heap.is_live(environment));
+    assert!(!heap.is_live(value));
 }
 
 #[test]
@@ -765,9 +769,9 @@ fn weak_map_with_live_key_does_not_activate_an_unreachable_map() {
         entries: Box::new(entries),
     });
     heap.collect([key]);
-    assert!(heap.get(key).is_some());
-    assert!(heap.get(map).is_none());
-    assert!(heap.get(value).is_none());
+    assert!(heap.is_live(key));
+    assert!(!heap.is_live(map));
+    assert!(!heap.is_live(value));
 }
 
 #[test]
@@ -783,9 +787,9 @@ fn weak_map_cycles_do_not_bootstrap_unreachable_keys() {
         entries: Box::new(entries),
     });
     heap.collect([map]);
-    assert!(heap.get(map).is_some());
-    assert!(heap.get(left).is_none());
-    assert!(heap.get(right).is_none());
+    assert!(heap.is_live(map));
+    assert!(!heap.is_live(left));
+    assert!(!heap.is_live(right));
     assert!(
         matches!(heap.get(map), Some(Cell::WeakMap { entries, .. }) if entries.iter().next().is_none())
     );
@@ -816,14 +820,14 @@ fn weak_map_activation_observes_keys_marked_before_and_after_the_map() {
             [outer_key, inner_key, outer]
         };
         heap.collect(roots);
-        assert!(heap.get(inner).is_some());
-        assert!(heap.get(value).is_some());
+        assert!(heap.is_live(inner));
+        assert!(heap.is_live(value));
         heap.collect([outer, outer_key]);
-        assert!(heap.get(inner).is_some());
-        assert!(heap.get(inner_key).is_none());
-        assert!(heap.get(value).is_none());
+        assert!(heap.is_live(inner));
+        assert!(!heap.is_live(inner_key));
+        assert!(!heap.is_live(value));
         heap.collect([outer]);
-        assert!(heap.get(inner).is_none());
+        assert!(!heap.is_live(inner));
     }
 }
 
@@ -844,9 +848,9 @@ fn weak_map_pending_fan_in_releases_every_value_and_resets_between_collections()
         values.push(value);
     }
     heap.collect(std::iter::once(key).chain(maps.iter().copied()));
-    assert!(values.iter().all(|value| heap.get(*value).is_some()));
+    assert!(values.iter().all(|value| heap.is_live(*value)));
     heap.collect(maps.iter().copied());
-    assert!(heap.get(key).is_none());
-    assert!(values.iter().all(|value| heap.get(*value).is_none()));
-    assert!(maps.iter().all(|map| heap.get(*map).is_some()));
+    assert!(!heap.is_live(key));
+    assert!(values.iter().all(|value| !heap.is_live(*value)));
+    assert!(maps.iter().all(|map| heap.is_live(*map)));
 }

@@ -1,17 +1,15 @@
 use super::root::WeakHandle;
 use super::*;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 impl Heap {
     pub(crate) fn weak_handle(&self, value: Value) -> Option<WeakHandle> {
-        let slot = value.heap_index()?;
-        self.get(value)?;
-        Some(WeakHandle { slot })
+        value.heap_index()?;
+        self.is_live(value).then_some(WeakHandle { value })
     }
 
     pub(crate) fn weak_value(&self, handle: WeakHandle) -> Option<Value> {
-        self.get(Value::heap(handle.slot))
-            .map(|_| Value::heap(handle.slot))
+        self.is_live(handle.value).then_some(handle.value)
     }
 }
 
@@ -21,70 +19,65 @@ struct PendingWeakValue {
     next: Option<usize>,
 }
 
-/// Collection-local conditional edges, indexed by their unmarked key.
-/// The flat edge list avoids an allocation for every waiting key.
+/// Collection-local conditional edges, indexed by their unmarked key identity.
 #[derive(Default)]
 pub(super) struct EphemeronWork {
-    heads: FxHashMap<u32, usize>,
+    heads: FxHashMap<Value, usize>,
     values: Vec<PendingWeakValue>,
 }
 
 impl EphemeronWork {
     pub(super) fn newly_marked(
         &mut self,
-        index: u32,
-        cell: &Cell,
-        marks: &[AtomicU64],
+        identity: Value,
+        cell: Option<&Cell>,
+        is_marked: impl FnMut(Value) -> bool,
         work: &mut Vec<Value>,
     ) {
-        self.flush(index, work);
-        self.scan_weak_map(cell, marks, work);
+        self.scan_owner(identity, cell, is_marked, work);
     }
 
     pub(super) fn remembered(
         &mut self,
-        index: u32,
+        identity: Value,
         cell: &Cell,
-        marks: &[AtomicU64],
+        is_marked: impl FnMut(Value) -> bool,
         work: &mut Vec<Value>,
     ) {
-        self.flush(index, work);
-        self.scan_weak_map(cell, marks, work);
+        self.scan_owner(identity, Some(cell), is_marked, work);
     }
 
-    fn flush(&mut self, index: u32, work: &mut Vec<Value>) {
+    fn scan_owner(
+        &mut self,
+        identity: Value,
+        cell: Option<&Cell>,
+        mut is_marked: impl FnMut(Value) -> bool,
+        work: &mut Vec<Value>,
+    ) {
         if !self.heads.is_empty() {
-            let mut next = self.heads.remove(&index);
-            while let Some(pending_index) = next {
-                let pending = self.values[pending_index];
+            let mut next = self.heads.remove(&identity);
+            while let Some(index) = next {
+                let pending = self.values[index];
                 work.push(pending.value);
                 next = pending.next;
             }
         }
-    }
-
-    fn scan_weak_map(&mut self, cell: &Cell, marks: &[AtomicU64], work: &mut Vec<Value>) {
-        if let Cell::WeakMap { entries, .. } = cell {
-            for (key, value) in entries.iter() {
-                let Some(key) = key.heap_index() else {
-                    continue;
-                };
-                let Some(target) = value.heap_index() else {
-                    continue;
-                };
-                if Heap::marked(marks, target as usize) {
-                    continue;
-                }
-                if Heap::marked(marks, key as usize) {
-                    work.push(*value);
-                } else {
-                    let index = self.values.len();
-                    let next = self.heads.insert(key, index);
-                    self.values.push(PendingWeakValue {
-                        value: *value,
-                        next,
-                    });
-                }
+        let Some(Cell::WeakMap { entries, .. }) = cell else {
+            return;
+        };
+        for (key, value) in entries.iter() {
+            if key.heap_index().is_none() || value.heap_index().is_none() || is_marked(*value) {
+                continue;
+            }
+            if is_marked(*key) {
+                work.push(*value);
+            } else {
+                let index = self.values.len();
+                let next = self.heads.insert(*key, index);
+                self.values.push(PendingWeakValue {
+                    value: *value,
+                    next,
+                });
             }
         }
     }
@@ -92,59 +85,61 @@ impl EphemeronWork {
 
 impl Heap {
     pub(super) fn prune_weak_entries(&mut self, full: bool) -> Vec<(Value, Value)> {
+        let Self {
+            object_records,
+            marks,
+            slots,
+            young,
+            remembered,
+            ..
+        } = self;
         let mut finalization_jobs = Vec::new();
-        let marks = &self.marks;
+        let is_marked = |value: Value| {
+            if let Some(record_id) = value.direct_object_index() {
+                return object_records.is_marked(record_id);
+            }
+            let Some(index) = value.legacy_heap_index().map(|index| index as usize) else {
+                return false;
+            };
+            marks
+                .get(index / u64::BITS as usize)
+                .is_some_and(|word| {
+                    word.load(Ordering::Relaxed)
+                        & (1 << (index % u64::BITS as usize))
+                        != 0
+                })
+        };
         if full {
-            for (index, slot) in self.slots.iter_mut().enumerate() {
-                if Self::marked(marks, index)
+            for (index, slot) in slots.iter_mut().enumerate() {
+                if is_marked(Value::heap(index as u32))
                     && let Some(cell) = slot.cell.as_mut()
                 {
-                    Self::prune_weak_cell(cell, marks, &mut finalization_jobs);
+                    Self::prune_weak_cell(cell, &is_marked, &mut finalization_jobs);
                 }
             }
-            return finalization_jobs;
-        }
-        for index in self.young.iter().copied() {
-            Self::prune_weak_slot(&mut self.slots, marks, index, &mut finalization_jobs);
-        }
-        for index in self.remembered.iter().copied() {
-            Self::prune_weak_slot(&mut self.slots, marks, index, &mut finalization_jobs);
+        } else {
+            for index in young.iter().chain(remembered.iter()).copied() {
+                if let Some(cell) = slots
+                    .get_mut(index as usize)
+                    .and_then(|slot| slot.cell.as_mut())
+                {
+                    Self::prune_weak_cell(cell, &is_marked, &mut finalization_jobs);
+                }
+            }
         }
         finalization_jobs
     }
 
-    fn prune_weak_slot(
-        slots: &mut SlotArena,
-        marks: &[AtomicU64],
-        index: u32,
-        finalization_jobs: &mut Vec<(Value, Value)>,
-    ) {
-        let index = index as usize;
-        if !Self::marked(marks, index) {
-            return;
-        }
-        if let Some(cell) = slots.get_mut(index).and_then(|slot| slot.cell.as_mut()) {
-            Self::prune_weak_cell(cell, marks, finalization_jobs);
-        }
-    }
-
     fn prune_weak_cell(
         cell: &mut Cell,
-        marks: &[AtomicU64],
+        is_marked: &impl Fn(Value) -> bool,
         finalization_jobs: &mut Vec<(Value, Value)>,
     ) {
         match cell {
-            Cell::WeakMap { entries, .. } => entries.retain(|(key, _)| {
-                key.heap_index()
-                    .is_some_and(|key| Self::marked(marks, key as usize))
-            }),
-            Cell::WeakSet { entries, .. } => entries.retain(|key| {
-                key.heap_index()
-                    .is_some_and(|key| Self::marked(marks, key as usize))
-            }),
+            Cell::WeakMap { entries, .. } => entries.retain(|(key, _)| is_marked(*key)),
+            Cell::WeakSet { entries, .. } => entries.retain(|key| is_marked(*key)),
             Cell::WeakRef { target, .. } => {
-                let live = target.is_some_and(|target| Self::marked(marks, target.slot as usize));
-                if !live {
+                if !target.is_some_and(|target| is_marked(target.value)) {
                     *target = None;
                 }
             }
@@ -152,11 +147,8 @@ impl Heap {
                 callback, entries, ..
             } => {
                 entries.retain_mut(|entry| {
-                    let live = Self::marked(marks, entry.target.slot as usize);
-                    if entry
-                        .token
-                        .is_some_and(|token| !Self::marked(marks, token.slot as usize))
-                    {
+                    let live = is_marked(entry.target.value);
+                    if entry.token.is_some_and(|token| !is_marked(token.value)) {
                         entry.token = None;
                     }
                     if !live {
