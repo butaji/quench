@@ -58,6 +58,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) event_targets_api: Option<quench_runtime::RootId>,
     pub(crate) trace: crate::modules::trace_state::TraceState,
     pub(crate) util_intrinsics: Option<crate::modules::util_shared_vm::UtilIntrinsics>,
+    pub(crate) node_error_api: Option<crate::modules::node_errors_shared_vm::NodeErrorApi>,
     /// Immutable startup arguments used to build guest process.argv.
     pub(crate) process_argv: crate::modules::process_state::ProcessArgs,
     pub(crate) process_control: crate::modules::process_state::ProcessControl,
@@ -175,6 +176,7 @@ impl SharedNodeState {
             primordials_module: None,
             event_targets_api: None,
             util_intrinsics: None,
+            node_error_api: None,
             trace: crate::modules::trace_state::TraceState::default(),
             process_argv,
             process_control,
