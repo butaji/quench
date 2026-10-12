@@ -4285,3 +4285,45 @@ server.listen(0,()=>{const handle=server._handle;assert.strictEqual(handle.hasRe
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn net_socket_reference_requests_preserve_public_hooks_and_real_socket_liveness() {
+    const SOURCE: &str = r#"
+const net=require('net'),cp=require('child_process'),assert=require('assert'),result=[];
+for(const name of ['ref','unref']) {
+ const method=net.Socket.prototype[name],descriptor=Object.getOwnPropertyDescriptor(net.Socket.prototype,name),trace=[];
+ result.push([method.name,method.length,Object.hasOwn(method,'prototype'),descriptor.enumerable]);assert.throws(()=>method(),{name:'TypeError'});
+ const handle={get [name](){trace.push('method');return function(){trace.push(this===handle)}}},receiver={get _handle(){trace.push('handle');return handle}};
+ assert.strictEqual(method.call(receiver),receiver);assert.deepStrictEqual(trace,['handle','handle','method','handle','method',true]);
+ const callback=function(){},deferred={_handle:null,[name]:callback,once(event,fn){assert.strictEqual(this,deferred);assert.strictEqual(event,'connect');assert.strictEqual(fn,callback);trace.push('deferred')}};
+ assert.strictEqual(method.call(deferred),deferred);assert.strictEqual(trace.pop(),'deferred');
+ const marker={};assert.throws(()=>method.call({_handle:{[name](){throw marker}}}),error=>error===marker);
+ assert.strictEqual(method.call({_handle:{[name]:1}})._handle[name],1);
+}
+for(const mode of ['before','after','ref']) {
+ const source='const net=require("net");const server=net.createServer(socket=>socket.unref());server.unref();server.listen(0,()=>{const socket=new net.Socket();'+(mode==='before'?'socket.unref();':'')+'socket.connect(server.address().port);socket.once("connect",()=>{console.log("connected");socket.setTimeout(3000,()=>{throw new Error("unexpected socket timeout")});'+(mode!=='before'?'socket.unref();':'')+(mode==='ref'?'socket.ref();':'')+'});});';
+ const child=cp.spawnSync(process.execPath,['-e',source],{encoding:'utf8',timeout:1500});assert.strictEqual(child.stdout,'connected\n');
+ if(mode==='ref'){assert.strictEqual(child.error.code,'ETIMEDOUT');result.push([mode,child.error.code])}else{assert.strictEqual(child.status,0);assert.strictEqual(child.error,undefined);result.push([mode,child.status])}
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
