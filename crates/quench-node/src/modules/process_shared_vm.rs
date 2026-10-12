@@ -277,6 +277,7 @@ fn create_stream(
     let stream = context.object_rooted()?;
     let writable = context.boolean(true);
     install(context, stream, "writable", writable)?;
+    install(context, stream, "_isStdio", writable)?;
     let tty = context.boolean(crate::modules::tty_state::is_terminal_fd(fd));
     install(context, stream, "isTTY", tty)?;
     let fd_value = context.number(fd as f64);

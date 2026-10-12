@@ -14,6 +14,8 @@ pub(crate) mod child_process_shared_vm;
 pub(crate) mod child_process_stdio_shared_vm;
 pub(crate) mod child_process_ipc_shared_vm;
 pub(crate) mod child_process_input_shared_vm;
+#[cfg(unix)]
+pub(crate) mod child_process_output_shared_vm;
 pub(crate) mod child_process_fork_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
 #[cfg(unix)]
@@ -52,6 +54,7 @@ pub(crate) mod querystring_data;
 pub(crate) mod querystring_shared_vm;
 pub(crate) mod shared_event_loop;
 pub(crate) mod stream_shared_vm;
+pub(crate) mod stream_pipe_shared_vm;
 pub(crate) mod stream_state;
 pub(crate) mod stream_source;
 pub(crate) mod string_decoder_codec;

@@ -1778,3 +1778,103 @@ child.on('close',(code)=>{assert.strictEqual(code,0);assert.strictEqual(callback
         assert!(observation.stderr.is_empty());
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn child_stdio_stream_forwarding_matches_node_pipe_ownership() {
+    const SOURCES: [&str; 2] = [
+        r#"
+const assert=require('assert'),{spawn}=require('child_process');
+const sink=spawn('cat',{stdio:['pipe','pipe','inherit']});
+const first=spawn('cat',{stdio:['pipe',sink.stdin,'inherit']});
+const second=spawn('cat',{stdio:['pipe',sink.stdin,'inherit']});
+let output='';sink.stdout.setEncoding('utf8');
+sink.stdout.once('data',chunk=>{assert.strictEqual(chunk,'first\n');output+=chunk;
+second.stdin.end('second\n');sink.stdout.once('data',chunk=>{assert.strictEqual(chunk,'second\n');output+=chunk;
+sink.stdin.end('direct\n');sink.stdout.once('data',chunk=>{assert.strictEqual(chunk,'direct\n');output+=chunk;});});});
+sink.on('close',code=>{assert.strictEqual(code,0);assert.strictEqual(output,'first\nsecond\ndirect\n');console.log('complete');});
+first.stdin.end('first\n');
+"#,
+        r#"
+const assert=require('assert'),{spawn}=require('child_process');
+const source=spawn('cat',{stdio:['pipe','pipe','inherit']});
+const head=spawn('head',['-n1'],{stdio:[source.stdout,'pipe','inherit']});
+let first='',rest='';head.stdout.setEncoding('utf8');head.stdout.on('data',chunk=>first+=chunk);
+head.on('exit',()=>{source.stdout.setEncoding('utf8');source.stdout.on('data',chunk=>rest+=chunk);source.stdin.end('rest\n');source.stdout.resume();});
+source.on('close',code=>{assert.strictEqual(code,0);assert.strictEqual(first,'first\n');assert.strictEqual(rest,'rest\n');console.log('complete');});
+source.stdin.write('first\n');
+"#,
+    ];
+    for source in SOURCES {
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command.args(["-e", source]);
+            if executable != "node" {
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            }
+            let observation =
+                quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
+                    .unwrap();
+            assert!(
+                !observation.timed_out,
+                "{executable}: {}",
+                String::from_utf8_lossy(&observation.stderr)
+            );
+            assert_eq!(
+                observation.exit_code,
+                Some(0),
+                "{executable}: {}",
+                String::from_utf8_lossy(&observation.stderr)
+            );
+            assert_eq!(observation.stdout, b"complete\n");
+            assert!(observation.stderr.is_empty());
+        }
+    }
+}
+
+#[test]
+fn legacy_pipe_close_and_throwing_completion_match_node_without_destroying_readables() {
+    const SOURCE: &str = r#"
+const {Stream,Readable}=require('stream');
+const observations=[];
+for(const modern of [false,true])for(const event of ['end','close']){
+ const source=modern?new Readable({read(){}}):new Stream();source.readable=true;
+ const destination=new Stream();destination.writable=true;destination.write=()=>true;
+ const calls=[];destination.end=()=>calls.push('end');destination.destroy=()=>calls.push('destroy');
+ source.pipe(destination);const before=[source.listeners('end').length,source.listeners('close').length];
+ source.emit(event);source.emit('close');
+ observations.push([modern,event,calls,before,source.listeners('end').length,source.listeners('close').length]);
+}
+for(const event of ['end','close']){
+ const source=new Stream(),destination=new Stream(),marker={event};let calls=0;
+ source.readable=true;destination.writable=true;destination.write=()=>true;
+ destination.end=destination.destroy=()=>{calls++;throw marker};source.pipe(destination);
+ let same=false;try{source.emit(event)}catch(error){same=error===marker}
+ source.emit('close');observations.push([event,same,calls,source.listeners('close').length]);
+}
+let gets=0;const source=new Stream(),destination=new Stream();source.readable=true;destination.writable=true;
+ destination._isStdio=true;destination.write=()=>true;destination.end=destination.destroy=()=>{throw Error('stdio completion')};
+ source.pipe(destination,{get end(){gets++;return true}});source.emit('end');source.emit('close');
+observations.push([gets,process.stdout._isStdio,process.stderr._isStdio]);
+console.log(JSON.stringify(observations));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}

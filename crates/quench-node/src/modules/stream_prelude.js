@@ -1157,9 +1157,10 @@
     }
 
     pipe(dest, options) {
-      const endDestination = deps.pipeShouldEnd
+      const plan = deps.pipePlan?.(this, dest, options);
+      const endDestination = plan ? false : (deps.pipeShouldEnd
         ? deps.pipeShouldEnd(dest, options)
-        : (!options || options.end !== false);
+        : (!options || options.end !== false));
       const source = this;
       const sourceState = source._readableState;
       sourceState.pipes.push(dest);
@@ -1210,7 +1211,8 @@
         cleanedUp = true;
         if (!fromUnpipe) source.unpipe(dest);
         source.removeListener("data", ondata);
-        source.removeListener("end", onend);
+        if (onend) source.removeListener("end", onend);
+        if (onclose) source.removeListener("close", onclose);
         source.removeListener("end", cleanup);
         source.removeListener("close", cleanup);
         dest.removeListener("close", cleanup);
@@ -1221,14 +1223,20 @@
         info.hasUnpiped = true;
         cleanup(true);
       };
-      const onend = () => {
+      const onend = plan ? plan.end : () => {
         if (endDestination) dest.end();
       };
+      const onclose = plan?.close;
       sourceState.pipeListeners.push({ dest, ondata });
       source.on("data", ondata);
-      source.on("end", onend);
-      source.on("end", cleanup);
-      source.on("close", cleanup);
+      if (onend) {
+        if (plan?.onceEnd) source.once("end", onend);
+        else source.on("end", onend);
+      }
+      if (onclose) source.on("close", onclose);
+      if (!plan || plan.cleanupOnEnd) source.on("end", cleanup);
+      else if (!onend) source.once("end", cleanup);
+      if (!plan || plan.cleanupOnClose) source.on("close", cleanup);
       dest.on("close", cleanup);
       dest.on("unpipe", onunpipe);
       dest.emit("pipe", source);
