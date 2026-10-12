@@ -32,7 +32,11 @@ pub(crate) struct HeapMemoryComposition {
     pub cell_variant_counts: Vec<usize>,
     pub slot_arena_reserved_bytes: usize,
     pub object_record_reserved_bytes: usize,
+    /// Subtotal already included in `object_record_reserved_bytes`.
+    pub object_record_free_id_capacity_bytes: usize,
     pub array_record_reserved_bytes: usize,
+    /// Subtotal already included in `array_record_reserved_bytes`.
+    pub array_record_free_id_capacity_bytes: usize,
     pub legacy_cell_record_reserved_bytes: usize,
     pub slot_size_bytes: usize,
     pub cell_size_bytes: usize,
@@ -583,7 +587,11 @@ impl Heap {
             cell_variant_counts: cell_variant_counts.values().copied().collect(),
             slot_arena_reserved_bytes: self.slots.capacity() * size_of::<super::Slot>(),
             object_record_reserved_bytes: self.object_records.allocated_bytes(),
+            object_record_free_id_capacity_bytes: self
+                .object_records
+                .free_id_vector_capacity_bytes(),
             array_record_reserved_bytes: self.array_records.allocated_bytes(),
+            array_record_free_id_capacity_bytes: self.array_records.free_id_vector_capacity_bytes(),
             legacy_cell_record_reserved_bytes: 0,
             slot_size_bytes: size_of::<super::Slot>(),
             cell_size_bytes: size_of::<Cell>(),
