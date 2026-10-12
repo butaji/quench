@@ -134,7 +134,10 @@ enum ElabStackEntry {
 #[derive(Clone, Debug)]
 enum BlockStackEntry {
     Elaborate { block: Block, idom: Option<Block> },
-    Pop,
+    /// Leave a block's dominator subtree. Quench: restores the loop stack
+    /// the block was entered with, so that a block outside a loop, which
+    /// pops that loop, does not hide it from later siblings inside it.
+    Pop { loop_stack: SmallVec<[LoopStackEntry; 8]> },
 }
 
 impl<'a> Elaborator<'a> {
@@ -829,7 +832,9 @@ impl<'a> Elaborator<'a> {
         while let Some(top) = self.block_stack.pop() {
             match top {
                 BlockStackEntry::Elaborate { block, idom } => {
-                    self.block_stack.push(BlockStackEntry::Pop);
+                    self.block_stack.push(BlockStackEntry::Pop {
+                        loop_stack: self.loop_stack.clone(),
+                    });
                     self.value_to_elaborated_value.increment_depth();
 
                     self.elaborate_block(&mut elab_values, idom, block);
@@ -850,8 +855,9 @@ impl<'a> Elaborator<'a> {
                     // we can't `.rev()` above.)
                     self.block_stack[block_stack_end..].reverse();
                 }
-                BlockStackEntry::Pop => {
+                BlockStackEntry::Pop { loop_stack } => {
                     self.value_to_elaborated_value.decrement_depth();
+                    self.loop_stack = loop_stack;
                 }
             }
         }
