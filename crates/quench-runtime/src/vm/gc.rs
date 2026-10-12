@@ -46,6 +46,72 @@ fn active_shape_attributes(
     entries
 }
 
+/// Object roots the collector discovers through shapes and VM-owned edges, and the shapes it
+/// finds live.
+struct ShapeRootTracer<'a> {
+    shapes: &'a [Shape],
+    owned_roots: &'a FxHashMap<Value, Vec<Value>>,
+}
+
+// SAFETY: marking threads only read the shape table and the owned-edge map, which nothing
+// writes while the mutator is stopped for collection.
+unsafe impl Sync for ShapeRootTracer<'_> {}
+
+/// The shapes one marking thread found on live objects, each once, with its bitmap.
+struct LiveShapes {
+    bits: Vec<u64>,
+    shapes: Vec<u32>,
+}
+
+impl LiveShapes {
+    /// Adds `shape`, returning whether it was new.
+    fn insert(&mut self, shape: u32) -> bool {
+        let index = shape as usize;
+        let (word, mask) = (index / u64::BITS as usize, 1_u64 << (index % u64::BITS as usize));
+        let new = self.bits[word] & mask == 0;
+        if new {
+            self.bits[word] |= mask;
+            self.shapes.push(shape);
+        }
+        new
+    }
+
+    /// Every thread's live shapes, each once.
+    fn merge(shape_count: usize, locals: Vec<Self>) -> Vec<u32> {
+        let mut merged = Self::empty(shape_count);
+        for shape in locals.into_iter().flat_map(|local| local.shapes) {
+            merged.insert(shape);
+        }
+        merged.shapes
+    }
+
+    fn empty(shape_count: usize) -> Self {
+        Self {
+            bits: vec![0; shape_count.div_ceil(u64::BITS as usize)],
+            shapes: Vec::new(),
+        }
+    }
+}
+
+impl crate::heap::ObjectRootTracer for ShapeRootTracer<'_> {
+    type Local = LiveShapes;
+
+    fn local(&self) -> LiveShapes {
+        LiveShapes::empty(self.shapes.len())
+    }
+
+    fn visit(&self, local: &mut LiveShapes, owner: Value, shape: u32, roots: &mut Vec<Value>) {
+        if local.insert(shape) && self.shapes[shape as usize].may_have_gc_roots {
+            append_shape_roots(self.shapes, shape, roots);
+        }
+        if !self.owned_roots.is_empty()
+            && let Some(edges) = self.owned_roots.get(&owner)
+        {
+            roots.extend(edges.iter().copied());
+        }
+    }
+}
+
 fn append_shape_roots(shapes: &[Shape], shape: u32, roots: &mut Vec<Value>) {
     roots.extend(
         active_shape_attributes(shapes, shape)
@@ -526,29 +592,13 @@ impl<H: Host> Vm<H> {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
             self.report_memory_snapshot(&phase);
         }
-        let shape_count = self.shapes.len();
-        let mut live_shape_bits = vec![0_u64; shape_count.div_ceil(u64::BITS as usize)];
-        let mut live_shapes = Vec::new();
-        let shapes = &mut self.shapes;
-        let finalization_jobs =
-            self.heap
-                .collect_with_object_roots(roots, |owner, shape, roots| {
-                    let shape_index = shape as usize;
-                    let word = shape_index / u64::BITS as usize;
-                    let mask = 1_u64 << (shape_index % u64::BITS as usize);
-                    if live_shape_bits[word] & mask == 0 {
-                        live_shape_bits[word] |= mask;
-                        live_shapes.push(shape);
-                        if shapes[shape_index].may_have_gc_roots {
-                            append_shape_roots(shapes, shape, roots);
-                        }
-                    }
-                    if !owned_roots.is_empty()
-                        && let Some(edges) = owned_roots.get(&owner)
-                    {
-                        roots.extend(edges.iter().copied());
-                    }
-                });
+        let tracer = ShapeRootTracer {
+            shapes: &self.shapes,
+            owned_roots: &owned_roots,
+        };
+        let (finalization_jobs, tracer_locals) =
+            self.heap.collect_with_object_roots(roots, &tracer);
+        let live_shapes = LiveShapes::merge(self.shapes.len(), tracer_locals);
         // Heap weak fields are pruned during collection. Prune the VM-owned
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.
