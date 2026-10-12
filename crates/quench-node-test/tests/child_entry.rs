@@ -3155,3 +3155,33 @@ process.on('exit',()=>console.log(JSON.stringify(result)));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn fatal_before_exit_errors_retain_diagnostics_and_final_exit_status() {
+    for status in [0, 7] {
+        let source = format!(
+            "process.on('exit',()=>{{process.exitCode={status}}});process.on('beforeExit',()=>{{throw new Error('before-exit-marker')}})"
+        );
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command.args(["-e", &source]);
+            if executable != "node" {
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            }
+            let observation =
+                quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                    .unwrap();
+            assert!(!observation.timed_out);
+            assert_eq!(
+                observation.exit_code,
+                Some(status),
+                "{}",
+                String::from_utf8_lossy(&observation.stderr)
+            );
+            assert!(observation.stdout.is_empty());
+            assert!(
+                String::from_utf8_lossy(&observation.stderr).contains("Error: before-exit-marker")
+            );
+        }
+    }
+}

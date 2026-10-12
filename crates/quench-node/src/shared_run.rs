@@ -193,7 +193,17 @@ fn execute_shared_on_worker(
             .finish_deferred_execution(&program)
             .map_err(|error| error.to_string())
     };
-    completion?;
+    if let Err(error) = completion {
+        // A fatal exception sets status 1 before emitting exit. The guest's
+        // exit listeners may replace that status; retain the fatal diagnostic
+        // while honoring the final status at the CLI/embedding boundary.
+        let code = shared_state.borrow().process_control.exit_code();
+        if let Some(code) = code.filter(|code| *code != 1) {
+            eprintln!("{error}");
+            return Ok(SharedCompletion::GuestExit { code });
+        }
+        return Err(error);
+    }
     reporting?;
     if let Some(code) = shared_state.borrow().process_control.exit_code() {
         return Ok(SharedCompletion::GuestExit { code });
