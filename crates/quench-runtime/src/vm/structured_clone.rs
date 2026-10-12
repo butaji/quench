@@ -135,30 +135,30 @@ impl<H: Host> Vm<H> {
         source: Value,
         graph: &mut CloneGraph,
     ) -> Result<Value, JsError> {
-        let Some(cell) = self.heap.get(source).cloned() else {
-            return Ok(source);
-        };
         if let Some(clone) = graph.copied(self, source) {
             return Ok(clone);
         }
+        if let Some(object) = self.heap.object_record(source) {
+            if object.has_error_data() || object.is_module_namespace() {
+                return Err(self.data_clone_error(program, "Object cannot be cloned"));
+            }
+            let source_root = graph.root(self, source);
+            let target = self
+                .heap
+                .alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            let target_root = graph.root(self, target);
+            graph.remember(source, target_root);
+            self.structured_clone_properties(program, source_root, target_root, graph)?;
+            return Ok(self.heap.root_value(target_root).unwrap());
+        }
+        let Some(cell) = self.heap.get(source).cloned() else {
+            return Ok(source);
+        };
         match cell {
             Cell::String(value) => Ok(self.heap.alloc(Cell::String(value))),
             Cell::BigInt(value) => Ok(self.heap.alloc(Cell::BigInt(value))),
             Cell::Symbol(_) => {
                 Err(self.data_clone_error(program, "Symbol values cannot be cloned"))
-            }
-            Cell::Object(object) if object.has_error_data() || object.is_module_namespace() => {
-                Err(self.data_clone_error(program, "Object cannot be cloned"))
-            }
-            Cell::Object(_) => {
-                let source_root = graph.root(self, source);
-                let target = self
-                    .heap
-                    .alloc(Cell::Object(Self::empty_object(self.object_proto)));
-                let target_root = graph.root(self, target);
-                graph.remember(source, target_root);
-                self.structured_clone_properties(program, source_root, target_root, graph)?;
-                Ok(self.heap.root_value(target_root).unwrap())
             }
             Cell::Array { .. } => {
                 let length = self.own_array_length(source).unwrap_or_default();

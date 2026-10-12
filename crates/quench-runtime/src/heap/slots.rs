@@ -106,11 +106,6 @@ impl SlotArena {
         (index < self.len).then(|| &mut self.slabs[index / SLOTS_PER_SLAB][index % SLOTS_PER_SLAB])
     }
 
-    #[cfg(feature = "profile-memory")]
-    pub(super) fn get(&self, index: usize) -> Option<&Slot> {
-        (index < self.len).then(|| &self.slabs[index / SLOTS_PER_SLAB][index % SLOTS_PER_SLAB])
-    }
-
     pub(super) unsafe fn get_unchecked(&self, index: usize) -> &Slot {
         debug_assert!(index < self.len);
         // SAFETY: the caller proves the flat index is live; every slab has the
@@ -186,7 +181,6 @@ impl SlotArena {
             (base, &mut slots[..occupied])
         })
     }
-
     pub(super) fn clear(&mut self) {
         self.slabs.clear();
         self.len = 0;

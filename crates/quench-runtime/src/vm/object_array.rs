@@ -102,7 +102,8 @@ impl<H: Host> Vm<H> {
                     self.heap.sparse_set_length(target, partial_len);
                     for (atom, index, _) in &tail {
                         if *index > blocked_index {
-                            self.descriptors.remove(&(target, PropertyKey::string(*atom)));
+                            self.descriptors
+                                .remove(&(target, PropertyKey::string(*atom)));
                         }
                     }
                     if !writable {
@@ -121,7 +122,8 @@ impl<H: Host> Vm<H> {
                     Rc::make_mut(elements).truncate(next_len);
                 }
                 for (atom, _, _) in &tail {
-                    self.descriptors.remove(&(target, PropertyKey::string(*atom)));
+                    self.descriptors
+                        .remove(&(target, PropertyKey::string(*atom)));
                 }
             }
             self.heap.sparse_set_length(target, next_len);

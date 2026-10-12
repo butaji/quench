@@ -6,6 +6,11 @@ const ARRAY_INDEX_GET_DENSE: usize = 0;
 #[cfg(feature = "profile-aggregate")]
 const ARRAY_INDEX_GET_SPARSE: usize = 1;
 
+enum DenseElementReplacement {
+    Plain,
+    Existing,
+}
+
 #[inline(always)]
 pub(super) fn mutable_array_elements(elements: &mut Rc<Vec<Value>>) -> &mut Vec<Value> {
     if Rc::strong_count(elements) == 1 {
@@ -154,14 +159,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(index) = self.array_index_key(key) {
             let index = index as usize;
-            // Descriptors, accessors and frozen state are the only things that make replacing a
-            // present dense element differ from a plain store, and a plain array has none.
-            if let Some(Cell::Array { object: data, elements }) = self.heap.get(object)
-                && !data.has_indexed_descriptors()
-                && !data.is_frozen()
-                && elements.get(index).is_some_and(|value| !value.is_deleted())
-            {
-                self.replace_dense_element(object, index, value);
+            if self.replace_dense_element(object, index, value, DenseElementReplacement::Plain) {
                 return Ok(());
             }
             if let Some((atom, attributes)) = self.array_descriptor_entry(object, index)
@@ -216,32 +214,52 @@ impl<H: Host> Vm<H> {
             {
                 return Ok(());
             }
-            let replaces = matches!(
-                self.heap.get(object),
-                Some(Cell::Array { elements, .. })
-                    if elements.get(index).is_some_and(|value| !value.is_deleted())
-            );
-            if replaces {
-                self.replace_dense_element(object, index, value);
+            if self.replace_dense_element(object, index, value, DenseElementReplacement::Existing) {
                 return Ok(());
             }
         }
         self.set_index_slow(p, object, key, value, strict)
     }
 
-    /// Overwrites a present dense array element after every guard has passed.
+    /// Replaces a present dense element after the selected semantic guards pass.
     #[inline(always)]
-    fn replace_dense_element(&mut self, object: Value, index: usize, value: Value) {
-        let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) else {
-            unreachable!("dense element replacement requires an array")
+    fn replace_dense_element(
+        &mut self,
+        object: Value,
+        index: usize,
+        value: Value,
+        replacement: DenseElementReplacement,
+    ) -> bool {
+        let mapped_slot = {
+            let Some(Cell::Array {
+                object: data,
+                elements,
+            }) = self.heap.get_mut(object)
+            else {
+                return false;
+            };
+            if !elements
+                .get(index)
+                .is_some_and(|element| !element.is_deleted())
+            {
+                return false;
+            }
+            if matches!(replacement, DenseElementReplacement::Plain)
+                && (data.has_indexed_descriptors() || data.is_frozen())
+            {
+                return false;
+            }
+            let mapped_slot = data.mapped_argument_slot(index);
+            #[cfg(feature = "profile-aggregate")]
+            self.profile
+                .array_write_ownership(Rc::strong_count(elements) != 1);
+            mutable_array_elements(elements)[index] = value;
+            mapped_slot
         };
-        #[cfg(feature = "profile-aggregate")]
-        self.profile
-            .array_write_ownership(Rc::strong_count(elements) != 1);
-        mutable_array_elements(elements)[index] = value;
-        self.sync_mapped_argument(object, index, value);
+        self.sync_mapped_argument_slot(object, mapped_slot, value);
         #[cfg(feature = "profile-aggregate")]
         self.profile.index_set(0);
+        true
     }
 
     #[inline(never)]

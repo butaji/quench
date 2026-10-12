@@ -31,6 +31,8 @@ pub(crate) struct HeapMemoryComposition {
     pub cell_variant_names: Vec<&'static str>,
     pub cell_variant_counts: Vec<usize>,
     pub slot_arena_reserved_bytes: usize,
+    pub object_record_reserved_bytes: usize,
+    pub legacy_cell_record_reserved_bytes: usize,
     pub free_slot_metadata_bytes: usize,
     pub slot_size_bytes: usize,
     pub cell_size_bytes: usize,
@@ -86,6 +88,7 @@ pub(crate) struct MemoryProfile {
     object_allocated_slots: Vec<u32>,
     object_peak_slots: Vec<u32>,
     object_lifetimes: FxHashMap<ObjectLifetime, u64>,
+    identity_slots: FxHashMap<Value, usize>,
 }
 impl Default for MemoryProfile {
     fn default() -> Self {
@@ -114,6 +117,7 @@ impl Default for MemoryProfile {
             object_allocated_slots: Vec::new(),
             object_peak_slots: Vec::new(),
             object_lifetimes: FxHashMap::default(),
+            identity_slots: FxHashMap::default(),
         }
     }
 }
@@ -123,11 +127,43 @@ impl MemoryProfile {
         self.current_site = Some(site);
     }
 
-    pub(super) fn allocated(&mut self, index: usize, cell: &Cell, object_slots: Option<usize>) {
+    pub(super) fn allocated(&mut self, identity: Value, cell: &Cell, object_slots: Option<usize>) {
+        self.allocated_record(
+            identity,
+            Heap::cell_kind(cell) as usize,
+            Heap::cell_payload_bytes(cell),
+            cell.profile_variant_name(),
+            object_slots,
+        );
+    }
+
+    pub(super) fn allocated_object(
+        &mut self,
+        identity: Value,
+        object: &Object,
+        object_slots: usize,
+    ) {
+        self.allocated_record(
+            identity,
+            CellKind::Object as usize,
+            object.allocated_extra_bytes(),
+            "object",
+            Some(object_slots),
+        );
+    }
+
+    fn allocated_record(
+        &mut self,
+        identity: Value,
+        kind: usize,
+        bytes: usize,
+        variant_name: &'static str,
+        object_slots: Option<usize>,
+    ) {
         self.clock += 1;
-        let kind = Heap::cell_kind(cell) as usize;
-        let bytes = Heap::cell_payload_bytes(cell);
+        let index = self.births.len();
         self.ensure_slot(index);
+        self.identity_slots.insert(identity, index);
         self.births[index] = self.clock;
         self.birth_bytes[index] = bytes;
         self.kinds[index] = kind as u8;
@@ -136,7 +172,7 @@ impl MemoryProfile {
         self.allocated_counts[kind] += 1;
         *self
             .allocated_variant_counts
-            .entry(cell.profile_variant_name())
+            .entry(variant_name)
             .or_default() += 1;
         self.allocated_bytes[kind] += bytes as u64;
         self.size_buckets[kind][Heap::size_bucket(bytes)] += 1;
@@ -151,9 +187,25 @@ impl MemoryProfile {
         }
     }
 
-    pub(super) fn freed(&mut self, index: usize, cell: &Cell, object_slots: Option<usize>) {
+    pub(super) fn freed(&mut self, identity: Value, cell: &Cell, object_slots: Option<usize>) {
+        let Some(index) = self.identity_slots.remove(&identity) else {
+            return;
+        };
         let kind = self.kinds[index] as usize;
         debug_assert_eq!(kind, Heap::cell_kind(cell) as usize);
+        self.freed_record(index, kind, object_slots);
+    }
+
+    pub(super) fn freed_object(&mut self, identity: Value, object_slots: usize) {
+        let Some(index) = self.identity_slots.remove(&identity) else {
+            return;
+        };
+        let kind = CellKind::Object as usize;
+        debug_assert_eq!(self.kinds[index] as usize, kind);
+        self.freed_record(index, kind, Some(object_slots));
+    }
+
+    fn freed_record(&mut self, index: usize, kind: usize, object_slots: Option<usize>) {
         let bytes = self.birth_bytes[index];
         self.live_counts[kind] -= 1;
         self.live_birth_bytes[kind] -= bytes as u64;
@@ -164,7 +216,10 @@ impl MemoryProfile {
         self.record_object_death(index, kind, object_slots);
     }
 
-    pub(super) fn object_slots_changed(&mut self, index: usize, slots: usize) {
+    pub(super) fn object_slots_changed(&mut self, identity: Value, slots: usize) {
+        let Some(index) = self.identity_slots.get(&identity).copied() else {
+            return;
+        };
         self.object_peak_slots[index] = self.object_peak_slots[index].max(slots as u32);
     }
 
@@ -262,23 +317,27 @@ impl MemoryProfile {
 
     fn report_object_lifetimes(&self, phase: &str, heap: &Heap) {
         let mut rows = self.object_lifetimes.clone();
-        for (index, slot) in heap.slots.iter().enumerate() {
-            let Some(cell) = slot.cell.as_ref() else {
-                continue;
+        heap.for_each_live_value(|identity| {
+            let Some(index) = self.identity_slots.get(&identity).copied() else {
+                return;
             };
-            let Some(object) = cell.object() else {
-                continue;
+            let Some(object) = heap.object(identity) else {
+                return;
             };
+            let kind = identity.direct_object_index().map_or_else(
+                || heap.get(identity).map_or(CellKind::Object, Heap::cell_kind),
+                |_| CellKind::Object,
+            );
             let lifetime = ObjectLifetime {
                 site: self.object_sites[index],
-                kind: Heap::cell_kind(cell) as u8,
+                kind: kind as u8,
                 allocated: self.object_allocated_slots[index],
                 peak: self.object_peak_slots[index],
                 death: None,
                 checkpoint: Some(heap.properties.len(object.properties) as u32),
             };
             *rows.entry(lifetime).or_default() += 1;
-        }
+        });
         let mut rows = rows.into_iter().collect::<Vec<_>>();
         rows.sort_unstable_by_key(|(row, _)| {
             (
@@ -323,6 +382,7 @@ impl MemoryProfile {
             + self.object_allocated_slots.capacity() * size_of::<u32>()
             + self.object_peak_slots.capacity() * size_of::<u32>()
             + self.object_lifetimes.capacity() * size_of::<(ObjectLifetime, u64)>()
+            + self.identity_slots.capacity() * size_of::<(Value, usize)>()
     }
 }
 
@@ -355,14 +415,26 @@ impl Heap {
         let mut other_cell_payload_bytes = 0;
         let mut array_identities = HashSet::new();
         let mut string_identities = HashSet::new();
-        for cell in self.slots.iter().filter_map(|slot| slot.cell.as_ref()) {
+        self.for_each_live_value(|identity| {
             occupied_slots += 1;
-            let kind = Self::cell_kind(cell) as usize;
+            let object_record = self.object_record(identity);
+            let cell = self.get(identity);
+            let direct_object = identity.direct_object_index().is_some();
+            let kind = if direct_object {
+                CellKind::Object as usize
+            } else {
+                Self::cell_kind(cell.expect("live legacy value has a Cell")) as usize
+            };
             cell_counts[kind] += 1;
-            *cell_variant_counts
-                .entry(cell.profile_variant_name())
-                .or_insert(0usize) += 1;
-            if let Some(object) = cell.object() {
+            let variant_name = if direct_object {
+                "object"
+            } else {
+                cell.expect("live legacy value has a Cell")
+                    .profile_variant_name()
+            };
+            *cell_variant_counts.entry(variant_name).or_insert(0usize) += 1;
+            let object = object_record.or_else(|| cell.and_then(Cell::object));
+            if let Some(object) = object {
                 object_headers += 1;
                 let property_width = self.properties.len(object.properties);
                 object_property_counts_by_width.resize(
@@ -372,7 +444,8 @@ impl Heap {
                     0,
                 );
                 object_property_counts_by_width[property_width] += 1;
-                if matches!(cell, Cell::Function { .. }) {
+                if !direct_object && cell.is_some_and(|cell| matches!(cell, Cell::Function { .. }))
+                {
                     boxed_object_headers += 1;
                 } else {
                     embedded_object_headers += 1;
@@ -397,9 +470,13 @@ impl Heap {
                     live_property_capacity_values_by_width[property_width] += capacity;
                 }
             }
-            let payload_bytes = Self::cell_payload_bytes(cell);
+            let payload_bytes = if direct_object {
+                object_record.map_or(0, Object::allocated_extra_bytes)
+            } else {
+                cell.map_or(0, Self::cell_payload_bytes)
+            };
             match cell {
-                Cell::Array { elements, .. } => {
+                Some(Cell::Array { elements, .. }) => {
                     let element_bytes = elements.capacity() * size_of::<Value>();
                     other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
                     let identity = Rc::as_ptr(elements) as usize;
@@ -411,7 +488,7 @@ impl Heap {
                         dense_array_backing_count += 1;
                     }
                 }
-                Cell::String(value) => {
+                Some(Cell::String(value)) => {
                     other_cell_payload_bytes += payload_bytes.saturating_sub(value.capacity());
                     let (units, host) = value.memory_parts();
                     if string_identities.insert(units.0) {
@@ -427,7 +504,7 @@ impl Heap {
                 }
                 _ => other_cell_payload_bytes += payload_bytes,
             }
-        }
+        });
         let cell_payload_bytes = other_cell_payload_bytes
             + dense_array_elements_bytes
             + dense_array_headers_bytes
@@ -448,6 +525,8 @@ impl Heap {
             cell_variant_names: cell_variant_counts.keys().copied().collect(),
             cell_variant_counts: cell_variant_counts.values().copied().collect(),
             slot_arena_reserved_bytes: self.slots.capacity() * size_of::<Slot>(),
+            object_record_reserved_bytes: self.object_records.allocated_bytes(),
+            legacy_cell_record_reserved_bytes: 0,
             free_slot_metadata_bytes: self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
             slot_size_bytes: size_of::<Slot>(),
@@ -484,9 +563,14 @@ impl Heap {
 
     pub(crate) fn cell_counts(&self) -> [usize; KINDS] {
         let mut counts = [0; KINDS];
-        for cell in self.slots.iter().filter_map(|slot| slot.cell.as_ref()) {
+        counts[CellKind::Object as usize] = self.object_records.live_count();
+        self.for_each_live_value(|identity| {
+            if identity.direct_object_index().is_some() {
+                return;
+            }
+            let cell = self.get(identity).expect("live legacy value has a Cell");
             counts[Self::cell_kind(cell) as usize] += 1;
-        }
+        });
         counts
     }
 
@@ -496,20 +580,20 @@ impl Heap {
 
     pub(crate) fn live_payload_bytes(&self) -> [usize; KINDS] {
         let mut bytes = [0; KINDS];
-        for cell in self.slots.iter().filter_map(|slot| slot.cell.as_ref()) {
-            bytes[Self::cell_kind(cell) as usize] += Self::cell_payload_bytes(cell);
-        }
+        self.for_each_live_value(|identity| {
+            if let Some(object) = self.object_record(identity) {
+                bytes[CellKind::Object as usize] += object.allocated_extra_bytes();
+            } else if let Some(cell) = self.get(identity) {
+                bytes[Self::cell_kind(cell) as usize] += Self::cell_payload_bytes(cell);
+            }
+        });
         bytes
     }
 
     pub fn memory_stats(&self) -> (usize, usize, usize, usize, usize, usize, usize) {
         let dynamic = self.properties.memory_bytes()
-            + self
-                .slots
-                .iter()
-                .filter_map(|slot| slot.cell.as_ref())
-                .map(cell_bytes)
-                .sum::<usize>()
+            + self.object_records.allocated_bytes()
+            + self.live_value_payload_bytes()
             + self
                 .sparse_arrays
                 .iter()
@@ -520,7 +604,7 @@ impl Heap {
                 .sum::<usize>();
         let property = self.properties.stats();
         (
-            self.slots.len(),
+            self.slots.len() + self.object_records.high_water(),
             self.slots.capacity() * size_of::<super::Slot>(),
             self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
@@ -532,13 +616,27 @@ impl Heap {
     }
 
     pub(crate) fn live_property_stats(&self) -> (usize, usize) {
-        self.slots
-            .iter()
-            .filter_map(|slot| slot.cell.as_ref()?.object())
-            .fold((0, 0), |(len, capacity), object| {
-                let stats = self.properties.vector_stats(object.properties);
-                (len + stats.0, capacity + stats.1)
-            })
+        let mut stats = (0, 0);
+        self.for_each_live_value(|identity| {
+            let Some(object) = self.object(identity) else {
+                return;
+            };
+            let vector = self.properties.vector_stats(object.properties);
+            stats.0 += vector.0;
+            stats.1 += vector.1;
+        });
+        stats
+    }
+
+    fn live_value_payload_bytes(&self) -> usize {
+        let mut bytes = 0;
+        self.for_each_live_value(|identity| {
+            bytes += self.object_record(identity).map_or_else(
+                || self.get(identity).map_or(0, cell_bytes),
+                Object::allocated_extra_bytes,
+            );
+        });
+        bytes
     }
 
     pub(crate) fn array_element_stats(&self) -> (usize, usize) {

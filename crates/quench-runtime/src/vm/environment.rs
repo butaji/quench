@@ -164,7 +164,11 @@ impl<H: Host> Vm<H> {
         else {
             return None;
         };
-        Some((super::ProgramId::from_raw(scope.program?), *function, *parent))
+        Some((
+            super::ProgramId::from_raw(scope.program?),
+            *function,
+            *parent,
+        ))
     }
 
     pub(super) fn initialize_this_binding(

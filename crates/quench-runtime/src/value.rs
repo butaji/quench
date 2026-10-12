@@ -25,6 +25,13 @@ const _: () = {
     }
     assert!(tags[0] == FIRST_TAG && tags[tags.len() - 1] == LAST_TAG);
 };
+const DIRECT_OBJECT_HANDLE_BIT: u64 = 1 << 47;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HeapReference {
+    LegacySlot(u32),
+    ObjectRecord(u32),
+}
 
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy)]
@@ -148,6 +155,11 @@ impl Value {
         Self(TAG_HEAP | u64::from(index))
     }
 
+    #[inline(always)]
+    pub(crate) fn direct_object(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT | u64::from(index))
+    }
+
     pub fn as_number(self) -> Option<f64> {
         if let Some(value) = self.as_int() {
             Some(value as f64)
@@ -163,6 +175,35 @@ impl Value {
     #[inline(always)]
     pub(crate) fn heap_index(self) -> Option<u32> {
         ((self.0 & TAG_MASK) == TAG_HEAP).then_some((self.0 & PAYLOAD_MASK) as u32)
+    }
+
+    #[inline(always)]
+    pub(crate) fn heap_reference(self) -> Option<HeapReference> {
+        if self.0 & TAG_MASK != TAG_HEAP {
+            return None;
+        }
+        let index = self.0 as u32;
+        Some(if self.0 & DIRECT_OBJECT_HANDLE_BIT == 0 {
+            HeapReference::LegacySlot(index)
+        } else {
+            HeapReference::ObjectRecord(index)
+        })
+    }
+
+    #[inline(always)]
+    pub(crate) fn legacy_heap_index(self) -> Option<u32> {
+        match self.heap_reference()? {
+            HeapReference::LegacySlot(index) => Some(index),
+            HeapReference::ObjectRecord(_) => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_object_index(self) -> Option<u32> {
+        match self.heap_reference()? {
+            HeapReference::ObjectRecord(index) => Some(index),
+            HeapReference::LegacySlot(_) => None,
+        }
     }
 
     pub fn is_undefined(self) -> bool {
@@ -248,6 +289,18 @@ mod tests {
         }
         assert_eq!(Value::TRUE.as_bool(), Some(true));
         assert_eq!(Value::heap(42).heap_index(), Some(42));
+        assert_eq!(
+            Value::heap(42).heap_reference(),
+            Some(super::HeapReference::LegacySlot(42))
+        );
+        let direct_object = Value::direct_object(42);
+        assert_eq!(direct_object.heap_index(), Some(42));
+        assert_eq!(direct_object.direct_object_index(), Some(42));
+        assert_eq!(
+            direct_object.heap_reference(),
+            Some(super::HeapReference::ObjectRecord(42))
+        );
+        assert_ne!(direct_object, Value::heap(42));
         assert_eq!(
             Value::int_pair(Value::integer(-2), Value::integer(3)),
             Some((-2, 3))

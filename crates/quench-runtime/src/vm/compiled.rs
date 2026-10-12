@@ -248,6 +248,7 @@ enum Raised {
 
 const CONTEXT_STACK_LIMIT: i32 = std::mem::offset_of!(CallContext, stack_limit) as i32;
 const CONTEXT_TABLE: i32 = std::mem::offset_of!(CallContext, table) as i32;
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 const CONTEXT_ENTRY_STACK: u8 = std::mem::offset_of!(CallContext, entry_stack) as u8;
 const CONTEXT_GLOBALS: i32 = std::mem::offset_of!(CallContext, globals) as i32;
 const CONTEXT_CALLOUT: i32 = std::mem::offset_of!(CallContext, callout) as i32;
@@ -2343,6 +2344,7 @@ type Trampoline =
 struct GuardSupport {
     _code: CodeMemory,
     trampoline: Trampoline,
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
     landing: usize,
 }
 

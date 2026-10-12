@@ -279,7 +279,9 @@ impl JsError {
 
 impl<H: Host> Vm<H> {
     pub(super) fn error_is_error(&self, value: Value) -> bool {
-        matches!(self.heap.get(value), Some(Cell::Object(object)) if object.has_error_data())
+        self.heap
+            .object_record(value)
+            .is_some_and(Object::has_error_data)
     }
 
     pub(super) fn error_stack_getter(

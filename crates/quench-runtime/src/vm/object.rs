@@ -1,5 +1,6 @@
 use super::property_key::PropertyKey;
 use super::*;
+use crate::value::HeapReference;
 
 const PRIVATE_NAME_PREFIX: &str = "\0quench:private:";
 
@@ -423,8 +424,7 @@ impl<H: Host> Vm<H> {
         self.resolved_this_binding(p, frame)
     }
 
-    /// `this` through the activation's lexical-this binding, for frames whose own `this` is
-    /// not authoritative.
+    /// Resolve `this` through the activation's lexical-this binding.
     #[inline(never)]
     fn resolved_this_binding(&mut self, p: &ResidualProgram, frame: usize) -> Result<Value, JsError> {
         self.lexical_this(frame).ok_or_else(|| {
@@ -588,42 +588,13 @@ impl<H: Host> Vm<H> {
         }
     }
     pub(super) fn object_data(&self, value: Value) -> Option<&Object> {
-        self.heap.get(value)?.object()
+        self.heap.object(value)
     }
     pub(super) fn object_data_mut(&mut self, value: Value) -> Option<&mut Object> {
-        self.heap.get_mut(value)?.object_mut()
+        self.heap.object_mut(value)
     }
     pub(super) fn is_object_like(&self, value: Value) -> bool {
-        matches!(
-            self.heap.get(value),
-            Some(
-                Cell::Object(_)
-                    | Cell::Array { .. }
-                    | Cell::ArrayBuffer { .. }
-                    | Cell::TypedArray { .. }
-                    | Cell::DataView { .. }
-                    | Cell::Map { .. }
-                    | Cell::Set { .. }
-                    | Cell::ShadowRealm { .. }
-                    | Cell::WeakMap { .. }
-                    | Cell::WeakSet { .. }
-                    | Cell::WeakRef { .. }
-                    | Cell::FinalizationRegistry { .. }
-                    | Cell::Iterator { .. }
-                    | Cell::Proxy { .. }
-                    | Cell::Function { .. }
-                    | Cell::Date { .. }
-                    | Cell::TemporalDuration { .. }
-                    | Cell::TemporalPlainDate { .. }
-                    | Cell::TemporalPlainDateTime { .. }
-                    | Cell::TemporalPlainMonthDay { .. }
-                    | Cell::TemporalPlainYearMonth { .. }
-                    | Cell::TemporalZonedDateTime { .. }
-                    | Cell::TemporalInstant { .. }
-                    | Cell::RegExp { .. }
-                    | Cell::Error(_)
-            )
-        )
+        self.heap.object(value).is_some() || matches!(self.heap.get(value), Some(Cell::Error(_)))
     }
     #[inline(always)]
     pub(super) fn get_field_cached(
@@ -635,16 +606,20 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match self.cached_field_hit(p, object, site) {
             FieldCacheProbe::Hit(value) => Ok(value),
-            FieldCacheProbe::OrdinaryMiss => self.get_field_polymorphic(p, object, atom, site),
-            FieldCacheProbe::Ineligible => self.get_field_uncached(p, object, atom, site),
+            FieldCacheProbe::OrdinaryMiss => self.get_field_polymorphic(
+                p,
+                object,
+                atom,
+                site,
+                object.heap_reference(),
+            ),
+            FieldCacheProbe::Ineligible => {
+                self.get_field_uncached(p, object, atom, site, object.heap_reference())
+            }
         }
     }
 
-    /// The inline field cache hits for `object` at `site`. A site is only populated after the
-    /// atom and non-dictionary receiver and holder shapes passed `shape_property_lookup_cell`,
-    /// and an ordinary object is eligible whenever those hold, so an own-data hit on ordinary
-    /// objects needs no further eligibility probe; a hit also proves the property exists.
-    /// These hits stay a leaf function; every other case continues out of line.
+    /// Probe own and holder entries using the shape pinned by the receiver.
     #[inline(always)]
     pub(super) fn cached_field_hit(
         &mut self,
@@ -655,7 +630,7 @@ impl<H: Host> Vm<H> {
         if !(self.specialized && p.specialized) {
             return FieldCacheProbe::Ineligible;
         }
-        let Some(Cell::Object(receiver)) = self.heap.get(object) else {
+        let Some(receiver) = self.heap.object(object) else {
             return FieldCacheProbe::Ineligible;
         };
         if receiver.is_module_namespace() {
@@ -676,8 +651,6 @@ impl<H: Host> Vm<H> {
             slot
         };
         if let Some(slot) = slot {
-            // SAFETY: receiver shape and slot were recorded together for an own data
-            // property on the cache miss path.
             return FieldCacheProbe::Hit(unsafe {
                 self.heap.property_get_unchecked(receiver, slot as usize)
             });
@@ -719,18 +692,23 @@ impl<H: Host> Vm<H> {
         object: Value,
         atom: Atom,
         site: u16,
+        heap_reference: Option<HeapReference>,
     ) -> Result<Value, JsError> {
         let index = self.field_cache_index(site);
-        if let Some(Cell::Object(receiver)) = self.heap.get(object)
-            && let Some(hit) = self
+        if let Some(HeapReference::ObjectRecord(record_id)) = heap_reference {
+            let receiver = self.heap.object_record_by_id(record_id);
+            if let Some(hit) = self
                 .cached_field_value(index, receiver)
-                .or_else(|| self.cached_ordinary_holder_field_value(index, receiver))
-        {
-            self.profile
-                .field_cache_hit(usize::from(hit.tier), hit.depth);
-            return Ok(hit.value);
+                .or_else(|| self.cached_holder_field_value(index, receiver, atom))
+            {
+                self.profile
+                    .field_cache_hit(usize::from(hit.tier), hit.depth);
+                return Ok(hit.value);
+            }
+            self.profile.field_cache(false);
+            return self.get_field_miss(p, object, atom, index);
         }
-        self.get_field_uncached(p, object, atom, site)
+        self.get_field_uncached(p, object, atom, site, heap_reference)
     }
 
     /// The receiver-shape miss path of `get_field_cached`: strings, proxies, prototype holders,
@@ -742,8 +720,29 @@ impl<H: Host> Vm<H> {
         object: Value,
         atom: Atom,
         site: u16,
+        heap_reference: Option<HeapReference>,
     ) -> Result<Value, JsError> {
-        let lookup = match self.heap.get(object) {
+        if let Some(HeapReference::ObjectRecord(record_id)) = heap_reference {
+            let receiver = self.heap.object_record_by_id(record_id);
+            if self.specialized && p.specialized && !receiver.is_module_namespace() {
+                let index = self.field_cache_index(site);
+                if let Some(hit) = self
+                    .cached_field_value(index, receiver)
+                    .or_else(|| self.cached_holder_field_value(index, receiver, atom))
+                {
+                    self.profile
+                        .field_cache_hit(usize::from(hit.tier), hit.depth);
+                    return Ok(hit.value);
+                }
+            }
+            self.profile.field_cache(false);
+            return self.get_field_miss(p, object, atom, self.field_cache_index(site));
+        }
+        let legacy_cell = match heap_reference {
+            Some(HeapReference::LegacySlot(index)) => self.heap.get_legacy(index),
+            Some(HeapReference::ObjectRecord(_)) | None => None,
+        };
+        let lookup = match legacy_cell {
             Some(Cell::String(_)) if self.specialized && p.specialized => {
                 if !self.field_cache_atom_eligible(atom) {
                     FieldCacheRead::StringGeneric
@@ -819,7 +818,7 @@ impl<H: Host> Vm<H> {
         if !(self.specialized && p.specialized) {
             return None;
         }
-        let Some(Cell::Object(receiver)) = self.heap.get(object) else {
+        let Some(receiver) = self.heap.object(object) else {
             return None;
         };
         if receiver.is_module_namespace() {
@@ -899,7 +898,7 @@ impl<H: Host> Vm<H> {
         if cache.holder == NO_FIELD_HOLDER || cache.receiver != receiver.shape() {
             return None;
         }
-        let Some(Cell::Object(holder)) = self.heap.get(receiver.proto) else {
+        let Some(holder) = self.heap.object(receiver.proto) else {
             return None;
         };
         if holder.is_module_namespace() || cache.holder != holder.shape() {
@@ -926,8 +925,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<FieldCacheHit> {
         let holder_value = receiver.proto;
-        let holder_cell = self.heap.get(holder_value)?;
-        let holder = self.shape_property_lookup_cell(holder_cell, atom)?;
+        let holder = self.shape_property_lookup(holder_value, atom)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(site) };
         let (cache, tier) = if cache.receiver == receiver.shape() && cache.holder == holder.shape()
@@ -1132,8 +1130,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
     ) -> Option<(u32, usize, Value)> {
         let holder_value = self.object_data(receiver_value)?.proto;
-        let holder_cell = self.heap.get(holder_value)?;
-        let holder = self.shape_property_lookup_cell(holder_cell, atom)?;
+        let holder = self.shape_property_lookup(holder_value, atom)?;
         let holder_shape = holder.shape();
         let slot = self.shape_slot(holder_shape, atom)?;
         if self
@@ -1197,8 +1194,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        if let Some((target, handler)) = self.proxy_parts(target)
-        {
+        if let Some((target, handler)) = self.proxy_parts(target) {
             return self.proxy_set(
                 p,
                 target,
@@ -1243,8 +1239,7 @@ impl<H: Host> Vm<H> {
                     super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
                 }
             }
-            if let Some((target, handler)) = self.proxy_parts(current)
-            {
+            if let Some((target, handler)) = self.proxy_parts(current) {
                 return self.proxy_set(
                     p,
                     target,
@@ -1535,7 +1530,7 @@ impl<H: Host> Vm<H> {
         if !(self.specialized && p.specialized) || self.method_caches_may_name(atom) {
             return false;
         }
-        let Some(Cell::Object(data)) = self.heap.get(object) else {
+        let Some(data) = self.heap.object(object) else {
             return false;
         };
         if data.is_module_namespace() || data.is_arguments_object() {
@@ -1812,7 +1807,7 @@ impl<H: Host> Vm<H> {
             if depth == FIELD_ADD_CACHE_MAX_PROTO_DEPTH {
                 return None;
             }
-            let Some(Cell::Object(data)) = self.heap.get(prototype) else {
+            let Some(data) = self.heap.object_record(prototype) else {
                 return None;
             };
             let shape = data.shape();
@@ -1835,7 +1830,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn field_add_prototype_chain_matches(&self, mut prototype: Value, expected: &[u32]) -> bool {
         for expected_shape in expected {
-            let Some(Cell::Object(data)) = self.heap.get(prototype) else {
+            let Some(data) = self.heap.object_record(prototype) else {
                 return false;
             };
             if data.shape() != *expected_shape
@@ -1864,7 +1859,7 @@ impl<H: Host> Vm<H> {
         if !(self.specialized && p.specialized) || self.is_private_name(atom) {
             return false;
         }
-        let Some(Cell::Object(data)) = self.heap.get(object) else {
+        let Some(data) = self.heap.object(object) else {
             return false;
         };
         if data.is_module_namespace() || data.is_arguments_object() {
@@ -2036,7 +2031,7 @@ impl<H: Host> Vm<H> {
         if self.is_function(value) {
             return true;
         }
-        let Some(Cell::Object(data)) = self.heap.get(object) else {
+        let Some(data) = self.heap.object_record(object) else {
             return self.callable_write(object, slot, value);
         };
         // SAFETY: the matching cached shape proves the slot lies within the object's storage.
