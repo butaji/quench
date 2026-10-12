@@ -27,11 +27,16 @@ impl<H: Host> Vm<H> {
             return fallback;
         };
         match self.heap.get(arguments) {
-            Some(Cell::Array { elements, .. }) => elements
-                .get(index)
-                .copied()
-                .filter(|value| !value.is_deleted())
-                .unwrap_or(Value::UNDEFINED),
+            Some(Cell::Array {
+                object: array_object,
+            }) => {
+                let elements = array_object.elements();
+                elements
+                    .get(index)
+                    .copied()
+                    .filter(|value| !value.is_deleted())
+                    .unwrap_or(Value::UNDEFINED)
+            }
             _ => fallback,
         }
     }
@@ -120,10 +125,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         if self.frames[owner].captured {
-            if let Some(target) = self
-                .heap
-                .environment_slot_mut(self.frames[owner].env, slot)
-            {
+            if let Some(target) = self.heap.environment_slot_mut(self.frames[owner].env, slot) {
                 *target = value;
             }
         } else if let Some(target) = self.frames[owner].locals.get_mut(slot) {

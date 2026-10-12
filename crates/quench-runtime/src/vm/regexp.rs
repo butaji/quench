@@ -666,7 +666,8 @@ impl<H: Host> Vm<H> {
             return Ok(matcher);
         }
         let matcher = Rc::new(Self::compile_regexp(source, flags)?);
-        self.regexp_matchers.insert(source, flags, Rc::clone(&matcher));
+        self.regexp_matchers
+            .insert(source, flags, Rc::clone(&matcher));
         Ok(matcher)
     }
 
@@ -1086,9 +1087,9 @@ impl<H: Host> Vm<H> {
                 q = advance_string_index_units(input.units(), q, unicode);
                 continue;
             }
-            let piece = self
-                .heap
-                .alloc(Cell::String(JsString::from_units(&input.units()[p_index..q])));
+            let piece = self.heap.alloc(Cell::String(JsString::from_units(
+                &input.units()[p_index..q],
+            )));
             if self.append_fresh_array_element(array, piece) >= limit {
                 return self.finish_regexp_split_builtin(splitter, input, last_match, array);
             }
@@ -1104,9 +1105,9 @@ impl<H: Host> Vm<H> {
             }
             q = p_index;
         }
-        let tail = self
-            .heap
-            .alloc(Cell::String(JsString::from_units(&input.units()[p_index..])));
+        let tail = self.heap.alloc(Cell::String(JsString::from_units(
+            &input.units()[p_index..],
+        )));
         self.append_fresh_array_element(array, tail);
         self.finish_regexp_split_builtin(splitter, input, last_match, array)
     }
@@ -1220,10 +1221,10 @@ impl<H: Host> Vm<H> {
                         ext: Box::new(crate::heap::IteratorExt {
                             next_method: None,
                             helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
-                            input,
-                            global: flags.contains('g'),
-                            unicode: flags.contains('u') || flags.contains('v'),
-                        })),
+                                input,
+                                global: flags.contains('g'),
+                                unicode: flags.contains('u') || flags.contains('v'),
+                            })),
                             helper_running: false,
                             helper_started: false,
                             generator: None,
@@ -1304,9 +1305,13 @@ impl<H: Host> Vm<H> {
                     loop {
                         let result = vm.regexp_exec_value(p, receiver, input_value)?;
                         if result.is_null() {
-                            let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+                            let Some(Cell::Array {
+                                object: array_object,
+                            }) = vm.heap.get(array)
+                            else {
                                 unreachable!("match owns its fresh result array");
                             };
+                            let elements = array_object.elements();
                             return Ok(if elements.is_empty() {
                                 Value::NULL
                             } else {
@@ -1371,9 +1376,9 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         match (native, self.heap.get(this)) {
-            (Native::RegExpSource, Some(Cell::RegExp { meta, .. })) => {
-                Ok(self.heap.alloc(Cell::String(escape_regexp_source(&meta.source))))
-            }
+            (Native::RegExpSource, Some(Cell::RegExp { meta, .. })) => Ok(self
+                .heap
+                .alloc(Cell::String(escape_regexp_source(&meta.source)))),
             (Native::RegExpSource, _)
                 if self
                     .realm
@@ -1894,7 +1899,9 @@ impl<H: Host> Vm<H> {
             let last_index = vm.get_property(p, this, last_index_atom)?;
             let last_index = vm.regexp_to_length_value(p, last_index)?;
             let (regex, flags) = match vm.heap.get(this) {
-                Some(Cell::RegExp { matcher, meta, .. }) => (Rc::clone(matcher), meta.flags.clone()),
+                Some(Cell::RegExp { matcher, meta, .. }) => {
+                    (Rc::clone(matcher), meta.flags.clone())
+                }
                 _ => {
                     return Err(
                         vm.type_error(p, "RegExp method called on incompatible receiver".into())
@@ -1948,8 +1955,10 @@ impl<H: Host> Vm<H> {
                 })
                 .collect::<Vec<_>>();
             let result = vm.heap.alloc(Cell::Array {
-                object: Self::empty_object(vm.array_proto),
-                elements: Rc::new(values),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(vm.array_proto),
+                    Rc::new(values),
+                ),
             });
             let named = regexp_named_capture_ranges(&matched);
             let groups = vm.regexp_groups_object(&named, input.units())?;
@@ -2005,7 +2014,11 @@ impl<H: Host> Vm<H> {
             self.set_property(result, atom, value)?;
         }
         let slots = atoms.map(|atom| self.object_property_slot(result, PropertyKey::string(atom)));
-        let [Some((shape, index_slot)), Some((_, input_slot)), Some((_, groups_slot))] = slots
+        let [
+            Some((shape, index_slot)),
+            Some((_, input_slot)),
+            Some((_, groups_slot)),
+        ] = slots
         else {
             return Ok(());
         };
@@ -2100,8 +2113,10 @@ impl<H: Host> Vm<H> {
             .map(|range| self.regexp_index_pair(range))
             .collect::<Vec<_>>();
         let indices = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(entries),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(entries),
+            ),
         });
         let groups = if !named.is_empty() {
             let groups = self
@@ -2130,8 +2145,10 @@ impl<H: Host> Vm<H> {
             Value::number(range.end as f64),
         ];
         self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(pair.into()),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(pair.into()),
+            ),
         })
     }
 

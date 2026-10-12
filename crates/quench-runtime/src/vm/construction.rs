@@ -522,7 +522,7 @@ impl<H: Host> Vm<H> {
                     let bound_args = vm
                         .own_property(env, args_atom)
                         .and_then(|value| match vm.heap.get(value) {
-                            Some(Cell::Array { elements, .. }) => Some(elements.as_ref().clone()),
+                            Some(Cell::Array { object: array_object }) => { let elements = array_object.elements(); Some(elements.as_ref().clone()) },
                             _ => None,
                         })
                         .unwrap_or_default();
@@ -1116,16 +1116,20 @@ impl<H: Host> Vm<H> {
                 return Err(self.range_error(p, "Invalid array length".into()));
             }
             let array = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(prototype),
-                elements: Rc::new(Vec::new()),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(prototype),
+                    Rc::new(Vec::new()),
+                ),
             });
             self.heap.sparse_set_length(array, length as usize);
             return Ok(array);
         }
 
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(prototype),
-            elements: Rc::new(args.to_vec()),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(prototype),
+                Rc::new(args.to_vec()),
+            ),
         }))
     }
 }

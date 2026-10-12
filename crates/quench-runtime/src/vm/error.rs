@@ -328,8 +328,10 @@ impl<H: Host> Vm<H> {
                 sites.push(self.heap.root_value(root).unwrap());
             }
             Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(sites),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(self.array_proto),
+                    Rc::new(sites),
+                ),
             }))
         })();
         for root in roots {
@@ -1484,8 +1486,10 @@ impl<H: Host> Vm<H> {
             },
         );
         let array_prototype = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(object_prototype),
-            elements: Rc::new(Vec::new()),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(object_prototype),
+                Rc::new(Vec::new()),
+            ),
         });
         self.install_array_for_realm(program, global, array_prototype)?;
         let map = self.native_with_realm(Native::Map, global, global);

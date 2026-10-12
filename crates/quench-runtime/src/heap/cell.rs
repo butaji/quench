@@ -18,11 +18,9 @@ mod cell_layout_tests {
     use super::*;
 
     /// Every heap slot stores an `Option<Cell>`. The M4 object layout includes
-    /// two inline properties, and arrays add their shared element handle.
+    /// two inline properties; an array keeps its element handle in that payload.
     const CELL_TAG_WORD_BYTES: usize = std::mem::size_of::<Value>();
-    const MAX_CELL_BYTES: usize = std::mem::size_of::<Object>()
-        + std::mem::size_of::<Rc<Vec<Value>>>()
-        + CELL_TAG_WORD_BYTES;
+    const MAX_CELL_BYTES: usize = std::mem::size_of::<Object>() + CELL_TAG_WORD_BYTES;
 
     #[test]
     fn cells_stay_compact() {
@@ -962,13 +960,23 @@ pub(crate) struct Object {
 }
 
 /// `Object::payload`: inline values, or `EXTRAS_TAG` and an `ObjectExtras` pointer in the first
-/// word. No `Value` carries that tag: it is a NaN pattern, and numbers canonicalize NaN.
-#[derive(Clone, Copy)]
+/// word. No `Value` carries that tag: it is a NaN pattern, and numbers canonicalize NaN. An
+/// array's object never stores properties inline, and its second word holds the array's element
+/// backing, owned by the `ArrayObject` around it.
 #[repr(C)]
 union ObjectPayload {
     inline: [Value; INLINE_PROPERTY_COUNT],
     words: [u64; INLINE_PROPERTY_COUNT],
+    array: std::mem::ManuallyDrop<ArrayPayload>,
 }
+
+#[repr(C)]
+struct ArrayPayload {
+    extras: u64,
+    elements: std::mem::ManuallyDrop<Rc<Vec<Value>>>,
+}
+
+const _: () = assert!(size_of::<ArrayPayload>() == size_of::<[Value; INLINE_PROPERTY_COUNT]>());
 
 /// Inline property values held by `ObjectExtras`; undefined until an object moves its own in.
 #[derive(Clone, Copy, Debug)]
@@ -985,11 +993,16 @@ const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
 
 impl Clone for Object {
     fn clone(&self) -> Self {
+        // An array's second word is its backing, which `ArrayObject::clone` replaces.
         let mut object = Self {
             proto: self.proto,
             properties: self.properties,
             payload: ObjectPayload {
-                inline: *self.inline_property_values(),
+                inline: if self.properties.has_inline_property_storage() {
+                    *self.inline_property_values()
+                } else {
+                    [Value::UNDEFINED; INLINE_PROPERTY_COUNT]
+                },
             },
         };
         if let Some(extras) = self.extras() {
@@ -1006,6 +1019,102 @@ impl Drop for Object {
             // this object alone.
             drop(unsafe { Box::from_raw(extras) });
         }
+    }
+}
+
+/// An array: its object, whose payload also holds the dense element backing.
+pub(crate) struct ArrayObject {
+    object: Object,
+}
+
+impl ArrayObject {
+    pub(crate) fn new(mut object: Object, elements: Rc<Vec<Value>>) -> Self {
+        // Array objects keep named properties in the arena; a fresh object has none inline.
+        if object.properties.has_inline_property_storage() {
+            debug_assert!(
+                object
+                    .inline_properties()
+                    .is_some_and(|values| values.iter().all(|value| value.is_undefined()))
+            );
+            let mut properties = ValueVec::new();
+            properties.set_auxiliary(object.properties.auxiliary());
+            properties.preserve_integrity_from(object.properties);
+            object.properties = properties;
+        }
+        // SAFETY: the second word is unused by an object without inline storage; this writes
+        // the backing there without reading or dropping what it held.
+        unsafe {
+            std::ptr::write(
+                std::ptr::addr_of_mut!((*object.payload.array).elements),
+                std::mem::ManuallyDrop::new(elements),
+            );
+        }
+        Self { object }
+    }
+
+    pub(crate) fn elements(&self) -> &Rc<Vec<Value>> {
+        // SAFETY: `new` stored the backing, which this array owns until it drops.
+        unsafe { &self.object.payload.array.elements }
+    }
+
+    pub(crate) fn elements_mut(&mut self) -> &mut Rc<Vec<Value>> {
+        // SAFETY: as in `elements`, with `&mut self` making the borrow unique.
+        unsafe { &mut (*self.object.payload.array).elements }
+    }
+
+    /// The object and the element backing, transferring ownership of both.
+    pub(crate) fn into_parts(self) -> (Object, Rc<Vec<Value>>) {
+        let mut array = std::mem::ManuallyDrop::new(self);
+        // SAFETY: `array` is never dropped, so the backing and the object are each moved out
+        // exactly once.
+        unsafe {
+            let elements =
+                std::mem::ManuallyDrop::take(&mut (*array.object.payload.array).elements);
+            (std::ptr::read(&array.object), elements)
+        }
+    }
+}
+
+impl Drop for ArrayObject {
+    fn drop(&mut self) {
+        // SAFETY: the backing was stored by `new` and is dropped only here.
+        unsafe { std::mem::ManuallyDrop::drop(&mut (*self.object.payload.array).elements) };
+    }
+}
+
+impl Clone for ArrayObject {
+    fn clone(&self) -> Self {
+        Self::new_cloned(self.object.clone(), self.elements().clone())
+    }
+}
+
+impl ArrayObject {
+    /// `new` for an object that already has arena storage and a stale second word.
+    fn new_cloned(object: Object, elements: Rc<Vec<Value>>) -> Self {
+        Self::new(object, elements)
+    }
+}
+
+impl std::ops::Deref for ArrayObject {
+    type Target = Object;
+    fn deref(&self) -> &Object {
+        &self.object
+    }
+}
+
+impl std::ops::DerefMut for ArrayObject {
+    fn deref_mut(&mut self) -> &mut Object {
+        &mut self.object
+    }
+}
+
+impl std::fmt::Debug for ArrayObject {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ArrayObject")
+            .field("object", &self.object)
+            .field("elements", self.elements())
+            .finish()
     }
 }
 
@@ -1145,8 +1254,14 @@ impl Object {
                     ..ObjectExtras::default()
                 }));
                 let address = extras as usize as u64;
-                assert_eq!(address & EXTRAS_TAG_MASK, 0, "object extras outside 48-bit space");
-                self.payload.words = [EXTRAS_TAG | address, 0];
+                assert_eq!(
+                    address & EXTRAS_TAG_MASK,
+                    0,
+                    "object extras outside 48-bit space"
+                );
+                // Only the first word changes: an array keeps its element backing in the second.
+                // SAFETY: both union views are plain words.
+                unsafe { self.payload.words[0] = EXTRAS_TAG | address };
                 extras
             }
         };
@@ -1211,13 +1326,18 @@ impl Object {
         let previous = self.properties;
         properties.preserve_integrity_from(previous);
         self.properties = properties;
-        *self.inline_property_values_mut() = inline_properties;
+        // Arena storage leaves the payload alone: an array keeps its element backing there.
+        if properties.has_inline_property_storage() {
+            *self.inline_property_values_mut() = inline_properties;
+        }
         previous
     }
 
     pub(crate) fn copy_property_storage_from(&mut self, source: &Self) {
         self.properties = source.properties;
-        *self.inline_property_values_mut() = *source.inline_property_values();
+        if source.properties.has_inline_property_storage() {
+            *self.inline_property_values_mut() = *source.inline_property_values();
+        }
     }
 
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
@@ -1228,8 +1348,7 @@ impl Object {
     }
 
     pub(crate) fn has_error_data(&self) -> bool {
-        self.extras()
-            .is_some_and(|extras| extras.error_data)
+        self.extras().is_some_and(|extras| extras.error_data)
     }
 
     pub(crate) fn stack_data(&self) -> Option<&StackData> {
@@ -1247,10 +1366,7 @@ impl Object {
     }
 
     pub(crate) fn visit_stack_data_roots(&self, mut visit: impl FnMut(Value)) {
-        match self
-            .extras()
-            .and_then(|extras| extras.stack_data.as_ref())
-        {
+        match self.extras().and_then(|extras| extras.stack_data.as_ref()) {
             Some(StackData::Captured(records)) => {
                 for record in records {
                     visit(record.this_value);
@@ -1292,8 +1408,7 @@ impl Object {
         self.extras_mut().arguments_object = true;
     }
     pub(crate) fn is_arguments_object(&self) -> bool {
-        self.extras()
-            .is_some_and(|extras| extras.arguments_object)
+        self.extras().is_some_and(|extras| extras.arguments_object)
     }
     pub(crate) fn has_indexed_descriptors(&self) -> bool {
         self.extras()
@@ -1310,15 +1425,13 @@ impl Object {
     }
 
     pub(crate) fn is_module_namespace(&self) -> bool {
-        self.extras()
-            .is_some_and(|extras| extras.module_namespace)
+        self.extras().is_some_and(|extras| extras.module_namespace)
     }
     pub(crate) fn set_module_namespace(&mut self) {
         self.extras_mut().module_namespace = true;
     }
     pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
-        self.extras()
-            .map_or(&[], |extras| &extras.module_bindings)
+        self.extras().map_or(&[], |extras| &extras.module_bindings)
     }
     pub(crate) fn set_module_bindings(&mut self, bindings: Vec<(Atom, ProgramId, u16)>) {
         self.extras_mut().module_bindings = bindings;
@@ -1335,8 +1448,7 @@ impl Object {
     }
 
     pub(crate) fn private_names(&self) -> &[PrivateBrand] {
-        self.extras()
-            .map_or(&[], |extras| &extras.private_names)
+        self.extras().map_or(&[], |extras| &extras.private_names)
     }
     pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
         self.private_names().contains(&brand)
@@ -1349,8 +1461,7 @@ impl Object {
     }
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     pub(crate) fn allocated_extra_bytes(&self) -> usize {
-        self.extras()
-            .map_or(0, ObjectExtras::allocated_bytes)
+        self.extras().map_or(0, ObjectExtras::allocated_bytes)
     }
 
     pub(crate) fn module_binding(&self, atom: Atom) -> Option<(ProgramId, u16)> {
@@ -1470,8 +1581,7 @@ impl RegExpLegacyOwner {
 pub(crate) enum Cell {
     Object(Object),
     Array {
-        object: Object,
-        elements: Rc<Vec<Value>>,
+        object: ArrayObject,
     },
     ArrayBuffer {
         object: Box<Object>,

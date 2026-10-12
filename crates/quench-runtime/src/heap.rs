@@ -14,10 +14,10 @@ mod root;
 mod slots;
 mod weak;
 pub(crate) use cell::*;
+use parallel_mark::MarkBits;
 #[cfg(test)]
 pub(crate) use parallel_mark::NoObjectRoots;
 pub(crate) use parallel_mark::ObjectRootTracer;
-use parallel_mark::MarkBits;
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
 use slots::SlotArena;
@@ -377,7 +377,16 @@ impl Heap {
         shape: u32,
         values: &[Value],
     ) {
-        let (properties, inline_properties) = self.initial_object_storage(shape, values);
+        // Array objects keep named properties in the arena (see `ArrayObject`).
+        let (properties, inline_properties) = if matches!(self.get(owner), Some(Cell::Array { .. }))
+        {
+            (
+                self.properties.with_values(shape, values),
+                [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+            )
+        } else {
+            self.initial_object_storage(shape, values)
+        };
         let previous = {
             let object = self
                 .get_mut(owner)
@@ -709,7 +718,9 @@ impl Heap {
         }
         #[cfg(feature = "profile-memory")]
         {
-            let object_slots = cell.object().map(|object| properties.len(object.properties));
+            let object_slots = cell
+                .object()
+                .map(|object| properties.len(object.properties));
             memory_profile.freed(index, &cell, object_slots);
         }
         if let Some(object) = cell.object() {
@@ -724,10 +735,8 @@ impl Heap {
         // beyond an array's element backing.
         match cell {
             Cell::Object(object) if object.owns_no_allocation() => std::mem::forget(object),
-            Cell::Array { object, elements } if object.owns_no_allocation() => {
-                drop(elements);
-                std::mem::forget(object);
-            }
+            // The array's own drop releases only its backing.
+            Cell::Array { object } if object.owns_no_allocation() => drop(object),
             cell => drop(cell),
         }
     }
@@ -796,9 +805,13 @@ impl Heap {
         }
     }
     pub(crate) fn sparse_set_length(&mut self, array: Value, length: usize) {
-        let Some(Cell::Array { elements, .. }) = self.get(array) else {
+        let Some(Cell::Array {
+            object: array_object,
+        }) = self.get(array)
+        else {
             return;
         };
+        let elements = array_object.elements();
         let dense_length = elements.len();
         let sparse_length = self.sparse_length(array);
         if sparse_length.is_none() && length == dense_length {
@@ -830,9 +843,13 @@ impl Heap {
         {
             self.sparse_arrays = None;
         }
-        let Some(Cell::Array { elements, .. }) = self.get_mut(array) else {
+        let Some(Cell::Array {
+            object: array_object,
+        }) = self.get_mut(array)
+        else {
             return;
         };
+        let elements = array_object.elements_mut();
         let dense_length = elements.len();
         let elements = Rc::make_mut(elements);
         elements.resize(length, Value::DELETED);
@@ -1016,11 +1033,9 @@ impl Heap {
         }
         match cell {
             Cell::Object(value) => object(value),
-            Cell::Array {
-                object: value,
-                elements,
-            } => {
+            Cell::Array { object: value } => {
                 object(value);
+                let elements = value.elements();
                 // Shared backings are immutable until copied, so one trace per cycle suffices.
                 let backing: *const Vec<Value> = &**elements;
                 if std::rc::Rc::strong_count(elements) > 1 {
@@ -1402,7 +1417,9 @@ mod offset_order_tests {
         let mut state = 0x2545_f491_u64;
         let mut offsets: Vec<usize> = (0..5000)
             .map(|_| {
-                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
                 (state >> 33) as usize
             })
             .collect();

@@ -12,7 +12,8 @@ impl Cell {
         match self {
             // The hot object kinds keep their object inline; the rest box it so the
             // cell stays small.
-            Self::Object(object) | Self::Array { object, .. } => Some(object),
+            Self::Object(object) => Some(object),
+            Self::Array { object } => Some(object),
             Self::ArrayBuffer { object, .. }
             | Self::TypedArray { object, .. }
             | Self::DataView { object, .. }
@@ -43,7 +44,8 @@ impl Cell {
         match self {
             // The hot object kinds keep their object inline; the rest box it so the
             // cell stays small.
-            Self::Object(object) | Self::Array { object, .. } => Some(object),
+            Self::Object(object) => Some(object),
+            Self::Array { object } => Some(object),
             Self::ArrayBuffer { object, .. }
             | Self::TypedArray { object, .. }
             | Self::DataView { object, .. }
