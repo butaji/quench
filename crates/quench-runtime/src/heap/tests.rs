@@ -107,14 +107,33 @@ fn scope_slot_owners_survive_collection_and_release() {
 
 #[test]
 fn object_storage_keeps_two_values_inline_in_the_cell() {
+    // Object extras share the inline payload, so an object is its prototype, its property
+    // vector and two inline values.
     assert_eq!(
         size_of::<Object>(),
-        size_of::<Value>()
-            + size_of::<ValueVec>()
-            + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
-            + size_of::<Option<Box<()>>>()
+        size_of::<Value>() + size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
     );
     assert_eq!(size_of::<Cell>(), size_of::<Slot>());
+}
+
+#[test]
+fn object_extras_keep_inline_values() {
+    let first = Value::number(1.0);
+    let second = Value::number(2.0);
+    let mut object = Object::with_property_storage(
+        Value::NULL,
+        ValueVec::inline_property_storage(0),
+        [first, second],
+    );
+    assert!(object.owns_no_allocation());
+    object.set_raw_json();
+    assert!(!object.owns_no_allocation());
+    assert!(object.is_raw_json());
+    assert_eq!(object.inline_properties().copied(), Some([first, second]));
+    object.set_inline_property(1, Value::TRUE);
+    let copy = object.clone();
+    assert!(copy.is_raw_json());
+    assert_eq!(copy.inline_properties().copied(), Some([first, Value::TRUE]));
 }
 
 #[test]

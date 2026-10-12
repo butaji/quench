@@ -950,14 +950,75 @@ pub(crate) enum IteratorConsumer {
     Find,
     Some,
 }
-#[derive(Clone, Debug)]
 pub(crate) struct Object {
     pub proto: Value,
     // Property names live once in the VM's immutable shape table; objects keep
     // only the data vector selected by that shape.
     pub properties: ValueVec,
-    inline_properties: [Value; INLINE_PROPERTY_COUNT],
-    extras: Option<Box<ObjectExtras>>,
+    /// The inline property values, or, for an object that has `ObjectExtras`, a tagged
+    /// pointer to them; they then also hold the inline values. Extras are rare, so the
+    /// common object pays no word for them.
+    payload: ObjectPayload,
+}
+
+/// `Object::payload`: inline values, or `EXTRAS_TAG` and an `ObjectExtras` pointer in the first
+/// word. No `Value` carries that tag: it is a NaN pattern, and numbers canonicalize NaN.
+#[derive(Clone, Copy)]
+#[repr(C)]
+union ObjectPayload {
+    inline: [Value; INLINE_PROPERTY_COUNT],
+    words: [u64; INLINE_PROPERTY_COUNT],
+}
+
+/// Inline property values held by `ObjectExtras`; undefined until an object moves its own in.
+#[derive(Clone, Copy, Debug)]
+struct DisplacedInline([Value; INLINE_PROPERTY_COUNT]);
+
+impl Default for DisplacedInline {
+    fn default() -> Self {
+        Self([Value::UNDEFINED; INLINE_PROPERTY_COUNT])
+    }
+}
+
+const EXTRAS_TAG: u64 = 0x7fff_0000_0000_0000;
+const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
+
+impl Clone for Object {
+    fn clone(&self) -> Self {
+        let mut object = Self {
+            proto: self.proto,
+            properties: self.properties,
+            payload: ObjectPayload {
+                inline: *self.inline_property_values(),
+            },
+        };
+        if let Some(extras) = self.extras() {
+            *object.extras_mut() = extras.clone();
+        }
+        object
+    }
+}
+
+impl Drop for Object {
+    fn drop(&mut self) {
+        if let Some(extras) = self.extras_pointer() {
+            // SAFETY: the pointer came from `Box::into_raw` in `extras_mut` and is owned by
+            // this object alone.
+            drop(unsafe { Box::from_raw(extras) });
+        }
+    }
+}
+
+impl std::fmt::Debug for Object {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Object")
+            .field("proto", &self.proto)
+            .field("properties", &self.properties)
+            .field("inline_properties", self.inline_property_values())
+            .field("extras", &self.extras())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -977,6 +1038,8 @@ pub(crate) enum StackData {
 
 #[derive(Clone, Debug, Default)]
 struct ObjectExtras {
+    /// The object's inline property values, displaced from its payload by the extras pointer.
+    inline_properties: DisplacedInline,
     arguments_map: Option<Vec<u16>>,
     arguments_object: bool,
     raw_json: bool,
@@ -1053,8 +1116,64 @@ impl Object {
         Self {
             proto,
             properties: ValueVec::inline_property_storage(0),
-            inline_properties: [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
-            extras: None,
+            payload: ObjectPayload {
+                inline: [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+            },
+        }
+    }
+
+    fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
+        // SAFETY: both union views are plain words.
+        let word = unsafe { self.payload.words[0] };
+        (word & EXTRAS_TAG_MASK == EXTRAS_TAG)
+            .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)
+    }
+
+    fn extras(&self) -> Option<&ObjectExtras> {
+        // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime.
+        self.extras_pointer().map(|extras| unsafe { &*extras })
+    }
+
+    fn extras_mut(&mut self) -> &mut ObjectExtras {
+        let extras = match self.extras_pointer() {
+            Some(extras) => extras,
+            None => {
+                // SAFETY: an untagged payload holds the inline values.
+                let inline = unsafe { self.payload.inline };
+                let extras = Box::into_raw(Box::new(ObjectExtras {
+                    inline_properties: DisplacedInline(inline),
+                    ..ObjectExtras::default()
+                }));
+                let address = extras as usize as u64;
+                assert_eq!(address & EXTRAS_TAG_MASK, 0, "object extras outside 48-bit space");
+                self.payload.words = [EXTRAS_TAG | address, 0];
+                extras
+            }
+        };
+        // SAFETY: owned by this object, and `&mut self` makes the borrow unique.
+        unsafe { &mut *extras }
+    }
+
+    fn extras_mut_existing(&mut self) -> Option<&mut ObjectExtras> {
+        // SAFETY: as in `extras`, with `&mut self` making the borrow unique.
+        self.extras_pointer().map(|extras| unsafe { &mut *extras })
+    }
+
+    /// The inline property slots, wherever they live.
+    fn inline_property_values(&self) -> &[Value; INLINE_PROPERTY_COUNT] {
+        match self.extras() {
+            Some(extras) => &extras.inline_properties.0,
+            // SAFETY: an untagged payload holds the inline values.
+            None => unsafe { &self.payload.inline },
+        }
+    }
+
+    fn inline_property_values_mut(&mut self) -> &mut [Value; INLINE_PROPERTY_COUNT] {
+        if self.extras_pointer().is_some() {
+            &mut self.extras_mut().inline_properties.0
+        } else {
+            // SAFETY: an untagged payload holds the inline values.
+            unsafe { &mut self.payload.inline }
         }
     }
 
@@ -1066,21 +1185,22 @@ impl Object {
         Self {
             proto,
             properties,
-            inline_properties,
-            extras: None,
+            payload: ObjectPayload {
+                inline: inline_properties,
+            },
         }
     }
 
     pub(crate) fn inline_properties(&self) -> Option<&[Value; INLINE_PROPERTY_COUNT]> {
         self.properties
             .has_inline_property_storage()
-            .then_some(&self.inline_properties)
+            .then(|| self.inline_property_values())
     }
 
     pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
         debug_assert!(self.properties.has_inline_property_storage());
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
-        self.inline_properties[slot] = value;
+        self.inline_property_values_mut()[slot] = value;
     }
 
     pub(crate) fn replace_property_storage(
@@ -1091,13 +1211,13 @@ impl Object {
         let previous = self.properties;
         properties.preserve_integrity_from(previous);
         self.properties = properties;
-        self.inline_properties = inline_properties;
+        *self.inline_property_values_mut() = inline_properties;
         previous
     }
 
     pub(crate) fn copy_property_storage_from(&mut self, source: &Self) {
         self.properties = source.properties;
-        self.inline_properties = source.inline_properties;
+        *self.inline_property_values_mut() = *source.inline_property_values();
     }
 
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
@@ -1108,13 +1228,12 @@ impl Object {
     }
 
     pub(crate) fn has_error_data(&self) -> bool {
-        self.extras
-            .as_deref()
+        self.extras()
             .is_some_and(|extras| extras.error_data)
     }
 
     pub(crate) fn stack_data(&self) -> Option<&StackData> {
-        self.extras.as_deref()?.stack_data.as_ref()
+        self.extras()?.stack_data.as_ref()
     }
 
     pub(crate) fn set_stack_data(&mut self, data: StackData) {
@@ -1122,15 +1241,14 @@ impl Object {
     }
 
     pub(crate) fn clear_stack_data(&mut self) {
-        if let Some(extras) = self.extras.as_deref_mut() {
+        if let Some(extras) = self.extras_mut_existing() {
             extras.stack_data = None;
         }
     }
 
     pub(crate) fn visit_stack_data_roots(&self, mut visit: impl FnMut(Value)) {
         match self
-            .extras
-            .as_deref()
+            .extras()
             .and_then(|extras| extras.stack_data.as_ref())
         {
             Some(StackData::Captured(records)) => {
@@ -1161,15 +1279,11 @@ impl Object {
     pub(crate) fn set_frozen(&mut self, value: bool) {
         self.properties.set_frozen(value);
     }
-    fn extras_mut(&mut self) -> &mut ObjectExtras {
-        self.extras
-            .get_or_insert_with(|| Box::new(ObjectExtras::default()))
-    }
     pub(crate) fn arguments_map(&self) -> Option<&[u16]> {
-        self.extras.as_deref()?.arguments_map.as_deref()
+        self.extras()?.arguments_map.as_deref()
     }
     pub(crate) fn arguments_map_mut(&mut self) -> Option<&mut Vec<u16>> {
-        self.extras.as_deref_mut()?.arguments_map.as_mut()
+        self.extras_mut_existing()?.arguments_map.as_mut()
     }
     pub(crate) fn set_arguments_map(&mut self, mapping: Vec<u16>) {
         self.extras_mut().arguments_map = Some(mapping);
@@ -1178,55 +1292,50 @@ impl Object {
         self.extras_mut().arguments_object = true;
     }
     pub(crate) fn is_arguments_object(&self) -> bool {
-        self.extras
-            .as_deref()
+        self.extras()
             .is_some_and(|extras| extras.arguments_object)
     }
     pub(crate) fn has_indexed_descriptors(&self) -> bool {
-        self.extras
-            .as_deref()
+        self.extras()
             .is_some_and(|extras| extras.indexed_descriptors)
     }
     pub(crate) fn mark_indexed_descriptors(&mut self) {
         self.extras_mut().indexed_descriptors = true;
     }
     pub(crate) fn is_raw_json(&self) -> bool {
-        self.extras.as_deref().is_some_and(|extras| extras.raw_json)
+        self.extras().is_some_and(|extras| extras.raw_json)
     }
     pub(crate) fn set_raw_json(&mut self) {
         self.extras_mut().raw_json = true;
     }
 
     pub(crate) fn is_module_namespace(&self) -> bool {
-        self.extras
-            .as_deref()
+        self.extras()
             .is_some_and(|extras| extras.module_namespace)
     }
     pub(crate) fn set_module_namespace(&mut self) {
         self.extras_mut().module_namespace = true;
     }
     pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
-        self.extras
-            .as_deref()
+        self.extras()
             .map_or(&[], |extras| &extras.module_bindings)
     }
     pub(crate) fn set_module_bindings(&mut self, bindings: Vec<(Atom, ProgramId, u16)>) {
         self.extras_mut().module_bindings = bindings;
     }
     pub(crate) fn deferred_module(&self) -> Option<&crate::ModuleSource> {
-        self.extras.as_deref()?.deferred_module.as_ref()
+        self.extras()?.deferred_module.as_ref()
     }
     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
         self.extras_mut().deferred_module = module;
     }
     /// Whether the object owns no heap allocation of its own, so discarding it needs no drop.
-    pub(crate) const fn owns_no_allocation(&self) -> bool {
-        self.extras.is_none()
+    pub(crate) fn owns_no_allocation(&self) -> bool {
+        self.extras_pointer().is_none()
     }
 
     pub(crate) fn private_names(&self) -> &[PrivateBrand] {
-        self.extras
-            .as_deref()
+        self.extras()
             .map_or(&[], |extras| &extras.private_names)
     }
     pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
@@ -1240,8 +1349,7 @@ impl Object {
     }
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     pub(crate) fn allocated_extra_bytes(&self) -> usize {
-        self.extras
-            .as_deref()
+        self.extras()
             .map_or(0, ObjectExtras::allocated_bytes)
     }
 
