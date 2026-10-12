@@ -88,6 +88,7 @@ fn write_field(
         | FieldLayout::OptionalRegister
         | FieldLayout::FunctionIndex
         | FieldLayout::ElementCount
+        | FieldLayout::SignedConstant
         | FieldLayout::CacheSiteIndex
         | FieldLayout::WideIndexChunk
         | FieldLayout::BooleanFlag => write_scalar_field(output, instruction, field, layout),
@@ -142,6 +143,14 @@ fn write_scalar_field(
         }
         (InstructionField::B, FieldLayout::FunctionIndex) => {
             write!(output, " b=function:{}", instruction.known_function_index())
+        }
+        (field, FieldLayout::SignedConstant) => {
+            write!(
+                output,
+                " {}={}",
+                field_name(field),
+                instruction.field_value(field) as i16
+            )
         }
         (InstructionField::B, FieldLayout::ElementCount) => {
             write!(output, " elements={}", instruction.element_count())
@@ -242,8 +251,10 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::WasmSimdOperator
         | ImmediateRole::WasmMemoryLoadOperator
         | ImmediateRole::WasmMemoryStoreOperator
+        | ImmediateRole::WasmMemoryOffset
+        | ImmediateRole::WasmInstanceSlot
+        | ImmediateRole::WasmI32Immediate
         | ImmediateRole::WasmAtomicOperator
-        | ImmediateRole::WasmI32BinaryOperator
         | ImmediateRole::WasmStructFieldIndex
         | ImmediateRole::WasmExceptionFieldIndex
         | ImmediateRole::WasmGcTypeIndex
@@ -259,7 +270,8 @@ fn write_scalar_immediate(output: &mut String, instruction: WideInstruction) -> 
         | ImmediateRole::WasmF32UnaryOperator
         | ImmediateRole::WasmF64BinaryOperator
         | ImmediateRole::WasmF64UnaryOperator
-        | ImmediateRole::JumpTarget => write_scalar_value(output, instruction),
+        | ImmediateRole::JumpTarget
+        | ImmediateRole::BranchTableCases => write_scalar_value(output, instruction),
     }
 }
 
@@ -351,11 +363,6 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
             " operator={:?}",
             crate::wasm::memory::MemoryStore::from_tag(instruction.imm())
         ),
-        ImmediateRole::WasmI32BinaryOperator => write!(
-            output,
-            " operator={:?}",
-            crate::wasm::integer::I32BinaryOperator::from_tag(instruction.imm())
-        ),
         ImmediateRole::WasmI64BinaryOperator => write!(
             output,
             " operator={:?}",
@@ -424,6 +431,7 @@ fn write_scalar_value(output: &mut String, instruction: WideInstruction) -> fmt:
             write!(output, " operator={}", instruction.unary_operator())
         }
         ImmediateRole::JumpTarget => write!(output, " target={}", instruction.jump_target()),
+        ImmediateRole::BranchTableCases => write!(output, " cases={}", instruction.imm()),
         _ => Ok(()),
     }
 }

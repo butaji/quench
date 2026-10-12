@@ -156,6 +156,8 @@ mod tests {
             handlers: Vec::new(),
             register_root_offset: 0,
             undefined_register: None,
+            parameter_registers: None,
+            initial_register: Default::default(),
         }
     }
 

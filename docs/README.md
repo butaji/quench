@@ -496,3 +496,42 @@ retains its fresh-execution reset contract. Unsupported shared operations
 are failures, never legacy fallbacks or skips. The legacy `run` target is only a pre-cutover
 reference; task 27 removes it. Module state/imports and remaining operators
 still need the shared implementation and complete suite proof recorded in tasks.
+
+## Wasm execution modes and link order
+
+`coremark -no-jit` (default) runs Wasm on the shared interpreter; `-jit`
+compiles each Wasm function with a compiled denotation through Cranelift
+(`crates/quench-runtime/src/vm/compiled.rs`) and leaves the rest interpreted.
+`run -jit` runs the testsuite in the compiled mode; both modes must pass the
+whole suite. A module is lowered for the mode that runs it
+(`Module::lower_shared_module_for`): the interpreter's residual inlines leaf
+calls up to a large budget, since a call costs it a frame and a dispatch, while
+the compiled mode keeps every call, since Cranelift calls cheaply and a copied
+body only adds register pressure. The residual's meaning is the same in both.
+
+On Linux the harness binaries link position-dependent, and on x86-64 with
+`ld.lld` available they link in the trained symbol order
+`crates/quench-wasm-test/link/x86_64-linux.order`: executed functions share
+pages instead of each faulting in its own fault-around window, which bounds
+resident text. The order is layout only. Symbol names carry the profile's crate
+hashes, so train on the profile you link (debug info and stripping change them;
+`production` keeps its symbol table for this). Retrain after large changes from
+cachegrind profiles of every Wasm kernel and CoreMark in both modes. Profiles
+name executed functions (`--demangle=no`), so they stay valid across relinks;
+cachegrind keeps no call stack, which the lane's sibling-call chains would
+exhaust in callgrind:
+
+```sh
+cargo build --profile production -p quench-wasm-test --bin coremark --bin symbol-order
+for module in KERNELS...; do for mode in no-jit jit; do
+  COREMARK_CLOCK_STEPS_MS=1,1,2000 valgrind --tool=cachegrind --cache-sim=no \
+    --demangle=no --cachegrind-out-file=train/$(basename $module)-$mode.out \
+    target/production/coremark -$mode $module
+done; done
+target/production/symbol-order target/production/coremark \
+  crates/quench-wasm-test/link/x86_64-linux.order train/*.out
+```
+
+Measure peak RSS with a launcher whose own image is small (`vfork`, `exec`,
+`wait4`): a forked interpreter's pre-`exec` image counts toward the child's
+`ru_maxrss`.

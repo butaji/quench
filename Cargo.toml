@@ -76,7 +76,10 @@ debug = 0
 debug-assertions = false
 overflow-checks = false
 incremental = false
-strip = "symbols"
+# The symbol table stays: a trained link order names symbols, whose crate
+# hashes follow the profile (crates/quench-wasm-test/build.rs). It is not
+# loaded at run time.
+strip = "debuginfo"
 panic = "abort"
 lto = "thin"
 codegen-units = 1

@@ -54,6 +54,28 @@ const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] 
     BinaryOperator::BitwiseAnd,
 ];
 
+/// Binary operator immediates up to this one are equality and relational
+/// comparisons, in `integer_relation` order.
+const LAST_RELATIONAL_OPERATOR: u32 = 7;
+
+/// The integer fast path of an equality or relational operator.
+#[inline(always)]
+pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {
+    if op > LAST_RELATIONAL_OPERATOR {
+        return None;
+    }
+    let (a, b) = Value::int_pair(left, right)?;
+    Some(match op {
+        0 | 2 => a == b,
+        1 | 3 => a != b,
+        4 => a < b,
+        5 => a <= b,
+        6 => a > b,
+        7 => a >= b,
+        _ => unreachable!("relational operator range"),
+    })
+}
+
 #[inline(always)]
 fn numeric_binary_operator(immediate: u32) -> Option<BinaryOperator> {
     let index = immediate.checked_sub(FIRST_NUMERIC_BINARY_OPERATOR)? as usize;

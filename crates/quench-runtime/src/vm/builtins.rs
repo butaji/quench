@@ -599,8 +599,24 @@ const NATIVES: &[Native] = &[
     Native::PromiseAsyncResumeJob, Native::DynamicImport, Native::AsyncFromSyncValue,
     Native::AsyncFromSyncValueRejected, Native::AsyncGeneratorDelegateFulfilled,
     Native::AsyncGeneratorDelegateRejected, ];
+/// How much of a realm a VM installs when it initializes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RealmScope {
+    /// Every builtin: the VM will run JavaScript.
+    Complete,
+    /// The prototypes, native functions and error intrinsics Wasm instances,
+    /// their exports and their traps use. A VM first initialized for Wasm
+    /// installs only these; executing JavaScript initializes a complete
+    /// realm afresh (`Vm::execute`).
+    Core,
+}
+
 impl<H: Host> Vm<H> {
-    pub(super) fn install_builtins(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
+    pub(super) fn install_builtins(
+        &mut self,
+        program: &ResidualProgram,
+        scope: RealmScope,
+    ) -> Result<(), JsError> {
         self.install_prototypes();
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_prototypes");
@@ -613,6 +629,9 @@ impl<H: Host> Vm<H> {
         // Error intrinsics must exist before any guarded initialization step.
         self.install_error_intrinsics(program)?;
         self.install_throw_type_error_for_realm(self.realm.globals)?;
+        if scope == RealmScope::Core {
+            return Ok(());
+        }
         self.install_object(program)?;
         self.install_console(program)?;
         self.install_array(program)?;

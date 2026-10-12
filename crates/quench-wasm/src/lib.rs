@@ -9,6 +9,7 @@ mod decode;
 mod legacy_try;
 mod shared;
 mod shared_wast;
+pub use shared_wast::EXECUTION_MODE_VARIABLE;
 mod wast_protocol;
 mod wast_script;
 

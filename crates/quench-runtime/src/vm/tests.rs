@@ -4013,15 +4013,18 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         fixed_this: false,
     };
 
-    frame.prepare_registers(1);
+    frame.prepare_registers(1, crate::bytecode::InitialRegister::Undefined);
     assert_eq!(frame.registers, [Value::UNDEFINED]);
 
     frame.registers[0] = Value::heap(13);
-    frame.prepare_registers(3);
+    frame.prepare_registers(3, crate::bytecode::InitialRegister::Undefined);
     assert_eq!(
         frame.registers,
         [Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED]
     );
+    frame.registers[1] = Value::heap(13);
+    frame.prepare_registers(2, crate::bytecode::InitialRegister::I32Zero);
+    assert_eq!(frame.registers, [Value::integer(0), Value::integer(0)]);
     assert_eq!(frame.original_arguments, [Value::heap(14)]);
     frame.context = super::activation::CallContext::Function(Value::heap(15));
     let mut recycled = frame;
