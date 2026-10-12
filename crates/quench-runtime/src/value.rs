@@ -110,6 +110,28 @@ impl Value {
         ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)
     }
 
+    /// The bits of a slot whose Wasm type is statically f64, for an operator
+    /// whose result depends on a NaN operand only through being a NaN (float
+    /// arithmetic and comparison). A boxed payload's bits are a quiet NaN, so
+    /// such an operator sees a NaN exactly where the payload is one.
+    #[inline(always)]
+    pub(crate) const fn float_bits64(self) -> u64 {
+        self.0
+    }
+
+    /// A float arithmetic result held in place. A NaN whose bits fall in the
+    /// tag space becomes the canonical NaN: arithmetic may produce any
+    /// arithmetic NaN, and the canonical one is.
+    #[inline(always)]
+    pub(crate) fn from_float_bits64(bits: u64) -> Self {
+        let value = Self(bits);
+        if value.is_tagged() {
+            Self(CANONICAL_NAN)
+        } else {
+            value
+        }
+    }
+
     /// The 32-bit payload of a slot whose Wasm type is statically i32 or f32.
     #[inline(always)]
     pub(crate) const fn wasm_bits32(self) -> u32 {
