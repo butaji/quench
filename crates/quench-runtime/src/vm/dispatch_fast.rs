@@ -1623,13 +1623,25 @@ struct JumpFusions<H>(std::marker::PhantomData<H>);
 impl<H: Host> JumpFusions<H> {
     /// A jump absorbing the instruction at its target.
     const THROUGH: [[Handler; 2]; 2] = [
-        [lane_jump_through::<H, false, false>, lane_jump_through::<H, false, true>],
-        [lane_jump_through::<H, true, false>, lane_jump_through::<H, true, true>],
+        [
+            lane_jump_through::<H, false, false>,
+            lane_jump_through::<H, false, true>,
+        ],
+        [
+            lane_jump_through::<H, true, false>,
+            lane_jump_through::<H, true, true>,
+        ],
     ];
     /// The instruction followed by its next record's jump.
     const THEN: [[Handler; 2]; 2] = [
-        [lane_then_jump::<H, false, false>, lane_then_jump::<H, false, true>],
-        [lane_then_jump::<H, true, false>, lane_then_jump::<H, true, true>],
+        [
+            lane_then_jump::<H, false, false>,
+            lane_then_jump::<H, false, true>,
+        ],
+        [
+            lane_then_jump::<H, true, false>,
+            lane_then_jump::<H, true, true>,
+        ],
     ];
 }
 
@@ -1639,8 +1651,14 @@ struct ScaledIndex<H>(std::marker::PhantomData<H>);
 
 impl<H: Host> ScaledIndex<H> {
     const HANDLERS: [[Handler; 2]; 2] = [
-        [lane_shift_add::<H, ACC_NONE, false>, lane_shift_add::<H, ACC_NONE, true>],
-        [lane_shift_add::<H, ACC_B, false>, lane_shift_add::<H, ACC_B, true>],
+        [
+            lane_shift_add::<H, ACC_NONE, false>,
+            lane_shift_add::<H, ACC_NONE, true>,
+        ],
+        [
+            lane_shift_add::<H, ACC_B, false>,
+            lane_shift_add::<H, ACC_B, true>,
+        ],
     ];
 }
 
@@ -1740,7 +1758,13 @@ fn load_table_handler<H: Host>(op: Op, acc: u8, add: bool) -> Option<Handler> {
             }
         };
     }
-    loads!(WasmI32Load, WasmI32Load8S, WasmI32Load8U, WasmI32Load16S, WasmI32Load16U)
+    loads!(
+        WasmI32Load,
+        WasmI32Load8S,
+        WasmI32Load8U,
+        WasmI32Load16S,
+        WasmI32Load16U
+    )
 }
 
 const fn add_load_handler<H: Host>(op: Op) -> Option<Handler> {
@@ -2465,8 +2489,7 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                     decoded_instruction(function, function.code[entry]).imm() as usize <= pc
                 })
             } else {
-                op.immediate_role() == ImmediateRole::JumpTarget
-                    && instruction.imm() as usize <= pc
+                op.immediate_role() == ImmediateRole::JumpTarget && instruction.imm() as usize <= pc
             };
             let selected = operand.and(if binds_memory {
                 Some(LaneHandler {
@@ -2511,6 +2534,11 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             }
         })
         .collect();
+    // Whether a record's handler serves `op` with accumulator field `acc`.
+    let serves = |handler: *const (), op: Op, acc: u8| {
+        tables[0][usize::from(acc)][op as usize]
+            .is_some_and(|served| handler == served.handler as *const ())
+    };
     // A table follows its selected entry's jump, so every entry must run in
     // the lane.
     for (pc, packed) in function.code.iter().enumerate() {
@@ -2529,10 +2557,8 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
     for pc in 0..records.len().saturating_sub(1) {
         let instruction = decoded_instruction(function, function.code[pc]);
         let next = decoded_instruction(function, function.code[pc + 1]);
-        let plain_add = tables[0][usize::from(ACC_NONE)][Op::WasmI32AddImmediate as usize]
-            .is_some_and(|add| records[pc].handler == add.handler as *const ());
-        let carried_load = tables[0][usize::from(ACC_C)][next.op() as usize]
-            .is_some_and(|load| records[pc + 1].handler == load.handler as *const ());
+        let plain_add = serves(records[pc].handler, Op::WasmI32AddImmediate, ACC_NONE);
+        let carried_load = serves(records[pc + 1].handler, next.op(), ACC_C);
         if instruction.op() == Op::WasmI32AddImmediate
             && plain_add
             && carried_load
@@ -2556,26 +2582,23 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
     }
     // An i32 load whose value the next record's branch table selects on
     // runs with that table as one record.
-    let table = tables[0][usize::from(ACC_NONE)][Op::WasmBranchTable as usize];
     for pc in 0..records.len().saturating_sub(1) {
         let instruction = decoded_instruction(function, function.code[pc]);
         let next = decoded_instruction(function, function.code[pc + 1]);
-        let field = [ACC_NONE, ACC_C].into_iter().find(|acc| {
-            tables[0][usize::from(*acc)][instruction.op() as usize]
-                .is_some_and(|load| records[pc].handler == load.handler as *const ())
-        });
+        let field = [ACC_NONE, ACC_C]
+            .into_iter()
+            .find(|acc| serves(records[pc].handler, instruction.op(), *acc));
         if let Some(field) = field
             && next.a() == instruction.a()
-            && table.is_some_and(|table| records[pc + 1].handler == table.handler as *const ())
+            && serves(records[pc + 1].handler, Op::WasmBranchTable, ACC_NONE)
             && let Some(fused) = load_table_handler::<H>(instruction.op(), field, false)
         {
             records[pc].handler = fused as *const ();
             // A plain add of a constant ahead of a load reading its own
             // field joins as well.
-            let add = tables[0][usize::from(ACC_NONE)][Op::WasmI32AddImmediate as usize];
             if pc > 0
                 && field == ACC_NONE
-                && add.is_some_and(|add| records[pc - 1].handler == add.handler as *const ())
+                && serves(records[pc - 1].handler, Op::WasmI32AddImmediate, ACC_NONE)
                 && let Some(fused) = load_table_handler::<H>(instruction.op(), ACC_NONE, true)
             {
                 records[pc - 1].handler = fused as *const ();
@@ -2585,10 +2608,7 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
     // A shift left by a constant whose result the next record adds runs
     // with that add as one record.
     for pc in 0..records.len().saturating_sub(1) {
-        let variant = |op: Op, acc: u8, at: usize| {
-            tables[0][usize::from(acc)][op as usize]
-                .is_some_and(|plain| records[at].handler == plain.handler as *const ())
-        };
+        let variant = |op: Op, acc: u8, at: usize| serves(records[at].handler, op, acc);
         let field = [ACC_NONE, ACC_B]
             .into_iter()
             .position(|acc| variant(Op::WasmI32ShiftLeftImmediate, acc, pc));
@@ -2604,12 +2624,10 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
     for pc in 0..records.len().saturating_sub(1) {
         let instruction = decoded_instruction(function, function.code[pc]);
         let next = decoded_instruction(function, function.code[pc + 1]);
-        let field = [ACC_NONE, ACC_C].into_iter().find(|acc| {
-            tables[0][usize::from(*acc)][instruction.op() as usize]
-                .is_some_and(|load| records[pc].handler == load.handler as *const ())
-        });
-        let carried_store = tables[0][usize::from(ACC_A)][next.op() as usize]
-            .is_some_and(|store| records[pc + 1].handler == store.handler as *const ());
+        let field = [ACC_NONE, ACC_C]
+            .into_iter()
+            .find(|acc| serves(records[pc].handler, instruction.op(), *acc));
+        let carried_store = serves(records[pc + 1].handler, next.op(), ACC_A);
         if let Some(field) = field
             && carried_store
             && let Some(fused) = load_store_handler::<H>(instruction.op(), next.op(), field)
@@ -2651,18 +2669,17 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             continue;
         }
         let absorbed = decoded_instruction(function, function.code[target]);
-        let plain = |op: Op| {
-            absorbed.op() == op
-                && tables[0][usize::from(ACC_NONE)][op as usize]
-                    .is_some_and(|plain| records[target].handler == plain.handler as *const ())
-        };
+        let plain = |op: Op| absorbed.op() == op && serves(records[target].handler, op, ACC_NONE);
         let backward = target < pc;
         let (handler, c) = if plain(Op::Move) {
             (JumpFusions::<H>::THROUGH[0][usize::from(backward)], 0)
         } else if plain(Op::WasmI32AddImmediate)
             && let Ok(step) = i16::try_from(absorbed.imm() as i32)
         {
-            (JumpFusions::<H>::THROUGH[1][usize::from(backward)], step as u16)
+            (
+                JumpFusions::<H>::THROUGH[1][usize::from(backward)],
+                step as u16,
+            )
         } else {
             continue;
         };
@@ -2679,10 +2696,7 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
     // A plain move or add of a constant whose next record jumps runs with
     // that jump as one record.
     for pc in 0..records.len().saturating_sub(1) {
-        let plain = |op: Op| {
-            tables[0][usize::from(ACC_NONE)][op as usize]
-                .is_some_and(|plain| records[pc].handler == plain.handler as *const ())
-        };
+        let plain = |op: Op| serves(records[pc].handler, op, ACC_NONE);
         let add = if plain(Op::Move) {
             false
         } else if plain(Op::WasmI32AddImmediate) {
@@ -2691,7 +2705,8 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             continue;
         };
         if let Some(backward) = jump_direction(records[pc + 1].handler) {
-            records[pc].handler = JumpFusions::<H>::THEN[usize::from(add)][usize::from(backward)] as *const ();
+            records[pc].handler =
+                JumpFusions::<H>::THEN[usize::from(add)][usize::from(backward)] as *const ();
         }
     }
     // An f64 arithmetic record whose result the next f64 operator takes
