@@ -267,7 +267,11 @@ impl<H: Host> Vm<H> {
                     .flat_map(|(realm, constructor)| [*realm, *constructor]),
             )
             .chain(self.realm.intrinsics.regexp_intrinsics.iter().flat_map(
-                |(realm, intrinsics)| [*realm, intrinsics.constructor, intrinsics.prototype],
+                |(realm, intrinsics)| {
+                    [*realm, intrinsics.constructor, intrinsics.prototype]
+                        .into_iter()
+                        .chain(intrinsics.result_template.map(|template| template.anchor))
+                },
             ))
             .chain(
                 self.realm
