@@ -788,38 +788,6 @@ impl<H: Host> Vm<H> {
         None
     }
 
-    /// The monomorphic prototype-holder hit when the immediate prototype is an ordinary object;
-    /// any other holder takes `cached_holder_field_value` on the uncached path.
-    #[inline(always)]
-    fn cached_ordinary_holder_field_value(
-        &self,
-        site: usize,
-        receiver: &Object,
-    ) -> Option<FieldCacheHit> {
-        // SAFETY: the active program's layout reserves every compiler-emitted site.
-        let cache = unsafe { *self.field_caches.get_unchecked(site) };
-        if cache.holder == NO_FIELD_HOLDER || cache.receiver != receiver.shape() {
-            return None;
-        }
-        let Some(holder) = self.heap.object(receiver.proto) else {
-            return None;
-        };
-        if holder.is_module_namespace() || cache.holder != holder.shape() {
-            return None;
-        }
-        // SAFETY: both immutable shapes and the property slot were recorded together after
-        // confirming an immediate-prototype data property.
-        let value = unsafe {
-            self.heap
-                .property_get_unchecked(holder, cache.slot as usize)
-        };
-        Some(FieldCacheHit {
-            value,
-            tier: 0,
-            depth: 1,
-        })
-    }
-
     #[inline(always)]
     fn cached_holder_field_value(
         &self,
