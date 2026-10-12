@@ -129,8 +129,8 @@ children that exit before a grandchild-held pipe reaches the deadline.
 
 Linux signal constants are read-only entries in a null-prototype record,
 derived from the same OS table as captured process-kill constants and
-synchronous child signal validation. Other platforms retain their previous
-signal and synchronous collection paths. Extra synchronous stdio channels,
+synchronous child signal validation. Collection is implemented on Unix; non-Unix retains its previous
+collection path. Signal selection and these additions are verified on Linux. Extra synchronous stdio channels,
 wrap-based synchronous stdio, full option normalization and mutable internal
 child-process callback routing still require conformance work.
 
