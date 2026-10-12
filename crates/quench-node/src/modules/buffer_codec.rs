@@ -19,9 +19,24 @@ pub(crate) fn encode_str(input: &str, encoding: &str) -> Vec<u8> {
     match encoding {
         "hex" => hex_decode(input.as_bytes()),
         "base64" | "base64url" => base64_decode(input.as_bytes()),
-        "latin1" | "ascii" => input.chars().map(|c| c as u32 as u8).collect(),
-        "utf16le" => input.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+        "latin1" | "ascii" | "utf16le" => encode_fixed_width_units(input.encode_utf16(), encoding),
         _ => input.as_bytes().to_vec(),
+    }
+}
+
+/// Encode JavaScript's original UTF-16 units without dropping lone surrogates.
+pub(crate) fn encode_units(input: &[u16], encoding: &str) -> Vec<u8> {
+    match encoding {
+        "latin1" | "ascii" | "utf16le" => encode_fixed_width_units(input.iter().copied(), encoding),
+        _ => encode_str(&String::from_utf16_lossy(input), encoding),
+    }
+}
+
+fn encode_fixed_width_units(input: impl Iterator<Item = u16>, encoding: &str) -> Vec<u8> {
+    if encoding == "utf16le" {
+        input.flat_map(u16::to_le_bytes).collect()
+    } else {
+        input.map(|unit| unit as u8).collect()
     }
 }
 
