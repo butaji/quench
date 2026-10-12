@@ -20,4 +20,25 @@ The schema-5 Splay A/A and A/B ran for 300 `run()` calls per process against the
 
 Using only clean pairs, paired marginal wall time changed −5.425% (95% bootstrap interval −6.506% to −4.353%), cycles −5.522% (−6.175% to −4.939%), and retired instructions −3.819% (−3.837% to −3.802%). Median work max RSS fell from 116,375,552 B to 87,703,552 B (−24.63%); setup-only max RSS fell from 65,437,696 B to 50,429,952 B (−22.93%).
 
-This is a Splay-only fixed-work result, not a stock-harness qualification or an all-eight guard. The official M4 distances therefore remain the last qualified trunk values: 1.664× Score and 1.810× max RSS. Next gate: all-eight A/A and candidate A/B against these exact pinned binaries, with clean cycles required for this layout change. Re-take the stock Splay campaign only after that guard passes.
+The official M4 distances remain the last qualified trunk values: 1.664× Score and 1.810× max RSS. This candidate has not had a stock-harness retake.
+
+## All-eight fixed-work gate (Apple M4 arm64 macOS)
+
+Pinned schema-5 runner SHA-256: `bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109`. Both all-eight campaigns completed with 11/11 clean pairs on every fixture and equal output. The A/A used the pinned trunk binary for both roles; the A/B compared that trunk binary with the candidate binary above. Raw reports: [`all-eight-aa-schema5-11.json`](all-eight-aa-schema5-11.json) (SHA-256 `963a116fccdbec9f320e12c76d73443066dfbcb58a83c0f4afee6925d50fdb26`) and [`all-eight-ab-schema5-11.json`](all-eight-ab-schema5-11.json) (SHA-256 `d49b18da91c7a67d731ccc8084f89a07aa3d454da5a9c90daddc9b1ec9ccd84b`). The schema-5 guard binary SHA-256 `65c7d338250c899622b4fb5851964f7262602fbb09c5e6759f88196b1952a0c1` wrote [`the checkpoint`](all-eight-ab-guard.json) and [`decision`](all-eight-ab-guard.decision.json); the tool's overall result is **rejected** because its cycle rule classifies Crypto as a regression.
+
+The paired wall intervals below use 20,000 percentile-bootstrap replicates and the same fixed seed as the Splay screen. RSS is the paired median change in work max RSS. A/A wall intervals show the measured same-binary band.
+
+| Fixture | A/B wall, % (95% interval) | A/A wall band, % | A/B cycles, % (95% interval) | A/B instructions, % | A/B work max RSS, % |
+| -- | --: | --: | --: | --: | --: |
+| Crypto | +1.167 [+0.377, +1.574] | [−0.842, +0.980] | +1.683 [+0.296, +1.976] | −0.734 | −1.057 |
+| DeltaBlue | −6.700 [−6.859, −6.082] | [−0.296, +0.921] | −6.662 [−6.826, −5.740] | −7.420 | −3.946 |
+| EarleyBoyer | −1.330 [−1.587, −0.819] | [−0.476, +0.148] | −1.314 [−1.613, −1.069] | −2.094 | −9.613 |
+| NavierStokes | −0.959 [−1.561, −0.053] | [−0.221, +0.663] | −0.843 [−1.331, −0.052] | −0.607 | −1.241 |
+| RayTrace | +0.346 [−0.608, +1.243] | [−0.641, +0.151] | +0.406 [−0.153, +1.169] | −0.132 | −3.882 |
+| RegExp | +0.663 [+0.043, +1.470] | [−1.391, +4.977] | +0.412 [−0.229, +2.324] | +0.785 | −1.342 |
+| Richards | −0.499 [−1.242, −0.135] | [−1.415, +0.532] | −0.360 [−0.899, +0.139] | −0.000 | −2.941 |
+| Splay | −4.991 [−5.940, −4.426] | [−1.884, +0.757] | −4.795 [−5.509, −4.328] | −3.835 | −24.609 |
+
+TOD-11's current numbered-package gate allows at most 2% wall loss on another fixture and at most 1% max-RSS loss beyond its A/A band; it also requires a `finding` for a loss above 0.5%. On those terms Crypto's +1.167% wall median is below the 2% limit, with its median only 0.187 percentage points above the A/A interval's upper end; its RSS fell 1.057%. The required Crypto finding is recorded on TOD-16. All eight fixtures' max-RSS medians decreased. The guard's cycle-based `overall: rejected` result is retained verbatim because it differs from TOD-11's wall-based numbered-package rule; no trunk merge is claimed here. Next, take a clean stock Splay retake on the candidate and preserve the official scoreboard row until the stock result is measured.
+
+The runner records launcher checkout `597dd55d…` as dirty; this does not identify either measured engine. The candidate source worktree was clean at `e7a5d9584`, the fixture corpus was clean at `64e1860c`, and both executable SHA-256 values are recorded in the raw A/B report.
