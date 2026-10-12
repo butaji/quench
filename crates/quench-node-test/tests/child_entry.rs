@@ -2243,3 +2243,47 @@ setImmediate(()=>{result.push(warnings);console.log(JSON.stringify(result))});
         String::from_utf8_lossy(&observations[1].stdout)
     );
 }
+
+#[test]
+fn console_write_error_policy_preserves_identity_and_guards_stream_errors() {
+    const SOURCE: &str = r#"
+const {Console}=require('console'),EE=require('events');const result=[];
+const marker={},overflow=new RangeError('Maximum call stack size exceeded');
+for(const ignoreErrors of [undefined,true,false,0,null]){
+ const stream=new EE();let writes=[];
+ stream.write=function(text,callback){writes.push([text,typeof callback,this.listenerCount('error')]);throw marker};
+ const console=new Console({stdout:stream,stderr:stream,ignoreErrors});
+ let thrown=false;try{console.log('value')}catch(error){thrown=error===marker}
+ result.push([console._ignoreErrors,writes,thrown,stream.listenerCount('error'),Object.getOwnPropertyDescriptor(console,'_ignoreErrors').enumerable]);
+}
+const stream=new EE();stream.write=()=>{throw overflow};const logger=new Console({stdout:stream});
+try{logger.warn('overflow')}catch(error){result.push(['overflow',error===overflow,stream.listenerCount('error')])}
+const asyncStream=new EE();asyncStream._writableState={errorEmitted:false};
+asyncStream.write=function(text,callback){result.push(['write',text,this.listenerCount('error')]);process.nextTick(()=>{callback(marker);result.push(['before-error',this.listenerCount('error')]);this.emit('error',marker);this._writableState.errorEmitted=true;result.push(['after-error',this.listenerCount('error')])});return true};
+new Console({stdout:asyncStream}).log('async');result.push(['after-log',asyncStream.listenerCount('error')]);
+setImmediate(()=>{console.log(JSON.stringify(result))});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}

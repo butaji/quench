@@ -319,6 +319,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fileURLToPathBuffer" (2) => crate::modules::url_shared_vm::file_url_to_path_buffer,
         global "structuredClone" (1) => crate::modules::clone_shared_vm::structured_clone,
         method "ttyIsatty" (1) => crate::modules::tty_shared_vm::isatty,
+        method "consoleNoop" (0) => crate::modules::console_shared_vm::noop,
+        method "consoleInitializeWrite" (3) => crate::modules::console_shared_vm::initialize_write,
+        method "consoleWrite" (3) => crate::modules::console_shared_vm::write,
+        method "consoleWriteError" (1) => crate::modules::console_shared_vm::write_error,
         method "consoleTrace" (0) => crate::modules::console_shared_vm::trace,
     ]
 }
