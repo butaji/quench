@@ -916,7 +916,10 @@ impl<H: Host> Vm<H> {
                 };
                 let this = self.read(f, i.register_c());
                 let callee = self.read(f, i.register_b());
-                self.frames[f].pc = *pc;
+                let caller = &mut *self.frames[f];
+                caller.pc = *pc;
+                let caller_function = caller.function;
+                debug_assert_eq!(caller.program, self.active_program);
                 let direct_eval = i.direct_eval()
                     && matches!(
                         self.heap.get(callee),
@@ -949,10 +952,9 @@ impl<H: Host> Vm<H> {
                     && !terminal
                     && p.kind != crate::bytecode::ProgramKind::Wasm
                     && f + 1 == self.frames.len()
-                    && self.frames[f].function != super::ROOT_FUNCTION_ID
+                    && caller_function != super::ROOT_FUNCTION_ID
                     && let Some((program_id, id, env)) = self.same_realm_user_target(callee)
                     && id != super::ROOT_FUNCTION_ID
-                    && program_id == self.frames[f].program
                     && program_id == self.active_program
                     && p.functions.get(id as usize).is_some_and(|function| {
                         !function.is_async
