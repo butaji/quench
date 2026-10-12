@@ -556,9 +556,13 @@ impl<H: Host> Vm<H> {
         if self.object_data(receiver)?.proto != intrinsics.prototype {
             return None;
         }
-        let exec = self.lookup_atom("exec")?;
-        let flags_atom = self.lookup_atom("flags")?;
-        let last_index = self.lookup_atom("lastIndex")?;
+        let RuntimeAtoms {
+            regexp_exec: exec,
+            regexp_flags: flags_atom,
+            last_index,
+            regexp_flag_accessors,
+            ..
+        } = self.runtime_atoms;
         if self
             .property_attributes(receiver, PropertyKey::string(exec))
             .is_some()
@@ -583,8 +587,7 @@ impl<H: Host> Vm<H> {
         {
             return None;
         }
-        for (name, native, _) in REGEXP_FLAG_ACCESSORS {
-            let atom = self.lookup_atom(name)?;
+        for ((_, native, _), atom) in REGEXP_FLAG_ACCESSORS.iter().zip(regexp_flag_accessors) {
             if self
                 .property_attributes(receiver, PropertyKey::string(atom))
                 .is_some()
@@ -680,9 +683,7 @@ impl<H: Host> Vm<H> {
         matcher: &quench_regexp::Regex,
         flags: &str,
     ) -> Result<Value, JsError> {
-        let last_index = self
-            .lookup_atom("lastIndex")
-            .expect("RegExp installation interns lastIndex");
+        let last_index = self.runtime_atoms.last_index;
         let subject = self.regexp_subject(input);
         let mut matches = Vec::new();
         if flags.contains('g') {
@@ -1020,7 +1021,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .regexp_intrinsics
             .get(&self.realm.globals)?;
-        let exec = self.lookup_atom("exec")?;
+        let exec = self.runtime_atoms.regexp_exec;
         (self.object_data(regexp)?.proto == intrinsics.prototype
             && self
                 .property_attributes(regexp, PropertyKey::string(exec))
@@ -2301,7 +2302,7 @@ fn regexp_escape_control(character: char) -> Option<&'static str> {
     }
 }
 
-const REGEXP_FLAG_ACCESSORS: &[(&str, Native, char)] = &[
+pub(super) const REGEXP_FLAG_ACCESSORS: &[(&str, Native, char)] = &[
     ("hasIndices", Native::RegExpHasIndices, 'd'),
     ("global", Native::RegExpGlobal, 'g'),
     ("ignoreCase", Native::RegExpIgnoreCase, 'i'),
