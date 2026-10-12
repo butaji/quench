@@ -49,6 +49,7 @@ pub(crate) mod http_shared_vm;
 pub(crate) mod net_config;
 pub(crate) mod net_shared_vm;
 pub(crate) mod net_endpoint_shared_vm;
+pub(crate) mod net_options_shared_vm;
 pub(crate) mod net_reference_shared_vm;
 pub(crate) mod module_shared_vm;
 pub(crate) mod os_facts;

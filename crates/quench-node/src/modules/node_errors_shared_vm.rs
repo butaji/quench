@@ -1,10 +1,24 @@
-//! Node's coded argument-error prototype, distinct from the ECMAScript base.
+//! Node's coded TypeError prototypes and shared private brand.
 
 use super::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const INVALID_ARGUMENT_TYPE: &str = "ERR_INVALID_ARG_TYPE";
+pub(crate) struct NodeErrorApi {
+    brand: RootId,
+    type_prototypes: std::collections::HashMap<(&'static str, TypeErrorPrototype), RootId>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum TypeErrorPrototype {
+    Direct,
+    HiddenStackFrames,
+}
+const HIDDEN_PROTOTYPE: &str = quench_js_check::checked_js!(
+    r#"constructorNative => class HideStackFramesError {
+      get ['constructor']() { return constructorNative(); }
+    }.prototype"#
+);
 const PROTOTYPE: &str = quench_js_check::checked_js!(
     r#"(Base, constructorNative, brandNative, stringNative, brand) =>
     class NodeError extends Base {
@@ -14,9 +28,34 @@ const PROTOTYPE: &str = quench_js_check::checked_js!(
     }.prototype"#
 );
 
-pub(super) fn argument_type_prototype(
+fn type_error_prototype(
     context: &mut NativeContext<'_, NodeHost>,
+    code: &'static str,
 ) -> Result<RootId, RootedError> {
+    let state = context.host_mut().shared_state();
+    if let Some(prototype) = state
+        .borrow()
+        .node_error_api
+        .as_ref()
+        .and_then(|api| api.type_prototypes.get(&(code, TypeErrorPrototype::Direct)))
+        .copied()
+    {
+        return Ok(prototype);
+    }
+    if state.borrow().node_error_api.is_none() {
+        let brand = context.symbol_rooted(Some("kIsNodeError"));
+        let brand = context.retain(brand)?;
+        state.borrow_mut().node_error_api = Some(NodeErrorApi {
+            brand,
+            type_prototypes: std::collections::HashMap::new(),
+        });
+    }
+    let key = state
+        .borrow()
+        .node_error_api
+        .as_ref()
+        .expect("initialized error API")
+        .brand;
     let base_error = context.type_error_rooted("")?;
     let base_prototype = context.prototype_rooted(base_error)?;
     let base = get(context, base_prototype, "constructor")?;
@@ -25,28 +64,85 @@ pub(super) fn argument_type_prototype(
         base,
     )?;
     let brand = context.host_function(crate::host::shared_vm::operation("nodeErrorBrand"))?;
-    let code = context.string_rooted(INVALID_ARGUMENT_TYPE);
-    let string = context
-        .host_function_with_data(crate::host::shared_vm::operation("nodeErrorToString"), code)?;
-    let key = context.symbol_rooted(Some("kIsNodeError"));
+    let code_root = context.string_rooted(code);
+    let string = context.host_function_with_data(
+        crate::host::shared_vm::operation("nodeErrorToString"),
+        code_root,
+    )?;
     let factory =
         context.evaluate_script_rooted(PROTOTYPE, "node:internal/errors/argument-prototype.js")?;
     let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[base, constructor, brand, string, key])
+    let prototype =
+        context.call_rooted(factory, undefined, &[base, constructor, brand, string, key])?;
+    let prototype = context.retain(prototype)?;
+    state
+        .borrow_mut()
+        .node_error_api
+        .as_mut()
+        .expect("initialized error API")
+        .type_prototypes
+        .insert((code, TypeErrorPrototype::Direct), prototype);
+    Ok(prototype)
+}
+
+/// Validators use a distinct subclass while inheriting the code and brand.
+pub(super) fn hide_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+) -> Result<(), RootedError> {
+    let base = type_error_prototype(context, code)?;
+    let state = context.host_mut().shared_state();
+    let key = (code, TypeErrorPrototype::HiddenStackFrames);
+    let cached = state
+        .borrow()
+        .node_error_api
+        .as_ref()
+        .and_then(|api| api.type_prototypes.get(&key))
+        .copied();
+    let prototype = if let Some(prototype) = cached {
+        prototype
+    } else {
+        let constructor = get(context, base, "constructor")?;
+        let constructor = context.host_function_with_data(
+            crate::host::shared_vm::operation("nodeErrorConstructor"),
+            constructor,
+        )?;
+        let factory = context.evaluate_script_rooted(
+            HIDDEN_PROTOTYPE,
+            "node:internal/errors/validator-prototype.js",
+        )?;
+        let undefined = context.undefined();
+        let prototype = context.call_rooted(factory, undefined, &[constructor])?;
+        context.set_prototype_rooted(prototype, base)?;
+        let prototype = context.retain(prototype)?;
+        state
+            .borrow_mut()
+            .node_error_api
+            .as_mut()
+            .expect("initialized error API")
+            .type_prototypes
+            .insert(key, prototype);
+        prototype
+    };
+    context.set_prototype_rooted(error, prototype)?;
+    Ok(())
 }
 
 pub(super) fn decorate_argument_type(
     context: &mut NativeContext<'_, NodeHost>,
     error: RootId,
 ) -> Result<(), RootedError> {
+    decorate_type_error(context, error, INVALID_ARGUMENT_TYPE)
+}
+
+pub(super) fn decorate_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+) -> Result<(), RootedError> {
     super::util_shared_vm::module(context)?;
-    let prototype = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .util_intrinsics
-        .ok_or_else(|| RootedError::host("argument error prototype missing"))?
-        .argument_type_prototype;
+    let prototype = type_error_prototype(context, code)?;
     context.set_prototype_rooted(error, prototype)?;
     // Node's variadic error constructor installs its code field before message.
     let message_key = context.string_rooted("message");
@@ -60,7 +156,7 @@ pub(super) fn decorate_argument_type(
     let delete = get(context, data, "delete")?;
     let undefined = context.undefined();
     context.call_rooted(delete, undefined, &[error, message_key])?;
-    let code = context.string_rooted(INVALID_ARGUMENT_TYPE);
+    let code = context.string_rooted(code);
     let key = context.string_rooted("code");
     context.define_data_property_rooted(error, key, code, true, true, true)?;
     context.define_data_property_rooted(error, message_key, message, true, false, true)?;

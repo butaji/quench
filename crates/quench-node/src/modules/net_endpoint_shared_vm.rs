@@ -24,6 +24,13 @@ pub(crate) fn normalize(
     let mut address = first;
     let mut explicit_path = false;
     let mut explicit_port = false;
+    if connecting
+        && context
+            .rooted_value(first)
+            .is_some_and(|value| value.is_undefined())
+    {
+        return Err(super::net_options_shared_vm::missing_endpoint(context)?);
+    }
     if context.is_callable_rooted(second)? {
         callback = second;
         host = undefined;
@@ -40,6 +47,16 @@ pub(crate) fn normalize(
         }
         let port = get(context, options, "port")?;
         let path = get(context, options, "path")?;
+        if connecting
+            && context
+                .rooted_value(port)
+                .is_some_and(|value| value.is_undefined())
+            && context
+                .rooted_value(path)
+                .is_some_and(|value| value.is_undefined() || value.is_null())
+        {
+            return Err(super::net_options_shared_vm::missing_endpoint(context)?);
+        }
         let port_key = context.string_rooted("port");
         let has_port = context.has_property_rooted(options, port_key)?;
         let port_present = context
@@ -85,6 +102,23 @@ pub(crate) fn normalize(
         }
     }
 
+    if connecting && !explicit_path {
+        let tcp = if explicit_port {
+            true
+        } else if context.string_text(address)?.is_some() {
+            let zero = context.number(0.0);
+            let numeric = context.subtract_rooted(address, zero)?;
+            context
+                .rooted_value(numeric)
+                .and_then(|value| value.as_number())
+                .is_some_and(|number| number >= 0.0)
+        } else {
+            true
+        };
+        if tcp {
+            host = super::net_options_shared_vm::validate_host(context, host)?;
+        }
+    }
     let original_address = address;
     if !explicit_path {
         if let Some(text) = context.string_text(address)? {
@@ -114,6 +148,13 @@ pub(crate) fn normalize(
             {
                 return Err(port_error(context, original_address, connecting)?);
             }
+        } else if connecting
+            && context
+                .rooted_value(address)
+                .is_some_and(|value| value.is_undefined())
+        {
+            // An explicitly supplied non-null path can select TCP port zero.
+            address = context.number(0.0);
         } else if !connecting
             && context
                 .rooted_value(address)
@@ -131,6 +172,9 @@ pub(crate) fn normalize(
                 "one of type number or string",
             )?);
         }
+    }
+    if connecting && context.string_text(address)?.is_none() {
+        super::net_options_shared_vm::validate_lookup(context, options, host)?;
     }
     let plan = context.null_object_rooted()?;
     for (name, value) in [
