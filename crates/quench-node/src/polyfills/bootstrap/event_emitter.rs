@@ -78,7 +78,7 @@ class EventEmitter {
     if (event === "error") {
       const monitorSymbol = globalThis.__nodeErrorMonitorSymbol ||
         Symbol.for("events.errorMonitor");
-      this.listeners(monitorSymbol).forEach((listener) =>
+      this.rawListeners(monitorSymbol).forEach((listener) =>
         Reflect.apply(listener, this, args)
       );
     }
@@ -145,7 +145,7 @@ class EventEmitter {
   }
   removeListener(event, listener) {
     checkListener(listener);
-    const current = this.listeners(event);
+    const current = this.rawListeners(event);
     const removed = current.find(
       (item) => item === listener || item.listener === listener,
     );
@@ -169,23 +169,11 @@ class EventEmitter {
       names.push("removeListener");
     }
     for (const name of names) {
-      for (const listener of this.listeners(name).reverse()) {
+      for (const listener of this.rawListeners(name).reverse()) {
         this.removeListener(name, listener);
       }
     }
     return this;
-  }
-  listeners(event) {
-    if (event === undefined || !this._events) return [];
-    const value = this._events[event];
-    return value === undefined
-      ? []
-      : Array.isArray(value)
-      ? value.slice()
-      : [value];
-  }
-  listenerCount(event) {
-    return this.listeners(event).length;
   }
   getMaxListeners() {
     return this[MAX_LISTENERS] ?? EventEmitter.defaultMaxListeners;

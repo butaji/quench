@@ -2053,3 +2053,54 @@ child.on('error',error=>{throw error});child.on('close',(code,signal)=>{assert.s
         assert_eq!(observation.stdout, b"complete\n");
     }
 }
+
+#[test]
+fn emitter_inspection_unwraps_once_and_preserves_raw_copies_and_filters() {
+    const SOURCE: &str = r#"
+const EE=require('events');const result=[],emitter=new EE();const symbol=Symbol('event');
+const first=()=>{},second=()=>{};
+emitter.on('__proto__',first);emitter.on('toString',second);emitter.on(symbol,first);
+result.push(emitter.eventNames().map(key=>typeof key==='symbol'?'symbol':key));
+emitter.on('event',first);emitter.once('event',first);emitter.once('event',second);
+result.push(emitter.listeners('event').map(fn=>fn===first?'first':'second'));
+const raw=emitter.rawListeners('event');result.push(raw[0]===first,raw[1]!==first,raw[1].listener===first,raw[2].listener===second);
+raw.length=0;result.push(emitter.listenerCount('event'),emitter.listenerCount('event',first),emitter.listenerCount('event',second),emitter.listenerCount('event',null));
+emitter.emit('event');result.push(emitter.listenerCount('event'),emitter.listenerCount('event',first));
+emitter.removeAllListeners();result.push(emitter.eventNames().length,emitter.listeners(symbol).length);
+emitter.on(undefined,first);result.push(emitter.listeners(undefined)[0]===first,emitter.listenerCount(undefined));
+let monitors=0;emitter.once(EE.errorMonitor,()=>monitors++);emitter.on('error',()=>{});
+emitter.emit('error',new Error('first'));emitter.emit('error',new Error('second'));
+result.push(monitors,emitter.listenerCount(EE.errorMonitor));
+const listeners=emitter.listeners;emitter.listeners=()=>{throw Error('public override')};
+result.push(emitter.listenerCount(undefined),listeners.call(emitter,undefined)[0]===first);
+for(const name of ['eventNames','listeners','rawListeners','listenerCount']){
+ const fn=EE.prototype[name],descriptor=Object.getOwnPropertyDescriptor(EE.prototype,name);
+ result.push([fn.name,fn.length,descriptor.writable,descriptor.enumerable,descriptor.configurable]);
+ try{fn.call(null,'event')}catch(error){result.push(error.name)}
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}

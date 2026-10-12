@@ -146,6 +146,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netIsIPv6" (1) => crate::modules::net_shared_vm::is_ipv6,
         method "netConnect" (3) => crate::modules::net_shared_vm::connect_operation,
         method "streamPipePlan" (3) => crate::modules::stream_pipe_shared_vm::plan,
+        method "emitterEventNames" (1) => crate::modules::event_emitter_shared_vm::names,
+        method "emitterListeners" (2) => crate::modules::event_emitter_shared_vm::listeners,
+        method "emitterRawListeners" (2) => crate::modules::event_emitter_shared_vm::raw_listeners,
+        method "emitterListenerCount" (3) => crate::modules::event_emitter_shared_vm::count,
         method "eventsListenerCount" (2) => crate::modules::events_shared_vm::listener_count,
         method "streamPipeEnd" (0) => crate::modules::stream_pipe_shared_vm::end,
         method "streamPipeClose" (0) => crate::modules::stream_pipe_shared_vm::close,
@@ -500,6 +504,7 @@ impl quench_runtime::Host for NodeHost {
             "node:bootstrap/event-emitter.js",
         )?;
         context.release_root(event_emitter);
+        crate::modules::event_emitter_shared_vm::initialize(context)?;
         // Native stdio writes still participate in the shared EventEmitter
         // protocol; consumers such as util.styleText validate that protocol.
         let global = context.global_root()?;
