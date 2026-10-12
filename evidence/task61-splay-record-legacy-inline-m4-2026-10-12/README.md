@@ -20,7 +20,13 @@ The schema-5 Splay A/A and A/B ran for 300 `run()` calls per process against the
 
 Using only clean pairs, paired marginal wall time changed −5.425% (95% bootstrap interval −6.506% to −4.353%), cycles −5.522% (−6.175% to −4.939%), and retired instructions −3.819% (−3.837% to −3.802%). Median work max RSS fell from 116,375,552 B to 87,703,552 B (−24.63%); setup-only max RSS fell from 65,437,696 B to 50,429,952 B (−22.93%).
 
-The official M4 distances remain the last qualified trunk values: 1.664× Score and 1.810× max RSS. This candidate has not had a stock-harness retake.
+The official M4 distances remain the last trunk values: 1.664× Score and 1.810× max RSS.
+
+## Stock-harness Splay diagnostic (Apple M4 arm64 macOS)
+
+The candidate production binary completed 11/11 valid rounds with equal output against the same-campaign references. Scores: Quench 9,599; Node v26.10.0 `--jitless` 14,872; Bun 1.4.2 no-JIT 9,917; QuickJS 2026-06-04 8,622. RSS: Quench 87,883,776 B; Bun 63,422,464 B (lowest reference); Node 404,619,264 B; QuickJS 151,060,480 B. Candidate diagnostic distances are **1.5493× Score / 1.3857× max RSS**; Splay is still unwon on both bars. Raw report: [`candidate-stock-11.json`](candidate-stock-11.json), SHA-256 `2e623341d23bf618d8c62d47edf4b52638879f248939a490eb266fe81405d0f0`.
+
+This single-fixture report has `qualification_ready=false` because the runner's qualification inventory expects the full fixture set; its Splay observations are diagnostic and do not replace the official trunk row. The preflight was one-minute load 3.68 with no Deno worker; the 5/15-minute averages were still elevated, and the stock runner has no per-round contention detector. Re-take stock Splay after integration on a fully settled host before updating official distances.
 
 ## All-eight fixed-work gate (Apple M4 arm64 macOS)
 
