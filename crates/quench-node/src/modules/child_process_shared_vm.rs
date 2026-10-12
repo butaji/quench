@@ -3,7 +3,7 @@
 use crate::host::{node_host::SharedChildProcess, NodeHost};
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::{
-    process::{Command, Stdio},
+    process::Command,
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc,
@@ -197,7 +197,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
         code: "ERR_INVALID_ARG_TYPE"
       });
     }
-    if (options?.argv0 !== undefined && typeof options.argv0 !== "string") {
+    if (options?.argv0 != null && typeof options.argv0 !== "string") {
       const received = Array.isArray(options.argv0) ? " Received an instance of Array" : "";
       throw Object.assign(new TypeError(`The "options.argv0" property must be of type string.${received}`), {
         code: "ERR_INVALID_ARG_TYPE"
@@ -1117,6 +1117,11 @@ pub(crate) fn spawn_sync(
         super::child_process_exec_shared_vm::DEFAULT_MAX_BUFFER
     };
 
+    let timeout = sync_timeout(context, options)?;
+    let input = sync_input(context, options)?;
+    #[cfg(unix)]
+    let kill_signal = sync_kill_signal(context, options)?;
+    let stdio = super::child_process_stdio_shared_vm::normalize_sync(context, options)?;
     let mut process = Command::new(&command);
     let argv0 = options
         .map(|root| property_string(context, root, "argv0"))
@@ -1124,7 +1129,21 @@ pub(crate) fn spawn_sync(
         .flatten();
     set_command_arg0(&mut process, argv0.as_deref());
     process.args(&arguments);
-    process.stdout(Stdio::piped()).stderr(Stdio::piped());
+    process.stdin(
+        stdio[0]
+            .os()
+            .map_err(|error| RootedError::host(error.to_string()))?,
+    );
+    process.stdout(
+        stdio[1]
+            .os()
+            .map_err(|error| RootedError::host(error.to_string()))?,
+    );
+    process.stderr(
+        stdio[2]
+            .os()
+            .map_err(|error| RootedError::host(error.to_string()))?,
+    );
 
     let env = options
         .map(|root| property(context, root, "env"))
@@ -1137,34 +1156,28 @@ pub(crate) fn spawn_sync(
         Ok(child) => {
             let pid = child.id();
             #[cfg(unix)]
-            let collected = super::child_process_sync::collect(child, max_buffer)
-                .map(|result| (result.output, result.limit_exceeded));
+            let collected =
+                super::child_process_sync::collect(child, max_buffer, timeout, kill_signal, &input)
+                    .map(|result| (result.output, result.error));
             #[cfg(not(unix))]
             let collected = {
-                let _ = max_buffer;
-                child.wait_with_output().map(|output| (output, false))
+                let _ = (max_buffer, timeout, input);
+                child.wait_with_output().map(|output| (output, None::<i32>))
             };
             match collected {
-                Ok((output, limit_exceeded)) => make_result(
-                    context,
-                    Some(pid),
-                    if limit_exceeded {
-                        None
-                    } else {
-                        output.status.code()
-                    },
-                    signal_name(&output.status),
-                    &output.stdout,
-                    &output.stderr,
-                    limit_exceeded.then(|| ("ENOBUFS", format!("spawnSync {command} ENOBUFS"))),
-                )?,
+                Ok((output, error)) => {
+                    let code = error.map(|errno| super::util_system_error_shared_vm::system_error_name(-f64::from(errno)));
+                    make_result(context, Some(pid), output.status.code(), signal_name(&output.status),
+                        stdio[1].piped().then_some(output.stdout.as_slice()), stdio[2].piped().then_some(output.stderr.as_slice()),
+                        code.as_deref().map(|code| (code, format!("spawnSync {command} {code}"))))?
+                },
                 Err(error) => make_result(
                     context,
                     Some(pid),
                     None,
                     None,
-                    &[],
-                    &[],
+                    stdio[1].piped().then_some(&[]),
+                    stdio[2].piped().then_some(&[]),
                     Some(("EIO", error.to_string())),
                 )?,
             }
@@ -1175,7 +1188,15 @@ pub(crate) fn spawn_sync(
                 13 => "EACCES",
                 _ => "UNKNOWN",
             });
-            make_result(context, None, None, None, &[], &[], Some((code, format!("spawnSync {command} {code}"))))?
+            make_result(
+                context,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some((code, format!("spawnSync {command} {code}"))),
+            )?
         }
     };
     #[cfg(unix)]
@@ -1191,6 +1212,8 @@ pub(crate) fn spawn_sync(
                 "ENOENT" => libc::ENOENT,
                 "EACCES" => libc::EACCES,
                 "EIO" => libc::EIO,
+                "ETIMEDOUT" => libc::ETIMEDOUT,
+                "EPIPE" => libc::EPIPE,
                 _ => libc::EINVAL,
             };
             let errno = context.number(f64::from(-number));
@@ -1224,8 +1247,8 @@ fn make_result(
     pid: Option<u32>,
     status: Option<i32>,
     signal: Option<&str>,
-    stdout: &[u8],
-    stderr: &[u8],
+    stdout: Option<&[u8]>,
+    stderr: Option<&[u8]>,
     error: Option<(&str, String)>,
 ) -> Result<RootId, RootedError> {
     let result = context.object_rooted()?;
@@ -1245,8 +1268,14 @@ fn make_result(
     };
     set(context, result, "signal", signal)?;
     let (stdout, stderr, output) = if pid.is_some() {
-        let stdout = sync_buffer(context, stdout)?;
-        let stderr = sync_buffer(context, stderr)?;
+        let stdout = match stdout {
+            Some(bytes) => sync_buffer(context, bytes)?,
+            None => context.null(),
+        };
+        let stderr = match stderr {
+            Some(bytes) => sync_buffer(context, bytes)?,
+            None => context.null(),
+        };
         let null = context.null();
         let output = context.array_rooted(&[null, stdout, stderr])?;
         (stdout, stderr, output)
@@ -1296,6 +1325,12 @@ fn project_sync_output(
     }
     for (index, name) in [(1, "stdout"), (2, "stderr")] {
         let buffer = property(context, result, name)?;
+        if context
+            .rooted_value(buffer)
+            .is_some_and(|value| value.is_null())
+        {
+            continue;
+        }
         let to_string = property(context, buffer, "toString")?;
         let text = context.call_rooted(to_string, buffer, &[encoding])?;
         set(context, result, name, text)?;
@@ -1415,7 +1450,22 @@ fn set(context: &mut NativeContext<'_, NodeHost>, object: RootId, name: &str, va
 #[cfg(unix)]
 fn signal_name(status: &std::process::ExitStatus) -> Option<&'static str> {
     use std::os::unix::process::ExitStatusExt;
-    status.signal().map(|signal| match signal { 9 => "SIGKILL", 15 => "SIGTERM", 2 => "SIGINT", _ => "SIGTERM" })
+    let signal = status.signal()?;
+    #[cfg(target_os = "linux")]
+    {
+        super::process_signals_state::SIGNALS
+            .iter()
+            .find_map(|(name, number)| (*number == signal).then_some(*name))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Some(match signal {
+            9 => "SIGKILL",
+            15 => "SIGTERM",
+            2 => "SIGINT",
+            _ => "SIGTERM",
+        })
+    }
 }
 
 #[cfg(not(unix))]
@@ -1443,4 +1493,90 @@ pub(crate) fn shell_args_warning(context: &mut NativeContext<'_, NodeHost>, _: R
     context.call_rooted(emit, process, &[message, kind, code])?;
     shared.borrow_mut().child_process_shell_args_warning_emitted = true;
     Ok(undefined)
+}
+
+fn sync_timeout(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: Option<RootId>,
+) -> Result<Option<Duration>, RootedError> {
+    let Some(options) = options else {
+        return Ok(None);
+    };
+    let value = property(context, options, "timeout")?;
+    super::child_process_exec_shared_vm::validate_limit(context, value, "timeout", true)?;
+    Ok(context
+        .rooted_value(value)
+        .and_then(|value| value.as_number())
+        .filter(|value| *value > 0.0)
+        .map(|value| Duration::from_millis(value as u64)))
+}
+fn sync_input(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: Option<RootId>,
+) -> Result<Vec<u8>, RootedError> {
+    let Some(options) = options else {
+        return Ok(Vec::new());
+    };
+    let value = property(context, options, "input")?;
+    if context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        return Ok(Vec::new());
+    }
+    if context.string_code_units(value)?.is_some() {
+        let encoding = property(context, options, "encoding")?;
+        let encoding = context.truthy_rooted(encoding)?.then_some(encoding);
+        return super::buffer_shared_vm::encode_bytes(context, value, encoding);
+    }
+    if let Some(bytes) = context.view_bytes_rooted(value) {
+        return Ok(bytes);
+    }
+    Err(super::util_shared_vm::argument_type_error_with_expected(
+        context,
+        value,
+        "options.stdio[0]",
+        "of type string or an instance of Buffer, TypedArray, or DataView",
+    )?)
+}
+#[cfg(unix)]
+fn sync_kill_signal(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: Option<RootId>,
+) -> Result<i32, RootedError> {
+    let Some(options) = options else {
+        return Ok(libc::SIGTERM);
+    };
+    let value = property(context, options, "killSignal")?;
+    if context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        return Ok(libc::SIGTERM);
+    }
+    let name = context.string_text(value)?;
+    let number = context
+        .rooted_value(value)
+        .and_then(|value| value.as_number());
+    if name.is_none() && number.is_none() {
+        return Err(super::util_shared_vm::argument_type_error_with_expected(
+            context,
+            value,
+            "options.killSignal",
+            "one of type string or number",
+        )?);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let name = name.map(|name| name.to_uppercase());
+        if let Some(signal) = super::process_signals_state::SIGNALS.iter().find_map(|(candidate, signal)| (name.as_deref() == Some(*candidate) || number == Some(f64::from(*signal))).then_some(*signal)) { return Ok(signal); }
+        let value = context.to_string(value)?;
+        let error = context.type_error_rooted(&format!("Unknown signal: {value}"))?;
+        let key = context.string_rooted("code");
+        let code = context.string_rooted("ERR_UNKNOWN_SIGNAL");
+        context.define_data_property_rooted(error, key, code, true, true, true)?;
+        Err(context.throw(error))
+    }
+    #[cfg(not(target_os = "linux"))]
+    Ok(libc::SIGTERM)
 }
