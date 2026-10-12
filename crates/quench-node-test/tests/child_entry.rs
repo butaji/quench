@@ -3656,3 +3656,81 @@ const child=cp.spawn(process.execPath,['-e','0'],{cwd:url.pathToFileURL(process.
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn tls_context_material_uses_real_crl_and_pkcs12_parsers() {
+    use openssl::{
+        asn1::Asn1Time,
+        hash::MessageDigest,
+        pkcs12::Pkcs12,
+        pkey::PKey,
+        rsa::Rsa,
+        x509::{X509, X509NameBuilder},
+    };
+    let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+    let mut name = X509NameBuilder::new().unwrap();
+    name.append_entry_by_text("CN", "quench-parser-oracle")
+        .unwrap();
+    let name = name.build();
+    let mut certificate = X509::builder().unwrap();
+    certificate.set_version(2).unwrap();
+    certificate.set_subject_name(&name).unwrap();
+    certificate.set_issuer_name(&name).unwrap();
+    certificate.set_pubkey(&key).unwrap();
+    certificate
+        .set_not_before(&Asn1Time::days_from_now(0).unwrap())
+        .unwrap();
+    certificate
+        .set_not_after(&Asn1Time::days_from_now(1).unwrap())
+        .unwrap();
+    certificate.sign(&key, MessageDigest::sha256()).unwrap();
+    let certificate = certificate.build();
+    let mut archive = Pkcs12::builder();
+    archive.pkey(&key).cert(&certificate);
+    let archive = archive
+        .build2("distinct-generated-password")
+        .unwrap()
+        .to_der()
+        .unwrap();
+    let mut no_key = Pkcs12::builder();
+    no_key.cert(&certificate);
+    let no_key = no_key.build2("distinct-generated-password").unwrap().to_der().unwrap();
+    let hex = |bytes: &[u8]| bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    let crl = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/node/test/fixtures/keys/ca2-crl.pem");
+    const SOURCE: &str = r#"
+const assert=require('assert'),tls=require('tls'),fs=require('fs'),result=[];
+const pfx=Buffer.from(ARCHIVE_HEX,'hex'),noKey=Buffer.from(NO_KEY_HEX,'hex'),crl=fs.readFileSync(CRL_PATH),passphrase='distinct-generated-password';
+assert.strictEqual(tls.createSecureContext.length,1);
+for(const options of [undefined,null,false,0,'',{}, {crl}, {crl:crl.toString()}, {crl:[crl,crl]}, {pfx,passphrase}, {pfx:new Uint8Array(pfx),passphrase}, {pfx:[{buf:pfx,passphrase}],passphrase:'wrong'}]) { assert(tls.createSecureContext(options).context);result.push('ok'); }
+for(const options of [1,'x',[],{crl:''},{crl:'arbitrary malformed revocation data'},{crl:Buffer.from('invalid pem')},{crl:3},{pfx:3},{pfx:''},{pfx:Buffer.alloc(0)},{pfx:Buffer.from('different malformed archive')},{pfx},{pfx,passphrase:'wrong'},{pfx:noKey,passphrase}]){
+ try{tls.createSecureContext(options);assert.fail('expected parser rejection')}catch(error){result.push([error.name,error.code,error.message,'opensslErrorStack' in error]);}
+}
+console.log(JSON.stringify(result));
+"#;
+    let source = SOURCE
+        .replace(
+            "ARCHIVE_HEX",
+            &serde_json::to_string(&hex(&archive)).unwrap(),
+        )
+        .replace("NO_KEY_HEX", &serde_json::to_string(&hex(&no_key)).unwrap())
+        .replace("CRL_PATH", &serde_json::to_string(&crl).unwrap());
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", &source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
