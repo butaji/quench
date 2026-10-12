@@ -36,6 +36,12 @@ pub(super) const ROOT_FUNCTION_ID: u32 = 0;
 struct RuntimeAtoms {
     lexical_this: Atom,
     new_target: Atom,
+    /// The RegExp members the builtin fast paths check on every call.
+    regexp_exec: Atom,
+    regexp_flags: Atom,
+    last_index: Atom,
+    /// `regexp::REGEXP_FLAG_ACCESSORS` names, in that order.
+    regexp_flag_accessors: [Atom; regexp::REGEXP_FLAG_ACCESSORS.len()],
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -435,6 +441,19 @@ struct FieldCache {
     slot: u16,
 }
 const NO_FIELD_HOLDER: u32 = u32::MAX;
+/// Prototypes an inherited field load may traverse to its holder. DeltaBlue's constraint
+/// methods sit three prototypes above their instances; deeper chains stay uncached.
+const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 4;
+/// A field load answered by a data property `depth` prototypes above a receiver of shape
+/// `receiver`: the chain still has exactly `prototype_shapes[..depth]`, the last of which
+/// holds the property at `slot`.
+#[derive(Clone, Copy)]
+struct InheritedFieldCache {
+    receiver: u32,
+    prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
+    depth: u8,
+    slot: u16,
+}
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
 // DeltaBlue's measured inherited writes reach three prototypes; keep the
 // residual cache bounded while covering that common constructor shape.
@@ -907,6 +926,9 @@ pub(crate) struct Vm<H> {
     well_known_symbols: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
     field_caches: Vec<FieldCache>,
+    /// Field load sites whose data property was found beyond the immediate prototype, by
+    /// global site index; cleared with the field caches.
+    inherited_field_caches: FxHashMap<usize, InheritedFieldCache>,
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
@@ -914,6 +936,14 @@ pub(crate) struct Vm<H> {
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
+    /// A non-dictionary constructor shape verified to have no own `@@hasInstance` and a
+    /// data `prototype` at the paired slot; derived from shapes, so field-cache invalidation
+    /// clears it.
+    instanceof_constructor_layout: Option<(u32, usize)>,
+    /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
+    /// non-writable, non-configurable data property, which it then holds for its lifetime;
+    /// rooted so the identity stays meaningful. `Value::NULL` when none.
+    instanceof_has_instance_holder: Value,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
@@ -1510,11 +1540,19 @@ impl<H: Host> Vm<H> {
         }
         let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
         let new_target = self.intern_atom(NEW_TARGET_BINDING);
+        let regexp_flag_accessors = std::array::from_fn(|index| {
+            self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0)
+        });
         self.runtime_atoms = RuntimeAtoms {
             lexical_this,
             new_target,
+            regexp_exec: self.intern_atom("exec"),
+            regexp_flags: self.intern_atom("flags"),
+            last_index: self.intern_atom("lastIndex"),
+            regexp_flag_accessors,
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
+        self.inherited_field_caches.clear();
         self.field_add_indices = vec![NO_FIELD_ADD_SET; program.cache_sites as usize];
         self.field_add_sets.clear();
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
@@ -1531,6 +1569,8 @@ impl<H: Host> Vm<H> {
         self.function_values.clear();
         self.programs.reset(program.clone());
         self.script_lexicals_seen = false;
+        self.instanceof_constructor_layout = None;
+        self.instanceof_has_instance_holder = Value::NULL;
         self.observe_program_declarations(program);
         self.program_cache_layouts.clear();
         self.program_cache_layouts

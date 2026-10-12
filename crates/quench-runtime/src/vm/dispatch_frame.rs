@@ -1,5 +1,8 @@
 use super::*;
 
+/// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
+const RETAINED_FRAME_VALUES: usize = 256;
+
 #[derive(Clone, Copy)]
 pub(super) struct GeneralCodeCursor {
     program: ProgramId,
@@ -11,9 +14,6 @@ pub(super) struct GeneralCodeCursor {
     /// The function's lane view, or null where the lane does not run.
     lane: *const dispatch_fast::LaneView,
 }
-
-/// Values a pooled frame's vectors keep their capacity for.
-const RETAINED_FRAME_VALUES: usize = 256;
 
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
 pub(super) struct PendingGeneralCall {
@@ -975,16 +975,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// Return from a frame the running loop pushed. Such a frame completes
-    /// or throws, so it releases its `with` scopes and returns its storage to
-    /// the pool; a root record still persists its global lexical bindings.
-    pub(super) fn retire_pending_frame(&mut self, p: &ResidualProgram) {
-        let frame = self.frames.pop().expect("pending frame is active");
-        self.finish_frame_scopes(&frame);
-        self.persist_global_lexical_bindings(p, &frame);
-        self.pool_frame(frame);
-    }
-
     /// Return a Wasm frame the lane pushed to the pool. A Wasm activation
     /// touches only its locals and registers and runs no global lexical
     /// declarations, so only its register storage needs bounding.
@@ -1012,25 +1002,31 @@ impl<H: Host> Vm<H> {
         frame.context = CallContext::Internal;
         frame.original_arguments.clear();
         frame.with_objects.clear();
-        const RETAINED_VALUES: usize = RETAINED_FRAME_VALUES;
-        if frame.original_arguments.capacity() > RETAINED_VALUES {
-            frame.original_arguments.shrink_to(RETAINED_VALUES);
-        }
-        if frame.locals.capacity() > RETAINED_VALUES {
-            frame.locals.clear();
-            frame.locals.shrink_to(RETAINED_VALUES);
-        }
-        if frame.registers.capacity() > RETAINED_VALUES {
-            frame.registers.clear();
-            frame.registers.shrink_to(RETAINED_VALUES);
-        }
-        if frame.dynamic_bindings.capacity() > RETAINED_VALUES {
-            frame.dynamic_bindings.clear();
-            frame.dynamic_bindings.shrink_to(RETAINED_VALUES);
-        } else {
-            frame.dynamic_bindings.clear();
-        }
+        frame.dynamic_bindings.clear();
         frame.active_iterators.clear();
+        let retained = frame
+            .original_arguments
+            .capacity()
+            .max(frame.locals.capacity())
+            .max(frame.registers.capacity())
+            .max(frame.dynamic_bindings.capacity());
+        if retained > RETAINED_FRAME_VALUES {
+            Self::shrink_frame_buffers(frame);
+        }
+    }
+
+    /// Bounds what a pooled frame's buffers retain after an unusually large activation.
+    #[cold]
+    #[inline(never)]
+    fn shrink_frame_buffers(frame: &mut Frame) {
+        frame.original_arguments.shrink_to(RETAINED_FRAME_VALUES);
+        for buffer in [&mut frame.locals, &mut frame.registers] {
+            if buffer.capacity() > RETAINED_FRAME_VALUES {
+                buffer.clear();
+                buffer.shrink_to(RETAINED_FRAME_VALUES);
+            }
+        }
+        frame.dynamic_bindings.shrink_to(RETAINED_FRAME_VALUES);
     }
 
     pub(super) fn run_frame_general(
@@ -1273,7 +1269,12 @@ impl<H: Host> Vm<H> {
                 Ok(StepResult::Return(value)) => {
                     if let Some(pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
-                        self.retire_pending_frame(p);
+                        let completed_frame = self.frames.pop().unwrap();
+                        self.finish_frame_scopes(&completed_frame);
+                        // In-loop pushes never enter a script root, the only activation that
+                        // publishes global lexical bindings.
+                        debug_assert_ne!(completed_frame.function, super::ROOT_FUNCTION_ID);
+                        self.pool_frame(completed_frame);
                         frame = pending.caller;
                         self.active_registers = self.frames[frame].registers.as_mut_ptr();
                         // [[Construct]] of an ordinary constructor yields its returned object,
@@ -1483,8 +1484,19 @@ impl<H: Host> Vm<H> {
         f: usize,
         window: crate::bytecode::RegisterWindow,
     ) -> &[Value] {
-        let start = usize::from(window.base);
-        &self.frames[f].registers[start..start + usize::from(window.count)]
+        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(
+            usize::from(window.base) + usize::from(window.count)
+                <= self.frames[f].registers.len()
+        );
+        // SAFETY: as for `read`: the window lies in frame `f`'s register file, which
+        // `active_registers` names.
+        unsafe {
+            std::slice::from_raw_parts(
+                self.active_registers.add(usize::from(window.base)),
+                usize::from(window.count),
+            )
+        }
     }
 
     /// An operand's value when reading it can run no guest code and cannot throw: a register
