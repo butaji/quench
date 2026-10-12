@@ -68,3 +68,26 @@ The paired wall intervals below use 20,000 percentile-bootstrap replicates and t
 TOD-11's current numbered-package gate allows at most 2% wall loss on another fixture and at most 1% max-RSS loss beyond its A/A band; it also requires a `finding` for a loss above 0.5%. On those terms Crypto's +1.167% wall median is below the 2% limit, with its median only 0.187 percentage points above the A/A interval's upper end; its RSS fell 1.057%. The required Crypto finding is recorded on TOD-16. All eight fixtures' max-RSS medians decreased. The guard's cycle-based `overall: rejected` result is retained verbatim because it differs from TOD-11's wall-based numbered-package rule. The candidate stock diagnostic is now recorded above: 11/11 valid, output-equal Splay rounds, with `qualification_ready=false` because the report contains one fixture. It does not replace the official scoreboard row; a stock retake on integrated trunk is still required after an integration decision.
 
 The runner records launcher checkout `597dd55d…` as dirty; this does not identify either measured engine. The candidate source worktree was clean at `e7a5d9584`, the fixture corpus was clean at `64e1860c`, and both executable SHA-256 values are recorded in the raw A/B report.
+
+## Synced-parent all-eight fixed-work guard (Apple M4 arm64 macOS)
+
+The schema-5 runner was pinned at SHA-256 `bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109`; the V8-v7 corpus was clean at `64e1860c736c1b899708f4cd646721bc71e53d8b`. The baseline is synced parent `40b5d420c591ba53c34252ea88dccad141635e93`, production binary SHA-256 `dd63c09a142648041daab393fcab66d5f2e4a85d9347a23d0c3830504c93cffe`. The candidate is `e08b4e0cabe756610606264b5db53cfaa5c481c9`, production binary SHA-256 `ead2ff81fa08797eee190dcafed5d31f825bf193c4f4a3328dc3af4150f22343`. The runner source was clean at `597dd55d41a79584e73d8965a16d5243a784349b`; the report records interpreter mode, equal output, and 11/11 clean paired rounds on every fixture.
+
+Raw report [`synced-parent-vs-candidate-all-eight-fixed-work-11.json`](synced-parent-vs-candidate-all-eight-fixed-work-11.json), SHA-256 `fc790d4a62bf9611a4e9a2316f25bb464590423e8fd83ca2cec360af8166fcf9`. Guard state [`synced-parent-vs-candidate-all-eight.guard.json`](synced-parent-vs-candidate-all-eight.guard.json), SHA-256 `b94bd7bd1f641fb8a7abb4d97335a0987127ce86e5578c1c1265e15652648926`; decision [`synced-parent-vs-candidate-all-eight.guard.decision.json`](synced-parent-vs-candidate-all-eight.guard.decision.json), SHA-256 `814e4e1503df3d93717a75aaec44e7ab449f56a77ca2dc4223881c0053f70297`. The fixed-work guard's overall decision is **rejected**.
+
+The paired wall and cycle percentages below use the guard's per-round K/K=0 marginal formula and its deterministic 20,000-replicate bootstrap (95% percentile interval); instructions and RSS are paired medians. All fixtures have 11/11 clean pairs and equal output.
+
+| Fixture | Marginal wall/run, % (95% interval) | Cycles/run, % (95% interval) | Instructions/run, % | Work max RSS, % |
+| -- | --: | --: | --: | --: |
+| Crypto | −0.086 [−0.681, +0.585] | +0.498 [−0.351, +0.722] | −1.275 | −0.577 |
+| DeltaBlue | −4.572 [−5.224, −4.270] | −4.611 [−5.025, −4.051] | −7.628 | −1.275 |
+| EarleyBoyer | −0.407 [−0.823, +0.276] | −3.751 [−4.623, −3.595] | −1.329 | −4.666 |
+| NavierStokes | −5.395 [−6.382, −4.628] | −4.976 [−6.505, −4.513] | −3.019 | −0.348 |
+| RayTrace | +8.850 [+7.482, +12.221] | +8.612 [+8.164, +10.660] | +8.155 | +1.342 |
+| RegExp | +3.211 [+1.127, +4.844] | +3.309 [+1.153, +4.667] | +1.726 | −0.456 |
+| Richards | −0.700 [−1.232, −0.003] | −0.556 [−0.904, −0.048] | −1.280 | +0.288 |
+| Splay | −11.803 [−12.634, −10.469] | −21.047 [−22.559, −20.706] | −15.872 | −20.744 |
+
+The candidate's Splay fixed-work improvement is clear against the synced parent, but RayTrace regresses beyond the guard on wall, cycles and instructions, and its work max RSS rises 1.342% against the 0.5% budget. RegExp also has a clean +3.211% wall / +3.309% cycles regression. This layout candidate is therefore not eligible to merge. The official M4 stock Splay distances remain **1.664× Score / 1.810× max RSS**; no stock result or scoreboard update follows from this fixed-work guard.
+
+An earlier attempt reached all fixtures but failed to write its report because the output path was relative to the clean runner checkout. It produced no retained raw data and is excluded; the report above is the successful retry with an absolute output path.
