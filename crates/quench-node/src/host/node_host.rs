@@ -214,9 +214,7 @@ impl NodeHost {
         let argv = crate::modules::process_state::ProcessArgs::new(argv);
         let async_identity = crate::modules::async_hooks_state::AsyncIdentity::new();
         let process_control = crate::modules::process_state::ProcessControl::new();
-        let cwd = crate::modules::process_state::ProcessCwd::new(
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")),
-        );
+        let cwd = crate::modules::process_state::ProcessCwd::from_current_directory();
         Self {
             node_library_root,
             shared_state: Rc::new(RefCell::new(SharedNodeState::new(

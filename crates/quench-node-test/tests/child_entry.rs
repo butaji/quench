@@ -3185,3 +3185,289 @@ fn fatal_before_exit_errors_retain_diagnostics_and_final_exit_status() {
         }
     }
 }
+
+#[test]
+fn borrowed_emit_and_domain_errors_preserve_original_values() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),{EventEmitter}=require('events');
+const marker=new Error('borrowed');const bare=Object.create(null);
+try{EventEmitter.prototype.emit.call(bare,'error',marker);throw 'missing error'}catch(error){assert.strictEqual(error,marker)}
+assert.strictEqual(Object.hasOwn(bare,'_events'),false);
+assert.strictEqual(EventEmitter.prototype.emit.call({},'unused'),false);
+const domain=require('domain'),result=[];
+for(const value of [undefined,null,false,0,'',42,'fortytwo',true,marker]){
+ const emitter=new EventEmitter(),owner=domain.create();owner.add(emitter);
+ owner.on('error',error=>{
+  result.push(value?error===value:error instanceof Error);
+  if(!value)result.push(error.code,error.message);
+  if(error&&typeof error==='object')result.push(error.domain===owner,error.domainEmitter===emitter,error.domainThrown===false,Object.getOwnPropertyDescriptor(error,'domain').enumerable===false);
+ });emitter.emit('error',value);
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn static_event_listeners_project_records_and_delegate_public_hooks() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),{EventEmitter,getEventListeners}=require('events');
+function a(){}function b(){}
+for(const target of [new EventEmitter(),new EventTarget()]){
+ const add=target.on||target.addEventListener,remove=target.off||target.removeEventListener;
+ add.call(target,'x',a);add.call(target,'x',b);
+ const snapshot=getEventListeners(target,'x');assert.deepStrictEqual(snapshot,[a,b]);
+ snapshot.length=0;assert.deepStrictEqual(getEventListeners(target,'x'),[a,b]);
+ remove.call(target,'x',a);assert.deepStrictEqual(getEventListeners(target,'x'),[b]);
+ assert.deepStrictEqual(getEventListeners(target,'absent'),[]);
+}
+const calls=[],original={get listeners(){calls.push('get');return function(type){calls.push(this===original,type);return 42}}};
+assert.strictEqual(getEventListeners(original,'custom'),42);
+console.log(JSON.stringify([getEventListeners.name,getEventListeners.length,calls]));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn abort_listener_disposal_and_stopped_propagation_match_node() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),{addAbortListener,getEventListeners}=require('events');
+const result=[],controller=new AbortController(),signal=controller.signal;
+signal.addEventListener('abort',e=>{result.push('stop');e.stopImmediatePropagation()});
+signal.addEventListener('abort',()=>result.push('ordinary'));
+const disposable=addAbortListener(signal,e=>result.push('resist',e.target===signal));
+assert.strictEqual(Object.getPrototypeOf(disposable),null);
+assert.strictEqual(disposable[Symbol.dispose].length,0);
+const removed=addAbortListener(signal,()=>result.push('removed'));removed[Symbol.dispose]();removed[Symbol.dispose]();
+controller.abort();disposable[Symbol.dispose]();
+const already=addAbortListener(AbortSignal.abort(),function(){'use strict';result.push('queued',this===undefined,arguments.length)});
+already[Symbol.dispose]();result.push('sync');
+for(const bad of [undefined,null,{},1])assert.throws(()=>addAbortListener(bad,()=>{}),{code:'ERR_INVALID_ARG_TYPE'});
+for(const bad of [undefined,null,{}])assert.throws(()=>addAbortListener(new AbortController().signal,bad),{code:'ERR_INVALID_ARG_TYPE'});
+let options,removedCalls=0;const foreign={aborted:false,addEventListener(type,callback,value){options=value},removeEventListener(){removedCalls++}};
+const foreignDisposable=addAbortListener(foreign,()=>{});foreignDisposable[Symbol.dispose]();foreignDisposable[Symbol.dispose]();
+assert.strictEqual(Object.getPrototypeOf(options),null);assert(Object.isFrozen(options));assert.strictEqual(options.once,true);
+result.push(removedCalls,Object.getOwnPropertySymbols(options).length);
+queueMicrotask(()=>console.log(JSON.stringify(result)));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn abort_onabort_uses_the_ordered_handler_wrapper() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),{getEventListeners,listenerCount}=require('events'),result=[];
+const c=new AbortController(),s=c.signal;
+function first(){result.push('first')}function original(){result.push('old')}function replacement(){result.push('handler')}
+s.addEventListener('abort',first);s.onabort=original;
+const wrapper=getEventListeners(s,'abort')[1];
+assert.notStrictEqual(wrapper,original);assert.strictEqual(wrapper.name,'eventHandler');assert.strictEqual(wrapper.handler,original);
+s.addEventListener('abort',()=>result.push('last'));s.onabort=replacement;
+assert.strictEqual(s.onabort,replacement);assert.strictEqual(getEventListeners(s,'abort')[1],wrapper);
+assert.strictEqual(wrapper.handler,replacement);c.abort();
+const d=new AbortController();d.signal.onabort={handleEvent(){result.push('must not call')}};
+assert.strictEqual(typeof d.signal.onabort,'object');d.abort();
+const inactive=new AbortController().signal;
+for(const value of [null,original,null,{},replacement,replacement,null]){
+ inactive.onabort=value;result.push(listenerCount(inactive,'abort'),getEventListeners(inactive,'abort').length);
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn error_monitors_use_public_emit_and_capture_listener_mutations() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),{EventEmitter,errorMonitor}=require('events'),result=[];
+const emitter=new EventEmitter(),original=emitter.emit,marker=new Error('original');
+emitter.emit=function(type,...args){result.push(typeof type);return original.call(this,type,...args)};
+emitter.on(errorMonitor,error=>{assert.strictEqual(error,marker);result.push('monitor');emitter.on('error',error=>{assert.strictEqual(error,marker);result.push('handler')})});
+assert.strictEqual(emitter.emit('error',marker),true);
+let reads=0;const borrowed=Object.create(EventEmitter.prototype),records={error:error=>assert.strictEqual(error,marker)};
+Object.defineProperty(borrowed,'_events',{get(){reads++;return records}});
+assert.strictEqual(borrowed.emit('error',marker),true);assert.strictEqual(reads,1);
+const replaced=new EventEmitter();replaced.on(errorMonitor,()=>{replaced._events={error:()=>{throw 'wrong replacement handler'}}});
+assert.throws(()=>replaced.emit('error',marker),error=>error===marker);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn children_inherit_directory_identity_after_rename_and_unlink() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),fs=require('fs'),path=require('path'),cp=require('child_process');
+const parent=process.cwd(),preload=path.join(parent,'preload.cjs'),old=path.join(parent,'old'),renamed=path.join(parent,'renamed');
+fs.mkdirSync(old);process.chdir(old);fs.renameSync(old,renamed);
+assert.strictEqual(process.cwd(),renamed);
+const read='console.log(process.cwd())';
+let child=cp.spawnSync(process.execPath,['-e',read]);
+assert.strictEqual(child.status,0);assert.strictEqual(child.stdout.toString().trim(),renamed);assert.strictEqual(child.stderr.toString(),'');
+fs.rmdirSync(renamed);
+assert.strictEqual(process.cwd(),renamed);
+process.chdir(parent);const uncached=path.join(parent,'uncached');fs.mkdirSync(uncached);process.chdir(uncached);fs.rmdirSync(uncached);
+assert.throws(()=>process.cwd(),{code:'ENOENT',syscall:'uv_cwd',errno:-2});
+child=cp.spawnSync(process.execPath,['-e','0']);assert.strictEqual(child.status,0);assert.strictEqual(child.stderr.length,0);
+child=cp.spawnSync(process.execPath,['-r',preload,'-e','console.log(globalThis.fromPreload)']);
+assert.strictEqual(child.status,0);assert.strictEqual(child.stdout.toString(),'42\n');assert.strictEqual(child.stderr.toString(),'');
+child=cp.spawnSync(process.execPath,['-e',read],{cwd:'..'});
+assert.strictEqual(child.status,0);assert.strictEqual(child.stdout.toString().trim(),parent);
+const asyncChild=cp.spawn(process.execPath,['-e','0']);
+asyncChild.on('error',error=>{throw error});asyncChild.on('exit',(status,signal)=>{assert.strictEqual(status,0);assert.strictEqual(signal,null);console.log('directory-identity')});
+"#;
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("preload.cjs"),
+            "globalThis.fromPreload=42",
+        )
+        .unwrap();
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let observation =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                .unwrap();
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert_eq!(observation.stdout, b"directory-identity\n");
+    }
+}
+
+#[test]
+fn coded_argument_errors_preserve_prototype_shape_and_constant_code_rendering() {
+    const SOURCE: &str = r#"
+const {getEventListeners}=require('events'),assert=require('assert');
+let first,second;try{getEventListeners('INVALID_EMITTER')}catch(error){first=error}try{getEventListeners(42)}catch(error){second=error}
+assert(first instanceof TypeError);assert.strictEqual(first.constructor,TypeError);
+const prototype=Object.getPrototypeOf(first),symbol=Object.getOwnPropertySymbols(prototype)[0];
+const result=[first.name,first.code,first.message,String(first),Reflect.ownKeys(first),
+ prototype===Object.getPrototypeOf(second),prototype===TypeError.prototype,
+ Reflect.ownKeys(prototype).map(key=>typeof key==='symbol'?key.description:key),
+ prototype[symbol],first.toString.name,first.toString.length,Object.hasOwn(first.toString,'prototype')];
+for(const name of ['code','message']){const d=Object.getOwnPropertyDescriptor(first,name);result.push([d.writable,d.enumerable,d.configurable])}
+first.code='changed';result.push(String(first));
+result.push(first.toString.call({name:'Custom',message:'marker',get code(){throw 'code must be captured'}}));
+const marker={};assert.throws(()=>first.toString.call({get name(){throw marker}}),error=>error===marker);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}

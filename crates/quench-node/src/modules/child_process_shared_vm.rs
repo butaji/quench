@@ -390,8 +390,8 @@ pub(crate) fn spawn_child(
         super::child_process_env_shared_vm::configure(context, &mut command, env)?;
     }
 
-    command.current_dir(child_cwd(context, cwd.as_deref()));
-    let configured = super::child_process_stdio_shared_vm::configure(&mut command, &stdio);
+    let configured = child_cwd(context, &mut command, cwd.as_deref())
+        .and_then(|_| super::child_process_stdio_shared_vm::configure(&mut command, &stdio));
     let start = match configured
         .and_then(|configured| command.spawn().map(|child| (child, configured)))
     {
@@ -1134,8 +1134,7 @@ pub(crate) fn spawn_sync(
         super::child_process_env_shared_vm::configure(context, &mut process, env)?;
     }
 
-    process.current_dir(child_cwd(context, cwd.as_deref()));
-    let output = match process.spawn() {
+    let output = match child_cwd(context, &mut process, cwd.as_deref()).and_then(|_| process.spawn()) {
         Ok(child) => {
             let pid = child.id();
             #[cfg(unix)]
@@ -1285,13 +1284,11 @@ fn string_array(context: &mut NativeContext<'_, NodeHost>, array: RootId) -> Res
 /// guest argument/environment hooks finish. Keep kernel symlink resolution.
 fn child_cwd(
     context: &mut NativeContext<'_, NodeHost>,
+    command: &mut Command,
     requested: Option<&str>,
-) -> std::path::PathBuf {
-    let base = context.host_mut().shared_state().borrow().cwd.path();
-    match requested {
-        Some(path) => base.join(path),
-        None => base,
-    }
+) -> std::io::Result<()> {
+    let cwd = context.host_mut().shared_state().borrow().cwd.clone();
+    cwd.configure_child_command(command, requested)
 }
 
 fn property_string(context: &mut NativeContext<'_, NodeHost>, object: RootId, name: &str) -> Result<Option<String>, RootedError> {

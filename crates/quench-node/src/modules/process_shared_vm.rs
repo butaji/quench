@@ -653,15 +653,24 @@ pub(crate) fn cwd(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let cwd = context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .cwd
-        .path()
-        .to_string_lossy()
-        .into_owned();
-    Ok(context.string_rooted(&cwd))
+    let cwd = context.host_mut().shared_state().borrow().cwd.clone();
+    match cwd.query_path() {
+        Ok(path) => Ok(context.string_rooted(&path.to_string_lossy())),
+        Err(error) => {
+            let (code, errno) = super::fs_error_codes::code_for(&error);
+            let message = if code == "ENOENT" {
+                "ENOENT: process.cwd failed with error no such file or directory, the current working directory was likely removed without changing the working directory, uv_cwd".to_owned()
+            } else {
+                format!("{code}: {}, uv_cwd", super::fs_error_codes::strerror(code))
+            };
+            let error = context.error_rooted(&message)?;
+            set_text(context, error, "code", code)?;
+            set_text(context, error, "syscall", "uv_cwd")?;
+            let errno = context.number(errno as f64);
+            install(context, error, "errno", errno)?;
+            Err(context.throw(error))
+        }
+    }
 }
 
 pub(crate) fn getuid(

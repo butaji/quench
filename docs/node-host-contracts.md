@@ -1,0 +1,86 @@
+# Native Node host contracts
+
+Node API policy belongs to `quench-node`; JavaScript coercions, property access,
+exceptions, roots and jobs use the shared VM. Existing class/function bridges
+supply observable syntax and delegate policy to native operations.
+
+## Event listeners
+
+EventEmitter dispatch and listener inspection use the same `_events` records.
+An emission retains the selected event store across error-monitor callbacks.
+Monitors dispatch through the public `emit` hook. Borrowed `emit` calls do not
+require a `rawListeners` method or initialize an absent event store. Domain
+forwarding preserves truthy primitive errors and decorates object errors.
+The existing stream-owned unhandled-error bridge remains in use.
+
+`getEventListeners` delegates to a callable public `listeners` hook, including
+its repeated getter access. EventTarget inspection returns a fresh projection
+of its records. Abort listeners use their private signal state; `onabort`
+occupies an ordered wrapper whose handler can change without replacing the
+wrapper. Node's observable listener count changes through registration,
+removal and handler activation transitions independently of wrapper membership.
+
+`addAbortListener` accepts Node's structural AbortSignal validation and returns
+a null-prototype disposable. An already-aborted signal queues a job with no
+arguments; disposal does not cancel that job. Live subscriptions use immutable
+options with `once` and propagation resistance. Disposal looks up the public
+removal hook each time. Dispatch snapshots registrations, skips removals made
+during the dispatch, and permits propagation-resistant listeners after an
+ordinary listener stops immediate propagation.
+
+These contracts cover native abort subscriptions. General EventTarget
+registration, weak-listener ownership and non-abort signal events still use
+existing compatibility paths and require their own oracle evidence.
+
+Native argument-validation helpers share an `ERR_INVALID_ARG_TYPE` prototype.
+Its constructor accessor preserves the captured TypeError identity; code and
+message retain Node's property order and attributes. Its `toString` captures
+the error code while reading/coercing the receiver's name and message. The
+private prototype brand is owned by these native errors; identity with every
+constructor/brand exported by upstream `internal/errors` is not established.
+
+## Working directories and preloads
+
+A successful `process.chdir` replaces the logical directory owner and clears
+the successful `process.cwd` observation cache. A later successful cwd query
+is cached until another chdir, matching Node even if the directory is removed
+after that observation. An uncached query of a removed directory reports the
+Node `ENOENT`/`uv_cwd` fields and diagnostic.
+
+On Linux, the directory owner retains an `O_PATH | O_DIRECTORY` descriptor with
+close-on-exec ownership. Child launch captures that owner after guest options
+and environment hooks. Default launches inherit the retained directory;
+relative cwd strings resolve there through kernel directory syscalls, including
+after rename or unlink. Absolute cwd strings resolve directly. Only
+directory syscalls run in the pre-exec callback. The descriptor remains owned
+until launch completes. Live pathname queries use procfs when available, with
+a cached-path fallback; other platforms retain the existing pathname path.
+
+Eval/stdin module setup uses Node's `tryGetCwd` policy, falling back to the
+executable directory when cwd cannot be queried. Absolute entry and preload
+paths do not require a readable cwd pathname. `-r`, `--require`, and
+`--require=...` preloads execute in order through the ordinary CommonJS loader
+and cache before the entry. A preload is separate from the main entry.
+
+## Verification
+
+Use the selected pinned Node oracle on `PATH` and build both sibling entry
+binaries before testing child launches:
+
+```sh
+cargo build --profile iteration -p quench-node -p quench-node-test \
+  --bin quench-node --bin run-parallel -j2
+cargo test --profile iteration -p quench-node-test --test child_entry -j2
+target/iteration/run-parallel --profile framework-core
+```
+
+Focused upstream checks use the selected pinned fixture directory:
+
+```sh
+target/iteration/run-parallel --all --parallel-dir "$NODE_PARALLEL_DIR" \
+  --filter test-event --jobs 4 --timeout-secs 30 --results work/events.json
+```
+
+Complete sweeps use frozen sibling binaries and retain every case outcome,
+binary/source revisions, inventory identity, deadlines and resource counters.
+Their results belong in `evidence/`; work status belongs in Linear.
