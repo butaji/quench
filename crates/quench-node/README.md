@@ -13,3 +13,14 @@
   another JavaScript engine.
 - Every script follows the same host path and preserves Node-observable values,
   ordering, errors, exit status, and I/O.
+
+## Event listener inspection
+
+`events.listenerCount()` delegates callable public methods with the original
+receiver, then recognizes EventTargets through Node's public constructor marker
+`Symbol.for('nodejs.event_target')`. Native inspection reads the canonical
+EventTarget listener records or the AbortSignal listener store; it does not
+maintain a second count. Event names retain their key types during inspection.
+The target's constructor and delegated-method getters remain observable.
+AbortSignal inherits EventTarget's constructor and prototype chains. General
+EventTarget capture/options handling remains incomplete.

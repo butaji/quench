@@ -55,6 +55,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) module_cache: std::collections::HashMap<String, quench_runtime::RootId>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
+    pub(crate) event_targets_api: Option<quench_runtime::RootId>,
     /// Immutable startup arguments used to build guest process.argv.
     pub(crate) process_argv: crate::modules::process_state::ProcessArgs,
     pub(crate) process_control: crate::modules::process_state::ProcessControl,
@@ -145,6 +146,7 @@ impl SharedNodeState {
             cwd,
             module_cache: std::collections::HashMap::new(),
             primordials_module: None,
+            event_targets_api: None,
             process_argv,
             process_control,
             process_signals: crate::modules::process_signals_state::SignalState::default(),

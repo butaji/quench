@@ -146,6 +146,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netIsIPv6" (1) => crate::modules::net_shared_vm::is_ipv6,
         method "netConnect" (3) => crate::modules::net_shared_vm::connect_operation,
         method "streamPipePlan" (3) => crate::modules::stream_pipe_shared_vm::plan,
+        method "eventsListenerCount" (2) => crate::modules::events_shared_vm::listener_count,
         method "streamPipeEnd" (0) => crate::modules::stream_pipe_shared_vm::end,
         method "streamPipeClose" (0) => crate::modules::stream_pipe_shared_vm::close,
         method "streamPipeShouldEnd" (2) => crate::modules::stream_shared_vm::pipe_should_end,
@@ -488,14 +489,10 @@ impl quench_runtime::Host for NodeHost {
             crate::polyfills::shared_vm::ABORT,
             "node:bootstrap/shared-vm/abort.js",
         )?;
-        context.release_root(abort);
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_abort_polyfill");
-        let event_target = context.evaluate_script_rooted(
-            crate::polyfills::shared_vm::EVENT_TARGET,
-            "node:bootstrap/shared-vm/event-target.js",
-        )?;
-        context.release_root(event_target);
+        crate::modules::events_shared_vm::initialize_targets(context, abort)?;
+        context.release_root(abort);
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_target_polyfill");
         let event_emitter = context.evaluate_script_rooted(
