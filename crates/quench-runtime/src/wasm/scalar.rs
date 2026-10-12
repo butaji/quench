@@ -260,6 +260,18 @@ impl WasmValue {
         }
     }
 
+    /// The scalar of type `ty` with bits `bits`, as `bits` reads it back
+    /// (the low word for 32-bit types).
+    pub(crate) fn from_bits(ty: WasmType, bits: u64) -> Self {
+        match ty {
+            WasmType::I32 => Self::I32(bits as u32 as i32),
+            WasmType::F32 => Self::F32(bits as u32),
+            WasmType::I64 => Self::I64(bits as i64),
+            WasmType::F64 => Self::F64(bits),
+            _ => unreachable!("numeric scalar type"),
+        }
+    }
+
     pub(crate) fn bits(self) -> Option<ScalarBits> {
         Some(match self {
             Self::I32(value) => ScalarBits::Bits32(value as u32),

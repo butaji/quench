@@ -1,4 +1,6 @@
+mod compiled;
 mod wasm;
+pub use compiled::ExecutionMode;
 mod wasm_exception;
 mod wasm_gc;
 mod wasm_host;
@@ -59,7 +61,9 @@ mod construction;
 mod data_view;
 mod date;
 mod dispatch;
+mod dispatch_fast;
 mod dispatch_frame;
+mod dispatch_wasm;
 mod dynamic_strings;
 mod embedding;
 mod environment;
@@ -189,9 +193,45 @@ pub(super) struct Frame {
     fixed_this: bool,
 }
 impl Frame {
-    fn prepare_registers(&mut self, register_count: usize) {
-        self.registers.resize(register_count, Value::UNDEFINED);
-        self.registers.fill(Value::UNDEFINED);
+    fn empty(program: ProgramId, with_base: usize) -> Self {
+        Self {
+            context: CallContext::Internal,
+            reflected_parameters: 0,
+            original_arguments: vec![],
+            program,
+            function: 0,
+            pc: 0,
+            binding_site_pc: None,
+            env: Value::NULL,
+            this: Value::UNDEFINED,
+            locals: vec![],
+            dynamic_bindings: vec![],
+            captured: false,
+            registers: vec![],
+            active_iterators: vec![],
+            with_objects: Vec::new(),
+            with_base,
+            fixed_this: false,
+        }
+    }
+
+    /// Arguments for a body that keeps its parameters in registers.
+    #[inline(always)]
+    fn bind_register_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
+        if let Some(base) = function.parameter_registers {
+            for offset in 0..function.params {
+                self.registers[usize::from(base + offset)] = args
+                    .get(usize::from(offset))
+                    .copied()
+                    .unwrap_or(Value::UNDEFINED);
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn prepare_registers(&mut self, count: u16, initial: crate::bytecode::InitialRegister) {
+        self.registers.clear();
+        self.registers.resize(usize::from(count), initial.value());
     }
 
     /// Sizes the register file for `function`. Compiled code writes every register before
@@ -199,14 +239,17 @@ impl Frame {
     /// matter only to a collector that scans the whole file. A function with a liveness root
     /// map is scanned through it, so only functions without one, and generator or async
     /// activations whose suspended registers are scanned whole, are cleared.
+    /// A body whose registers start at a value other than `undefined` (Wasm's i32 zero) relies
+    /// on that fill, so it is always cleared.
     #[inline(always)]
     fn prepare_registers_for(&mut self, function: &crate::bytecode::Function) {
         let register_count = usize::from(function.registers);
         if function.register_root_offset == crate::bytecode::NO_REGISTER_ROOT_MAP
             || function.is_generator
             || function.is_async
+            || function.initial_register != crate::bytecode::InitialRegister::Undefined
         {
-            self.prepare_registers(register_count);
+            self.prepare_registers(function.registers, function.initial_register);
         } else {
             self.registers.resize(register_count, Value::UNDEFINED);
             if let Some(register) = function.undefined_register {
@@ -747,6 +790,8 @@ pub(crate) struct Vm<H> {
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
     frame_pool: Vec<Box<Frame>>,
+    /// Whether Wasm functions with a compiled denotation run as native code.
+    execution_mode: ExecutionMode,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// Set by the first `with` entry and never cleared: `Native::WithEnter` is
@@ -1340,9 +1385,13 @@ impl<H: Host> Vm<H> {
         crate::report_allocator_memory(phase);
     }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        self.initialize_shared(&Rc::new(program.clone()))
+        self.initialize_shared(&Rc::new(program.clone()), builtins::RealmScope::Complete)
     }
-    fn initialize_shared(&mut self, program: &Rc<ResidualProgram>) -> Result<(), JsError> {
+    fn initialize_shared(
+        &mut self,
+        program: &Rc<ResidualProgram>,
+        scope: builtins::RealmScope,
+    ) -> Result<(), JsError> {
         self.specialized = program.specialized;
         self.realm.intrinsics.arguments_objects.clear();
         self.heap.reset();
@@ -1421,7 +1470,7 @@ impl<H: Host> Vm<H> {
         self.materialize_program_constants(ProgramId::MAIN, program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("program_constants");
-        self.install_builtins(program)?;
+        self.install_builtins(program, scope)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins");
         self.initialize_host(program)?;
@@ -1432,7 +1481,7 @@ impl<H: Host> Vm<H> {
     fn materialize_constant(&mut self, constant: &Constant) -> Value {
         match constant {
             Constant::Number(v) => Value::number(*v),
-            Constant::WasmBits64(bits) => self.heap.alloc(Cell::WasmBits64(*bits)),
+            Constant::WasmBits64(bits) => self.encode_bits64(*bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
             Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
             Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),

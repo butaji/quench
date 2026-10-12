@@ -66,6 +66,7 @@ impl<H: Host> Vm<H> {
             frames: vec![],
             native_stack_frames: vec![],
             frame_pool: vec![],
+            execution_mode: ExecutionMode::default(),
             active_call_roots: vec![],
             with_stack: vec![],
             with_scope_entered: false,
