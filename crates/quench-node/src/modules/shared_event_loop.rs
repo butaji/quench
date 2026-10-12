@@ -1,5 +1,7 @@
 //! Scheduler queues and callbacks owned by the shared Node host.
 
+use crate::host::NodeHost;
+use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
@@ -13,6 +15,32 @@ pub struct SharedCallback {
     pub callback: quench_runtime::RootId,
     pub receiver: quench_runtime::RootId,
     pub args: Vec<quench_runtime::RootId>,
+}
+
+/// Retain a native-context callback into Node's canonical next-tick queue.
+pub(crate) fn queue_next_tick(
+    context: &mut NativeContext<'_, NodeHost>,
+    callback: RootId,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<(), RootedError> {
+    let callback = context.retain(callback)?;
+    let receiver = context.retain(receiver)?;
+    let args = args
+        .iter()
+        .map(|root| context.retain(*root))
+        .collect::<Result<Vec<_>, _>>()?;
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .scheduler
+        .queue_shared_next_tick(SharedCallback {
+            callback,
+            receiver,
+            args,
+        });
+    Ok(())
 }
 
 struct SharedCallbacks {

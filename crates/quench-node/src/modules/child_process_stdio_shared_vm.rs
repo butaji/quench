@@ -11,7 +11,21 @@ pub(crate) enum Specification {
     Ignore,
     Inherit,
     Descriptor(i32),
+    #[cfg(unix)]
+    Stream {
+        fd: i32,
+        owner: u64,
+        channel: Channel,
+    },
     Ipc,
+}
+
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+pub(crate) enum Channel {
+    Stdin,
+    Stdout,
+    Stderr,
 }
 
 impl Specification {
@@ -25,6 +39,8 @@ impl Specification {
             Self::Ignore => Ok(Stdio::null()),
             Self::Inherit => Ok(Stdio::inherit()),
             Self::Descriptor(fd) => descriptor(fd),
+            #[cfg(unix)]
+            Self::Stream { fd, .. } => descriptor(fd),
             Self::Ipc => Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "IPC requires a duplex channel",
@@ -159,9 +175,73 @@ fn channel(
             return numeric_descriptor(context, fd);
         }
     }
+    #[cfg(unix)]
+    if let Some(specification) = inherited_stream_descriptor(context, value)? {
+        return Ok(specification);
+    }
     let bytes =
         context.has_builtin_brand_rooted(value, quench_runtime::BuiltinBrand::ArrayBufferView)?;
     Err(invalid(context, value, bytes)?)
+}
+
+/// Registered guest streams identify their owned native pipe by identity.
+/// Public `fd` projection is handled first, matching Node's stdio validation.
+#[cfg(unix)]
+fn inherited_stream_descriptor(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<Option<Specification>, RootedError> {
+    let state = context.host_mut().shared_state();
+    let streams = state.borrow().child_processes.iter()
+        .flat_map(|(owner, process)| [
+            (process.stdin_stream, process.stdin.descriptor(), *owner, Channel::Stdin),
+            (process.stdout, process.stdout_pipe.descriptor(), *owner, Channel::Stdout),
+            (process.stderr, process.stderr_pipe.descriptor(), *owner, Channel::Stderr),
+        ])
+        .filter_map(|(stream, fd, owner, channel)| stream.map(|stream| (stream, fd, owner, channel)))
+        .collect::<Vec<_>>();
+    for (stream, fd, owner, channel) in streams {
+        if context.strict_equal_rooted(value, stream)? {
+            return Ok(fd.map(|fd| Specification::Stream { fd, owner, channel }));
+        }
+    }
+    Ok(None)
+}
+
+pub(crate) fn activate_inherited_streams(
+    context: &mut NativeContext<'_, NodeHost>,
+    specifications: &[Specification],
+) -> Result<(), RootedError> {
+    #[cfg(unix)]
+    for specification in specifications {
+        let Specification::Stream { owner, channel, .. } = specification else {
+            continue;
+        };
+        let state = context.host_mut().shared_state();
+        let stream = {
+            let mut state = state.borrow_mut();
+            state.child_processes.get_mut(owner).and_then(|process| match channel {
+                Channel::Stdin => None,
+                Channel::Stdout => { process.stdout_pipe.stop(); process.stdout },
+                Channel::Stderr => { process.stderr_pipe.stop(); process.stderr },
+            })
+        };
+        if let Some(stream) = stream {
+            let key = context.string_rooted("pause");
+            let pause = context.get_property_rooted(stream, key)?;
+            context.call_rooted(pause, stream, &[])?;
+            if let Some(process) = state.borrow_mut().child_processes.get_mut(owner) {
+                match channel {
+                    Channel::Stdin => {},
+                    Channel::Stdout => process.stdout_pipe.inherit(),
+                    Channel::Stderr => process.stderr_pipe.inherit(),
+                }
+            };
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (context, specifications);
+    Ok(())
 }
 
 fn numeric_descriptor(
@@ -210,10 +290,16 @@ fn invalid(
 
 use super::child_process_ipc_shared_vm::IpcChannel;
 
+pub(crate) struct Configured {
+    pub(crate) ipc: Option<IpcChannel>,
+    #[cfg(unix)]
+    pub(crate) pipes: [Option<std::os::fd::OwnedFd>; STANDARD_CHANNELS],
+}
+
 pub(crate) fn configure(
     command: &mut std::process::Command,
     specifications: &[Specification],
-) -> std::io::Result<Option<IpcChannel>> {
+) -> std::io::Result<Configured> {
     let ipc_index = specifications
         .iter()
         .position(|value| matches!(value, Specification::Ipc));
@@ -221,6 +307,8 @@ pub(crate) fn configure(
         Some(index) => Some(ipc_channel(command, index, specifications.len())?),
         None => None,
     };
+    #[cfg(unix)]
+    let mut pipes = std::array::from_fn(|_| None);
     for (index, specification) in specifications
         .iter()
         .copied()
@@ -230,6 +318,15 @@ pub(crate) fn configure(
         if matches!(specification, Specification::Ipc) {
             continue;
         }
+        #[cfg(unix)]
+        let descriptor = if matches!(specification, Specification::Pipe) {
+            let (parent, child) = spawn_socket_pair()?;
+            pipes[index] = Some(parent.into());
+            Stdio::from(std::os::fd::OwnedFd::from(child))
+        } else {
+            specification.os()?
+        };
+        #[cfg(not(unix))]
         let descriptor = specification.os()?;
         match index {
             0 => {
@@ -252,19 +349,19 @@ pub(crate) fn configure(
         command.env("NODE_CHANNEL_FD", index.to_string());
         command.env("NODE_CHANNEL_SERIALIZATION_MODE", "json");
     }
-    Ok(channel)
+    Ok(Configured {
+        ipc: channel,
+        #[cfg(unix)]
+        pipes,
+    })
 }
 
 #[cfg(unix)]
-fn ipc_channel(
-    command: &mut std::process::Command,
-    index: usize,
-    count: usize,
-) -> std::io::Result<IpcChannel> {
-    use std::os::{
-        fd::{AsRawFd, FromRawFd, OwnedFd},
-        unix::{net::UnixStream, process::CommandExt},
-    };
+fn spawn_socket_pair() -> std::io::Result<(
+    std::os::unix::net::UnixStream,
+    std::os::unix::net::UnixStream,
+)> {
+    use std::os::{fd::AsRawFd, unix::net::UnixStream};
     let (parent, child) = UnixStream::pair()?;
     // Match libuv's spawned pipe endpoints, including the Linux kernel's
     // doubling of these requested socket buffer capacities.
@@ -285,6 +382,20 @@ fn ipc_channel(
             }
         }
     }
+    Ok((parent, child))
+}
+
+#[cfg(unix)]
+fn ipc_channel(
+    command: &mut std::process::Command,
+    index: usize,
+    count: usize,
+) -> std::io::Result<IpcChannel> {
+    use std::os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd},
+        unix::process::CommandExt,
+    };
+    let (parent, child) = spawn_socket_pair()?;
     parent.set_nonblocking(true)?;
     if index < STANDARD_CHANNELS {
         let descriptor: OwnedFd = child.into();
