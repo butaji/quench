@@ -1219,6 +1219,11 @@ impl Object {
     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
         self.extras_mut().deferred_module = module;
     }
+    /// Whether the object owns no heap allocation of its own, so discarding it needs no drop.
+    pub(crate) const fn owns_no_allocation(&self) -> bool {
+        self.extras.is_none()
+    }
+
     pub(crate) fn private_names(&self) -> &[PrivateBrand] {
         self.extras
             .as_deref()

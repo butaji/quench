@@ -7,6 +7,17 @@ impl Cell {
             _ => 0,
         }
     }
+
+    /// Whether the cell refers to other cells weakly, so collection must prune it.
+    pub(super) const fn holds_weak_references(&self) -> bool {
+        matches!(
+            self,
+            Self::WeakMap { .. }
+                | Self::WeakSet { .. }
+                | Self::WeakRef { .. }
+                | Self::FinalizationRegistry { .. }
+        )
+    }
 }
 
 impl Heap {
