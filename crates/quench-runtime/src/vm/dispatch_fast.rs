@@ -89,6 +89,24 @@ pub(super) struct LaneView {
     /// from the records, which only the lane reads.
     entries: Box<[bool]>,
     memory_register: Option<u16>,
+    /// How a lane call activates the function without a frame; `None`
+    /// when its activation needs a frame (locals outside registers).
+    activation: Option<ActivationShape>,
+}
+
+/// Registers a lane call writes as one fixed block when the window fits it:
+/// slots past the window lie in spare stack capacity, so the block needs no
+/// loop over the window's size.
+const ACTIVATION_FILL_BLOCK: usize = 8;
+
+/// A function's register window as a lane activation starts it: every
+/// register its initial value, then the parameters at their base.
+#[derive(Clone, Copy)]
+struct ActivationShape {
+    registers: u16,
+    parameters: u16,
+    params: u16,
+    initial: Value,
 }
 
 impl LaneView {
@@ -160,6 +178,32 @@ struct Carried {
     acc: Value,
 }
 
+/// A Wasm activation a lane call made without a VM frame. Its registers are
+/// a window of the lane stack; it returns to the record after `call` in its
+/// caller, whose registers, view and memory it keeps for the return.
+#[derive(Clone, Copy)]
+struct Activation {
+    function: u32,
+    call: Ip,
+    caller_base: Ip,
+    caller_registers: Registers,
+    caller_memory: MemoryView,
+    /// The lane-stack index of this activation's first register.
+    window: usize,
+}
+
+/// Wasm activations a lane runs without VM frames, innermost last, over the
+/// bottom VM frame of the lane run. They exist only while the lane runs:
+/// every exit makes them VM frames with pending calls, exactly as frame
+/// pushes would have, so the general loop, traps and collection see the
+/// usual frame stack. The register storage grows only between activations,
+/// so register windows stay put while any exists.
+#[derive(Default)]
+pub(super) struct LaneStack {
+    values: Vec<Value>,
+    activations: Vec<Activation>,
+}
+
 /// Lane state that handlers read rarely; the hot state travels in handler
 /// arguments so it stays in machine registers across dispatches.
 struct LaneContext<H: Host> {
@@ -174,6 +218,9 @@ struct LaneContext<H: Host> {
     /// The general loop's pending inline calls, which lane calls extend and
     /// lane returns complete exactly as the general loop would.
     pending: *mut Vec<PendingGeneralCall>,
+    /// The program's lane views by function, which a call reads when its
+    /// callee's view is derived.
+    views: *const [std::cell::OnceCell<LaneView>],
     /// Lane calls and returns manage activations: the interpreter runs a
     /// Wasm program in a loop that allows inline calls. A compiled callee
     /// runs from the general path, which raises its traps.
@@ -1168,6 +1215,56 @@ fn lane_enter_frame<H: Host>(cx: *mut LaneContext<H>, frame: usize, pc: usize) -
     next!(cx, r, ip, view)
 }
 
+impl<H: Host> Vm<H> {
+    /// Make the lane's activations VM frames, innermost last, each with the
+    /// pending call its push would have recorded; the lane continues in the
+    /// innermost one. The bottom caller is the lane run's VM frame.
+    fn materialize_lane_activations(&mut self, cx: *mut LaneContext<H>) {
+        let activations = std::mem::take(&mut self.lane_stack.activations);
+        if activations.is_empty() {
+            self.lane_stack.activations = activations;
+            return;
+        }
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let pending = unsafe { &mut *(*cx).pending };
+        let mut caller = unsafe { (*cx).frame };
+        for activation in &activations {
+            // SAFETY: a call record lies in its caller's view.
+            let call_pc = unsafe { activation.call.offset_from(activation.caller_base) } as usize;
+            let destination = unsafe { (*activation.call).a };
+            self.frames[caller].pc = call_pc + 1;
+            let count = usize::from(code.functions[activation.function as usize].registers);
+            let window = activation.window;
+            let registers = std::mem::take(&mut self.lane_stack.values);
+            self.push_wasm_frame_with_registers(
+                code,
+                caller,
+                activation.function,
+                &registers[window..window + count],
+            );
+            self.lane_stack.values = registers;
+            pending.push(PendingGeneralCall {
+                caller,
+                caller_cursor: None,
+                call_pc: call_pc as u32,
+                destination,
+                construct_this: None,
+                stack_guard: None,
+            });
+            caller += 1;
+        }
+        self.lane_stack.values.clear();
+        let mut activations = activations;
+        activations.clear();
+        self.lane_stack.activations = activations;
+        unsafe {
+            (*cx).frame = caller;
+            (*cx).registers = Registers(self.frames[caller].registers.as_mut_ptr());
+        }
+    }
+}
+
 lane_handler! {
     /// A Wasm call to a function of the same program, pushed as the general
     /// loop's inline call would be.
@@ -1176,54 +1273,184 @@ lane_handler! {
             return exit(ip);
         }
         let vm = unsafe { vm(cx) };
-        let caller = unsafe { (*cx).frame };
-        // SAFETY: `ip` is a record of the active view.
-        let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
-        let window = crate::bytecode::RegisterWindow {
-            base: ImmediateLayout::call_window_base(i.imm()),
-            count: ImmediateLayout::argument_count(i.imm()),
-        };
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        if vm.push_wasm_frame(code, caller, u32::from(i.b), window).is_err() {
-            return exit(ip);
+        // SAFETY: the program's views outlive the lane run.
+        let views = unsafe { &*(*cx).views };
+        let stack = &mut vm.lane_stack;
+        if let Some(lane_view) = views.get(usize::from(i.b)).and_then(std::cell::OnceCell::get)
+            && let Some(shape) = lane_view.activation
+            && stack.activations.len() < stack.activations.capacity()
+            && vm.frames.len() + stack.activations.len()
+                < super::dispatch_frame::WASM_ACTIVATION_LIMIT
+            && stack.values.capacity() - stack.values.len()
+                >= usize::from(shape.registers).max(ACTIVATION_FILL_BLOCK)
+        {
+            let window = stack.values.len();
+            let count = usize::from(shape.registers);
+            let arguments = ImmediateLayout::call_window_base(i.imm());
+            let passed = ImmediateLayout::argument_count(i.imm()).min(shape.params);
+            // SAFETY: capacity holds the window; each slot is written before
+            // the length covers it, and no activation's window moves.
+            let callee_registers = unsafe {
+                let registers = stack.values.as_mut_ptr().add(window);
+                if count <= ACTIVATION_FILL_BLOCK {
+                    registers
+                        .cast::<[Value; ACTIVATION_FILL_BLOCK]>()
+                        .write_unaligned([shape.initial; ACTIVATION_FILL_BLOCK]);
+                } else {
+                    let mut index = 0;
+                    while index < count {
+                        registers.add(index).write(shape.initial);
+                        index += 1;
+                    }
+                }
+                let mut offset = 0;
+                while offset < passed {
+                    registers
+                        .add(usize::from(shape.parameters + offset))
+                        .write(r.get(arguments + offset));
+                    offset += 1;
+                }
+                stack.values.set_len(window + count);
+                Registers(registers)
+            };
+            // SAFETY: capacity holds the activation.
+            unsafe {
+                let length = stack.activations.len();
+                stack.activations.as_mut_ptr().add(length).write(Activation {
+                    function: u32::from(i.b),
+                    call: ip,
+                    caller_base: (*cx).base,
+                    caller_registers: r,
+                    caller_memory: view.memory,
+                    window,
+                });
+                stack.activations.set_len(length + 1);
+            }
+            // A fresh activation's memory register holds no memory until
+            // the function's instance binding loads it.
+            let base = lane_view.records();
+            unsafe {
+                (*cx).registers = callee_registers;
+                (*cx).base = base;
+                (*cx).memory = MemoryView::NONE;
+            }
+            let view = Carried {
+                memory: MemoryView::NONE,
+                integers: crate::value::IntegerEncoding::TAG,
+                acc: Value::UNDEFINED,
+            };
+            next!(cx, callee_registers, base, view)
         }
-        vm.frames[caller].pc = call_pc + 1;
-        unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
-            caller,
-            caller_cursor: None,
-            call_pc: call_pc as u32,
-            destination: i.a,
-            construct_this: None,
-            stack_guard: None,
-        });
-        lane_enter_frame(cx, caller + 1, 0)
+        lane_call_frame::<H>(ip)
     }
+}
+
+/// A lane call without room for an activation, or to a function whose lane
+/// view is not yet derived: the activations
+/// become frames and the call pushes one, as the general loop would; the
+/// emptied stack then grows so that later calls fit. Out of line so the
+/// activation path saves no registers.
+#[cold]
+#[inline(never)]
+fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
+    let cx = lane_context::<H>();
+    // SAFETY: called only while a lane runs, from its call handler.
+    let i = unsafe { &*ip };
+    let vm = unsafe { vm(cx) };
+    let code = unsafe { &*(*cx).code };
+    let callee = u32::from(i.b);
+    let count = usize::from(code.functions[usize::from(i.b)].registers);
+    let window = count.max(ACTIVATION_FILL_BLOCK);
+    let stack = &vm.lane_stack;
+    let values_full = stack.values.capacity() - stack.values.len() < window;
+    let activations_full = stack.activations.len() == stack.activations.capacity();
+    vm.materialize_lane_activations(cx);
+    // Only a lack of room grows the stack, so its size follows the deepest
+    // window and activation count a lane has actually needed.
+    if values_full {
+        let capacity = vm.lane_stack.values.capacity();
+        vm.lane_stack.values.reserve((2 * capacity).max(window));
+    }
+    if activations_full {
+        let capacity = vm.lane_stack.activations.capacity();
+        vm.lane_stack.activations.reserve((2 * capacity).max(1));
+    }
+    let caller = unsafe { (*cx).frame };
+    // SAFETY: `ip` is a record of the active view.
+    let call_pc = unsafe { ip.offset_from((*cx).base) } as usize;
+    let window = crate::bytecode::RegisterWindow {
+        base: ImmediateLayout::call_window_base(i.imm()),
+        count: ImmediateLayout::argument_count(i.imm()),
+    };
+    if vm.push_wasm_frame(code, caller, callee, window).is_err() {
+        return exit(ip);
+    }
+    vm.frames[caller].pc = call_pc + 1;
+    unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
+        caller,
+        caller_cursor: None,
+        call_pc: call_pc as u32,
+        destination: i.a,
+        construct_this: None,
+        stack_guard: None,
+    });
+    lane_enter_frame(cx, caller + 1, 0)
 }
 
 lane_handler! {
     /// Return from an inline call to its caller; returning from the loop's
     /// entry frame belongs to the general loop.
     fn lane_return<>(cx, r, ip, i, view) {
-        let pending = unsafe { &mut *(*cx).pending };
-        // An in-loop `new` substitutes its receiver for a non-object result;
-        // the general path owns that [[Construct]] step.
-        if !unsafe { (*cx).inline_calls }
-            || pending.last().is_none_or(|call| call.construct_this.is_some())
-        {
-            return exit(ip);
-        }
-        let value = r.get(i.a);
-        let Some(call) = pending.pop() else {
-            return exit(ip);
-        };
         let vm = unsafe { vm(cx) };
-        vm.retire_wasm_frame();
-        vm.write(call.caller, call.destination, value);
-        drop(call.stack_guard);
-        let pc = vm.frames[call.caller].pc;
-        lane_enter_frame(cx, call.caller, pc)
+        if let Some(activation) = vm.lane_stack.activations.pop() {
+            // SAFETY: the call record belongs to the caller's live view.
+            let destination = unsafe { (*activation.call).a };
+            activation.caller_registers.set(destination, r.get(i.a));
+            vm.lane_stack.values.truncate(activation.window);
+            unsafe {
+                (*cx).registers = activation.caller_registers;
+                (*cx).base = activation.caller_base;
+                (*cx).memory = activation.caller_memory;
+            }
+            let view = Carried {
+                memory: activation.caller_memory,
+                integers: crate::value::IntegerEncoding::TAG,
+                acc: Value::UNDEFINED,
+            };
+            next!(cx, activation.caller_registers, following(activation.call), view)
+        }
+        lane_return_frame::<H>(r, ip)
     }
+}
+
+/// Return from a frame the general loop or a frame push made. Out of line
+/// so the activation return saves no registers.
+#[cold]
+#[inline(never)]
+fn lane_return_frame<H: Host>(r: Registers, ip: Ip) -> Ip {
+    let cx = lane_context::<H>();
+    // SAFETY: called only while a lane runs, from its return handler.
+    let i = unsafe { &*ip };
+    let vm = unsafe { vm(cx) };
+    let pending = unsafe { &mut *(*cx).pending };
+    // An in-loop `new` substitutes its receiver for a non-object result;
+    // the general path owns that [[Construct]] step.
+    if !unsafe { (*cx).inline_calls }
+        || pending
+            .last()
+            .is_none_or(|call| call.construct_this.is_some())
+    {
+        return exit(ip);
+    }
+    let value = r.get(i.a);
+    let Some(call) = pending.pop() else {
+        return exit(ip);
+    };
+    vm.retire_wasm_frame();
+    vm.write(call.caller, call.destination, value);
+    drop(call.stack_guard);
+    let pc = vm.frames[call.caller].pc;
+    lane_enter_frame(cx, call.caller, pc)
 }
 
 /// A lane opcode's handler, and whether that handler is an accumulator
@@ -1613,10 +1840,20 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
         run = if exits[pc] { 0 } else { run + 1 };
         entries[pc] = run >= LANE_ENTRY_MIN_RUN && !reads_accumulator[pc];
     }
+    let activation = function
+        .parameter_registers
+        .filter(|_| function.locals == 0)
+        .map(|parameters| ActivationShape {
+            registers: function.registers,
+            parameters,
+            params: function.params,
+            initial: function.initial_register.value(),
+        });
     LaneView {
         records,
         entries,
         memory_register,
+        activation,
     }
 }
 
@@ -1715,6 +1952,10 @@ impl<H: Host> Vm<H> {
             registers,
             base,
             pending,
+            views: self
+                .programs
+                .lane_views(program)
+                .map_or(&[][..], |views| views) as *const _,
             inline_calls: inline_calls
                 && code.kind == crate::bytecode::ProgramKind::Wasm
                 && self.execution_mode != super::compiled::ExecutionMode::Compiled,
@@ -1741,6 +1982,7 @@ impl<H: Host> Vm<H> {
             );
             ip = next.map_addr(|address| address & !EXIT_TAG);
             if next.addr() & EXIT_TAG != 0 {
+                self.materialize_lane_activations(cx);
                 LANE_CONTEXT.with(|current| current.set(outer));
                 LANE_FLOOR.with(|current| current.set(outer_floor));
                 // SAFETY: as above.
