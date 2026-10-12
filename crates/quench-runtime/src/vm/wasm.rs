@@ -304,12 +304,13 @@ impl<H: Host> Vm<H> {
             let length = memory.byte_length().ok_or_else(|| {
                 JsError::validation("Wasm memory allocation exceeds host address space".into())
             })?;
-            // Compiled code accesses an unshared memory32 without bounds checks,
-            // so the compiled mode gives it a guarded reservation.
-            // The guard covers exactly the bytes past the memory's length
-            // only when every length is a whole number of host pages.
-            let guarded = (self.execution_mode == super::ExecutionMode::Compiled
-                && !memory.ty.shared
+            // An unshared memory32 lives in a guarded reservation in both
+            // modes: its pages commit as they are first touched, and growth
+            // never copies. Compiled code also relies on the guard in place
+            // of bounds checks. The guard covers exactly the bytes past the
+            // memory's length only when every length is a whole number of
+            // host pages.
+            let guarded = (!memory.ty.shared
                 && !memory.ty.memory64
                 && (memory.ty.page_size() as usize)
                     .is_multiple_of(crate::wasm::memory::HOST_PAGE))
