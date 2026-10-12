@@ -36,7 +36,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn array_values(&self, this: Value) -> Result<Vec<Value>, JsError> {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(this) else {
+        let Some((_, elements)) = self.heap.array(this) else {
             return Err(JsError("modern array method receiver is not array".into()));
         };
         let length = self.heap.sparse_length(this).unwrap_or(elements.len());
@@ -51,7 +51,7 @@ impl<H: Host> Vm<H> {
 
     /// Append an own data element to an unexposed dense array. No guest code runs.
     pub(super) fn append_fresh_array_element(&mut self, array: Value, value: Value) -> usize {
-        let Some(Cell::Array { elements, .. }) = self.heap.get_mut(array) else {
+        let Some((_, elements)) = self.heap.array_mut(array) else {
             unreachable!("fresh array owner remains an array");
         };
         let elements = super::index::mutable_array_elements(elements);
@@ -695,7 +695,7 @@ impl<H: Host> Vm<H> {
         target: Value,
         length: usize,
     ) -> Result<(), JsError> {
-        if matches!(self.heap.get(target), Some(Cell::Array { .. })) {
+        if self.heap.array(target).is_some() {
             return Ok(());
         }
         let length_atom = self.intern_atom("length");

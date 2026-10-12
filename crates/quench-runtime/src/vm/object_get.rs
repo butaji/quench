@@ -442,7 +442,7 @@ impl<H: Host> Vm<H> {
             }
             if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
                 && let Some(index) = super::object_static::array_index(self.atom_name(atom))
-                && let Some(Cell::Array { elements, .. }) = self.heap.get(object)
+                && let Some((_, elements)) = self.heap.array(object)
             {
                 let value = elements
                     .get(index as usize)
@@ -471,6 +471,12 @@ impl<H: Host> Vm<H> {
             }
             if let Some(data) = self.heap.object_record(object) {
                 object = data.proto;
+            } else if object.direct_array_index().is_some() {
+                object = self
+                    .heap
+                    .object(object)
+                    .expect("live direct array retains its object header")
+                    .proto;
             } else {
                 match self.heap.get(object) {
                     Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,

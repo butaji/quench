@@ -682,11 +682,11 @@ impl<H: Host> Vm<H> {
         changes: Value,
     ) -> Result<(), JsError> {
         if !self.is_object_like(changes)
+            || self.heap.array(changes).is_some()
             || matches!(
                 self.heap.get(changes),
                 Some(
-                    Cell::Array { .. }
-                        | Cell::TemporalPlainDate { .. }
+                    Cell::TemporalPlainDate { .. }
                         | Cell::TemporalPlainDateTime { .. }
                         | Cell::TemporalPlainMonthDay { .. }
                         | Cell::TemporalPlainYearMonth { .. }
@@ -1056,11 +1056,11 @@ impl<H: Host> Vm<H> {
         changes: Value,
     ) -> Result<(), JsError> {
         if !self.is_object_like(changes)
+            || self.heap.array(changes).is_some()
             || matches!(
                 self.heap.get(changes),
                 Some(
-                    Cell::Array { .. }
-                        | Cell::TemporalPlainDate { .. }
+                    Cell::TemporalPlainDate { .. }
                         | Cell::TemporalPlainDateTime { .. }
                         | Cell::TemporalPlainMonthDay { .. }
                         | Cell::TemporalPlainYearMonth { .. }

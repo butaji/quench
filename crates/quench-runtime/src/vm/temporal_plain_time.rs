@@ -649,7 +649,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let fields = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_object_like(fields)
-            || matches!(self.heap.get(fields), Some(Cell::Array { .. }))
+            || self.heap.array(fields).is_some()
             || self.is_temporal_object(fields)
         {
             return Err(self.type_error(p, "Invalid time-like object".into()));

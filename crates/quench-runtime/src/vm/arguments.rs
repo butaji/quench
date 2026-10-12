@@ -26,14 +26,11 @@ impl<H: Host> Vm<H> {
         let Some(index) = self.mapped_argument_index(arguments, slot) else {
             return fallback;
         };
-        match self.heap.get(arguments) {
-            Some(Cell::Array { elements, .. }) => elements
-                .get(index)
-                .copied()
-                .filter(|value| !value.is_deleted())
-                .unwrap_or(Value::UNDEFINED),
-            _ => fallback,
-        }
+        self.heap
+            .array(arguments)
+            .and_then(|(_, elements)| elements.get(index).copied())
+            .filter(|value| !value.is_deleted())
+            .unwrap_or(fallback)
     }
 
     pub(super) fn mapped_argument_store(

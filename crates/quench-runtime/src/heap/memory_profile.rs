@@ -1,4 +1,4 @@
-use super::{Cell, CellKind, FreeSlotBitmap, Heap, Object, Slot};
+use super::{ArrayRecord, Cell, CellKind, FreeSlotBitmap, Heap, Object, Slot};
 use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use rustc_hash::FxHashMap;
@@ -32,6 +32,11 @@ pub(crate) struct HeapMemoryComposition {
     pub cell_variant_counts: Vec<usize>,
     pub slot_arena_reserved_bytes: usize,
     pub object_record_reserved_bytes: usize,
+    /// Subtotal already included in `object_record_reserved_bytes`.
+    pub object_record_free_id_capacity_bytes: usize,
+    pub array_record_reserved_bytes: usize,
+    /// Subtotal already included in `array_record_reserved_bytes`.
+    pub array_record_free_id_capacity_bytes: usize,
     pub legacy_cell_record_reserved_bytes: usize,
     pub free_slot_metadata_bytes: usize,
     pub slot_size_bytes: usize,
@@ -152,6 +157,21 @@ impl MemoryProfile {
         );
     }
 
+    pub(super) fn allocated_array(
+        &mut self,
+        identity: Value,
+        array: &ArrayRecord,
+        object_slots: usize,
+    ) {
+        self.allocated_record(
+            identity,
+            CellKind::Array as usize,
+            array.object.allocated_extra_bytes() + array.elements.capacity() * size_of::<Value>(),
+            "array",
+            Some(object_slots),
+        );
+    }
+
     fn allocated_record(
         &mut self,
         identity: Value,
@@ -201,6 +221,20 @@ impl MemoryProfile {
             return;
         };
         let kind = CellKind::Object as usize;
+        debug_assert_eq!(self.kinds[index] as usize, kind);
+        self.freed_record(index, kind, Some(object_slots));
+    }
+
+    pub(super) fn freed_array(
+        &mut self,
+        identity: Value,
+        object_slots: usize,
+        _array: &ArrayRecord,
+    ) {
+        let Some(index) = self.identity_slots.remove(&identity) else {
+            return;
+        };
+        let kind = CellKind::Array as usize;
         debug_assert_eq!(self.kinds[index] as usize, kind);
         self.freed_record(index, kind, Some(object_slots));
     }
@@ -324,10 +358,13 @@ impl MemoryProfile {
             let Some(object) = heap.object(identity) else {
                 return;
             };
-            let kind = identity.direct_object_index().map_or_else(
-                || heap.get(identity).map_or(CellKind::Object, Heap::cell_kind),
-                |_| CellKind::Object,
-            );
+            let kind = if identity.direct_object_index().is_some() {
+                CellKind::Object
+            } else if identity.direct_array_index().is_some() {
+                CellKind::Array
+            } else {
+                heap.get(identity).map_or(CellKind::Object, Heap::cell_kind)
+            };
             let lifetime = ObjectLifetime {
                 site: self.object_sites[index],
                 kind: kind as u8,
@@ -418,22 +455,27 @@ impl Heap {
         self.for_each_live_value(|identity| {
             occupied_slots += 1;
             let object_record = self.object_record(identity);
+            let direct_array = identity.direct_array_index().is_some();
             let cell = self.get(identity);
             let direct_object = identity.direct_object_index().is_some();
             let kind = if direct_object {
                 CellKind::Object as usize
+            } else if direct_array {
+                CellKind::Array as usize
             } else {
                 Self::cell_kind(cell.expect("live legacy value has a Cell")) as usize
             };
             cell_counts[kind] += 1;
             let variant_name = if direct_object {
                 "object"
+            } else if direct_array {
+                "array"
             } else {
                 cell.expect("live legacy value has a Cell")
                     .profile_variant_name()
             };
             *cell_variant_counts.entry(variant_name).or_insert(0usize) += 1;
-            let object = object_record.or_else(|| cell.and_then(Cell::object));
+            let object = object_record.or_else(|| self.object(identity));
             if let Some(object) = object {
                 object_headers += 1;
                 let property_width = self.properties.len(object.properties);
@@ -444,7 +486,9 @@ impl Heap {
                     0,
                 );
                 object_property_counts_by_width[property_width] += 1;
-                if !direct_object && cell.is_some_and(|cell| matches!(cell, Cell::Function { .. }))
+                if !direct_object
+                    && !direct_array
+                    && cell.is_some_and(|cell| matches!(cell, Cell::Function { .. }))
                 {
                     boxed_object_headers += 1;
                 } else {
@@ -472,37 +516,55 @@ impl Heap {
             }
             let payload_bytes = if direct_object {
                 object_record.map_or(0, Object::allocated_extra_bytes)
+            } else if let Some((object, elements)) = self.array(identity)
+                && direct_array
+            {
+                object.allocated_extra_bytes() + elements.capacity() * size_of::<Value>()
             } else {
                 cell.map_or(0, Self::cell_payload_bytes)
             };
-            match cell {
-                Some(Cell::Array { elements, .. }) => {
-                    let element_bytes = elements.capacity() * size_of::<Value>();
-                    other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
-                    let identity = Rc::as_ptr(elements) as usize;
-                    if array_identities.insert(identity) {
-                        const RC_HEADER_WORDS: usize = 2;
-                        dense_array_elements_bytes += element_bytes;
-                        dense_array_headers_bytes +=
-                            size_of::<Vec<Value>>() + RC_HEADER_WORDS * size_of::<usize>();
-                        dense_array_backing_count += 1;
-                    }
+            if direct_array {
+                let (_, elements) = self.array(identity).expect("live direct array record");
+                let element_bytes = elements.capacity() * size_of::<Value>();
+                other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
+                let identity = Rc::as_ptr(elements) as usize;
+                if array_identities.insert(identity) {
+                    const RC_HEADER_WORDS: usize = 2;
+                    dense_array_elements_bytes += element_bytes;
+                    dense_array_headers_bytes +=
+                        size_of::<Vec<Value>>() + RC_HEADER_WORDS * size_of::<usize>();
+                    dense_array_backing_count += 1;
                 }
-                Some(Cell::String(value)) => {
-                    other_cell_payload_bytes += payload_bytes.saturating_sub(value.capacity());
-                    let (units, host) = value.memory_parts();
-                    if string_identities.insert(units.0) {
-                        string_buffers_bytes += units.1;
-                        string_buffer_count += 1;
-                    }
-                    if let Some(host) = host {
-                        if string_identities.insert(host.0) {
-                            string_buffers_bytes += host.1;
-                            string_buffer_count += 1;
+            } else {
+                match cell {
+                    Some(Cell::Array { elements, .. }) => {
+                        let element_bytes = elements.capacity() * size_of::<Value>();
+                        other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
+                        let identity = Rc::as_ptr(elements) as usize;
+                        if array_identities.insert(identity) {
+                            const RC_HEADER_WORDS: usize = 2;
+                            dense_array_elements_bytes += element_bytes;
+                            dense_array_headers_bytes +=
+                                size_of::<Vec<Value>>() + RC_HEADER_WORDS * size_of::<usize>();
+                            dense_array_backing_count += 1;
                         }
                     }
+                    Some(Cell::String(value)) => {
+                        other_cell_payload_bytes += payload_bytes.saturating_sub(value.capacity());
+                        let (units, host) = value.memory_parts();
+                        if string_identities.insert(units.0) {
+                            string_buffers_bytes += units.1;
+                            string_buffer_count += 1;
+                        }
+                        if let Some(host) = host {
+                            if string_identities.insert(host.0) {
+                                string_buffers_bytes += host.1;
+                                string_buffer_count += 1;
+                            }
+                        }
+                    }
+                    _ => other_cell_payload_bytes += payload_bytes,
                 }
-                _ => other_cell_payload_bytes += payload_bytes,
             }
         });
         let cell_payload_bytes = other_cell_payload_bytes
@@ -514,7 +576,7 @@ impl Heap {
         let (property_arena_used_values, property_arena_capacity_values, _) =
             self.properties.stats();
         let sparse_array_sidecar_bytes = self.sparse_arrays.as_ref().map_or(0, |arrays| {
-            arrays.capacity() * size_of::<(u32, super::SparseElements)>()
+            arrays.capacity() * size_of::<(Value, super::SparseElements)>()
                 + arrays
                     .values()
                     .map(|elements| elements.values.capacity() * size_of::<(usize, Value)>())
@@ -526,6 +588,11 @@ impl Heap {
             cell_variant_counts: cell_variant_counts.values().copied().collect(),
             slot_arena_reserved_bytes: self.slots.capacity() * size_of::<Slot>(),
             object_record_reserved_bytes: self.object_records.allocated_bytes(),
+            object_record_free_id_capacity_bytes: self
+                .object_records
+                .free_id_vector_capacity_bytes(),
+            array_record_reserved_bytes: self.array_records.allocated_bytes(),
+            array_record_free_id_capacity_bytes: self.array_records.free_id_vector_capacity_bytes(),
             legacy_cell_record_reserved_bytes: 0,
             free_slot_metadata_bytes: self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
@@ -564,8 +631,9 @@ impl Heap {
     pub(crate) fn cell_counts(&self) -> [usize; KINDS] {
         let mut counts = [0; KINDS];
         counts[CellKind::Object as usize] = self.object_records.live_count();
+        counts[CellKind::Array as usize] = self.array_records.live_count();
         self.for_each_live_value(|identity| {
-            if identity.direct_object_index().is_some() {
+            if identity.direct_object_index().is_some() || identity.direct_array_index().is_some() {
                 return;
             }
             let cell = self.get(identity).expect("live legacy value has a Cell");
@@ -583,6 +651,11 @@ impl Heap {
         self.for_each_live_value(|identity| {
             if let Some(object) = self.object_record(identity) {
                 bytes[CellKind::Object as usize] += object.allocated_extra_bytes();
+            } else if let Some(array_id) = identity.direct_array_index() {
+                // SAFETY: profile walks only live values.
+                let array = unsafe { self.array_records.get_live(array_id) };
+                bytes[CellKind::Array as usize] += array.object.allocated_extra_bytes()
+                    + array.elements.capacity() * size_of::<Value>();
             } else if let Some(cell) = self.get(identity) {
                 bytes[Self::cell_kind(cell) as usize] += Self::cell_payload_bytes(cell);
             }
@@ -593,6 +666,7 @@ impl Heap {
     pub fn memory_stats(&self) -> (usize, usize, usize, usize, usize, usize, usize) {
         let dynamic = self.properties.memory_bytes()
             + self.object_records.allocated_bytes()
+            + self.array_records.allocated_bytes()
             + self.live_value_payload_bytes()
             + self
                 .sparse_arrays
@@ -604,7 +678,7 @@ impl Heap {
                 .sum::<usize>();
         let property = self.properties.stats();
         (
-            self.slots.len() + self.object_records.high_water(),
+            self.slots.len() + self.object_records.high_water() + self.array_records.high_water(),
             self.slots.capacity() * size_of::<super::Slot>(),
             self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
@@ -632,7 +706,16 @@ impl Heap {
         let mut bytes = 0;
         self.for_each_live_value(|identity| {
             bytes += self.object_record(identity).map_or_else(
-                || self.get(identity).map_or(0, cell_bytes),
+                || {
+                    if let Some(array_id) = identity.direct_array_index() {
+                        // SAFETY: profile walks only live values.
+                        let array = unsafe { self.array_records.get_live(array_id) };
+                        array.object.allocated_extra_bytes()
+                            + array.elements.capacity() * size_of::<Value>()
+                    } else {
+                        self.get(identity).map_or(0, cell_bytes)
+                    }
+                },
                 Object::allocated_extra_bytes,
             );
         });
@@ -640,13 +723,18 @@ impl Heap {
     }
 
     pub(crate) fn array_element_stats(&self) -> (usize, usize) {
+        let mut total = (0, 0);
+        self.array_records.for_each_live(|_, array| {
+            total.0 += array.elements.len();
+            total.1 += array.elements.capacity();
+        });
         self.slots
             .iter()
             .filter_map(|slot| match slot.cell.as_ref()? {
                 Cell::Array { elements, .. } => Some((elements.len(), elements.capacity())),
                 _ => None,
             })
-            .fold((0, 0), |(len, capacity), value| {
+            .fold(total, |(len, capacity), value| {
                 (len + value.0, capacity + value.1)
             })
     }

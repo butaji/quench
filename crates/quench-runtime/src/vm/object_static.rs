@@ -142,20 +142,18 @@ impl<H: Host> Vm<H> {
             "Error"
         } else if let Some(brand) = boxed_brand {
             brand
+        } else if let Some((object, _)) = self.heap.array(value) {
+            if object.is_arguments_object() {
+                "Arguments"
+            } else {
+                "Array"
+            }
         } else {
             match self.heap.get(value) {
                 Some(Cell::Proxy { .. }) if proxy_array => "Array",
                 Some(Cell::Proxy { .. }) if self.is_function(value) => "Function",
                 Some(Cell::String(_)) => "String",
                 Some(Cell::BigInt(_) | Cell::Symbol(_)) => "Object",
-                Some(Cell::Array { .. })
-                    if self
-                        .object_data(value)
-                        .is_some_and(Object::is_arguments_object) =>
-                {
-                    "Arguments"
-                }
-                Some(Cell::Array { .. }) => "Array",
                 Some(Cell::Date { .. }) => "Date",
                 Some(Cell::RegExp { .. }) => "RegExp",
                 Some(Cell::Function { .. }) => "Function",

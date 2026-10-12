@@ -1,3 +1,4 @@
+use super::{ArrayRecord, Object};
 use std::alloc::Layout;
 use std::alloc::{alloc, dealloc};
 use std::mem::MaybeUninit;
@@ -7,28 +8,31 @@ use std::ptr::NonNull;
 
 pub(super) type RecordId = u32;
 
+pub(super) type ObjectRecordSpace = RecordSpace<Object>;
+pub(super) type ArrayRecordSpace = RecordSpace<ArrayRecord>;
+
 const RECORDS_PER_BLOCK: usize = 1_024;
 const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
-const OBJECT_RECORD_SPACE_CAPACITY: usize = 1 << 24;
+const RECORD_SPACE_CAPACITY: usize = 1 << 24;
 
 const _: () = assert!(RECORDS_PER_BLOCK.is_power_of_two());
-const _: () = assert!(OBJECT_RECORD_SPACE_CAPACITY.is_power_of_two());
-const _: () = assert!(OBJECT_RECORD_SPACE_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
-const _: () = assert!(OBJECT_RECORD_SPACE_CAPACITY <= u32::MAX as usize);
+const _: () = assert!(RECORD_SPACE_CAPACITY.is_power_of_two());
+const _: () = assert!(RECORD_SPACE_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
+const _: () = assert!(RECORD_SPACE_CAPACITY <= u32::MAX as usize);
 
-/// Object locators index one fixed address range. Block metadata controls
+/// Each record family owns one fixed address range. Block metadata controls
 /// allocation and sweep, but resolving a live locator never walks it.
-pub(super) struct ObjectRecordSpace<T> {
+pub(super) struct RecordSpace<T> {
     base: NonNull<MaybeUninit<T>>,
     reserved: bool,
     reservation_failed: bool,
-    blocks: Vec<ObjectRecordBlock>,
+    blocks: Vec<RecordBlock>,
     next_id: u32,
     free: Vec<u32>,
     live: usize,
 }
 
-impl<T> Default for ObjectRecordSpace<T> {
+impl<T> Default for RecordSpace<T> {
     fn default() -> Self {
         Self {
             base: NonNull::dangling(),
@@ -42,17 +46,17 @@ impl<T> Default for ObjectRecordSpace<T> {
     }
 }
 
-struct ObjectRecordBlock {
+struct RecordBlock {
     occupied: [u64; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
     marked: [u64; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
 }
 
 pub(super) enum RecordSweep<'a, T> {
     Keep(RecordId, &'a T),
-    Dead(T),
+    Dead(RecordId, T),
 }
 
-impl ObjectRecordBlock {
+impl RecordBlock {
     fn new() -> Self {
         Self {
             occupied: [0; RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS],
@@ -105,21 +109,21 @@ impl ObjectRecordBlock {
     }
 }
 
-impl<T> ObjectRecordSpace<T> {
-    /// Allocates a dense identity in this record space. Object Values carry
-    /// this ID directly, independent of legacy Cell slot allocation.
+impl<T> RecordSpace<T> {
+    /// Allocates a dense identity in this record space. The family's Value
+    /// tag carries this ID directly, independent of legacy Cell slot allocation.
     pub(super) fn try_insert(&mut self, value: T) -> Result<RecordId, T> {
         if !self.ensure_reserved() {
             return Err(value);
         }
         let reused = self.free.last().copied();
         let id = reused.unwrap_or(self.next_id);
-        if id as usize >= OBJECT_RECORD_SPACE_CAPACITY {
+        if id as usize >= RECORD_SPACE_CAPACITY {
             return Err(value);
         }
         let (block_index, record_index) = Self::split_id(id);
         while self.blocks.len() <= block_index {
-            self.blocks.push(ObjectRecordBlock::new());
+            self.blocks.push(RecordBlock::new());
         }
         if !self.blocks[block_index].claim(record_index) {
             return Err(value);
@@ -147,7 +151,7 @@ impl<T> ObjectRecordSpace<T> {
         if self.reservation_failed {
             return false;
         }
-        let Ok(layout) = Layout::array::<MaybeUninit<T>>(OBJECT_RECORD_SPACE_CAPACITY) else {
+        let Ok(layout) = Layout::array::<MaybeUninit<T>>(RECORD_SPACE_CAPACITY) else {
             self.reservation_failed = true;
             return false;
         };
@@ -163,7 +167,7 @@ impl<T> ObjectRecordSpace<T> {
     }
 
     /// # Safety
-    /// `id` must come from a live direct Object Value. Sweep removes the
+    /// `id` must come from a live direct Value of this record family. Sweep removes the
     /// record only after all weak owners have been pruned.
     pub(super) unsafe fn get_live(&self, id: RecordId) -> &T {
         debug_assert!(
@@ -175,7 +179,7 @@ impl<T> ObjectRecordSpace<T> {
     }
 
     /// # Safety
-    /// `id` must come from a live direct Object Value, and
+    /// `id` must come from a live direct Value of this record family, and
     /// the caller must have exclusive access to the heap.
     pub(super) unsafe fn get_live_mut(&mut self, id: RecordId) -> &mut T {
         debug_assert!(
@@ -281,7 +285,7 @@ impl<T> ObjectRecordSpace<T> {
                     // SAFETY: the occupied bit proves initialization and its
                     // removal transfers this record to the drop callback.
                     let value = unsafe { self.base.as_ptr().add(id as usize).read().assume_init() };
-                    visit(RecordSweep::Dead(value));
+                    visit(RecordSweep::Dead(id, value));
                     dead &= dead - 1;
                     freed_count += 1;
                 }
@@ -350,18 +354,23 @@ impl<T> ObjectRecordSpace<T> {
     #[cfg(feature = "profile-memory")]
     pub(super) fn allocated_bytes(&self) -> usize {
         self.blocks.len() * RECORDS_PER_BLOCK * size_of::<T>()
-            + self.blocks.capacity() * size_of::<ObjectRecordBlock>()
+            + self.blocks.capacity() * size_of::<RecordBlock>()
             + self.free.capacity() * size_of::<RecordId>()
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn free_id_vector_capacity_bytes(&self) -> usize {
+        self.free.capacity() * size_of::<RecordId>()
     }
 }
 
-impl<T> Drop for ObjectRecordSpace<T> {
+impl<T> Drop for RecordSpace<T> {
     fn drop(&mut self) {
         if !self.reserved {
             return;
         }
-        let layout = Layout::array::<MaybeUninit<T>>(OBJECT_RECORD_SPACE_CAPACITY)
-            .expect("ObjectRecord space layout was validated at reservation");
+        let layout = Layout::array::<MaybeUninit<T>>(RECORD_SPACE_CAPACITY)
+            .expect("record-space layout was validated at reservation");
         for (block_index, block) in self.blocks.iter().enumerate() {
             for (word_index, word) in block.occupied.iter().copied().enumerate() {
                 let mut live = word;
@@ -390,12 +399,12 @@ impl<T> Drop for ObjectRecordSpace<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{OBJECT_RECORD_SPACE_CAPACITY, ObjectRecordSpace, RECORDS_PER_BLOCK};
+    use super::{RECORD_SPACE_CAPACITY, RECORDS_PER_BLOCK, RecordSpace};
     use std::mem::size_of;
 
     #[test]
     fn object_record_addresses_are_dense_and_reuse_vacancies() {
-        let mut arena = ObjectRecordSpace::default();
+        let mut arena = RecordSpace::default();
         let first = arena.try_insert(String::from("first")).unwrap();
         let second = arena.try_insert(String::from("second")).unwrap();
         // SAFETY: both ids were returned by successful insertions and remain live.
@@ -413,7 +422,7 @@ mod tests {
         assert_eq!(last as usize, RECORDS_PER_BLOCK);
         // SAFETY: the first id remains live after the second block is added.
         assert_eq!(unsafe { arena.get_live(first) }, "first");
-        assert!(OBJECT_RECORD_SPACE_CAPACITY > RECORDS_PER_BLOCK);
+        assert!(RECORD_SPACE_CAPACITY > RECORDS_PER_BLOCK);
         assert_eq!(arena.remove_live(first), "first");
         assert_eq!(arena.try_insert(String::from("reused")).unwrap(), first);
         // SAFETY: the slot-index id was reinitialized by the insertion above.
@@ -424,7 +433,7 @@ mod tests {
     fn object_record_sweep_uses_marks_and_recycles_dead_ids() {
         use super::RecordSweep;
 
-        let mut arena = ObjectRecordSpace::default();
+        let mut arena = RecordSpace::default();
         let dead = arena.try_insert(String::from("dead")).unwrap();
         let live = arena.try_insert(String::from("live")).unwrap();
         assert!(arena.mark(live));
@@ -434,11 +443,11 @@ mod tests {
         let mut dropped = Vec::new();
         let (live_count, freed_count) = arena.sweep(|record| match record {
             RecordSweep::Keep(id, value) => kept.push((id, value.clone())),
-            RecordSweep::Dead(value) => dropped.push(value),
+            RecordSweep::Dead(id, value) => dropped.push((id, value)),
         });
         assert_eq!((live_count, freed_count), (1, 1));
         assert_eq!(kept, [(live, String::from("live"))]);
-        assert_eq!(dropped, [String::from("dead")]);
+        assert_eq!(dropped, [(dead, String::from("dead"))]);
         assert!(arena.is_live(live));
         assert!(!arena.is_live(dead));
         assert_eq!(arena.try_insert(String::from("reused")).unwrap(), dead);
