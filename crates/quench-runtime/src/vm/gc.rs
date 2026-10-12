@@ -326,7 +326,11 @@ impl<H: Host> Vm<H> {
                 },
             ))
             .chain(self.realm.intrinsics.regexp_intrinsics.iter().flat_map(
-                |(realm, intrinsics)| [*realm, intrinsics.constructor, intrinsics.prototype],
+                |(realm, intrinsics)| {
+                    [*realm, intrinsics.constructor, intrinsics.prototype]
+                        .into_iter()
+                        .chain(intrinsics.result_template.map(|template| template.anchor))
+                },
             ))
             .chain(
                 self.realm
@@ -527,6 +531,7 @@ impl<H: Host> Vm<H> {
                     .flat_map(|((global, _), template)| [*global, template.anchor]),
             )
             .chain(self.with_stack.iter().copied())
+            .chain(std::iter::once(self.instanceof_has_instance_holder))
             .chain(self.active_call_roots.iter().copied())
             .chain(
                 self.suspended

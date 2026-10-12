@@ -132,6 +132,8 @@ enum Expr {
         min: usize,
         max: Option<usize>,
         greedy: bool,
+        /// `capture_indices(body)`: the captures each iteration resets.
+        captures: Box<[usize]>,
     },
     Assertion(Assertion),
     Lookaround {
@@ -211,10 +213,21 @@ struct Unit {
     offset_start: usize,
     offset_end: usize,
 }
+/// A backtracking position. Captures are shared copy-on-write: choice points clone states
+/// far more often than captures change.
 #[derive(Clone)]
 struct State {
     position: usize,
-    captures: Vec<Option<Range<usize>>>,
+    captures: std::rc::Rc<Vec<Option<Range<usize>>>>,
+}
+
+impl State {
+    /// Records capture `index`, copying the captures only while another state shares them.
+    fn set_capture(&mut self, index: usize, capture: Option<Range<usize>>) {
+        if let Some(slot) = std::rc::Rc::make_mut(&mut self.captures).get_mut(index) {
+            *slot = capture;
+        }
+    }
 }
 
 // The semantic matcher must not silently discard alternatives.  Earlier code
@@ -232,6 +245,8 @@ pub struct Regex {
     flags: Flags,
     capture_names: Vec<String>,
     has_named_groups: bool,
+    /// Literal units every match consumes contiguously (`required_literal`); empty if none.
+    required_literal: Box<[u32]>,
     compiled_dot_requires_cr_guard: bool,
     /// The automata backend is a guarded fast path for ASCII patterns. Regex
     /// syntax it cannot represent (backreferences/lookaround and other
@@ -289,6 +304,7 @@ impl Regex {
             next_capture: 0,
         };
         let program = lower_disjunction(&parsed.body, &mut lowering);
+        let required_literal = required_literal(&program, flags);
         let has_named_groups = lowering.names.iter().any(|name| !name.is_empty());
         // The `regex` crate is a useful literal fast path, but its capture
         // and character semantics are not ECMAScript-complete (notably
@@ -299,7 +315,9 @@ impl Regex {
         let backend_enabled = !flags.unicode_sets
             && !flags.unicode
             && std::env::var_os("QUENCH_DISABLE_COMPILED_REGEXP").is_none();
-        let compiled = (backend_enabled && compiled_source_is_safe(source))
+        let compiled = (backend_enabled
+            && compiled_source_syntax_is_safe(source, NonCapturingGroups::Allowed)
+            && compiled_structure_is_safe(&parsed.body))
             .then(|| compile_byte_regex(source, flags))
             .flatten();
         let compiled_test = (backend_enabled && compiled_test_source_is_safe(source))
@@ -313,6 +331,7 @@ impl Regex {
             flags,
             capture_names: lowering.names,
             has_named_groups,
+            required_literal,
             compiled_dot_requires_cr_guard: !flags.dot_all && has_bare_dot(source),
             compiled,
             compiled_test,
@@ -364,12 +383,8 @@ impl Regex {
             }
         }
         let units = units_from_str(text, self.flags.unicode || self.flags.unicode_sets);
-        let first = units
-            .iter()
-            .position(|unit| unit.offset_start >= start)
-            .unwrap_or(units.len());
         Matches {
-            item: self.find_units(&units, first),
+            item: self.find_units(&units, first_unit_at(&units, start)),
         }
     }
 
@@ -401,7 +416,10 @@ impl Regex {
                 return self.find_compiled(compiled, bytes, start);
             }
         }
-        self.find_from_utf16(&subject.units, start)
+        let units = subject.decoded(self.flags.unicode || self.flags.unicode_sets);
+        Matches {
+            item: self.find_units(units, first_unit_at(units, start)),
+        }
     }
 
     pub fn find_from_utf16(&self, input: &[u16], start: usize) -> Matches {
@@ -417,12 +435,8 @@ impl Regex {
             }
         }
         let units = units_from_utf16(input, self.flags.unicode || self.flags.unicode_sets);
-        let first = units
-            .iter()
-            .position(|unit| unit.offset_start >= start)
-            .unwrap_or(units.len());
         Matches {
-            item: self.find_units(&units, first),
+            item: self.find_units(&units, first_unit_at(&units, start)),
         }
     }
 
@@ -443,12 +457,18 @@ impl Regex {
     }
 
     fn find_units(&self, input: &[Unit], first: usize) -> Option<Match> {
+        if !self.required_literal.is_empty()
+            && !contains_literal(&input[first.min(input.len())..], &self.required_literal)
+        {
+            return None;
+        }
+        let unset = std::rc::Rc::new(vec![None; self.capture_names.len()]);
         for position in first..=input.len() {
             let state = State {
                 position,
-                captures: vec![None; self.capture_names.len()],
+                captures: std::rc::Rc::clone(&unset),
             };
-            if let Some(mut found) = match_expr(&self.program, input, state, self.flags) {
+            if let Some(found) = match_expr(&self.program, input, state, self.flags) {
                 let start = input.get(position).map_or_else(
                     || input.last().map_or(0, |unit| unit.offset_end),
                     |unit| unit.offset_start,
@@ -465,9 +485,9 @@ impl Regex {
                 );
                 let captures = found
                     .captures
-                    .iter_mut()
+                    .iter()
                     .map(|capture| {
-                        capture.take().map(|range| {
+                        capture.clone().map(|range| {
                             let capture_start = input.get(range.start).map_or_else(
                                 || input.last().map_or(end, |unit| unit.offset_end),
                                 |unit| unit.offset_start,
@@ -502,6 +522,9 @@ pub struct Subject {
     /// One byte per unit, present only when every unit is ASCII.
     ascii: Option<Box<[u8]>>,
     has_carriage_return: bool,
+    /// The units decoded for the backtracking matcher, by code unit and by code point
+    /// (`unicode`), each decoded on first use.
+    decoded: [std::cell::OnceCell<Vec<Unit>>; 2],
 }
 
 impl Subject {
@@ -515,7 +538,12 @@ impl Subject {
             units,
             ascii,
             has_carriage_return,
+            decoded: Default::default(),
         }
+    }
+
+    fn decoded(&self, unicode: bool) -> &[Unit] {
+        self.decoded[usize::from(unicode)].get_or_init(|| units_from_utf16(&self.units, unicode))
     }
 
     pub fn is_text_of(&self, units: &std::rc::Rc<[u16]>) -> bool {
@@ -729,12 +757,114 @@ fn class_contains_invalid_string_property(class: &ast::CharacterClass<'_>, flags
     })
 }
 
-fn compiled_source_is_safe(source: &str) -> bool {
-    compiled_source_syntax_is_safe(source) && !source.contains(")?") && !source.contains("??")
+fn compiled_test_source_is_safe(source: &str) -> bool {
+    compiled_source_syntax_is_safe(source, NonCapturingGroups::Rejected) && !has_backreference(source)
 }
 
-fn compiled_test_source_is_safe(source: &str) -> bool {
-    compiled_source_syntax_is_safe(source) && !has_backreference(source)
+/// Whether the byte backend may see `(?:` groups; any other `(?` form stays on the
+/// repository matcher.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NonCapturingGroups {
+    Allowed,
+    Rejected,
+}
+
+/// Whether the byte backend's leftmost-first matching agrees with ECMAScript on this
+/// pattern's structure. ECMAScript fails a quantifier iteration that matches empty while the
+/// backend accepts it, and resets a repeated group's captures on every iteration while the
+/// backend keeps a capture from an earlier iteration that the last one skipped; modifier
+/// groups, lookaround and backreferences are left to the repository matcher.
+fn compiled_structure_is_safe(disjunction: &ast::Disjunction<'_>) -> bool {
+    disjunction
+        .body
+        .iter()
+        .all(|alternative| alternative.body.iter().all(term_structure_is_safe))
+}
+
+fn term_structure_is_safe(term: &ast::Term<'_>) -> bool {
+    match term {
+        ast::Term::Quantifier(quantifier) => {
+            !term_is_nullable(&quantifier.body)
+                && (quantifier.max == Some(1) || captures_always_participate(&quantifier.body))
+                && term_structure_is_safe(&quantifier.body)
+        }
+        ast::Term::CapturingGroup(group) => compiled_structure_is_safe(&group.body),
+        ast::Term::IgnoreGroup(group) => {
+            group.modifiers.is_none() && compiled_structure_is_safe(&group.body)
+        }
+        ast::Term::LookAroundAssertion(_)
+        | ast::Term::IndexedReference(_)
+        | ast::Term::NamedReference(_) => false,
+        _ => true,
+    }
+}
+
+/// Whether `term` can match the empty string; assertions and references count as nullable.
+fn term_is_nullable(term: &ast::Term<'_>) -> bool {
+    match term {
+        ast::Term::Quantifier(quantifier) => quantifier.min == 0 || term_is_nullable(&quantifier.body),
+        ast::Term::CapturingGroup(group) => disjunction_is_nullable(&group.body),
+        ast::Term::IgnoreGroup(group) => disjunction_is_nullable(&group.body),
+        ast::Term::Character(_)
+        | ast::Term::Dot(_)
+        | ast::Term::CharacterClassEscape(_)
+        | ast::Term::UnicodePropertyEscape(_)
+        | ast::Term::CharacterClass(_) => false,
+        _ => true,
+    }
+}
+
+fn disjunction_is_nullable(disjunction: &ast::Disjunction<'_>) -> bool {
+    disjunction
+        .body
+        .iter()
+        .any(|alternative| alternative.body.iter().all(term_is_nullable))
+}
+
+/// Whether every capture in `term` participates whenever `term` matches, so a repeated
+/// `term`'s captures come from its last iteration under both reset and keep semantics.
+fn captures_always_participate(term: &ast::Term<'_>) -> bool {
+    match term {
+        ast::Term::CapturingGroup(group) => disjunction_captures_always_participate(&group.body),
+        ast::Term::IgnoreGroup(group) => disjunction_captures_always_participate(&group.body),
+        ast::Term::Quantifier(quantifier) => {
+            !term_has_capture(&quantifier.body)
+                || (quantifier.min > 0 && captures_always_participate(&quantifier.body))
+        }
+        ast::Term::LookAroundAssertion(assertion) => {
+            !assertion
+                .body
+                .body
+                .iter()
+                .any(|alternative| alternative.body.iter().any(term_has_capture))
+        }
+        _ => true,
+    }
+}
+
+fn disjunction_captures_always_participate(disjunction: &ast::Disjunction<'_>) -> bool {
+    match disjunction.body.as_slice() {
+        [alternative] => alternative.body.iter().all(captures_always_participate),
+        alternatives => !alternatives
+            .iter()
+            .any(|alternative| alternative.body.iter().any(term_has_capture)),
+    }
+}
+
+fn term_has_capture(term: &ast::Term<'_>) -> bool {
+    let disjunction_has_capture = |disjunction: &ast::Disjunction<'_>| {
+        disjunction
+            .body
+            .iter()
+            .any(|alternative| alternative.body.iter().any(term_has_capture))
+    };
+    match term {
+        ast::Term::CapturingGroup(_) => true,
+        ast::Term::Quantifier(quantifier) => term_has_capture(&quantifier.body),
+        ast::Term::IgnoreGroup(group) => disjunction_has_capture(&group.body),
+        ast::Term::LookAroundAssertion(assertion) => disjunction_has_capture(&assertion.body),
+        _ => false,
+    }
 }
 
 fn has_bare_dot(source: &str) -> bool {
@@ -756,7 +886,7 @@ fn has_bare_dot(source: &str) -> bool {
     false
 }
 
-fn compiled_source_syntax_is_safe(source: &str) -> bool {
+fn compiled_source_syntax_is_safe(source: &str, non_capturing: NonCapturingGroups) -> bool {
     let mut escaped = false;
     let mut bytes = source.bytes().peekable();
     while let Some(byte) = bytes.next() {
@@ -806,7 +936,8 @@ fn compiled_source_syntax_is_safe(source: &str) -> bool {
                     | b'^'
                     | b'$'
                     | b'-'
-            ) {
+            ) && !escaped_punctuation_is_literal(byte)
+            {
                 return false;
             }
             escaped = false;
@@ -820,7 +951,11 @@ fn compiled_source_syntax_is_safe(source: &str) -> bool {
     if escaped {
         return false;
     }
-    if source.contains("(?") {
+    let other_group_forms = match non_capturing {
+        NonCapturingGroups::Allowed => source.replace("(?:", "").contains("(?"),
+        NonCapturingGroups::Rejected => source.contains("(?"),
+    };
+    if other_group_forms {
         return false;
     }
     // A bare dot is cheap to match in the VM, while the byte backend treats
@@ -830,6 +965,13 @@ fn compiled_source_syntax_is_safe(source: &str) -> bool {
         return false;
     }
     true
+}
+
+/// Whether `\byte` is an identity escape of the same literal in ECMAScript and the byte
+/// backend: ASCII punctuation, except `<` and `>`, which the backend reads as word
+/// boundaries.
+fn escaped_punctuation_is_literal(byte: u8) -> bool {
+    byte.is_ascii_punctuation() && !matches!(byte, b'<' | b'>')
 }
 
 fn has_backreference(source: &str) -> bool {
@@ -904,6 +1046,45 @@ fn units_from_str(text: &str, unicode: bool) -> Vec<Unit> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// The longest run of literal units that every match consumes contiguously: consecutive
+/// literals of the top-level sequence, read through captures, which a match always enters.
+/// Empty for case-insensitive patterns, whose literals match more than their own value.
+fn required_literal(program: &Expr, flags: Flags) -> Box<[u32]> {
+    fn visit(expr: &Expr, run: &mut Vec<u32>, best: &mut Vec<u32>) {
+        match expr {
+            Expr::Sequence(parts) => parts.iter().for_each(|part| visit(part, run, best)),
+            Expr::Capture { body, .. } => visit(body, run, best),
+            Expr::Literal(value) => run.push(*value),
+            _ => end_run(run, best),
+        }
+    }
+    fn end_run(run: &mut Vec<u32>, best: &mut Vec<u32>) {
+        if run.len() > best.len() {
+            std::mem::swap(run, best);
+        }
+        run.clear();
+    }
+    if flags.ignore_case {
+        return Box::default();
+    }
+    let (mut run, mut best) = (Vec::new(), Vec::new());
+    visit(program, &mut run, &mut best);
+    end_run(&mut run, &mut best);
+    best.into()
+}
+
+/// Whether `literal` occurs in `input`.
+fn contains_literal(input: &[Unit], literal: &[u32]) -> bool {
+    input
+        .windows(literal.len())
+        .any(|window| window.iter().zip(literal).all(|(unit, value)| unit.value == *value))
+}
+
+/// The index of the first decoded unit at or after UTF-16 offset `start`.
+fn first_unit_at(units: &[Unit], start: usize) -> usize {
+    units.partition_point(|unit| unit.offset_start < start)
 }
 
 fn units_from_utf16(input: &[u16], unicode: bool) -> Vec<Unit> {
@@ -982,14 +1163,18 @@ fn lower_term(term: &ast::Term<'_>, lowering: &mut Lowering) -> Expr {
             },
             body: Box::new(lower_disjunction(&assertion.body, lowering)),
         },
-        ast::Term::Quantifier(quantifier) => Expr::Repeat {
-            body: Box::new(lower_term(&quantifier.body, lowering)),
-            min: quantifier.min.min(usize::MAX as u64) as usize,
-            max: quantifier
-                .max
-                .map(|max| max.min(usize::MAX as u64) as usize),
-            greedy: quantifier.greedy,
-        },
+        ast::Term::Quantifier(quantifier) => {
+            let body = lower_term(&quantifier.body, lowering);
+            Expr::Repeat {
+                captures: capture_indices(&body).into(),
+                body: Box::new(body),
+                min: quantifier.min.min(usize::MAX as u64) as usize,
+                max: quantifier
+                    .max
+                    .map(|max| max.min(usize::MAX as u64) as usize),
+                greedy: quantifier.greedy,
+            }
+        }
         ast::Term::Character(character) => lower_character(character, &lowering.source),
         ast::Term::Dot(_) => Expr::Dot,
         ast::Term::CharacterClassEscape(escape) => Expr::Class(ClassExpr {
@@ -1316,15 +1501,13 @@ fn match_expr_with(
                 ..state
             })
             .and_then(continuation),
-        Expr::Class(class) => class_match_widths(
+        Expr::Class(class) => class_first_width(
             class,
             input,
             state.position,
             flags.ignore_case,
             flags.unicode,
         )
-        .into_iter()
-        .next()
         .map(|width| State {
             position: state.position + width,
             ..state
@@ -1333,10 +1516,12 @@ fn match_expr_with(
         Expr::Capture { index, body } => {
             let start = state.position;
             match_expr_with(body, input, state, flags, &mut |mut result| {
-                if let Some(capture) = result.captures.get_mut(*index) {
-                    if !flags.reverse || capture.is_none() {
-                        *capture = Some(start..result.position);
-                    }
+                if result
+                    .captures
+                    .get(*index)
+                    .is_some_and(|capture| !flags.reverse || capture.is_none())
+                {
+                    result.set_capture(*index, Some(start..result.position));
                 }
                 continuation(result)
             })
@@ -1346,8 +1531,10 @@ fn match_expr_with(
             min,
             max,
             greedy,
+            captures,
         } => repeat_with(
             body,
+            captures,
             input,
             state,
             flags,
@@ -1428,6 +1615,7 @@ fn match_sequence_with(
 
 fn repeat_with(
     body: &Expr,
+    captures: &[usize],
     input: &[Unit],
     state: State,
     flags: Flags,
@@ -1449,9 +1637,13 @@ fn repeat_with(
     if count < limit {
         let mut iteration_state = state.clone();
         if !flags.reverse {
-            for index in capture_indices(body) {
-                if let Some(capture) = iteration_state.captures.get_mut(index) {
-                    *capture = None;
+            for &index in captures {
+                if iteration_state
+                    .captures
+                    .get(index)
+                    .is_some_and(Option::is_some)
+                {
+                    iteration_state.set_capture(index, None);
                 }
             }
         }
@@ -1460,6 +1652,7 @@ fn repeat_with(
             if next.position != position || count < min {
                 repeat_with(
                     body,
+                    captures,
                     input,
                     next,
                     flags,
@@ -1688,9 +1881,7 @@ fn reverse_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> V
             reverse_options(body, input, state, flags)
                 .into_iter()
                 .map(|mut result| {
-                    if let Some(capture) = result.captures.get_mut(*index) {
-                        *capture = Some(result.position..end);
-                    }
+                    result.set_capture(*index, Some(result.position..end));
                     result
                 })
                 .take(MAX_BACKTRACK_STATES)
@@ -1701,6 +1892,7 @@ fn reverse_options(expr: &Expr, input: &[Unit], state: State, flags: Flags) -> V
             min,
             max,
             greedy,
+            ..
         } => reverse_repeat_options(body, input, state, flags, *min, *max, *greedy),
         Expr::Assertion(assertion) => assertion_matches(*assertion, input, state.position, flags)
             .then_some(state)
@@ -2079,6 +2271,38 @@ fn is_basic_emoji_units(units: &[Unit]) -> bool {
 
 fn is_basic_emoji_code_point(value: u32) -> bool {
     property_matches("Emoji", None, value)
+}
+
+/// Whether every item of `class` matches exactly one unit, so its widths at any position are
+/// `[1]` or none.
+fn class_is_single_unit(class: &ClassExpr) -> bool {
+    class.items.iter().all(|item| match item {
+        ClassItem::String(_) => false,
+        ClassItem::Property { name, .. } => {
+            name != "Emoji_Keycap_Sequence" && !is_string_property(name)
+        }
+        ClassItem::Nested(nested) => class_is_single_unit(nested),
+        _ => true,
+    })
+}
+
+/// The longest width `class` matches at `position`: the first of `class_match_widths`.
+fn class_first_width(
+    class: &ClassExpr,
+    input: &[Unit],
+    position: usize,
+    ignore_case: bool,
+    unicode: bool,
+) -> Option<usize> {
+    if class_is_single_unit(class) {
+        return input
+            .get(position)
+            .filter(|unit| class_matches(class, unit.value, ignore_case, unicode))
+            .map(|_| 1);
+    }
+    class_match_widths(class, input, position, ignore_case, unicode)
+        .into_iter()
+        .next()
 }
 
 fn class_match_widths(

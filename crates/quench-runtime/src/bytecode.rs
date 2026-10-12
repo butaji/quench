@@ -1250,9 +1250,9 @@ impl Function {
     /// Whether an activation is fully described by the function's static layout: a nested,
     /// non-arrow, non-derived function whose parameters all live in registers, with no rest
     /// array, self binding, `arguments` object, parameter-scope `arguments` error, inherited
-    /// `with` scope, observable implicit bindings, or register file that must start cleared.
-    /// Such a frame needs only its storage sized, its parameters placed and its scalar state
-    /// set; see `activate_plain_frame`.
+    /// `with` scope or observable implicit bindings. Such a frame needs only its storage sized
+    /// (cleared when no root map lets the collector skip stale registers), its parameters
+    /// placed and its scalar state set; see `activate_plain_frame`.
     pub(crate) fn plain_activation(&self, atoms: &AtomTable) -> bool {
         *self.plain_activation.get_or_init(|| {
             let promoted_parameters = self
@@ -1270,7 +1270,6 @@ impl Function {
                 && !self.inherited_with_scope
                 && !self.is_generator
                 && !self.is_async
-                && self.register_root_offset != NO_REGISTER_ROOT_MAP
                 && promoted_parameters == usize::from(self.params)
                 && !self.activation_bindings_observable(atoms)
         })
