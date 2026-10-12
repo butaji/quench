@@ -6,6 +6,7 @@
 pub(crate) mod assert_rejects_source;
 pub(crate) mod assert_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
+pub(crate) mod async_hook_registry_shared_vm;
 pub(crate) mod async_hooks_state;
 pub(crate) mod buffer_codec;
 pub(crate) mod buffer_shared_vm;
@@ -34,6 +35,7 @@ pub(crate) mod node_errors_shared_vm;
 pub(crate) mod event_limits_shared_vm;
 pub(crate) mod event_constructor_shared_vm;
 pub(crate) mod event_emitter_shared_vm;
+pub(crate) mod emitter_async_resource_shared_vm;
 pub(crate) mod fetch_shared_vm;
 pub(crate) mod fs_error_codes;
 pub(crate) mod fs_error_details;
