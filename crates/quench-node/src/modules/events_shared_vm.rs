@@ -57,12 +57,7 @@ const EVENTS_API: &str = quench_js_check::checked_js!(
     });
   };
 
-  const listenerCount = (emitter, event) => {
-    if (typeof emitter?.listenerCount === "function") return emitter.listenerCount(event);
-    return globalThis.__quenchAbortListenerCount?.(emitter, event) ?? 0;
-  };
-
-  return { once, listenerCount };
+  return { once };
 })()"#
 );
 
@@ -86,11 +81,24 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     }
 
     let api = context.evaluate_script_rooted(EVENTS_API, "node:events/shared-api.js")?;
-    for name in ["once", "listenerCount"] {
-        let key = context.string_rooted(name);
-        let value = context.get_property_rooted(api, key)?;
-        set(context, module, name, value)?;
-    }
+    let once = get(context, api, "once")?;
+    set(context, module, "once", once)?;
+    let state = context.host_mut().shared_state();
+    let data = state
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("EventTarget API missing"))?;
+    let native = context.host_function_with_data(
+        crate::host::shared_vm::operation("eventsListenerCount"),
+        data,
+    )?;
+    let wrapper = context.evaluate_script_rooted(
+        "(native) => function listenerCount(emitter, event) { return native(emitter, event); }",
+        "node:events/listener-count.js",
+    )?;
+    let undefined = context.undefined();
+    let count = context.call_rooted(wrapper, undefined, &[native])?;
+    set(context, module, "listenerCount", count)?;
     let symbol = context.evaluate_script_rooted(
         "Symbol.for('events.errorMonitor')",
         "node:events/errorMonitor",
@@ -118,4 +126,121 @@ fn set(
             "cannot install shared events property {name}"
         )))
     }
+}
+
+fn get(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+) -> Result<RootId, RootedError> {
+    let key = context.string_rooted(name);
+    context.get_property_rooted(object, key)
+}
+
+pub(crate) fn initialize_targets(
+    context: &mut NativeContext<'_, NodeHost>,
+    abort_state: RootId,
+) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    let symbol = get(context, global, "Symbol")?;
+    let undefined = context.undefined();
+    let description = context.string_rooted("kEvents");
+    let records_key = context.call_rooted(symbol, undefined, &[description])?;
+    let registry = get(context, symbol, "for")?;
+    let description = context.string_rooted("nodejs.event_target");
+    let brand_key = context.call_rooted(registry, symbol, &[description])?;
+    let factory = context.evaluate_script_rooted(
+        crate::polyfills::shared_vm::EVENT_TARGET,
+        "node:bootstrap/shared-vm/event-target.js",
+    )?;
+    context.call_rooted(factory, undefined, &[records_key])?;
+    let target = get(context, global, "EventTarget")?;
+    let yes = context.boolean(true);
+    context.define_data_property_rooted(target, brand_key, yes, true, true, true)?;
+    let signal = get(context, global, "AbortSignal")?;
+    context.set_prototype_rooted(signal, target)?;
+    let signal_prototype = get(context, signal, "prototype")?;
+    let target_prototype = get(context, target, "prototype")?;
+    context.set_prototype_rooted(signal_prototype, target_prototype)?;
+    let data = context.null_object_rooted()?;
+    set(context, data, "recordsKey", records_key)?;
+    set(context, data, "brandKey", brand_key)?;
+    set(context, data, "abortState", abort_state)?;
+    let retained = context.retain(data)?;
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .event_targets_api = Some(retained);
+    Ok(())
+}
+
+pub(crate) fn listener_count(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let emitter = args.first().copied().unwrap_or(undefined);
+    let event = args.get(1).copied().unwrap_or(undefined);
+    let method = get(context, emitter, "listenerCount")?;
+    if context.is_callable_rooted(method)? {
+        let method = get(context, emitter, "listenerCount")?;
+        return context.call_rooted(method, emitter, &[event]);
+    }
+    let data = context.host_function_data()?;
+    let constructor = get(context, emitter, "constructor")?;
+    let constructor_value = context
+        .rooted_value(constructor)
+        .ok_or_else(|| RootedError::host("constructor root missing"))?;
+    let branded = if constructor_value.is_null() || constructor_value.is_undefined() {
+        false
+    } else {
+        let key = get(context, data, "brandKey")?;
+        let brand = context.get_property_rooted(constructor, key)?;
+        context.truthy_rooted(brand)?
+    };
+    if !branded {
+        return Err(super::util_shared_vm::argument_type_error(
+            context,
+            emitter,
+            "emitter",
+            "EventEmitter or EventTarget",
+        )?);
+    }
+    let abort_state = get(context, data, "abortState")?;
+    let state = context.call_rooted(abort_state, undefined, &[emitter])?;
+    if context.truthy_rooted(state)? {
+        if context.string_text(event)?.as_deref() != Some("abort") {
+            return Ok(context.number(0.0));
+        }
+        let listeners = get(context, state, "listeners")?;
+        let length = get(context, listeners, "length")?;
+        let length = context
+            .rooted_value(length)
+            .and_then(|value| value.as_number())
+            .ok_or_else(|| RootedError::host("AbortSignal listener length missing"))?;
+        let onabort = get(context, state, "onabort")?;
+        let count = length
+            + if context.is_callable_rooted(onabort)? {
+                1.0
+            } else {
+                0.0
+            };
+        return Ok(context.number(count));
+    }
+    // Node's Map lookup preserves key type rather than coercing property keys.
+    if context.string_text(event)?.is_none() && !context.is_symbol_rooted(event)? {
+        return Ok(context.number(0.0));
+    }
+    let key = get(context, data, "recordsKey")?;
+    let records = context.get_property_rooted(emitter, key)?;
+    if !context.truthy_rooted(records)? {
+        return Ok(context.number(0.0));
+    }
+    let listeners = context.get_property_rooted(records, event)?;
+    if !context.truthy_rooted(listeners)? {
+        return Ok(context.number(0.0));
+    }
+    get(context, listeners, "length")
 }

@@ -1878,3 +1878,53 @@ console.log(JSON.stringify(observations));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn events_listener_count_preserves_target_branding_and_method_dispatch() {
+    const SOURCE: &str = r#"
+const {listenerCount}=require('events');const result=[];
+const key=Symbol.for('nodejs.event_target');
+const target=new EventTarget(), fn=()=>{};
+target.addEventListener('x',fn);target.addEventListener('x',fn);
+target.addEventListener('x',()=>{}, {once:true});
+result.push(listenerCount(target,'x'));target.dispatchEvent(new Event('x'));
+result.push(listenerCount(target,'x'));target.removeEventListener('x',fn);
+result.push(listenerCount(target,'x'));
+target.addEventListener('0',fn);result.push(listenerCount(target,0),listenerCount(target,'0'));
+class Derived extends EventTarget {}result.push(listenerCount(new Derived(),'x'));
+result.push(listenerCount(Object.create(EventTarget.prototype),'x'));
+result.push(listenerCount({constructor:{[key]:true}},'x'));
+const controller=new AbortController();controller.signal.addEventListener('abort',fn);
+result.push(controller.signal instanceof EventTarget,listenerCount(controller.signal,'abort'));
+controller.signal.removeEventListener('abort',fn);result.push(listenerCount(controller.signal,'abort'));
+for(const onabort of [fn,null,{},fn]){controller.signal.onabort=onabort;result.push(listenerCount(controller.signal,'abort'));}
+let gets=0;const delegated={get listenerCount(){gets++;return function(event){return [this===delegated,event,arguments.length]}}};
+result.push(listenerCount(delegated,'y'),gets);
+const marker={};try{listenerCount({get listenerCount(){throw marker}},'x')}catch(error){result.push(error===marker)}
+for(const value of [{},null,undefined])try{listenerCount(value,'x')}catch(error){result.push([error.name,error.code??null])}
+target.constructor={};try{listenerCount(target,'x')}catch(error){result.push([error.name,error.code])}
+const constructor=EventTarget;globalThis.EventTarget=function(){};
+result.push(listenerCount(new constructor(),'x'));
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
