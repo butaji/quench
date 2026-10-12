@@ -360,7 +360,7 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async generator return reaction without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+        let Some((_, elements)) = self.heap.array(environment) else {
             return Err(JsError("async generator return state is invalid".into()));
         };
         let [generator, promise] = elements.as_slice() else {
@@ -411,7 +411,7 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async generator return rejection without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+        let Some((_, elements)) = self.heap.array(environment) else {
             return Err(JsError("async generator return state is invalid".into()));
         };
         let [generator, promise] = elements.as_slice() else {
@@ -439,7 +439,7 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate return without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+        let Some((_, elements)) = self.heap.array(environment) else {
             return Err(JsError("async delegate return state is invalid".into()));
         };
         let [generator, iterator, destination] = elements.as_slice() else {
@@ -969,7 +969,7 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate reaction without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
+        let Some((_, elements)) = self.heap.array(env) else {
             return Err(JsError("async delegate reaction state is invalid".into()));
         };
         let [generator, destination, throwing, adapter, _async_from_sync] = elements.as_slice()
@@ -1047,7 +1047,7 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate rejection without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
+        let Some((_, elements)) = self.heap.array(env) else {
             return Err(JsError("async delegate rejection state is invalid".into()));
         };
         let generator = elements

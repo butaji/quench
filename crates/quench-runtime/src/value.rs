@@ -10,11 +10,13 @@ const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
 const DIRECT_OBJECT_HANDLE_BIT: u64 = 1 << 47;
+const DIRECT_ARRAY_HANDLE_BIT: u64 = 1 << 46;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeapReference {
     LegacySlot(u32),
     ObjectRecord(u32),
+    ArrayRecord(u32),
 }
 
 #[cfg(feature = "profile-aggregate")]
@@ -81,6 +83,11 @@ impl Value {
         Self(TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT | u64::from(index))
     }
 
+    #[inline(always)]
+    pub(crate) fn direct_array(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT | u64::from(index))
+    }
+
     pub fn as_number(self) -> Option<f64> {
         if let Some(value) = self.as_int() {
             Some(value as f64)
@@ -104,18 +111,21 @@ impl Value {
             return None;
         }
         let index = self.0 as u32;
-        Some(if self.0 & DIRECT_OBJECT_HANDLE_BIT == 0 {
-            HeapReference::LegacySlot(index)
-        } else {
-            HeapReference::ObjectRecord(index)
-        })
+        Some(
+            match self.0 & (DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT) {
+                0 => HeapReference::LegacySlot(index),
+                DIRECT_OBJECT_HANDLE_BIT => HeapReference::ObjectRecord(index),
+                DIRECT_ARRAY_HANDLE_BIT => HeapReference::ArrayRecord(index),
+                _ => return None,
+            },
+        )
     }
 
     #[inline(always)]
     pub(crate) fn legacy_heap_index(self) -> Option<u32> {
         match self.heap_reference()? {
             HeapReference::LegacySlot(index) => Some(index),
-            HeapReference::ObjectRecord(_) => None,
+            HeapReference::ObjectRecord(_) | HeapReference::ArrayRecord(_) => None,
         }
     }
 
@@ -123,7 +133,15 @@ impl Value {
     pub(crate) fn direct_object_index(self) -> Option<u32> {
         match self.heap_reference()? {
             HeapReference::ObjectRecord(index) => Some(index),
-            HeapReference::LegacySlot(_) => None,
+            HeapReference::LegacySlot(_) | HeapReference::ArrayRecord(_) => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_array_index(self) -> Option<u32> {
+        match self.heap_reference()? {
+            HeapReference::ArrayRecord(index) => Some(index),
+            HeapReference::LegacySlot(_) | HeapReference::ObjectRecord(_) => None,
         }
     }
 
@@ -222,6 +240,14 @@ mod tests {
             Some(super::HeapReference::ObjectRecord(42))
         );
         assert_ne!(direct_object, Value::heap(42));
+        let direct_array = Value::direct_array(42);
+        assert_eq!(direct_array.heap_index(), Some(42));
+        assert_eq!(direct_array.direct_array_index(), Some(42));
+        assert_eq!(
+            direct_array.heap_reference(),
+            Some(super::HeapReference::ArrayRecord(42))
+        );
+        assert_ne!(direct_array, direct_object);
         assert_eq!(
             Value::int_pair(Value::integer(-2), Value::integer(3)),
             Some((-2, 3))

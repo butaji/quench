@@ -946,7 +946,7 @@ impl<H: Host> Vm<H> {
             .object_record(changes)
             .is_some_and(|object| object.proto == self.temporal_plain_time_proto);
         if !self.is_object_like(changes)
-            || matches!(self.heap.get(changes), Some(Cell::Array { .. }))
+            || self.heap.array(changes).is_some()
             || is_plain_time
             || matches!(
                 self.heap.get(changes),

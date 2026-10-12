@@ -261,9 +261,10 @@ impl<H: Host> Vm<H> {
             .unwrap_or(Value::UNDEFINED);
         let bound_args = self
             .own_property(env, args_atom)
-            .and_then(|value| match self.heap.get(value) {
-                Some(Cell::Array { elements, .. }) => Some(elements.as_ref().clone()),
-                _ => None,
+            .and_then(|value| {
+                self.heap
+                    .array(value)
+                    .map(|(_, elements)| elements.as_ref().clone())
             })
             .unwrap_or_default();
         let mut combined = bound_args;
