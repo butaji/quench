@@ -91,3 +91,22 @@ The paired wall and cycle percentages below use the guard's per-round K/K=0 marg
 The candidate's Splay fixed-work improvement is clear against the synced parent, but RayTrace regresses beyond the guard on wall, cycles and instructions, and its work max RSS rises 1.342% against the 0.5% budget. RegExp also has a clean +3.211% wall / +3.309% cycles regression. This layout candidate is therefore not eligible to merge. The official M4 stock Splay distances remain **1.664× Score / 1.810× max RSS**; no stock result or scoreboard update follows from this fixed-work guard.
 
 An earlier attempt reached all fixtures but failed to write its report because the output path was relative to the clean runner checkout. It produced no retained raw data and is excluded; the report above is the successful retry with an absolute output path.
+
+## Counter-only attribution of RayTrace and RegExp (Apple M4 arm64 macOS)
+
+To locate the two regressions, I ran one `profile-aggregate` K=300/K=0 capture for each fixture with output equality. The reports have 0/1 clean timing rounds, so their wall/cycle/RSS fields are excluded from decisions; only runtime counters and retired-instruction attribution are used here. The parent and candidate profile binaries are SHA-256 `83cac26ff6e4a20a606d5e5a6e9524d32353fe6eafb624ea1f11bb26c7e90ea5` and `9b30259ad5216caa168302471dc7eea7d04c0f3d1eb226f58bde2ce081817840`. They were built from parent `40b5d420c` and candidate `e08b4e0ca`, respectively, with the measurement-only compatibility patch [`profile-aggregate-build-compatibility.patch`](profile-aggregate-build-compatibility.patch), SHA-256 `b7554ef8d15ff034d9d6aca6691684c7747cfcb233ea1c081a130a288aa60c06`. The patch only supplies `Default` for the feature-gated 35-entry mark-counter array and updates the feature-gated Wasm profiler call signature. Runner SHA-256 is `bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109`; corpus revision is `64e1860c736c1b899708f4cd646721bc71e53d8b`.
+
+For RayTrace, K=300 minus K=0 field-cache counters are:
+
+| Counter | Synced parent | Candidate |
+| -- | --: | --: |
+| Hits | 12,024,787 | 11,294,151 |
+| Misses | 12,323 | 742,959 |
+| Tier 0 / tier 2 hits | 11,108,370 / 916,417 | 11,108,370 / 185,781 |
+| Depth 1 hits | 1,865,269 | 1,134,633 |
+
+The candidate loses exactly 730,636 tier-2 holder hits and gains exactly 730,636 misses. Allocations (1,332,950), indexed gets (115,230), indexed dispatches, call counts, and output are equal. The source explains the counter delta: in `vm/object.rs`, `get_field_polymorphic`'s direct-record branch at lines 696–700 tries `cached_field_value` and then `cached_ordinary_holder_field_value`, which checks only the monomorphic immediate-holder entry. It then calls `get_field_miss`. The equivalent fallback in `get_field_uncached` at lines 723–730 uses `cached_holder_field_value`; that helper (lines 919–935) also probes the megamorphic holder table. Thus direct-record receivers bypass an existing cache tier. Restoring the shared full holder probe is the next candidate fix; the counter match pins the mechanism without treating this one-round profile as a timing result.
+
+For RegExp, K=300 minus K=0 cache counters match exactly: 123,706 hits, one miss, 123,706 tier-0 hits, and depth counts `[38,781, 84,925, 0]`; indexed gets are 92,090 and allocations are 335,000 in both builds. This rules out cache-miss inflation as the explanation for RegExp. Its instrumented marginal retired-instruction count is 10,478,445,360 on the parent and 10,645,924,111 on the candidate (+1.599%); this is attribution only, not a qualified performance measurement. The remaining RegExp cost needs separate source or instruction attribution.
+
+Raw reports: [`raytrace-profile-aggregate-parent-vs-candidate-1.json`](raytrace-profile-aggregate-parent-vs-candidate-1.json), SHA-256 `869f9bc2bb36942c0aa1c36b37591b9de43b71efecaa46394a73d8ccdfbeeaa1`; and [`regexp-profile-aggregate-parent-vs-candidate-1.json`](regexp-profile-aggregate-parent-vs-candidate-1.json), SHA-256 `3252d2a0b855f43a9308ed06eb960fdef50c7af408e870b24fc5d2cd158e0be5`.
