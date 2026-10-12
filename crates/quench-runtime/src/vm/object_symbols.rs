@@ -21,7 +21,7 @@ impl<H: Host> Vm<H> {
             .filter_map(|root| self.heap.root_value(*root))
             .collect::<Vec<_>>();
         let result = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(keys),
         });
         roots.into_iter().for_each(|root| {
@@ -399,7 +399,7 @@ impl<H: Host> Vm<H> {
             .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
             .collect();
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(values),
         }))
     }

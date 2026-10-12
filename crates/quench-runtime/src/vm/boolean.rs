@@ -17,7 +17,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(constructor, "Boolean")?;
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         let boolean_value = self.intern_atom("\0quench:boolean-value");
         self.set_property(prototype, boolean_value, Value::FALSE)?;
         self.set_property_attributes(

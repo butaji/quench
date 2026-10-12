@@ -178,6 +178,12 @@ impl ValueArena {
         self.shape_lengths[shape] = length as u32;
     }
 
+    pub(crate) fn ensure_empty_shape(&mut self, shape: u32) {
+        if self.shape_lengths.len() <= shape as usize {
+            self.shape_lengths.resize(shape as usize + 1, 0);
+        }
+    }
+
     pub(crate) fn reset_shapes(&mut self) {
         self.shape_lengths.clear();
         self.shape_lengths.push(0);
@@ -449,7 +455,16 @@ impl ValueArena {
     }
 
     pub(crate) fn len(&self, vector: ValueVec) -> usize {
-        self.shape_lengths[vector.auxiliary() as usize] as usize
+        match self.shape_lengths.get(vector.auxiliary() as usize) {
+            Some(length) => *length as usize,
+            None => {
+                // Root shapes always describe empty objects. Ordinary and array
+                // allocations register these eagerly, but object headers embedded
+                // in other Cell variants can retain an unregistered root shape.
+                debug_assert!(vector.has_inline_property_storage());
+                0
+            }
+        }
     }
 
     pub(crate) fn assert_shape_length(&self, shape: u32, length: usize) {
@@ -559,6 +574,14 @@ mod tests {
             expected
         );
         assert_eq!(vector.auxiliary(), 1);
+    }
+
+    #[test]
+    fn unregistered_inline_root_shape_has_zero_properties() {
+        let arena = ValueArena::default();
+        let vector = ValueVec::inline_property_storage(1);
+
+        assert_eq!(arena.len(vector), 0);
     }
 
     #[test]

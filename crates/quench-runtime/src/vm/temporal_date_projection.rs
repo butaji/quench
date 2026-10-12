@@ -212,7 +212,7 @@ impl<H: Host> Vm<H> {
         let prototype =
             self.constructor_prototype(p, new_target, self.temporal_plain_month_day_proto)?;
         Ok(self.heap.alloc(Cell::TemporalPlainMonthDay {
-            object: Box::new(Self::empty_object(prototype)),
+            object: Box::new(self.shapes.empty_object(prototype)),
             month: month as u32,
             day: day as u32,
             calendar: Box::new(calendar),
@@ -240,7 +240,7 @@ impl<H: Host> Vm<H> {
         let prototype =
             self.constructor_prototype(p, new_target, self.temporal_plain_year_month_proto)?;
         Ok(self.heap.alloc(Cell::TemporalPlainYearMonth {
-            object: Box::new(Self::empty_object(prototype)),
+            object: Box::new(self.shapes.empty_object(prototype)),
             year,
             month: month as u32,
             calendar: Box::new(calendar),
@@ -499,7 +499,7 @@ impl<H: Host> Vm<H> {
                 }
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
                 Ok(self.heap.alloc(Cell::TemporalPlainDate {
-                    object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
+                    object: Box::new(self.shapes.empty_object(self.temporal_plain_date_proto)),
                     year: date.year,
                     month: date.month,
                     day: date.day,
@@ -854,7 +854,7 @@ impl<H: Host> Vm<H> {
                 let date = checked_iso_date(iso.0, iso.1 as i32, iso.2 as i32)
                     .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
                 Ok(self.heap.alloc(Cell::TemporalPlainDate {
-                    object: Box::new(Self::empty_object(self.temporal_plain_date_proto)),
+                    object: Box::new(self.shapes.empty_object(self.temporal_plain_date_proto)),
                     year: date.year,
                     month: date.month,
                     day: date.day,
@@ -902,7 +902,7 @@ impl<H: Host> Vm<H> {
         .ok_or_else(|| self.range_error(p, "Invalid PlainYearMonth".into()))?;
         self.validate_plain_year_month_range(p, result.0, result.1 as i32, result.2)?;
         Ok(self.heap.alloc(Cell::TemporalPlainYearMonth {
-            object: Box::new(Self::empty_object(self.temporal_plain_year_month_proto)),
+            object: Box::new(self.shapes.empty_object(self.temporal_plain_year_month_proto)),
             year: result.0,
             month: result.1,
             calendar: Box::new(calendar),
@@ -1847,7 +1847,7 @@ pub(super) fn to_plain_year_month<H: Host>(
         })
         .map_or(DEFAULT_REFERENCE_ISO_DAY, |(_, _, day)| day);
     Ok(vm.heap.alloc(Cell::TemporalPlainYearMonth {
-        object: Box::new(Vm::<H>::empty_object(vm.temporal_plain_year_month_proto)),
+        object: Box::new(vm.shapes.empty_object(vm.temporal_plain_year_month_proto)),
         year,
         month,
         calendar: Box::new(calendar),

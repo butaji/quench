@@ -22,6 +22,7 @@ use atomics::Test262AgentState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
 use std::hash::{Hash, Hasher};
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 const DEFAULT_RANDOM_SEED: u64 = 0x4d59_5df4_d0f3_3173;
@@ -542,6 +543,7 @@ impl ShapeLookupIndex {
     }
 }
 struct Shape {
+    prototype: Value,
     parent: Option<u32>,
     transition: ShapeTransition,
     storage_len: usize,
@@ -559,8 +561,8 @@ struct Shape {
 const PROTOTYPE_SLOT_UNKNOWN: u32 = u32::MAX;
 const PROTOTYPE_SLOT_NONE: u32 = u32::MAX - 1;
 impl Shape {
-    fn root() -> Self {
-        Self::child(None, ShapeTransition::Root, 0, None, false)
+    fn root(prototype: Value) -> Self {
+        Self::child(None, ShapeTransition::Root, 0, None, false, prototype)
     }
 
     fn child(
@@ -569,8 +571,10 @@ impl Shape {
         storage_len: usize,
         dictionary_trigger: Option<DictionaryTrigger>,
         parent_may_have_gc_roots: bool,
+        prototype: Value,
     ) -> Self {
         Self {
+            prototype,
             parent,
             transition,
             storage_len,
@@ -580,6 +584,66 @@ impl Shape {
             long_walks: std::cell::Cell::new(0),
             prototype_slot: std::cell::Cell::new(PROTOTYPE_SLOT_UNKNOWN),
         }
+    }
+}
+
+/// Root shapes own prototype identity; property transitions inherit it.
+/// The root map is a lookup cache and is pruned after collection, never a GC root.
+struct ShapeTable {
+    entries: Vec<Shape>,
+    roots: FxHashMap<Value, u32>,
+}
+
+impl ShapeTable {
+    fn new() -> Self {
+        Self {
+            entries: vec![Shape::root(Value::NULL)],
+            roots: [(Value::NULL, 0)].into_iter().collect(),
+        }
+    }
+
+    fn root_for_prototype(&mut self, prototype: Value) -> u32 {
+        if let Some(shape) = self.roots.get(&prototype) {
+            return *shape;
+        }
+        let shape = u32::try_from(self.entries.len()).expect("object shape table exhausted");
+        self.entries.push(Shape::root(prototype));
+        self.roots.insert(prototype, shape);
+        shape
+    }
+
+    fn empty_object(&mut self, prototype: Value) -> Object {
+        Object::new(self.root_for_prototype(prototype))
+    }
+
+    fn reset(&mut self) {
+        self.entries.clear();
+        self.entries.push(Shape::root(Value::NULL));
+        self.roots.clear();
+        self.roots.insert(Value::NULL, 0);
+    }
+
+    fn push(&mut self, shape: Shape) {
+        self.entries.push(shape);
+    }
+
+    fn prune_roots(&mut self, mut is_live: impl FnMut(Value) -> bool) {
+        self.roots
+            .retain(|prototype, _| prototype.is_null() || is_live(*prototype));
+    }
+}
+
+impl Deref for ShapeTable {
+    type Target = Vec<Shape>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
+
+impl DerefMut for ShapeTable {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.entries
     }
 }
 const EMPTY_STRING_CONCAT_CACHE: StringConcatCache = StringConcatCache {
@@ -754,7 +818,7 @@ pub(crate) struct Vm<H> {
     active_layout: ProgramCacheLayout,
     active_program: ProgramId,
     profile: Profile,
-    shapes: Vec<Shape>,
+    shapes: ShapeTable,
     transitions: FxHashMap<(u32, ShapeTransitionKey), u32>,
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
@@ -1266,8 +1330,9 @@ impl<H: Host> Vm<H> {
             + heap.sparse_array_sidecar_bytes
             + vm_metadata_bytes;
         eprintln!(
-            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"array_record_reserved_bytes\":{},\"legacy_cell_record_reserved_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"shape_count\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"array_record_reserved_bytes\":{},\"legacy_cell_record_reserved_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
             self.heap.collection_count(),
+            self.shapes.len(),
             CellKind::NAMES,
             heap.cell_counts,
             heap.cell_variant_names,
@@ -1337,7 +1402,7 @@ impl<H: Host> Vm<H> {
         self.eval_script_context = false;
         self.construct_target = None;
         self.realm.promise = Default::default();
-        self.shapes.truncate(1);
+        self.shapes.reset();
         self.transitions.clear();
         self.atom_text = program.atoms.clone();
         self.atoms.clear();
@@ -1391,7 +1456,7 @@ impl<H: Host> Vm<H> {
         self.random_state = DEFAULT_RANDOM_SEED;
         self.realm.globals = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+            .alloc(Cell::Object(self.shapes.empty_object(Value::NULL)));
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("vm_shell");
         self.materialize_program_constants(ProgramId::MAIN, program);

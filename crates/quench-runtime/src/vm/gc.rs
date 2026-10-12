@@ -11,7 +11,7 @@ fn shape_reclaim_threshold_met(shape_count: usize, unreachable: usize) -> bool {
     unreachable >= shape_count.div_ceil(SHAPE_COMPACTION_MIN_RECLAIM_DENOMINATOR)
 }
 
-fn active_shape_attributes(
+pub(super) fn active_shape_attributes(
     shapes: &[Shape],
     shape: u32,
 ) -> Vec<Option<(property_key::PropertyKey, PropertyAttributes)>> {
@@ -60,7 +60,7 @@ fn append_shape_roots(shapes: &[Shape], shape: u32, roots: &mut Vec<Value>) {
 }
 
 fn append_compacted_shape(
-    shapes: &mut Vec<Shape>,
+    shapes: &mut ShapeTable,
     transitions: &mut FxHashMap<(u32, ShapeTransitionKey), u32>,
     parent: u32,
     transition: ShapeTransition,
@@ -78,12 +78,14 @@ fn append_compacted_shape(
         _ => shapes[parent as usize].dictionary_trigger,
     };
     let parent_may_have_gc_roots = shapes[parent as usize].may_have_gc_roots;
+    let prototype = shapes[parent as usize].prototype;
     shapes.push(Shape::child(
         Some(parent),
         transition,
         storage_len,
         dictionary_trigger,
         parent_may_have_gc_roots,
+        prototype,
     ));
     if let Some(key) = cache_key {
         transitions.insert((parent, key), shape);
@@ -94,10 +96,15 @@ fn append_compacted_shape(
 fn rebuild_shape(
     old_shapes: &[Shape],
     old_shape: u32,
-    shapes: &mut Vec<Shape>,
+    shapes: &mut ShapeTable,
     transitions: &mut FxHashMap<(u32, ShapeTransitionKey), u32>,
 ) -> u32 {
-    let mut parent = 0;
+    let mut old_root = old_shape;
+    while let Some(parent) = old_shapes[old_root as usize].parent {
+        old_root = parent;
+    }
+    let prototype = old_shapes[old_root as usize].prototype;
+    let mut parent = shapes.root_for_prototype(prototype);
     for (slot, entry) in active_shape_attributes(old_shapes, old_shape)
         .into_iter()
         .enumerate()
@@ -534,6 +541,7 @@ impl<H: Host> Vm<H> {
                     if live_shape_bits[word] & mask == 0 {
                         live_shape_bits[word] |= mask;
                         live_shapes.push(shape);
+                        roots.push(shapes[shape_index].prototype);
                         if shapes[shape_index].may_have_gc_roots {
                             append_shape_roots(shapes, shape, roots);
                         }
@@ -544,6 +552,8 @@ impl<H: Host> Vm<H> {
                         roots.extend(edges.iter().copied());
                     }
                 });
+        let heap = &self.heap;
+        self.shapes.prune_roots(|prototype| heap.is_live(prototype));
         // Heap weak fields are pruned during collection. Prune the VM-owned
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.
@@ -672,13 +682,13 @@ impl<H: Host> Vm<H> {
     }
 
     fn compact_live_shapes(&mut self, live_shapes: Vec<u32>) {
-        let old_shapes = std::mem::replace(&mut self.shapes, vec![Shape::root()]);
+        let old_shapes = std::mem::replace(&mut self.shapes, ShapeTable::new());
         #[cfg(feature = "profile-memory")]
         let old_shape_count = old_shapes.len();
         #[cfg(feature = "profile-memory")]
         let live_shape_count = live_shapes.len();
         let mut mapping = vec![u32::MAX; old_shapes.len()];
-        let mut shapes = vec![Shape::root()];
+        let mut shapes = ShapeTable::new();
         let mut transitions = FxHashMap::default();
         for old_shape in live_shapes {
             let mapping_entry = &mut mapping[old_shape as usize];
@@ -807,7 +817,7 @@ mod tests {
 
     #[test]
     fn shape_gc_root_fact_is_inherited_from_symbol_and_accessor_transitions() {
-        let root = Shape::root();
+        let root = Shape::root(Value::NULL);
         assert!(!root.may_have_gc_roots);
         let string_key = Shape::child(
             Some(0),
@@ -818,6 +828,7 @@ mod tests {
             1,
             None,
             root.may_have_gc_roots,
+            Value::NULL,
         );
         assert!(!string_key.may_have_gc_roots);
 
@@ -831,6 +842,7 @@ mod tests {
             1,
             None,
             root.may_have_gc_roots,
+            Value::NULL,
         );
         assert!(symbol_shape.may_have_gc_roots);
         let deleted_symbol_shape = Shape::child(
@@ -842,6 +854,7 @@ mod tests {
             1,
             None,
             symbol_shape.may_have_gc_roots,
+            Value::NULL,
         );
         assert!(deleted_symbol_shape.may_have_gc_roots);
 
@@ -858,6 +871,7 @@ mod tests {
             1,
             Some(DictionaryTrigger::PropertyCount),
             string_key.may_have_gc_roots,
+            Value::NULL,
         );
         assert!(accessor_shape.may_have_gc_roots);
     }

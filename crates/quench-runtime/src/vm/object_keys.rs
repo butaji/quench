@@ -67,7 +67,7 @@ impl<H: Host> Vm<H> {
                 };
                 let property = match kind {
                     EnumerableOwnPropertyKind::KeyValue => self.heap.alloc(Cell::Array {
-                        object: Self::empty_object(self.array_proto),
+                        object: self.shapes.empty_object(self.array_proto),
                         elements: Rc::new(vec![self.heap.root_value(*key).unwrap(), item]),
                     }),
                     EnumerableOwnPropertyKind::Key | EnumerableOwnPropertyKind::Value => item,
@@ -79,7 +79,7 @@ impl<H: Host> Vm<H> {
                 .map(|root| self.heap.root_value(*root).unwrap())
                 .collect();
             Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+                object: self.shapes.empty_object(self.array_proto),
                 elements: Rc::new(elements),
             }))
         })();
@@ -101,7 +101,7 @@ impl<H: Host> Vm<H> {
             .filter(|key| matches!(self.heap.get(*key), Some(Cell::String(_))))
             .collect();
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(values),
         }))
     }

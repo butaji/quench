@@ -298,7 +298,7 @@ impl<H: Host> Vm<H> {
             let Some(data) = self.object_data(owner) else {
                 return Ok(Value::UNDEFINED);
             };
-            owner = data.proto;
+            owner = self.prototype_for_data(data);
             if owner.is_null() {
                 return Ok(Value::UNDEFINED);
             }
@@ -470,18 +470,24 @@ impl<H: Host> Vm<H> {
                 return Ok(v);
             }
             if let Some(data) = self.heap.object_record(object) {
-                object = data.proto;
+                object = self.prototype_for_data(data);
             } else if object.direct_array_index().is_some() {
-                object = self
+                let data = self
                     .heap
                     .object(object)
-                    .expect("live direct array retains its object header")
-                    .proto;
+                    .expect("live direct array retains its object header");
+                object = self.prototype_for_data(data);
             } else {
                 match self.heap.get(object) {
-                    Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,
-                    Some(Cell::TypedArray { object: x, .. }) => object = x.proto,
-                    Some(Cell::DataView { object: x, .. }) => object = x.proto,
+                    Some(Cell::ArrayBuffer { object: x, .. }) => {
+                        object = self.prototype_for_data(x)
+                    }
+                    Some(Cell::TypedArray { object: x, .. }) => {
+                        object = self.prototype_for_data(x)
+                    }
+                    Some(Cell::DataView { object: x, .. }) => {
+                        object = self.prototype_for_data(x)
+                    }
                     Some(Cell::String(v)) => {
                         if let Ok(index) = self.atom_name(atom).parse::<usize>()
                             && let Some(unit) = v.units().get(index).copied()
@@ -530,19 +536,25 @@ impl<H: Host> Vm<H> {
                     | Some(Cell::TemporalPlainMonthDay { object: x, .. })
                     | Some(Cell::TemporalPlainYearMonth { object: x, .. })
                     | Some(Cell::TemporalZonedDateTime { object: x, .. })
-                    | Some(Cell::TemporalInstant { object: x, .. }) => object = x.proto,
-                    Some(Cell::Array { object: x, .. }) => object = x.proto,
-                    Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto,
-                    Some(Cell::RegExp { object: x, .. }) => object = x.proto,
+                    | Some(Cell::TemporalInstant { object: x, .. }) => {
+                        object = self.prototype_for_data(x)
+                    }
+                    Some(Cell::Array { object: x, .. }) => object = self.prototype_for_data(x),
+                    Some(Cell::ShadowRealm { object: x, .. }) => {
+                        object = self.prototype_for_data(x)
+                    }
+                    Some(Cell::RegExp { object: x, .. }) => object = self.prototype_for_data(x),
                     Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
-                        object = x.proto
+                        object = self.prototype_for_data(x)
                     }
                     Some(Cell::WeakMap { object: x, .. })
-                    | Some(Cell::WeakSet { object: x, .. }) => object = x.proto,
-                    Some(Cell::WeakRef { object: x, .. }) => object = x.proto,
-                    Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto,
-                    Some(Cell::Iterator { object: x, .. }) => object = x.proto,
-                    Some(Cell::Function { object: x, .. }) => object = x.proto,
+                    | Some(Cell::WeakSet { object: x, .. }) => object = self.prototype_for_data(x),
+                    Some(Cell::WeakRef { object: x, .. }) => object = self.prototype_for_data(x),
+                    Some(Cell::FinalizationRegistry { object: x, .. }) => {
+                        object = self.prototype_for_data(x)
+                    }
+                    Some(Cell::Iterator { object: x, .. }) => object = self.prototype_for_data(x),
+                    Some(Cell::Function { object: x, .. }) => object = self.prototype_for_data(x),
                     _ => return Ok(Value::UNDEFINED),
                 }
             }

@@ -263,7 +263,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if source.is_null() || source.is_undefined() {
             return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+                object: self.shapes.empty_object(self.array_proto),
                 elements: Rc::new(Vec::new()),
             }));
         }
@@ -317,7 +317,7 @@ impl<H: Host> Vm<H> {
                 .map(|key| self.heap.root_value(*key).unwrap())
                 .collect();
             Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
+                object: self.shapes.empty_object(self.array_proto),
                 elements: Rc::new(elements),
             }))
         })();
@@ -546,7 +546,7 @@ impl<H: Host> Vm<H> {
                 if !proto.is_null() && self.object_data(proto).is_none() {
                     return Err(JsError("Object prototype is not an object".into()));
                 }
-                let object = self.heap.alloc(Cell::Object(Self::empty_object(proto)));
+                let object = self.heap.alloc(Cell::Object(self.shapes.empty_object(proto)));
                 if let Some(descriptors) = args.get(1).copied()
                     && !descriptors.is_undefined()
                 {
@@ -611,7 +611,7 @@ impl<H: Host> Vm<H> {
                 .get(&(self.realm.globals, Native::Object))
                 .copied()
                 .unwrap_or(self.object_proto);
-            let result = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+            let result = self.heap.alloc(Cell::Object(self.shapes.empty_object(prototype)));
             let result = self.heap.root(result);
             result_root = Some(result);
             loop {

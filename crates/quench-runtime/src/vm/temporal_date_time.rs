@@ -197,7 +197,7 @@ impl<H: Host> Vm<H> {
             self.object_proto
         };
         Ok(self.heap.alloc(Cell::TemporalPlainDateTime {
-            object: Box::new(Self::empty_object(prototype)),
+            object: Box::new(self.shapes.empty_object(prototype)),
             date: (date.year, date.month, date.day),
             time: Box::new(time.map(|value| value as u32)),
             calendar: Box::new(calendar),
@@ -944,7 +944,9 @@ impl<H: Host> Vm<H> {
         let is_plain_time = self
             .heap
             .object_record(changes)
-            .is_some_and(|object| object.proto == self.temporal_plain_time_proto);
+            .is_some_and(|object| {
+                self.prototype_for_data(object) == self.temporal_plain_time_proto
+            });
         if !self.is_object_like(changes)
             || self.heap.array(changes).is_some()
             || is_plain_time

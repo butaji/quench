@@ -163,7 +163,7 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(self.heap.alloc(Cell::TypedArray {
                         kind,
-                        object: Box::new(Self::empty_object(
+                        object: Box::new(self.shapes.empty_object(
                             self.heap.root_value(prototype_root.unwrap()).unwrap(),
                         )),
                         buffer: source,
@@ -190,7 +190,7 @@ impl<H: Host> Vm<H> {
                 backing = Some(buffer_root);
                 let typed_array = self.heap.alloc(Cell::TypedArray {
                     kind,
-                    object: Box::new(Self::empty_object(
+                    object: Box::new(self.shapes.empty_object(
                         self.heap.root_value(prototype_root.unwrap()).unwrap(),
                     )),
                     buffer: self.heap.root_value(buffer_root).unwrap(),

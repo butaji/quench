@@ -465,7 +465,7 @@ mod tests {
     fn high_array_index_stays_out_of_dense_storage() {
         let mut vm = Vm::new(SilentHost);
         let array = vm.heap.alloc(Cell::Array {
-            object: Vm::<SilentHost>::empty_object(Value::NULL),
+            object: vm.shapes.empty_object(Value::NULL),
             elements: Rc::new(vec![]),
         });
         assert!(vm.set_array_element(array, 1_000_000, Value::TRUE));
@@ -502,7 +502,7 @@ mod tests {
     fn bounded_sparse_write_promotes_to_dense_storage() {
         let mut vm = Vm::new(SilentHost);
         let array = vm.heap.alloc(Cell::Array {
-            object: Vm::<SilentHost>::empty_object(Value::NULL),
+            object: vm.shapes.empty_object(Value::NULL),
             elements: Rc::new(Vec::new()),
         });
 
@@ -521,7 +521,7 @@ mod tests {
     fn shrinking_large_sparse_array_promotes_and_preserves_values() {
         let mut vm = Vm::new(SilentHost);
         let array = vm.heap.alloc(Cell::Array {
-            object: Vm::<SilentHost>::empty_object(Value::NULL),
+            object: vm.shapes.empty_object(Value::NULL),
             elements: Rc::new(Vec::new()),
         });
         vm.heap.sparse_set_length(array, 1_000_000);
@@ -544,7 +544,7 @@ mod tests {
         let program = crate::Engine::specialize("", "array-index-atoms.js").unwrap();
         let mut vm = Vm::new(SilentHost);
         let array = vm.heap.alloc(Cell::Array {
-            object: Vm::<SilentHost>::empty_object(Value::NULL),
+            object: vm.shapes.empty_object(Value::NULL),
             elements: Rc::new(Vec::new()),
         });
         let atom_count = vm.dynamic_atoms.len();
@@ -570,7 +570,7 @@ mod tests {
     fn deleting_an_uninterned_present_index_does_not_create_an_atom() {
         let mut vm = Vm::new(SilentHost);
         let array = vm.heap.alloc(Cell::Array {
-            object: Vm::<SilentHost>::empty_object(Value::NULL),
+            object: vm.shapes.empty_object(Value::NULL),
             elements: Rc::new(vec![Value::FALSE; 1024]),
         });
         let atom_count = vm.dynamic_atoms.len();

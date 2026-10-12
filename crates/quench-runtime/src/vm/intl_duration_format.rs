@@ -72,7 +72,7 @@ impl<H: Host> Vm<H> {
         let constructor = self.native_with_realm(Native::IntlDurationFormat, global, global);
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.realm
             .intrinsics
             .intl_duration_format_constructors
@@ -123,7 +123,7 @@ impl<H: Host> Vm<H> {
                 let requested_locale = locales.first().cloned().unwrap_or_else(|| "en-US".into());
                 let options =
                     vm.duration_format_options(p, args.get(1).copied(), &requested_locale)?;
-                let instance = vm.heap.alloc(Cell::Object(Self::empty_object(prototype)));
+                let instance = vm.heap.alloc(Cell::Object(vm.shapes.empty_object(prototype)));
                 vm.write_duration_format_slots(instance, &options)?;
                 Ok(instance)
             })
@@ -352,7 +352,7 @@ impl<H: Host> Vm<H> {
             values.push(object);
         }
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(values),
         }))
     }

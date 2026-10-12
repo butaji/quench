@@ -29,7 +29,7 @@ impl<H: Host> Vm<H> {
         let array_buffer = self.realm_native_value(Native::ArrayBuffer, global, current_realm);
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -94,7 +94,7 @@ impl<H: Host> Vm<H> {
         }
         let prototype = self
             .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
+            .alloc(Cell::Object(self.shapes.empty_object(object_prototype)));
         self.realm
             .intrinsics
             .builtin_prototypes
@@ -477,7 +477,7 @@ impl<H: Host> Vm<H> {
         let prototype = self.array_buffer_prototype_from_new_target(p, new_target, shared)?;
         let bytes = self.array_buffer_zeroed_bytes(p, length)?;
         let buffer = self.heap.alloc(Cell::ArrayBuffer {
-            object: Box::new(Self::empty_object(prototype)),
+            object: Box::new(self.shapes.empty_object(prototype)),
             bytes,
             shared,
             detached: false,
@@ -546,7 +546,7 @@ impl<H: Host> Vm<H> {
         let prototype = self.array_buffer_intrinsic_prototype(shared);
         let bytes = self.array_buffer_zeroed_bytes(p, length)?;
         Ok(self.heap.alloc(Cell::ArrayBuffer {
-            object: Box::new(Self::empty_object(prototype)),
+            object: Box::new(self.shapes.empty_object(prototype)),
             bytes,
             shared,
             detached: false,
@@ -726,7 +726,7 @@ impl<H: Host> Vm<H> {
             length
         };
         let result = self.heap.alloc(Cell::ArrayBuffer {
-            object: Box::new(Self::empty_object(
+            object: Box::new(self.shapes.empty_object(
                 self.array_buffer_intrinsic_prototype(false),
             )),
             bytes: Rc::new(copied_bytes),
@@ -925,7 +925,7 @@ impl<H: Host> Vm<H> {
             .unwrap()
             .copy_from_slice(&source_bytes[start..end]);
         Ok(self.heap.alloc(Cell::ArrayBuffer {
-            object: Box::new(Self::empty_object(
+            object: Box::new(self.shapes.empty_object(
                 self.array_buffer_intrinsic_prototype(false),
             )),
             bytes,

@@ -259,7 +259,7 @@ impl<H: Host> Vm<H> {
         self.embedding_program()?;
         let elements = self.embedding_arguments(values)?;
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
+            object: self.shapes.empty_object(self.array_proto),
             elements: Rc::new(elements),
         }))
     }

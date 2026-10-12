@@ -952,7 +952,6 @@ pub(crate) enum IteratorConsumer {
     Some,
 }
 pub(crate) struct Object {
-    pub proto: Value,
     // Property names live once in the VM's immutable shape table; objects keep
     // only the data vector selected by that shape.
     pub properties: ValueVec,
@@ -1066,10 +1065,9 @@ impl std::ops::DerefMut for FinalizationEntries {
     }
 }
 impl Object {
-    pub(crate) fn new(proto: Value) -> Self {
+    pub(crate) fn new(shape: u32) -> Self {
         Self {
-            proto,
-            properties: ValueVec::inline_property_storage(0),
+            properties: ValueVec::inline_property_storage(shape),
             payload: ObjectPayload {
                 inline_properties: ManuallyDrop::new([Value::UNDEFINED; INLINE_PROPERTY_COUNT]),
             },
@@ -1077,13 +1075,11 @@ impl Object {
     }
 
     pub(crate) fn with_property_storage(
-        proto: Value,
         mut properties: ValueVec,
         inline_properties: [Value; INLINE_PROPERTY_COUNT],
     ) -> Self {
         properties.set_out_of_line_storage(false);
         Self {
-            proto,
             properties,
             payload: ObjectPayload {
                 inline_properties: ManuallyDrop::new(inline_properties),
@@ -1191,8 +1187,8 @@ impl Object {
     }
 
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
-    pub(crate) fn error(proto: Value) -> Self {
-        let mut object = Self::new(proto);
+    pub(crate) fn error(shape: u32) -> Self {
+        let mut object = Self::new(shape);
         object.extras_mut().error_data = true;
         object
     }
@@ -1325,7 +1321,7 @@ impl Object {
     }
 }
 
-const _: () = assert!(std::mem::size_of::<Object>() == 4 * std::mem::size_of::<Value>());
+const _: () = assert!(std::mem::size_of::<Object>() == 3 * std::mem::size_of::<Value>());
 
 impl Clone for Object {
     fn clone(&self) -> Self {
@@ -1339,7 +1335,6 @@ impl Clone for Object {
             }
         };
         Self {
-            proto: self.proto,
             properties: self.properties,
             payload,
         }
@@ -1359,7 +1354,7 @@ impl fmt::Debug for Object {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Object")
-            .field("proto", &self.proto)
+            .field("shape", &self.shape())
             .field("properties", &self.properties)
             .field("inline_properties", &self.inline_properties())
             .field(
@@ -1379,7 +1374,6 @@ mod object_payload_tests {
     #[test]
     fn out_of_line_extras_preserve_inline_values_and_clone_state() {
         let mut object = Object::with_property_storage(
-            Value::NULL,
             ValueVec::inline_property_storage(7),
             [Value::integer(11), Value::integer(13)],
         );
@@ -1406,8 +1400,7 @@ mod object_payload_tests {
     fn out_of_line_extras_keep_arena_storage_mode_and_integrity() {
         let mut properties = ValueVec::new();
         properties.set_extensible(false);
-        let mut object =
-            Object::with_property_storage(Value::NULL, properties, [Value::UNDEFINED; 2]);
+        let mut object = Object::with_property_storage(properties, [Value::UNDEFINED; 2]);
         object.set_module_namespace();
         assert!(object.is_module_namespace());
         assert!(!object.properties.has_inline_property_storage());

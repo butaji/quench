@@ -2,6 +2,14 @@ use super::object_descriptors::PropertyDescriptorRecord;
 use super::property_key::PropertyKey;
 use super::*;
 impl<H: Host> Vm<H> {
+    fn is_immutable_prototype_exotic(&self, target: Value) -> bool {
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .iter()
+            .any(|((_, native), prototype)| *native == Native::Object && *prototype == target)
+    }
+
     pub(super) fn delete_name(
         &mut self,
         p: &ResidualProgram,
@@ -245,10 +253,7 @@ impl<H: Host> Vm<H> {
             return outcome;
         }
         let value = self.box_object_or_type_error(p, value)?;
-        Ok(self
-            .object_data(value)
-            .map(|object| object.proto)
-            .unwrap_or(Value::NULL))
+        Ok(self.object_prototype(value))
     }
 
     pub(super) fn object_set_prototype_of(
@@ -341,13 +346,16 @@ impl<H: Host> Vm<H> {
             }
             return outcome;
         }
-        let data = self
-            .object_data(target)
-            .expect("SetPrototypeOf target is an object");
-        if self.same_value(data.proto, proto) {
+        let (current_proto, extensible) = {
+            let data = self
+                .object_data(target)
+                .expect("SetPrototypeOf target is an object");
+            (self.prototype_for_data(data), data.is_extensible())
+        };
+        if self.same_value(current_proto, proto) {
             return Ok(true);
         }
-        if target == self.object_proto || !data.is_extensible() {
+        if self.is_immutable_prototype_exotic(target) || !extensible {
             return Ok(false);
         }
         let mut cursor = proto;
@@ -358,14 +366,9 @@ impl<H: Host> Vm<H> {
             if matches!(self.heap.get(cursor), Some(Cell::Proxy { .. })) {
                 break;
             }
-            cursor = self
-                .object_data(cursor)
-                .map(|object| object.proto)
-                .unwrap_or(Value::NULL);
+            cursor = self.object_prototype(cursor);
         }
-        self.object_data_mut(target)
-            .expect("object validated")
-            .proto = proto;
+        self.set_object_prototype(target, proto);
         self.mark_object_dictionary(target, DictionaryTrigger::PrototypeUse);
         self.invalidate_field_caches();
         self.invalidate_method_caches();
