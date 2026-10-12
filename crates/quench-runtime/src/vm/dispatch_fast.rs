@@ -671,25 +671,25 @@ lane_handler! {
     }
 }
 
-/// A taken jump. Safepoint jumps (every `Jump`, and backward conditionals,
-/// whose direction the view fixes per record) leave the lane when a
-/// collection is due; forward conditionals dispatch directly. Leaving hands
-/// the whole instruction to the general path, so `commit`, the register
-/// write the instruction makes before its jump, applies only when the lane
-/// takes the jump itself.
+/// A taken jump. Backward jumps, the only ones that close a loop, are
+/// safepoints: they leave the lane when a collection is due; forward jumps
+/// dispatch directly. Every jump's direction is fixed when the view is
+/// derived. Leaving hands the whole instruction to the general path, so
+/// `commit`, the register write the instruction makes before its jump,
+/// applies only when the lane takes the jump itself.
 #[inline(always)]
 fn lane_jump<H: Host>(
     cx: *mut LaneContext<H>,
     r: Registers,
     ip: Ip,
-    safepoint: bool,
+    backward: bool,
     view: Carried,
     commit: Option<(u16, Value)>,
 ) -> Ip {
     let jump = unsafe { (*ip).jump() };
     // SAFETY: the view records the distance to a validated jump target.
     let target = unsafe { ip.byte_offset(jump) };
-    if safepoint && below_floor() {
+    if backward && below_floor() {
         // Scalar arguments only, so the slow path stays a sibling call.
         return match commit {
             None => lane_safepoint::<H>(ip, target),
@@ -703,16 +703,16 @@ fn lane_jump<H: Host>(
 }
 
 lane_handler! {
-    fn lane_jump_always<>(cx, r, ip, i, view) {
-        lane_jump(cx, r, ip, true, view, None)
+    fn lane_jump_always<BACKWARD: bool>(cx, r, ip, i, view) {
+        lane_jump(cx, r, ip, BACKWARD, view, None)
     }
 }
 
 lane_handler! {
-    fn lane_jump_false<>(cx, r, ip, i, view) {
+    fn lane_jump_false<BACKWARD: bool>(cx, r, ip, i, view) {
         let truthy = unsafe { vm(cx) }.truthy(r.get(i.a));
         if !truthy {
-            return lane_jump(cx, r, ip, true, view, None);
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
         }
         next!(cx, r, following(ip), view)
     }
@@ -721,11 +721,11 @@ lane_handler! {
 lane_handler! {
     /// Take the selected entry's jump; the view admits a table only when
     /// every entry is a lane jump.
-    fn lane_branch_table<>(cx, r, ip, i, view) {
+    fn lane_branch_table<BACKWARD: bool>(cx, r, ip, i, view) {
         let case = r.get(i.a).wasm_bits32().min(i.imm());
         // SAFETY: validation places `imm + 1` entries after the table.
         let entry = unsafe { ip.add(1 + case as usize) };
-        lane_jump(cx, r, entry, true, view, None)
+        lane_jump(cx, r, entry, BACKWARD, view, None)
     }
 }
 
@@ -1496,6 +1496,68 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// An i32 shift left by a constant, reading its operand through field
+    /// `ACC`, whose result the next record, an i32 add, takes as its left
+    /// (`LEFT`) or right operand: a scaled index. Both records run here,
+    /// each result written as its own record writes it.
+    fn lane_shift_add<ACC: u8, LEFT: bool>(cx, r, ip, i, view) {
+        let Ok(shifted) = I32BinaryOperator::ShiftLeft
+            .evaluate(read_i32::<ACC, ACC_B>(r, i.b, view), i.imm() as i32)
+        else {
+            return exit(ip);
+        };
+        r.set(i.a, view.integers.encode(shifted));
+        let next = following(ip);
+        // SAFETY: the view fuses a shift only with a following add record.
+        let add = unsafe { &*next };
+        let other = r.i32(if LEFT { add.c } else { add.b });
+        let (left, right) = if LEFT { (shifted, other) } else { (other, shifted) };
+        let Ok(sum) = I32BinaryOperator::Add.evaluate(left, right) else {
+            return exit(next);
+        };
+        produce!(cx, r, next, add.a, view.integers.encode(sum), view)
+    }
+}
+
+lane_handler! {
+    /// A direct i32 load `OP` whose value the next record, a branch table,
+    /// selects on: both records run here, the value written as the load
+    /// writes it. With `ADD`, the record is a plain add of a constant ahead
+    /// of the load (`switch (*pc++)`), and the three run here, each result
+    /// written as its own record writes it. A load the general path must
+    /// run exits at its record.
+    fn lane_load_table<OP: u16, ACC: u8, ADD: bool>(cx, r, ip, i, view) {
+        let load = const {
+            match MemoryLoad::from_direct_op(opcode(OP)) {
+                Some(load) => load,
+                None => panic!("not a direct load"),
+            }
+        };
+        let ip = if ADD {
+            r.set(i.a, view.integers.encode(r.i32(i.b).wrapping_add(i.imm() as i32)));
+            following(ip)
+        } else {
+            ip
+        };
+        // SAFETY: the view fuses an add only with a following load record.
+        let i = unsafe { &*ip };
+        // SAFETY: as for `lane_load`.
+        let Ok(crate::WasmValue::I32(selector)) =
+            load.read(unsafe { view.memory.bytes() }, lane_address::<ACC>(r, i, view))
+        else {
+            return exit(ip);
+        };
+        r.set(i.a, view.integers.encode(selector));
+        let table = following(ip);
+        // SAFETY: the view fuses a load only with a following table record.
+        let case = (selector as u32).min(unsafe { (*table).imm() });
+        // SAFETY: validation places `imm + 1` entries after the table.
+        let entry = unsafe { table.add(1 + case as usize) };
+        lane_jump(cx, r, entry, false, view, None)
+    }
+}
+
+lane_handler! {
     /// An i32 add of a constant whose sum the next record, direct load `OP`,
     /// reads as its address: both records run here, the sum written as the
     /// add writes it. A load the general path must run exits at its record.
@@ -1521,6 +1583,65 @@ lane_handler! {
         };
         produce!(cx, r, next, access.a, value, view)
     }
+}
+
+lane_handler! {
+    /// A jump absorbing the move (`ADD` false) or i32 add of the constant
+    /// `c` (`ADD` true) at its target: the record holds the target's fields
+    /// and jumps past it, carrying the result as the target would.
+    fn lane_jump_through<ADD: bool, BACKWARD: bool>(cx, r, ip, i, view) {
+        let value = if ADD {
+            view.integers.encode(r.i32(i.b).wrapping_add(i32::from(i.c as i16)))
+        } else {
+            r.get(i.b)
+        };
+        // A safepoint exit resumes at the jump, which runs the target
+        // again, so the result is written only when the jump is taken.
+        lane_jump(cx, r, ip, BACKWARD, Carried { acc: value, ..view }, Some((i.a, value)))
+    }
+}
+
+lane_handler! {
+    /// A move (`ADD` false) or an i32 add of a constant (`ADD` true) whose
+    /// next record is an unconditional jump, as at a loop latch: both
+    /// records run here, the result written as its own record writes it.
+    fn lane_then_jump<ADD: bool, BACKWARD: bool>(cx, r, ip, i, view) {
+        let value = if ADD {
+            view.integers.encode(r.i32(i.b).wrapping_add(i.imm() as i32))
+        } else {
+            r.get(i.b)
+        };
+        r.set(i.a, value);
+        lane_jump(cx, r, following(ip), BACKWARD, view, None)
+    }
+}
+
+/// The handlers fusing a move or an add of a constant with a jump, indexed
+/// by whether the instruction adds and by the jump's direction.
+struct JumpFusions<H>(std::marker::PhantomData<H>);
+
+impl<H: Host> JumpFusions<H> {
+    /// A jump absorbing the instruction at its target.
+    const THROUGH: [[Handler; 2]; 2] = [
+        [lane_jump_through::<H, false, false>, lane_jump_through::<H, false, true>],
+        [lane_jump_through::<H, true, false>, lane_jump_through::<H, true, true>],
+    ];
+    /// The instruction followed by its next record's jump.
+    const THEN: [[Handler; 2]; 2] = [
+        [lane_then_jump::<H, false, false>, lane_then_jump::<H, false, true>],
+        [lane_then_jump::<H, true, false>, lane_then_jump::<H, true, true>],
+    ];
+}
+
+/// The scaled-index handlers, indexed by the shift's operand field (none,
+/// `b`) and by whether the add takes the shifted value on its left.
+struct ScaledIndex<H>(std::marker::PhantomData<H>);
+
+impl<H: Host> ScaledIndex<H> {
+    const HANDLERS: [[Handler; 2]; 2] = [
+        [lane_shift_add::<H, ACC_NONE, false>, lane_shift_add::<H, ACC_NONE, true>],
+        [lane_shift_add::<H, ACC_B, false>, lane_shift_add::<H, ACC_B, true>],
+    ];
 }
 
 lane_handler! {
@@ -1582,6 +1703,46 @@ impl<H: Host> AddLoadF64<H> {
 }
 
 /// The fused add-and-load handler for direct load `op`.
+/// The fused handler for direct load `load`, with address field `acc`, and
+/// direct store `store` writing its value: copies of one value type.
+fn load_store_handler<H: Host>(load: Op, store: Op, acc: u8) -> Option<Handler> {
+    macro_rules! copies {
+        ($(($load:ident, $store:ident)),+) => {
+            match (load, store, acc) {
+                $(
+                    (Op::$load, Op::$store, ACC_NONE) => Some(lane_load_store::<H, { Op::$load as u16 }, { Op::$store as u16 }, ACC_NONE> as Handler),
+                    (Op::$load, Op::$store, ACC_C) => Some(lane_load_store::<H, { Op::$load as u16 }, { Op::$store as u16 }, ACC_C> as Handler),
+                )+
+                _ => None,
+            }
+        };
+    }
+    copies!(
+        (WasmI32Load, WasmI32Store),
+        (WasmI32Load8U, WasmI32Store8),
+        (WasmI64Load, WasmI64Store)
+    )
+}
+
+/// The fused handler for i32 load `op`, with address field `acc`, the
+/// branch table selecting on its value, and with `add` the plain add of a
+/// constant ahead of the load.
+fn load_table_handler<H: Host>(op: Op, acc: u8, add: bool) -> Option<Handler> {
+    macro_rules! loads {
+        ($($load:ident),+) => {
+            match (op, acc, add) {
+                $(
+                    (Op::$load, ACC_NONE, false) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_NONE, false> as Handler),
+                    (Op::$load, ACC_C, false) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_C, false> as Handler),
+                    (Op::$load, ACC_NONE, true) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_NONE, true> as Handler),
+                )+
+                _ => None,
+            }
+        };
+    }
+    loads!(WasmI32Load, WasmI32Load8S, WasmI32Load8U, WasmI32Load16S, WasmI32Load16U)
+}
+
 const fn add_load_handler<H: Host>(op: Op) -> Option<Handler> {
     macro_rules! loads {
         ($($load:ident),+) => {
@@ -1607,6 +1768,44 @@ const fn add_load_handler<H: Host>(op: Op) -> Option<Handler> {
         WasmI64Load32S,
         WasmI64Load32U
     )
+}
+
+lane_handler! {
+    /// A direct load `LOAD`, with address field `ACC`, whose value the next
+    /// record, direct store `STORE`, writes: both records run here, the value
+    /// written to its register as the load writes it. An access the general
+    /// path must run exits at its record.
+    fn lane_load_store<LOAD: u16, STORE: u16, ACC: u8>(cx, r, ip, i, view) {
+        let (load, store) = const {
+            match (
+                MemoryLoad::from_direct_op(opcode(LOAD)),
+                MemoryStore::from_direct_op(opcode(STORE)),
+            ) {
+                (Some(load), Some(store)) => (load, store),
+                _ => panic!("not a direct load and store"),
+            }
+        };
+        // SAFETY: as for `lane_load`.
+        let Ok(value) = load.read(unsafe { view.memory.bytes() }, lane_address::<ACC>(r, i, view))
+        else {
+            return exit(ip);
+        };
+        let Some(encoded) = lane_encode(view, value) else {
+            return exit(ip);
+        };
+        r.set(i.a, encoded);
+        let next = following(ip);
+        // SAFETY: the view fuses a load only with a following store record.
+        let access = unsafe { &*next };
+        // SAFETY: as for `lane_load`.
+        if store
+            .write(unsafe { view.memory.bytes() }, lane_address::<ACC_NONE>(r, access, view), value)
+            .is_err()
+        {
+            return exit(next);
+        }
+        next!(cx, r, following(next), view)
+    }
 }
 
 lane_handler! {
@@ -2004,9 +2203,9 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::Binary => Some(lane_binary::<H>),
         Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
         Op::LoadLocalPlain => Some(lane_load_local_plain::<H>),
-        Op::Jump => Some(lane_jump_always::<H>),
-        Op::JumpFalse => Some(lane_jump_false::<H>),
-        Op::WasmBranchTable => Some(lane_branch_table::<H>),
+        Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
+        Op::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
+        Op::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
         Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC>),
         Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC>),
         Op::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
@@ -2260,8 +2459,15 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             let acc = carried.map_or(ACC_NONE, |register| {
                 accumulator_field(instruction, register)
             });
-            let backward_jump = op.immediate_role() == ImmediateRole::JumpTarget
-                && instruction.imm() as usize <= pc;
+            // A table is backward when one of its entries jumps back.
+            let backward_jump = if op == Op::WasmBranchTable {
+                crate::bytecode::branch_table_entries(pc, instruction).any(|entry| {
+                    decoded_instruction(function, function.code[entry]).imm() as usize <= pc
+                })
+            } else {
+                op.immediate_role() == ImmediateRole::JumpTarget
+                    && instruction.imm() as usize <= pc
+            };
             let selected = operand.and(if binds_memory {
                 Some(LaneHandler {
                     handler: lane_instance_binding::<H, true> as Handler,
@@ -2346,6 +2552,146 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                     Some(AddLoadF64::<H>::HANDLERS[usize::from(second)][usize::from(left)])
                 });
             records[pc].handler = operator.unwrap_or(fused) as *const ();
+        }
+    }
+    // An i32 load whose value the next record's branch table selects on
+    // runs with that table as one record.
+    let table = tables[0][usize::from(ACC_NONE)][Op::WasmBranchTable as usize];
+    for pc in 0..records.len().saturating_sub(1) {
+        let instruction = decoded_instruction(function, function.code[pc]);
+        let next = decoded_instruction(function, function.code[pc + 1]);
+        let field = [ACC_NONE, ACC_C].into_iter().find(|acc| {
+            tables[0][usize::from(*acc)][instruction.op() as usize]
+                .is_some_and(|load| records[pc].handler == load.handler as *const ())
+        });
+        if let Some(field) = field
+            && next.a() == instruction.a()
+            && table.is_some_and(|table| records[pc + 1].handler == table.handler as *const ())
+            && let Some(fused) = load_table_handler::<H>(instruction.op(), field, false)
+        {
+            records[pc].handler = fused as *const ();
+            // A plain add of a constant ahead of a load reading its own
+            // field joins as well.
+            let add = tables[0][usize::from(ACC_NONE)][Op::WasmI32AddImmediate as usize];
+            if pc > 0
+                && field == ACC_NONE
+                && add.is_some_and(|add| records[pc - 1].handler == add.handler as *const ())
+                && let Some(fused) = load_table_handler::<H>(instruction.op(), ACC_NONE, true)
+            {
+                records[pc - 1].handler = fused as *const ();
+            }
+        }
+    }
+    // A shift left by a constant whose result the next record adds runs
+    // with that add as one record.
+    for pc in 0..records.len().saturating_sub(1) {
+        let variant = |op: Op, acc: u8, at: usize| {
+            tables[0][usize::from(acc)][op as usize]
+                .is_some_and(|plain| records[at].handler == plain.handler as *const ())
+        };
+        let field = [ACC_NONE, ACC_B]
+            .into_iter()
+            .position(|acc| variant(Op::WasmI32ShiftLeftImmediate, acc, pc));
+        let left = [ACC_C, ACC_B]
+            .into_iter()
+            .position(|acc| variant(Op::WasmI32Add, acc, pc + 1));
+        if let (Some(field), Some(left)) = (field, left) {
+            records[pc].handler = ScaledIndex::<H>::HANDLERS[field][left] as *const ();
+        }
+    }
+    // A load whose value the next record stores runs with that store as
+    // one record.
+    for pc in 0..records.len().saturating_sub(1) {
+        let instruction = decoded_instruction(function, function.code[pc]);
+        let next = decoded_instruction(function, function.code[pc + 1]);
+        let field = [ACC_NONE, ACC_C].into_iter().find(|acc| {
+            tables[0][usize::from(*acc)][instruction.op() as usize]
+                .is_some_and(|load| records[pc].handler == load.handler as *const ())
+        });
+        let carried_store = tables[0][usize::from(ACC_A)][next.op() as usize]
+            .is_some_and(|store| records[pc + 1].handler == store.handler as *const ());
+        if let Some(field) = field
+            && carried_store
+            && let Some(fused) = load_store_handler::<H>(instruction.op(), next.op(), field)
+        {
+            records[pc].handler = fused as *const ();
+        }
+    }
+    // A record's plain jump, with its direction.
+    let jump_direction = |handler: *const ()| {
+        [false, true].into_iter().find(|&backward| {
+            tables[usize::from(backward)][usize::from(ACC_NONE)][Op::Jump as usize]
+                .is_some_and(|jump| handler == jump.handler as *const ())
+        })
+    };
+    // A jump whose target is a plain move or add of a small constant runs
+    // that instruction itself and jumps past it: the target's successor
+    // then sees the accumulator the target would have carried. A table
+    // entry stays a plain jump, since tables take the entry's jump without
+    // running its record. This runs before the fusions below, which take a
+    // following jump's record as a plain jump.
+    let mut entry_jumps = vec![false; records.len()];
+    for (pc, packed) in function.code.iter().enumerate() {
+        let instruction = decoded_instruction(function, *packed);
+        if instruction.op() == Op::WasmBranchTable {
+            for entry in crate::bytecode::branch_table_entries(pc, instruction) {
+                entry_jumps[entry] = true;
+            }
+        }
+    }
+    let record_bytes = size_of::<LaneInstruction>() as isize;
+    for (pc, packed) in function.code.iter().enumerate() {
+        let instruction = decoded_instruction(function, *packed);
+        let target = instruction.imm() as usize;
+        if instruction.op() != Op::Jump
+            || jump_direction(records[pc].handler).is_none()
+            || entry_jumps[pc]
+            || target + 1 >= records.len()
+        {
+            continue;
+        }
+        let absorbed = decoded_instruction(function, function.code[target]);
+        let plain = |op: Op| {
+            absorbed.op() == op
+                && tables[0][usize::from(ACC_NONE)][op as usize]
+                    .is_some_and(|plain| records[target].handler == plain.handler as *const ())
+        };
+        let backward = target < pc;
+        let (handler, c) = if plain(Op::Move) {
+            (JumpFusions::<H>::THROUGH[0][usize::from(backward)], 0)
+        } else if plain(Op::WasmI32AddImmediate)
+            && let Ok(step) = i16::try_from(absorbed.imm() as i32)
+        {
+            (JumpFusions::<H>::THROUGH[1][usize::from(backward)], step as u16)
+        } else {
+            continue;
+        };
+        records[pc] = LaneInstruction {
+            handler: handler as *const (),
+            operand: LaneOperand {
+                jump: (target as isize + 1 - pc as isize) * record_bytes,
+            },
+            a: absorbed.a(),
+            b: absorbed.b(),
+            c,
+        };
+    }
+    // A plain move or add of a constant whose next record jumps runs with
+    // that jump as one record.
+    for pc in 0..records.len().saturating_sub(1) {
+        let plain = |op: Op| {
+            tables[0][usize::from(ACC_NONE)][op as usize]
+                .is_some_and(|plain| records[pc].handler == plain.handler as *const ())
+        };
+        let add = if plain(Op::Move) {
+            false
+        } else if plain(Op::WasmI32AddImmediate) {
+            true
+        } else {
+            continue;
+        };
+        if let Some(backward) = jump_direction(records[pc + 1].handler) {
+            records[pc].handler = JumpFusions::<H>::THEN[usize::from(add)][usize::from(backward)] as *const ();
         }
     }
     // An f64 arithmetic record whose result the next f64 operator takes

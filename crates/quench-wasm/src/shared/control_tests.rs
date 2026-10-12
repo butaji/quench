@@ -136,3 +136,161 @@ fn state_machine_dispatch_matches_model_in_both_modes() {
         }
     }
 }
+
+/// A bytecode interpreter in the shape C compilers give `switch (*pc++)`:
+/// the opcode load feeds the table, handlers copy stack slots through
+/// memory, and handlers leave through shared tails that step registers
+/// before jumping back. Its result matches a direct model of the same
+/// program in both execution modes.
+#[test]
+fn bytecode_interpreter_matches_model_in_both_modes() {
+    const INTERPRETER: &str = r#"(module
+      (memory 1)
+      (func $interpret (result i32)
+        (local $pc i32) (local $sp i32) (local $next i32) (local $top i32)
+        (local.set $sp (i32.const 2048))
+        (loop $dispatch
+          (block $advance (block $halt (block $jnz (block $subi (block $add
+          (block $mul (block $dup (block $store (block $load (block $push
+            (local.set $next (i32.add (local.get $pc) (i32.const 4)))
+            (br_table $push $load $store $dup $mul $add $subi $jnz $halt $halt
+              (i32.load (local.get $pc))))
+            (i32.store (local.get $sp) (i32.load offset=4 (local.get $pc)))
+            (br $advance))
+           (i32.store (local.get $sp) (i32.load offset=1024
+             (i32.shl (i32.load offset=4 (local.get $pc)) (i32.const 2))))
+           (br $advance))
+          (local.set $sp (i32.add (local.get $sp) (i32.const -4)))
+          (i32.store offset=1024 (i32.shl (i32.load offset=4 (local.get $pc)) (i32.const 2))
+            (i32.load (local.get $sp)))
+          (local.set $pc (i32.add (local.get $pc) (i32.const 8)))
+          (br $dispatch))
+         (i32.store (local.get $sp) (i32.load (i32.add (local.get $sp) (i32.const -4))))
+         (local.set $sp (i32.add (local.get $sp) (i32.const 4)))
+         (local.set $pc (local.get $next))
+         (br $dispatch))
+        (local.set $sp (i32.add (local.get $sp) (i32.const -4)))
+        (local.set $top (i32.add (local.get $sp) (i32.const -4)))
+        (i32.store (local.get $top)
+          (i32.mul (i32.load (local.get $top)) (i32.load (local.get $sp))))
+        (local.set $pc (local.get $next))
+        (br $dispatch))
+       (local.set $sp (i32.add (local.get $sp) (i32.const -4)))
+       (local.set $top (i32.add (local.get $sp) (i32.const -4)))
+       (i32.store (local.get $top)
+         (i32.add (i32.load (local.get $top)) (i32.load (local.get $sp))))
+       (local.set $pc (local.get $next))
+       (br $dispatch))
+      (local.set $top (i32.add (local.get $sp) (i32.const -4)))
+      (i32.store (local.get $top)
+        (i32.sub (i32.load (local.get $top)) (i32.load offset=4 (local.get $pc))))
+      (local.set $pc (i32.add (local.get $pc) (i32.const 8)))
+      (br $dispatch))
+     (local.set $sp (i32.add (local.get $sp) (i32.const -4)))
+     (local.set $pc (select (i32.load offset=4 (local.get $pc))
+       (i32.add (local.get $pc) (i32.const 8)) (i32.load (local.get $sp))))
+     (br $dispatch))
+    (return (i32.load (i32.add (local.get $sp) (i32.const -4)))))
+          (local.set $sp (i32.add (local.get $sp) (i32.const 4)))
+          (local.set $pc (i32.add (local.get $pc) (i32.const 8)))
+          (br $dispatch))
+        unreachable)
+      (func (export "f") (param $n i32) (result i32)
+        (local $at i32)
+        (loop $copy
+          (i32.store (local.get $at) (i32.load offset=512 (local.get $at)))
+          (local.set $at (i32.add (local.get $at) (i32.const 4)))
+          (br_if $copy (i32.lt_u (local.get $at) (i32.const 512))))
+        (i32.store offset=20 (i32.const 0) (local.get $n))
+        (call $interpret))
+      (data (i32.const 512) "PROGRAM"))"#;
+    const PUSH: i32 = 0;
+    const LOAD: i32 = 1;
+    const STORE: i32 = 2;
+    const DUP: i32 = 3;
+    const MUL: i32 = 4;
+    const ADD: i32 = 5;
+    const SUBI: i32 = 6;
+    const JNZ: i32 = 7;
+    const HALT: i32 = 8;
+    const LOOP_HEAD: i32 = 32;
+    // acc = 0; k = n; do { acc += k * k; k -= 1 } while k != 0; acc
+    const PROGRAM: [i32; 29] = [
+        PUSH, 0, STORE, 0, PUSH, 0, STORE, 1, // n replaces the second push
+        LOAD, 0, LOAD, 1, DUP, MUL, ADD, STORE, 0, LOAD, 1, SUBI, 1, DUP, STORE, 1, JNZ,
+        LOOP_HEAD, LOAD, 0, HALT,
+    ];
+    fn model(n: i32) -> i32 {
+        let mut program = PROGRAM;
+        program[5] = n;
+        let (mut pc, mut stack, mut locals) = (0_usize, Vec::new(), [0_i32; 2]);
+        let word = |pc: usize| program[pc];
+        loop {
+            let operand = || program[pc + 1];
+            pc = match word(pc) {
+                PUSH => {
+                    stack.push(operand());
+                    pc + 2
+                }
+                LOAD => {
+                    stack.push(locals[operand() as usize]);
+                    pc + 2
+                }
+                STORE => {
+                    locals[operand() as usize] = stack.pop().unwrap();
+                    pc + 2
+                }
+                DUP => {
+                    stack.push(*stack.last().unwrap());
+                    pc + 1
+                }
+                MUL | ADD => {
+                    let right = stack.pop().unwrap();
+                    let left = stack.pop().unwrap();
+                    stack.push(if word(pc) == MUL {
+                        left.wrapping_mul(right)
+                    } else {
+                        left.wrapping_add(right)
+                    });
+                    pc + 1
+                }
+                SUBI => {
+                    let top = stack.pop().unwrap();
+                    stack.push(top.wrapping_sub(operand()));
+                    pc + 2
+                }
+                JNZ => match stack.pop().unwrap() {
+                    0 => pc + 2,
+                    _ => operand() as usize / 4,
+                },
+                _ => return *stack.last().unwrap(),
+            };
+        }
+    }
+    let program: String = PROGRAM
+        .iter()
+        .flat_map(|word| word.to_le_bytes())
+        .map(|byte| format!("\\{byte:02x}"))
+        .collect();
+    let engine = crate::Engine::new()
+        .compile_wat(&INTERPRETER.replace("PROGRAM", &program))
+        .unwrap();
+    for mode in [
+        quench_runtime::ExecutionMode::Interpreted,
+        quench_runtime::ExecutionMode::Compiled,
+    ] {
+        let module = engine.lower_shared_module_for(mode).unwrap();
+        let mut runtime = Runtime::new(TestHost);
+        runtime.set_execution_mode(mode);
+        let instance = runtime.instantiate_wasm_module(&module).unwrap();
+        for n in [1, 2, 3, 10, 1000] {
+            assert_eq!(
+                runtime
+                    .invoke_wasm(&instance, 1, &[quench_runtime::WasmValue::I32(n)])
+                    .unwrap(),
+                Some(quench_runtime::WasmValue::I32(model(n))),
+                "{mode:?} n={n}"
+            );
+        }
+    }
+}
