@@ -60,6 +60,15 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, process, name, function)?;
     }
+    #[cfg(unix)]
+    {
+        let function =
+            context.host_function(crate::host::shared_vm::operation("processGetgroups"))?;
+        let key = context.string_rooted("name");
+        let name = context.string_rooted("getgroups");
+        context.define_data_property_rooted(function, key, name, false, false, true)?;
+        install(context, process, "getgroups", function)?;
+    }
     let error_instance = context.evaluate_script_rooted(
         "((Error) => value => value instanceof Error)(Error)",
         "node:process/warning-instance.js",
@@ -363,6 +372,7 @@ fn fact_value(
     fact: ProcessFact,
 ) -> Result<RootId, RootedError> {
     match fact {
+        ProcessFact::SharedOpenSsl => Ok(context.boolean(process_state::shared_openssl())),
         ProcessFact::Boolean(value) => Ok(context.boolean(value)),
         ProcessFact::Number(value) => Ok(context.number(value)),
         ProcessFact::String(value) => Ok(context.string_rooted(value)),
@@ -3718,4 +3728,48 @@ pub(crate) fn kill(
         return Err(throw_with_code(context, error, &code));
     }
     Ok(context.boolean(true))
+}
+
+pub(crate) fn getgroups(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    #[cfg(unix)]
+    {
+        let query = || {
+            let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+            if count < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let mut groups = vec![0 as libc::gid_t; count as usize];
+            let count = unsafe { libc::getgroups(count, groups.as_mut_ptr()) };
+            if count < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            groups.truncate(count as usize);
+            let effective = unsafe { libc::getegid() };
+            if !groups.contains(&effective) {
+                groups.push(effective);
+            }
+            Ok(groups)
+        };
+        match query() {
+            Ok(groups) => { let values = groups.into_iter().map(|group| context.number(f64::from(group))).collect::<Vec<_>>();context.array_rooted(&values) },
+            Err(error) => {
+                let errno = error.raw_os_error().unwrap_or(libc::EIO);
+                let code = super::util_system_error_shared_vm::system_error_name(-f64::from(errno));
+                let error = context.error_rooted(&format!("getgroups {code}"))?;
+                let number = context.number(-f64::from(errno));
+                install(context, error, "errno", number)?;
+                let code = context.string_rooted(&code);
+                install(context, error, "code", code)?;
+                let syscall = context.string_rooted("getgroups");
+                install(context, error, "syscall", syscall)?;
+                Err(context.throw(error))
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    context.array_rooted(&[])
 }

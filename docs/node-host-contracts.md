@@ -134,6 +134,28 @@ collection path. Signal selection and these additions are verified on Linux. Ext
 wrap-based synchronous stdio, full option normalization and mutable internal
 child-process callback routing still require conformance work.
 
+Common child options are copied into a null-prototype record through own keys,
+per-key descriptor checks and original getter receivers. Common field rules
+validate boolean flags, signed 32-bit uid/gid, shell/argv0 strings, timeouts,
+kill signals and asynchronous serialization mode. Native option and file/NUL
+validation replace the former bridge checks. Argument snapshots and the full
+internal mutable child-process routing still need separate work.
+
+Unix child credential/session configuration runs in pre-exec after directory
+setup, with no guest calls. It clears supplementary groups opportunistically,
+then applies gid and uid. Async launch errors preserve Node's synchronous
+versus queued errno boundary. Sync errors retain the actual kernel errno;
+code names and messages are projections, not reverse lookups. `getgroups`
+queries the kernel and includes the effective gid when absent.
+
+Synchronous command options preserve `execFileSync` shell choices and apply
+`execSync` shell defaults in native code. Child disposal observes public killed
+and kill hooks and returns undefined. Linux signal records are non-extensible
+through the shared VM's canonical integrity operation. On Unix,
+`node_shared_openssl` compares the loaded image owning SSL_CTX_new with the
+image owning the host implementation; it does not infer linkage from fixture
+names or a build environment. Non-Unix retains the previous linkage fact.
+
 ## TLS material validation
 
 Secure-context CRL and PKCS12 checks use native OpenSSL parsers. CRLs use

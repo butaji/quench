@@ -16,7 +16,7 @@ use std::time::Duration;
 static NEXT_CHILD_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan, requestRead, flushStdio) => {
+    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan, requestRead, flushStdio, prepareOptions, validateFile, syncOptions, disposeNative, disposeKey) => {
     const { EventEmitter } = globalThis.process.getBuiltinModule("events");
     class ChildProcess extends EventEmitter {
       constructor(file, args, started, options) {
@@ -101,7 +101,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
         else signal.addEventListener("abort", abort, { once: true });
       }
       const timeout = options?.timeout;
-      if (timeout !== undefined && timeout !== 0 && !started.errorCode) {
+      if (timeout != null && timeout !== 0 && !started.errorCode) {
         this.__quenchTimeout = setTimeout(() => {
           if (this.exitCode === null && this.signalCode === null) {
             this.kill(options.killSignal || "SIGTERM");
@@ -124,17 +124,9 @@ const FACTORY: &str = quench_js_check::checked_js!(
       ref() { return this; }
       unref() { return this; }
     }
+  ChildProcess.prototype[disposeKey] = function() { disposeNative(this); };
   const spawn = (file, args, options) => {
-    if (typeof file !== "string") {
-      throw Object.assign(new TypeError('The "file" argument must be of type string.'), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
-    if (file.length === 0) {
-      throw Object.assign(new TypeError('The "file" argument must be a non-empty string.'), {
-        code: "ERR_INVALID_ARG_VALUE"
-      });
-    }
+    file = validateFile(file);
     if (args === undefined || args === null) {
       args = [];
     } else if (!Array.isArray(args)) {
@@ -151,26 +143,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
       options = args;
       args = [];
     }
-    if (options !== undefined &&
-        (options === null || typeof options !== "object" || Array.isArray(options))) {
-      throw Object.assign(new TypeError('The "options" argument must be of type object.'), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
-    if (options?.timeout !== undefined &&
-        (typeof options.timeout !== "number" || !Number.isFinite(options.timeout) || options.timeout < 0)) {
-      throw Object.assign(new RangeError('ERR_INVALID_ARG_TYPE: The value of "timeout" is out of range. It must be an unsigned integer.'), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
-    for (const name of ["uid", "gid"]) {
-      if (options?.[name] !== undefined &&
-          (!Number.isInteger(options[name]) || options[name] < 0 || options[name] > 0xFFFFFFFF)) {
-        throw Object.assign(new RangeError(`The value of "options.${name}" is out of range.`), {
-          code: "ERR_OUT_OF_RANGE"
-        });
-      }
-    }
+    options = prepareOptions(options, false);
     if (options?.shell) {
       const shell = typeof options.shell === "string"
         ? options.shell
@@ -185,24 +158,14 @@ const FACTORY: &str = quench_js_check::checked_js!(
     return new ChildProcess(file, args, spawnNative(file, args, options), options);
   };
   const spawnSyncFunction = (command, args, options) => {
+    command = validateFile(command);
     if (args === undefined || args === null) {
       args = [];
     } else if (!Array.isArray(args)) {
       options = args;
       args = [];
     }
-    if (options !== undefined &&
-        (options === null || typeof options !== "object" || Array.isArray(options))) {
-      throw Object.assign(new TypeError('The "options" argument must be of type object.'), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
-    if (options?.argv0 != null && typeof options.argv0 !== "string") {
-      const received = Array.isArray(options.argv0) ? " Received an instance of Array" : "";
-      throw Object.assign(new TypeError(`The "options.argv0" property must be of type string.${received}`), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
+    options = prepareOptions(options, true);
     let file = command;
     let actualArgs = args || [];
     if (options?.shell) {
@@ -261,7 +224,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
     return spawn(plan.file, plan.args, plan.options);
   }
   const synchronousCommand = (command, args, options, useShell) => {
-    const result = spawnSyncFunction(command, args, { ...(options || {}), shell: useShell });
+    const result = spawnSyncFunction(command, args, syncOptions(options, useShell));
     const stdout = result.stdout;
     const stderr = result.stderr;
     if (result.error || result.status !== 0) {
@@ -311,6 +274,23 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let flush_stdio =
         context.host_function(crate::host::shared_vm::operation("childProcessFlushStdio"))?;
     let read = context.host_function(crate::host::shared_vm::operation("childProcessRead"))?;
+    let prepare_options = context.host_function(crate::host::shared_vm::operation(
+        "childProcessPrepareOptions",
+    ))?;
+    let validate_file = context.host_function(crate::host::shared_vm::operation(
+        "childProcessValidateFile",
+    ))?;
+    let sync_options =
+        context.host_function(crate::host::shared_vm::operation("childProcessSyncOptions"))?;
+    let dispose =
+        context.host_function(crate::host::shared_vm::operation("childProcessDispose"))?;
+    let operations = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("child disposal symbol owner missing"))?;
+    let dispose_key = property(context, operations, "disposeKey")?;
     let factory = context.evaluate_script_rooted(FACTORY, "node:child_process/shared.js")?;
     let undefined = context.undefined();
     let module = context.call_rooted(
@@ -327,6 +307,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             fork_plan,
             read,
             flush_stdio,
+            prepare_options,
+            validate_file,
+            sync_options,
+            dispose,
+            dispose_key,
         ],
     )?;
     let key = context.string_rooted("spawn");
@@ -351,7 +336,7 @@ pub(crate) fn spawn_child(
         let error = context.type_error_rooted("The \"file\" argument must be of type string")?;
         return Err(context.throw(error));
     };
-    let file = context.to_string(command_arg)?;
+    let file = super::child_process_options_shared_vm::file_text(context, command_arg)?;
     let arguments = args
         .get(1)
         .copied()
@@ -389,8 +374,11 @@ pub(crate) fn spawn_child(
         super::child_process_env_shared_vm::configure(context, &mut command, env)?;
     }
 
+    let identity =
+        super::child_process_options_shared_vm::Identity::from_options(context, options)?;
     let configured = child_cwd(context, &mut command, cwd.as_deref())
         .and_then(|_| super::child_process_stdio_shared_vm::configure(&mut command, &stdio));
+    identity.configure(&mut command);
     let start = match configured
         .and_then(|configured| command.spawn().map(|child| (child, configured)))
     {
@@ -430,7 +418,7 @@ pub(crate) fn spawn_child(
                 .name("quench-child-wait".into())
                 .spawn(move || {
                     let (code, signal) = match child.wait() {
-                        Ok(status) => (status.code(), process_signal(&status)),
+                        Ok(status) => (status.code(), signal_name(&status).map(str::to_owned)),
                         Err(_) => (None, None),
                     };
                     let _ = sender.send(crate::host::node_host::ChildProcessEvent::Exit(
@@ -464,13 +452,21 @@ pub(crate) fn spawn_child(
                 );
             (id, Some(pid), None, None, None)
         }
-        Err(error) => (
-            0,
-            None,
-            Some(spawn_error_code(error.raw_os_error())),
-            Some(error.to_string()),
-            error.raw_os_error().map(|number| -number),
-        ),
+        Err(error) => {
+            let code = spawn_error_code(error.raw_os_error());
+            #[cfg(unix)]
+            if !error.raw_os_error().is_some_and(|number| matches!(number, libc::EACCES | libc::EAGAIN | libc::EMFILE | libc::ENFILE | libc::ENOENT)) {
+                let exception = context.error_rooted(&format!("spawn {code}"))?;
+                if let Some(errno) = error.raw_os_error() {
+                    let errno = context.number(-f64::from(errno));
+                    set(context, exception, "errno", errno)?;
+                }
+                set_string(context, exception, "code", &code)?;
+                set_string(context, exception, "syscall", "spawn")?;
+                return Err(context.throw(exception));
+            }
+            (0, None, Some(code.clone()), Some(format!("spawn {file} {code}")), error.raw_os_error().map(|number| -number))
+        },
     };
 
     let result = context.object_rooted()?;
@@ -541,31 +537,11 @@ fn spawn_reader<R: Read + Send + 'static>(
     });
 }
 
-fn spawn_error_code(code: Option<i32>) -> &'static str {
-    match code {
-        Some(2) => "ENOENT",
-        Some(13) => "EACCES",
-        Some(8) => "ENOEXEC",
-        #[cfg(unix)]
-        Some(libc::EBADF) => "EBADF",
-        _ => "UNKNOWN",
-    }
-}
-
-#[cfg(unix)]
-fn process_signal(status: &std::process::ExitStatus) -> Option<String> {
-    use std::os::unix::process::ExitStatusExt;
-    status.signal().map(|signal| match signal {
-        2 => "SIGINT",
-        9 => "SIGKILL",
-        15 => "SIGTERM",
-        _ => "SIGTERM",
-    }.to_owned())
-}
-
-#[cfg(not(unix))]
-fn process_signal(_: &std::process::ExitStatus) -> Option<String> {
-    None
+fn spawn_error_code(code: Option<i32>) -> String {
+    code.map_or_else(
+        || "UNKNOWN".to_owned(),
+        |code| super::util_system_error_shared_vm::system_error_name(-f64::from(code)),
+    )
 }
 
 pub(crate) fn register_child(
@@ -1071,7 +1047,7 @@ pub(crate) fn spawn_sync(
         let error = context.type_error_rooted("The \"file\" argument must be of type string")?;
         return Err(context.throw(error));
     };
-    let command = context.to_string(command_arg)?;
+    let command = super::child_process_options_shared_vm::file_text(context, command_arg)?;
     let arguments = args
         .get(1)
         .copied()
@@ -1152,7 +1128,12 @@ pub(crate) fn spawn_sync(
         super::child_process_env_shared_vm::configure(context, &mut process, env)?;
     }
 
-    let output = match child_cwd(context, &mut process, cwd.as_deref()).and_then(|_| process.spawn()) {
+    let identity =
+        super::child_process_options_shared_vm::Identity::from_options(context, options)?;
+    let output = match child_cwd(context, &mut process, cwd.as_deref()).and_then(|_| {
+        identity.configure(&mut process);
+        process.spawn()
+    }) {
         Ok(child) => {
             let pid = child.id();
             #[cfg(unix)]
@@ -1169,25 +1150,18 @@ pub(crate) fn spawn_sync(
                     let code = error.map(|errno| super::util_system_error_shared_vm::system_error_name(-f64::from(errno)));
                     make_result(context, Some(pid), output.status.code(), signal_name(&output.status),
                         stdio[1].piped().then_some(output.stdout.as_slice()), stdio[2].piped().then_some(output.stderr.as_slice()),
-                        code.as_deref().map(|code| (code, format!("spawnSync {command} {code}"))))?
+                        code.as_deref().map(|code| (error, code, format!("spawnSync {command} {code}"))))?
                 },
-                Err(error) => make_result(
-                    context,
-                    Some(pid),
-                    None,
-                    None,
-                    stdio[1].piped().then_some(&[]),
-                    stdio[2].piped().then_some(&[]),
-                    Some(("EIO", error.to_string())),
-                )?,
+                Err(error) => {
+                    let code = spawn_error_code(error.raw_os_error());
+                    make_result(context, Some(pid), None, None,
+                        stdio[1].piped().then_some(&[]), stdio[2].piped().then_some(&[]),
+                        Some((error.raw_os_error(), code.as_str(), format!("spawnSync {command} {code}"))))?
+                },
             }
         }
         Err(error) => {
-            let code = error.raw_os_error().map_or("UNKNOWN", |code| match code {
-                2 => "ENOENT",
-                13 => "EACCES",
-                _ => "UNKNOWN",
-            });
+            let code = spawn_error_code(error.raw_os_error());
             make_result(
                 context,
                 None,
@@ -1195,7 +1169,11 @@ pub(crate) fn spawn_sync(
                 None,
                 None,
                 None,
-                Some((code, format!("spawnSync {command} {code}"))),
+                Some((
+                    error.raw_os_error(),
+                    code.as_str(),
+                    format!("spawnSync {command} {code}"),
+                )),
             )?
         }
     };
@@ -1206,18 +1184,6 @@ pub(crate) fn spawn_sync(
             .rooted_value(error)
             .is_some_and(|value| value.is_null() || value.is_undefined())
         {
-            let code = property_string(context, error, "code")?.unwrap_or_default();
-            let number = match code.as_str() {
-                "ENOBUFS" => libc::ENOBUFS,
-                "ENOENT" => libc::ENOENT,
-                "EACCES" => libc::EACCES,
-                "EIO" => libc::EIO,
-                "ETIMEDOUT" => libc::ETIMEDOUT,
-                "EPIPE" => libc::EPIPE,
-                _ => libc::EINVAL,
-            };
-            let errno = context.number(f64::from(-number));
-            set(context, error, "errno", errno)?;
             set_string(context, error, "syscall", &format!("spawnSync {command}"))?;
             set(context, error, "path", command_arg)?;
             let values = arguments
@@ -1249,11 +1215,15 @@ fn make_result(
     signal: Option<&str>,
     stdout: Option<&[u8]>,
     stderr: Option<&[u8]>,
-    error: Option<(&str, String)>,
+    error: Option<(Option<i32>, &str, String)>,
 ) -> Result<RootId, RootedError> {
     let result = context.object_rooted()?;
-    if let Some((code, message)) = error {
+    if let Some((errno, code, message)) = error {
         let value = context.error_rooted(&message)?;
+        if let Some(errno) = errno {
+            let errno = context.number(-f64::from(errno));
+            set(context, value, "errno", errno)?;
+        }
         set_string(context, value, "code", code)?;
         set(context, result, "error", value)?;
     }
@@ -1346,6 +1316,11 @@ fn string_array(context: &mut NativeContext<'_, NodeHost>, array: RootId) -> Res
         .map(|index| {
             let key = context.string_rooted(&index.to_string());
             let value = context.get_property_rooted(array, key)?;
+            super::child_process_options_shared_vm::null_check(
+                context,
+                value,
+                &format!("args[{index}]"),
+            )?;
             context.to_string(value)
         })
         .collect()
@@ -1368,15 +1343,29 @@ fn property_cwd(
     options: RootId,
 ) -> Result<Option<String>, RootedError> {
     let value = property(context, options, "cwd")?;
+    let value = validate_cwd(context, value)?;
+    if context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        return Ok(None);
+    }
+    Ok(Some(context.to_string(value)?))
+}
+
+pub(crate) fn validate_cwd(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<RootId, RootedError> {
     if context
         .rooted_value(value)
         .is_some_and(|v| v.is_undefined() || v.is_null())
     {
-        return Ok(None);
+        return Ok(value);
     }
     if let Some(path) = context.string_text(value)? {
         reject_cwd_null(context, value, path.as_bytes().contains(&0))?;
-        return Ok(Some(path));
+        return Ok(value);
     }
     if super::url_shared_vm::url_argument_text(context, value)?.is_some() {
         let undefined = context.undefined();
@@ -1385,23 +1374,20 @@ fn property_cwd(
             .string_text(converted)?
             .ok_or_else(|| RootedError::host("file URL cwd is not a string"))?;
         reject_cwd_null(context, converted, path.as_bytes().contains(&0))?;
-        return Ok(Some(path));
+        return Ok(converted);
     }
     if context.has_builtin_brand_rooted(value, quench_runtime::BuiltinBrand::Uint8Array)? {
         let bytes = context
             .view_bytes_rooted(value)
             .ok_or_else(|| RootedError::host("cwd byte view unavailable"))?;
         reject_cwd_null(context, value, bytes.contains(&0))?;
-        // Node's child-process binding coerces a validated byte view to a
-        // string; Buffer's UTF-8 conversion and Uint8Array's join both apply.
-        let path = context.to_string(value)?;
-        return Ok(Some(path));
+        return Ok(value);
     }
     Err(super::util_shared_vm::argument_type_error_with_expected(
         context,
         value,
         "options.cwd",
-        "a string or an instance of Buffer or URL",
+        "of type string or an instance of Buffer or URL",
     )?)
 }
 
@@ -1417,7 +1403,7 @@ fn reject_cwd_null(
     let undefined = context.undefined();
     let detail = context.call_rooted(inspect, undefined, &[value])?;
     let detail = context.to_string(detail)?;
-    let error=context.type_error_rooted(&format!("The argument 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received {detail}"))?;
+    let error=context.type_error_rooted(&format!("The property 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received {detail}"))?;
     let code = context.string_rooted("ERR_INVALID_ARG_VALUE");
     set(context, error, "code", code)?;
     Err(context.throw(error))
@@ -1540,7 +1526,7 @@ fn sync_input(
     )?)
 }
 #[cfg(unix)]
-fn sync_kill_signal(
+pub(crate) fn sync_kill_signal(
     context: &mut NativeContext<'_, NodeHost>,
     options: Option<RootId>,
 ) -> Result<i32, RootedError> {
@@ -1579,4 +1565,21 @@ fn sync_kill_signal(
     }
     #[cfg(not(target_os = "linux"))]
     Ok(libc::SIGTERM)
+}
+
+/// Node's generic disposable observes public killed/kill hooks and returns
+/// undefined, retaining the original thrown value from either hook.
+pub(crate) fn dispose_child(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let child = args.first().copied().unwrap_or(undefined);
+    let killed = property(context, child, "killed")?;
+    if !context.truthy_rooted(killed)? {
+        let kill = property(context, child, "kill")?;
+        context.call_rooted(kill, child, &[])?;
+    }
+    Ok(undefined)
 }
