@@ -9,6 +9,7 @@ mod external;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
 mod parallel_mark;
+mod parallel_sweep;
 mod root;
 mod slots;
 mod weak;
@@ -549,59 +550,42 @@ impl Heap {
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         let sweep_started = std::time::Instant::now();
         let mut live = 0;
-        let properties = &mut self.properties;
         #[cfg(feature = "profile-aggregate")]
         {
             self.gc_profile.sweep_slots += self.slots.len() as u64;
         }
         // Live arena owners, keyed for the offset-ordered compaction below.
         let mut property_owners = Vec::new();
-        for (base, slab) in self.slots.slabs_mut() {
-            for (offset, slot) in slab.iter_mut().enumerate() {
-                let index = base + offset;
-                if Self::marked(&self.marks, index) {
-                    live += 1;
-                    if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
-                        && properties.has_compact_range(object.properties)
-                    {
-                        property_owners
-                            .push(pack_offset_owner(object.properties.start_offset(), index));
-                    }
-                } else if let Some(cell) = slot.cell.take() {
-                    self.external_bytes = self.external_bytes.saturating_sub(cell.external_bytes());
-                    if cell.holds_weak_references() {
-                        self.weak_holders.remove(&(index as u32));
-                    }
-                    #[cfg(feature = "profile-memory")]
-                    {
-                        let object_slots = cell
-                            .object()
-                            .map(|object| properties.len(object.properties));
-                        self.memory_profile.freed(index, &cell, object_slots);
-                    }
-                    if let Some(object) = cell.object() {
-                        properties.release(object.properties);
-                    }
-                    if let Some(arrays) = &mut self.sparse_arrays {
-                        arrays.remove(&(index as u32));
-                    }
-                    // Reused slots enter `free` only after their side-table entries are gone.
-                    self.free.push(index as u32);
-                    // The commonest dead cells, plain objects and arrays without extras, own
-                    // nothing beyond an array's element backing.
-                    match cell {
-                        Cell::Object(object) if object.owns_no_allocation() => {
-                            std::mem::forget(object);
+        if self.parallel_marking() && !cfg!(feature = "profile-memory") {
+            (live, property_owners) = self.sweep_parallel();
+        } else {
+            for (base, slab) in self.slots.slabs_mut() {
+                for (offset, slot) in slab.iter_mut().enumerate() {
+                    let index = base + offset;
+                    if Self::marked(&self.marks, index) {
+                        live += 1;
+                        if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
+                            && self.properties.has_compact_range(object.properties)
+                        {
+                            property_owners
+                                .push(pack_offset_owner(object.properties.start_offset(), index));
                         }
-                        Cell::Array { object, elements } if object.owns_no_allocation() => {
-                            drop(elements);
-                            std::mem::forget(object);
+                    } else if let Some(cell) = slot.cell.take() {
+                        Self::free_cell_parts(
+                            &mut self.properties,
+                            &mut self.external_bytes,
+                            &mut self.weak_holders,
+                            &mut self.sparse_arrays,
+                            &mut self.free,
+                            index,
+                            cell,
+                            #[cfg(feature = "profile-memory")]
+                            &mut self.memory_profile,
+                        );
+                        #[cfg(feature = "profile-aggregate")]
+                        {
+                            self.gc_profile.freed += 1;
                         }
-                        cell => drop(cell),
-                    }
-                    #[cfg(feature = "profile-aggregate")]
-                    {
-                        self.gc_profile.freed += 1;
                     }
                 }
             }
@@ -689,6 +673,65 @@ impl Heap {
             }
         }
     }
+    /// Frees the dead `cell` taken from slot `index`: its external and side-table accounting,
+    /// its property storage, then the cell itself, and the slot joins the free list.
+    fn free_cell(&mut self, index: usize, cell: Cell) {
+        Self::free_cell_parts(
+            &mut self.properties,
+            &mut self.external_bytes,
+            &mut self.weak_holders,
+            &mut self.sparse_arrays,
+            &mut self.free,
+            index,
+            cell,
+            #[cfg(feature = "profile-memory")]
+            &mut self.memory_profile,
+        );
+    }
+
+    /// `free_cell` over the heap fields it touches, so the sweep can call it while it holds
+    /// the slot arena.
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn free_cell_parts(
+        properties: &mut ValueArena,
+        external_bytes: &mut usize,
+        weak_holders: &mut FxHashSet<u32>,
+        sparse_arrays: &mut Option<Box<FxHashMap<u32, SparseElements>>>,
+        free: &mut Vec<u32>,
+        index: usize,
+        cell: Cell,
+        #[cfg(feature = "profile-memory")] memory_profile: &mut memory_profile::MemoryProfile,
+    ) {
+        *external_bytes = external_bytes.saturating_sub(cell.external_bytes());
+        if cell.holds_weak_references() {
+            weak_holders.remove(&(index as u32));
+        }
+        #[cfg(feature = "profile-memory")]
+        {
+            let object_slots = cell.object().map(|object| properties.len(object.properties));
+            memory_profile.freed(index, &cell, object_slots);
+        }
+        if let Some(object) = cell.object() {
+            properties.release(object.properties);
+        }
+        if let Some(arrays) = sparse_arrays {
+            arrays.remove(&(index as u32));
+        }
+        // Reused slots enter `free` only after their side-table entries are gone.
+        free.push(index as u32);
+        // The commonest dead cells, plain objects and arrays without extras, own nothing
+        // beyond an array's element backing.
+        match cell {
+            Cell::Object(object) if object.owns_no_allocation() => std::mem::forget(object),
+            Cell::Array { object, elements } if object.owns_no_allocation() => {
+                drop(elements);
+                std::mem::forget(object);
+            }
+            cell => drop(cell),
+        }
+    }
+
     /// Marks what live WeakMaps keep alive once the strong graph is marked: values whose keys
     /// are marked, repeatedly as newly marked cells mark further keys. Returns the tracer
     /// state of that marking, if any was needed.
