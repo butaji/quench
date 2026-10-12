@@ -13,7 +13,7 @@ mod root;
 mod slots;
 mod weak;
 pub(crate) use cell::*;
-use records::{ObjectRecordSpace, RecordSweep};
+use records::{ArrayRecordSpace, ObjectRecordSpace, RecordSweep};
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
 use slots::SlotArena;
@@ -83,7 +83,8 @@ impl Slot {
 #[derive(Default)]
 pub(crate) struct Heap {
     slots: SlotArena,
-    object_records: ObjectRecordSpace<Object>,
+    object_records: ObjectRecordSpace,
+    array_records: ArrayRecordSpace,
     marks: Vec<u64>,
     free: Vec<u32>,
     external_bytes: usize,
@@ -96,7 +97,7 @@ pub(crate) struct Heap {
     max_threshold: usize,
     properties: ValueArena,
     roots: RootTable,
-    sparse_arrays: Option<Box<FxHashMap<u32, SparseElements>>>,
+    sparse_arrays: Option<Box<FxHashMap<Value, SparseElements>>>,
     #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
@@ -306,9 +307,11 @@ impl Heap {
         self.roots.values().count()
     }
 
-    /// Live legacy Cells and direct Object records.
+    /// Live legacy Cells and direct object-family records.
     pub(crate) fn live_slots(&self) -> usize {
-        self.slots.len() - self.free.len() + self.object_records.live_count()
+        self.slots.len() - self.free.len()
+            + self.object_records.live_count()
+            + self.array_records.live_count()
     }
     pub fn alloc(&mut self, cell: Cell) -> Value {
         #[cfg(feature = "profile-aggregate")]
@@ -331,6 +334,21 @@ impl Heap {
                     return value;
                 }
                 Err(object) => Cell::Object(object),
+            },
+            Cell::Array { object, elements } => match self
+                .array_records
+                .try_insert(ArrayRecord { object, elements })
+            {
+                Ok(record_id) => {
+                    let value = Value::direct_array(record_id);
+                    #[cfg(feature = "profile-memory")]
+                    self.profile_allocation(value);
+                    return value;
+                }
+                Err(array) => Cell::Array {
+                    object: array.object,
+                    elements: array.elements,
+                },
             },
             cell => cell,
         };
@@ -424,6 +442,10 @@ impl Heap {
             let old_shape = object.shape() as usize;
             object.set_shape(mapping[old_shape]);
         });
+        self.array_records.for_each_live_mut(|_, array| {
+            let old_shape = array.object.shape() as usize;
+            array.object.set_shape(mapping[old_shape]);
+        });
         for index in 0..self.slots.len() {
             let Some(object) = self.object_at_index_mut(index) else {
                 continue;
@@ -448,6 +470,7 @@ impl Heap {
         let mut target = 0;
         let Self {
             object_records,
+            array_records,
             slots,
             properties,
             ..
@@ -456,6 +479,9 @@ impl Heap {
             let object = if let Some(record_id) = owner.direct_object_index() {
                 // SAFETY: direct owners were collected from live object records.
                 Some(unsafe { object_records.get_live_mut(record_id) })
+            } else if let Some(record_id) = owner.direct_array_index() {
+                // SAFETY: array owners were collected from live array records.
+                Some(&mut unsafe { array_records.get_live_mut(record_id) }.object)
             } else {
                 owner
                     .legacy_heap_index()
@@ -479,6 +505,7 @@ impl Heap {
     pub(crate) fn reset(&mut self) {
         self.slots.clear();
         self.object_records = ObjectRecordSpace::default();
+        self.array_records = ArrayRecordSpace::default();
         self.marks.clear();
         self.free.clear();
         self.external_bytes = 0;
@@ -560,8 +587,10 @@ impl Heap {
         let properties = &mut self.properties;
         #[cfg(feature = "profile-aggregate")]
         {
-            self.gc_profile.sweep_slots +=
-                (self.slots.len() + self.object_records.high_water()) as u64;
+            self.gc_profile.sweep_slots += (self.slots.len()
+                + self.object_records.high_water()
+                + self.array_records.high_water())
+                as u64;
         }
         #[cfg(feature = "profile-memory")]
         let memory_profile = &mut self.memory_profile;
@@ -587,6 +616,41 @@ impl Heap {
         {
             self.gc_profile.freed += object_freed as u64;
         }
+        let mut dead_array_ids = Vec::new();
+        let (array_live, array_freed) = self.array_records.sweep(|record| match record {
+            RecordSweep::Keep(record_id, array) => {
+                let vector = array.object.properties;
+                if properties.has_compact_range(vector) {
+                    property_owners.push((vector.start_offset(), Value::direct_array(record_id)));
+                }
+            }
+            RecordSweep::Dead(_record_id, array) => {
+                #[cfg(feature = "profile-memory")]
+                let slots = properties.len(array.object.properties);
+                properties.release(array.object.properties);
+                #[cfg(feature = "profile-memory")]
+                memory_profile.freed_array(Value::direct_array(_record_id), slots, &array);
+                dead_array_ids.push(_record_id);
+            }
+        });
+        let clear_sparse_arrays = if let Some(sparse_arrays) = &mut self.sparse_arrays {
+            for record_id in dead_array_ids {
+                sparse_arrays.remove(&Value::direct_array(record_id));
+            }
+            sparse_arrays.is_empty()
+        } else {
+            false
+        };
+        if clear_sparse_arrays {
+            self.sparse_arrays = None;
+        }
+        live += array_live;
+        #[cfg(feature = "profile-aggregate")]
+        {
+            self.gc_profile.freed += array_freed as u64;
+        }
+        #[cfg(not(feature = "profile-aggregate"))]
+        let _ = array_freed;
         for index in 0..self.slots.len() {
             let slot = self.slots.get(index).expect("slot index is in range");
             if !slot.is_live() {
@@ -621,7 +685,7 @@ impl Heap {
                 properties.release(object.properties);
             }
             if let Some(arrays) = &mut self.sparse_arrays {
-                arrays.remove(&(index as u32));
+                arrays.remove(&Value::heap(index as u32));
             }
             let cell = self
                 .slots
@@ -689,6 +753,24 @@ impl Heap {
                 let object = unsafe { self.object_records.get_live(record_id) };
                 Self::object_children(value, object, &self.properties, work, object_roots);
                 ephemerons.newly_marked(value, None, |target| self.is_marked_value(target), work);
+            } else if let Some(record_id) = value.direct_array_index() {
+                if !self.array_records.mark(record_id) {
+                    continue;
+                }
+                #[cfg(feature = "profile-aggregate")]
+                {
+                    self.gc_profile.marked += 1;
+                    self.gc_profile.marked_kinds[CellKind::Array as usize] += 1;
+                }
+                // SAFETY: a direct Array Value names an initialized record.
+                let array = unsafe { self.array_records.get_live(record_id) };
+                Self::array_children(value, array, &self.properties, work, object_roots);
+                if let Some(arrays) = self.sparse_arrays.as_ref()
+                    && let Some(elements) = arrays.get(&value)
+                {
+                    work.extend(elements.values.values().copied());
+                }
+                ephemerons.newly_marked(value, None, |target| self.is_marked_value(target), work);
             } else {
                 let Some(index) = value.legacy_heap_index().map(|value| value as usize) else {
                     continue;
@@ -718,7 +800,7 @@ impl Heap {
                 );
                 if let Some(arrays) = self.sparse_arrays.as_ref()
                     && matches!(cell, Cell::Array { .. })
-                    && let Some(elements) = arrays.get(&(index as u32))
+                    && let Some(elements) = arrays.get(&Value::heap(index as u32))
                 {
                     work.extend(elements.values.values().copied());
                 }
@@ -741,6 +823,9 @@ impl Heap {
         if let Some(record_id) = value.direct_object_index() {
             return self.object_records.is_marked(record_id);
         }
+        if let Some(record_id) = value.direct_array_index() {
+            return self.array_records.is_marked(record_id);
+        }
         let Some(index) = value.legacy_heap_index().map(|index| index as usize) else {
             return false;
         };
@@ -755,7 +840,7 @@ impl Heap {
     pub(crate) fn sparse_get(&self, array: Value, index: usize) -> Option<Value> {
         self.sparse_arrays
             .as_ref()?
-            .get(&array.legacy_heap_index()?)?
+            .get(&array)?
             .values
             .get(&index)
             .copied()
@@ -763,16 +848,14 @@ impl Heap {
     pub(crate) fn sparse_length(&self, array: Value) -> Option<usize> {
         self.sparse_arrays
             .as_ref()?
-            .get(&array.legacy_heap_index()?)
+            .get(&array)
             .map(|elements| elements.length)
     }
     pub(crate) fn sparse_set(&mut self, array: Value, index: usize, value: Value) {
         let arrays = self
             .sparse_arrays
             .get_or_insert_with(|| Box::new(FxHashMap::default()));
-        let elements = arrays
-            .entry(array.legacy_heap_index().unwrap())
-            .or_default();
+        let elements = arrays.entry(array).or_default();
         elements.values.insert(index, value);
         elements.length = elements.length.max(index.saturating_add(1));
         let length = elements.length;
@@ -781,7 +864,7 @@ impl Heap {
         }
     }
     pub(crate) fn sparse_set_length(&mut self, array: Value, length: usize) {
-        let Some(Cell::Array { elements, .. }) = self.get(array) else {
+        let Some((_, elements)) = self.array(array) else {
             return;
         };
         let dense_length = elements.len();
@@ -796,28 +879,23 @@ impl Heap {
         let arrays = self
             .sparse_arrays
             .get_or_insert_with(|| Box::new(FxHashMap::default()));
-        let elements = arrays
-            .entry(array.legacy_heap_index().unwrap())
-            .or_default();
+        let elements = arrays.entry(array).or_default();
         if length < elements.length {
             elements.values.retain(|index, _| *index < length);
         }
         elements.length = length;
     }
     fn materialize_sparse_array(&mut self, array: Value, length: usize) {
-        let Some(index) = array.legacy_heap_index() else {
-            return;
-        };
         let sparse = self
             .sparse_arrays
             .as_mut()
-            .and_then(|arrays| arrays.remove(&index));
+            .and_then(|arrays| arrays.remove(&array));
         if let Some(arrays) = &mut self.sparse_arrays
             && arrays.is_empty()
         {
             self.sparse_arrays = None;
         }
-        let Some(Cell::Array { elements, .. }) = self.get_mut(array) else {
+        let Some((_, elements)) = self.array_mut(array) else {
             return;
         };
         let dense_length = elements.len();
@@ -942,6 +1020,7 @@ impl Heap {
     fn profile_allocation(&mut self, identity: Value) {
         let Self {
             object_records,
+            array_records,
             slots,
             properties,
             memory_profile,
@@ -951,6 +1030,14 @@ impl Heap {
             // SAFETY: this function is called immediately after insertion.
             let object = unsafe { object_records.get_live(record_id) };
             memory_profile.allocated_object(identity, object, properties.len(object.properties));
+        } else if let Some(record_id) = identity.direct_array_index() {
+            // SAFETY: profile runs immediately after inserting this array.
+            let array = unsafe { array_records.get_live(record_id) };
+            memory_profile.allocated_array(
+                identity,
+                array,
+                properties.len(array.object.properties),
+            );
         } else {
             let index = identity
                 .legacy_heap_index()
@@ -1189,6 +1276,23 @@ impl Heap {
             | Cell::WasmMemory { .. } => {}
             _ => unreachable!("typed array backing handled above"),
         }
+    }
+
+    fn array_children(
+        owner: Value,
+        array: &ArrayRecord,
+        properties: &ValueArena,
+        work: &mut Vec<Value>,
+        object_roots: &mut impl FnMut(Value, u32, &mut Vec<Value>),
+    ) {
+        Self::object_children(owner, &array.object, properties, work, object_roots);
+        work.extend(
+            array
+                .elements
+                .iter()
+                .copied()
+                .filter(|value| value.is_heap()),
+        );
     }
 
     fn object_children(

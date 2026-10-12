@@ -583,15 +583,20 @@ impl<H: Host> Vm<H> {
         site: u16,
     ) -> Result<Value, JsError> {
         let heap_reference = object.heap_reference();
+        if matches!(heap_reference, Some(HeapReference::ArrayRecord(_)))
+            && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
+        {
+            return self.get_property(p, object, atom);
+        }
+        let record_receiver = heap_reference.and_then(|reference| self.heap.record_object(reference));
         // A site is only populated after the atom and non-dictionary receiver and holder shapes
         // passed `shape_property_lookup_cell`, and an ordinary object is eligible whenever those
         // hold, so an own-data hit on ordinary objects needs no further eligibility probe. These
         // hits stay a leaf function; every other case continues out of line.
         if self.specialized
             && p.specialized
-            && let Some(HeapReference::ObjectRecord(record_id)) = heap_reference
+            && let Some(receiver) = record_receiver
         {
-            let receiver = self.heap.object_record_by_id(record_id);
             if !receiver.is_module_namespace() {
                 let index = self.field_cache_index(site);
                 let shape = receiver.shape();
@@ -653,8 +658,7 @@ impl<H: Host> Vm<H> {
         heap_reference: Option<HeapReference>,
     ) -> Result<Value, JsError> {
         let index = self.field_cache_index(site);
-        if let Some(HeapReference::ObjectRecord(record_id)) = heap_reference {
-            let receiver = self.heap.object_record_by_id(record_id);
+        if let Some(receiver) = heap_reference.and_then(|reference| self.heap.record_object(reference)) {
             if let Some(hit) = self
                 .cached_field_value(index, receiver)
                 .or_else(|| self.cached_holder_field_value(index, receiver, atom))
@@ -680,8 +684,7 @@ impl<H: Host> Vm<H> {
         site: u16,
         heap_reference: Option<HeapReference>,
     ) -> Result<Value, JsError> {
-        if let Some(HeapReference::ObjectRecord(record_id)) = heap_reference {
-            let receiver = self.heap.object_record_by_id(record_id);
+        if let Some(receiver) = heap_reference.and_then(|reference| self.heap.record_object(reference)) {
             if self.specialized && p.specialized && !receiver.is_module_namespace() {
                 let index = self.field_cache_index(site);
                 if let Some(hit) = self
@@ -698,7 +701,7 @@ impl<H: Host> Vm<H> {
         }
         let legacy_cell = match heap_reference {
             Some(HeapReference::LegacySlot(index)) => self.heap.get_legacy(index),
-            Some(HeapReference::ObjectRecord(_)) | None => None,
+            Some(HeapReference::ObjectRecord(_) | HeapReference::ArrayRecord(_)) | None => None,
         };
         let lookup = match legacy_cell {
             Some(Cell::String(_)) if self.specialized && p.specialized => {
@@ -1152,7 +1155,7 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         value: Value,
     ) -> Result<Option<bool>, JsError> {
-        if !matches!(self.heap.get(receiver), Some(Cell::Array { .. })) {
+        if !self.heap.array(receiver).is_some() {
             return Ok(None);
         }
         if atom == self.length_atom
@@ -1417,7 +1420,7 @@ impl<H: Host> Vm<H> {
             };
         }
         if atom == self.length_atom
-            && matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            && self.heap.array(object).is_some()
             && !self
                 .object_data(object)
                 .is_some_and(Object::is_arguments_object)
