@@ -1,0 +1,487 @@
+{
+  "scope": "Flush process stdout writes before waiting for child interaction",
+  "parent_commit": "55bf900a05d0338158dff7c3cdaa8559c60b73e8",
+  "branch": "v2-cloud-node",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "counts": {
+    "fail": 31,
+    "timeout": 3,
+    "pass": 76,
+    "skip": 2
+  },
+  "inventory_hash": "a3a03b5546a7e293",
+  "jobs": 2,
+  "timeout_secs": 30,
+  "results": [
+    {
+      "fixture": "test-child-process-advanced-serialization-host-objects.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-advanced-serialization-largebuffer.js",
+      "status": "timeout"
+    },
+    {
+      "fixture": "test-child-process-advanced-serialization-splitted-length-field.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-advanced-serialization.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-bad-stdio.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-can-write-to-stdout.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-constructor.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-cwd.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-default-options.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-destroy.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-detached.js",
+      "status": "timeout"
+    },
+    {
+      "fixture": "test-child-process-dgram-reuseport.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-disconnect.js",
+      "status": "timeout"
+    },
+    {
+      "fixture": "test-child-process-double-pipe.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-env.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exec-abortcontroller-promisified.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exec-any-shells-windows.js",
+      "status": "skip"
+    },
+    {
+      "fixture": "test-child-process-exec-cwd.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exec-encoding.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exec-env.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exec-error.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exec-kill-throws.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exec-maxbuf.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exec-std-encoding.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exec-stdout-stderr-data-string.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exec-timeout-expire.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exec-timeout-kill.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exec-timeout-not-expired.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-execFile-promisified-abortController.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-execfile-maxbuf.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-execfile.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-execfilesync-maxbuf.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-execsync-maxbuf.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-exit-code.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-flush-stdio.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-abort-signal.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-advanced-header-serialization.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-and-spawn.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-args.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-close.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-closed-channel-segfault.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-detached.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-dgram.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-fork-exec-argv.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-exec-path.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-getconnections.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-fork-net-server.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-fork-net-socket.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-fork-net.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-fork-no-shell.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-ref.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-ref2.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-stdio-string-variant.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-stdio.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-fork-timeout-kill-signal.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork-url.mjs",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-fork3.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-http-socket-leak.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-internal.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-ipc-next-tick.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-ipc.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-kill.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-net-reuseport.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-no-deprecation.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-pipe-dataflow.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-promisified.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-prototype-tampering.mjs",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-recv-handle.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-reject-null-bytes.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-send-after-close.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-send-cb.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-send-keep-open.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-send-returns-boolean.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-send-type-error.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-send-utf8.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-server-close.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-set-blocking.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-silent.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawn-args.mjs",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawn-argv0.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawn-controller.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawn-error.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawn-event.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawn-shell.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawn-timeout-kill-signal.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawn-typeerror.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawn-windows-batch-file.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawnsync-args.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawnsync-env.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawnsync-input.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-spawnsync-kill-signal.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-spawnsync-maxbuf.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawnsync-non-string-args.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-spawnsync-shell.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-spawnsync-timeout.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-spawnsync-validation-errors.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-spawnsync.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-stdin-ipc.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-stdin.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-stdio-big-write-end.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-stdio-inherit.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-stdio-merge-stdouts-into-cat.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-stdio-overlapped.js",
+      "status": "skip"
+    },
+    {
+      "fixture": "test-child-process-stdio-reuse-readable-stdio.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-stdio.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-stdout-flush-exit.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-stdout-flush.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-stdout-ipc.js",
+      "status": "pass"
+    },
+    {
+      "fixture": "test-child-process-uid-gid.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-validate-stdio.js",
+      "status": "fail"
+    },
+    {
+      "fixture": "test-child-process-windows-hide.js",
+      "status": "fail"
+    }
+  ],
+  "gained_passes_from_environment_group": [
+    "test-child-process-kill.js",
+    "test-child-process-net-reuseport.js"
+  ],
+  "lost_passes": [],
+  "validation": {
+    "node_oracle_tests": 51,
+    "node_oracle_log": "work/stdout-flush-all-oracles.log",
+    "framework_summary": "parallel: pass=43 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=43",
+    "framework_log": "work/stdout-flush-framework.log",
+    "interactive_oracle": "Child writes ready without newline, stays alive, waits for parent input, acknowledges input and exits; parent can observe bytes before child exit."
+  },
+  "memory_events_before": "low 0\nhigh 0\nmax 4864178\noom 177\noom_kill 47\noom_group_kill 0\n",
+  "memory_events_after": "low 0\nhigh 0\nmax 4864178\noom 177\noom_kill 47\noom_group_kill 0\n",
+  "raw_sha256": "5528a667d4022bf838537be886ca31f7b7f2fbbf49a1f647caa28e031d380067",
+  "qualifications": [
+    "Child group and framework ran sequentially without overlapping builds/tests. No new OOM kill.",
+    "Group baseline predates TCP reuse-port repair; the two gains are TCP reuse-port and the child-process kill fixture. The isolated TCP case was already qualified at 55bf900a0.",
+    "This change flushes the existing stdout writer. Binary chunk encoding, write callbacks, and full asynchronous stdio backpressure remain incomplete.",
+    "No new full sweep; latest actual full remains 1265 pass / 685 skip / 2652 fail / 125 timeout of 4727. All-case passing goal remains open."
+  ]
+}
