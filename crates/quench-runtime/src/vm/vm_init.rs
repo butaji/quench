@@ -95,6 +95,7 @@ impl<H: Host> Vm<H> {
             well_known_symbols: FxHashMap::default(),
             string_concats: None,
             field_caches: vec![],
+            inherited_field_caches: FxHashMap::default(),
             field_add_indices: vec![],
             field_add_sets: vec![],
             megamorphic_field_indices: vec![],
