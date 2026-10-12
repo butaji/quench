@@ -112,6 +112,38 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
 }
 
 #[test]
+fn minor_collection_roots_external_edges_of_old_owners() {
+    use super::{DEFAULT_PROPERTY_ATTRIBUTES, PropertyAttributes, property_key::PropertyKey};
+    use crate::heap::Cell;
+
+    let program = Engine::specialize("", "minor-external-roots.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    let owner = vm.object();
+    let owner_root = vm.heap.root(owner);
+    vm.collect_slow(&program, true);
+
+    let getter = vm.heap.alloc(Cell::String("young getter".into()));
+    let getter_weak = vm.heap.weak_handle(getter).unwrap();
+    let key = PropertyKey::string(vm.intern_atom("field"));
+    vm.set_property_attributes(
+        owner,
+        key,
+        PropertyAttributes {
+            getter: Some(getter),
+            ..DEFAULT_PROPERTY_ATTRIBUTES
+        },
+    );
+
+    vm.collect_slow(&program, false);
+    assert_eq!(vm.heap.weak_value(getter_weak), Some(getter));
+
+    vm.set_property_attributes(owner, key, DEFAULT_PROPERTY_ATTRIBUTES);
+    vm.collect_slow(&program, true);
+    assert!(vm.heap.weak_value(getter_weak).is_none());
+    assert!(vm.heap.release_root(owner_root));
+}
+
+#[test]
 fn shape_roots_keep_symbols_and_active_accessors_alive() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
     use crate::heap::Cell;

@@ -1,0 +1,37 @@
+{
+  "node_version": "v24.19.0",
+  "node_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+  "oracle_sha256": "15d58f02218d28069e2a291891d27f100ddfbf12de4b9cbbfaf311facefb9a2f",
+  "baseline_sha256": "e46537823eb25a37cf5646af793e6873ceaeff1069fb878a96813cae3a86ab32",
+  "candidate_sha256": "43dc37f8294e05756a5eda6485cb7f2eb3f76aa9c025d7939286fec8146c288b",
+  "source_revision": "0cfb25533b0072c676e24576681a8904cd2715c3",
+  "node": {
+    "command": [
+      "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "/workspace/quench/work/task61-earley-pc-publication-linux-2026-10-10/oracle.js"
+    ],
+    "exit_code": 0,
+    "stdout": "[[\"getter_and_finally\",\"return\",7],[\"getter_count\",1],[\"caught_identity\",\"return\",true],[\"proxy_get\",\"return\",9],[\"proxy_get_count\",1],[\"nested_throw_catch\",\"return\",[\"RangeError\",\"nested\"]],[\"tdz_read_catch\",\"return\",\"ReferenceError\"],[\"tdz_write_catch\",\"return\",\"ReferenceError\"],[\"finally_throw\",\"throw\",\"TypeError\",\"finally\"],[\"allocation_pressure\",\"return\",7199940000]]\n",
+    "stderr": ""
+  },
+  "baseline": {
+    "command": [
+      "/workspace/quench/work/task61-earley-pc-publication-linux-2026-10-10/baseline",
+      "/workspace/quench/work/task61-earley-pc-publication-linux-2026-10-10/oracle.js"
+    ],
+    "exit_code": 0,
+    "stdout": "[[\"getter_and_finally\",\"return\",7],[\"getter_count\",1],[\"caught_identity\",\"return\",true],[\"proxy_get\",\"return\",9],[\"proxy_get_count\",1],[\"nested_throw_catch\",\"return\",[\"RangeError\",\"nested\"]],[\"tdz_read_catch\",\"return\",\"ReferenceError\"],[\"tdz_write_catch\",\"return\",\"ReferenceError\"],[\"finally_throw\",\"throw\",\"TypeError\",\"finally\"],[\"allocation_pressure\",\"return\",7199940000]]\n",
+    "stderr": ""
+  },
+  "candidate": {
+    "command": [
+      "/workspace/quench/work/task61-earley-pc-publication-linux-2026-10-10/candidate",
+      "/workspace/quench/work/task61-earley-pc-publication-linux-2026-10-10/oracle.js"
+    ],
+    "exit_code": 0,
+    "stdout": "[[\"getter_and_finally\",\"return\",7],[\"getter_count\",1],[\"caught_identity\",\"return\",true],[\"proxy_get\",\"return\",9],[\"proxy_get_count\",1],[\"nested_throw_catch\",\"return\",[\"RangeError\",\"nested\"]],[\"tdz_read_catch\",\"return\",\"ReferenceError\"],[\"tdz_write_catch\",\"return\",\"ReferenceError\"],[\"finally_throw\",\"throw\",\"TypeError\",\"finally\"],[\"allocation_pressure\",\"return\",7199940000]]\n",
+    "stderr": ""
+  },
+  "same_exact_output_as_node": true,
+  "candidate_matches_baseline": true
+}

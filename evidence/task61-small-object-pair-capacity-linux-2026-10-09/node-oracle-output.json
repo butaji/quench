@@ -1,0 +1,1 @@
+{"before":[4095,4096,8191,["first","second","sum"]],"after":[null,4096,null,["second","sum","third"],{"value":4096,"writable":true,"enumerable":true,"configurable":true}],"duplicate":{"x":3,"y":2},"count":5000,"last":[4999,5000]}

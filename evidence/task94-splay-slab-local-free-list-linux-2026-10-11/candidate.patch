@@ -1,0 +1,162 @@
+diff --git a/crates/quench-runtime/src/heap.rs b/crates/quench-runtime/src/heap.rs
+index a8a323822..44c66c8fd 100644
+--- a/crates/quench-runtime/src/heap.rs
++++ b/crates/quench-runtime/src/heap.rs
+@@ -14,7 +14,7 @@ mod weak;
+ pub(crate) use cell::*;
+ pub use root::RootId;
+ pub(crate) use root::{RootTable, WeakHandle};
+-use slots::SlotArena;
++use slots::{SLOTS_PER_SLAB, SlotArena};
+ 
+ // Keep implicit holes in dense storage when their one-time allocation is
+ // bounded. 256 KiB covers the measured 16,900-slot NavierStokes grids while
+@@ -116,7 +116,9 @@ pub(crate) struct Heap {
+     remembered_marks: Vec<u64>,
+     remembered: Vec<u32>,
+     young: Vec<u32>,
+-    free: Vec<u32>,
++    free_by_slab: Vec<Vec<u16>>,
++    free_slabs: Vec<u32>,
++    free_slots: usize,
+     retired_slots: usize,
+     generations: Vec<u16>,
+     generation_overflow: FxHashMap<u32, u32>,
+@@ -297,7 +299,9 @@ impl Heap {
+             remembered_marks: Vec::with_capacity(12),
+             remembered: Vec::with_capacity(384),
+             young: Vec::with_capacity(384),
+-            free: Vec::with_capacity(384),
++            free_by_slab: Vec::with_capacity(12),
++            free_slabs: Vec::with_capacity(12),
++            free_slots: 0,
+             threshold: MINIMUM_GC_ALLOCATION_HEADROOM,
+             max_threshold: MINIMUM_GC_ALLOCATION_HEADROOM,
+             ..Self::default()
+@@ -342,8 +346,18 @@ impl Heap {
+         let track_young = self.tracks_young_cells();
+         self.total_allocations += 1;
+         self.external_bytes += cell.external_bytes();
+-        while let Some(index) = self.free.pop() {
+-            let slot = index as usize;
++        while let Some(slab) = self.free_slabs.last().copied() {
++            let slab_index = slab as usize;
++            let Some(offset) = self.free_by_slab[slab_index].pop() else {
++                self.free_slabs.pop();
++                continue;
++            };
++            self.free_slots -= 1;
++            if self.free_by_slab[slab_index].is_empty() {
++                self.free_slabs.pop();
++            }
++            let slot = slab_index * SLOTS_PER_SLAB + offset as usize;
++            let index = slot as u32;
+             let current = self.generations[slot];
+             if current == OVERFLOW_HEAP_SLOT_GENERATION {
+                 let Some(current) = self.generation_overflow.get_mut(&index) else {
+@@ -370,11 +384,15 @@ impl Heap {
+             self.profile_allocation(index as usize);
+             self.peak_live = self
+                 .peak_live
+-                .max(self.slots.len() - self.free.len() - self.retired_slots);
++                .max(self.slots.len() - self.free_slots - self.retired_slots);
+             return Value::heap(index);
+         }
+         let index = self.slots.len();
+         self.slots.push(Slot { cell: Some(cell) });
++        let slab = index / SLOTS_PER_SLAB;
++        if self.free_by_slab.len() == slab {
++            self.free_by_slab.push(Vec::new());
++        }
+         #[cfg(feature = "profile-memory")]
+         self.profile_allocation(index);
+         if index / 64 == self.marks.len() {
+@@ -386,7 +404,7 @@ impl Heap {
+         }
+         self.peak_live = self
+             .peak_live
+-            .max(self.slots.len() - self.free.len() - self.retired_slots);
++            .max(self.slots.len() - self.free_slots - self.retired_slots);
+         Value::heap(index as u32)
+     }
+     pub(crate) fn alloc_object_pair(
+@@ -501,7 +519,9 @@ impl Heap {
+     pub(crate) fn reset(&mut self) {
+         self.slots.clear();
+         self.marks.clear();
+-        self.free.clear();
++        self.free_by_slab.clear();
++        self.free_slabs.clear();
++        self.free_slots = 0;
+         self.retired_slots = 0;
+         self.generations.clear();
+         self.generation_overflow.clear();
+@@ -667,7 +687,9 @@ impl Heap {
+         let mut property_owners = Vec::new();
+         {
+             let external_bytes = &mut self.external_bytes;
+-            let free = &mut self.free;
++            let free_by_slab = &mut self.free_by_slab;
++            let free_slabs = &mut self.free_slabs;
++            let free_slots = &mut self.free_slots;
+             let sparse_arrays = &mut self.sparse_arrays;
+             #[cfg(feature = "profile-memory")]
+             let memory_profile = &mut self.memory_profile;
+@@ -688,7 +710,13 @@ impl Heap {
+                 if let Some(arrays) = sparse_arrays {
+                     arrays.remove(&(index as u32));
+                 }
+-                free.push(index as u32);
++                let slab = index / SLOTS_PER_SLAB;
++                let offsets = &mut free_by_slab[slab];
++                if offsets.is_empty() {
++                    free_slabs.push(slab as u32);
++                }
++                offsets.push((index % SLOTS_PER_SLAB) as u16);
++                *free_slots += 1;
+                 #[cfg(feature = "profile-aggregate")]
+                 {
+                     gc_profile.freed += 1;
+diff --git a/crates/quench-runtime/src/heap/slots.rs b/crates/quench-runtime/src/heap/slots.rs
+index ec3c8b8cc..5464268ac 100644
+--- a/crates/quench-runtime/src/heap/slots.rs
++++ b/crates/quench-runtime/src/heap/slots.rs
+@@ -1,6 +1,6 @@
+ use super::Slot;
+ 
+-const SLOTS_PER_SLAB: usize = 2_048;
++pub(super) const SLOTS_PER_SLAB: usize = 2_048;
+ 
+ #[derive(Default)]
+ pub(super) struct SlotArena {
+diff --git a/crates/quench-runtime/src/heap/tests.rs b/crates/quench-runtime/src/heap/tests.rs
+index 77a3be327..24552134d 100644
+--- a/crates/quench-runtime/src/heap/tests.rs
++++ b/crates/quench-runtime/src/heap/tests.rs
+@@ -406,6 +406,26 @@ fn overflowing_heap_generations_keep_weak_handle_lifetime() {
+     assert_eq!(heap.weak_value(current), None);
+ }
+ 
++#[test]
++fn slab_local_free_offsets_reuse_slots_across_slab_boundaries() {
++    let mut heap = Heap::new();
++    let slot_count = super::slots::SLOTS_PER_SLAB + 2;
++    for _ in 0..slot_count {
++        heap.alloc(Cell::String("temporary".into()));
++    }
++
++    assert_eq!(heap.collect([]), []);
++    assert_eq!(heap.free_slots, slot_count);
++
++    let first = heap.alloc(Cell::String("first".into()));
++    let second = heap.alloc(Cell::String("second".into()));
++    let third = heap.alloc(Cell::String("third".into()));
++    assert_eq!(first.heap_index(), Some((slot_count - 1) as u32));
++    assert_eq!(second.heap_index(), Some((slot_count - 2) as u32));
++    assert_eq!(third.heap_index(), Some((slot_count - 3) as u32));
++    assert_eq!(heap.free_slots, slot_count - 3);
++}
++
+ #[test]
+ fn stale_weak_handles_cannot_resolve_reused_slots() {
+     let mut heap = Heap::new();

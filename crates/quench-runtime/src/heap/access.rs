@@ -158,7 +158,23 @@ impl Heap {
         if index >= self.slots.len() {
             return None;
         }
+        self.remember(index);
         // SAFETY: the explicit length check proves the slab index is in range.
         unsafe { self.slots.get_unchecked_mut(index).cell.as_mut() }
+    }
+
+    pub(super) fn remember(&mut self, index: usize) {
+        if !self.tracks_young_cells()
+            || index >= self.slots.len()
+            || !Heap::marked(&self.marks, index)
+        {
+            return;
+        }
+        self.remembered_marks.resize(self.marks.len(), 0);
+        if self.remembered_marks[index / 64] & (1 << (index % 64)) != 0 {
+            return;
+        }
+        self.remembered_marks[index / 64] |= 1 << (index % 64);
+        self.remembered.push(index as u32);
     }
 }

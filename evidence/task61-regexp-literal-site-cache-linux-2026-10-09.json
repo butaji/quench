@@ -1,0 +1,195 @@
+{
+  "schema": 1,
+  "task": 61,
+  "experiment": "Program-local RegExp literal matcher cache",
+  "outcome": "retain as a focused Stage B pre-gate optimization; the Task 61 all-eight, all-engine gate remains open",
+  "source": {
+    "baseline_revision": "d4d0ff19f57a6bf79054e55c08b34365ac8b5140",
+    "candidate_base_revision": "d4d0ff19f57a6bf79054e55c08b34365ac8b5140",
+    "candidate_patch_sha256": "71338506ed19d1550e907144db0f8ad4dad6c63916eb13cb78396199b0e43823",
+    "candidate_binary_sha256": "c3611c6562103af2ae285f9bb87b3813e9838fa207006815c06b0dbd107f1651",
+    "baseline_binary_sha256": "13420569b20285cdb9833af1314527c1d83af7d9fdba8ecefc162be30bf348b6",
+    "v2_candidate_commit": "e840fe4606717266188d10e0d336ccbcc17943f2",
+    "v2_candidate_evidence_sha256": "3b4d80d3391535f0ee87d895c244534b8a56c2a1a53e58b56c4ac33d127d005f",
+    "candidate_patch_encoding": "gzip; uncompressed SHA-256 remains the measured patch hash"
+  },
+  "linux_measurement": {
+    "fixture": "V8-v7 RegExp, materialized from pinned corpus revision 64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "host": {
+      "uname": {
+        "system": "Linux",
+        "node": "1c7595109800",
+        "release": "6.18.44",
+        "version": "#1 SMP Sat Sep 26 20:02:31 UTC 2026",
+        "machine": "x86_64",
+        "processor": ""
+      },
+      "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+      "cpu_quota": "400000 100000",
+      "memory_limit_bytes": 17179869184,
+      "rss_backend": "Linux wait4 ru_maxrss, KiB normalized to bytes"
+    },
+    "rounds": 11,
+    "alternating_order": true,
+    "valid": true,
+    "semantic_output_equal_all_pairs": true,
+    "baseline_median_score": 40.3,
+    "candidate_median_score": 52.5,
+    "score_delta": 12.200000000000003,
+    "score_delta_percent": 30.272952853598035,
+    "score_delta_95_percentile_interval": {
+      "lower_95": 10.900000000000006,
+      "upper_95": 14.399999999999999,
+      "resamples": 100000,
+      "method": "paired percentile bootstrap of difference in medians",
+      "seed": 20261009
+    },
+    "candidate_lower_score_pairs": 0,
+    "baseline_median_maximum_rss_bytes": 38383616,
+    "candidate_median_maximum_rss_bytes": 31911936,
+    "maximum_rss_delta_bytes": -6471680,
+    "maximum_rss_delta_95_percentile_interval": {
+      "lower_95": -6537216.0,
+      "upper_95": -6352896.0,
+      "resamples": 100000,
+      "method": "paired percentile bootstrap of difference in medians",
+      "seed": 20261009
+    },
+    "candidate_lower_rss_pairs": 11,
+    "measurement_method": "11 alternating production-binary pairs; Score parsed from benchmark output; peak RSS from Linux wait4 ru_maxrss normalized from KiB to bytes; 100,000 paired percentile-bootstrap resamples with seed 20261009"
+  },
+  "correctness": {
+    "test262": {
+      "engine": "quench",
+      "stages": {
+        "64": {
+          "failed": 0,
+          "passed": 1879,
+          "total": 1879
+        },
+        "65": {
+          "failed": 0,
+          "passed": 17,
+          "total": 17
+        },
+        "66": {
+          "failed": 0,
+          "passed": 383,
+          "total": 383
+        },
+        "67": {
+          "failed": 0,
+          "passed": 11,
+          "total": 11
+        },
+        "68": {
+          "failed": 0,
+          "passed": 64,
+          "total": 64
+        },
+        "69": {
+          "failed": 0,
+          "passed": 104,
+          "total": 104
+        },
+        "70": {
+          "failed": 0,
+          "passed": 1223,
+          "total": 1223
+        }
+      },
+      "passed": 3681,
+      "failed": 0,
+      "total": 3681,
+      "suite_revision": "f2d1435644",
+      "report_sha256": "2af046cc96516d4615232a32c19bd02d492031b4f12123d3829773cd1e3f7353"
+    },
+    "node_oracle": {
+      "node_version": "v24.19.0",
+      "shared_cases_exactly_matched": [
+        "fresh-object-and-independent-last-index",
+        "compile-isolation",
+        "reentrant-exec-during-replace",
+        "cross-object-reentrant-capture-use",
+        "literal-ignores-reassigned-global-regexp"
+      ],
+      "node_foreign_realm_result": {
+        "matches": true,
+        "usesForeignPrototype": true,
+        "usesHostPrototype": false
+      },
+      "quench_node_vm_builtin": "unsupported; Quench run compared the five shared cases; the runtime foreign-realm regression remains covered by quench-runtime tests",
+      "script_sha256": "b8294c75c0fcc48896ccd6859818386c160184efe4840e8054af8a62b3a3c2ab",
+      "node_output_sha256": "beb5e45ab638f372f712b25852590db5f852c75d5c26acbe91d449b375d35eef",
+      "quench_output_sha256": "0cef209aa3b537fe10822c3c92b571540a8c70498f5cebc877dd2f31f4633942"
+    },
+    "runtime_suite": {
+      "command": "cargo test --profile iteration --offline -p quench-runtime --lib",
+      "passed": 520,
+      "failed": 0,
+      "result": "pass",
+      "strengthened_test": "vm::tests::regexp_literal_sites_share_matchers_but_create_fresh_objects passed 1/1 with cross-object capture reentrancy assertion",
+      "full_suite_after_strengthening": "520 passed; 0 failed"
+    }
+  },
+  "v2_comparison": {
+    "host": "Apple M4, macOS 26.5",
+    "rounds": 11,
+    "score_baseline_median": 95.6,
+    "score_candidate_median": 132.0,
+    "paired_median_score_change_percent": 37.78705636743216,
+    "max_rss_baseline_median_bytes": 59179008,
+    "max_rss_candidate_median_bytes": 44072960,
+    "paired_median_max_rss_change_percent": -25.636766334440754,
+    "comparison": "The Linux port independently reproduced improvements on both Score and RSS; effect sizes differ by host and are reported separately."
+  },
+  "online_research": [
+    {
+      "url": "https://tc39.es/ecma262/#sec-regular-expression-literals-runtime-semantics-evaluation",
+      "finding": "Each RegExp literal evaluation runs RegExpCreate(pattern, flags); a matcher cache must preserve fresh RegExp object identity and mutable per-object state."
+    },
+    {
+      "url": "https://docs.rs/regex/latest/regex/struct.Regex.html#method.new",
+      "finding": "A compiled Regex is reusable; compilation is relatively expensive and the crate recommends compiling once and reusing it."
+    },
+    {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp",
+      "finding": "MDN describes RegExp compilation before matching; this supports the compilation-cost hypothesis, while ECMAScript and Node oracle validate semantics."
+    }
+  ],
+  "artifacts": {
+    "paired_report": {
+      "path": "tasks/evidence/task61-regexp-literal-site-cache-linux-pairs-2026-10-09.json",
+      "sha256": "34912f9a115036418677b5ee230786e420879f7604815d0af7511ef0cf94aacd"
+    },
+    "paired_log": {
+      "path": "tasks/evidence/task61-regexp-literal-site-cache-linux-pairs-2026-10-09.jsonl",
+      "sha256": "f88c5fd368ef142a7f2b439a03d3d31fa08c0690a12b246f93b7da36ad7cad58"
+    },
+    "paired_runner": {
+      "path": "tasks/evidence/task61-regexp-literal-site-cache-pairs-linux-2026-10-09.py",
+      "sha256": "9fdcef7d006e1b37f4265f76859da99ae63d33d33299cfb68cac4cfb11425dbb"
+    },
+    "source_patch": {
+      "path": "tasks/evidence/task61-regexp-literal-site-cache-2026-10-09.patch.gz",
+      "sha256": "f0b005353d955c40d0f7919e67899b28e752572b9f66550de01c778f80e4b17c",
+      "uncompressed_sha256": "71338506ed19d1550e907144db0f8ad4dad6c63916eb13cb78396199b0e43823"
+    },
+    "test262_report": {
+      "path": "tasks/evidence/task61-regexp-literal-site-test262-64-70-2026-10-09.json",
+      "sha256": "2af046cc96516d4615232a32c19bd02d492031b4f12123d3829773cd1e3f7353"
+    },
+    "node_oracle_script": {
+      "path": "tasks/evidence/task61-regexp-literal-site-node-oracle-2026-10-09.cjs",
+      "sha256": "b8294c75c0fcc48896ccd6859818386c160184efe4840e8054af8a62b3a3c2ab"
+    },
+    "node_oracle_output": {
+      "path": "tasks/evidence/task61-regexp-literal-site-node-oracle-output-2026-10-09.json",
+      "sha256": "beb5e45ab638f372f712b25852590db5f852c75d5c26acbe91d449b375d35eef"
+    },
+    "quench_oracle_output": {
+      "path": "tasks/evidence/task61-regexp-literal-site-quench-oracle-output-2026-10-09.json",
+      "sha256": "0cef209aa3b537fe10822c3c92b571540a8c70498f5cebc877dd2f31f4633942"
+    }
+  }
+}

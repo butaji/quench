@@ -1,0 +1,64 @@
+{
+  "experiment": "fuse LoadLocalPlain -> direct Atom GetField on EarleyBoyer",
+  "candidate_sha256": "b338b1371167653151ef5bcf1f3af83123c95dbddb348e087feab9d0ca2dce3d",
+  "baseline_sha256": "f3940bcc9cff03f9bf3c6888864e3d96586d4991f4c56df4cc1e87d829e9fe00",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "node_oracle_sha256": "27be7ea4bf51f38841b0878f03878276afb0f4c7e3a009ad9a7321747a394847",
+  "node_oracle_output": [
+    "[[\"own\",\"value\",23],[\"inherited\",\"value\",19],[\"method_receiver\",\"value\",30],[\"getter_receiver\",\"value\",31],[\"proxy\",\"value\",37],[\"proxy_get_count\",1],[\"caught_getter_throw\",\"value\",\"getter sentinel\"],[\"null_base\",\"throw\",\"TypeError\"]]"
+  ],
+  "node_oracle_match": true,
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_score": 375.0,
+      "candidate_score": 375.0,
+      "score_delta": 0.0,
+      "baseline_rss_bytes": 42508288,
+      "candidate_rss_bytes": 42496000,
+      "rss_delta_bytes": -12288,
+      "fixture_output_equal": true,
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "valid": true
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_score": 380.0,
+      "candidate_score": 356.0,
+      "score_delta": -24.0,
+      "baseline_rss_bytes": 42373120,
+      "candidate_rss_bytes": 42303488,
+      "rss_delta_bytes": -69632,
+      "fixture_output_equal": true,
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "valid": true
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_score": 375.0,
+      "candidate_score": 363.0,
+      "score_delta": -12.0,
+      "baseline_rss_bytes": 42688512,
+      "candidate_rss_bytes": 42242048,
+      "rss_delta_bytes": -446464,
+      "fixture_output_equal": true,
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "valid": true
+    }
+  ]
+}

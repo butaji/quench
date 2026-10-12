@@ -1,0 +1,59 @@
+{
+  "experiment": "EarleyBoyer same-target constructability check elimination directional screen",
+  "node_oracle_match": true,
+  "rounds": 3,
+  "valid": true,
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "output_equal": true,
+      "baseline_score": 398.0,
+      "candidate_score": 396.0,
+      "score_delta": -2.0,
+      "baseline_rss_bytes": 42577920,
+      "candidate_rss_bytes": 42778624,
+      "rss_delta_bytes": 200704,
+      "baseline_wall_ns": 23229203047,
+      "candidate_wall_ns": 23697706189,
+      "valid": true
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "output_equal": true,
+      "baseline_score": 402.0,
+      "candidate_score": 401.0,
+      "score_delta": -1.0,
+      "baseline_rss_bytes": 42766336,
+      "candidate_rss_bytes": 42704896,
+      "rss_delta_bytes": -61440,
+      "baseline_wall_ns": 23076013706,
+      "candidate_wall_ns": 23468011954,
+      "valid": true
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "output_equal": true,
+      "baseline_score": 404.0,
+      "candidate_score": 394.0,
+      "score_delta": -10.0,
+      "baseline_rss_bytes": 42696704,
+      "candidate_rss_bytes": 42635264,
+      "rss_delta_bytes": -61440,
+      "baseline_wall_ns": 22861869895,
+      "candidate_wall_ns": 23742510309,
+      "valid": true
+    }
+  ]
+}

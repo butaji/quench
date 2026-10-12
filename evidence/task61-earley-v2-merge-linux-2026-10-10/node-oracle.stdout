@@ -1,0 +1,6 @@
+literal:["123","first,second,third","3,6,9",true]
+setter:[17,false]
+indexed:[9,41,true]
+prototype-cache:[1,1,2,3,4,2,8,9]
+instanceof:[true,true,true,true,1]
+numeric:[3,3.75,12,0,null]
