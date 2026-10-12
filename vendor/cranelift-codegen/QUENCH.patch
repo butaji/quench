@@ -73,7 +73,7 @@
      /// alignment occurs.
      fn align_basic_block(offset: CodeOffset) -> CodeOffset {
 --- a/cranelift-codegen/src/machinst/vcode.rs	2006-07-24 01:21:28.000000000 +0000
-+++ b/cranelift-codegen/src/machinst/vcode.rs	2026-10-12 09:37:52.523696652 +0000
++++ b/cranelift-codegen/src/machinst/vcode.rs	2026-10-12 20:01:17.298180280 +0000
 @@ -76,6 +76,11 @@
  pub trait VCodeInst: MachInst + MachInstEmit {}
  impl<I: MachInst + MachInstEmit> VCodeInst for I {}
@@ -86,17 +86,17 @@
  /// A function in "VCode" (virtualized-register code) form, after
  /// lowering.  This is essentially a standard CFG of basic blocks,
  /// where each basic block consists of lowered instructions produced
-@@ -656,6 +661,51 @@
+@@ -656,6 +661,55 @@
  
      /// Get the number of blocks. Block indices will be in the range `0 ..
      /// (self.num_blocks() - 1)`.
-+    /// Quench: the headers of small loops without calls, by block. A loop
-+    /// is a header with the back edges reaching it from later in
-+    /// `final_order`; its body is the blocks from the header to its last
-+    /// back edge. Such a loop runs many iterations per entry, so starting
-+    /// it on `small_loop_alignment` keeps its body in the fewest fetch
-+    /// windows; a loop with a call or a longer body gains nothing to pay
-+    /// for the padding.
++    /// Quench: the headers of small loops without calls, and of loops whose
++    /// header dispatches through a table, by block. A loop is a header with
++    /// the back edges reaching it from later in `final_order`; its body is
++    /// the blocks from the header to its last back edge. Such a loop runs
++    /// many iterations per entry, so starting it on `small_loop_alignment`
++    /// keeps its hot code in the fewest fetch windows; a loop with a call or
++    /// a longer body gains nothing to pay for the padding.
 +    fn small_loop_headers(&self, final_order: &[BlockIndex]) -> Vec<bool> {
 +        let mut aligned = vec![false; self.num_blocks()];
 +        if I::small_loop_alignment() <= 1 {
@@ -130,7 +130,11 @@
 +                    break;
 +                }
 +            }
-+            aligned[block.index()] = small;
++            // A header that dispatches through a table (an interpreter's
++            // switch) is entered once per dispatched case, so it is hot
++            // whatever the loop's size.
++            let dispatches = regalloc2::Function::block_succs(self, *block).len() > 2;
++            aligned[block.index()] = small || dispatches;
 +        }
 +        aligned
 +    }
@@ -138,7 +142,7 @@
      pub fn num_blocks(&self) -> usize {
          self.block_ranges.len()
      }
-@@ -768,6 +818,7 @@
+@@ -768,6 +822,7 @@
              }
          }
          final_order.extend(cold_blocks.clone());
@@ -146,7 +150,7 @@
  
          // Compute/save info we need for the prologue: clobbers and
          // number of spillslots.
-@@ -827,7 +878,10 @@
+@@ -827,7 +882,10 @@
              state.on_new_block();
  
              // Emit NOPs to align the block.
