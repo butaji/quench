@@ -1134,6 +1134,54 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// An f64 arithmetic `ARITH` whose result the next record, an f64
+    /// store, writes to memory: both records run here. A store the general
+    /// path must run exits at its record, the result already written.
+    fn lane_f64_store_pair<ARITH: u8, ACC: u8>(cx, r, ip, i, view) {
+        let result = match f64_operation(
+            ARITH,
+            f64::from_bits(read::<ACC, ACC_B>(r, i.b, view).float_bits64()),
+            f64::from_bits(read::<ACC, ACC_C>(r, i.c, view).float_bits64()),
+        ) {
+            Ok(result) => result,
+            Err(_) => unreachable!("a fused store's operator is arithmetic"),
+        };
+        let value = Value::from_float_bits64(result.to_bits());
+        r.set(i.a, value);
+        let next = following(ip);
+        // SAFETY: the view fuses an operator only with a following store.
+        let store = unsafe { &*next };
+        let bits = value.float_bits64();
+        // SAFETY: as for `lane_store`.
+        if MemoryStore::F64Store
+            .write(
+                unsafe { view.memory.bytes() },
+                lane_address::<ACC_NONE>(r, store, view),
+                crate::WasmValue::F64(bits),
+            )
+            .is_err()
+        {
+            return exit(next);
+        }
+        next!(cx, r, following(next), view)
+    }
+}
+
+/// The accumulator fields a fused first float record may read: none, its
+/// left operand, or its right operand.
+const FUSED_ACC_FIELDS: [u8; 3] = [ACC_NONE, ACC_B, ACC_C];
+
+macro_rules! float_store_pair_handlers {
+    ($host:ty, $arith:expr) => {
+        [
+            lane_f64_store_pair::<$host, $arith, ACC_NONE> as Handler,
+            lane_f64_store_pair::<$host, $arith, ACC_B> as Handler,
+            lane_f64_store_pair::<$host, $arith, ACC_C> as Handler,
+        ]
+    };
+}
+
 macro_rules! float_load_pair_handlers {
     ($host:ty; $($second:expr),+) => {
         [$([
@@ -1186,6 +1234,14 @@ impl<H: Host> FloatPairs<H> {
     const HANDLERS: [[[Handler; 2]; FLOAT_ARITHMETIC]; FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H);
     /// An f64 load fused with the operator taking its value, by second
     /// operator and whether the value is its left operand.
+    /// An f64 arithmetic fused with the store of its result, by operator.
+    /// By operator and the operator's accumulator field (none, `b`, `c`).
+    const STORES: [[Handler; FUSED_ACC_FIELDS.len()]; FLOAT_PAIR_FIRSTS] = [
+        float_store_pair_handlers!(H, FLOAT_ADD),
+        float_store_pair_handlers!(H, FLOAT_SUBTRACT),
+        float_store_pair_handlers!(H, FLOAT_MULTIPLY),
+        float_store_pair_handlers!(H, FLOAT_DIVIDE),
+    ];
     const LOADS: [[Handler; 2]; FLOAT_ARITHMETIC] = float_load_pair_handlers!(H;
         FLOAT_ADD, FLOAT_SUBTRACT, FLOAT_MULTIPLY, FLOAT_DIVIDE, FLOAT_EQUAL,
         FLOAT_NOT_EQUAL, FLOAT_LESS, FLOAT_GREATER, FLOAT_LESS_EQUAL, FLOAT_GREATER_EQUAL);
@@ -2237,6 +2293,27 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                     [usize::from(left)],
             )
         })();
+        // An f64 arithmetic whose result the next record stores, when only
+        // the arithmetic reaches that store.
+        let pair = pair.or_else(|| {
+            let first = float_arithmetic(instruction.op(), instruction.imm())?;
+            let store = tables[0][usize::from(ACC_NONE)][Op::WasmF64Store as usize]?;
+            if instruction.op() != Op::WasmF64Binary
+                || usize::from(first) >= FLOAT_PAIR_FIRSTS
+                || next.op() != Op::WasmF64Store
+                || next.a() != instruction.a()
+                || jump_targets[pc + 1]
+                || records[pc + 1].handler != store.handler as *const ()
+            {
+                return None;
+            }
+            let field = FUSED_ACC_FIELDS.iter().position(|acc| {
+                records[pc].handler
+                    == FloatArithmetic::<H>::HANDLERS[1][usize::from(first)][usize::from(*acc)]
+                        as *const ()
+            })?;
+            Some(FloatPairs::<H>::STORES[usize::from(first)][field])
+        });
         match pair {
             Some(fused) => {
                 records[pc].handler = fused as *const ();
