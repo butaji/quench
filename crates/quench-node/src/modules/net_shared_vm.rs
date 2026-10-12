@@ -10,7 +10,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 const FIRST_TRANSPORT_ID: u64 = 1;
 const TCP_READ_CHUNK: usize = 16 * 1024;
 const TCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, emitOperation, endpointOperation, referenceOperation) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, emitOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation) => {
   const listeners = (socket) => socket._listeners;
   class Socket extends Duplex {
     constructor(options = {}) {
@@ -101,6 +101,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       this._quenchTimeoutTimer = null;
       if (this._quenchTimeout > 0 && !this.destroyed && !this.connecting) {
         this._quenchTimeoutTimer = setTimeout(() => this.emit('timeout'), this._quenchTimeout);
+        unrefTimeoutOperation(this._quenchTimeoutTimer);
       }
     }
     write(chunk, encoding, callback, internalAccounted = false) {
@@ -139,9 +140,9 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       connectOperation(this, port, host);
       return this;
     }
-    ref() { return this; }
-    unref() { return this; }
   }
+  Socket.prototype.ref = function() { 'use strict'; return socketReferenceOperation(this,true); };
+  Socket.prototype.unref = function() { 'use strict'; return socketReferenceOperation(this,false); };
   const connect = function connect(port, host, callback) {
     const socket = new Socket();
     return socket.connect(port, host, callback);
@@ -348,7 +349,8 @@ pub(crate) struct Transport {
     next_id: u64,
     listeners: HashMap<u64, Listener>,
     sockets: HashMap<u64, SharedSocket>,
-    connecting: HashMap<u64, Receiver<Result<SocketStream, ConnectFailure>>>,
+    connecting: HashMap<u64, ConnectingSocket>,
+    closing_sockets: HashMap<u64, ClosingSocket>,
 }
 
 enum SocketStream {
@@ -468,8 +470,23 @@ enum ConnectFailure {
     },
 }
 
+// The reference bit transfers with the socket between disjoint lifecycle maps.
+struct ConnectingSocket {
+    completion: Receiver<Result<SocketStream, ConnectFailure>>,
+    referenced: bool,
+}
+struct ClosingSocket {
+    referenced: bool,
+    phase: SocketClosePhase,
+}
+enum SocketClosePhase {
+    Requested,
+    Closing,
+}
+
 struct SharedSocket {
     stream: SocketStream,
+    referenced: bool,
     pending_write: Vec<u8>,
     write_offset: usize,
     completions: VecDeque<usize>,
@@ -524,6 +541,7 @@ impl Transport {
             listeners: HashMap::new(),
             sockets: HashMap::new(),
             connecting: HashMap::new(),
+            closing_sockets: HashMap::new(),
         }
     }
 
@@ -633,7 +651,13 @@ pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Res
             let _ = sender.send(result.map_err(ConnectFailure::Tcp));
         })
         .map_err(|error| format!("cannot start TCP connect: {error}"))?;
-    transport.connecting.insert(id, receiver);
+    transport.connecting.insert(
+        id,
+        ConnectingSocket {
+            completion: receiver,
+            referenced: true,
+        },
+    );
     Ok(id)
 }
 
@@ -693,9 +717,18 @@ pub(crate) fn close_listener(transport: &mut Transport, listener: u64) {
     }
 }
 
-pub(crate) fn close_socket(transport: &mut Transport, socket: u64) {
-    transport.connecting.remove(&socket);
-    transport.sockets.remove(&socket);
+pub(crate) fn close_socket(transport: &mut Transport, id: u64) {
+    let referenced = transport.connecting.remove(&id).map(|socket| socket.referenced)
+        .or_else(|| transport.sockets.remove(&id).map(|socket| socket.referenced));
+    if let Some(referenced) = referenced {
+        transport.closing_sockets.insert(
+            id,
+            ClosingSocket {
+                referenced,
+                phase: SocketClosePhase::Requested,
+            },
+        );
+    }
 }
 
 pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
@@ -703,6 +736,10 @@ pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
         ListenerState::Closing => false,
         ListenerState::CloseRequested => { listener.state = ListenerState::Closing; true },
         ListenerState::Open(_) => true,
+    });
+    transport.closing_sockets.retain(|_, socket| match socket.phase {
+        SocketClosePhase::Closing => false,
+        SocketClosePhase::Requested => { socket.phase = SocketClosePhase::Closing; true },
     });
     let mut events = poll_connects(transport);
     events.extend(poll_accepts(transport));
@@ -718,7 +755,9 @@ pub(crate) fn has_work(transport: &Transport) -> bool {
             ListenerState::Open(_) => listener.referenced,
             ListenerState::CloseRequested | ListenerState::Closing => true,
         })
-        || !transport.sockets.is_empty()
+        || transport.sockets.values().any(|socket| socket.referenced
+            || socket.write_offset < socket.pending_write.len() || !socket.completions.is_empty())
+        || !transport.closing_sockets.is_empty()
         || !transport.connecting.is_empty()
 }
 
@@ -726,6 +765,7 @@ pub(crate) fn cleanup(transport: &mut Transport) {
     transport.listeners.clear();
     transport.sockets.clear();
     transport.connecting.clear();
+    transport.closing_sockets.clear();
 }
 
 pub(crate) const fn poll_interval() -> std::time::Duration {
@@ -736,10 +776,10 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
     let mut events = Vec::new();
     let ids = transport.connecting.keys().copied().collect::<Vec<_>>();
     for id in ids {
-        let Some(receiver) = transport.connecting.get(&id) else {
+        let Some(connection) = transport.connecting.get(&id) else {
             continue;
         };
-        let result = match receiver.try_recv() {
+        let result = match connection.completion.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => {
                 continue;
@@ -748,13 +788,18 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
                 "socket connect worker stopped".to_owned(),
             )),
         };
-        transport.connecting.remove(&id);
+        let connection = transport
+            .connecting
+            .remove(&id)
+            .expect("observed connecting socket");
+        let referenced = connection.referenced;
         match result {
             Ok(stream) => {
                 transport.sockets.insert(
                     id,
                     SharedSocket {
                         stream,
+                        referenced,
                         pending_write: Vec::new(),
                         completions: VecDeque::new(),
                         write_offset: 0,
@@ -765,12 +810,15 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
                 );
                 events.push(TransportEvent::Connected { socket: id });
             }
-            Err(ConnectFailure::Tcp(message)) => events.push(TransportEvent::ConnectError {
-                socket: id,
-                message,
-            }),
+            Err(ConnectFailure::Tcp(message)) => {
+                transport.closing_sockets.insert(id, ClosingSocket {referenced,phase:SocketClosePhase::Requested});
+                events.push(TransportEvent::ConnectError {socket:id,message});
+            },
             #[cfg(unix)]
-            Err(ConnectFailure::Local { error, path }) => events.push(TransportEvent::LocalConnectError { socket: id, error, path }),
+            Err(ConnectFailure::Local { error, path }) => {
+                transport.closing_sockets.insert(id, ClosingSocket {referenced,phase:SocketClosePhase::Requested});
+                events.push(TransportEvent::LocalConnectError { socket: id, error, path });
+            },
         }
     }
     events
@@ -807,6 +855,7 @@ fn poll_accepts(transport: &mut Transport) -> Vec<TransportEvent> {
             socket,
             SharedSocket {
                 stream,
+                referenced: true,
                 pending_write: Vec::new(),
                 completions: VecDeque::new(),
                 write_offset: 0,
@@ -922,7 +971,7 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
         }
     }
     for id in terminal {
-        transport.sockets.remove(&id);
+        close_socket(transport, id);
     }
     events
 }
@@ -1014,14 +1063,31 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.host_function(crate::host::shared_vm::operation("netNormalizeEndpoint"))?;
     let reference =
         context.host_function(crate::host::shared_vm::operation("netServerReference"))?;
+    let socket_reference =
+        context.host_function(crate::host::shared_vm::operation("netSocketReference"))?;
+    let unref_timeout =
+        context.host_function(crate::host::shared_vm::operation("netSocketUnrefTimeout"))?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
         factory,
         undefined,
         &[
-            duplex, connect, write, end, destroy, encoding, listen, close, address, account, emit,
-            endpoint, reference,
+            duplex,
+            connect,
+            write,
+            end,
+            destroy,
+            encoding,
+            listen,
+            close,
+            address,
+            account,
+            emit,
+            endpoint,
+            reference,
+            socket_reference,
+            unref_timeout,
         ],
     )?;
     for name in ["Socket", "Stream", "Server", "BlockList", "SocketAddress", "connect", "createConnection", "createServer"] {
@@ -1255,6 +1321,9 @@ pub(crate) fn destroy_operation(
         .host_mut()
         .net_pending_destroys
         .push((id, was_connected));
+    let key = context.string_rooted("_handle");
+    let null = context.null();
+    context.set_property_rooted(socket, key, null, socket)?;
     Ok(socket)
 }
 
@@ -1538,7 +1607,13 @@ fn connect_local(
             }));
         })
         .map_err(|error| error.to_string())?;
-    transport.connecting.insert(id, receiver);
+    transport.connecting.insert(
+        id,
+        ConnectingSocket {
+            completion: receiver,
+            referenced: true,
+        },
+    );
     Ok(id)
 }
 fn listener_path(transport: &Transport, id: u64) -> Option<&str> {
@@ -1571,6 +1646,7 @@ fn register_socket(
             write_callbacks: VecDeque::new(),
         },
     );
+    super::net_reference_shared_vm::install_socket_handle(context, id, socket)?;
     Ok(socket)
 }
 
@@ -1723,4 +1799,19 @@ pub(crate) fn listener_has_ref(transport: &Transport, id: u64) -> Option<bool> {
         .listeners
         .get(&id)
         .map(|listener| listener.referenced)
+}
+
+pub(crate) fn socket_reference(transport: &mut Transport, id: u64, referenced: bool) {
+    if let Some(socket) = transport.connecting.get_mut(&id) {
+        socket.referenced = referenced;
+    } else if let Some(socket) = transport.sockets.get_mut(&id) {
+        socket.referenced = referenced;
+    } else if let Some(socket) = transport.closing_sockets.get_mut(&id) {
+        socket.referenced = referenced;
+    }
+}
+pub(crate) fn socket_has_ref(transport: &Transport, id: u64) -> Option<bool> {
+    transport.connecting.get(&id).map(|socket|socket.referenced)
+        .or_else(||transport.sockets.get(&id).map(|socket|socket.referenced))
+        .or_else(||transport.closing_sockets.get(&id).map(|socket|socket.referenced))
 }

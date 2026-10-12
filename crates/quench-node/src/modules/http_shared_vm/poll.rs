@@ -159,6 +159,15 @@ pub(crate) fn poll(
                         return Err("cannot tag accepted net socket".into());
                     }
                     runtime.release_root(key);
+                    let install = runtime
+                        .host_function(crate::host::shared_vm::operation("netSocketInstallHandle"))
+                        .map_err(|error| error.to_string())?;
+                    let undefined = runtime.root(Value::UNDEFINED);
+                    let installed = runtime.call_rooted(install, undefined, &[accepted, id]);
+                    runtime.release_root(install);
+                    runtime.release_root(undefined);
+                    let installed = installed.map_err(|error| error.to_string())?;
+                    runtime.release_root(installed);
                     runtime.release_root(id);
                     if let Some(remote) = remote {
                         let remote_address = runtime.string_rooted(&remote.ip().to_string());
