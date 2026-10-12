@@ -74,8 +74,12 @@ impl Heap {
     pub(super) fn prune_weak_entries(&mut self) -> Vec<(Value, Value)> {
         let mut finalization_jobs = Vec::new();
         let marks = &self.marks;
-        for slot in self.slots.iter_mut() {
-            let Some(cell) = slot.cell.as_mut() else {
+        for &index in &self.weak_holders {
+            let Some(cell) = self
+                .slots
+                .get_mut(index as usize)
+                .and_then(|slot| slot.cell.as_mut())
+            else {
                 continue;
             };
             match cell {
