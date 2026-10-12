@@ -890,14 +890,45 @@ fn invariant() -> MemFlagsData {
     MemFlagsData::trusted().with_readonly().with_can_move()
 }
 
-/// The internal signature of a compiled function.
+/// The memory facts a compiled call passes after the context: the base
+/// unless the program fixes it as a constant, and the length unless the
+/// guard bounds accesses. One program's functions share them.
+#[derive(Clone, Copy)]
+struct MemoryArguments {
+    base: bool,
+    length: bool,
+}
+
+impl MemoryArguments {
+    fn of(fixed_base: Option<i32>, guarded: bool) -> Self {
+        Self {
+            base: fixed_base.is_none(),
+            length: !guarded,
+        }
+    }
+
+    /// The passed ones of `base` and `length`, in parameter order.
+    fn select(self, base: ir::Value, length: ir::Value) -> impl Iterator<Item = ir::Value> {
+        [self.base.then_some(base), self.length.then_some(length)]
+            .into_iter()
+            .flatten()
+    }
+
+    fn count(self) -> usize {
+        usize::from(self.base) + usize::from(self.length)
+    }
+}
+
+/// The internal signature of a compiled function: the context, the memory
+/// arguments, then the Wasm parameters.
 fn internal_signature(
+    memory: MemoryArguments,
     plan_params: &[crate::WasmType],
     result: Option<crate::WasmType>,
     call_conv: cranelift_codegen::isa::CallConv,
 ) -> Signature {
     let mut signature = Signature::new(call_conv);
-    for _ in 0..3 {
+    for _ in 0..1 + memory.count() {
         signature.params.push(AbiParam::new(types::I64));
     }
     for ty in plan_params {
@@ -1078,7 +1109,9 @@ struct Emitter<'a, 'b, H: Host> {
     blocks: Vec<Option<ir::Block>>,
     context: ir::Value,
     base: ir::Value,
-    length: ir::Value,
+    /// The memory's length, which only unguarded accesses compare.
+    length: Option<ir::Value>,
+    memory: MemoryArguments,
     trap_blocks: [Option<ir::Block>; TRAPS.len()],
     /// Per callee, its imported name in this function.
     callees: Vec<Option<ir::FuncRef>>,
@@ -1456,10 +1489,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             .builder
             .ins()
             .iadd_imm_s(address, i64::from(offset) + width as i64);
-        let out_of_bounds = self
-            .builder
-            .ins()
-            .icmp(IntCC::UnsignedGreaterThan, end, self.length);
+        let out_of_bounds = self.builder.ins().icmp(
+            IntCC::UnsignedGreaterThan,
+            end,
+            self.length.expect("unguarded accesses receive the length"),
+        );
         self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
         let host = self.builder.ins().iadd(self.base, address);
         self.builder.ins().iadd_imm_s(host, i64::from(offset))
@@ -1895,7 +1929,11 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let callee = usize::from(instruction.known_function_index());
                 let callee_plan = self.plans[callee].as_ref().expect("callable");
                 let window = instruction.call_window();
-                let mut args = vec![self.context, self.base, self.length];
+                let mut args = vec![self.context];
+                if self.memory.base {
+                    args.push(self.base);
+                }
+                args.extend(self.length);
                 for (offset, ty) in callee_plan.params.iter().enumerate() {
                     let kind = Kind::of(*ty).expect("planned");
                     args.push(self.read(window.base + offset as u16, kind));
@@ -1906,6 +1944,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                     Some(target) => target,
                     None => {
                         let signature = internal_signature(
+                            self.memory,
                             &callee_plan.params,
                             callee_plan.result,
                             self.call_conv,
@@ -1988,9 +2027,10 @@ impl<H: Host> Analysis<'_, H> {
     ) -> Option<(Vec<u8>, Vec<Call>)> {
         let function = &self.code.functions[index];
         let call_conv = isa.default_call_conv();
+        let memory = MemoryArguments::of(fixed_base, guarded);
         let mut func = ir::Function::with_name_signature(
             UserFuncName::User(function_name(index)),
-            internal_signature(&plan.params, plan.result, call_conv),
+            internal_signature(memory, &plan.params, plan.result, call_conv),
         );
         let mut builder_context = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
@@ -2002,13 +2042,18 @@ impl<H: Host> Analysis<'_, H> {
         builder.switch_to_block(entry);
         builder.seal_block(entry);
         let parameters = builder.block_params(entry).to_vec();
-        let (context, base, length) = (parameters[0], parameters[1], parameters[2]);
+        let context = parameters[0];
+        let mut passed = parameters[1..].iter().copied();
         // A constant base folds into each access's addressing mode and
-        // frees the register the parameter would occupy.
+        // frees the register a parameter would occupy.
         let base = match fixed_base {
             Some(fixed) => builder.ins().iconst(types::I64, i64::from(fixed)),
-            None => base,
+            None => passed.next().expect("a passed base"),
         };
+        let length = memory
+            .length
+            .then(|| passed.next().expect("a passed length"));
+        let wasm_parameters = &parameters[1 + memory.count()..];
         let regions = Region::ALL.map(|region| {
             builder.func.dfg.alias_regions.insert(ir::AliasRegionData {
                 user_id: region as u32,
@@ -2042,6 +2087,7 @@ impl<H: Host> Analysis<'_, H> {
             context,
             base,
             length,
+            memory,
             trap_blocks: [None; TRAPS.len()],
             callees: vec![None; plans.len()],
             callout_signature: None,
@@ -2063,7 +2109,11 @@ impl<H: Host> Analysis<'_, H> {
         let parameter_base = function.parameter_registers.expect("planned");
         for (offset, ty) in plan.params.iter().enumerate() {
             let kind = Kind::of(*ty).expect("planned");
-            emitter.write(parameter_base + offset as u16, kind, parameters[3 + offset]);
+            emitter.write(
+                parameter_base + offset as u16,
+                kind,
+                wasm_parameters[offset],
+            );
         }
         // Each activation checks the stack it may still use.
         let stack_pointer = emitter.builder.ins().get_stack_pointer(types::I64);
@@ -2174,6 +2224,7 @@ impl<H: Host> Analysis<'_, H> {
         isa: &dyn cranelift_codegen::isa::TargetIsa,
         index: usize,
         plan: &Plan,
+        memory: MemoryArguments,
     ) -> Option<Vec<u8>> {
         let call_conv = isa.default_call_conv();
         let mut signature = Signature::new(call_conv);
@@ -2199,7 +2250,8 @@ impl<H: Host> Analysis<'_, H> {
             parameters[3],
             parameters[4],
         );
-        let mut call_args = vec![context, base, length];
+        let mut call_args = vec![context];
+        call_args.extend(memory.select(base, length));
         for (offset, ty) in plan.params.iter().enumerate() {
             let raw = builder.ins().load(
                 types::I64,
@@ -2212,8 +2264,12 @@ impl<H: Host> Analysis<'_, H> {
                 Kind::I64 => raw,
             });
         }
-        let target_signature =
-            builder.import_signature(internal_signature(&plan.params, plan.result, call_conv));
+        let target_signature = builder.import_signature(internal_signature(
+            memory,
+            &plan.params,
+            plan.result,
+            call_conv,
+        ));
         let table = builder
             .ins()
             .load(types::I64, MemFlagsData::trusted(), context, CONTEXT_TABLE);
@@ -2639,7 +2695,8 @@ impl<H: Host> Vm<H> {
             let offset = place(&mut bytes, body);
             offsets[index] = Some(offset);
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
-            let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?)?;
+            let memory = MemoryArguments::of(fixed_base, guarded);
+            let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?, memory)?;
             entries[index] = Some(place(&mut bytes, entry));
         }
         for (offset, call) in calls {
