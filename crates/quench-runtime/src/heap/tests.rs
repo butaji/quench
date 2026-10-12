@@ -6,6 +6,140 @@ fn plain_object() -> Object {
     Object::new(Value::NULL)
 }
 
+fn collect_minor(heap: &mut Heap, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
+    heap.collect_with_object_roots(roots, |_, _, _, _| {}, None, false)
+        .0
+}
+
+#[test]
+fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
+    let mut heap = Heap::new();
+    let owner = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::new(vec![Value::UNDEFINED]),
+    });
+    let sparse = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::new(Vec::new()),
+    });
+    heap.collect([owner, sparse]);
+
+    let child = heap.alloc(Cell::String("dense child".into()));
+    if let Some(Cell::Array { elements, .. }) = heap.get_mut(owner) {
+        Rc::make_mut(elements)[0] = child;
+    }
+    let sparse_child = heap.alloc(Cell::String("sparse child".into()));
+    let sparse_index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
+    heap.sparse_set(sparse, sparse_index, sparse_child);
+    let garbage = heap.alloc(Cell::String("unreachable young".into()));
+
+    collect_minor(&mut heap, [owner, sparse]);
+    assert!(heap.get(child).is_some());
+    assert_eq!(heap.sparse_get(sparse, sparse_index), Some(sparse_child));
+    assert!(heap.get(sparse_child).is_some());
+    assert!(heap.get(garbage).is_none());
+
+    if let Some(Cell::Array { elements, .. }) = heap.get_mut(owner) {
+        Rc::make_mut(elements)[0] = Value::UNDEFINED;
+    }
+    heap.collect([owner, sparse]);
+    assert!(heap.get(child).is_none());
+}
+
+#[test]
+fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
+    let mut heap = Heap::new();
+    let children = (0..PARALLEL_MARK_MINIMUM_SLOTS)
+        .map(|_| heap.alloc(Cell::String("parallel survivor".into())))
+        .collect::<Vec<_>>();
+    let root = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::new(children.clone()),
+    });
+
+    heap.collect([root]);
+    assert!(children.iter().all(|child| heap.get(*child).is_some()));
+
+    let young = (0..128)
+        .map(|_| heap.alloc(Cell::String("remembered young survivor".into())))
+        .collect::<Vec<_>>();
+    if let Some(Cell::Array { elements, .. }) = heap.get_mut(root) {
+        Rc::make_mut(elements).extend(young.iter().copied());
+    }
+    collect_minor(&mut heap, [root]);
+    assert!(young.iter().all(|child| heap.get(*child).is_some()));
+
+    if let Some(Cell::Array { elements, .. }) = heap.get_mut(root) {
+        Rc::make_mut(elements).clear();
+    }
+    heap.collect([root]);
+    assert!(children.iter().all(|child| heap.get(*child).is_none()));
+    assert!(young.iter().all(|child| heap.get(*child).is_none()));
+}
+
+#[test]
+fn parallel_sweep_releases_shared_array_payloads() {
+    let mut heap = Heap::new();
+    let elements = Rc::new(vec![Value::UNDEFINED]);
+    let arrays = (0..PARALLEL_MARK_MINIMUM_SLOTS)
+        .map(|_| {
+            heap.alloc(Cell::Array {
+                object: plain_object(),
+                elements: elements.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    drop(elements);
+
+    heap.collect([]);
+
+    assert!(arrays.iter().all(|array| heap.get(*array).is_none()));
+    assert_eq!(heap.live_slots(), 0);
+}
+
+#[test]
+fn minor_collection_handles_old_weak_maps_and_weak_refs() {
+    let mut heap = Heap::new();
+    let old_key = heap.alloc(Cell::Object(plain_object()));
+    let old_value = heap.alloc(Cell::Object(plain_object()));
+    let mut entries = WeakMapEntries::default();
+    entries.insert(old_key, old_value);
+    let map = heap.alloc(Cell::WeakMap {
+        object: Box::new(plain_object()),
+        entries: Box::new(entries),
+    });
+    let weak_ref = heap.alloc(Cell::WeakRef {
+        object: Box::new(plain_object()),
+        target: None,
+    });
+    heap.collect([map, old_key, weak_ref]);
+
+    let key = heap.alloc(Cell::Object(plain_object()));
+    let value = heap.alloc(Cell::Object(plain_object()));
+    if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(map) {
+        entries.insert(key, value);
+    }
+    let referent = heap.alloc(Cell::Object(plain_object()));
+    let target = heap.weak_handle(referent).unwrap();
+    if let Some(Cell::WeakRef { target: slot, .. }) = heap.get_mut(weak_ref) {
+        *slot = Some(target);
+    }
+
+    collect_minor(&mut heap, [map, key, weak_ref]);
+    assert!(heap.get(value).is_some());
+    assert!(matches!(
+        heap.get(weak_ref),
+        Some(Cell::WeakRef { target: None, .. })
+    ));
+    assert!(heap.get(referent).is_none());
+
+    heap.collect([map, weak_ref]);
+    assert!(heap.get(key).is_none());
+    assert!(heap.get(value).is_none());
+    assert!(heap.get(old_key).is_none());
+    assert!(heap.get(old_value).is_none());
+}
+
 #[test]
 fn gc_headroom_factors_scale_live_cells_without_overflow() {
     let live = 781_054usize;
@@ -53,6 +187,27 @@ fn gc_time_profile_records_collection_phases_without_aggregate_counters() {
     let profile = heap.gc_profile();
     assert!(profile.mark_nanos + profile.sweep_nanos + profile.mark_clear_nanos > 0);
     assert_eq!(heap.stats().1, 1);
+}
+
+#[test]
+fn minor_tracking_matches_the_next_collection_boundary() {
+    let mut heap = Heap::new();
+    heap.full_collection_growth_limit = 1_000;
+    heap.threshold = 500;
+    assert!(heap.minor_collection_scheduled());
+
+    heap.allocations = 200;
+    heap.allocations_since_full = 200;
+    heap.threshold = 800;
+    assert!(heap.minor_collection_scheduled());
+
+    heap.allocations = 700;
+    heap.allocations_since_full = 700;
+    heap.threshold = 500;
+    assert!(heap.minor_collection_scheduled());
+
+    heap.threshold = 1_000;
+    assert!(!heap.minor_collection_scheduled());
 }
 
 #[test]
@@ -180,6 +335,24 @@ fn finalization_jobs_are_created_for_unmarked_targets() {
 }
 
 #[test]
+fn unreachable_finalization_registry_does_not_enqueue_jobs() {
+    let mut heap = Heap::new();
+    let target = heap.alloc(Cell::Object(plain_object()));
+    let target = heap.weak_handle(target).unwrap();
+    heap.alloc(Cell::FinalizationRegistry {
+        object: Box::new(plain_object()),
+        callback: Value::number(1.0),
+        entries: Box::new(FinalizationEntries(vec![FinalizationEntry {
+            target,
+            held: Value::number(2.0),
+            token: None,
+        }])),
+    });
+
+    assert!(heap.collect([]).is_empty());
+}
+
+#[test]
 fn weak_map_values_follow_ephemeron_key_reachability() {
     let mut heap = Heap::new();
     let weak_map = heap.alloc(Cell::WeakMap {
@@ -248,6 +421,26 @@ fn weak_ref_owner_clears_its_handle_before_slot_reuse() {
         Some(Cell::WeakRef { target: None, .. })
     ));
     assert!(heap.release_root(reference_root));
+}
+
+#[test]
+fn slab_local_free_bitmap_reuses_slots_across_slab_boundaries() {
+    let mut heap = Heap::new();
+    let slot_count = super::slots::SLOTS_PER_SLAB + 2;
+    for _ in 0..slot_count {
+        heap.alloc(Cell::String("temporary".into()));
+    }
+
+    assert_eq!(heap.collect([]), []);
+    assert_eq!(heap.free_slots, slot_count);
+
+    let first = heap.alloc(Cell::String("first".into()));
+    let second = heap.alloc(Cell::String("second".into()));
+    let third = heap.alloc(Cell::String("third".into()));
+    assert_eq!(first.heap_index(), Some((slot_count - 1) as u32));
+    assert_eq!(second.heap_index(), Some((slot_count - 2) as u32));
+    assert_eq!(third.heap_index(), Some((slot_count - 3) as u32));
+    assert_eq!(heap.free_slots, slot_count - 3);
 }
 
 #[test]
