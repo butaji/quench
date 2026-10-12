@@ -3847,7 +3847,7 @@ console.log(JSON.stringify(result));
 fn synchronous_child_deadlines_reap_selected_signals_and_preserve_exit_handlers() {
     const SOURCE: &str = r#"
 const cp=require('child_process'),assert=require('assert'),os=require('os'),result=[];
-const constants=os.constants.signals;assert.strictEqual(Object.getPrototypeOf(constants),null);assert.strictEqual(Object.getPrototypeOf(os.constants),null);
+const constants=os.constants.signals;assert.strictEqual(Object.getPrototypeOf(constants),null);assert.strictEqual(Object.getPrototypeOf(os.constants),null);assert.strictEqual(Object.isFrozen(constants),true);assert.strictEqual(Object.isExtensible(constants),false);assert.strictEqual(Reflect.set(constants,'NEW_SIGNAL',1),false);
 result.push([Object.keys(constants),Object.getOwnPropertyDescriptor(constants,'SIGKILL')]);
 for(const killSignal of [undefined,'sigkill',constants.SIGKILL,'SIGUSR1']){
  const child=cp.spawnSync('sleep',['5'],{timeout:50,killSignal});assert.strictEqual(child.error.code,'ETIMEDOUT');assert(child.error.errno<0);assert.strictEqual(child.status,null);result.push([child.error.code,child.error.errno,child.status,child.signal]);
@@ -3887,6 +3887,145 @@ const source='const cp=require("child_process");const child=cp.spawn("sleep",["5
 const child=cp.spawnSync(process.execPath,['-e',source],{timeout:500});
 const pid=Number(child.stdout.toString().trim());assert(pid>0);try{process.kill(pid,'SIGKILL')}catch(error){if(error.code!=='ESRCH')throw error;}
 assert.strictEqual(child.error.code,'ETIMEDOUT');assert.strictEqual(child.status,0);assert.strictEqual(child.signal,null);console.log(JSON.stringify([child.error.code,child.status,child.signal]));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn child_options_snapshot_getters_once_and_validate_common_fields_in_native_code() {
+    const SOURCE: &str = r#"
+const cp=require('child_process'),assert=require('assert'),result=[];
+for(const spawn of [cp.spawn,cp.spawnSync]){
+ for(const [name,value] of [['cwd',1],['cwd',true],['cwd',[]],['detached',1],['detached','yes'],['uid','0'],['uid',1.5],['uid',2147483648],['gid',false],['gid',NaN],['shell',1],['shell',[]],['argv0',1],['argv0','bad\0arg'],['windowsHide','yes'],['windowsVerbatimArguments',1],['timeout',-1],['killSignal',true]]){
+  try{spawn('quench-oracle-never-launched',[],{[name]:value});assert.fail('expected option rejection')}catch(error){result.push([name,error.name,error.code,error.message]);}
+ }
+}
+for(const serialization of [null,42,Infinity,'unsupported'])try{cp.spawn(process.execPath,[],{serialization});assert.fail('expected serialization rejection')}catch(error){result.push(['serialization',error.name,error.code,error.message]);}
+const trace=[],options={};for(const [name,value] of [['cwd',process.cwd()],['detached',false],['uid',process.getuid()],['gid',process.getgid()],['argv0','oracle'],['windowsHide',false],['timeout',0]])Object.defineProperty(options,name,{enumerable:true,get(){trace.push(name);return value}});
+const sync=cp.spawnSync(process.execPath,['-e','0'],options);assert.strictEqual(sync.status,0);assert.deepStrictEqual(trace,['cwd','detached','uid','gid','argv0','windowsHide','timeout']);result.push(trace);
+const hidden={get detached(){Object.defineProperty(this,'uid',{enumerable:false});return false}};Object.defineProperty(hidden,'uid',{enumerable:true,configurable:true,get(){throw new Error('hidden getter must not run')}});assert.strictEqual(cp.spawnSync(process.execPath,['-e','0'],hidden).status,0);
+const marker={};assert.throws(()=>cp.spawnSync(process.execPath,[],{get cwd(){throw marker}}),error=>error===marker);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn child_identity_uses_kernel_credentials_sessions_and_spawn_error_boundaries() {
+    const SOURCE: &str = r#"
+const cp=require('child_process'),assert=require('assert'),result=[];
+assert.strictEqual(process.getgroups.name,'getgroups');assert.strictEqual(process.getgroups.length,0);result.push(process.getgroups());
+const code='console.log(JSON.stringify([process.getuid(),process.getgid(),process.getgroups()]))';
+const child=cp.spawnSync(process.execPath,['-e',code],{uid:process.getuid(),gid:process.getgid(),encoding:'utf8'});assert.strictEqual(child.status,0);assert.strictEqual(child.error,undefined);result.push(JSON.parse(child.stdout));
+for(const [name,value] of [['uid',0],['gid',0]]){
+ if(name==='uid'?process.getuid()===0:process.getgroups().includes(0))continue;
+ assert.throws(()=>cp.spawn('true',[],{[name]:value}),error=>{result.push([error.name,error.code,error.errno,error.message,error.syscall,Object.keys(error)]);return error.code==='EPERM'});
+ const failed=cp.spawnSync('true',[],{[name]:value});assert.strictEqual(failed.error.code,'EPERM');assert.strictEqual(failed.status,null);result.push([failed.error.code,failed.error.errno,failed.error.syscall,failed.pid]);
+}
+const session='const cp=require("child_process");const sid=Number(cp.spawnSync("ps",["-o","sid=","-p",String(process.pid)],{encoding:"utf8"}).stdout.trim());console.log(sid===process.pid)';
+for(const detached of [false,true]){const child=cp.spawnSync(process.execPath,['-e',session],{detached,encoding:'utf8'});assert.strictEqual(child.status,0);assert.strictEqual(child.stdout.trim(),String(detached));result.push(child.stdout.trim());}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn child_file_and_argument_null_validation_preserves_node_codes_and_messages() {
+    const SOURCE: &str = r#"
+const cp=require('child_process'),assert=require('assert'),result=[];
+for(const spawn of [cp.spawn,cp.spawnSync]){
+ for(const file of [undefined,null,1,false,{},[],'','bad\0file'])try{spawn(file,[]);assert.fail('expected file rejection')}catch(error){result.push([error.name,error.code,error.message]);}
+ try{spawn(process.execPath,['bad\0argument']);assert.fail('expected argument rejection')}catch(error){result.push([error.name,error.code,error.message]);}
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn child_disposal_and_sync_shell_options_observe_public_hooks_and_native_validation() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),cp=require('child_process'),result=[];
+const method=cp.ChildProcess.prototype[Symbol.dispose],descriptor=Object.getOwnPropertyDescriptor(cp.ChildProcess.prototype,Symbol.dispose),events=[];
+result.push([method.name,method.length,Object.hasOwn(method,'prototype'),descriptor.writable,descriptor.enumerable,descriptor.configurable]);
+const receiver={get killed(){events.push('killed');return false},get kill(){events.push('kill');return function(){events.push(this===receiver)}}};assert.strictEqual(method.call(receiver),undefined);result.push(events);
+const marker={};assert.throws(()=>method.call({killed:false,kill(){throw marker}}),error=>error===marker);assert.strictEqual(method.call({killed:1,get kill(){throw marker}}),undefined);
+for(const run of [cp.execSync,cp.execFileSync])try{run(process.execPath,{shell:'invalid\0shell'});assert.fail('expected shell rejection')}catch(error){result.push([error.name,error.code]);assert.strictEqual(error.code,'ERR_INVALID_ARG_VALUE');}
+assert.strictEqual(cp.execSync('printf shell',{encoding:'utf8'}),'shell');assert.strictEqual(cp.execFileSync('printf',['direct'],{encoding:'utf8'}),'direct');
+const child=cp.spawn('sleep',['5']);child.on('exit',(code,signal)=>{assert.strictEqual(code,null);assert.strictEqual(signal,'SIGTERM');console.log(JSON.stringify(result))});assert.strictEqual(child[Symbol.dispose](),undefined);assert.strictEqual(child.killed,true);assert.strictEqual(child[Symbol.dispose](),undefined);
 "#;
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);

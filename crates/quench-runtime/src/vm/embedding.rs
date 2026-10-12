@@ -416,6 +416,12 @@ impl<H: Host> Vm<H> {
         Ok(self.detail_string(value))
     }
 
+    pub(crate) fn embedding_prevent_extensions(&mut self, object: RootId) -> Result<bool, JsError> {
+        let object = self.embedding_value(object)?;
+        let program = self.embedding_program()?;
+        self.prevent_extensions(&program, object)
+    }
+
     pub(crate) fn embedding_has_property(&mut self, object: RootId, key: RootId) -> Result<bool, JsError> {
         let object = self.embedding_value(object)?;
         let key = self.embedding_value(key)?;
