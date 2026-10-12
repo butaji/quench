@@ -87,6 +87,7 @@ impl Heap {
     pub(super) fn prune_weak_entries(&mut self, full: bool) -> Vec<(Value, Value)> {
         let Self {
             object_records,
+            array_records,
             marks,
             slots,
             young,
@@ -97,6 +98,9 @@ impl Heap {
         let is_marked = |value: Value| {
             if let Some(record_id) = value.direct_object_index() {
                 return object_records.is_marked(record_id);
+            }
+            if let Some(record_id) = value.direct_array_index() {
+                return array_records.is_marked(record_id);
             }
             let Some(index) = value.legacy_heap_index().map(|index| index as usize) else {
                 return false;

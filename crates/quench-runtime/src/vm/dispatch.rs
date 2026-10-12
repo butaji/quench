@@ -1234,7 +1234,7 @@ impl<H: Host> Vm<H> {
                 let args = match i.construct_arguments() {
                     crate::bytecode::ConstructArguments::Array(register) => {
                         let array = self.read(f, register);
-                        if !matches!(self.heap.get(array), Some(Cell::Array { .. })) {
+                        if !self.heap.array(array).is_some() {
                             return Err(JsError(
                                 "super constructor arguments are not an array".into(),
                             ));

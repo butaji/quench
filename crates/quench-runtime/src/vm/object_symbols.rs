@@ -193,16 +193,15 @@ impl<H: Host> Vm<H> {
         object: Value,
     ) -> Result<Vec<Value>, JsError> {
         let keys = self.object_own_keys(p, object)?;
-        Ok(match self.heap.get(keys) {
-            Some(Cell::Array { elements, .. }) => elements
+        Ok(self.heap.array(keys).map_or_else(Vec::new, |(_, elements)| {
+            elements
                 .iter()
                 .copied()
                 .filter(|key| {
                     !matches!(self.heap.get(*key), Some(Cell::String(name)) if name.host_string().starts_with("\0quench:"))
                 })
-                .collect(),
-            _ => Vec::new(),
-        })
+                .collect()
+        }))
     }
 
     pub(super) fn same_property_key(&self, left: Value, right: Value) -> bool {
@@ -220,10 +219,10 @@ impl<H: Host> Vm<H> {
         source: Value,
         exclusions: Value,
     ) -> Result<(), JsError> {
-        let excluded = match self.heap.get(exclusions) {
-            Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
-            _ => Vec::new(),
-        };
+        let excluded = self
+            .heap
+            .array(exclusions)
+            .map_or_else(Vec::new, |(_, elements)| elements.as_ref().clone());
         self.copy_enumerable_properties(
             p,
             target,

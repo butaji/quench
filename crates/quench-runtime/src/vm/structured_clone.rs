@@ -151,6 +151,21 @@ impl<H: Host> Vm<H> {
             self.structured_clone_properties(program, source_root, target_root, graph)?;
             return Ok(self.heap.root_value(target_root).unwrap());
         }
+        if self.heap.array(source).is_some() {
+            let length = self.own_array_length(source).unwrap_or_default();
+            let source_root = graph.root(self, source);
+            let prototype = self.array_prototype_for_realm(self.realm.globals);
+            let target = self.heap.alloc(Cell::Array {
+                object: Self::empty_object(prototype),
+                elements: Rc::new(Vec::new()),
+            });
+            let target_root = graph.root(self, target);
+            graph.remember(source, target_root);
+            self.structured_clone_properties(program, source_root, target_root, graph)?;
+            let target = self.heap.root_value(target_root).unwrap();
+            self.set_array_length(program, target, Value::number(length as f64))?;
+            return Ok(self.heap.root_value(target_root).unwrap());
+        }
         let Some(cell) = self.heap.get(source).cloned() else {
             return Ok(source);
         };
@@ -159,21 +174,6 @@ impl<H: Host> Vm<H> {
             Cell::BigInt(value) => Ok(self.heap.alloc(Cell::BigInt(value))),
             Cell::Symbol(_) => {
                 Err(self.data_clone_error(program, "Symbol values cannot be cloned"))
-            }
-            Cell::Array { .. } => {
-                let length = self.own_array_length(source).unwrap_or_default();
-                let source_root = graph.root(self, source);
-                let prototype = self.array_prototype_for_realm(self.realm.globals);
-                let target = self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(prototype),
-                    elements: Rc::new(Vec::new()),
-                });
-                let target_root = graph.root(self, target);
-                graph.remember(source, target_root);
-                self.structured_clone_properties(program, source_root, target_root, graph)?;
-                let target = self.heap.root_value(target_root).unwrap();
-                self.set_array_length(program, target, Value::number(length as f64))?;
-                Ok(self.heap.root_value(target_root).unwrap())
             }
             Cell::ArrayBuffer {
                 bytes,

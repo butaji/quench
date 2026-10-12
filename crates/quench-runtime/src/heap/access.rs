@@ -179,6 +179,10 @@ impl Heap {
             // ObjectRecord is initialized, and records retire after weak pruning.
             return Some(unsafe { self.object_records.get_live(record_id) });
         }
+        if let Some(record_id) = value.direct_array_index() {
+            // SAFETY: a direct-array Value names an initialized ArrayRecord.
+            return Some(&unsafe { self.array_records.get_live(record_id) }.object);
+        }
         self.get(value)?.object()
     }
 
@@ -187,12 +191,54 @@ impl Heap {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.object_records.get_live_mut(record_id) });
         }
+        if let Some(record_id) = value.direct_array_index() {
+            // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
+            return Some(&mut unsafe { self.array_records.get_live_mut(record_id) }.object);
+        }
         self.get_mut(value)?.object_mut()
+    }
+
+    pub(crate) fn array(&self, value: Value) -> Option<(&Object, &std::rc::Rc<Vec<Value>>)> {
+        if let Some(record_id) = value.direct_array_index() {
+            // SAFETY: direct-array Values name live records, retired after weak pruning.
+            let array = unsafe { self.array_records.get_live(record_id) };
+            return Some((&array.object, &array.elements));
+        }
+        match self.get(value)? {
+            Cell::Array { object, elements } => Some((object, elements)),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn array_mut(
+        &mut self,
+        value: Value,
+    ) -> Option<(&mut Object, &mut std::rc::Rc<Vec<Value>>)> {
+        if let Some(record_id) = value.direct_array_index() {
+            // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
+            let array = unsafe { self.array_records.get_live_mut(record_id) };
+            return Some((&mut array.object, &mut array.elements));
+        }
+        match self.get_mut(value)? {
+            Cell::Array { object, elements } => Some((object, elements)),
+            _ => None,
+        }
     }
 
     pub(crate) fn object_record(&self, value: Value) -> Option<&Object> {
         let record_id = value.direct_object_index()?;
         Some(self.object_record_by_id(record_id))
+    }
+
+    pub(crate) fn record_object(&self, reference: HeapReference) -> Option<&Object> {
+        match reference {
+            HeapReference::ObjectRecord(record_id) => Some(self.object_record_by_id(record_id)),
+            HeapReference::ArrayRecord(record_id) => {
+                // SAFETY: the tagged Value identifies an initialized live array record.
+                Some(&unsafe { self.array_records.get_live(record_id) }.object)
+            }
+            HeapReference::LegacySlot(_) => None,
+        }
     }
 
     pub(crate) fn object_record_by_id(&self, record_id: u32) -> &Object {
@@ -211,6 +257,9 @@ impl Heap {
         if let Some(record_id) = value.direct_object_index() {
             return self.object_records.is_live(record_id);
         }
+        if let Some(record_id) = value.direct_array_index() {
+            return self.array_records.is_live(record_id);
+        }
         self.get(value).is_some()
     }
 
@@ -218,6 +267,8 @@ impl Heap {
     pub(super) fn for_each_live_value(&self, mut visit: impl FnMut(Value)) {
         self.object_records
             .for_each_live(|record_id, _| visit(Value::direct_object(record_id)));
+        self.array_records
+            .for_each_live(|record_id, _| visit(Value::direct_array(record_id)));
         for (index, slot) in self.slots.iter().enumerate() {
             if slot.is_live() {
                 visit(Value::heap(index as u32));

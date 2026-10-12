@@ -508,18 +508,20 @@ impl<H: Host> Vm<H> {
                 if attributes.accessor {
                     return self.property_descriptor_object(Value::UNDEFINED, attributes);
                 }
-                let value = match self.heap.get(target) {
-                    Some(Cell::Array { elements, .. }) => elements
-                        .get(index)
-                        .copied()
-                        .filter(|value| !value.is_deleted()),
-                    _ => None,
-                }
-                .or_else(|| {
-                    self.heap
-                        .sparse_get(target, index)
-                        .filter(|value| !value.is_deleted())
-                });
+                let value = self
+                    .heap
+                    .array(target)
+                    .and_then(|(_, elements)| {
+                        elements
+                            .get(index)
+                            .copied()
+                            .filter(|value| !value.is_deleted())
+                    })
+                    .or_else(|| {
+                        self.heap
+                            .sparse_get(target, index)
+                            .filter(|value| !value.is_deleted())
+                    });
                 if let Some(value) = value {
                     return self.property_descriptor_object(value, attributes);
                 }

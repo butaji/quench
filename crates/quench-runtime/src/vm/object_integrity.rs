@@ -84,7 +84,7 @@ impl<H: Host> Vm<H> {
                 let atom = vm.intern_js_atom(&key);
                 vm.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
                 if key.host_string() == "length"
-                    && matches!(vm.heap.get(target), Some(Cell::Array { .. }))
+                    && vm.heap.array(target).is_some()
                     && !vm
                         .object_data(target)
                         .is_some_and(Object::is_arguments_object)
@@ -113,7 +113,7 @@ impl<H: Host> Vm<H> {
                 }
                 if let Some(index) =
                     super::object_static::array_index(key.host_string()).map(|index| index as usize)
-                    && matches!(vm.heap.get(target), Some(Cell::Array { .. }))
+                    && vm.heap.array(target).is_some()
                 {
                     return Ok(vm.delete_array_index(target, index));
                 }
