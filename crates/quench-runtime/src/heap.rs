@@ -1,6 +1,6 @@
 use crate::value::Value;
 use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 mod access;
 mod cell;
@@ -8,10 +8,15 @@ mod cell_access;
 mod external;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
+mod parallel_mark;
 mod root;
 mod slots;
 mod weak;
 pub(crate) use cell::*;
+#[cfg(test)]
+pub(crate) use parallel_mark::NoObjectRoots;
+pub(crate) use parallel_mark::ObjectRootTracer;
+use parallel_mark::MarkBits;
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
 use slots::SlotArena;
@@ -79,13 +84,15 @@ pub(crate) struct Heap {
     collections: u64,
     peak_live: usize,
     peak_survivors: usize,
+    /// Cells the latest collection kept, which sizes the next marking.
+    last_survivors: usize,
     max_threshold: usize,
     properties: ValueArena,
     roots: RootTable,
     sparse_arrays: Option<Box<FxHashMap<u32, SparseElements>>>,
-    /// Live cells that hold weak references (`Cell::holds_weak_references`); collection prunes
-    /// weak entries only while some exist.
-    weak_holders: usize,
+    /// Slots of the live cells that hold weak references (`Cell::holds_weak_references`):
+    /// collection resolves ephemerons and prunes weak entries through these alone.
+    weak_holders: FxHashSet<u32>,
     #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
@@ -312,8 +319,11 @@ impl Heap {
         self.allocations += 1;
         self.total_allocations += 1;
         self.external_bytes += cell.external_bytes();
-        self.weak_holders += usize::from(cell.holds_weak_references());
+        let weak = cell.holds_weak_references();
         if let Some(index) = self.free.pop() {
+            if weak {
+                self.weak_holders.insert(index);
+            }
             let slot = &mut self.slots.get_mut(index as usize).unwrap().cell;
             debug_assert!(slot.is_none(), "free-list slots hold no cell");
             // Collection clears heap weak owners before adding a dead slot here;
@@ -326,6 +336,9 @@ impl Heap {
             return Value::heap(index);
         }
         let index = self.slots.len();
+        if weak {
+            self.weak_holders.insert(index as u32);
+        }
         self.slots.push(Slot { cell: Some(cell) });
         #[cfg(feature = "profile-memory")]
         self.profile_allocation(index);
@@ -448,13 +461,14 @@ impl Heap {
         self.marks.clear();
         self.free.clear();
         self.external_bytes = 0;
-        self.weak_holders = 0;
+        self.weak_holders.clear();
         self.allocations = 0;
         self.threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
         self.total_allocations = 0;
         self.collections = 0;
         self.peak_live = 0;
         self.peak_survivors = 0;
+        self.last_survivors = 0;
         self.max_threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
         self.properties.reset();
         self.roots.clear();
@@ -482,13 +496,15 @@ impl Heap {
     }
     #[cfg(test)]
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
-        self.collect_with_object_roots(roots, |_, _, _| {})
+        self.collect_with_object_roots(roots, &NoObjectRoots).0
     }
-    pub(crate) fn collect_with_object_roots(
+    /// Collects garbage; returns the finalization jobs of dead registered targets and each
+    /// marking thread's tracer state.
+    pub(crate) fn collect_with_object_roots<T: ObjectRootTracer>(
         &mut self,
         roots: impl IntoIterator<Item = Value>,
-        mut object_roots: impl FnMut(Value, u32, &mut Vec<Value>),
-    ) -> Vec<(Value, Value)> {
+        tracer: &T,
+    ) -> (Vec<(Value, Value)>, Vec<T::Local>) {
         // Live slots grow only by allocation and shrink only by sweeping, so the peak is
         // observed here and when it is reported rather than on every allocation.
         self.peak_live = self.peak_live.max(self.live_slots());
@@ -511,15 +527,21 @@ impl Heap {
             self.gc_profile.roots += work.len() as u64;
             self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
         }
-        {
-            let mut ephemerons = weak::EphemeronWork::default();
-            self.mark_work(&mut work, &mut object_roots, &mut ephemerons);
-        }
-        let finalization_jobs = if self.weak_holders == 0 {
-            Vec::new()
+        let mut tracer_locals = if self.parallel_marking() {
+            self.mark_parallel(work, tracer)
         } else {
-            self.prune_weak_entries()
+            let mut local = tracer.local();
+            self.mark_work(
+                &mut work,
+                &mut |owner, shape, roots| tracer.visit(&mut local, owner, shape, roots),
+                None,
+            );
+            vec![local]
         };
+        if let Some(local) = self.mark_ephemerons(tracer) {
+            tracer_locals.push(local);
+        }
+        let finalization_jobs = self.prune_weak_entries();
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             self.gc_profile.mark_nanos += mark_started.elapsed().as_nanos() as u64;
@@ -547,7 +569,9 @@ impl Heap {
                     }
                 } else if let Some(cell) = slot.cell.take() {
                     self.external_bytes = self.external_bytes.saturating_sub(cell.external_bytes());
-                    self.weak_holders -= usize::from(cell.holds_weak_references());
+                    if cell.holds_weak_references() {
+                        self.weak_holders.remove(&(index as u32));
+                    }
                     #[cfg(feature = "profile-memory")]
                     {
                         let object_slots = cell
@@ -607,14 +631,15 @@ impl Heap {
         // factor is added to the live set to describe the occupied high-water.
         self.threshold = gc_allocation_headroom(live);
         self.peak_survivors = self.peak_survivors.max(live);
+        self.last_survivors = live;
         self.max_threshold = self.max_threshold.max(self.threshold);
-        finalization_jobs
+        (finalization_jobs, tracer_locals)
     }
     fn mark_work(
         &mut self,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(Value, u32, &mut Vec<Value>),
-        ephemerons: &mut weak::EphemeronWork,
+        mut ephemerons: Option<&mut weak::EphemeronWork>,
     ) {
         let mut last_shared_elements: *const Vec<Value> = std::ptr::null();
         while let Some(value) = work.pop() {
@@ -644,13 +669,12 @@ impl Heap {
                 value,
                 cell,
                 &self.properties,
-                &self.marks,
+                self.marks.as_slice(),
                 &mut last_shared_elements,
                 work,
                 object_roots,
             );
-            // Ephemeron work exists only through a live WeakMap.
-            if self.weak_holders != 0 {
+            if let Some(ephemerons) = ephemerons.as_deref_mut() {
                 ephemerons.newly_marked(index as u32, cell, &self.marks, work);
             }
             if let Some(arrays) = self.sparse_arrays.as_ref()
@@ -664,6 +688,31 @@ impl Heap {
                 self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
             }
         }
+    }
+    /// Marks what live WeakMaps keep alive once the strong graph is marked: values whose keys
+    /// are marked, repeatedly as newly marked cells mark further keys. Returns the tracer
+    /// state of that marking, if any was needed.
+    fn mark_ephemerons<T: ObjectRootTracer>(&mut self, tracer: &T) -> Option<T::Local> {
+        let mut ephemerons = weak::EphemeronWork::default();
+        let mut work = Vec::new();
+        for &index in &self.weak_holders {
+            let index = index as usize;
+            if Self::marked(&self.marks, index)
+                && let Some(cell) = self.slots.get(index).and_then(|slot| slot.cell.as_ref())
+            {
+                ephemerons.newly_marked(index as u32, cell, &self.marks, &mut work);
+            }
+        }
+        if work.is_empty() {
+            return None;
+        }
+        let mut local = tracer.local();
+        self.mark_work(
+            &mut work,
+            &mut |owner, shape, roots| tracer.visit(&mut local, owner, shape, roots),
+            Some(&mut ephemerons),
+        );
+        Some(local)
     }
     #[inline(always)]
     fn marked(marks: &[u64], index: usize) -> bool {
@@ -887,23 +936,20 @@ impl Heap {
     /// elements, the bulk of a heap's edges, skip referents already marked, which would only
     /// be popped and discarded. A copy-on-write element backing shared by many arrays is
     /// traced by the first of them: `last_shared_elements` holds the latest such backing.
-    fn children(
+    fn children<M: MarkBits + ?Sized>(
         owner: Value,
         cell: &Cell,
         properties: &ValueArena,
-        marks: &[u64],
+        marks: &M,
         last_shared_elements: &mut *const Vec<Value>,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(Value, u32, &mut Vec<Value>),
     ) {
         // A reference beyond the mark bitmap names no slot and is dropped, as popping it would.
         let unmarked_heap = |value: &Value| {
-            value.heap_index().is_some_and(|index| {
-                let index = index as usize;
-                marks
-                    .get(index / 64)
-                    .is_some_and(|word| word & (1 << (index % 64)) == 0)
-            })
+            value
+                .heap_index()
+                .is_some_and(|index| marks.unmarked(index as usize))
         };
         let mut object = |object: &Object| {
             if unmarked_heap(&object.proto) {
