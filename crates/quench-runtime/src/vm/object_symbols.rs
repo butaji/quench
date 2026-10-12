@@ -44,13 +44,28 @@ impl<H: Host> Vm<H> {
             .collect()
     }
 
-    fn ordinary_own_key_values(&mut self, object: Value) -> Vec<Value> {
-        let mut values = self.indexed_name_keys(object).unwrap_or_default();
+    pub(super) fn ordinary_own_key_values(
+        &mut self,
+        object: Value,
+        include_indices: bool,
+    ) -> Vec<Value> {
+        let mut values = if include_indices {
+            self.indexed_name_keys(object).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let Some(data) = self.object_data(object) else {
             return values;
         };
         let shape = data.shape();
-        let strings = self.own_named_keys(object);
+        let strings = self
+            .own_named_keys(object)
+            .into_iter()
+            .filter(|atom| {
+                include_indices
+                    || super::object_static::array_index(self.atom_name(*atom)).is_none()
+            })
+            .collect::<Vec<_>>();
         let symbols = self
             .shape_keys(shape)
             .iter()
@@ -416,7 +431,7 @@ impl<H: Host> Vm<H> {
         }
         let target = self.box_object(object)?;
         self.evaluate_deferred_namespace_for_key(p, target, None)?;
-        let values = self.ordinary_own_key_values(target);
+        let values = self.ordinary_own_key_values(target, true);
         Ok(self.own_keys_array(values))
     }
 }

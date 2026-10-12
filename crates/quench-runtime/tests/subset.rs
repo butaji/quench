@@ -21,6 +21,41 @@ fn output(source: &str) -> Vec<String> {
 }
 
 #[test]
+fn nested_super_initialization_preserves_caller_receivers() {
+    let source = r#"
+      (() => {
+        class Base {}
+        class Derived extends Base {}
+        const make = () => new Derived();
+        class Caller {
+          constructor() { this.value = 42; }
+          read(reason = make()) { return this.value; }
+        }
+        print(new Caller().read());
+        class Captured extends Base {
+          constructor() {
+            const read = () => this;
+            super();
+            print(read() === this);
+          }
+        }
+        new Captured();
+      })();
+    "#;
+    for generic in [false, true] {
+        let host = Capture::default();
+        let program = if generic {
+            Engine::specialize_unspecialized(source, "nested-super.js")
+        } else {
+            Engine::specialize(source, "nested-super.js")
+        }
+        .unwrap();
+        Runtime::new(host.clone()).execute(&program).unwrap();
+        assert_eq!(*host.0.borrow(), ["42", "true"]);
+    }
+}
+
+#[test]
 fn residual_binary_round_trip_preserves_execution() {
     let path =
         std::env::temp_dir().join(format!("quench-roundtrip-{}.residual", std::process::id()));
@@ -209,4 +244,78 @@ fn numeric_method_arguments_flow_directly_from_caller_registers() {
             .any(|line| line.ends_with("dispatch=Numeric"))
     );
     assert_eq!(output(source), ["258280325"]);
+}
+
+#[test]
+fn native_stack_scopes_are_ordered_truthful_and_unwind_safe() {
+    let program = Engine::specialize(
+        "Error.prepareStackTrace = (error, sites) => JSON.stringify(sites.map(site => [site.getFunctionName(), site.isNative(), site.getFileName(), site.getLineNumber(), site.getColumnNumber()])); function capture() { const error = new Error('scope'); return error.stack; }",
+        "native-stack.js",
+    ).unwrap();
+    let mut runtime = Runtime::new(Capture::default());
+    runtime.execute(&program).unwrap();
+    let global = runtime.global_root().unwrap();
+    let key = runtime.string_rooted("capture");
+    let capture = runtime.get_property_rooted(global, key).unwrap();
+    let undefined = runtime.root(quench_runtime::Value::UNDEFINED);
+    let result = runtime
+        .with_native_stack_frame("outer", |runtime| {
+            runtime.with_native_stack_frame("inner", |runtime| {
+                runtime.call_rooted(capture, undefined, &[])
+            })
+        })
+        .unwrap();
+    let text = runtime.string_text_rooted(result).unwrap().unwrap();
+    assert!(
+        text.ends_with("[\"inner\",true,null,null,null],[\"outer\",true,null,null,null]]"),
+        "{text}"
+    );
+    runtime.release_root(result);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.with_native_stack_frame("panicking", |_| panic!("native scope unwind"));
+    }));
+    assert!(panic.is_err());
+    let result = runtime.call_rooted(capture, undefined, &[]).unwrap();
+    let text = runtime.string_text_rooted(result).unwrap().unwrap();
+    assert!(!text.contains("outer") && !text.contains("inner") && !text.contains("panicking"));
+    runtime.release_root(result);
+    runtime.release_root(capture);
+    runtime.release_root(undefined);
+    runtime.release_root(key);
+    runtime.release_root(global);
+}
+
+#[test]
+fn throw_preserves_identity_without_hooks_and_retains_source_through_binary() {
+    const SOURCE: &str = "let touches=0;\nconst marker={get message(){touches++;throw 1},toString(){touches++;throw 2}};\nfunction handled(){throw marker}\ntry{handled()}catch(error){if(error!==marker||touches!==0)throw 'wrong throw effects'}\nfunction escaping(){\n  throw new Error('snapshot');\n}\nescaping();";
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let program = compile(SOURCE, "throw-snapshot.js").unwrap();
+        let mut runtime = Runtime::new(Capture::default());
+        let error = runtime.execute(&program).unwrap_err();
+        let (file, line, column, text) = error.source_location().expect("escaping throw location");
+        assert_eq!(
+            (file, line, text),
+            (
+                "throw-snapshot.js",
+                6,
+                Some("  throw new Error('snapshot');")
+            )
+        );
+        assert!(column > 0 && column as usize <= text.unwrap().encode_utf16().count() + 1);
+        let expected = (file.to_owned(), line, column, text.map(str::to_owned));
+        let path =
+            std::env::temp_dir().join(format!("quench-throw-snapshot-{}.qbc", std::process::id()));
+        program.write_binary(&path).unwrap();
+        let restored = quench_runtime::ResidualProgram::read_binary(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        let error = runtime.execute(&restored).unwrap_err();
+        let (file, line, column, text) = error.source_location().unwrap();
+        assert_eq!(
+            (file.to_owned(), line, column, text.map(str::to_owned)),
+            expected
+        );
+    }
 }

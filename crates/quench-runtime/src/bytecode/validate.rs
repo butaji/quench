@@ -223,6 +223,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
                     && register_window_in_bounds(value, u32::from(window.count), bounds.registers)
             }
             FieldLayout::RegisterCount => true, // The associated window base owns the bounds check.
+            FieldLayout::SignedConstant => true,
             FieldLayout::OptionalRegister => instruction
                 .optional_register_b()
                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),
@@ -310,11 +311,11 @@ fn immediate_domains_in_bounds(
         super::ImmediateRole::WasmMemoryLoadOperator => {
             crate::wasm::memory::MemoryLoad::from_tag(instruction.imm()).is_some()
         }
+        super::ImmediateRole::WasmMemoryOffset => true,
+        super::ImmediateRole::WasmInstanceSlot => true,
+        super::ImmediateRole::WasmI32Immediate => true,
         super::ImmediateRole::WasmMemoryStoreOperator => {
             crate::wasm::memory::MemoryStore::from_tag(instruction.imm()).is_some()
-        }
-        super::ImmediateRole::WasmI32BinaryOperator => {
-            crate::wasm::integer::I32BinaryOperator::from_tag(instruction.imm()).is_some()
         }
         super::ImmediateRole::WasmI64BinaryOperator => {
             crate::wasm::integer::I64BinaryOperator::from_tag(instruction.imm()).is_some()
@@ -379,6 +380,8 @@ fn immediate_domains_in_bounds(
             (instruction.superinstruction_index() as usize) < bounds.superinstructions
         }
         super::ImmediateRole::JumpTarget => instruction.jump_target() < bounds.code_len,
+        // Control-flow validation bounds the entries and checks that each is a jump.
+        super::ImmediateRole::BranchTableCases => true,
         super::ImmediateRole::FieldLookup
         | super::ImmediateRole::WasmSignatureIndex
         | super::ImmediateRole::WasmFunctionIndex
@@ -532,12 +535,18 @@ impl ResidualProgram {
                     "function {index} has an invalid promoted-local layout"
                 ));
             }
-            let plain_local_slots = function.plain_local_slots(|atom| {
-                usize::try_from(atom)
-                    .ok()
-                    .filter(|atom| *atom < self.atoms.len())
-                    .map(|atom| &self.atoms[atom])
-            });
+            // Wasm locals are frame slots by construction: no environment
+            // capture, TDZ, or name binding can observe them.
+            let plain_local_slots = if self.kind == super::ProgramKind::Wasm {
+                vec![true; usize::from(function.locals)]
+            } else {
+                function.plain_local_slots(|atom| {
+                    usize::try_from(atom)
+                        .ok()
+                        .filter(|atom| *atom < self.atoms.len())
+                        .map(|atom| &self.atoms[atom])
+                })
+            };
             if let Some(initializer) = function.instance_initializer {
                 let valid = self
                     .functions
@@ -1166,9 +1175,13 @@ mod tests {
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
+            plain_activation: Default::default(),
             handlers: vec![],
             register_root_offset: root,
             undefined_register: None,
+            parameter_registers: None,
+            initial_register: Default::default(),
         }
     }
 
@@ -1180,6 +1193,7 @@ mod tests {
             module_imports: Vec::new(),
             module_link_plan: None,
             source_name: String::new(),
+            source: None,
             atoms: AtomTable::default(),
             constants: vec![],
             functions: vec![function],

@@ -49,7 +49,7 @@ struct ObjectRecordBlock {
 
 pub(super) enum RecordSweep<'a, T> {
     Keep(RecordId, &'a T),
-    Dead(RecordId, T),
+    Dead(T),
 }
 
 impl ObjectRecordBlock {
@@ -213,6 +213,32 @@ impl<T> ObjectRecordSpace<T> {
             .is_some_and(|block| block.is_occupied(record_index) && block.is_marked(record_index))
     }
 
+    #[cfg(debug_assertions)]
+    pub(super) fn snapshot_marks(&self) -> Vec<u64> {
+        self.blocks
+            .iter()
+            .flat_map(|block| block.marked.iter().copied())
+            .collect()
+    }
+
+    #[cfg(debug_assertions)]
+    pub(super) fn clear_marks(&mut self) {
+        for block in &mut self.blocks {
+            block.marked.fill(0);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub(super) fn restore_marks(&mut self, marks: &[u64]) {
+        let expected_len = self.blocks.len() * (RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS);
+        assert_eq!(marks.len(), expected_len);
+        for (block, block_marks) in self.blocks.iter_mut().zip(marks.chunks_exact(
+            RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS,
+        )) {
+            block.marked.copy_from_slice(block_marks);
+        }
+    }
+
     pub(super) fn live_count(&self) -> usize {
         self.live
     }
@@ -255,7 +281,7 @@ impl<T> ObjectRecordSpace<T> {
                     // SAFETY: the occupied bit proves initialization and its
                     // removal transfers this record to the drop callback.
                     let value = unsafe { self.base.as_ptr().add(id as usize).read().assume_init() };
-                    visit(RecordSweep::Dead(id, value));
+                    visit(RecordSweep::Dead(value));
                     dead &= dead - 1;
                     freed_count += 1;
                 }
@@ -408,11 +434,11 @@ mod tests {
         let mut dropped = Vec::new();
         let (live_count, freed_count) = arena.sweep(|record| match record {
             RecordSweep::Keep(id, value) => kept.push((id, value.clone())),
-            RecordSweep::Dead(id, value) => dropped.push((id, value)),
+            RecordSweep::Dead(value) => dropped.push(value),
         });
         assert_eq!((live_count, freed_count), (1, 1));
         assert_eq!(kept, [(live, String::from("live"))]);
-        assert_eq!(dropped, [(dead, String::from("dead"))]);
+        assert_eq!(dropped, [String::from("dead")]);
         assert!(arena.is_live(live));
         assert!(!arena.is_live(dead));
         assert_eq!(arena.try_insert(String::from("reused")).unwrap(), dead);

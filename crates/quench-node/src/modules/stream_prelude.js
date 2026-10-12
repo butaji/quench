@@ -267,7 +267,7 @@
     const objectMode = side === "readable"
       ? options.objectMode || options.readableObjectMode
       : options.objectMode || options.writableObjectMode;
-    return objectMode ? 16 : 16384;
+    return deps.getDefaultHighWaterMark(objectMode);
   }
 
   function growReadableHwm(state, size) {
@@ -1157,6 +1157,10 @@
     }
 
     pipe(dest, options) {
+      const plan = deps.pipePlan?.(this, dest, options);
+      const endDestination = plan ? false : (deps.pipeShouldEnd
+        ? deps.pipeShouldEnd(dest, options)
+        : (!options || options.end !== false));
       const source = this;
       const sourceState = source._readableState;
       sourceState.pipes.push(dest);
@@ -1207,9 +1211,9 @@
         cleanedUp = true;
         if (!fromUnpipe) source.unpipe(dest);
         source.removeListener("data", ondata);
-        source.removeListener("end", onend);
+        if (onend) source.removeListener("end", onend);
+        if (onclose) source.removeListener("close", onclose);
         source.removeListener("end", cleanup);
-        source.removeListener("close", onclose);
         source.removeListener("close", cleanup);
         dest.removeListener("close", cleanup);
         dest.removeListener("unpipe", onunpipe);
@@ -1219,16 +1223,20 @@
         info.hasUnpiped = true;
         cleanup(true);
       };
-      const onend = () => {
-        if (!options || options.end !== false) dest.end();
+      const onend = plan ? plan.end : () => {
+        if (endDestination) dest.end();
       };
-      const onclose = () => dest.destroy?.();
+      const onclose = plan?.close;
       sourceState.pipeListeners.push({ dest, ondata });
       source.on("data", ondata);
-      source.on("end", onend);
-      source.on("end", cleanup);
-      source.on("close", onclose);
-      source.on("close", cleanup);
+      if (onend) {
+        if (plan?.onceEnd) source.once("end", onend);
+        else source.on("end", onend);
+      }
+      if (onclose) source.on("close", onclose);
+      if (!plan || plan.cleanupOnEnd) source.on("end", cleanup);
+      else if (!onend) source.once("end", cleanup);
+      if (!plan || plan.cleanupOnClose) source.on("close", cleanup);
       dest.on("close", cleanup);
       dest.on("unpipe", onunpipe);
       dest.emit("pipe", source);
@@ -2612,9 +2620,8 @@
     }
     const item = st.pending.shift();
     updateBufferedRequestCount(st);
-    st.buffered -= item.chunkLength;
-    updateNeedDrain(st);
-    stream.write(
+    deps.replayWrite(
+      stream,
       item.chunk,
       item.encoding === "buffer" ? undefined : item.encoding,
       item.callback,
@@ -2868,6 +2875,7 @@
             true,
           );
           st.ended = wasEnded;
+          finishWritable(this);
           return;
         }
         if (
@@ -3128,8 +3136,11 @@
       super(options || {});
       this._isTransform = true;
       this._transformBackpressure = null;
-      if (options && options.transform) this._transform = options.transform;
-      if (options && options.flush) this._flush = options.flush;
+      if (deps.applyTransformOptions) deps.applyTransformOptions(this, options);
+      else {
+        if (options && options.transform) this._transform = options.transform;
+        if (options && options.flush) this._flush = options.flush;
+      }
       if (options && options.final) this._final = options.final;
       // When the writable side finishes, flush then end the readable side.
       // Node flushes and closes the readable side during prefinish, before
@@ -3137,7 +3148,11 @@
       // event preserves the observable end -> finish ordering.
       this.once("prefinish", () => {
         const end = (error, data) => {
-          if (!error && data != null) this.push(data);
+          if (error) {
+            this.destroy(error);
+            return;
+          }
+          if (data != null) this.push(data);
           this.push(null);
         };
         if (this._flush) this._flush(end);

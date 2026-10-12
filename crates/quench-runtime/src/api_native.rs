@@ -5,6 +5,96 @@ use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
 
+/// Private weak host reference, pruned by the core collector before slot reuse.
+/// Its persistent root must be released when the host resource is discarded.
+#[derive(Clone, Copy, Debug)]
+pub struct HostWeakRoot(pub(super) RootId);
+
+/// Iterator and cached next method, owned by its NativeContext's live roots.
+pub struct RootedIterator {
+    iterator: RootId,
+    next: RootId,
+}
+
+/// Builtin internal-slot brands, independent of prototypes and guest property hooks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltinBrand {
+    Date,
+    RegExp,
+    NativeError,
+    Promise,
+    Map,
+    Set,
+    WeakMap,
+    WeakSet,
+    Proxy,
+    ArrayBuffer,
+    SharedArrayBuffer,
+    AnyArrayBuffer,
+    DataView,
+    TypedArray,
+    ArrayBufferView,
+    Uint8Array,
+    Uint8ClampedArray,
+    Uint16Array,
+    Uint32Array,
+    Int8Array,
+    Int16Array,
+    Int32Array,
+    BigInt64Array,
+    BigUint64Array,
+    Float16Array,
+    Float32Array,
+    Float64Array,
+    ArgumentsObject,
+    AsyncFunction,
+    GeneratorFunction,
+    GeneratorObject,
+    MapIterator,
+    SetIterator,
+    ModuleNamespaceObject,
+    BooleanObject,
+    NumberObject,
+    StringObject,
+    SymbolObject,
+    BigIntObject,
+    BoxedPrimitive,
+}
+
+/// Intrinsic payload snapshot. Value roots remain scoped to the native callback.
+#[derive(Debug)]
+pub enum BuiltinData<T = RootId> {
+    Primitive { brand: BuiltinBrand, value: T },
+    Bytes { brand: BuiltinBrand, bytes: Vec<u8> },
+    Map(Vec<(T, T)>),
+    Set(Vec<T>),
+    RegExp,
+    Error,
+    Opaque,
+}
+
+impl<T> BuiltinData<T> {
+    pub(crate) fn map_values<U>(self, mut map: impl FnMut(T) -> U) -> BuiltinData<U> {
+        match self {
+            Self::Primitive { brand, value } => BuiltinData::Primitive {
+                brand,
+                value: map(value),
+            },
+            Self::Bytes { brand, bytes } => BuiltinData::Bytes { brand, bytes },
+            Self::Map(entries) => BuiltinData::Map(
+                entries
+                    .into_iter()
+                    .map(|(key, value)| (map(key), map(value)))
+                    .collect(),
+            ),
+            Self::Set(entries) => BuiltinData::Set(entries.into_iter().map(map).collect()),
+            Self::RegExp => BuiltinData::RegExp,
+            Self::Error => BuiltinData::Error,
+            Self::Opaque => BuiltinData::Opaque,
+        }
+    }
+}
+
 pub type HostCallback<H> =
     for<'a> fn(&mut NativeContext<'a, H>, RootId, &[RootId]) -> Result<RootId, RootedError>;
 
@@ -74,6 +164,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Copy string code units without coercion or lone-surrogate loss.
+    pub fn string_code_units(&mut self, root: RootId) -> Result<Option<Vec<u16>>, RootedError> {
+        let result = self.vm.embedding_string_units(root);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Apply [[HasProperty]], including prototype lookup and Proxy has traps.
+    pub fn has_property_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+    ) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_has_property(object, key)
+            .map_err(|error| self.error(error))
+    }
+
     /// Check whether a live rooted value is a JavaScript Symbol primitive.
     pub fn is_symbol_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
         let result = self.vm.embedding_is_symbol(root);
@@ -86,10 +193,157 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Test an internal-slot brand without invoking guest getters or proxy traps.
+    pub fn has_builtin_brand_rooted(
+        &mut self,
+        root: RootId,
+        brand: BuiltinBrand,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_has_builtin_brand(root, brand);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Copy builtin internal data without invoking guest properties or proxy traps.
+    pub fn builtin_data_rooted(
+        &mut self,
+        root: RootId,
+    ) -> Result<Option<BuiltinData>, RootedError> {
+        let result = self.vm.embedding_builtin_data(root);
+        let data = result.map_err(|error| self.error(error))?;
+        Ok(data.map(|data| data.map_values(|value| self.scoped_value(value))))
+    }
+
+    /// Read floating-point view elements through their internal slots.
+    pub fn floating_view_values_rooted(
+        &mut self,
+        root: RootId,
+    ) -> Result<Option<Vec<f64>>, RootedError> {
+        let result = self.vm.embedding_floating_view_values(root);
+        result.map_err(|error| self.error(error))
+    }
+
+    pub fn strict_equal_rooted(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_strict_equal(left, right);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Apply IsArray, including proxy target and revocation semantics.
+    pub fn is_array_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_is_array(root);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Get an object's prototype through its internal method, preserving proxy effects.
+    pub fn prototype_rooted(&mut self, root: RootId) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_prototype(root);
+        self.completion(result)
+    }
+
+    /// Read a WeakMap entry through its internal slots, without guest hooks.
+    pub fn weak_map_get_rooted(&mut self, map: RootId, key: RootId) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_weak_map_get(map, key);
+        self.completion(result)
+    }
+
+    /// Reflect all own keys through the object's internal method.
+    pub fn own_keys_rooted(&mut self, root: RootId) -> Result<Vec<RootId>, RootedError> {
+        let result = self.vm.embedding_own_keys(root);
+        let roots = result.map_err(|error| self.error(error))?;
+        self.roots.extend(roots.iter().copied());
+        Ok(roots)
+    }
+
+    /// Apply Object.defineProperty semantics to a rooted descriptor.
+    pub fn define_property_descriptor_rooted(
+        &mut self,
+        object: RootId,
+        key: RootId,
+        descriptor: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_define_descriptor(object, key, descriptor);
+        self.completion(result)
+    }
+
+    /// Read an own property descriptor through the object's internal method.
+    pub fn own_property_descriptor_rooted(
+        &mut self,
+        root: RootId,
+        key: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_own_descriptor(root, key);
+        self.completion(result)
+    }
+
+    /// Enumerable own string keys, optionally including Symbols, through internal methods.
+    pub fn enumerable_own_keys_rooted(
+        &mut self,
+        root: RootId,
+        include_symbols: bool,
+        include_indices: bool,
+    ) -> Result<Vec<RootId>, RootedError> {
+        let result = self
+            .vm
+            .embedding_enumerable_own_keys(root, include_symbols, include_indices);
+        let roots = result.map_err(|error| self.error(error))?;
+        self.roots.extend(roots.iter().copied());
+        Ok(roots)
+    }
+
     /// Apply the realm's ordinary ToString operation at a host boundary.
     pub fn to_string(&mut self, root: RootId) -> Result<String, RootedError> {
         let result = self.vm.embedding_to_string(root);
         result.map_err(|error| self.error(error))
+    }
+
+    /// Apply the shared greater-than operation, including string/BigInt
+    /// comparison and ordinary guest primitive-conversion hooks.
+    pub fn greater_than_rooted(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_greater_than(left, right);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Apply shared bitwise OR, preserving ToNumeric hooks and BigInt errors.
+    pub fn bitwise_or_rooted(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_bitwise_or(left, right);
+        self.completion(result)
+    }
+
+    /// Acquire the shared VM iterator protocol and cache its next method once.
+    pub fn iterator_rooted(&mut self, source: RootId) -> Result<RootedIterator, RootedError> {
+        let result = self.vm.embedding_iterator_record(source);
+        let (iterator, next) = result.map_err(|error| self.error(error))?;
+        self.roots.extend([iterator, next]);
+        Ok(RootedIterator { iterator, next })
+    }
+
+    pub fn iterator_step_rooted(
+        &mut self,
+        iterator: &RootedIterator,
+    ) -> Result<Option<RootId>, RootedError> {
+        let result = self
+            .vm
+            .embedding_iterator_step(iterator.iterator, iterator.next);
+        let value = result.map_err(|error| self.error(error))?;
+        Ok(value.map(|value| self.scoped_value(value)))
+    }
+
+    pub fn iterator_close_rooted(&mut self, iterator: &RootedIterator) -> Result<(), RootedError> {
+        let result = self.vm.embedding_iterator_close(iterator.iterator);
+        let value = self.completion(result)?;
+        self.release_root(value);
+        Ok(())
     }
 
     /// Apply ToBoolean without invoking guest coercion hooks.
@@ -132,6 +386,24 @@ impl<'a, H: Host> NativeContext<'a, H> {
         name: &str,
     ) -> Result<RootId, RootedError> {
         let result = self.vm.evaluate_embedding_specialized_script(source, name);
+        self.completion(result)
+    }
+
+    /// Compile host-wrapped source with an explicit original-source origin.
+    /// The offsets remove wrapper lines and its first-line UTF-16 columns from
+    /// compiler-owned locations and diagnostic excerpts, not executable code.
+    pub fn evaluate_specialized_script_with_origin_rooted(
+        &mut self,
+        source: &str,
+        name: &str,
+        line_offset: u32,
+        column_offset: u32,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.evaluate_embedding_specialized_script_with_origin(
+            source,
+            name,
+            Some((line_offset, column_offset)),
+        );
         self.completion(result)
     }
 
@@ -227,6 +499,39 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     pub fn rooted_value(&self, root: RootId) -> Option<Value> {
         self.vm.root_value(root)
+    }
+
+    /// Copy native bytes into an intrinsic Uint8Array with its own fixed backing.
+    /// No guest constructor, iterator, or indexed property hook is invoked.
+    pub fn uint8_array_rooted(&mut self, bytes: &[u8]) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_uint8_array(bytes);
+        self.completion(result)
+    }
+
+    /// Retain a private weak reference without ECMAScript kept-object effects.
+    pub fn host_weak_root(&mut self, target: RootId) -> Result<HostWeakRoot, RootedError> {
+        self.vm
+            .embedding_host_weak_root(target)
+            .map(HostWeakRoot)
+            .map_err(|error| self.error(error))
+    }
+
+    /// Resolve a host weak reference into this callback's temporary root scope.
+    pub fn resolve_host_weak_root(&mut self, reference: HostWeakRoot) -> Option<RootId> {
+        self.vm
+            .embedding_host_weak_value(reference.0)
+            .map(|value| self.scoped_value(value))
+    }
+
+    pub fn release_host_weak_root(&mut self, reference: HostWeakRoot) -> bool {
+        self.vm.release_root(reference.0)
+    }
+
+    /// Copy the raw bytes from a typed array or DataView without per-index guest property reads.
+    pub fn view_bytes_rooted(&self, root: RootId) -> Option<Vec<u8>> {
+        self.vm
+            .root_value(root)
+            .and_then(|value| self.vm.embedding_view_bytes(value))
     }
 
     /// Check callability without coercion or invoking guest code.

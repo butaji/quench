@@ -4560,7 +4560,7 @@ impl<H: Host> Vm<H> {
     fn module_static_value(&mut self, constant: Constant) -> Value {
         match constant {
             Constant::Number(value) => Value::number(value),
-            Constant::WasmBits64(bits) => self.heap.alloc(Cell::WasmBits64(bits)),
+            Constant::WasmBits64(bits) => self.encode_bits64(bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(bits)),
             Constant::String(value) => self.heap.alloc(Cell::String(value.into())),
             Constant::StringUnits(value) => {
