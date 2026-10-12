@@ -1,10 +1,10 @@
 use super::{
     AtomTable, BindingSite, Constant, DispatchClass, EvalBinding, EvalBindingDeclaration,
-    EvalBindingLocation, FieldBase, FieldSite, Function, Handler, Instr, LexicalBindingKind,
-    LocalRegister,
-    MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleLinkPlan,
-    ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase, ObjectSite, Op,
-    RegExpLiteralSite, SourcePosition, Superinstruction, WideInstruction,
+    EvalBindingLocation, FieldBase, FieldSite, Function, Handler, InitialRegister, Instr,
+    LexicalBindingKind, LocalRegister, MethodSite, ModuleImportBinding, ModuleImportName,
+    ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest,
+    ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, SourcePosition, Superinstruction,
+    WideInstruction,
 };
 
 /// Encodes a function without an `undefined` register.
@@ -20,6 +20,8 @@ const RESIDUAL_MAGIC: &[u8; 8] = &[
     super::ResidualProgram::FORMAT_VERSION,
 ];
 const RESIDUAL_MAGIC_TERMINATOR: u8 = 0;
+// Serialized absence of register parameters; no register file reaches it.
+const NO_PARAMETER_REGISTERS: u16 = u16::MAX;
 const WASM_BITS64_TAG: u8 = 8;
 const WASM_V128_TAG: u8 = 9;
 const EVAL_BINDING_LOCAL: u8 = 0;
@@ -74,6 +76,14 @@ pub(super) fn write_program(
     out.u8(u8::from(program.specialized));
     out.u8(program.kind.binary_tag());
     out.string(&program.source_name);
+    write_optional_string(
+        &mut out,
+        program.source.as_ref().map(|source| source.text.as_ref()),
+    );
+    if let Some(source) = &program.source {
+        out.u32(source.line_offset);
+        out.u32(source.column_offset);
+    }
     out.u32(program.module_requests.len() as u32);
     for request in &program.module_requests {
         out.string(&request.source);
@@ -261,6 +271,12 @@ pub(super) fn write_program(
         out.u8(function.dispatch as u8);
         out.u32(function.register_root_offset);
         out.u16(function.undefined_register.unwrap_or(NO_UNDEFINED_REGISTER));
+        out.u16(
+            function
+                .parameter_registers
+                .unwrap_or(NO_PARAMETER_REGISTERS),
+        );
+        out.u8(function.initial_register as u8);
         out.u32(function.code.len() as u32);
         for instruction in &function.code {
             out.u8(instruction.op() as u8);
@@ -356,6 +372,14 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let kind = super::ProgramKind::from_binary_tag(input.u8()?)
         .ok_or_else(|| "invalid residual program kind".to_owned())?;
     let source_name = input.string()?;
+    let source = match read_optional_string(&mut input)? {
+        Some(text) => Some(super::ProgramSource {
+            text: std::sync::Arc::from(text),
+            line_offset: input.u32()?,
+            column_offset: input.u32()?,
+        }),
+        None => None,
+    };
     let module_requests = input.list(|input| {
         let source = input.string()?;
         let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
@@ -549,6 +573,12 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         let register_root_offset = input.u32()?;
         let undefined_register =
             Some(input.u16()?).filter(|register| *register != NO_UNDEFINED_REGISTER);
+        let parameter_registers = Some(input.u16()?).filter(|base| *base != NO_PARAMETER_REGISTERS);
+        let initial_register = match input.u8()? {
+            0 => InitialRegister::Undefined,
+            1 => InitialRegister::I32Zero,
+            _ => return Err("invalid residual initial register".into()),
+        };
         let code = input.list(|input| {
             let opcode = input.u8()?;
             let op = Op::from_index(usize::from(opcode))
@@ -653,9 +683,13 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
+            plain_activation: Default::default(),
             handlers,
             register_root_offset,
             undefined_register,
+            parameter_registers,
+            initial_register,
         })
     })?;
     let cache_sites = input.u16()?;
@@ -719,6 +753,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         module_imports,
         module_link_plan,
         source_name,
+        source,
         atoms,
         constants,
         functions,

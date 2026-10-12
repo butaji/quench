@@ -1,14 +1,15 @@
 //! Canonical JavaScript source shared by console runtime adapters.
 
-pub(crate) const CONSOLE_CLASS: &str = r#"(class Console {
-  constructor(stdout, stderr) {
+pub(crate) const CONSOLE_CLASS: &str = r#"((initialize, write) => class Console {
+  constructor(stdout, stderr, ignoreErrors) {
     const options = stdout && typeof stdout === "object" &&
       (stdout.stdout || stdout.stderr) ? stdout : null;
     this._stdout = options ? options.stdout : stdout;
     this._stderr = options ? options.stderr : stderr;
     this._inspectOptions = options ? options.inspectOptions : undefined;
     if (!this._stdout) this._stdout = globalThis?.process?.stdout;
-    if (!this._stderr) this._stderr = globalThis?.process?.stderr;
+    if (!this._stderr) this._stderr = this._stdout;
+    initialize(this, options, ignoreErrors);
   }
   _format(output, args) {
     const util = (typeof require === "function"
@@ -27,7 +28,7 @@ pub(crate) const CONSOLE_CLASS: &str = r#"(class Console {
   }
   log(...args) {
     const output = this._stdout || process?.stdout;
-    if (output && typeof output.write === "function") output.write(`${this._format(output, args)}\n`);
+    write(this, true, this._format(output, args));
     if (!this._tickPending) {
       this._tickPending = true;
       const tick = globalThis?.process?.nextTick;
@@ -41,7 +42,7 @@ pub(crate) const CONSOLE_CLASS: &str = r#"(class Console {
   timeLog(label = "default", ...args) { this.log(...args); }
   warn(...args) {
     const output = this._stderr || process?.stderr;
-    if (output && typeof output.write === "function") output.write(`${this._format(output, args)}\n`);
+    write(this, false, this._format(output, args));
   }
   error(...args) { this.warn(...args); }
   trace(...args) { this.error(...args); }

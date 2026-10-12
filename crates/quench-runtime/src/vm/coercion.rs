@@ -192,7 +192,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Date { milliseconds, .. }) => return Ok(*milliseconds),
             Some(Cell::Symbol(_)) => {
                 return Err(
-                    self.type_error(program, "cannot convert a Symbol value to a number".into())
+                    self.type_error(program, "Cannot convert a Symbol value to a number".into())
                 );
             }
             Some(Cell::String(value)) => {

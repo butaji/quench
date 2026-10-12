@@ -111,6 +111,38 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
 }
 
 #[test]
+fn minor_collection_roots_external_edges_of_old_owners() {
+    use super::{DEFAULT_PROPERTY_ATTRIBUTES, PropertyAttributes, property_key::PropertyKey};
+    use crate::heap::Cell;
+
+    let program = Engine::specialize("", "minor-external-roots.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    let owner = vm.object();
+    let owner_root = vm.heap.root(owner);
+    vm.collect_slow(&program, true);
+
+    let getter = vm.heap.alloc(Cell::String("young getter".into()));
+    let getter_weak = vm.heap.weak_handle(getter).unwrap();
+    let key = PropertyKey::string(vm.intern_atom("field"));
+    vm.set_property_attributes(
+        owner,
+        key,
+        PropertyAttributes {
+            getter: Some(getter),
+            ..DEFAULT_PROPERTY_ATTRIBUTES
+        },
+    );
+
+    vm.collect_slow(&program, false);
+    assert_eq!(vm.heap.weak_value(getter_weak), Some(getter));
+
+    vm.set_property_attributes(owner, key, DEFAULT_PROPERTY_ATTRIBUTES);
+    vm.collect_slow(&program, true);
+    assert!(vm.heap.weak_value(getter_weak).is_none());
+    assert!(vm.heap.release_root(owner_root));
+}
+
+#[test]
 fn shape_roots_keep_symbols_and_active_accessors_alive() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
     use crate::heap::Cell;
@@ -1882,6 +1914,8 @@ fn definition_batch_roots_release_after_each_completion() {
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
             let result = vm.object_define_properties(&program, &values[..2]);
+            // End this direct host job before checking temporary-root cleanup.
+            vm.clear_kept_objects();
             match phase {
                 "success" => assert_eq!(result.unwrap(), values[0]),
                 "invalid-late" | "define-reject" => {
@@ -2180,25 +2214,10 @@ fn error_stack_setter_roots_release_after_each_completion() {
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
             let outcome = vm.error_stack_setter(&program, target, &[value]);
-            assert_eq!(
-                outcome.is_ok(),
-                matches!(phase, "missing" | "data" | "accessor"),
-                "{phase}"
-            );
-            if let Err(error) = outcome {
-                if phase.ends_with("-throw") {
-                    let atom = vm.intern_atom("marker");
-                    assert_eq!(
-                        error.thrown_value(),
-                        vm.own_property(vm.realm.globals, atom)
-                    );
-                } else {
-                    assert!(
-                        vm.format_error(&program, &error).starts_with("TypeError:"),
-                        "{phase}"
-                    );
-                }
-            }
+            // A borrowed V8 stack setter ignores receivers without captured
+            // stack data, including proxies, primitives and arbitrary accessors.
+            // It must not invoke their descriptor or setter hooks.
+            assert!(outcome.is_ok(), "{phase}");
             assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
             assert_eq!(vm.active_call_roots.len(), calls);
             vm.collect_now(&program);
@@ -3998,15 +4017,18 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         fixed_this: false,
     };
 
-    frame.prepare_registers(1);
+    frame.prepare_registers(1, crate::bytecode::InitialRegister::Undefined);
     assert_eq!(frame.registers, [Value::UNDEFINED]);
 
     frame.registers[0] = Value::heap(13);
-    frame.prepare_registers(3);
+    frame.prepare_registers(3, crate::bytecode::InitialRegister::Undefined);
     assert_eq!(
         frame.registers,
         [Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED]
     );
+    frame.registers[1] = Value::heap(13);
+    frame.prepare_registers(2, crate::bytecode::InitialRegister::I32Zero);
+    assert_eq!(frame.registers, [Value::integer(0), Value::integer(0)]);
     assert_eq!(frame.original_arguments, [Value::heap(14)]);
     frame.context = super::activation::CallContext::Function(Value::heap(15));
     let mut recycled = frame;
@@ -9108,5 +9130,93 @@ fn number_format_legacy_views_release_after_bound_or_options_completion() {
             assert_eq!(vm.active_call_roots.len(), calls);
             assert_eq!(vm.heap.root_count_for_test(), roots - 1);
         }
+    }
+}
+
+#[test]
+fn weak_ref_targets_are_kept_until_host_checkpoint() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for dereference in [false, true] {
+            let mut vm = Vm::new(SilentHost);
+            let program = compile("var weak = new WeakRef({});", "weak-ref-job.js").unwrap();
+            vm.execute(&program).unwrap();
+            let key = vm.intern_atom("weak");
+            let weak = vm.own_property(vm.realm.globals, key).unwrap();
+            let target = match vm.heap.get(weak) {
+                Some(super::Cell::WeakRef { target, .. }) => target.unwrap(),
+                _ => panic!("expected weak reference"),
+            };
+            if dereference {
+                vm.clear_kept_objects();
+                let value = vm
+                    .call_collection_native(&program, Native::WeakRefDeref, weak, &[])
+                    .unwrap();
+                assert!(!value.is_undefined());
+            }
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(target).is_some());
+            vm.clear_kept_objects();
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(target).is_none());
+        }
+    }
+}
+
+#[test]
+fn host_byte_views_preserve_intrinsics_backing_and_gc_edges() {
+    for compile in [Engine::specialize as fn(&str,&str)->_,Engine::specialize_unspecialized] {
+        let mut vm=Vm::new(SilentHost);let program=compile("0;","host-bytes.js").unwrap();vm.execute(&program).unwrap();
+        for bytes in [vec![],vec![0,127,128,255]] {
+            let view=vm.embedding_uint8_array(&bytes).unwrap();let root=vm.heap.root(view);
+            let prototype=match vm.heap.get(view) {Some(super::Cell::TypedArray{object,kind,buffer,..})=>{
+                assert_eq!(*kind,TypedArrayKind::Uint8);
+                assert!(matches!(vm.heap.get(*buffer),Some(super::Cell::ArrayBuffer{shared:false,detached:false,resizable:false,immutable:false,..})));
+                object.proto
+            },_=>panic!("expected Uint8Array")};
+            assert_eq!(prototype,vm.typed_array_proto(TypedArrayKind::Uint8));
+            vm.collect_now(&program);let view=vm.heap.root_value(root).unwrap();
+            assert_eq!(vm.embedding_view_bytes(view).unwrap(),bytes);
+            vm.heap.release_root(root);
+        }
+    }
+}
+
+#[test]
+fn private_host_weak_roots_clear_before_slot_reuse_without_kept_objects() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let mut vm = Vm::new(SilentHost);
+        let program = compile("0;", "host-weak.js").unwrap();
+        vm.execute(&program).unwrap();
+        let target = vm
+            .heap
+            .alloc(super::Cell::Object(Vm::<SilentHost>::empty_object(
+                Value::NULL,
+            )));
+        let strong = vm.heap.root(target);
+        let weak = vm.embedding_host_weak_root(strong).unwrap();
+        vm.collect_now(&program);
+        assert_eq!(
+            vm.embedding_host_weak_value(weak),
+            Some(vm.heap.root_value(strong).unwrap())
+        );
+        vm.heap.release_root(strong);
+        vm.collect_now(&program);
+        assert!(vm.embedding_host_weak_value(weak).is_none());
+        let replacement = vm
+            .heap
+            .alloc(super::Cell::Object(Vm::<SilentHost>::empty_object(
+                Value::NULL,
+            )));
+        assert!(vm.heap.is_live(replacement));
+        assert!(vm.embedding_host_weak_value(weak).is_none());
+        let other = Vm::new(SilentHost);
+        assert!(other.embedding_host_weak_value(weak).is_none());
+        vm.heap.release_root(weak);
     }
 }

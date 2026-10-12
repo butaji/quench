@@ -54,6 +54,28 @@ const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] 
     BinaryOperator::BitwiseAnd,
 ];
 
+/// Binary operator immediates up to this one are equality and relational
+/// comparisons, in `integer_relation` order.
+const LAST_RELATIONAL_OPERATOR: u32 = 7;
+
+/// The integer fast path of an equality or relational operator.
+#[inline(always)]
+pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {
+    if op > LAST_RELATIONAL_OPERATOR {
+        return None;
+    }
+    let (a, b) = Value::int_pair(left, right)?;
+    Some(match op {
+        0 | 2 => a == b,
+        1 | 3 => a != b,
+        4 => a < b,
+        5 => a <= b,
+        6 => a > b,
+        7 => a >= b,
+        _ => unreachable!("relational operator range"),
+    })
+}
+
 #[inline(always)]
 fn numeric_binary_operator(immediate: u32) -> Option<BinaryOperator> {
     let index = immediate.checked_sub(FIRST_NUMERIC_BINARY_OPERATOR)? as usize;
@@ -1393,10 +1415,16 @@ impl<H: Host> Vm<H> {
         right: Value,
     ) -> Result<Value, JsError> {
         let Some(Cell::BigInt(left)) = self.heap.get(left) else {
-            return Err(self.type_error(p, "Cannot mix BigInt and other types".into()));
+            return Err(self.type_error(
+                p,
+                "Cannot mix BigInt and other types, use explicit conversions".into(),
+            ));
         };
         let Some(Cell::BigInt(right)) = self.heap.get(right) else {
-            return Err(self.type_error(p, "Cannot mix BigInt and other types".into()));
+            return Err(self.type_error(
+                p,
+                "Cannot mix BigInt and other types, use explicit conversions".into(),
+            ));
         };
         let result = match op {
             8 => crate::bigint::binary(left, right, |a, b| Ok(a + b)),
@@ -1511,30 +1539,44 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<bool, JsError> {
-        if op <= LAST_COMPARISON_OPERATOR {
-            if let Some((a, b)) = Value::int_pair(left, right) {
-                self.record_binary_value_path(
-                    op,
-                    left,
-                    right,
-                    crate::profile::BinaryValuePath::IntegerFastPath,
-                );
-                return Ok(number_comparison(op, f64::from(a), f64::from(b)));
-            }
-            // Equality, strict equality and the relational operators agree with IEEE 754
-            // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
-            if let (Some(a), Some(b)) = (left.as_number(), right.as_number()) {
-                self.record_binary_value_path(
-                    op,
-                    left,
-                    right,
-                    crate::profile::BinaryValuePath::NumberFastPath,
-                );
-                return Ok(number_comparison(op, a, b));
-            }
+        if let Some(result) = self.number_comparison_truthy(op, left, right) {
+            return Ok(result);
         }
         let value = self.binary(p, op, left, right)?;
         Ok(self.truthy(value))
+    }
+
+    /// `binary_truthy` for a comparison of two numbers, which runs no guest code; `None` for
+    /// any other operator or operand.
+    #[inline(always)]
+    pub(super) fn number_comparison_truthy(
+        &mut self,
+        op: u32,
+        left: Value,
+        right: Value,
+    ) -> Option<bool> {
+        if op > LAST_COMPARISON_OPERATOR {
+            return None;
+        }
+        if let Some((a, b)) = Value::int_pair(left, right) {
+            self.record_binary_value_path(
+                op,
+                left,
+                right,
+                crate::profile::BinaryValuePath::IntegerFastPath,
+            );
+            return Some(number_comparison(op, f64::from(a), f64::from(b)));
+        }
+        // Equality, strict equality and the relational operators agree with IEEE 754
+        // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
+        let (a, b) = (left.as_number()?, right.as_number()?);
+        self.record_binary_value_path(
+            op,
+            left,
+            right,
+            crate::profile::BinaryValuePath::NumberFastPath,
+        );
+        Some(number_comparison(op, a, b))
     }
     pub(super) fn numeric(
         &mut self,

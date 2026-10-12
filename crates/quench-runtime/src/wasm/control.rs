@@ -49,6 +49,26 @@ enum IfArm {
     Else,
 }
 
+/// An i32 branch condition: a register, or a comparison fused into the jump.
+#[derive(Clone, Copy)]
+pub(super) enum Condition {
+    Value(Register),
+    Comparison(I32BinaryOperator, Register, Register),
+    /// A comparison with a constant that fits the jump's signed field.
+    ConstantComparison(I32BinaryOperator, Register, i16),
+    Zero(Register),
+}
+
+/// A branch label resolved against the current operand stack.
+#[derive(Clone, Copy)]
+struct BranchTarget {
+    index: usize,
+    base: Register,
+    arity: Register,
+    head: Option<usize>,
+    values: Register,
+}
+
 pub(super) struct Control {
     kind: Kind,
     base: Register,
@@ -68,10 +88,11 @@ struct Delegation {
 }
 
 impl Control {
-    pub(super) fn function(results: Register) -> Self {
+    /// The function's operand stack starts above its prologue binding registers.
+    pub(super) fn function(base: Register, results: Register) -> Self {
         Self {
             kind: Kind::Function,
-            base: 0,
+            base,
             params: 0,
             results,
             saved_inputs: None,
@@ -119,13 +140,14 @@ impl Lowering<'_> {
             )?,
             Operator::If { blockty } => {
                 let condition = if self.path == Reachability::Live {
-                    Some(self.pop()?)
+                    Some(self.pop_condition()?)
                 } else {
                     None
                 };
+                self.materialize_aliases()?;
                 self.begin(Kind::If(IfArm::Then { false_jump: None }), *blockty)?;
                 let false_jump = condition
-                    .map(|condition| self.jump(Op::JumpFalse, condition))
+                    .map(|condition| self.jump_on(condition, false))
                     .transpose()?;
                 self.controls.last_mut().unwrap().kind = Kind::If(IfArm::Then { false_jump });
             }
@@ -139,7 +161,8 @@ impl Lowering<'_> {
             }
             Operator::BrIf { relative_depth } => {
                 if self.path == Reachability::Live {
-                    let condition = self.pop()?;
+                    let condition = self.pop_condition()?;
+                    self.materialize_aliases()?;
                     self.branch_if(*relative_depth, condition)?;
                 }
             }
@@ -163,7 +186,7 @@ impl Lowering<'_> {
                         )?;
                         self.push()?;
                     }
-                    self.branch_if(*relative_depth, condition)?;
+                    self.branch_if(*relative_depth, Condition::Value(condition))?;
                     self.depth = without_reference;
                     if !carry_reference {
                         self.push()?;
@@ -173,27 +196,8 @@ impl Lowering<'_> {
             Operator::BrTable { targets } => {
                 if self.path == Reachability::Live {
                     let index = self.pop()?;
-                    let depth = self.depth;
-                    self.push()?; // Keep the selector live while allocating scratch slots.
-                    let constant = self.push()?;
-                    let condition = self.push()?;
-                    self.depth = depth;
-                    for (ordinal, target) in targets.targets().enumerate() {
-                        let target = target
-                            .map_err(|e| Diagnostic::unsupported(self.name, e.to_string()))?;
-                        let ordinal = u32::try_from(ordinal)
-                            .map_err(|_| self.control_error("Wasm branch table too large"))?;
-                        self.load_i32(constant, ordinal as i32)?;
-                        self.emit(
-                            Op::WasmI32Binary,
-                            condition,
-                            index,
-                            constant,
-                            I32BinaryOperator::Equal as u32,
-                        )?;
-                        self.branch_if(target, condition)?;
-                    }
-                    self.branch(targets.default())?;
+                    self.materialize_aliases()?;
+                    self.branch_table(index, &targets)?;
                     self.make_dead();
                 }
             }
@@ -215,12 +219,16 @@ impl Lowering<'_> {
                     let right = self.pop()?;
                     let left = self.pop()?;
                     let result = self.push()?;
-                    debug_assert_eq!(result, left);
-                    let false_jump = self.jump(Op::JumpFalse, condition)?;
-                    let end = self.jump(Op::Jump, 0)?;
-                    self.patch_jump(false_jump, self.code.len())?;
-                    self.emit(Op::Move, result, right, 0, 0)?;
-                    self.patch_jump(end, self.code.len())?;
+                    self.emit(
+                        Op::WasmSelect,
+                        result,
+                        left,
+                        right,
+                        crate::bytecode::ImmediateLayout::register_pair_immediate(
+                            condition, condition,
+                        ),
+                    )?;
+                    self.produced(result);
                 }
             }
             _ => return Ok(false),
@@ -293,13 +301,13 @@ impl Lowering<'_> {
 
     fn exception_slot(&mut self) -> Result<u16, Diagnostic> {
         let slot = self
-            .locals
+            .temporary_base
             .checked_add(self.temporary_locals)
             .ok_or_else(|| self.control_error("too many Wasm exception locals"))?;
         self.temporary_locals = self
             .temporary_locals
             .checked_add(1)
-            .filter(|temporary| self.locals.checked_add(*temporary).is_some())
+            .filter(|temporary| self.temporary_base.checked_add(*temporary).is_some())
             .ok_or_else(|| self.control_error("too many Wasm exception locals"))?;
         Ok(slot)
     }
@@ -551,7 +559,7 @@ impl Lowering<'_> {
             let tag = self.tag_binding(tag)?;
             let condition = self.push()?;
             self.emit(Op::WasmExceptionMatch, condition, exception, tag, 0)?;
-            Some(self.jump(Op::JumpFalse, condition)?)
+            Some(self.jump_on(Condition::Value(condition), false)?)
         } else {
             None
         };
@@ -640,7 +648,7 @@ impl Lowering<'_> {
         // their operand registers. Hidden frame locals preserve those inputs.
         let saved_inputs =
             if matches!(kind, Kind::If(_)) && params != 0 && self.path == Reachability::Live {
-                let first = self.locals + self.temporary_locals;
+                let first = self.temporary_base + self.temporary_locals;
                 first
                     .checked_add(params)
                     .ok_or_else(|| self.control_error("too many Wasm locals"))?;
@@ -755,17 +763,23 @@ impl Lowering<'_> {
         };
         if matches!(control.kind, Kind::Function) {
             if control.results == 0 {
-                self.emit(Op::LoadConst, 0, 0, 0, VOID_RESULT_CONSTANT)?;
+                self.emit(Op::LoadConst, control.base, 0, 0, VOID_RESULT_CONSTANT)?;
             }
             let result = if usize::from(control.results) > SCALAR_RETURN_ARITY {
                 let bundle = self.push()?;
                 self.emit(Op::MakeArray, bundle, 0, 0, u32::from(control.results))?;
                 for offset in 0..control.results {
-                    self.emit(Op::DefineArrayElement, offset, bundle, 0, u32::from(offset))?;
+                    self.emit(
+                        Op::DefineArrayElement,
+                        control.base + offset,
+                        bundle,
+                        0,
+                        u32::from(offset),
+                    )?;
                 }
                 bundle
             } else {
-                0
+                control.base
             };
             self.emit(Op::Return, result, 0, 0, 0)?;
         }
@@ -775,14 +789,134 @@ impl Lowering<'_> {
     pub(super) fn branch_if(
         &mut self,
         relative_depth: u32,
-        condition: Register,
+        condition: Condition,
     ) -> Result<(), Diagnostic> {
-        let fallthrough = self.jump(Op::JumpFalse, condition)?;
+        let target = self.branch_target(relative_depth)?;
+        if target.base == target.values || target.arity == 0 {
+            let jump = self.jump_on(condition, true)?;
+            return self.bind_branch(target, jump);
+        }
+        let fallthrough = self.jump_on(condition, false)?;
         self.branch(relative_depth)?;
         self.patch_jump(fallthrough, self.code.len())
     }
 
-    fn branch(&mut self, relative_depth: u32) -> Result<(), Diagnostic> {
+    /// Pop an i32 branch condition. A comparison that the previous operator
+    /// emitted only for this condition is withdrawn and becomes the jump.
+    /// Its operands stay intact: they sit in locals or popped positions,
+    /// which later materialization never writes.
+    pub(super) fn pop_condition(&mut self) -> Result<Condition, Diagnostic> {
+        let condition = self.pop()?;
+        let Some(pc) = self.previous_producer(condition) else {
+            return Ok(Condition::Value(condition));
+        };
+        let instruction = self.instruction(pc);
+        if let Some(comparison) = I32BinaryOperator::from_register_op(instruction.op())
+            && comparison.jump_op().is_some()
+        {
+            self.code.pop();
+            return Ok(Condition::Comparison(
+                comparison,
+                instruction.b(),
+                instruction.c(),
+            ));
+        }
+        if let Some(comparison) = I32BinaryOperator::from_immediate_op(instruction.op())
+            && comparison.immediate_jump_op().is_some()
+            && let Ok(constant) = i16::try_from(instruction.imm() as i32)
+        {
+            self.code.pop();
+            return Ok(Condition::ConstantComparison(
+                comparison,
+                instruction.b(),
+                constant,
+            ));
+        }
+        if instruction.op() == Op::WasmI32Unary
+            && I32UnaryOperator::from_tag(instruction.imm()) == Some(I32UnaryOperator::EqualZero)
+        {
+            self.code.pop();
+            return Ok(Condition::Zero(instruction.b()));
+        }
+        Ok(Condition::Value(condition))
+    }
+
+    /// Emit a jump taken when `condition` holds (`when`) or fails.
+    pub(super) fn jump_on(
+        &mut self,
+        condition: Condition,
+        when: bool,
+    ) -> Result<usize, Diagnostic> {
+        let pc = self.code.len();
+        match condition {
+            Condition::Comparison(comparison, left, right) => {
+                let comparison = if when {
+                    comparison
+                } else {
+                    comparison
+                        .negated_comparison()
+                        .expect("fusable comparison has a negation")
+                };
+                let op = comparison.jump_op().expect("fusable comparison has a jump");
+                self.emit(op, left, right, 0, 0)?;
+            }
+            Condition::ConstantComparison(comparison, left, constant) => {
+                let comparison = if when {
+                    comparison
+                } else {
+                    comparison
+                        .negated_comparison()
+                        .expect("fusable comparison has a negation")
+                };
+                let op = comparison
+                    .immediate_jump_op()
+                    .expect("fusable comparison has a constant jump");
+                self.emit(op, left, constant as u16, 0, 0)?;
+            }
+            Condition::Zero(value) => {
+                let op = if when {
+                    Op::WasmJumpI32Zero
+                } else {
+                    Op::WasmJumpI32NonZero
+                };
+                self.emit(op, value, 0, 0, 0)?;
+            }
+            Condition::Value(value) => {
+                if when && let Some((step, source, addend)) = self.take_counter_step(value) {
+                    self.emit(Op::WasmI32AddImmediateJumpNonZero, value, source, addend, 0)?;
+                    return Ok(step);
+                }
+                let op = if when {
+                    Op::WasmJumpI32NonZero
+                } else {
+                    Op::WasmJumpI32Zero
+                };
+                self.emit(op, value, 0, 0, 0)?;
+            }
+        }
+        Ok(pc)
+    }
+
+    /// A counted loop's step `value = source ± k`, emitted last, that the
+    /// branch on `value` can absorb: its position, source and addend.
+    fn take_counter_step(&mut self, value: Register) -> Option<(usize, Register, u16)> {
+        let (pc, step) = self.fusable_last()?;
+        if step.a() != value {
+            return None;
+        }
+        let addend = if step.op() == I32BinaryOperator::Add.immediate_op() {
+            step.imm() as i32
+        } else if step.op() == I32BinaryOperator::Subtract.immediate_op() {
+            (step.imm() as i32).checked_neg()?
+        } else {
+            return None;
+        };
+        let addend = i16::try_from(addend).ok()?;
+        self.code.pop();
+        Some((pc, step.b(), addend as u16))
+    }
+
+    fn branch_target(&self, relative_depth: u32) -> Result<BranchTarget, Diagnostic> {
         let distance = usize::try_from(relative_depth)
             .ok()
             .and_then(|depth| depth.checked_add(1))
@@ -802,19 +936,67 @@ impl Lowering<'_> {
             .checked_sub(arity)
             .filter(|values| *values >= self.control_base())
             .ok_or_else(|| self.control_error("missing Wasm branch values"))?;
+        Ok(BranchTarget {
+            index,
+            base,
+            arity,
+            head,
+            values,
+        })
+    }
+
+    /// Point a jump at its label: a loop head now, a block end when it closes.
+    fn bind_branch(&mut self, target: BranchTarget, jump: usize) -> Result<(), Diagnostic> {
+        if let Some(head) = target.head {
+            self.patch_jump(jump, head)
+        } else {
+            self.controls[target.index].exits.push(jump);
+            Ok(())
+        }
+    }
+
+    /// One `Jump` entry per case and a final default entry follow the table.
+    /// An entry whose label needs value moves jumps to a pad after the
+    /// entries that moves them and branches.
+    fn branch_table(
+        &mut self,
+        index: Register,
+        targets: &wasmparser::BrTable<'_>,
+    ) -> Result<(), Diagnostic> {
+        let labels = targets
+            .targets()
+            .chain(std::iter::once(Ok(targets.default())))
+            .collect::<Result<Vec<u32>, _>>()
+            .map_err(|e| Diagnostic::unsupported(self.name, e.to_string()))?;
+        let cases = u32::try_from(labels.len() - 1)
+            .map_err(|_| self.control_error("Wasm branch table too large"))?;
+        self.emit(Op::WasmBranchTable, index, 0, 0, cases)?;
+        let entries = labels
+            .iter()
+            .map(|_| self.jump(Op::Jump, 0))
+            .collect::<Result<Vec<usize>, _>>()?;
+        for (entry, label) in entries.into_iter().zip(labels) {
+            let target = self.branch_target(label)?;
+            if target.base == target.values || target.arity == 0 {
+                self.bind_branch(target, entry)?;
+            } else {
+                self.patch_jump(entry, self.code.len())?;
+                self.branch(label)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn branch(&mut self, relative_depth: u32) -> Result<(), Diagnostic> {
+        let target = self.branch_target(relative_depth)?;
         // Destinations are below sources, so ascending moves preserve overlap.
-        for offset in 0..arity {
-            if base != values {
-                self.emit(Op::Move, base + offset, values + offset, 0, 0)?;
+        for offset in 0..target.arity {
+            if target.base != target.values {
+                self.emit(Op::Move, target.base + offset, target.values + offset, 0, 0)?;
             }
         }
         let jump = self.jump(Op::Jump, 0)?;
-        if let Some(head) = head {
-            self.patch_jump(jump, head)?;
-        } else {
-            self.controls[index].exits.push(jump);
-        }
-        Ok(())
+        self.bind_branch(target, jump)
     }
 
     pub(super) fn control_base(&self) -> Register {

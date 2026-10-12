@@ -1,8 +1,48 @@
-use super::{Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, Object};
+use super::{Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, IteratorKind, Object};
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
 
 impl Heap {
+    pub(crate) fn collection_entry_deleted(&mut self, collection: Value, index: usize, map: bool) {
+        for slot in self.slots.iter_mut() {
+            let Some(Cell::Iterator {
+                source,
+                kind,
+                index: cursor,
+                done,
+                ..
+            }) = slot.cell.as_mut()
+            else {
+                continue;
+            };
+            let tracks_map = matches!(kind, IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries);
+            let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
+            if *source == collection && !*done && ((map && tracks_map) || (!map && tracks_set)) && *cursor > index {
+                *cursor -= 1;
+            }
+        }
+    }
+
+    pub(crate) fn collection_cleared(&mut self, collection: Value, map: bool) {
+        for slot in self.slots.iter_mut() {
+            let Some(Cell::Iterator {
+                source,
+                kind,
+                index,
+                done,
+                ..
+            }) = slot.cell.as_mut()
+            else {
+                continue;
+            };
+            let tracks_map = matches!(kind, IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries);
+            let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
+            if *source == collection && !*done && ((map && tracks_map) || (!map && tracks_set)) {
+                *index = 0;
+            }
+        }
+    }
+
     pub(crate) fn environment_binding_owner(&self, environment: Value) -> Option<Value> {
         match self.get(environment)? {
             Cell::Environment { scope, .. } => match scope.dynamic_bindings {
@@ -129,7 +169,8 @@ impl Heap {
             return None;
         }
         // SAFETY: the explicit range check proves the slot index is valid.
-        unsafe { self.slots.get_unchecked_mut(index) }.cell.as_mut()
+        self.remember(index);
+        unsafe { self.slots.get_unchecked_mut(index).cell.as_mut() }
     }
 
     pub(crate) fn object(&self, value: Value) -> Option<&Object> {
@@ -184,12 +225,18 @@ impl Heap {
         }
     }
 
-    pub(super) fn object_at_index_mut(&mut self, index: usize) -> Option<&mut Object> {
-        self.slots.get_mut(index)?.cell.as_mut()?.object_mut()
-    }
-
-    #[cfg(test)]
-    pub(super) fn cell_at_index(&self, index: usize) -> Option<&Cell> {
-        self.slots.get(index)?.cell.as_ref()
+    pub(super) fn remember(&mut self, index: usize) {
+        if !self.tracks_young_cells()
+            || index >= self.slots.len()
+            || !Heap::marked(&self.marks, index)
+        {
+            return;
+        }
+        self.remembered_marks.resize(self.marks.len(), 0);
+        if self.remembered_marks[index / 64] & (1 << (index % 64)) != 0 {
+            return;
+        }
+        self.remembered_marks[index / 64] |= 1 << (index % 64);
+        self.remembered.push(index as u32);
     }
 }
