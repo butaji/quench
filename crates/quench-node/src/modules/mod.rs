@@ -14,6 +14,7 @@ pub(crate) mod clone_shared_vm;
 pub(crate) mod child_process_shared_vm;
 pub(crate) mod child_process_env_shared_vm;
 pub(crate) mod child_process_stdio_shared_vm;
+pub(crate) mod child_process_options_shared_vm;
 pub(crate) mod child_process_ipc_shared_vm;
 pub(crate) mod child_process_input_shared_vm;
 #[cfg(unix)]
@@ -47,6 +48,8 @@ pub(crate) mod http_protocol;
 pub(crate) mod http_shared_vm;
 pub(crate) mod net_config;
 pub(crate) mod net_shared_vm;
+pub(crate) mod net_endpoint_shared_vm;
+pub(crate) mod net_reference_shared_vm;
 pub(crate) mod module_shared_vm;
 pub(crate) mod os_facts;
 pub(crate) mod os_shared_vm;

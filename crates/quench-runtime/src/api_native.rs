@@ -170,6 +170,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Apply the shared object integrity operation, including Proxy traps.
+    pub fn prevent_extensions_rooted(&mut self, object: RootId) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_prevent_extensions(object);
+        result.map_err(|error| self.error(error))
+    }
+
     /// Apply [[HasProperty]], including prototype lookup and Proxy has traps.
     pub fn has_property_rooted(
         &mut self,

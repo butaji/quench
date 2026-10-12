@@ -3,7 +3,7 @@
 use crate::host::{node_host::SharedChildProcess, NodeHost};
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::{
-    process::{Command, Stdio},
+    process::Command,
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc,
@@ -16,7 +16,7 @@ use std::time::Duration;
 static NEXT_CHILD_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan, requestRead, flushStdio) => {
+    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan, requestRead, flushStdio, prepareOptions, validateFile, syncOptions, disposeNative, disposeKey, referenceNative) => {
     const { EventEmitter } = globalThis.process.getBuiltinModule("events");
     class ChildProcess extends EventEmitter {
       constructor(file, args, started, options) {
@@ -56,6 +56,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
         else if (type === "stdoutEnd") this.stdout?.push(null);
         else if (type === "stderrEnd") this.stderr?.push(null);
         else if (type === "exit") {
+          this._handle = null;
           this.exitCode = value;
           this.signalCode = value2;
           if (this.__quenchTimeout !== undefined) clearTimeout(this.__quenchTimeout);
@@ -101,7 +102,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
         else signal.addEventListener("abort", abort, { once: true });
       }
       const timeout = options?.timeout;
-      if (timeout !== undefined && timeout !== 0 && !started.errorCode) {
+      if (timeout != null && timeout !== 0 && !started.errorCode) {
         this.__quenchTimeout = setTimeout(() => {
           if (this.exitCode === null && this.signalCode === null) {
             this.kill(options.killSignal || "SIGTERM");
@@ -121,20 +122,13 @@ const FACTORY: &str = quench_js_check::checked_js!(
         }
       }
 
-      ref() { return this; }
-      unref() { return this; }
+
     }
+  ChildProcess.prototype[disposeKey] = function() { disposeNative(this); };
+  ChildProcess.prototype.ref = function ref() { referenceNative(this, true); };
+  ChildProcess.prototype.unref = function unref() { referenceNative(this, false); };
   const spawn = (file, args, options) => {
-    if (typeof file !== "string") {
-      throw Object.assign(new TypeError('The "file" argument must be of type string.'), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
-    if (file.length === 0) {
-      throw Object.assign(new TypeError('The "file" argument must be a non-empty string.'), {
-        code: "ERR_INVALID_ARG_VALUE"
-      });
-    }
+    file = validateFile(file);
     if (args === undefined || args === null) {
       args = [];
     } else if (!Array.isArray(args)) {
@@ -151,26 +145,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
       options = args;
       args = [];
     }
-    if (options !== undefined &&
-        (options === null || typeof options !== "object" || Array.isArray(options))) {
-      throw Object.assign(new TypeError('The "options" argument must be of type object.'), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
-    if (options?.timeout !== undefined &&
-        (typeof options.timeout !== "number" || !Number.isFinite(options.timeout) || options.timeout < 0)) {
-      throw Object.assign(new RangeError('ERR_INVALID_ARG_TYPE: The value of "timeout" is out of range. It must be an unsigned integer.'), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
-    for (const name of ["uid", "gid"]) {
-      if (options?.[name] !== undefined &&
-          (!Number.isInteger(options[name]) || options[name] < 0 || options[name] > 0xFFFFFFFF)) {
-        throw Object.assign(new RangeError(`The value of "options.${name}" is out of range.`), {
-          code: "ERR_OUT_OF_RANGE"
-        });
-      }
-    }
+    options = prepareOptions(options, false);
     if (options?.shell) {
       const shell = typeof options.shell === "string"
         ? options.shell
@@ -185,24 +160,14 @@ const FACTORY: &str = quench_js_check::checked_js!(
     return new ChildProcess(file, args, spawnNative(file, args, options), options);
   };
   const spawnSyncFunction = (command, args, options) => {
+    command = validateFile(command);
     if (args === undefined || args === null) {
       args = [];
     } else if (!Array.isArray(args)) {
       options = args;
       args = [];
     }
-    if (options !== undefined &&
-        (options === null || typeof options !== "object" || Array.isArray(options))) {
-      throw Object.assign(new TypeError('The "options" argument must be of type object.'), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
-    if (options?.argv0 !== undefined && typeof options.argv0 !== "string") {
-      const received = Array.isArray(options.argv0) ? " Received an instance of Array" : "";
-      throw Object.assign(new TypeError(`The "options.argv0" property must be of type string.${received}`), {
-        code: "ERR_INVALID_ARG_TYPE"
-      });
-    }
+    options = prepareOptions(options, true);
     let file = command;
     let actualArgs = args || [];
     if (options?.shell) {
@@ -219,8 +184,6 @@ const FACTORY: &str = quench_js_check::checked_js!(
       delete options.shell;
     }
     const result = spawnSync(file, actualArgs, options);
-    result.stdout = Buffer.from(result.stdout);
-    result.stderr = Buffer.from(result.stderr);
     return result;
   };
   const parseFileArguments = (args, options, callback) => {
@@ -263,10 +226,9 @@ const FACTORY: &str = quench_js_check::checked_js!(
     return spawn(plan.file, plan.args, plan.options);
   }
   const synchronousCommand = (command, args, options, useShell) => {
-    const result = spawnSyncFunction(command, args, { ...(options || {}), shell: useShell });
-    const encoding = options?.encoding;
-    const stdout = encoding && encoding !== "buffer" ? result.stdout.toString(encoding) : result.stdout;
-    const stderr = encoding && encoding !== "buffer" ? result.stderr.toString(encoding) : result.stderr;
+    const result = spawnSyncFunction(command, args, syncOptions(options, useShell));
+    const stdout = result.stdout;
+    const stderr = result.stderr;
     if (result.error || result.status !== 0) {
       const error = result.error || new Error(`Command failed: ${command}`);
       error.status = result.status;
@@ -293,9 +255,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let global = context.global_root()?;
     let key = context.string_rooted("Buffer");
     let buffer = context.get_property_rooted(global, key)?;
-    let spawn_sync = context.host_function(crate::host::shared_vm::operation(
-        "childProcessSpawnSync",
-    ))?;
+    let prototype = property(context, buffer, "prototype")?;
+    let spawn_sync = context.host_function_with_data(
+        crate::host::shared_vm::operation("childProcessSpawnSync"),
+        prototype,
+    )?;
     let spawn = context.host_function(crate::host::shared_vm::operation("childProcessSpawn"))?;
     let register = context.host_function(crate::host::shared_vm::operation("childProcessRegister"))?;
     let write = context.host_function(crate::host::shared_vm::operation("childProcessWrite"))?;
@@ -312,6 +276,25 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let flush_stdio =
         context.host_function(crate::host::shared_vm::operation("childProcessFlushStdio"))?;
     let read = context.host_function(crate::host::shared_vm::operation("childProcessRead"))?;
+    let prepare_options = context.host_function(crate::host::shared_vm::operation(
+        "childProcessPrepareOptions",
+    ))?;
+    let validate_file = context.host_function(crate::host::shared_vm::operation(
+        "childProcessValidateFile",
+    ))?;
+    let sync_options =
+        context.host_function(crate::host::shared_vm::operation("childProcessSyncOptions"))?;
+    let dispose =
+        context.host_function(crate::host::shared_vm::operation("childProcessDispose"))?;
+    let operations = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .event_targets_api
+        .ok_or_else(|| RootedError::host("child disposal symbol owner missing"))?;
+    let dispose_key = property(context, operations, "disposeKey")?;
+    let reference =
+        context.host_function(crate::host::shared_vm::operation("childProcessReference"))?;
     let factory = context.evaluate_script_rooted(FACTORY, "node:child_process/shared.js")?;
     let undefined = context.undefined();
     let module = context.call_rooted(
@@ -328,6 +311,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             fork_plan,
             read,
             flush_stdio,
+            prepare_options,
+            validate_file,
+            sync_options,
+            dispose,
+            dispose_key,
+            reference,
         ],
     )?;
     let key = context.string_rooted("spawn");
@@ -352,7 +341,7 @@ pub(crate) fn spawn_child(
         let error = context.type_error_rooted("The \"file\" argument must be of type string")?;
         return Err(context.throw(error));
     };
-    let file = context.to_string(command_arg)?;
+    let file = super::child_process_options_shared_vm::file_text(context, command_arg)?;
     let arguments = args
         .get(1)
         .copied()
@@ -379,7 +368,7 @@ pub(crate) fn spawn_child(
     command.args(&arguments);
     let stdio = super::child_process_stdio_shared_vm::normalize(context, options)?;
     let cwd = options
-        .map(|root| property_string(context, root, "cwd"))
+        .map(|root| property_cwd(context, root))
         .transpose()?
         .flatten();
     if let Some(env) = options
@@ -390,8 +379,11 @@ pub(crate) fn spawn_child(
         super::child_process_env_shared_vm::configure(context, &mut command, env)?;
     }
 
+    let identity =
+        super::child_process_options_shared_vm::Identity::from_options(context, options)?;
     let configured = child_cwd(context, &mut command, cwd.as_deref())
         .and_then(|_| super::child_process_stdio_shared_vm::configure(&mut command, &stdio));
+    identity.configure(&mut command);
     let start = match configured
         .and_then(|configured| command.spawn().map(|child| (child, configured)))
     {
@@ -431,7 +423,7 @@ pub(crate) fn spawn_child(
                 .name("quench-child-wait".into())
                 .spawn(move || {
                     let (code, signal) = match child.wait() {
-                        Ok(status) => (status.code(), process_signal(&status)),
+                        Ok(status) => (status.code(), signal_name(&status).map(str::to_owned)),
                         Err(_) => (None, None),
                     };
                     let _ = sender.send(crate::host::node_host::ChildProcessEvent::Exit(
@@ -447,6 +439,9 @@ pub(crate) fn spawn_child(
                 .insert(
                     id,
                     SharedChildProcess {
+                        referenced: true,
+                        close_dispatched: false,
+                        handle_phase: crate::host::node_host::ChildHandlePhase::Open,
                         child: None,
                         stdout: None,
                         stderr: None,
@@ -465,13 +460,21 @@ pub(crate) fn spawn_child(
                 );
             (id, Some(pid), None, None, None)
         }
-        Err(error) => (
-            0,
-            None,
-            Some(spawn_error_code(error.raw_os_error())),
-            Some(error.to_string()),
-            error.raw_os_error().map(|number| -number),
-        ),
+        Err(error) => {
+            let code = spawn_error_code(error.raw_os_error());
+            #[cfg(unix)]
+            if !error.raw_os_error().is_some_and(|number| matches!(number, libc::EACCES | libc::EAGAIN | libc::EMFILE | libc::ENFILE | libc::ENOENT)) {
+                let exception = context.error_rooted(&format!("spawn {code}"))?;
+                if let Some(errno) = error.raw_os_error() {
+                    let errno = context.number(-f64::from(errno));
+                    set(context, exception, "errno", errno)?;
+                }
+                set_string(context, exception, "code", &code)?;
+                set_string(context, exception, "syscall", "spawn")?;
+                return Err(context.throw(exception));
+            }
+            (0, None, Some(code.clone()), Some(format!("spawn {file} {code}")), error.raw_os_error().map(|number| -number))
+        },
     };
 
     let result = context.object_rooted()?;
@@ -542,31 +545,11 @@ fn spawn_reader<R: Read + Send + 'static>(
     });
 }
 
-fn spawn_error_code(code: Option<i32>) -> &'static str {
-    match code {
-        Some(2) => "ENOENT",
-        Some(13) => "EACCES",
-        Some(8) => "ENOEXEC",
-        #[cfg(unix)]
-        Some(libc::EBADF) => "EBADF",
-        _ => "UNKNOWN",
-    }
-}
-
-#[cfg(unix)]
-fn process_signal(status: &std::process::ExitStatus) -> Option<String> {
-    use std::os::unix::process::ExitStatusExt;
-    status.signal().map(|signal| match signal {
-        2 => "SIGINT",
-        9 => "SIGKILL",
-        15 => "SIGTERM",
-        _ => "SIGTERM",
-    }.to_owned())
-}
-
-#[cfg(not(unix))]
-fn process_signal(_: &std::process::ExitStatus) -> Option<String> {
-    None
+fn spawn_error_code(code: Option<i32>) -> String {
+    code.map_or_else(
+        || "UNKNOWN".to_owned(),
+        |code| super::util_system_error_shared_vm::system_error_name(-f64::from(code)),
+    )
 }
 
 pub(crate) fn register_child(
@@ -621,6 +604,7 @@ pub(crate) fn register_child(
         .borrow_mut()
         .child_processes
         .insert(id, process);
+    install_process_handle(context, id, child)?;
     super::child_process_ipc_shared_vm::install(context, id, child)?;
     for (stream, is_stdout) in [(stdout, true), (stderr, false)] {
         if context
@@ -860,6 +844,9 @@ pub(crate) fn poll(
             let Some(process) = state.child_processes.get_mut(&id) else {
                 continue;
             };
+            if process.handle_phase == crate::host::node_host::ChildHandlePhase::Closing {
+                process.handle_phase = crate::host::node_host::ChildHandlePhase::Closed;
+            }
             let input_progress = process.stdin.progress();
             let mut events = Vec::new();
             loop {
@@ -884,13 +871,15 @@ pub(crate) fn poll(
             for event in &events {
                 match event {
                     ChildProcessEvent::Exit(code, signal) => {
+                        process.handle_phase = crate::host::node_host::ChildHandlePhase::Closing;
                         process.exit = Some((*code, signal.clone()));
                         exit = Some((*code, signal.clone()));
                     }
                     _ => {}
                 }
             }
-            let close = process.stdout_terminal
+            let close = !process.close_dispatched
+                && process.stdout_terminal
                 && process.stderr_terminal
                 && process.exit.is_some()
                 && process.ipc.as_ref().is_none_or(|channel| channel.closed())
@@ -939,7 +928,14 @@ pub(crate) fn poll(
             }
         }
         if let Some((code, signal)) = close {
+            if let Some(process) = shared_state.borrow_mut().child_processes.get_mut(&id) {
+                process.close_dispatched = true;
+            }
             dispatch_exit(runtime, program, child, "close", code, signal.as_deref())?;
+            progressed = true;
+        }
+        let finished = shared_state.borrow().child_processes.get(&id).is_some_and(|process| process.close_dispatched && process.handle_phase == crate::host::node_host::ChildHandlePhase::Closed);
+        if finished {
             let process = shared_state.borrow_mut().child_processes.remove(&id);
             if let Some(mut process) = process {
                 drop(process.ipc.take());
@@ -1050,12 +1046,14 @@ pub(crate) fn has_pending(
 ) -> bool {
     #[cfg(unix)]
     { shared_state.borrow().child_processes.values().any(|process|
-        process.exit.is_none() || process.stdin.has_pending()
+        (process.referenced && process.handle_phase == crate::host::node_host::ChildHandlePhase::Open)
+        || process.handle_phase == crate::host::node_host::ChildHandlePhase::Closing || process.stdin.has_pending()
+        || process.ipc.as_ref().is_some_and(super::child_process_ipc_shared_vm::IpcChannel::parent_has_work)
         || process.stdout_pipe.is_referenced() || process.stderr_pipe.is_referenced()
     ) }
     #[cfg(not(unix))]
     {
-        !shared_state.borrow().child_processes.is_empty()
+        shared_state.borrow().child_processes.values().any(|process| process.referenced && process.exit.is_none() || !process.stdout_terminal || !process.stderr_terminal || process.stdin.has_pending())
     }
 }
 
@@ -1072,7 +1070,7 @@ pub(crate) fn spawn_sync(
         let error = context.type_error_rooted("The \"file\" argument must be of type string")?;
         return Err(context.throw(error));
     };
-    let command = context.to_string(command_arg)?;
+    let command = super::child_process_options_shared_vm::file_text(context, command_arg)?;
     let arguments = args
         .get(1)
         .copied()
@@ -1090,7 +1088,7 @@ pub(crate) fn spawn_sync(
             .is_some_and(|value| value.is_undefined() || value.is_null())
     });
     let cwd = options
-        .map(|root| property_string(context, root, "cwd"))
+        .map(|root| property_cwd(context, root))
         .transpose()?
         .flatten();
     let max_buffer = if let Some(options) = options {
@@ -1118,6 +1116,11 @@ pub(crate) fn spawn_sync(
         super::child_process_exec_shared_vm::DEFAULT_MAX_BUFFER
     };
 
+    let timeout = sync_timeout(context, options)?;
+    let input = sync_input(context, options)?;
+    #[cfg(unix)]
+    let kill_signal = sync_kill_signal(context, options)?;
+    let stdio = super::child_process_stdio_shared_vm::normalize_sync(context, options)?;
     let mut process = Command::new(&command);
     let argv0 = options
         .map(|root| property_string(context, root, "argv0"))
@@ -1125,7 +1128,21 @@ pub(crate) fn spawn_sync(
         .flatten();
     set_command_arg0(&mut process, argv0.as_deref());
     process.args(&arguments);
-    process.stdout(Stdio::piped()).stderr(Stdio::piped());
+    process.stdin(
+        stdio[0]
+            .os()
+            .map_err(|error| RootedError::host(error.to_string()))?,
+    );
+    process.stdout(
+        stdio[1]
+            .os()
+            .map_err(|error| RootedError::host(error.to_string()))?,
+    );
+    process.stderr(
+        stdio[2]
+            .os()
+            .map_err(|error| RootedError::host(error.to_string()))?,
+    );
 
     let env = options
         .map(|root| property(context, root, "env"))
@@ -1134,49 +1151,53 @@ pub(crate) fn spawn_sync(
         super::child_process_env_shared_vm::configure(context, &mut process, env)?;
     }
 
-    let output = match child_cwd(context, &mut process, cwd.as_deref()).and_then(|_| process.spawn()) {
+    let identity =
+        super::child_process_options_shared_vm::Identity::from_options(context, options)?;
+    let output = match child_cwd(context, &mut process, cwd.as_deref()).and_then(|_| {
+        identity.configure(&mut process);
+        process.spawn()
+    }) {
         Ok(child) => {
             let pid = child.id();
             #[cfg(unix)]
-            let collected = super::child_process_sync::collect(child, max_buffer)
-                .map(|result| (result.output, result.limit_exceeded));
+            let collected =
+                super::child_process_sync::collect(child, max_buffer, timeout, kill_signal, &input)
+                    .map(|result| (result.output, result.error));
             #[cfg(not(unix))]
             let collected = {
-                let _ = max_buffer;
-                child.wait_with_output().map(|output| (output, false))
+                let _ = (max_buffer, timeout, input);
+                child.wait_with_output().map(|output| (output, None::<i32>))
             };
             match collected {
-                Ok((output, limit_exceeded)) => make_result(
-                    context,
-                    Some(pid),
-                    if limit_exceeded {
-                        None
-                    } else {
-                        output.status.code()
-                    },
-                    signal_name(&output.status),
-                    &output.stdout,
-                    &output.stderr,
-                    limit_exceeded.then(|| ("ENOBUFS", format!("spawnSync {command} ENOBUFS"))),
-                )?,
-                Err(error) => make_result(
-                    context,
-                    Some(pid),
-                    None,
-                    None,
-                    &[],
-                    &[],
-                    Some(("EIO", error.to_string())),
-                )?,
+                Ok((output, error)) => {
+                    let code = error.map(|errno| super::util_system_error_shared_vm::system_error_name(-f64::from(errno)));
+                    make_result(context, Some(pid), output.status.code(), signal_name(&output.status),
+                        stdio[1].piped().then_some(output.stdout.as_slice()), stdio[2].piped().then_some(output.stderr.as_slice()),
+                        code.as_deref().map(|code| (error, code, format!("spawnSync {command} {code}"))))?
+                },
+                Err(error) => {
+                    let code = spawn_error_code(error.raw_os_error());
+                    make_result(context, Some(pid), None, None,
+                        stdio[1].piped().then_some(&[]), stdio[2].piped().then_some(&[]),
+                        Some((error.raw_os_error(), code.as_str(), format!("spawnSync {command} {code}"))))?
+                },
             }
         }
         Err(error) => {
-            let code = error.raw_os_error().map_or("UNKNOWN", |code| match code {
-                2 => "ENOENT",
-                13 => "EACCES",
-                _ => "UNKNOWN",
-            });
-            make_result(context, None, None, None, &[], &[], Some((code, error.to_string())))?
+            let code = spawn_error_code(error.raw_os_error());
+            make_result(
+                context,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some((
+                    error.raw_os_error(),
+                    code.as_str(),
+                    format!("spawnSync {command} {code}"),
+                )),
+            )?
         }
     };
     #[cfg(unix)]
@@ -1184,18 +1205,8 @@ pub(crate) fn spawn_sync(
         let error = property(context, output, "error")?;
         if !context
             .rooted_value(error)
-            .is_some_and(|value| value.is_null())
+            .is_some_and(|value| value.is_null() || value.is_undefined())
         {
-            let code = property_string(context, error, "code")?.unwrap_or_default();
-            let number = match code.as_str() {
-                "ENOBUFS" => libc::ENOBUFS,
-                "ENOENT" => libc::ENOENT,
-                "EACCES" => libc::EACCES,
-                "EIO" => libc::EIO,
-                _ => libc::EINVAL,
-            };
-            let errno = context.number(f64::from(-number));
-            set(context, error, "errno", errno)?;
             set_string(context, error, "syscall", &format!("spawnSync {command}"))?;
             set(context, error, "path", command_arg)?;
             let values = arguments
@@ -1206,6 +1217,7 @@ pub(crate) fn spawn_sync(
             set(context, error, "spawnargs", spawnargs)?;
         }
     }
+    project_sync_output(context, output, options)?;
     Ok(output)
 }
 
@@ -1224,16 +1236,20 @@ fn make_result(
     pid: Option<u32>,
     status: Option<i32>,
     signal: Option<&str>,
-    stdout: &[u8],
-    stderr: &[u8],
-    error: Option<(&str, String)>,
+    stdout: Option<&[u8]>,
+    stderr: Option<&[u8]>,
+    error: Option<(Option<i32>, &str, String)>,
 ) -> Result<RootId, RootedError> {
     let result = context.object_rooted()?;
-    let pid = match pid {
-        Some(pid) => context.number(pid as f64),
-        None => context.null(),
-    };
-    set(context, result, "pid", pid)?;
+    if let Some((errno, code, message)) = error {
+        let value = context.error_rooted(&message)?;
+        if let Some(errno) = errno {
+            let errno = context.number(-f64::from(errno));
+            set(context, value, "errno", errno)?;
+        }
+        set_string(context, value, "code", code)?;
+        set(context, result, "error", value)?;
+    }
     let status = match status {
         Some(status) => context.number(status as f64),
         None => context.null(),
@@ -1244,28 +1260,76 @@ fn make_result(
         None => context.null(),
     };
     set(context, result, "signal", signal)?;
-    let stdout = bytes_array(context, stdout)?;
-    let stderr = bytes_array(context, stderr)?;
+    let (stdout, stderr, output) = if pid.is_some() {
+        let stdout = match stdout {
+            Some(bytes) => sync_buffer(context, bytes)?,
+            None => context.null(),
+        };
+        let stderr = match stderr {
+            Some(bytes) => sync_buffer(context, bytes)?,
+            None => context.null(),
+        };
+        let null = context.null();
+        let output = context.array_rooted(&[null, stdout, stderr])?;
+        (stdout, stderr, output)
+    } else {
+        let undefined = context.undefined();
+        let null = context.null();
+        (undefined, undefined, null)
+    };
+    set(context, result, "output", output)?;
+    let pid = context.number(pid.unwrap_or(0) as f64);
+    set(context, result, "pid", pid)?;
     set(context, result, "stdout", stdout)?;
     set(context, result, "stderr", stderr)?;
-    let error_value = if let Some((code, message)) = error {
-        let value = context.error_rooted(&message)?;
-        set_string(context, value, "code", code)?;
-        set_string(context, value, "message", &message)?;
-        value
-    } else {
-        context.null()
-    };
-    set(context, result, "error", error_value)?;
     Ok(result)
 }
 
-fn bytes_array(context: &mut NativeContext<'_, NodeHost>, bytes: &[u8]) -> Result<RootId, RootedError> {
-    let values = bytes
-        .iter()
-        .map(|byte| context.number(f64::from(*byte)))
-        .collect::<Vec<_>>();
-    context.array_rooted(&values)
+fn sync_buffer(
+    context: &mut NativeContext<'_, NodeHost>,
+    bytes: &[u8],
+) -> Result<RootId, RootedError> {
+    let prototype = context.host_function_data()?;
+    let buffer = context.uint8_array_rooted(bytes)?;
+    context.set_prototype_rooted(buffer, prototype)?;
+    Ok(buffer)
+}
+
+fn project_sync_output(
+    context: &mut NativeContext<'_, NodeHost>,
+    result: RootId,
+    options: Option<RootId>,
+) -> Result<(), RootedError> {
+    let Some(options) = options else {
+        return Ok(());
+    };
+    let encoding = property(context, options, "encoding")?;
+    if !context.truthy_rooted(encoding)?
+        || context.string_text(encoding)?.as_deref() == Some("buffer")
+    {
+        return Ok(());
+    }
+    let output = property(context, result, "output")?;
+    if context
+        .rooted_value(output)
+        .is_some_and(|value| value.is_null())
+    {
+        return Ok(());
+    }
+    for (index, name) in [(1, "stdout"), (2, "stderr")] {
+        let buffer = property(context, result, name)?;
+        if context
+            .rooted_value(buffer)
+            .is_some_and(|value| value.is_null())
+        {
+            continue;
+        }
+        let to_string = property(context, buffer, "toString")?;
+        let text = context.call_rooted(to_string, buffer, &[encoding])?;
+        set(context, result, name, text)?;
+        set(context, output, &index.to_string(), text)?;
+    }
+    Ok(())
 }
 
 fn string_array(context: &mut NativeContext<'_, NodeHost>, array: RootId) -> Result<Vec<String>, RootedError> {
@@ -1275,6 +1339,11 @@ fn string_array(context: &mut NativeContext<'_, NodeHost>, array: RootId) -> Res
         .map(|index| {
             let key = context.string_rooted(&index.to_string());
             let value = context.get_property_rooted(array, key)?;
+            super::child_process_options_shared_vm::null_check(
+                context,
+                value,
+                &format!("args[{index}]"),
+            )?;
             context.to_string(value)
         })
         .collect()
@@ -1289,6 +1358,78 @@ fn child_cwd(
 ) -> std::io::Result<()> {
     let cwd = context.host_mut().shared_state().borrow().cwd.clone();
     cwd.configure_child_command(command, requested)
+}
+
+/// Node validates cwd as a filesystem path, including branded file URLs.
+fn property_cwd(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: RootId,
+) -> Result<Option<String>, RootedError> {
+    let value = property(context, options, "cwd")?;
+    let value = validate_cwd(context, value)?;
+    if context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        return Ok(None);
+    }
+    Ok(Some(context.to_string(value)?))
+}
+
+pub(crate) fn validate_cwd(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<RootId, RootedError> {
+    if context
+        .rooted_value(value)
+        .is_some_and(|v| v.is_undefined() || v.is_null())
+    {
+        return Ok(value);
+    }
+    if let Some(path) = context.string_text(value)? {
+        reject_cwd_null(context, value, path.as_bytes().contains(&0))?;
+        return Ok(value);
+    }
+    if super::url_shared_vm::url_argument_text(context, value)?.is_some() {
+        let undefined = context.undefined();
+        let converted = super::url_shared_vm::file_url_to_path(context, undefined, &[value])?;
+        let path = context
+            .string_text(converted)?
+            .ok_or_else(|| RootedError::host("file URL cwd is not a string"))?;
+        reject_cwd_null(context, converted, path.as_bytes().contains(&0))?;
+        return Ok(converted);
+    }
+    if context.has_builtin_brand_rooted(value, quench_runtime::BuiltinBrand::Uint8Array)? {
+        let bytes = context
+            .view_bytes_rooted(value)
+            .ok_or_else(|| RootedError::host("cwd byte view unavailable"))?;
+        reject_cwd_null(context, value, bytes.contains(&0))?;
+        return Ok(value);
+    }
+    Err(super::util_shared_vm::argument_type_error_with_expected(
+        context,
+        value,
+        "options.cwd",
+        "of type string or an instance of Buffer or URL",
+    )?)
+}
+
+fn reject_cwd_null(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    contains_null: bool,
+) -> Result<(), RootedError> {
+    if !contains_null {
+        return Ok(());
+    }
+    let inspect = super::util_shared_vm::internal_inspect(context)?;
+    let undefined = context.undefined();
+    let detail = context.call_rooted(inspect, undefined, &[value])?;
+    let detail = context.to_string(detail)?;
+    let error=context.type_error_rooted(&format!("The property 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received {detail}"))?;
+    let code = context.string_rooted("ERR_INVALID_ARG_VALUE");
+    set(context, error, "code", code)?;
+    Err(context.throw(error))
 }
 
 fn property_string(context: &mut NativeContext<'_, NodeHost>, object: RootId, name: &str) -> Result<Option<String>, RootedError> {
@@ -1318,7 +1459,22 @@ fn set(context: &mut NativeContext<'_, NodeHost>, object: RootId, name: &str, va
 #[cfg(unix)]
 fn signal_name(status: &std::process::ExitStatus) -> Option<&'static str> {
     use std::os::unix::process::ExitStatusExt;
-    status.signal().map(|signal| match signal { 9 => "SIGKILL", 15 => "SIGTERM", 2 => "SIGINT", _ => "SIGTERM" })
+    let signal = status.signal()?;
+    #[cfg(target_os = "linux")]
+    {
+        super::process_signals_state::SIGNALS
+            .iter()
+            .find_map(|(name, number)| (*number == signal).then_some(*name))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Some(match signal {
+            9 => "SIGKILL",
+            15 => "SIGTERM",
+            2 => "SIGINT",
+            _ => "SIGTERM",
+        })
+    }
 }
 
 #[cfg(not(unix))]
@@ -1346,4 +1502,222 @@ pub(crate) fn shell_args_warning(context: &mut NativeContext<'_, NodeHost>, _: R
     context.call_rooted(emit, process, &[message, kind, code])?;
     shared.borrow_mut().child_process_shell_args_warning_emitted = true;
     Ok(undefined)
+}
+
+fn sync_timeout(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: Option<RootId>,
+) -> Result<Option<Duration>, RootedError> {
+    let Some(options) = options else {
+        return Ok(None);
+    };
+    let value = property(context, options, "timeout")?;
+    super::child_process_exec_shared_vm::validate_limit(context, value, "timeout", true)?;
+    Ok(context
+        .rooted_value(value)
+        .and_then(|value| value.as_number())
+        .filter(|value| *value > 0.0)
+        .map(|value| Duration::from_millis(value as u64)))
+}
+fn sync_input(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: Option<RootId>,
+) -> Result<Vec<u8>, RootedError> {
+    let Some(options) = options else {
+        return Ok(Vec::new());
+    };
+    let value = property(context, options, "input")?;
+    if context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        return Ok(Vec::new());
+    }
+    if context.string_code_units(value)?.is_some() {
+        let encoding = property(context, options, "encoding")?;
+        let encoding = context.truthy_rooted(encoding)?.then_some(encoding);
+        return super::buffer_shared_vm::encode_bytes(context, value, encoding);
+    }
+    if let Some(bytes) = context.view_bytes_rooted(value) {
+        return Ok(bytes);
+    }
+    Err(super::util_shared_vm::argument_type_error_with_expected(
+        context,
+        value,
+        "options.stdio[0]",
+        "of type string or an instance of Buffer, TypedArray, or DataView",
+    )?)
+}
+#[cfg(unix)]
+pub(crate) fn sync_kill_signal(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: Option<RootId>,
+) -> Result<i32, RootedError> {
+    let Some(options) = options else {
+        return Ok(libc::SIGTERM);
+    };
+    let value = property(context, options, "killSignal")?;
+    if context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        return Ok(libc::SIGTERM);
+    }
+    let name = context.string_text(value)?;
+    let number = context
+        .rooted_value(value)
+        .and_then(|value| value.as_number());
+    if name.is_none() && number.is_none() {
+        return Err(super::util_shared_vm::argument_type_error_with_expected(
+            context,
+            value,
+            "options.killSignal",
+            "one of type string or number",
+        )?);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let name = name.map(|name| name.to_uppercase());
+        if let Some(signal) = super::process_signals_state::SIGNALS.iter().find_map(|(candidate, signal)| (name.as_deref() == Some(*candidate) || number == Some(f64::from(*signal))).then_some(*signal)) { return Ok(signal); }
+        let value = context.to_string(value)?;
+        let error = context.type_error_rooted(&format!("Unknown signal: {value}"))?;
+        let key = context.string_rooted("code");
+        let code = context.string_rooted("ERR_UNKNOWN_SIGNAL");
+        context.define_data_property_rooted(error, key, code, true, true, true)?;
+        Err(context.throw(error))
+    }
+    #[cfg(not(target_os = "linux"))]
+    Ok(libc::SIGTERM)
+}
+
+/// Node's generic disposable observes public killed/kill hooks and returns
+/// undefined, retaining the original thrown value from either hook.
+pub(crate) fn dispose_child(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let child = args.first().copied().unwrap_or(undefined);
+    let killed = property(context, child, "killed")?;
+    if !context.truthy_rooted(killed)? {
+        let kill = property(context, child, "kill")?;
+        context.call_rooted(kill, child, &[])?;
+    }
+    Ok(undefined)
+}
+
+fn install_process_handle(
+    context: &mut NativeContext<'_, NodeHost>,
+    id: u64,
+    child: RootId,
+) -> Result<(), RootedError> {
+    let handle = context.object_rooted()?;
+    let id_root = context.number(id as f64);
+    for (name, reference) in [("ref", true), ("unref", false)] {
+        let reference = context.boolean(reference);
+        let data = context.array_rooted(&[id_root, handle, reference])?;
+        let method = context.host_function_with_data(
+            crate::host::shared_vm::operation("childProcessHandleReference"),
+            data,
+        )?;
+        let key = context.string_rooted("name");
+        let name_root = context.string_rooted(name);
+        context.define_data_property_rooted(method, key, name_root, false, false, true)?;
+        set(context, handle, name, method)?;
+    }
+    let data = context.array_rooted(&[id_root, handle])?;
+    let has_ref = context.host_function_with_data(
+        crate::host::shared_vm::operation("childProcessHandleHasRef"),
+        data,
+    )?;
+    let key = context.string_rooted("name");
+    let name = context.string_rooted("hasRef");
+    context.define_data_property_rooted(has_ref, key, name, false, false, true)?;
+    set(context, handle, "hasRef", has_ref)?;
+    let pid = property(context, child, "pid")?;
+    set(context, handle, "pid", pid)?;
+    set(context, child, "_handle", handle)
+}
+
+pub(crate) fn reference_child(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let child = args.first().copied().unwrap_or(undefined);
+    let handle = property(context, child, "_handle")?;
+    if context.truthy_rooted(handle)? {
+        // Node's guard and public method call perform two observable gets.
+        let handle = property(context, child, "_handle")?;
+        let reference = args.get(1).copied().unwrap_or(undefined);
+        let name = if context.truthy_rooted(reference)? {
+            "ref"
+        } else {
+            "unref"
+        };
+        let method = property(context, handle, name)?;
+        context.call_rooted(method, handle, &[])?;
+    }
+    Ok(undefined)
+}
+
+fn handle_owner(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+) -> Result<(u64, RootId), RootedError> {
+    let data = context.host_function_data()?;
+    let handle = property(context, data, "1")?;
+    if !context.strict_equal_rooted(receiver, handle)? {
+        let error = context.type_error_rooted("Illegal invocation")?;
+        return Err(context.throw(error));
+    }
+    let id = property(context, data, "0")?;
+    let id = context
+        .rooted_value(id)
+        .and_then(|value| value.as_number())
+        .ok_or_else(|| RootedError::host("child handle owner missing"))? as u64;
+    Ok((id, data))
+}
+
+pub(crate) fn reference_handle(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (id, data) = handle_owner(context, receiver)?;
+    let reference = property(context, data, "2")?;
+    let reference = context.truthy_rooted(reference)?;
+    if let Some(process) = context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .child_processes
+        .get_mut(&id)
+    {
+        if process.handle_phase != crate::host::node_host::ChildHandlePhase::Closed {
+            process.referenced = reference;
+        }
+    }
+    Ok(context.undefined())
+}
+pub(crate) fn handle_has_ref(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (id, _) = handle_owner(context, receiver)?;
+    let reference = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .child_processes
+        .get(&id)
+        .filter(|process| process.handle_phase != crate::host::node_host::ChildHandlePhase::Closed)
+        .map(|process| process.referenced);
+    Ok(match reference {
+        Some(reference) => context.boolean(reference),
+        None => context.undefined(),
+    })
 }

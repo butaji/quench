@@ -641,6 +641,26 @@ pub(crate) fn argument_type_error_with_expected(
     name: &str,
     expected: &str,
 ) -> Result<RootedError, RootedError> {
+    let received = argument_type_description(context, root)?;
+    let label = if name.ends_with(" argument") {
+        name.to_owned()
+    } else if name.contains('.') {
+        format!("\"{name}\" property")
+    } else {
+        format!("\"{name}\" argument")
+    };
+    let error = context.type_error_rooted(&format!(
+        "The {label} must be {expected}. Received {received}"
+    ))?;
+    super::node_errors_shared_vm::decorate_argument_type(context, error)?;
+    Ok(context.throw(error))
+}
+
+/// Shared Node received-type description for coded argument and port errors.
+pub(crate) fn argument_type_description(
+    context: &mut NativeContext<'_, NodeHost>,
+    root: RootId,
+) -> Result<String, RootedError> {
     let value = context
         .rooted_value(root)
         .ok_or_else(|| RootedError::host("invalid argument root"))?;
@@ -687,18 +707,7 @@ pub(crate) fn argument_type_error_with_expected(
     } else {
         format!("type bigint ({}n)", context.to_string(root)?)
     };
-    let label = if name.ends_with(" argument") {
-        name.to_owned()
-    } else if name.contains('.') {
-        format!("\"{name}\" property")
-    } else {
-        format!("\"{name}\" argument")
-    };
-    let error = context.type_error_rooted(&format!(
-        "The {label} must be {expected}. Received {received}"
-    ))?;
-    super::node_errors_shared_vm::decorate_argument_type(context, error)?;
-    Ok(context.throw(error))
+    Ok(received)
 }
 
 /// Numeric ERR_OUT_OF_RANGE input rendering, shared by native validators.

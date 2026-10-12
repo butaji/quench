@@ -160,13 +160,15 @@ pub(crate) fn poll(
                     }
                     runtime.release_root(key);
                     runtime.release_root(id);
-                    let remote_address = runtime.string_rooted(&remote.ip().to_string());
-                    let remote_key = runtime.string_rooted("remoteAddress");
-                    runtime
-                        .set_property_rooted(accepted, remote_key, remote_address, accepted)
-                        .map_err(|error| error.to_string())?;
-                    runtime.release_root(remote_key);
-                    runtime.release_root(remote_address);
+                    if let Some(remote) = remote {
+                        let remote_address = runtime.string_rooted(&remote.ip().to_string());
+                        let remote_key = runtime.string_rooted("remoteAddress");
+                        runtime
+                            .set_property_rooted(accepted, remote_key, remote_address, accepted)
+                            .map_err(|error| error.to_string())?;
+                        runtime.release_root(remote_key);
+                        runtime.release_root(remote_address);
+                    }
                     {
                         let mut host = shared_state.borrow_mut();
                         host.net_sockets.insert(
@@ -235,6 +237,37 @@ pub(crate) fn poll(
                         queue_net_method(runtime, shared_state, net_root, "destroy", &[error])?;
                         runtime.release_root(error);
                     }
+                }
+                progressed = true;
+            }
+            #[cfg(unix)]
+            net_shared_vm::TransportEvent::LocalConnectError {
+                socket,
+                error,
+                path,
+            } => {
+                let root = shared_state
+                    .borrow()
+                    .net_sockets
+                    .get(&socket)
+                    .map(|socket| socket.root);
+                if let Some(root) = root {
+                    let errno = error.raw_os_error().map(|errno| -f64::from(errno));
+                    let code = errno
+                        .map(crate::modules::util_system_error_shared_vm::system_error_name)
+                        .unwrap_or_else(|| "UNKNOWN".to_owned());
+                    let error = net_socket_error_with_code(
+                        runtime,
+                        &format!("connect {code} {path}"),
+                        &code,
+                    )?;
+                    if let Some(errno) = errno {
+                        set_number(runtime, error, "errno", errno)?;
+                    }
+                    set_text(runtime, error, "syscall", "connect")?;
+                    set_text(runtime, error, "address", &path)?;
+                    queue_net_method(runtime, shared_state, root, "destroy", &[error])?;
+                    runtime.release_root(error);
                 }
                 progressed = true;
             }
