@@ -186,7 +186,25 @@ against the live working-directory path. Resolving a relative path to an
 absolute pathname can still change the socket address length limit, and does
 not preserve directory-fd semantics through concurrent renames. Server fd
 adoption, the complete option/property-access surface, permissions flags,
-reference ownership and Windows named pipes remain separate work.
+socket reference ownership and Windows named pipes remain separate work.
+
+## Listener reference ownership
+
+`net.Server` ref/unref methods preserve the public `_unref` request and the
+repeated `_handle` getter/method lookup. An unref request before listen applies
+when the native listener is installed; changing an installed handle changes
+the listener's single reference bit. Accepted sockets contribute independently.
+The event loop derives net liveness from the transport, rather than counting
+retained wrapper maps as additional references.
+
+Native listeners transition from open to close-requested to closing, releasing
+the OS endpoint at close and retaining handle reference queries through close
+callback dispatch. The next native poll releases the handle metadata. Oracle
+checks cover before/after-listen unref, ref restoration, public setter/getter
+hooks, strict detached calls and close-phase hasRef observations. The exposed
+handle adapter implements ref/unref/hasRef; complete TCP/Pipe wrap methods and
+prototype metadata, fd adoption and socket reference behavior remain separate
+work.
 
 ## TLS material validation
 
