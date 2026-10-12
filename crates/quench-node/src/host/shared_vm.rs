@@ -159,7 +159,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netSocketEnd" (1) => crate::modules::net_shared_vm::end_operation,
         method "netSocketDestroy" (2) => crate::modules::net_shared_vm::destroy_operation,
         method "netSocketSetEncoding" (2) => crate::modules::net_shared_vm::set_encoding_operation,
-        method "netServerListen" (3) => crate::modules::net_shared_vm::server_listen_operation,
+        method "netServerListen" (4) => crate::modules::net_shared_vm::server_listen_operation,
         method "netServerClose" (1) => crate::modules::net_shared_vm::server_close_operation,
         method "netServerAddress" (1) => crate::modules::net_shared_vm::server_address_operation,
         method "httpCreateServer" (1) => crate::modules::http_shared_vm::create_server,

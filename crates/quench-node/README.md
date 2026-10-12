@@ -34,3 +34,12 @@ string coercion, preserving getter/conversion errors. String keys and values wit
 null bytes produce Node-compatible argument errors before OS spawning. Windows
 keys are sorted and deduplicated without regard to case; validation evidence is
 currently from Linux.
+
+## TCP reuse-port listeners
+
+`net.Server.listen({ reusePort: true })` enables OS socket sharing before bind,
+using the existing TCP listener lifetime and polling. The option requires the
+boolean `true`, matching Node's flag selection. Linux validation covers IPv4,
+IPv6, and another process binding the same address and port. FreeBSD selects its
+load-balancing socket option. General listen error projection, Solaris reuse-port
+support, and explicit backlog handling remain incomplete.
