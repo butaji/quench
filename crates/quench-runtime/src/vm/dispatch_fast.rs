@@ -1176,6 +1176,57 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// An f64 load, the f64 arithmetic `ARITH` taking the loaded value as
+    /// its left (`LEFT`) or right operand, and the f64 store writing the
+    /// arithmetic's result (`mem[x] += v`): three records run here, each
+    /// result written as its own record writes it. An access the general
+    /// path must run exits at its record.
+    fn lane_f64_update<ARITH: u8, LEFT: bool>(cx, r, ip, i, view) {
+        // SAFETY: as for `lane_load`.
+        let Some(crate::WasmValue::F64(bits)) = (unsafe {
+            view.memory.read(MemoryLoad::F64Load, lane_address::<ACC_NONE>(r, i, view))
+        }) else {
+            return exit(ip);
+        };
+        let Some(loaded) = Value::from_bits64(bits) else {
+            return exit(ip);
+        };
+        r.set(i.a, loaded);
+        let operator = following(ip);
+        // SAFETY: the view fuses a load only with a following operator and
+        // store.
+        let o = unsafe { &*operator };
+        let first = f64::from_bits(bits);
+        let (left, right) = if LEFT {
+            (first, f64::from_bits(r.get(o.c).float_bits64()))
+        } else {
+            (f64::from_bits(r.get(o.b).float_bits64()), first)
+        };
+        let Ok(result) = f64_operation(ARITH, left, right) else {
+            unreachable!("a fused update's operator is arithmetic");
+        };
+        let value = Value::from_float_bits64(result.to_bits());
+        r.set(o.a, value);
+        let store = following(operator);
+        // SAFETY: as above.
+        let access = unsafe { &*store };
+        // SAFETY: as for `lane_store`.
+        if unsafe {
+            view.memory.write(
+                MemoryStore::F64Store,
+                lane_address::<ACC_NONE>(r, access, view),
+                crate::WasmValue::F64(value.float_bits64()),
+            )
+        }
+        .is_none()
+        {
+            return exit(store);
+        }
+        next!(cx, r, following(store), view)
+    }
+}
+
+lane_handler! {
     /// An f64 arithmetic `ARITH` whose result the next record, an f64
     /// store, writes to memory: both records run here. A store the general
     /// path must run exits at its record, the result already written.
@@ -1291,6 +1342,26 @@ impl<H: Host> FloatPairs<H> {
         float_store_pair_handlers!(H, FLOAT_SUBTRACT),
         float_store_pair_handlers!(H, FLOAT_MULTIPLY),
         float_store_pair_handlers!(H, FLOAT_DIVIDE),
+    ];
+    /// An f64 load, arithmetic and store of its result, by operator and
+    /// whether the loaded value is the left operand.
+    const UPDATES: [[Handler; 2]; FLOAT_PAIR_FIRSTS] = [
+        [
+            lane_f64_update::<H, FLOAT_ADD, false>,
+            lane_f64_update::<H, FLOAT_ADD, FUSED_LEFT>,
+        ],
+        [
+            lane_f64_update::<H, FLOAT_SUBTRACT, false>,
+            lane_f64_update::<H, FLOAT_SUBTRACT, FUSED_LEFT>,
+        ],
+        [
+            lane_f64_update::<H, FLOAT_MULTIPLY, false>,
+            lane_f64_update::<H, FLOAT_MULTIPLY, FUSED_LEFT>,
+        ],
+        [
+            lane_f64_update::<H, FLOAT_DIVIDE, false>,
+            lane_f64_update::<H, FLOAT_DIVIDE, FUSED_LEFT>,
+        ],
     ];
     const LOADS: [[Handler; 2]; FLOAT_ARITHMETIC] = float_load_pair_handlers!(H;
         FLOAT_ADD, FLOAT_SUBTRACT, FLOAT_MULTIPLY, FLOAT_DIVIDE, FLOAT_EQUAL,
@@ -2837,7 +2908,27 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                     return None;
                 }
                 let left = left_of(&records)?;
-                return Some(FloatPairs::<H>::LOADS[usize::from(second)][usize::from(left)]);
+                // An arithmetic whose result the record after it stores
+                // (`mem[x] += v`) joins as well.
+                let updates =
+                    pc + 2 < records.len() && usize::from(second) < FLOAT_PAIR_FIRSTS && {
+                        let store = decoded_instruction(function, function.code[pc + 2]);
+                        store.op() == Op::WasmF64Store
+                            && store.a() == next.a()
+                            && [ACC_NONE, ACC_A]
+                                .into_iter()
+                                .any(|acc| serves(records[pc + 2].handler, Op::WasmF64Store, acc))
+                    };
+                if updates {
+                    return Some((
+                        FloatPairs::<H>::UPDATES[usize::from(second)][usize::from(left)],
+                        3,
+                    ));
+                }
+                return Some((
+                    FloatPairs::<H>::LOADS[usize::from(second)][usize::from(left)],
+                    2,
+                ));
             }
             if instruction.op() != Op::WasmF64Binary {
                 return None;
@@ -2852,22 +2943,27 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                         as *const ()
             })?;
             let left = left_of(&records)?;
-            Some(
+            Some((
                 FloatPairs::<H>::HANDLERS[usize::from(first)][usize::from(second)]
                     [usize::from(left)][field],
-            )
+                2,
+            ))
         })();
         // An f64 arithmetic whose result the next record stores, when only
         // the arithmetic reaches that store.
         let pair = pair.or_else(|| {
             let first = float_arithmetic(instruction.op(), instruction.imm())?;
-            let store = tables[0][usize::from(ACC_NONE)][Op::WasmF64Store as usize]?;
+            // The fused record writes the arithmetic's result itself, so the
+            // store may read it plainly or through the accumulator.
+            let store_runs = [ACC_NONE, ACC_A]
+                .into_iter()
+                .any(|acc| serves(records[pc + 1].handler, Op::WasmF64Store, acc));
             if instruction.op() != Op::WasmF64Binary
                 || usize::from(first) >= FLOAT_PAIR_FIRSTS
                 || next.op() != Op::WasmF64Store
                 || next.a() != instruction.a()
                 || jump_targets[pc + 1]
-                || records[pc + 1].handler != store.handler as *const ()
+                || !store_runs
             {
                 return None;
             }
@@ -2876,12 +2972,12 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                     == FloatArithmetic::<H>::HANDLERS[1][usize::from(first)][usize::from(*acc)]
                         as *const ()
             })?;
-            Some(FloatPairs::<H>::STORES[usize::from(first)][field])
+            Some((FloatPairs::<H>::STORES[usize::from(first)][field], 2))
         });
         match pair {
-            Some(fused) => {
+            Some((fused, span)) => {
                 records[pc].handler = fused as *const ();
-                pc += 2;
+                pc += span;
             }
             None => pc += 1,
         }
