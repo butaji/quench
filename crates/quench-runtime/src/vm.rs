@@ -1558,6 +1558,7 @@ impl<H: Host> Vm<H> {
             regexp_flag_accessors,
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
+        Self::prime_loop_decoding(program);
         self.inherited_field_caches.clear();
         self.field_add_indices = vec![NO_FIELD_ADD_SET; program.cache_sites as usize];
         self.field_add_sets.clear();
@@ -1654,8 +1655,16 @@ impl<H: Host> Vm<H> {
             .first()
             .is_some_and(|root| !root.global_lexical_atoms.is_empty());
     }
+    /// Primes every looping function of an installed `program` to expand on first entry.
+    fn prime_loop_decoding(program: &ResidualProgram) {
+        for function in &program.functions {
+            function.decoded.prime_loop(&function.code, &function.wide);
+        }
+    }
+
     fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
+        Self::prime_loop_decoding(program);
         self.program_cache_layouts.push(ProgramCacheLayout {
             field_base: self.field_caches.len(),
             method_base: self.method_caches.len(),
