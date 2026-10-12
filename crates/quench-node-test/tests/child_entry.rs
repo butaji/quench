@@ -2715,3 +2715,74 @@ console.log(JSON.stringify({result,calls}));
         String::from_utf8_lossy(&observations[1].stdout)
     );
 }
+
+#[test]
+fn typed_array_fill_matches_node_bytes_coercion_and_live_view_ranges() {
+    const SOURCE: &str = r#"
+const result=[];
+for(const Ctor of [Uint8Array,Uint8ClampedArray,Int8Array,Uint16Array,Int16Array,Uint32Array,Int32Array,Float16Array,Float32Array,Float64Array])for(const value of [0,-0,1.5,257,-257,Infinity,NaN]){const whole=new Ctor(5),view=whole.subarray(1,4);const returned=view.fill(value,-2);result.push([Ctor.name,String(value),returned===view,Array.from(new Uint8Array(whole.buffer))]);}
+for(const Ctor of [BigInt64Array,BigUint64Array])for(const value of [0n,-1n,(2n**70n)+17n,-(2n**70n)-17n]){const whole=new Ctor(4),view=whole.subarray(1,3);view.fill(value);result.push([Ctor.name,String(value),Array.from(new Uint8Array(whole.buffer))]);}
+const trace=[],buffer=new ArrayBuffer(8,{maxByteLength:16}),tracking=new Uint8Array(buffer);tracking.fill({valueOf(){trace.push('value');return 7}},{valueOf(){trace.push('start');buffer.resize(3);return 1}},{valueOf(){trace.push('end');buffer.resize(6);return 5}});result.push(trace,Array.from(tracking));
+const fixedBuffer=new ArrayBuffer(8,{maxByteLength:16}),fixed=new Uint8Array(fixedBuffer,2,4);try{fixed.fill(9,{valueOf(){fixedBuffer.resize(3);return 0}})}catch(error){result.push(error.name,fixed.length)}
+const shared=new Uint16Array(new SharedArrayBuffer(8));shared.fill(0x4444,1,3);result.push(Array.from(shared));
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn util_text_codec_aliases_capture_initialized_global_constructors() {
+    const SOURCE: &str = r#"
+const util=require('util'),result=[],encoder=util.TextEncoder,decoder=util.TextDecoder;
+result.push(typeof encoder,typeof decoder,encoder===globalThis.TextEncoder,decoder===globalThis.TextDecoder,encoder.name,decoder.name);
+globalThis.TextEncoder=function replacedEncoder(){};globalThis.TextDecoder=function replacedDecoder(){};
+result.push(require('util')===util,util.TextEncoder===encoder,util.TextDecoder===decoder);
+const bytes=new encoder().encode('A€𤭢');result.push(Array.from(bytes),new decoder().decode(bytes));
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
