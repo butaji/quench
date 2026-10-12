@@ -62,6 +62,11 @@ paths do not require a readable cwd pathname. `-r`, `--require`, and
 `--require=...` preloads execute in order through the ordinary CommonJS loader
 and cache before the entry. A preload is separate from the main entry.
 
+POSIX `path.resolve` validates consumed arguments from right to left and stops
+at an absolute prefix. Absolute resolutions do not read `process.cwd`; empty
+and dot-only resolutions retain Node's early cwd shortcut and retry behavior
+when a replaced cwd hook returns a relative path.
+
 ## Verification
 
 Use the selected pinned Node oracle on `PATH` and build both sibling entry
