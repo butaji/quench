@@ -29,7 +29,21 @@ pub(super) struct RegExpIntrinsics {
     pub(super) prototype: Value,
     legacy_input: Option<JsString>,
     legacy_match: LegacyRegExpMatch,
+    /// The own-property layout every builtin exec result shares, recorded from the first.
+    pub(super) result_template: Option<RegExpResultTemplate>,
 }
+
+/// An exec result's `index`, `input` and `groups` layout. `anchor` is an object of that
+/// shape that keeps it alive; the slots locate each property in it.
+#[derive(Clone, Copy)]
+pub(super) struct RegExpResultTemplate {
+    pub(super) anchor: Value,
+    index_slot: usize,
+    input_slot: usize,
+    groups_slot: usize,
+}
+/// `index`, `input` and `groups`.
+const REGEXP_RESULT_PROPERTY_COUNT: usize = 3;
 
 #[derive(Clone)]
 enum LegacyRegExpMatch {
@@ -48,6 +62,7 @@ impl RegExpIntrinsics {
             prototype,
             legacy_input: Some(JsString::from_units(&[])),
             legacy_match: LegacyRegExpMatch::Empty,
+            result_template: None,
         }
     }
 }
@@ -1938,14 +1953,9 @@ impl<H: Host> Vm<H> {
             });
             let named = regexp_named_capture_ranges(&matched);
             let groups = vm.regexp_groups_object(&named, input.units())?;
-            let index = matched.range.start;
-            let index_atom = vm.intern_atom("index");
-            vm.set_property(result, index_atom, Value::number(index as f64))?;
+            let index = Value::number(matched.range.start as f64);
             let input_value = vm.heap.alloc(Cell::String(input.clone()));
-            let input_atom = vm.intern_atom("input");
-            vm.set_property(result, input_atom, input_value)?;
-            let groups_atom = vm.intern_atom("groups");
-            vm.set_property(result, groups_atom, groups)?;
+            vm.initialize_regexp_result(result, index, input_value, groups)?;
             if flags.contains('d') {
                 let indices = vm.regexp_indices_array(&matched, &named)?;
                 let indices_atom = vm.intern_atom("indices");
@@ -1954,6 +1964,72 @@ impl<H: Host> Vm<H> {
             vm.record_regexp_legacy_match(this, input, matched)?;
             Ok(result)
         })
+    }
+
+    /// Gives a fresh exec `result` array its `index`, `input` and `groups` properties: from
+    /// the realm's recorded layout when there is one, else by ordinary property creation,
+    /// whose resulting layout is then recorded.
+    fn initialize_regexp_result(
+        &mut self,
+        result: Value,
+        index: Value,
+        input: Value,
+        groups: Value,
+    ) -> Result<(), JsError> {
+        let globals = self.realm.globals;
+        let template = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&globals)
+            .and_then(|intrinsics| intrinsics.result_template);
+        if let Some(template) = template {
+            let shape = self
+                .object_data(template.anchor)
+                .expect("RegExp result template anchor is an object")
+                .shape();
+            let mut properties = [Value::UNDEFINED; REGEXP_RESULT_PROPERTY_COUNT];
+            properties[template.index_slot] = index;
+            properties[template.input_slot] = input;
+            properties[template.groups_slot] = groups;
+            self.heap
+                .initialize_object_properties(result, shape, &properties);
+            return Ok(());
+        }
+        let atoms = [
+            self.intern_atom("index"),
+            self.intern_atom("input"),
+            self.intern_atom("groups"),
+        ];
+        for (atom, value) in atoms.into_iter().zip([index, input, groups]) {
+            self.set_property(result, atom, value)?;
+        }
+        let slots = atoms.map(|atom| self.object_property_slot(result, PropertyKey::string(atom)));
+        let [Some((shape, index_slot)), Some((_, input_slot)), Some((_, groups_slot))] = slots
+        else {
+            return Ok(());
+        };
+        if self.shapes[shape as usize].storage_len != REGEXP_RESULT_PROPERTY_COUNT {
+            return Ok(());
+        }
+        let proto = self
+            .object_data(result)
+            .expect("RegExp result is an array")
+            .proto;
+        let anchor = self.heap.alloc_object_with_properties(
+            proto,
+            shape,
+            &[Value::UNDEFINED; REGEXP_RESULT_PROPERTY_COUNT],
+        );
+        if let Some(intrinsics) = self.realm.intrinsics.regexp_intrinsics.get_mut(&globals) {
+            intrinsics.result_template = Some(RegExpResultTemplate {
+                anchor,
+                index_slot,
+                input_slot,
+                groups_slot,
+            });
+        }
+        Ok(())
     }
 
     /// The legacy `RegExp` static state a successful builtin exec of `this` leaves behind.
