@@ -174,6 +174,9 @@ struct LaneContext<H: Host> {
     /// The general loop's pending inline calls, which lane calls extend and
     /// lane returns complete exactly as the general loop would.
     pending: *mut Vec<PendingGeneralCall>,
+    /// Lane calls and returns manage activations: the interpreter runs a
+    /// Wasm program in a loop that allows inline calls. A compiled callee
+    /// runs from the general path, which raises its traps.
     inline_calls: bool,
     /// The view handlers start from when the lane loop dispatches.
     memory: MemoryView,
@@ -1169,10 +1172,7 @@ lane_handler! {
     /// A Wasm call to a function of the same program, pushed as the general
     /// loop's inline call would be.
     fn lane_call_known<>(cx, r, ip, i, view) {
-        // A compiled callee runs from the general path, which raises its traps.
-        if !unsafe { (*cx).inline_calls }
-            || unsafe { vm(cx) }.execution_mode == super::compiled::ExecutionMode::Compiled
-        {
+        if !unsafe { (*cx).inline_calls } {
             return exit(ip);
         }
         let vm = unsafe { vm(cx) };
@@ -1218,13 +1218,7 @@ lane_handler! {
             return exit(ip);
         };
         let vm = unsafe { vm(cx) };
-        // SAFETY: the context's program outlives the lane run.
-        let code = unsafe { &*(*cx).code };
-        if code.kind == crate::bytecode::ProgramKind::Wasm {
-            vm.retire_wasm_frame();
-        } else {
-            vm.retire_pending_frame(code);
-        }
+        vm.retire_wasm_frame();
         vm.write(call.caller, call.destination, value);
         drop(call.stack_guard);
         let pc = vm.frames[call.caller].pc;
@@ -1721,7 +1715,9 @@ impl<H: Host> Vm<H> {
             registers,
             base,
             pending,
-            inline_calls: inline_calls && code.kind == crate::bytecode::ProgramKind::Wasm,
+            inline_calls: inline_calls
+                && code.kind == crate::bytecode::ProgramKind::Wasm
+                && self.execution_mode != super::compiled::ExecutionMode::Compiled,
             memory: MemoryView::NONE,
             resolved: (Value::UNDEFINED, MemoryView::NONE),
         };
