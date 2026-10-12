@@ -25,9 +25,10 @@ impl<H: Host> Vm<H> {
                 kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
                 ..
             }) => self.programs.get(*program_id).is_some_and(|program| {
-                program.functions.get(*id as usize).is_some_and(|function| {
-                    function.has_restricted_legacy_caller_access()
-                })
+                program
+                    .functions
+                    .get(*id as usize)
+                    .is_some_and(|function| function.has_restricted_legacy_caller_access())
             }),
             Some(Cell::Function {
                 kind: FunctionKind::Native(_),
@@ -90,17 +91,27 @@ impl<H: Host> Vm<H> {
         else {
             return Ok(Value::NULL);
         };
-        let expose_callee = self
-            .programs
-            .get(frame.program)
-            .and_then(|program| {
-                program
-                    .functions
-                    .get(frame.function as usize)
-                    .map(|metadata| metadata.simple_parameters)
-            })
-            .unwrap_or(false);
-        let args = Rc::new(frame.original_arguments.clone());
+        let program = self.programs.get(frame.program);
+        let metadata = program
+            .as_deref()
+            .and_then(|program| program.functions.get(frame.function as usize));
+        let expose_callee = metadata.is_some_and(|metadata| metadata.simple_parameters);
+        let reflected = (0..frame.reflected_parameters).map(|parameter| {
+            let metadata = metadata.expect("reflected parameters belong to a live function");
+            match metadata
+                .local_registers
+                .iter()
+                .find(|entry| entry.local == parameter)
+            {
+                Some(entry) => frame.registers[usize::from(entry.register)],
+                None => frame.locals[usize::from(parameter)],
+            }
+        });
+        let args = Rc::new(
+            reflected
+                .chain(frame.original_arguments.iter().copied())
+                .collect::<Vec<_>>(),
+        );
         let arguments = self.heap.alloc(Cell::Array {
             object: Self::empty_object(self.realm_object_prototype(self.realm.globals)),
             elements: args.clone(),
@@ -250,9 +261,10 @@ impl<H: Host> Vm<H> {
             .unwrap_or(Value::UNDEFINED);
         let bound_args = self
             .own_property(env, args_atom)
-            .and_then(|value| match self.heap.get(value) {
-                Some(Cell::Array { elements, .. }) => Some(elements.as_ref().clone()),
-                _ => None,
+            .and_then(|value| {
+                self.heap
+                    .array(value)
+                    .map(|(_, elements)| elements.as_ref().clone())
             })
             .unwrap_or_default();
         let mut combined = bound_args;

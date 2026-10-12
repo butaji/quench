@@ -198,6 +198,39 @@ impl FunctionCompiler<'_, '_> {
         atom: Atom,
         receiver: Option<Register>,
     ) -> Register {
+        if let Some(register) = self.static_atom_reference(atom) {
+            return register;
+        }
+        let atom = self.resolve_dynamic_reference_atom(atom);
+        let dst = self.reg();
+        let cache = self.owner.cache_site();
+        match receiver {
+            Some(receiver) => {
+                self.emit(Op::LoadNameCall, dst, receiver, cache, atom);
+            }
+            None => {
+                self.emit(Op::LoadName, dst, 0, cache, atom);
+            }
+        }
+        dst
+    }
+
+    /// The atom a by-name reference resolves through when no static binding applies.
+    fn resolve_dynamic_reference_atom(&self, atom: Atom) -> Atom {
+        let atom = self.parameter_binding_atom(atom);
+        let lexical = if self.dynamic_eval
+            && self.lexical_binding_kind(atom) == LexicalBindingKind::FunctionName
+        {
+            None
+        } else {
+            self.active_lexical_binding(atom)
+        };
+        lexical.unwrap_or(atom)
+    }
+
+    /// Loads a reference that resolves statically to a promoted register, a frame local or a
+    /// closure capture; `None` leaves it to by-name resolution.
+    pub(super) fn static_atom_reference(&mut self, atom: Atom) -> Option<Register> {
         let atom = self.parameter_binding_atom(atom);
         let compiler_binding = self.is_compiler_binding(atom);
         let lexical = if self.dynamic_eval
@@ -213,11 +246,11 @@ impl FunctionCompiler<'_, '_> {
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             if let Some(register) = self.local_register(atom) {
-                return register;
+                return Some(register);
             }
             let dst = self.reg();
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
-            dst
+            Some(dst)
         } else if self.with_depth == 0
             && (!self.dynamic_eval || compiler_binding)
             && let Some((depth, slot)) = self
@@ -234,19 +267,9 @@ impl FunctionCompiler<'_, '_> {
                 0,
                 crate::bytecode::ImmediateLayout::capture_immediate(depth, slot),
             );
-            dst
+            Some(dst)
         } else {
-            let dst = self.reg();
-            let cache = self.owner.cache_site();
-            match receiver {
-                Some(receiver) => {
-                    self.emit(Op::LoadNameCall, dst, receiver, cache, atom);
-                }
-                None => {
-                    self.emit(Op::LoadName, dst, 0, cache, atom);
-                }
-            }
-            dst
+            None
         }
     }
 

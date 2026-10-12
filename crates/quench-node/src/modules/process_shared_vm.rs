@@ -827,11 +827,10 @@ pub(crate) fn initgroups(
     };
     let group_id = parse_group_id(context, extra_group, None)?;
     let user_name = credential_user_name(context, user)?;
-    let result = initgroups_syscall(&user_name, group_id);
-    if result == 0 {
-        return Ok(context.undefined());
+    if let Err(error) = initgroups_syscall(&user_name, group_id) {
+        return Err(throw_os_process_error(context, "initgroups", error)?);
     }
-    Err(throw_os_process_error(context, "initgroups")?)
+    Ok(context.undefined())
 }
 
 fn is_array(
@@ -917,36 +916,55 @@ fn apply_groups(
     context: &mut NativeContext<'_, NodeHost>,
     groups: &[u32],
 ) -> Result<RootId, RootedError> {
-    let result = setgroups_syscall(groups);
-    if result == 0 {
-        return Ok(context.undefined());
+    if let Err(error) = setgroups_syscall(groups) {
+        return Err(throw_os_process_error(context, "setgroups", error)?);
     }
-    Err(throw_os_process_error(context, "setgroups")?)
+    Ok(context.undefined())
 }
 
 #[cfg(unix)]
-fn initgroups_syscall(user: &std::ffi::CString, group: u32) -> i32 {
-    unsafe { libc::initgroups(user.as_ptr(), group as libc::gid_t) }
+fn initgroups_syscall(user: &std::ffi::CString, group: u32) -> std::io::Result<()> {
+    let group = group
+        .try_into()
+        .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+    let result = unsafe { libc::initgroups(user.as_ptr(), group) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 #[cfg(not(unix))]
-fn initgroups_syscall(_: &std::ffi::CString, _: u32) -> i32 {
-    libc::ENOSYS
+fn initgroups_syscall(_: &std::ffi::CString, _: u32) -> std::io::Result<()> {
+    Err(std::io::Error::from_raw_os_error(libc::ENOSYS))
 }
 
 #[cfg(unix)]
-fn setgroups_syscall(groups: &[u32]) -> i32 {
+fn setgroups_syscall(groups: &[u32]) -> std::io::Result<()> {
     let groups = groups
         .iter()
         .copied()
-        .map(|group| group as libc::gid_t)
-        .collect::<Vec<_>>();
-    unsafe { libc::setgroups(groups.len(), groups.as_ptr()) }
+        .map(|group| {
+            libc::gid_t::try_from(group)
+                .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let count = groups
+        .len()
+        .try_into()
+        .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+    let result = unsafe { libc::setgroups(count, groups.as_ptr()) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
 }
 
 #[cfg(not(unix))]
-fn setgroups_syscall(_: &[u32]) -> i32 {
-    libc::ENOSYS
+fn setgroups_syscall(_: &[u32]) -> std::io::Result<()> {
+    Err(std::io::Error::from_raw_os_error(libc::ENOSYS))
 }
 
 #[cfg(unix)]
@@ -973,8 +991,9 @@ fn credential_name_by_uid(_: u32) -> Option<std::ffi::CString> {
 fn throw_os_process_error(
     context: &mut NativeContext<'_, NodeHost>,
     syscall: &str,
+    error: std::io::Error,
 ) -> Result<RootedError, RootedError> {
-    let errno = std::io::Error::last_os_error()
+    let errno = error
         .raw_os_error()
         .unwrap_or(libc::EINVAL);
     let code = errno_name(errno);

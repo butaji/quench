@@ -154,6 +154,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         constructor: Value,
     ) -> Result<bool, JsError> {
+        if let Some(result) = self.ordinary_instanceof(value, constructor) {
+            return Ok(result);
+        }
         let _stack = self.enter_stack()?;
         self.with_call_roots([value, constructor], |vm| {
             if !vm.is_object_like(constructor) {
@@ -174,6 +177,101 @@ impl<H: Host> Vm<H> {
             }
             vm.ordinary_has_instance(p, constructor, value)
         })
+    }
+
+    /// `InstanceofOperator(value, constructor)` when it reduces to a prototype-chain walk:
+    /// `constructor` is an unbound function without an own `@@hasInstance`, whose prototype
+    /// holds the native `Function.prototype[@@hasInstance]` as data, whose own `prototype` is
+    /// a data property holding an object, and `value`'s chain has no proxy. Every step is then
+    /// an ordinary data read that runs no guest code and cannot throw; `None` leaves any other
+    /// case, unobserved, to the general path.
+    fn ordinary_instanceof(&mut self, value: Value, constructor: Value) -> Option<bool> {
+        let Some(Cell::Function { kind, .. }) = self.heap.get(constructor) else {
+            return None;
+        };
+        if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
+            return None;
+        }
+        let constructor_data = self.object_data(constructor)?;
+        let (shape, holder) = (constructor_data.shape(), constructor_data.proto);
+        let prototype_slot = match self.instanceof_constructor_layout {
+            Some((cached, slot)) if cached == shape => slot,
+            _ => {
+                let slot = self.instanceof_constructor_slot(constructor)?;
+                if !self.shape_is_dictionary(shape) {
+                    self.instanceof_constructor_layout = Some((shape, slot));
+                }
+                slot
+            }
+        };
+        if holder != self.instanceof_has_instance_holder && !self.verify_has_instance_holder(holder)
+        {
+            return None;
+        }
+        if !self.is_object_like(value) {
+            return Some(false);
+        }
+        let prototype = self
+            .heap
+            .property_get(self.object_data(constructor)?, prototype_slot)?;
+        if !self.is_object_like(prototype) {
+            return None;
+        }
+        let mut current = value;
+        loop {
+            if self.proxy_parts(current).is_some() {
+                return None;
+            }
+            let next = self
+                .object_data(current)
+                .map_or(Value::NULL, |object| object.proto);
+            if next.is_null() {
+                return Some(false);
+            }
+            if next == prototype {
+                return Some(true);
+            }
+            current = next;
+        }
+    }
+
+    /// The slot of `constructor`'s own data `prototype` when it has no own `@@hasInstance`.
+    fn instanceof_constructor_slot(&mut self, constructor: Value) -> Option<usize> {
+        let has_instance = PropertyKey::symbol(*self.well_known_symbols.get("hasInstance")?);
+        if self.property_attributes(constructor, has_instance).is_some() {
+            return None;
+        }
+        let prototype = PropertyKey::string(self.prototype_atom());
+        if self.property_attributes(constructor, prototype)?.accessor {
+            return None;
+        }
+        Some(self.object_property_slot(constructor, prototype)?.1)
+    }
+
+    /// Whether `holder`'s `@@hasInstance` is the native `Function.prototype[@@hasInstance]`
+    /// as a data property; remembers a holder whose property can never change.
+    fn verify_has_instance_holder(&mut self, holder: Value) -> bool {
+        let Some(&symbol) = self.well_known_symbols.get("hasInstance") else {
+            return false;
+        };
+        let Some(attributes) = self.property_attributes(holder, PropertyKey::symbol(symbol))
+        else {
+            return false;
+        };
+        let native = !attributes.accessor
+            && self.symbol_property(holder, symbol).is_some_and(|method| {
+                matches!(
+                    self.heap.get(method),
+                    Some(Cell::Function {
+                        kind: FunctionKind::Native(Native::FunctionPrototypeHasInstance),
+                        ..
+                    })
+                )
+            });
+        if native && !attributes.writable && !attributes.configurable {
+            self.instanceof_has_instance_holder = holder;
+        }
+        native
     }
 
     pub(super) fn ordinary_has_instance(

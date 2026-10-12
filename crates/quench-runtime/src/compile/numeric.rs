@@ -255,8 +255,14 @@ mod tests {
             decoded: Default::default(),
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
+            plain_activation: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
+            undefined_register: None,
+            parameter_registers: None,
+            initial_register: Default::default(),
         };
         let mut dead = make_function();
         compact_binary_stores(
@@ -332,8 +338,14 @@ mod tests {
             decoded: Default::default(),
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
+            plain_activation: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
+            undefined_register: None,
+            parameter_registers: None,
+            initial_register: Default::default(),
         };
         let mut dead = make_function();
         compact_binary_stores(

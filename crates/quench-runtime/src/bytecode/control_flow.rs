@@ -8,6 +8,14 @@ pub(super) fn instruction_at(function: &Function, packed: Instr) -> Option<WideI
     }
 }
 
+/// The PCs of a branch table's `Jump` entries: its cases, then the default.
+pub(crate) fn branch_table_entries(
+    pc: usize,
+    instruction: WideInstruction,
+) -> std::ops::RangeInclusive<usize> {
+    pc + 1..=pc + 1 + instruction.imm() as usize
+}
+
 pub(super) fn is_bounded(function: &Function) -> bool {
     let code = &function.code;
     let mut reachable = vec![false; code.len()];
@@ -32,6 +40,20 @@ pub(super) fn is_bounded(function: &Function) -> bool {
             ControlFlowLayout::ConditionalJump => {
                 work.push(instruction.jump_target() as usize);
                 work.push(pc + 1);
+            }
+            ControlFlowLayout::BranchTable => {
+                for entry in branch_table_entries(pc, instruction) {
+                    let Some(entry_instruction) = code
+                        .get(entry)
+                        .and_then(|packed| instruction_at(function, *packed))
+                    else {
+                        return false;
+                    };
+                    if entry_instruction.op() != super::Op::Jump {
+                        return false;
+                    }
+                    work.push(entry);
+                }
             }
             ControlFlowLayout::Terminal => {}
             ControlFlowLayout::Call | ControlFlowLayout::Fallthrough

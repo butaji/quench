@@ -3683,7 +3683,7 @@ impl<H: Host> Vm<H> {
             source_import_values.insert(import.local.clone(), value);
         }
         self.programs.set_module_imports(program_id, imports);
-        let active_program = std::mem::replace(&mut self.active_program, program_id);
+        let active_program = self.replace_active_program(program_id);
         let specialized = std::mem::replace(&mut self.specialized, false);
         let evaluated = (|| {
             let closure = self.closure(&residual, 0, Value::NULL)?;
@@ -3789,7 +3789,7 @@ impl<H: Host> Vm<H> {
             }
             Ok(values)
         })();
-        self.active_program = active_program;
+        self.set_active_program(active_program);
         self.specialized = specialized;
         evaluated
     }
@@ -4463,7 +4463,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "dynamic import attributes must be an object".into()));
         }
         let keys = self.object_own_keys(p, attributes)?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(keys) else {
+        let Some((_, elements)) = self.heap.array(keys) else {
             return Err(JsError(
                 "dynamic import own keys result is not an array".into(),
             ));
@@ -4560,7 +4560,7 @@ impl<H: Host> Vm<H> {
     fn module_static_value(&mut self, constant: Constant) -> Value {
         match constant {
             Constant::Number(value) => Value::number(value),
-            Constant::WasmBits64(bits) => self.heap.alloc(Cell::WasmBits64(bits)),
+            Constant::WasmBits64(bits) => self.encode_bits64(bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(bits)),
             Constant::String(value) => self.heap.alloc(Cell::String(value.into())),
             Constant::StringUnits(value) => {

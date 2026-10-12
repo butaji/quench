@@ -1,27 +1,41 @@
 use super::*;
 
+/// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
+const RETAINED_FRAME_VALUES: usize = 256;
+
 #[derive(Clone, Copy)]
-struct GeneralCodeCursor {
+pub(super) struct GeneralCodeCursor {
     program: ProgramId,
     function: u32,
     code: *const Instr,
     wide: *const WideInstruction,
     /// Fixed-width expansion of `code`; null while the function is cold.
     decoded: *const WideInstruction,
+    /// The function's lane view, or null where the lane does not run.
+    lane: *const dispatch_fast::LaneView,
 }
 
 /// A caller suspended by an in-loop frame push, resumed when its callee completes.
-struct PendingGeneralCall {
-    caller: usize,
+pub(super) struct PendingGeneralCall {
+    pub(super) caller: usize,
     /// The caller's cursor, still valid on resume: the residual outlives the loop and a hot
     /// decoding, once built, never moves; a cold caller simply keeps reading packed code.
-    caller_cursor: GeneralCodeCursor,
-    call_pc: u32,
-    destination: Register,
+    /// Lane calls leave it to the general loop, which derives it only if it resumes the caller.
+    pub(super) caller_cursor: Option<GeneralCodeCursor>,
+    pub(super) call_pc: u32,
+    pub(super) destination: Register,
     /// Set for an in-loop `new`; see `StepResult::PushFrame`.
-    construct_this: Option<Value>,
-    call_guard: crate::stack::GuestCallGuard,
+    pub(super) construct_this: Option<Value>,
+    /// `None` only for a lane activation materialized past the guest-call budget, which
+    /// `WASM_ACTIVATION_LIMIT` bounds instead.
+    pub(super) call_guard: Option<crate::stack::GuestCallGuard>,
 }
+
+/// Activations the dispatch loop holds before a Wasm call exhausts the call
+/// stack. A Wasm call in the loop pushes a heap frame instead of recursing
+/// natively, so the native stack guard does not bound it; the guest call
+/// depth does.
+pub(super) const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEPTH;
 
 impl GeneralCodeCursor {
     fn new(program_id: ProgramId, program: &ResidualProgram, function: u32) -> Self {
@@ -36,6 +50,7 @@ impl GeneralCodeCursor {
             code: function_code.code.as_ptr(),
             wide: function_code.wide.as_ptr(),
             decoded,
+            lane: std::ptr::null(),
         }
     }
 
@@ -62,6 +77,24 @@ impl GeneralCodeCursor {
 }
 
 impl<H: Host> Vm<H> {
+    /// A code cursor for `function`, with its lane view where the lane runs.
+    pub(super) fn general_cursor(
+        &self,
+        program_id: ProgramId,
+        program: &ResidualProgram,
+        function: u32,
+        lane: bool,
+    ) -> GeneralCodeCursor {
+        GeneralCodeCursor {
+            lane: if lane {
+                self.lane_view(program_id, function)
+            } else {
+                std::ptr::null()
+            },
+            ..GeneralCodeCursor::new(program_id, program, function)
+        }
+    }
+
     pub(super) fn call_this_value(&mut self, this: Value, strict: bool) -> Result<Value, JsError> {
         if strict {
             Ok(this)
@@ -150,6 +183,98 @@ impl<H: Host> Vm<H> {
         self.run_user_frame(p, id, parent, Value::UNDEFINED, args, context, true)
     }
 
+    /// Activate a Wasm function in the running dispatch loop. Wasm bodies
+    /// observe only their locals and registers: no receiver, arguments
+    /// object, dynamic binding or `with` scope belongs to the activation.
+    /// A known call stays within its instance, and a Wasm frame is never
+    /// captured nor enters a `with` scope, so the callee's environment is
+    /// the caller's: the instance environment.
+    #[inline(always)]
+    pub(super) fn push_wasm_frame(
+        &mut self,
+        p: &ResidualProgram,
+        caller: usize,
+        id: u32,
+        arguments: crate::bytecode::RegisterWindow,
+    ) -> Result<crate::stack::GuestCallGuard, JsError> {
+        // An in-loop activation grows the frame stack, not the native stack, so it counts
+        // against the live guest-call budget.
+        let call_guard = crate::stack::GuestCallGuard::enter()
+            .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?;
+        let function = &p.functions[id as usize];
+        let program = self.active_program;
+        let with_base = self.with_stack.len();
+        let mut frame = self
+            .frame_pool
+            .pop()
+            .unwrap_or_else(|| Box::new(Frame::empty(program, with_base)));
+        let caller = &self.frames[caller];
+        let arguments_base = usize::from(arguments.base);
+        let arguments =
+            &caller.registers[arguments_base..arguments_base + usize::from(arguments.count)];
+        // Each slot is written once: parameters land where the function
+        // keeps them, every other local and register takes its default.
+        let local_arguments = &arguments[..arguments
+            .len()
+            .min(usize::from(function.local_parameter_count()))];
+        frame.locals.clear();
+        if function.locals != 0 {
+            frame.locals.extend_from_slice(local_arguments);
+            frame
+                .locals
+                .resize(usize::from(function.locals), Value::UNDEFINED);
+        }
+        frame.prepare_wasm_registers(function, arguments);
+        frame.context = CallContext::Internal;
+        frame.function = id;
+        frame.program = program;
+        frame.pc = 0;
+        frame.binding_site_pc = None;
+        frame.env = caller.env;
+        frame.this = Value::UNDEFINED;
+        frame.captured = false;
+        frame.with_base = with_base;
+        frame.fixed_this = false;
+        self.frames.push(frame);
+        Ok(call_guard)
+    }
+
+    /// Activate a Wasm function whose registers already hold `registers`:
+    /// a lane activation becoming a frame. Its environment is the caller's.
+    pub(super) fn push_wasm_frame_with_registers(
+        &mut self,
+        p: &ResidualProgram,
+        caller: usize,
+        id: u32,
+        registers: &[Value],
+    ) {
+        debug_assert_eq!(p.functions[id as usize].locals, 0);
+        let program = self.active_program;
+        let with_base = self.with_stack.len();
+        let mut frame = self
+            .frame_pool
+            .pop()
+            .unwrap_or_else(|| Box::new(Frame::empty(program, with_base)));
+        frame.locals.clear();
+        frame.registers.clear();
+        frame.registers.extend_from_slice(registers);
+        frame.context = CallContext::Internal;
+        frame.function = id;
+        frame.program = program;
+        frame.pc = 0;
+        frame.binding_site_pc = None;
+        frame.env = self.frames[caller].env;
+        frame.this = Value::UNDEFINED;
+        frame.captured = false;
+        frame.with_base = with_base;
+        frame.fixed_this = false;
+        self.frames.push(frame);
+    }
+
+    fn empty_frame(&self) -> Box<Frame> {
+        Box::new(Frame::empty(self.active_program, self.with_stack.len()))
+    }
+
     /// Starts an activation that the dispatch loop runs in place.
     ///
     /// `args` may borrow the caller's register window: setup only pushes the new activation,
@@ -234,7 +359,74 @@ impl<H: Host> Vm<H> {
     }
 
     /// Binds a user function's activation and pushes it on the frame stack, returning its index.
+    #[inline(always)]
     fn activate_user_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        parent: Value,
+        this: Value,
+        args: &[Value],
+        context: CallContext,
+    ) -> Result<usize, JsError> {
+        let function = &p.functions[id as usize];
+        if id != super::ROOT_FUNCTION_ID && function.plain_activation(&p.atoms) {
+            self.activate_plain_frame(p, id, function, parent, this, args, context)
+        } else {
+            self.activate_general_frame(p, id, parent, this, args, context)
+        }
+    }
+
+    /// `activate_user_frame` for a function whose static layout describes its whole
+    /// activation (`Function::plain_activation`): every local starts undefined because every
+    /// parameter lives in a register, `this` is the coerced receiver, and no implicit binding,
+    /// rest array or `arguments` object exists.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn activate_plain_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        function: &crate::bytecode::Function,
+        parent: Value,
+        this: Value,
+        args: &[Value],
+        context: CallContext,
+    ) -> Result<usize, JsError> {
+        self.profile
+            .function(self.active_program.raw(), id as usize);
+        let this = self.call_this_value(this, function.strict)?;
+        let mut frame = self.pooled_frame();
+        frame.reset_locals_undefined(usize::from(function.locals));
+        self.initialize_frame_invocation(&p.atoms, &mut frame, function, context, args);
+        frame.function = id;
+        frame.program = self.active_program;
+        frame.pc = 0;
+        frame.binding_site_pc = None;
+        frame.env = parent;
+        frame.this = this;
+        frame.fixed_this = !this.is_deleted();
+        frame.captured = false;
+        frame.with_base = self.with_stack.len();
+        if self.with_scope_entered {
+            self.with_stack
+                .extend(self.captured_with_objects_for_function(parent, function, p.kind));
+        }
+        // A `new.target` set for this activation has no observable binding to land in.
+        self.construct_target = None;
+        frame.prepare_registers_for(function);
+        frame.place_plain_parameters(function, args);
+        self.frames.push(frame);
+        Ok(self.frames.len() - 1)
+    }
+
+    /// A frame from the pool, or a fresh one; its fields are set by activation.
+    pub(super) fn pooled_frame(&mut self) -> Box<Frame> {
+        self.frame_pool.pop().unwrap_or_else(|| self.empty_frame())
+    }
+
+    #[inline(never)]
+    fn activate_general_frame(
         &mut self,
         p: &ResidualProgram,
         id: u32,
@@ -251,25 +443,8 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let mut frame = self.frame_pool.pop().unwrap_or_else(|| Box::new(Frame {
-            context: CallContext::Internal,
-            original_arguments: vec![],
-            program: self.active_program,
-            function: 0,
-            pc: 0,
-            binding_site_pc: None,
-            env: Value::NULL,
-            this: Value::UNDEFINED,
-            locals: vec![],
-            dynamic_bindings: vec![],
-            captured: false,
-            registers: vec![],
-            active_iterators: vec![],
-            with_objects: Vec::new(),
-            with_base: self.with_stack.len(),
-            fixed_this: false,
-        }));
-        self.bind_activation_arguments(&mut frame, function, context, args)?;
+        let mut frame = self.pooled_frame();
+        self.bind_activation_arguments(&p.atoms, &mut frame, function, context, args)?;
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -298,8 +473,10 @@ impl<H: Host> Vm<H> {
             frame.captured = true;
         }
         frame.with_base = self.with_stack.len();
-        self.with_stack
-            .extend(self.captured_with_objects_for_function(parent, function, p.kind));
+        if self.with_scope_entered {
+            self.with_stack
+                .extend(self.captured_with_objects_for_function(parent, function, p.kind));
+        }
         if id == super::ROOT_FUNCTION_ID {
             self.bind_module_imports(&mut frame)?;
         }
@@ -308,9 +485,10 @@ impl<H: Host> Vm<H> {
             &mut frame,
             arrow,
             new_target,
-            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(),
+            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(&p.atoms),
         );
         frame.prepare_registers_for(function);
+        frame.bind_register_parameters(function, args);
         frame.initialize_promoted_registers(function, args);
         self.frames.push(frame);
         let frame_index = self.frames.len() - 1;
@@ -346,31 +524,12 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let placeholder = self.frame_pool.pop().unwrap_or_else(|| {
-            Box::new(Frame {
-                context: CallContext::Internal,
-                original_arguments: vec![],
-                program: self.active_program,
-                function: 0,
-                pc: 0,
-                binding_site_pc: None,
-                env: Value::NULL,
-                this: Value::UNDEFINED,
-                locals: vec![],
-                dynamic_bindings: vec![],
-                captured: false,
-                registers: vec![],
-                active_iterators: vec![],
-                with_objects: Vec::new(),
-                with_base: self.with_stack.len(),
-                fixed_this: false,
-            })
-        });
+        let placeholder = self.pooled_frame();
         let old = std::mem::replace(&mut self.frames[frame_index], placeholder);
         self.with_stack.truncate(old.with_base);
         let mut frame = old;
         Self::recycle_frame(&mut frame);
-        self.bind_activation_arguments(&mut frame, function, context, args)?;
+        self.bind_activation_arguments(&p.atoms, &mut frame, function, context, args)?;
         frame.program = self.active_program;
         frame.function = id;
         frame.pc = 0;
@@ -401,9 +560,10 @@ impl<H: Host> Vm<H> {
             &mut frame,
             arrow,
             new_target,
-            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(),
+            id == super::ROOT_FUNCTION_ID || function.activation_bindings_observable(&p.atoms),
         );
         frame.prepare_registers_for(function);
+        frame.bind_register_parameters(function, args);
         frame.initialize_promoted_registers(function, args);
         let placeholder = std::mem::replace(&mut self.frames[frame_index], frame);
         self.frame_pool.push(placeholder);
@@ -415,21 +575,22 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     fn bind_activation_arguments(
         &mut self,
+        atoms: &crate::bytecode::AtomTable,
         frame: &mut Frame,
         function: &crate::bytecode::Function,
         context: CallContext,
         args: &[Value],
     ) -> Result<(), JsError> {
-        frame
-            .locals
-            .resize(function.locals as usize, Value::UNDEFINED);
-        frame.locals[function.params as usize..].fill(Value::UNDEFINED);
         let fixed = usize::from(function.params) - usize::from(function.rest);
         // Promoted parameters live in registers; `initialize_promoted_registers` clears their
-        // local slots once the frame is set up, so every fixed parameter is copied here.
+        // local slots once the frame is set up, so every fixed parameter is copied here. Every
+        // other local starts undefined.
         let passed = fixed.min(args.len());
-        frame.locals[..passed].copy_from_slice(&args[..passed]);
-        frame.locals[passed..fixed].fill(Value::UNDEFINED);
+        frame.locals.clear();
+        frame.locals.extend_from_slice(&args[..passed]);
+        frame
+            .locals
+            .resize(usize::from(function.locals), Value::UNDEFINED);
         if function.rest {
             frame.locals[fixed] = self.rest_parameter_array(args.get(fixed..).unwrap_or_default());
         }
@@ -440,7 +601,7 @@ impl<H: Host> Vm<H> {
             frame.locals[usize::from(slot)] =
                 self.activation_arguments_object(function, context, args)?;
         }
-        self.initialize_frame_invocation(frame, function, context, args);
+        self.initialize_frame_invocation(atoms, frame, function, context, args);
         Ok(())
     }
 
@@ -504,6 +665,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn initialize_frame_invocation(
         &self,
+        atoms: &crate::bytecode::AtomTable,
         frame: &mut Frame,
         function: &crate::bytecode::Function,
         context: CallContext,
@@ -511,8 +673,18 @@ impl<H: Host> Vm<H> {
     ) {
         frame.context = context;
         frame.original_arguments.clear();
-        if context.callable().is_some() && !function.has_restricted_legacy_caller_access() {
-            frame.original_arguments.extend_from_slice(args);
+        frame.reflected_parameters = 0;
+        if context.callable().is_none() || function.has_restricted_legacy_caller_access() {
+            return;
+        }
+        let reflected = if function.reflects_live_parameters(atoms) {
+            args.len().min(usize::from(function.params))
+        } else {
+            0
+        };
+        frame.reflected_parameters = reflected as u16;
+        if reflected < args.len() {
+            frame.original_arguments.extend_from_slice(&args[reflected..]);
         }
     }
 
@@ -803,36 +975,58 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Return a Wasm frame the lane pushed to the pool. A Wasm activation
+    /// touches only its locals and registers and runs no global lexical
+    /// declarations, so only its register storage needs bounding.
+    #[inline(always)]
+    pub(super) fn retire_wasm_frame(&mut self) {
+        let mut frame = self.frames.pop().expect("pending frame is active");
+        self.with_stack.truncate(frame.with_base);
+        if frame.registers.capacity() > RETAINED_FRAME_VALUES {
+            frame.registers.clear();
+            frame.registers.shrink_to(RETAINED_FRAME_VALUES);
+        }
+        self.frame_pool.push(frame);
+    }
+
     pub(super) fn pool_frame(&mut self, frame: impl Into<Box<Frame>>) {
         let mut frame = frame.into();
         Self::recycle_frame(&mut frame);
         self.frame_pool.push(frame);
     }
 
+    /// Empties a finished frame's appendable buffers and drops its callee for reuse, bounding
+    /// what the buffers retain. Every activation sets legacy argument reflection and
+    /// `fixed_this` itself.
     pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
         frame.original_arguments.clear();
-        frame.with_objects = Vec::new();
-        const RETAINED_VALUES: usize = 256;
-        if frame.original_arguments.capacity() > RETAINED_VALUES {
-            frame.original_arguments.shrink_to(RETAINED_VALUES);
-        }
-        if frame.locals.capacity() > RETAINED_VALUES {
-            frame.locals.clear();
-            frame.locals.shrink_to(RETAINED_VALUES);
-        }
-        if frame.registers.capacity() > RETAINED_VALUES {
-            frame.registers.clear();
-            frame.registers.shrink_to(RETAINED_VALUES);
-        }
-        if frame.dynamic_bindings.capacity() > RETAINED_VALUES {
-            frame.dynamic_bindings.clear();
-            frame.dynamic_bindings.shrink_to(RETAINED_VALUES);
-        } else {
-            frame.dynamic_bindings.clear();
-        }
+        frame.with_objects.clear();
+        frame.dynamic_bindings.clear();
         frame.active_iterators.clear();
-        frame.fixed_this = false;
+        let retained = frame
+            .original_arguments
+            .capacity()
+            .max(frame.locals.capacity())
+            .max(frame.registers.capacity())
+            .max(frame.dynamic_bindings.capacity());
+        if retained > RETAINED_FRAME_VALUES {
+            Self::shrink_frame_buffers(frame);
+        }
+    }
+
+    /// Bounds what a pooled frame's buffers retain after an unusually large activation.
+    #[cold]
+    #[inline(never)]
+    fn shrink_frame_buffers(frame: &mut Frame) {
+        frame.original_arguments.shrink_to(RETAINED_FRAME_VALUES);
+        for buffer in [&mut frame.locals, &mut frame.registers] {
+            if buffer.capacity() > RETAINED_FRAME_VALUES {
+                buffer.clear();
+                buffer.shrink_to(RETAINED_FRAME_VALUES);
+            }
+        }
+        frame.dynamic_bindings.shrink_to(RETAINED_FRAME_VALUES);
     }
 
     pub(super) fn run_frame_general(
@@ -849,249 +1043,370 @@ impl<H: Host> Vm<H> {
         frame: usize,
         initial_error: Option<JsError>,
     ) -> Result<FrameOutcome, JsError> {
-        self.run_frame_general_until(p, frame, None, initial_error)
+        self.run_frame_general_until::<false>(p, frame, None, initial_error)
     }
 
-    pub(super) fn run_frame_general_until(
+    /// Runs the general loop. `STOPS` monomorphizes the parameter-initialization variant, the
+    /// only caller with a `stop_pc`, so ordinary dispatch carries no per-instruction stop test.
+    pub(super) fn run_frame_general_until<const STOPS: bool>(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
         stop_pc: Option<usize>,
         initial_error: Option<JsError>,
     ) -> Result<FrameOutcome, JsError> {
-        let entry_program = p;
+        debug_assert!(STOPS || stop_pc.is_none());
         let frame_program = self.frames[frame].program;
-        let allow_inline_calls = stop_pc.is_none()
-            && initial_error.is_none()
-            && p.kind != crate::bytecode::ProgramKind::Wasm;
-        let previous_program = std::mem::replace(&mut self.active_program, frame_program);
+        let allow_inline_calls = stop_pc.is_none() && initial_error.is_none();
+        let previous_program = self.replace_active_program(frame_program);
         let previous_global = self.realm.globals;
-        let outcome = (|| {
-            let mut current_program: Option<Rc<ResidualProgram>> = None;
-            // The residual being executed: the entry program, or the one `current_program`
-            // retains after a cross-program tail call. Updated only where that switch happens.
-            let mut executing_residual: *const ResidualProgram = entry_program;
-            let mut frame = frame;
-            let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
-            let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
-                crate::stack::StackGuard::enter()
-                    .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
-            } else {
-                self.enter_stack()?
-            };
-            let initial_function = self.frames[frame].function as usize;
-            let mut executing_program = self.frames[frame].program;
-            let mut cursor =
-                GeneralCodeCursor::new(executing_program, entry_program, initial_function as u32);
-            let mut pc = self.frames[frame].pc;
-            if let Some(error) = initial_error {
-                pc = self.exception_handler_target(
+        // A nested loop leaves the caller's register file active again.
+        let caller_registers = self.active_registers;
+        let outcome = self.run_general_loop::<STOPS>(
+            p,
+            frame,
+            stop_pc,
+            initial_error,
+            allow_inline_calls,
+        );
+        self.active_registers = caller_registers;
+        self.set_active_program(previous_program);
+        self.realm.globals = previous_global;
+        outcome
+    }
+
+    /// The general dispatch loop of `run_frame_general_until`, whose caller restores the active
+    /// program and realm around it.
+    #[inline(always)]
+    fn run_general_loop<const STOPS: bool>(
+        &mut self,
+        entry_program: &ResidualProgram,
+        frame: usize,
+        stop_pc: Option<usize>,
+        initial_error: Option<JsError>,
+        allow_inline_calls: bool,
+    ) -> Result<FrameOutcome, JsError> {
+        let p = entry_program;
+        let mut current_program: Option<Rc<ResidualProgram>> = None;
+        // The residual being executed: the entry program, or the one `current_program`
+        // retains after a cross-program tail call. Updated only where that switch happens.
+        let mut executing_residual: *const ResidualProgram = entry_program;
+        let mut frame = frame;
+        let mut pending_calls: Vec<PendingGeneralCall> = Vec::new();
+        let _stack = if p.kind == crate::bytecode::ProgramKind::Wasm {
+            crate::stack::StackGuard::enter()
+                .map_err(|()| JsError::wasm_trap_error(crate::WasmTrap::CallStackExhausted))?
+        } else {
+            self.enter_stack()?
+        };
+        // Parameter-initialization stops and instruction profiling observe
+        // every PC, so they run the general path only.
+        let fast_lane = !STOPS
+            && stop_pc.is_none()
+            && !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"));
+        let initial_function = self.frames[frame].function as usize;
+        let mut executing_program = self.frames[frame].program;
+        let mut cursor = self.general_cursor(
+            executing_program,
+            entry_program,
+            initial_function as u32,
+            fast_lane,
+        );
+        let mut pc = self.frames[frame].pc;
+        // The active frame's published PC. Frames are boxed, so the slot stays put while that
+        // frame is active; every frame change below re-derives it.
+        let mut published_pc: *mut usize = &mut self.frames[frame].pc;
+        self.active_registers = self.frames[frame].registers.as_mut_ptr();
+        if let Some(error) = initial_error {
+            pc = self.exception_handler_target(
+                p,
+                frame,
+                initial_function,
+                pc.saturating_sub(1) as u32,
+                error,
+            )?;
+        }
+        loop {
+            // SAFETY: `executing_residual` points at `entry_program`, borrowed for the whole
+            // call, or at the residual `current_program` keeps alive until it is replaced,
+            // and it is re-derived at that replacement.
+            let p = unsafe { &*executing_residual };
+            if Self::lane_runs(cursor.lane, pc) {
+                pc = self.run_fast_lane(
                     p,
-                    frame,
-                    initial_function,
-                    pc.saturating_sub(1) as u32,
-                    error,
-                )?;
-            }
-            loop {
-                // SAFETY: `executing_residual` points at `entry_program`, borrowed for the whole
-                // call, or at the residual `current_program` keeps alive until it is replaced,
-                // and it is re-derived at that replacement.
-                let p = unsafe { &*executing_residual };
-                if stop_pc == Some(pc) {
-                    self.frames[frame].pc = pc;
-                    return Ok(FrameOutcome::ParameterInitializationComplete);
+                    cursor.program,
+                    cursor.lane,
+                    &mut frame,
+                    pc,
+                    &mut pending_calls,
+                    allow_inline_calls,
+                );
+                // Lane calls and returns can leave a different activation, or a new one in the
+                // same frame slot; the active frame's PC slot and register file follow it.
+                published_pc = &mut self.frames[frame].pc;
+                self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                if self.frames[frame].function != cursor.function {
+                    cursor =
+                        self.general_cursor(cursor.program, p, self.frames[frame].function, fast_lane);
                 }
-                debug_assert_eq!(cursor.program, self.frames[frame].program);
-                debug_assert_eq!(cursor.function, self.frames[frame].function);
-                let instruction_pc = pc;
-                #[cfg(feature = "profile-memory")]
-                self.heap.set_memory_allocation_site(
-                    cursor.program.raw(),
-                    cursor.function,
-                    instruction_pc,
-                );
-                let ins = cursor.instruction(pc);
-                pc += 1;
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.opcode(
-                    ins.op() as usize,
-                    frame,
-                    cursor.program.raw(),
-                    cursor.function,
-                    instruction_pc,
-                );
-                #[cfg(feature = "profile-aggregate")]
-                self.profile.object_literal_instruction(
-                    cursor.program.raw(),
-                    cursor.function,
-                    instruction_pc,
-                    ins.op(),
-                );
-                #[cfg(not(feature = "profile-aggregate"))]
-                self.profile.opcode(ins.op() as usize);
-                // Register/local moves cannot allocate, collect or throw, so they need neither the
-                // published root-map PC nor the general step result.
-                match ins.op() {
-                    Op::LoadLocalPlain => {
-                        // SAFETY: validated bytecode bounds the slot by Function.locals.
-                        let value = unsafe { self.read_validated_local(frame, ins.local_slot()) };
+            }
+            if STOPS && stop_pc == Some(pc) {
+                self.frames[frame].pc = pc;
+                return Ok(FrameOutcome::ParameterInitializationComplete);
+            }
+            debug_assert_eq!(cursor.program, self.frames[frame].program);
+            debug_assert_eq!(cursor.function, self.frames[frame].function);
+            let instruction_pc = pc;
+            #[cfg(feature = "profile-memory")]
+            self.heap.set_memory_allocation_site(
+                cursor.program.raw(),
+                cursor.function,
+                instruction_pc,
+            );
+            let ins = cursor.instruction(pc);
+            pc += 1;
+            #[cfg(feature = "profile-aggregate")]
+            self.profile.opcode(
+                ins.op() as usize,
+                frame,
+                cursor.program.raw(),
+                cursor.function,
+                instruction_pc,
+            );
+            #[cfg(feature = "profile-aggregate")]
+            self.profile.object_literal_instruction(
+                cursor.program.raw(),
+                cursor.function,
+                instruction_pc,
+                ins.op(),
+            );
+            #[cfg(not(feature = "profile-aggregate"))]
+            self.profile.opcode(ins.op() as usize);
+            // Register/local moves and field cache hits cannot allocate, collect or throw, so they
+            // need neither the published root-map PC nor the general step result.
+            match ins.op() {
+                Op::LoadLocalPlain => {
+                    // SAFETY: validated bytecode bounds the slot by Function.locals.
+                    let value = unsafe { self.read_validated_local(frame, ins.local_slot()) };
+                    self.write(frame, ins.result_register(), value);
+                    continue;
+                }
+                Op::StoreLocalPlain => {
+                    let value = self.read(frame, ins.register_a());
+                    // SAFETY: validated bytecode bounds the slot by Function.locals.
+                    unsafe { self.write_validated_local(frame, ins.local_slot(), value) };
+                    if let Some(register) = ins.optional_register_b() {
+                        self.write(frame, register, value);
+                    }
+                    continue;
+                }
+                Op::Move => {
+                    self.write(frame, ins.result_register(), self.read(frame, ins.register_b()));
+                    continue;
+                }
+                Op::LoadConst => {
+                    if let Some(value) = self.active_constant(ins.constant_index()) {
                         self.write(frame, ins.result_register(), value);
                         continue;
                     }
-                    Op::StoreLocalPlain => {
-                        let value = self.read(frame, ins.register_a());
-                        // SAFETY: validated bytecode bounds the slot by Function.locals.
-                        unsafe { self.write_validated_local(frame, ins.local_slot(), value) };
-                        if let Some(register) = ins.optional_register_b() {
-                            self.write(frame, register, value);
-                        }
-                        continue;
-                    }
-                    Op::Move => {
-                        self.write(frame, ins.result_register(), self.read(frame, ins.register_b()));
-                        continue;
-                    }
-                    _ => {}
                 }
-                // GC inside a getter or native operation needs this instruction's root map.
-                // SAFETY: `frame` names the active activation, which stays on the frame stack
-                // for every iteration that dispatches it.
-                unsafe { self.frames.get_unchecked_mut(frame).pc = instruction_pc };
-                match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
-                    Ok(StepResult::Return(value)) => {
-                        if let Some(pending) = pending_calls.pop() {
-                            debug_assert_eq!(frame, pending.caller + 1);
-                            let completed_frame = self.frames.pop().unwrap();
-                            self.finish_frame_scopes(&completed_frame);
-                            self.persist_global_lexical_bindings(p, &completed_frame);
-                            self.pool_frame(completed_frame);
-                            frame = pending.caller;
-                            // [[Construct]] of an ordinary constructor yields its returned object,
-                            // otherwise the receiver it allocated.
-                            let value = match pending.construct_this {
-                                Some(this) if !self.is_object_like(value) => this,
-                                _ => value,
-                            };
-                            self.write(frame, pending.destination, value);
-                            pc = self.frames[frame].pc;
-                            cursor = pending.caller_cursor;
-                            drop(pending.call_guard);
-                        } else {
-                            self.frames[frame].pc = pc;
-                            return Ok(FrameOutcome::Complete(value));
-                        }
+                Op::LoadCapture => {
+                    if let Some(value) =
+                        self.direct_capture(frame, ins.capture_depth(), ins.capture_slot())
+                    {
+                        self.write(frame, ins.result_register(), value);
+                        continue;
                     }
-                    Ok(StepResult::Continue) => {}
-                    Ok(StepResult::PushFrame {
-                        destination,
-                        call_guard,
-                        construct_this,
-                    }) => {
-                        pending_calls.push(PendingGeneralCall {
-                            caller: frame,
-                            caller_cursor: cursor,
-                            call_pc: instruction_pc as u32,
-                            destination,
-                            construct_this,
-                            call_guard,
+                }
+                Op::JumpFalse | Op::JumpTrue => {
+                    // ToBoolean runs no guest code.
+                    let value = self.read(frame, ins.register_a());
+                    let truthy = self.truthy(value);
+                    #[cfg(feature = "profile-aggregate")]
+                    self.profile
+                        .branch_value(value.profile_kind() as usize, truthy);
+                    if truthy == (ins.op() == Op::JumpTrue) {
+                        pc = ins.jump_target() as usize;
+                    }
+                    continue;
+                }
+                Op::JumpBinaryFalse => {
+                    let operator = ins.binary_operator_field();
+                    if let (Some(left), Some(right)) = (
+                        self.inert_operand(frame, ins.operand_b()),
+                        self.inert_operand(frame, ins.operand_c()),
+                    ) && let Some(truthy) = self.number_comparison_truthy(operator, left, right)
+                    {
+                        self.profile
+                            .binary(operator as usize, ins.operand_b().0, ins.operand_c().0);
+                        if !truthy {
+                            pc = ins.jump_target() as usize;
+                        }
+                        continue;
+                    }
+                }
+                // A field cache hit reads a data slot: it neither allocates nor throws.
+                Op::GetField
+                    if ins.result_flags() == 0
+                        && let Some(crate::bytecode::FieldLookup::Atom {
+                            base, cache_site, ..
+                        }) = ins.field_lookup()
+                        && let Some(register) = base.register_index()
+                        && let super::object::FieldCacheProbe::Hit(value) =
+                            self.cached_field_hit(p, self.read(frame, register), cache_site) =>
+                {
+                    self.write(frame, ins.result_register(), value);
+                    continue;
+                }
+                _ => {}
+            }
+            // GC inside a getter or native operation needs this instruction's root map.
+            // SAFETY: `frame` names the active activation, which stays on the frame stack
+            // for every iteration that dispatches it.
+            debug_assert!(std::ptr::eq(published_pc, &self.frames[frame].pc));
+            unsafe { *published_pc = instruction_pc };
+            match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
+                Ok(StepResult::Return(value)) => {
+                    if let Some(pending) = pending_calls.pop() {
+                        debug_assert_eq!(frame, pending.caller + 1);
+                        let completed_frame = self.frames.pop().unwrap();
+                        self.finish_frame_scopes(&completed_frame);
+                        // In-loop pushes never enter a script root, the only activation that
+                        // publishes global lexical bindings.
+                        debug_assert_ne!(completed_frame.function, super::ROOT_FUNCTION_ID);
+                        self.pool_frame(completed_frame);
+                        frame = pending.caller;
+                        self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                        // [[Construct]] of an ordinary constructor yields its returned object,
+                        // otherwise the receiver it allocated.
+                        let value = match pending.construct_this {
+                            Some(this) if !self.is_object_like(value) => this,
+                            _ => value,
+                        };
+                        self.write(frame, pending.destination, value);
+                        pc = self.frames[frame].pc;
+                        cursor = pending.caller_cursor.unwrap_or_else(|| {
+                            self.general_cursor(executing_program, p, self.frames[frame].function, fast_lane)
                         });
-                        frame += 1;
-                        pc = self.frames[frame].pc;
-                        let callee_program = self.frames[frame].program;
-                        debug_assert_eq!(callee_program, executing_program);
-                        cursor =
-                            GeneralCodeCursor::new(callee_program, p, self.frames[frame].function);
-                    }
-                    Ok(StepResult::TailCall) => {
-                        let replacement_program = self.frames[frame].program;
-                        if replacement_program != executing_program {
-                            self.active_program = replacement_program;
-                            current_program =
-                                Some(self.programs.get(replacement_program).ok_or_else(|| {
-                                    JsError::validation("missing tail-call program".into())
-                                })?);
-                        }
-                        executing_program = replacement_program;
-                        executing_residual = current_program.as_deref().unwrap_or(entry_program);
-                        pc = self.frames[frame].pc;
-                        cursor = GeneralCodeCursor::new(
-                            replacement_program,
-                            current_program.as_deref().unwrap_or(entry_program),
-                            self.frames[frame].function,
-                        );
-                        // The replacement frame publishes all callee roots before this back edge.
-                        self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
-                    }
-                    Ok(StepResult::Await { value, destination }) => {
-                        debug_assert!(pending_calls.is_empty());
+                        published_pc = &mut self.frames[frame].pc;
+                        drop(pending.call_guard);
+                    } else {
                         self.frames[frame].pc = pc;
-                        return Ok(FrameOutcome::Await {
-                            value,
-                            destination,
-                            frame: None,
-                        });
+                        return Ok(FrameOutcome::Complete(value));
                     }
-                    Ok(StepResult::Yield {
+                }
+                Ok(StepResult::Continue) => {}
+                Ok(StepResult::PushFrame {
+                    destination,
+                    call_guard,
+                    construct_this,
+                }) => {
+                    pending_calls.push(PendingGeneralCall {
+                        caller: frame,
+                        caller_cursor: Some(cursor),
+                        call_pc: instruction_pc as u32,
+                        destination,
+                        construct_this,
+                        call_guard: Some(call_guard),
+                    });
+                    frame += 1;
+                    pc = self.frames[frame].pc;
+                    let callee_program = self.frames[frame].program;
+                    debug_assert_eq!(callee_program, executing_program);
+                    cursor =
+                        self.general_cursor(callee_program, p, self.frames[frame].function, fast_lane);
+                    published_pc = &mut self.frames[frame].pc;
+                    self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                }
+                Ok(StepResult::TailCall) => {
+                    let replacement_program = self.frames[frame].program;
+                    if replacement_program != executing_program {
+                        self.set_active_program(replacement_program);
+                        current_program =
+                            Some(self.programs.get(replacement_program).ok_or_else(|| {
+                                JsError::validation("missing tail-call program".into())
+                            })?);
+                    }
+                    executing_program = replacement_program;
+                    executing_residual = current_program.as_deref().unwrap_or(entry_program);
+                    pc = self.frames[frame].pc;
+                    cursor = self.general_cursor(replacement_program,
+                        current_program.as_deref().unwrap_or(entry_program),
+                        self.frames[frame].function, fast_lane);
+                    published_pc = &mut self.frames[frame].pc;
+                    self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                    // The replacement frame publishes all callee roots before this back edge.
+                    self.maybe_collect(current_program.as_deref().unwrap_or(entry_program));
+                }
+                Ok(StepResult::Await { value, destination }) => {
+                    debug_assert!(pending_calls.is_empty());
+                    self.frames[frame].pc = pc;
+                    return Ok(FrameOutcome::Await {
+                        value,
+                        destination,
+                        frame: None,
+                    });
+                }
+                Ok(StepResult::Yield {
+                    value,
+                    destination,
+                    delegated_result,
+                }) => {
+                    debug_assert!(pending_calls.is_empty());
+                    self.frames[frame].pc = pc;
+                    return Ok(FrameOutcome::Yield {
                         value,
                         destination,
                         delegated_result,
-                    }) => {
-                        debug_assert!(pending_calls.is_empty());
-                        self.frames[frame].pc = pc;
-                        return Ok(FrameOutcome::Yield {
-                            value,
-                            destination,
-                            delegated_result,
-                            frame: None,
-                        });
-                    }
-                    Err(error) => {
-                        let mut throwing_pc = instruction_pc as u32;
-                        let mut error = error;
-                        loop {
-                            let function = self.frames[frame].function as usize;
-                            match self.exception_handler_target(
-                                p,
-                                frame,
-                                function,
-                                throwing_pc,
-                                error,
-                            ) {
-                                Ok(target) => {
-                                    pc = target;
-                                    break;
-                                }
-                                Err(unhandled) => {
-                                    self.frames[frame].pc = pc;
-                                    if let Some(pending) = pending_calls.pop() {
-                                        debug_assert_eq!(frame, pending.caller + 1);
-                                        let result = Err(unhandled);
-                                        let mut failed_frame = self.frames.pop().unwrap();
-                                        self.deactivate_frame(&mut failed_frame, &result);
-                                        self.persist_global_lexical_bindings(p, &failed_frame);
-                                        frame = pending.caller;
-                                        pc = self.frames[frame].pc;
-                                        cursor = pending.caller_cursor;
-                                        throwing_pc = pending.call_pc;
-                                        drop(pending.call_guard);
-                                        error = match result {
-                                            Err(error) => error,
-                                            Ok(_) => unreachable!(),
-                                        };
-                                    } else {
-                                        return Err(unhandled);
-                                    }
+                        frame: None,
+                    });
+                }
+                Err(error) => {
+                    let mut throwing_pc = instruction_pc as u32;
+                    let mut error = error;
+                    loop {
+                        let function = self.frames[frame].function as usize;
+                        match self.exception_handler_target(
+                            p,
+                            frame,
+                            function,
+                            throwing_pc,
+                            error,
+                        ) {
+                            Ok(target) => {
+                                pc = target;
+                                break;
+                            }
+                            Err(unhandled) => {
+                                self.frames[frame].pc = pc;
+                                if let Some(pending) = pending_calls.pop() {
+                                    debug_assert_eq!(frame, pending.caller + 1);
+                                    let result = Err(unhandled);
+                                    let mut failed_frame = self.frames.pop().unwrap();
+                                    self.deactivate_frame(&mut failed_frame, &result);
+                                    self.persist_global_lexical_bindings(p, &failed_frame);
+                                    frame = pending.caller;
+                                    pc = self.frames[frame].pc;
+                                    cursor = pending.caller_cursor.unwrap_or_else(|| {
+                                        self.general_cursor(executing_program, p, self.frames[frame].function, fast_lane)
+                                    });
+                                    published_pc = &mut self.frames[frame].pc;
+                                    self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                                    throwing_pc = pending.call_pc;
+                                    drop(pending.call_guard);
+                                    error = match result {
+                                        Err(error) => error,
+                                        Ok(_) => unreachable!(),
+                                    };
+                                } else {
+                                    return Err(unhandled);
                                 }
                             }
                         }
                     }
                 }
             }
-        })();
-        self.active_program = previous_program;
-        self.realm.globals = previous_global;
-        outcome
+        }
     }
 
     fn exception_handler_target(
@@ -1169,33 +1484,52 @@ impl<H: Host> Vm<H> {
         f: usize,
         window: crate::bytecode::RegisterWindow,
     ) -> &[Value] {
-        let start = usize::from(window.base);
-        &self.frames[f].registers[start..start + usize::from(window.count)]
+        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(
+            usize::from(window.base) + usize::from(window.count)
+                <= self.frames[f].registers.len()
+        );
+        // SAFETY: as for `read`: the window lies in frame `f`'s register file, which
+        // `active_registers` names.
+        unsafe {
+            std::slice::from_raw_parts(
+                self.active_registers.add(usize::from(window.base)),
+                usize::from(window.count),
+            )
+        }
+    }
+
+    /// An operand's value when reading it can run no guest code and cannot throw: a register
+    /// or a constant. Field and local operands go through `resolve_operand`.
+    #[inline(always)]
+    fn inert_operand(&self, frame: usize, operand: crate::bytecode::Operand) -> Option<Value> {
+        match operand.kind() {
+            Some(crate::bytecode::OperandKind::Register) => {
+                Some(self.read(frame, operand.payload() as Register))
+            }
+            Some(crate::bytecode::OperandKind::Constant) => {
+                self.active_constant(operand.payload() as usize)
+            }
+            _ => None,
+        }
     }
 
     #[inline(always)]
     pub(super) fn read(&self, f: usize, r: u16) -> Value {
-        // SAFETY: compiler-issued registers are defined before use; each frame
-        // is sized to the verified maximum register before interpretation.
-        unsafe {
-            *self
-                .frames
-                .get_unchecked(f)
-                .registers
-                .get_unchecked(r as usize)
-        }
+        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(usize::from(r) < self.frames[f].registers.len());
+        // SAFETY: register access happens only while dispatching frame `f`, whose register file
+        // `active_registers` names (see `run_general_loop`); compiler-issued registers are below
+        // the verified register count the file was sized to.
+        unsafe { *self.active_registers.add(usize::from(r)) }
     }
 
     #[inline(always)]
     pub(super) fn write(&mut self, f: usize, r: u16, v: Value) {
-        // SAFETY: same compiler/frame invariant as `read`; mutation stays here.
-        unsafe {
-            *self
-                .frames
-                .get_unchecked_mut(f)
-                .registers
-                .get_unchecked_mut(r as usize) = v;
-        }
+        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(usize::from(r) < self.frames[f].registers.len());
+        // SAFETY: same active-frame invariant as `read`; mutation stays here.
+        unsafe { *self.active_registers.add(usize::from(r)) = v };
     }
 
     #[inline(always)]

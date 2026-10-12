@@ -576,6 +576,11 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::text_decoder_shared_vm::install_global(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_text_decoder");
+        context
+            .host_mut()
+            .shared_state()
+            .borrow_mut()
+            .reset_cached_vm_roots();
         crate::modules::process_shared_vm::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_process");

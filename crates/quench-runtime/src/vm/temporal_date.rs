@@ -418,7 +418,7 @@ impl<H: Host> Vm<H> {
             .map_or(iso_day as i32, |fields| fields.day as i32);
         let changes = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_object_like(changes)
-            || matches!(self.heap.get(changes), Some(Cell::Array { .. }))
+            || self.heap.array(changes).is_some()
             || matches!(
                 self.heap.get(changes),
                 Some(
@@ -603,8 +603,11 @@ impl<H: Host> Vm<H> {
             ..
         }) = self.heap.get(value)
         {
-            let (epoch_nanoseconds, time_zone, calendar) =
-                (**epoch_nanoseconds, time_zone.to_string(), calendar.to_string());
+            let (epoch_nanoseconds, time_zone, calendar) = (
+                **epoch_nanoseconds,
+                time_zone.to_string(),
+                calendar.to_string(),
+            );
             let _ = self.plain_date_overflow(p, options)?;
             let fields = super::temporal_zoned_date_time::zoned_date_time_fields(
                 epoch_nanoseconds,

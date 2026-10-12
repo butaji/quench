@@ -1,0 +1,160 @@
+--- a/cranelift-codegen/src/egraph/elaborate.rs	2006-07-24 01:21:28.000000000 +0000
++++ b/cranelift-codegen/src/egraph/elaborate.rs	2026-10-12 14:08:21.349644685 +0000
+@@ -134,7 +134,10 @@
+ #[derive(Clone, Debug)]
+ enum BlockStackEntry {
+     Elaborate { block: Block, idom: Option<Block> },
+-    Pop,
++    /// Leave a block's dominator subtree. Quench: restores the loop stack
++    /// the block was entered with, so that a block outside a loop, which
++    /// pops that loop, does not hide it from later siblings inside it.
++    Pop { loop_stack: SmallVec<[LoopStackEntry; 8]> },
+ }
+ 
+ impl<'a> Elaborator<'a> {
+@@ -829,7 +832,9 @@
+         while let Some(top) = self.block_stack.pop() {
+             match top {
+                 BlockStackEntry::Elaborate { block, idom } => {
+-                    self.block_stack.push(BlockStackEntry::Pop);
++                    self.block_stack.push(BlockStackEntry::Pop {
++                        loop_stack: self.loop_stack.clone(),
++                    });
+                     self.value_to_elaborated_value.increment_depth();
+ 
+                     self.elaborate_block(&mut elab_values, idom, block);
+@@ -850,8 +855,9 @@
+                     // we can't `.rev()` above.)
+                     self.block_stack[block_stack_end..].reverse();
+                 }
+-                BlockStackEntry::Pop => {
++                BlockStackEntry::Pop { loop_stack } => {
+                     self.value_to_elaborated_value.decrement_depth();
++                    self.loop_stack = loop_stack;
+                 }
+             }
+         }
+--- a/cranelift-codegen/src/isa/x64/inst/mod.rs	2006-07-24 01:21:28.000000000 +0000
++++ b/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-12 13:19:07.555669508 +0000
+@@ -1478,6 +1478,12 @@
+         }
+     }
+ 
++    /// Quench: one cache line, the unit the front end fetches and caches
++    /// decoded instructions in.
++    fn small_loop_alignment() -> CodeOffset {
++        64
++    }
++
+     fn function_alignment() -> FunctionAlignment {
+         FunctionAlignment {
+             minimum: 1,
+--- a/cranelift-codegen/src/lib.rs	2006-07-24 01:21:28.000000000 +0000
++++ b/cranelift-codegen/src/lib.rs	2026-10-12 09:18:26.568602936 +0000
+@@ -1,4 +1,5 @@
+ //! Cranelift code generation library.
++#![allow(warnings)]
+ #![deny(missing_docs)]
+ // Display feature requirements in the documentation when building on docs.rs
+ #![cfg_attr(docsrs, feature(doc_cfg))]
+--- a/cranelift-codegen/src/machinst/mod.rs	2006-07-24 01:21:28.000000000 +0000
++++ b/cranelift-codegen/src/machinst/mod.rs	2026-10-12 09:38:00.181164348 +0000
+@@ -363,6 +363,12 @@
+     /// order.
+     fn gen_nop_units() -> Vec<Vec<u8>>;
+ 
++    /// Quench: the alignment of a small loop's header (see
++    /// `VCode::small_loop_headers`). By default, no alignment occurs.
++    fn small_loop_alignment() -> CodeOffset {
++        1
++    }
++
+     /// Align a basic block offset (from start of function).  By default, no
+     /// alignment occurs.
+     fn align_basic_block(offset: CodeOffset) -> CodeOffset {
+--- a/cranelift-codegen/src/machinst/vcode.rs	2006-07-24 01:21:28.000000000 +0000
++++ b/cranelift-codegen/src/machinst/vcode.rs	2026-10-12 09:37:52.523696652 +0000
+@@ -76,6 +76,11 @@
+ pub trait VCodeInst: MachInst + MachInstEmit {}
+ impl<I: MachInst + MachInstEmit> VCodeInst for I {}
+ 
++/// Quench: the most instructions a loop body may hold for its header to be
++/// aligned (see `VCode::small_loop_headers`): about one 64-byte fetch window
++/// of typical x64 encodings.
++const SMALL_LOOP_INSTS: usize = 16;
++
+ /// A function in "VCode" (virtualized-register code) form, after
+ /// lowering.  This is essentially a standard CFG of basic blocks,
+ /// where each basic block consists of lowered instructions produced
+@@ -656,6 +661,51 @@
+ 
+     /// Get the number of blocks. Block indices will be in the range `0 ..
+     /// (self.num_blocks() - 1)`.
++    /// Quench: the headers of small loops without calls, by block. A loop
++    /// is a header with the back edges reaching it from later in
++    /// `final_order`; its body is the blocks from the header to its last
++    /// back edge. Such a loop runs many iterations per entry, so starting
++    /// it on `small_loop_alignment` keeps its body in the fewest fetch
++    /// windows; a loop with a call or a longer body gains nothing to pay
++    /// for the padding.
++    fn small_loop_headers(&self, final_order: &[BlockIndex]) -> Vec<bool> {
++        let mut aligned = vec![false; self.num_blocks()];
++        if I::small_loop_alignment() <= 1 {
++            return aligned;
++        }
++        let mut position = vec![usize::MAX; self.num_blocks()];
++        for (index, block) in final_order.iter().enumerate() {
++            position[block.index()] = index;
++        }
++        let mut last_back_edge = vec![None::<usize>; self.num_blocks()];
++        for (index, &block) in final_order.iter().enumerate() {
++            for succ in regalloc2::Function::block_succs(self, block) {
++                if position[succ.index()] <= index {
++                    last_back_edge[succ.index()] = Some(index);
++                }
++            }
++        }
++        for (header, block) in final_order.iter().enumerate() {
++            let Some(latch) = last_back_edge[block.index()] else {
++                continue;
++            };
++            let insts = final_order[header..=latch]
++                .iter()
++                .flat_map(|body| self.block_ranges.get(body.index()));
++            let mut count = 0;
++            let mut small = true;
++            for inst in insts {
++                count += 1;
++                if count > SMALL_LOOP_INSTS || self.insts[inst].call_type() != CallType::None {
++                    small = false;
++                    break;
++                }
++            }
++            aligned[block.index()] = small;
++        }
++        aligned
++    }
++
+     pub fn num_blocks(&self) -> usize {
+         self.block_ranges.len()
+     }
+@@ -768,6 +818,7 @@
+             }
+         }
+         final_order.extend(cold_blocks.clone());
++        let aligned_loops = self.small_loop_headers(&final_order);
+ 
+         // Compute/save info we need for the prologue: clobbers and
+         // number of spillslots.
+@@ -827,7 +878,10 @@
+             state.on_new_block();
+ 
+             // Emit NOPs to align the block.
+-            let new_offset = I::align_basic_block(buffer.cur_offset());
++            let mut new_offset = I::align_basic_block(buffer.cur_offset());
++            if aligned_loops[block.index()] {
++                new_offset = align_to(new_offset, I::small_loop_alignment());
++            }
+             while new_offset > buffer.cur_offset() {
+                 // Pad with NOPs up to the aligned block offset.
+                 let nop = I::gen_nop((new_offset - buffer.cur_offset()) as usize);

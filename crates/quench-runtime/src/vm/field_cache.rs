@@ -3,17 +3,23 @@ use super::*;
 impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn field_cache_atom_eligible(&self, atom: Atom) -> bool {
-        !self.is_private_name(atom)
-            && atom != self.length_atom
-            && atom != self.size_atom
-            && atom != self.byte_length_atom
-            && atom != self.byte_offset_atom
-            && atom != self.buffer_atom
+        !self
+            .atom_class(atom)
+            .intersects(AtomClass::PRIVATE | AtomClass::VIRTUAL_FIELD)
     }
 
     // Shapes prove ordinary data storage only when no exotic or virtual lookup intervenes.
     pub(super) fn shape_property_lookup(&self, value: Value, atom: Atom) -> Option<&Object> {
-        self.shape_property_lookup_cell(self.heap.get(value)?, atom)
+        if let Some((object, _)) = self.heap.array(value) {
+            if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) {
+                return None;
+            }
+            return self.shape_property_lookup_object(object, atom);
+        }
+        if let Some(cell) = self.heap.get(value) {
+            return self.shape_property_lookup_cell(cell, atom);
+        }
+        self.shape_property_lookup_object(self.heap.object(value)?, atom)
     }
 
     pub(super) fn shape_property_lookup_cell<'a>(
@@ -21,17 +27,10 @@ impl<H: Host> Vm<H> {
         cell: &'a Cell,
         atom: Atom,
     ) -> Option<&'a Object> {
-        if !self.field_cache_atom_eligible(atom) {
-            return None;
-        }
         let object = cell.object()?;
-        if object.is_module_namespace() || self.shape_is_dictionary(object.shape()) {
-            return None;
-        }
         let class = self.atom_class(atom);
         match cell {
             Cell::Proxy { .. } => return None,
-            Cell::Array { .. } if class.contains(AtomClass::ARRAY_INDEX) => return None,
             Cell::TypedArray { .. } if class.contains(AtomClass::TYPED_ARRAY_INDEX) => {
                 return None;
             }
@@ -39,6 +38,20 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             _ => {}
+        }
+        self.shape_property_lookup_object(object, atom)
+    }
+
+    fn shape_property_lookup_object<'a>(
+        &self,
+        object: &'a Object,
+        atom: Atom,
+    ) -> Option<&'a Object> {
+        if !self.field_cache_atom_eligible(atom) {
+            return None;
+        }
+        if object.is_module_namespace() || self.shape_is_dictionary(object.shape()) {
+            return None;
         }
         Some(object)
     }
