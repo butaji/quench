@@ -1076,11 +1076,11 @@ lane_handler! {
     /// An f64 arithmetic `FIRST` whose result the next record, f64 operator
     /// `SECOND`, takes as its left (`LEFT`) or right operand: both records
     /// run here, each result written as its own record writes it.
-    fn lane_f64_pair<FIRST: u8, SECOND: u8, LEFT: bool>(cx, r, ip, i, view) {
+    fn lane_f64_pair<FIRST: u8, SECOND: u8, LEFT: bool, ACC: u8>(cx, r, ip, i, view) {
         let first = match f64_operation(
             FIRST,
-            f64::from_bits(r.get(i.b).float_bits64()),
-            f64::from_bits(r.get(i.c).float_bits64()),
+            f64::from_bits(read::<ACC, ACC_B>(r, i.b, view).float_bits64()),
+            f64::from_bits(read::<ACC, ACC_C>(r, i.c, view).float_bits64()),
         ) {
             Ok(result) => result,
             Err(_) => unreachable!("a fused first operator is arithmetic"),
@@ -1218,8 +1218,15 @@ macro_rules! float_pair_handlers {
     };
     ($host:ty, $first:expr, $second:expr) => {
         [
-            lane_f64_pair::<$host, $first, $second, false> as Handler,
-            lane_f64_pair::<$host, $first, $second, FUSED_LEFT> as Handler,
+            float_pair_handlers!($host, $first, $second, false),
+            float_pair_handlers!($host, $first, $second, FUSED_LEFT),
+        ]
+    };
+    ($host:ty, $first:expr, $second:expr, $left:expr) => {
+        [
+            lane_f64_pair::<$host, $first, $second, $left, ACC_NONE> as Handler,
+            lane_f64_pair::<$host, $first, $second, $left, ACC_B> as Handler,
+            lane_f64_pair::<$host, $first, $second, $left, ACC_C> as Handler,
         ]
     };
 }
@@ -1229,9 +1236,10 @@ macro_rules! float_pair_handlers {
 const FLOAT_PAIR_FIRSTS: usize = 4;
 
 impl<H: Host> FloatPairs<H> {
-    /// By first operator, second operator and whether the first result is
-    /// the second's left operand.
-    const HANDLERS: [[[Handler; 2]; FLOAT_ARITHMETIC]; FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H);
+    /// By first operator, second operator, whether the first result is the
+    /// second's left operand, and the first's accumulator field.
+    const HANDLERS: [[[[Handler; FUSED_ACC_FIELDS.len()]; 2]; FLOAT_ARITHMETIC];
+        FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H);
     /// An f64 load fused with the operator taking its value, by second
     /// operator and whether the value is its left operand.
     /// An f64 arithmetic fused with the store of its result, by operator.
@@ -2281,16 +2289,18 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                 return None;
             }
             let first = float_arithmetic(instruction.op(), instruction.imm())?;
-            let plain =
-                FloatArithmetic::<H>::HANDLERS[1][usize::from(first)][usize::from(ACC_NONE)];
-            if usize::from(first) >= FLOAT_PAIR_FIRSTS || records[pc].handler != plain as *const ()
-            {
+            if usize::from(first) >= FLOAT_PAIR_FIRSTS {
                 return None;
             }
+            let field = FUSED_ACC_FIELDS.iter().position(|acc| {
+                records[pc].handler
+                    == FloatArithmetic::<H>::HANDLERS[1][usize::from(first)][usize::from(*acc)]
+                        as *const ()
+            })?;
             let left = left_of(&records)?;
             Some(
                 FloatPairs::<H>::HANDLERS[usize::from(first)][usize::from(second)]
-                    [usize::from(left)],
+                    [usize::from(left)][field],
             )
         })();
         // An f64 arithmetic whose result the next record stores, when only
