@@ -3803,3 +3803,108 @@ console.log(JSON.stringify(result));
     assert_eq!(observations[0].stdout, observations[1].stdout);
     assert_eq!(observations[0].stderr, observations[1].stderr);
 }
+
+#[cfg(unix)]
+#[test]
+fn synchronous_child_stdin_and_stdio_preserve_raw_views_and_encoded_units() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),cp=require('child_process'),result=[];
+const bytes=new Uint8Array([0,255,128,65]);
+for(const input of [Buffer.from(bytes),bytes,new Uint16Array(bytes.buffer),new DataView(bytes.buffer),Buffer.alloc(256*1024,85)]){
+ const child=cp.spawnSync('cat',[],{input,maxBuffer:1024*1024});assert.strictEqual(child.status,0);assert.strictEqual(child.error,undefined);assert.strictEqual(child.stdout.length,input.byteLength);assert.strictEqual(child.stderr.length,0);result.push([child.stdout.length,child.stdout[0],child.stdout[child.stdout.length-1]]);
+}
+for(const [input,encoding] of [['hello','utf8'],['00ff80','hex'],['\ud800A','utf16le'],['😀','latin1']]){
+ const child=cp.spawnSync('cat',[],{input,encoding});assert.strictEqual(child.status,0);assert.strictEqual(child.error,undefined);result.push([encoding,child.stdout,child.stderr]);
+}
+const inherited=cp.spawnSync(process.execPath,['-e','process.stdout.write("forward");process.stderr.write("forwardERR")'],{stdio:'inherit',encoding:'hex'});assert.strictEqual(inherited.status,0);assert.strictEqual(inherited.error,undefined);assert.deepStrictEqual(inherited.output,[null,null,null]);assert.strictEqual(inherited.stdout,null);assert.strictEqual(inherited.stderr,null);
+const ignored=cp.spawnSync(process.execPath,['-e','process.stdout.write("ok");process.stderr.write("ignored")'],{stdio:['ignore','pipe','ignore']});assert.strictEqual(ignored.stdout.toString(),'ok');assert.strictEqual(ignored.stderr,null);
+for(const options of [{input:3},{stdio:['ipc','ipc','ipc']}])try{cp.spawnSync('cat',[],options);assert.fail('expected input/IPC error')}catch(error){result.push([error.name,error.code,error.message]);}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+    assert_eq!(observations[0].stderr, observations[1].stderr);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn synchronous_child_deadlines_reap_selected_signals_and_preserve_exit_handlers() {
+    const SOURCE: &str = r#"
+const cp=require('child_process'),assert=require('assert'),os=require('os'),result=[];
+const constants=os.constants.signals;assert.strictEqual(Object.getPrototypeOf(constants),null);assert.strictEqual(Object.getPrototypeOf(os.constants),null);
+result.push([Object.keys(constants),Object.getOwnPropertyDescriptor(constants,'SIGKILL')]);
+for(const killSignal of [undefined,'sigkill',constants.SIGKILL,'SIGUSR1']){
+ const child=cp.spawnSync('sleep',['5'],{timeout:50,killSignal});assert.strictEqual(child.error.code,'ETIMEDOUT');assert(child.error.errno<0);assert.strictEqual(child.status,null);result.push([child.error.code,child.error.errno,child.status,child.signal]);
+}
+const handled=cp.spawnSync(process.execPath,['-e','process.on("SIGTERM",()=>process.exit(7));setInterval(()=>{},1000)'],{timeout:300});assert.strictEqual(handled.error.code,'ETIMEDOUT');assert.strictEqual(handled.status,7);assert.strictEqual(handled.signal,null);result.push(['handled',handled.status]);
+const inherited=cp.spawnSync('sleep',['5'],{timeout:50,stdio:'ignore',killSignal:'SIGKILL'});assert.strictEqual(inherited.error.code,'ETIMEDOUT');assert.strictEqual(inherited.signal,'SIGKILL');assert.deepStrictEqual(inherited.output,[null,null,null]);
+for(const options of [{timeout:-1},{timeout:1.2},{timeout:'1'},{killSignal:true},{killSignal:0},{killSignal:'SIG_NO_SUCH_SIGNAL'}])try{cp.spawnSync('true',options);assert.fail('expected option validation error')}catch(error){result.push([error.name,error.code,error.message]);}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn synchronous_child_timeout_closes_grandchild_pipes_after_direct_exit() {
+    const SOURCE: &str = r#"
+const cp=require('child_process'),assert=require('assert');
+const source='const cp=require("child_process");const child=cp.spawn("sleep",["5"],{stdio:["ignore","inherit","inherit"]});console.log(child.pid);child.unref();process.exit(0)';
+const child=cp.spawnSync(process.execPath,['-e',source],{timeout:500});
+const pid=Number(child.stdout.toString().trim());assert(pid>0);try{process.kill(pid,'SIGKILL')}catch(error){if(error.code!=='ESRCH')throw error;}
+assert.strictEqual(child.error.code,'ETIMEDOUT');assert.strictEqual(child.status,0);assert.strictEqual(child.signal,null);console.log(JSON.stringify([child.error.code,child.status,child.signal]));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}

@@ -117,6 +117,23 @@ descriptors instead of converting through UTF-8. The existing embedding
 This does not establish complete Writable metadata, callbacks, string-encoding
 options, backpressure or stream-error handling.
 
+On Unix, synchronous child input and output share one nonblocking poll loop.
+The configured stdio specifications own the OS descriptors and determine null
+output slots. String input shares Buffer's codec using the original UTF-16
+units; views use their raw bytes. Empty input closes the parent stdin endpoint.
+Runner errors take precedence over the first pipe error. A timeout or buffer
+overflow sends the selected signal, closes every parent endpoint and reaps the
+child. A failing signal operation uses Node's SIGKILL fallback. The child's
+actual exit status is preserved, including handlers that exit with a code and
+children that exit before a grandchild-held pipe reaches the deadline.
+
+Linux signal constants are read-only entries in a null-prototype record,
+derived from the same OS table as captured process-kill constants and
+synchronous child signal validation. Other platforms retain their previous
+signal and synchronous collection paths. Extra synchronous stdio channels,
+wrap-based synchronous stdio, full option normalization and mutable internal
+child-process callback routing still require conformance work.
+
 ## TLS material validation
 
 Secure-context CRL and PKCS12 checks use native OpenSSL parsers. CRLs use

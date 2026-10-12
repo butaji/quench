@@ -85,12 +85,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "_kill", kill)?;
     #[cfg(target_os = "linux")]
     {
-        let signals = context.null_object_rooted()?;
-        for (name, number) in super::process_signals_state::SIGNALS {
-            let key = context.string_rooted(name);
-            let value = context.number(f64::from(*number));
-            context.define_data_property_rooted(signals, key, value, false, true, false)?;
-        }
+        let signals = super::os_shared_vm::signal_constants(context)?;
         let util = crate::host::shared_vm::commonjs::util_module(context)?;
         let key = context.string_rooted("inspect");
         let inspect = context.get_property_rooted(util, key)?;
