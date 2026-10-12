@@ -245,6 +245,8 @@ pub struct Regex {
     flags: Flags,
     capture_names: Vec<String>,
     has_named_groups: bool,
+    /// Literal units every match consumes contiguously (`required_literal`); empty if none.
+    required_literal: Box<[u32]>,
     compiled_dot_requires_cr_guard: bool,
     /// The automata backend is a guarded fast path for ASCII patterns. Regex
     /// syntax it cannot represent (backreferences/lookaround and other
@@ -301,6 +303,7 @@ impl Regex {
             next_capture: 0,
         };
         let program = lower_disjunction(&parsed.body, &mut lowering);
+        let required_literal = required_literal(&program, flags);
         let has_named_groups = lowering.names.iter().any(|name| !name.is_empty());
         // The `regex` crate is a useful literal fast path, but its capture
         // and character semantics are not ECMAScript-complete (notably
@@ -327,6 +330,7 @@ impl Regex {
             flags,
             capture_names: lowering.names,
             has_named_groups,
+            required_literal,
             compiled_dot_requires_cr_guard: !flags.dot_all && has_bare_dot(source),
             compiled,
             compiled_test,
@@ -452,6 +456,11 @@ impl Regex {
     }
 
     fn find_units(&self, input: &[Unit], first: usize) -> Option<Match> {
+        if !self.required_literal.is_empty()
+            && !contains_literal(&input[first.min(input.len())..], &self.required_literal)
+        {
+            return None;
+        }
         let unset = std::rc::Rc::new(vec![None; self.capture_names.len()]);
         for position in first..=input.len() {
             let state = State {
@@ -981,6 +990,40 @@ fn units_from_str(text: &str, unicode: bool) -> Vec<Unit> {
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// The longest run of literal units that every match consumes contiguously: consecutive
+/// literals of the top-level sequence, read through captures, which a match always enters.
+/// Empty for case-insensitive patterns, whose literals match more than their own value.
+fn required_literal(program: &Expr, flags: Flags) -> Box<[u32]> {
+    fn visit(expr: &Expr, run: &mut Vec<u32>, best: &mut Vec<u32>) {
+        match expr {
+            Expr::Sequence(parts) => parts.iter().for_each(|part| visit(part, run, best)),
+            Expr::Capture { body, .. } => visit(body, run, best),
+            Expr::Literal(value) => run.push(*value),
+            _ => end_run(run, best),
+        }
+    }
+    fn end_run(run: &mut Vec<u32>, best: &mut Vec<u32>) {
+        if run.len() > best.len() {
+            std::mem::swap(run, best);
+        }
+        run.clear();
+    }
+    if flags.ignore_case {
+        return Box::default();
+    }
+    let (mut run, mut best) = (Vec::new(), Vec::new());
+    visit(program, &mut run, &mut best);
+    end_run(&mut run, &mut best);
+    best.into()
+}
+
+/// Whether `literal` occurs in `input`.
+fn contains_literal(input: &[Unit], literal: &[u32]) -> bool {
+    input
+        .windows(literal.len())
+        .any(|window| window.iter().zip(literal).all(|(unit, value)| unit.value == *value))
 }
 
 /// The index of the first decoded unit at or after UTF-16 offset `start`.
