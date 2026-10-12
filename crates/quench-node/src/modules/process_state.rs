@@ -132,7 +132,8 @@ pub(crate) fn change_directory_cwd(cwd: &ProcessCwd, destination: &str) -> Resul
             std::io::Error::from_raw_os_error(libc::ENOTDIR),
         ));
     }
-    cwd.set_path(requested);
+    cwd.set_path(requested)
+        .map_err(|error| chdir_error(&previous, destination, error))?;
     Ok(())
 }
 
@@ -207,23 +208,128 @@ impl UnhandledRejectionMode {
 /// Process and path consumers observe the same owner, so cwd changes remain
 /// visible without passing runtime values across the host boundary.
 #[derive(Clone)]
-pub struct ProcessCwd(Rc<RefCell<std::path::PathBuf>>);
+pub struct ProcessCwd(Rc<RefCell<WorkingDirectory>>);
+
+struct WorkingDirectory {
+    path: std::path::PathBuf,
+    observed_path: Option<std::path::PathBuf>,
+    #[cfg(target_os = "linux")]
+    directory: Option<std::sync::Arc<std::fs::File>>,
+}
+
+#[cfg(target_os = "linux")]
+fn open_directory(path: &std::path::Path) -> std::io::Result<std::sync::Arc<std::fs::File>> {
+    use std::os::unix::fs::OpenOptionsExt;
+    // O_PATH retains directory identity without requiring read permission.
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_PATH | libc::O_DIRECTORY)
+        .open(path)
+        .map(std::sync::Arc::new)
+}
 
 impl ProcessCwd {
-    pub fn new(path: std::path::PathBuf) -> Self {
-        Self(Rc::new(RefCell::new(path)))
+    pub fn from_current_directory() -> Self {
+        let path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+        Self(Rc::new(RefCell::new(WorkingDirectory {
+            path,
+            observed_path: None,
+            // The inherited directory can remain valid after its pathname is removed.
+            #[cfg(target_os = "linux")]
+            directory: open_directory(std::path::Path::new(".")).ok(),
+        })))
     }
 
     pub fn path(&self) -> std::path::PathBuf {
-        self.0.borrow().clone()
+        self.current_path()
+            .unwrap_or_else(|_| self.0.borrow().path.clone())
     }
 
-    pub fn set_path(&self, path: std::path::PathBuf) {
-        *self.0.borrow_mut() = path;
+    /// Node caches successful process.cwd observations until process.chdir.
+    /// Relative filesystem and child operations continue to use directory identity.
+    pub(crate) fn query_path(&self) -> std::io::Result<std::path::PathBuf> {
+        if let Some(path) = self.0.borrow().observed_path.clone() {
+            return Ok(path);
+        }
+        let path = self.current_path()?;
+        self.0.borrow_mut().observed_path = Some(path.clone());
+        Ok(path)
+    }
+
+    pub(crate) fn current_path(&self) -> std::io::Result<std::path::PathBuf> {
+        let state = self.0.borrow();
+        #[cfg(target_os = "linux")]
+        if let Some(directory) = &state.directory {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::fs::MetadataExt;
+            if directory.metadata()?.nlink() == 0 {
+                return Err(std::io::Error::from_raw_os_error(libc::ENOENT));
+            }
+            // Resolve the live inode after a rename; a missing procfs preserves
+            // the cached path used on other platforms.
+            if let Ok(path) = std::fs::read_link(format!("/proc/self/fd/{}", directory.as_raw_fd()))
+            {
+                return Ok(path);
+            }
+        }
+        Ok(state.path.clone())
+    }
+
+    pub fn set_path(&self, path: std::path::PathBuf) -> std::io::Result<()> {
+        #[cfg(target_os = "linux")]
+        let directory = Some(open_directory(&path)?);
+        *self.0.borrow_mut() = WorkingDirectory {
+            path,
+            observed_path: None,
+            #[cfg(target_os = "linux")]
+            directory,
+        };
+        Ok(())
     }
 
     pub fn join(&self, path: impl AsRef<std::path::Path>) -> std::path::PathBuf {
-        self.0.borrow().join(path)
+        self.0.borrow().path.join(path)
+    }
+
+    /// Resolve relative child cwd against the retained directory at the OS boundary.
+    pub(crate) fn configure_child_command(
+        &self,
+        command: &mut std::process::Command,
+        requested: Option<&str>,
+    ) -> std::io::Result<()> {
+        let requested = requested.filter(|path| !path.is_empty());
+        if let Some(path) = requested.filter(|path| std::path::Path::new(path).is_absolute()) {
+            command.current_dir(path);
+            return Ok(());
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(directory) = self.0.borrow().directory.clone() {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::process::CommandExt;
+            let relative = requested.map(std::ffi::CString::new).transpose()
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "cwd contains a null byte"))?;
+            // Only async-signal-safe directory syscalls run between fork and exec.
+            // The captured CLOEXEC descriptor stays owned until command completion.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fchdir(directory.as_raw_fd()) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if let Some(relative) = &relative {
+                        if libc::chdir(relative.as_ptr()) != 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                    }
+                    Ok(())
+                });
+            }
+            return Ok(());
+        }
+        command.current_dir(match requested {
+            Some(path) => self.join(path),
+            None => self.path(),
+        });
+        Ok(())
     }
 }
 

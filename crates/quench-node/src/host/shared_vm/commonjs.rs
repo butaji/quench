@@ -21,7 +21,13 @@ fn commonjs_resolver() -> oxc_resolver::Resolver {
 }
 
 pub(crate) fn entry_path(path: &Path) -> Result<PathBuf, String> {
-    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    let cwd = if path.is_absolute() {
+        path.parent()
+            .unwrap_or_else(|| Path::new("/"))
+            .to_path_buf()
+    } else {
+        std::env::current_dir().map_err(|error| error.to_string())?
+    };
     let path = if path.is_absolute() {
         path.to_owned()
     } else {
@@ -31,6 +37,14 @@ pub(crate) fn entry_path(path: &Path) -> Result<PathBuf, String> {
         .resolve(&cwd, &path.to_string_lossy())
         .map(|resolution| resolution.full_path())
         .map_err(|error| error.to_string())
+}
+
+/// Match Node's tryGetCwd fallback for eval and stdin module setup.
+fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
+    let cwd = context.host_mut().shared_state().borrow().cwd.clone();
+    if let Ok(path) = cwd.query_path() { return Ok(path); }
+    std::env::current_exe().map(|path| path.parent().unwrap_or_else(|| Path::new("/")).to_path_buf())
+        .map_err(|error| RootedError::host(error.to_string()))
 }
 
 /// Node's explicit extension/package parse-goal policy, before guest execution.
@@ -94,9 +108,8 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     // The process.getBuiltinModule bootstrap needs access to the host's
     // builtin loader in both Script and Module goals. Keep it under a private
     // global key so ESM does not acquire a user-visible global `require`.
-    let bootstrap_filename = std::env::current_dir()
-        .map_err(|error| RootedError::host(error.to_string()))?
-        .join(context.host_mut().inline_source.label());
+    let bootstrap_filename =
+        inline_directory(context)?.join(context.host_mut().inline_source.label());
     let bootstrap_require = create_require(context, &bootstrap_filename)?;
     set(context, global, "\0quench:require", bootstrap_require)?;
     context.release_root(bootstrap_require);
@@ -119,6 +132,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         roots.borrow_mut().primordials_module = Some(retained);
         context.release_root(exports);
     }
+    preload_modules(context)?;
     if context.is_module()? {
         return Ok(());
     }
@@ -127,9 +141,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
             .map_err(|error| RootedError::host(error.to_string()))?;
         load(context, &filename, None, entry.goal)?;
     } else {
-        let filename = std::env::current_dir()
-            .map_err(|error| RootedError::host(error.to_string()))?
-            .join(context.host_mut().inline_source.label());
+        let filename = inline_directory(context)?.join(context.host_mut().inline_source.label());
         let module = module_record(context, &filename, None, false)?;
         let label = context.host_mut().inline_source.label();
         let label = context.string_rooted(label);
@@ -143,6 +155,28 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         set(context, global, "__filename", label)?;
         let dirname = context.string_rooted(".");
         set(context, global, "__dirname", dirname)?;
+    }
+    Ok(())
+}
+
+/// CLI preloads execute in order through the ordinary CommonJS loader/cache.
+fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let arguments = context.host_mut().shared_state().borrow().exec_argv.clone();
+    let global = context.global_root()?;
+    let require = get(context, global, "\0quench:require")?;
+    let undefined = context.undefined();
+    let mut index = 0;
+    while let Some(argument) = arguments.get(index) {
+        let specifier = match argument.as_str() {
+            "-e" | "--eval" | "-p" | "--print" | "-pe" | "-ep" => break,
+            "-r" | "--require" => { index += 1; arguments.get(index).map(String::as_str) },
+            argument => argument.strip_prefix("--require="),
+        };
+        if let Some(specifier) = specifier {
+            let specifier = context.string_rooted(specifier);
+            context.call_rooted(require, undefined, &[specifier])?;
+        }
+        index += 1;
     }
     Ok(())
 }

@@ -5,16 +5,7 @@ pub const JS: &str = quench_js_check::checked_js!(
 const ERROR_INSPECT = Symbol.for("quench.internal.eventEmitter.inspect");
 const STREAM_OWNER = Symbol.for("quench.internal.streamOwner");
 class EventEmitterBridge {
-  emit(event, ...args) {
-    this._events ||= Object.create(null);
-    if (event === "error") {
-      const monitorSymbol = globalThis.__nodeErrorMonitorSymbol ||
-        Symbol.for("events.errorMonitor");
-      this.rawListeners(monitorSymbol).forEach((listener) =>
-        Reflect.apply(listener, this, args)
-      );
-    }
-    const listeners = this._events[event];
+  emit(event, args, listeners) {
     const values = listeners === undefined
       ? []
       : Array.isArray(listeners)
@@ -23,16 +14,6 @@ class EventEmitterBridge {
     const internalOnlyError = event === "error" && values.length > 0 &&
       values.every((listener) => listener.__quenchInternal === true);
     const ownerWasDestroyed = this[STREAM_OWNER]?.destroyed === true;
-    if (event === "error" && values.length === 0 && this.domain) {
-      const error = args[0] && typeof args[0] === "object"
-        ? args[0]
-        : Object.assign(new Error("Unhandled error."), { domain: this.domain });
-      error.domain = this.domain;
-      error.domainEmitter = this;
-      error.domainThrown = false;
-      this.domain.emit("error", error);
-      return true;
-    }
     if (
       event === "error" &&
       (values.length === 0 || (internalOnlyError && ownerWasDestroyed))

@@ -360,6 +360,7 @@ const UTIL: &str = quench_js_check::checked_js!(
 pub(crate) struct UtilIntrinsics {
     pub(crate) module: RootId,
     pub(crate) inspect: RootId,
+    pub(crate) argument_type_prototype: RootId,
 }
 
 pub(crate) fn internal_inspect(
@@ -466,13 +467,19 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     }
     let key = context.string_rooted("types");
     context.set_property_rooted(module, key, types, module)?;
+    let argument_type_prototype = super::node_errors_shared_vm::argument_type_prototype(context)?;
+    let argument_type_prototype = context.retain(argument_type_prototype)?;
     let module = context.retain(module)?;
     let inspect = context.retain(inspect)?;
     context
         .host_mut()
         .shared_state()
         .borrow_mut()
-        .util_intrinsics = Some(UtilIntrinsics { module, inspect });
+        .util_intrinsics = Some(UtilIntrinsics {
+        module,
+        inspect,
+        argument_type_prototype,
+    });
     Ok(module)
 }
 
@@ -690,9 +697,7 @@ pub(crate) fn argument_type_error_with_expected(
     let error = context.type_error_rooted(&format!(
         "The {label} must be {expected}. Received {received}"
     ))?;
-    let key = context.string_rooted("code");
-    let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
-    context.set_property_rooted(error, key, code, error)?;
+    super::node_errors_shared_vm::decorate_argument_type(context, error)?;
     Ok(context.throw(error))
 }
 
