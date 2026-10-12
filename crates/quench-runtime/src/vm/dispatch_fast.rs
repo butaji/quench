@@ -1185,9 +1185,9 @@ lane_handler! {
         };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Ok(stack_guard) = vm.push_wasm_frame(code, caller, u32::from(i.b), window) else {
+        if vm.push_wasm_frame(code, caller, u32::from(i.b), window).is_err() {
             return exit(ip);
-        };
+        }
         vm.frames[caller].pc = call_pc + 1;
         unsafe { &mut *(*cx).pending }.push(PendingGeneralCall {
             caller,
@@ -1195,7 +1195,7 @@ lane_handler! {
             call_pc: call_pc as u32,
             destination: i.a,
             construct_this: None,
-            stack_guard,
+            stack_guard: None,
         });
         lane_enter_frame(cx, caller + 1, 0)
     }

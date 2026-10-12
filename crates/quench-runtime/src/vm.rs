@@ -224,6 +224,44 @@ impl Frame {
         }
     }
 
+    /// A Wasm activation's registers: the parameters where the function
+    /// keeps them, every other register its default, each written once.
+    #[inline(always)]
+    fn prepare_wasm_registers(
+        &mut self,
+        function: &crate::bytecode::Function,
+        arguments: &[Value],
+    ) {
+        let initial = function.initial_register.value();
+        let count = usize::from(function.registers);
+        let (base, parameters) = match function.parameter_registers {
+            Some(base) => (
+                usize::from(base),
+                &arguments[..arguments.len().min(usize::from(function.params))],
+            ),
+            None => (0, &[][..]),
+        };
+        assert!(
+            base + parameters.len() <= count,
+            "parameters fit the register file"
+        );
+        self.registers.clear();
+        self.registers.reserve(count);
+        let registers = self.registers.as_mut_ptr();
+        // SAFETY: capacity holds `count` values; every slot below `count` is
+        // written before the length covers it, parameters in their window.
+        unsafe {
+            for index in 0..count {
+                registers.add(index).write(initial);
+            }
+            // A few values: an inline copy, not a library call.
+            for (offset, value) in parameters.iter().enumerate() {
+                registers.add(base + offset).write(*value);
+            }
+            self.registers.set_len(count);
+        }
+    }
+
     #[inline(always)]
     fn prepare_registers(&mut self, count: u16, initial: crate::bytecode::InitialRegister) {
         self.registers.clear();
@@ -541,7 +579,9 @@ pub(super) enum StepResult {
     TailCall,
     PushFrame {
         destination: Register,
-        stack_guard: crate::stack::StackGuard,
+        /// The native stack transition the callee spends; `None` for a Wasm
+        /// activation, bounded by `WASM_ACTIVATION_LIMIT` instead.
+        stack_guard: Option<crate::stack::StackGuard>,
         /// For `new`: the allocated receiver, the result unless the callee returns an object.
         construct_this: Option<Value>,
     },
