@@ -126,6 +126,10 @@ impl Value {
     pub(crate) fn from_float_bits64(bits: u64) -> Self {
         let value = Self(bits);
         if value.is_tagged() {
+            // Only a NaN whose payload collides with a tag: a predicted
+            // branch keeps the check off the result's dependency chain,
+            // where a conditional move would lengthen every float chain.
+            std::hint::cold_path();
             Self(CANONICAL_NAN)
         } else {
             value
