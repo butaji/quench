@@ -3,24 +3,25 @@
 use crate::host::{node_host::SharedChildProcess, NodeHost};
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::{
-    io::Read,
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc,
     },
 };
+#[cfg(not(unix))]
+use std::io::Read;
 use std::time::Duration;
 
 static NEXT_CHILD_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan) => {
+    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan, requestRead, flushStdio) => {
     const { EventEmitter } = globalThis.process.getBuiltinModule("events");
     class ChildProcess extends EventEmitter {
       constructor(file, args, started, options) {
         super();
-        const { PassThrough, Writable } = globalThis.process.getBuiltinModule("stream");
+        const { Readable, Writable } = globalThis.process.getBuiltinModule("stream");
       this.pid = started.pid ?? undefined;
       this.spawnfile = file;
       this.spawnargs = [file, ...args];
@@ -28,8 +29,8 @@ const FACTORY: &str = quench_js_check::checked_js!(
       this.signalCode = null;
       this.killed = false;
       this.connected = false;
-      this.stdout = started.piped[1] ? new PassThrough() : null;
-      this.stderr = started.piped[2] ? new PassThrough() : null;
+      this.stdout = started.piped[1] ? new Readable({read(){requestRead(started.id,true);}}) : null;
+      this.stderr = started.piped[2] ? new Readable({read(){requestRead(started.id,false);}}) : null;
         for (const stream of [this.stdout, this.stderr]) {
           stream?.once("end", () => stream.destroy());
         }
@@ -62,6 +63,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
             this.__quenchAbortSignal.removeEventListener("abort", this.__quenchAbortHandler);
           }
           this.emit("exit", value, value2);
+          flushStdio(id);
         } else if (type === "close") {
           this.emit("close", value, value2);
         }
@@ -80,7 +82,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
           this.emit("close", null, null);
         });
       } else {
-        register(id, this, this.stdout, this.stderr);
+        register(id, this, this.stdout, this.stderr, this.stdin);
         queueMicrotask(() => this.emit("spawn"));
       }
       const signal = options?.signal;
@@ -307,13 +309,25 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         crate::host::shared_vm::operation("childProcessForkPlan"),
         is_buffer,
     )?;
+    let flush_stdio =
+        context.host_function(crate::host::shared_vm::operation("childProcessFlushStdio"))?;
+    let read = context.host_function(crate::host::shared_vm::operation("childProcessRead"))?;
     let factory = context.evaluate_script_rooted(FACTORY, "node:child_process/shared.js")?;
     let undefined = context.undefined();
     let module = context.call_rooted(
         factory,
         undefined,
         &[
-            spawn_sync, spawn, register, write, end, buffer, warning, fork_plan,
+            spawn_sync,
+            spawn,
+            register,
+            write,
+            end,
+            buffer,
+            warning,
+            fork_plan,
+            read,
+            flush_stdio,
         ],
     )?;
     let key = context.string_rooted("spawn");
@@ -376,31 +390,42 @@ pub(crate) fn spawn_child(
         .transpose()?
         .filter(|root| context.is_object_rooted(*root).unwrap_or(false))
     {
-        command.env_clear();
-        for key in object_keys(context, env)? {
-            let name = context.to_string(key)?;
-            let value = property_string(context, env, &name)?.unwrap_or_default();
-            command.env(name, value);
-        }
+        super::child_process_env_shared_vm::configure(context, &mut command, env)?;
     }
 
     let configured = super::child_process_stdio_shared_vm::configure(&mut command, &stdio);
-    let start = match configured.and_then(|ipc| command.spawn().map(|child| (child, ipc))) {
-        Ok((mut child, ipc)) => {
+    let start = match configured
+        .and_then(|configured| command.spawn().map(|child| (child, configured)))
+    {
+        Ok((mut child, configured)) => {
+            if let Err(error) =
+                super::child_process_stdio_shared_vm::activate_inherited_streams(context, &stdio)
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
             let id = NEXT_CHILD_PROCESS_ID.fetch_add(1, Ordering::Relaxed);
             let pid = child.id();
-            let stdin = match super::child_process_input_shared_vm::Input::new(child.stdin.take()) {
-                Ok(stdin) => stdin,
-                Err(error) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(RootedError::host(error.to_string()));
-                }
-            };
+            let ipc = configured.ipc;
+            #[cfg(unix)]
+            let [stdin_pipe, stdout_pipe, stderr_pipe] = configured.pipes;
+            #[cfg(unix)]
+            let stdin = super::child_process_input_shared_vm::Input::new(
+                stdin_pipe.map(std::fs::File::from),
+            );
+            #[cfg(not(unix))]
+            let stdin = super::child_process_input_shared_vm::Input::new(child.stdin.take());
+            #[cfg(unix)]
+            let stdout_pipe = super::child_process_output_shared_vm::Output::new(stdout_pipe);
+            #[cfg(unix)]
+            let stderr_pipe = super::child_process_output_shared_vm::Output::new(stderr_pipe);
             let (sender, receiver) = mpsc::channel();
+            #[cfg(not(unix))]
             if let Some(stdout) = child.stdout.take() {
                 spawn_reader(stdout, sender.clone(), true);
             }
+            #[cfg(not(unix))]
             if let Some(stderr) = child.stderr.take() {
                 spawn_reader(stderr, sender.clone(), false);
             }
@@ -427,6 +452,11 @@ pub(crate) fn spawn_child(
                         child: None,
                         stdout: None,
                         stderr: None,
+                        #[cfg(unix)]
+                        stdout_pipe,
+                        #[cfg(unix)]
+                        stderr_pipe,
+                        stdin_stream: None,
                         stdin,
                         ipc,
                         events: receiver,
@@ -478,6 +508,7 @@ pub(crate) fn spawn_child(
     Ok(result)
 }
 
+#[cfg(not(unix))]
 fn spawn_reader<R: Read + Send + 'static>(
     mut reader: R,
     sender: mpsc::Sender<crate::host::node_host::ChildProcessEvent>,
@@ -553,9 +584,23 @@ pub(crate) fn register_child(
     }) else {
         return Err(RootedError::host("child process registration has no id"));
     };
-    let child = args.get(1).copied().ok_or_else(|| RootedError::host("child process registration has no child"))?;
-    let stdout = args.get(2).copied().ok_or_else(|| RootedError::host("child process registration has no stdout"))?;
-    let stderr = args.get(3).copied().ok_or_else(|| RootedError::host("child process registration has no stderr"))?;
+    let child = args
+        .get(1)
+        .copied()
+        .ok_or_else(|| RootedError::host("child process registration has no child"))?;
+    let stdout = args
+        .get(2)
+        .copied()
+        .ok_or_else(|| RootedError::host("child process registration has no stdout"))?;
+    let stderr = args
+        .get(3)
+        .copied()
+        .ok_or_else(|| RootedError::host("child process registration has no stderr"))?;
+    let stdin = args
+        .get(4)
+        .copied()
+        .ok_or_else(|| RootedError::host("child process registration has no stdin"))?;
+    let stdin = context.retain(stdin)?;
     let child = context.retain(child)?;
     let stdout = context.retain(stdout)?;
     let stderr = context.retain(stderr)?;
@@ -568,6 +613,7 @@ pub(crate) fn register_child(
     else {
         return Err(RootedError::host("child process registration id is unknown"));
     };
+    process.stdin_stream = Some(stdin);
     process.child = Some(child);
     process.stdout = Some(stdout);
     process.stderr = Some(stderr);
@@ -622,10 +668,106 @@ pub(crate) fn stream_closed(
     if let Some(process) = state.borrow_mut().child_processes.get_mut(&id) {
         if is_stdout {
             process.stdout_terminal = true;
+            #[cfg(unix)]
+            process.stdout_pipe.close();
         } else {
             process.stderr_terminal = true;
+            #[cfg(unix)]
+            process.stderr_pipe.close();
         }
     }
+    Ok(context.undefined())
+}
+
+pub(crate) fn queue_stdio_flush(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let callback = context.host_function(crate::host::shared_vm::operation(
+        "childProcessFlushStdioRun",
+    ))?;
+    let receiver = context.undefined();
+    super::shared_event_loop::queue_next_tick(context, callback, receiver, args)?;
+    Ok(context.undefined())
+}
+
+pub(crate) fn flush_stdio(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = args
+        .first()
+        .and_then(|root| context.rooted_value(*root))
+        .and_then(quench_runtime::Value::as_number)
+        .ok_or_else(|| RootedError::host("child stdio flush has no id"))? as u64;
+    let state = context.host_mut().shared_state();
+    let streams = {
+        let state = state.borrow();
+        state
+            .child_processes
+            .get(&id)
+            .map(|process| {
+                #[cfg(unix)]
+                let streams = [
+                    (!process.stdout_pipe.inherited())
+                        .then_some(process.stdout)
+                        .flatten(),
+                    (!process.stderr_pipe.inherited())
+                        .then_some(process.stderr)
+                        .flatten(),
+                ];
+                #[cfg(not(unix))]
+                let streams = [process.stdout, process.stderr];
+                streams
+            })
+            .unwrap_or([None, None])
+    };
+    for stream in streams.into_iter().flatten() {
+        if context
+            .rooted_value(stream)
+            .is_some_and(|value| value.is_null())
+        {
+            continue;
+        }
+        let key = context.string_rooted("resume");
+        let resume = context.get_property_rooted(stream, key)?;
+        context.call_rooted(resume, stream, &[])?;
+    }
+    Ok(context.undefined())
+}
+
+pub(crate) fn request_read(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    #[cfg(unix)]
+    {
+        let id = args
+            .first()
+            .and_then(|root| context.rooted_value(*root))
+            .and_then(quench_runtime::Value::as_number)
+            .ok_or_else(|| RootedError::host("child output read has no id"))?
+            as u64;
+        let stdout = args
+            .get(1)
+            .copied()
+            .map(|root| context.truthy_rooted(root))
+            .transpose()?
+            .unwrap_or(false);
+        let state = context.host_mut().shared_state();
+        if let Some(process) = state.borrow_mut().child_processes.get_mut(&id) {
+            if stdout {
+                process.stdout_pipe.request();
+            } else {
+                process.stderr_pipe.request();
+            }
+        };
+    }
+    #[cfg(not(unix))]
+    let _ = args;
     Ok(context.undefined())
 }
 
@@ -728,11 +870,21 @@ pub(crate) fn poll(
                     Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
                 }
             }
+            #[cfg(unix)]
+            for (pipe, stdout) in [
+                (&mut process.stdout_pipe, true),
+                (&mut process.stderr_pipe, false),
+            ] {
+                use super::child_process_output_shared_vm::Progress;
+                match pipe.progress() {
+                    Progress::Idle => {},
+                    Progress::Data(bytes) => events.push(if stdout { ChildProcessEvent::Stdout(bytes) } else { ChildProcessEvent::Stderr(bytes) }),
+                    Progress::End => events.push(if stdout { ChildProcessEvent::StdoutEnd } else { ChildProcessEvent::StderrEnd }),
+                }
+            }
             let mut exit = None;
             for event in &events {
                 match event {
-                    ChildProcessEvent::StdoutEnd => process.stdout_terminal = true,
-                    ChildProcessEvent::StderrEnd => process.stderr_terminal = true,
                     ChildProcessEvent::Exit(code, signal) => {
                         process.exit = Some((*code, signal.clone()));
                         exit = Some((*code, signal.clone()));
@@ -793,7 +945,15 @@ pub(crate) fn poll(
             let process = shared_state.borrow_mut().child_processes.remove(&id);
             if let Some(mut process) = process {
                 drop(process.ipc.take());
-                for root in [process.child, process.stdout, process.stderr].into_iter().flatten() {
+                for root in [
+                    process.child,
+                    process.stdin_stream,
+                    process.stdout,
+                    process.stderr,
+                ]
+                .into_iter()
+                .flatten()
+                {
                     runtime.release_root(root);
                 }
             }
@@ -890,7 +1050,15 @@ fn dispatch_exit(
 pub(crate) fn has_pending(
     shared_state: &std::rc::Rc<std::cell::RefCell<crate::host::SharedNodeState>>,
 ) -> bool {
-    !shared_state.borrow().child_processes.is_empty()
+    #[cfg(unix)]
+    { shared_state.borrow().child_processes.values().any(|process|
+        process.exit.is_none() || process.stdin.has_pending()
+        || process.stdout_pipe.is_referenced() || process.stderr_pipe.is_referenced()
+    ) }
+    #[cfg(not(unix))]
+    {
+        !shared_state.borrow().child_processes.is_empty()
+    }
 }
 
 pub(crate) const fn poll_interval() -> Duration {
@@ -967,12 +1135,7 @@ pub(crate) fn spawn_sync(
         .map(|root| property(context, root, "env"))
         .transpose()?;
     if let Some(env) = env.filter(|root| context.is_object_rooted(*root).unwrap_or(false)) {
-        process.env_clear();
-        for key in object_keys(context, env)? {
-            let name = context.to_string(key)?;
-            let value = property_string(context, env, &name)?.unwrap_or_default();
-            process.env(name, value);
-        }
+        super::child_process_env_shared_vm::configure(context, &mut process, env)?;
     }
 
     let output = match process.spawn() {
@@ -1117,21 +1280,6 @@ fn string_array(context: &mut NativeContext<'_, NodeHost>, array: RootId) -> Res
             let key = context.string_rooted(&index.to_string());
             let value = context.get_property_rooted(array, key)?;
             context.to_string(value)
-        })
-        .collect()
-}
-
-fn object_keys(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<Vec<RootId>, RootedError> {
-    let global = context.global_root()?;
-    let object = property(context, global, "Object")?;
-    let keys = property(context, object, "keys")?;
-    let array = context.call_rooted(keys, object, &[value])?;
-    let length = property(context, array, "length")?;
-    let length = context.rooted_value(length).and_then(|value| value.as_number()).unwrap_or_default().max(0.0) as usize;
-    (0..length)
-        .map(|index| {
-            let key = context.string_rooted(&index.to_string());
-            context.get_property_rooted(array, key)
         })
         .collect()
 }

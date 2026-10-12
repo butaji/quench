@@ -55,6 +55,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) module_cache: std::collections::HashMap<String, quench_runtime::RootId>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
+    pub(crate) event_targets_api: Option<quench_runtime::RootId>,
     /// Immutable startup arguments used to build guest process.argv.
     pub(crate) process_argv: crate::modules::process_state::ProcessArgs,
     pub(crate) process_control: crate::modules::process_state::ProcessControl,
@@ -107,6 +108,11 @@ pub(crate) struct SharedChildProcess {
     pub(crate) child: Option<quench_runtime::RootId>,
     pub(crate) stdout: Option<quench_runtime::RootId>,
     pub(crate) stderr: Option<quench_runtime::RootId>,
+    #[cfg(unix)]
+    pub(crate) stdout_pipe: crate::modules::child_process_output_shared_vm::Output,
+    #[cfg(unix)]
+    pub(crate) stderr_pipe: crate::modules::child_process_output_shared_vm::Output,
+    pub(crate) stdin_stream: Option<quench_runtime::RootId>,
     pub(crate) stdin: crate::modules::child_process_input_shared_vm::Input,
     pub(crate) ipc: Option<crate::modules::child_process_ipc_shared_vm::IpcChannel>,
     pub(crate) events: std::sync::mpsc::Receiver<ChildProcessEvent>,
@@ -140,6 +146,7 @@ impl SharedNodeState {
             cwd,
             module_cache: std::collections::HashMap::new(),
             primordials_module: None,
+            event_targets_api: None,
             process_argv,
             process_control,
             process_signals: crate::modules::process_signals_state::SignalState::default(),

@@ -186,9 +186,10 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
   Server.prototype.removeAllListeners = function(event) { if (event === undefined) this._listeners.clear(); else this._listeners.delete(event); return this; };
   Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };
   Server.prototype.listen = function(port, host, callback) {
+      let options;
       if (typeof port === 'function') { callback = port; port = 0; }
       if (port && typeof port === 'object') {
-        const options = port;
+        options = port;
         callback = typeof host === 'function' ? host : callback;
         if (!('port' in options) && !('path' in options)) {
           throw invalidArgValue(options, `The argument 'options' must have the property "port" or "path". Received ${String(options)}`);
@@ -200,7 +201,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       if (typeof host === 'function') { callback = host; host = undefined; }
       port = validatePort(port, true);
       if (typeof callback === 'function') this.once('listening', callback);
-      listenOperation(this, port, host);
+      listenOperation(this, port, host, options);
       this.listening = true;
       return this;
     };
@@ -450,13 +451,75 @@ impl Default for Transport {
 }
 
 pub(crate) fn listen(transport: &mut Transport, address: SocketAddr) -> Result<u64, String> {
-    let listener = TcpListener::bind(address).map_err(|error| error.to_string())?;
+    listen_with_reuse_port(transport, address, false)
+}
+
+fn listen_with_reuse_port(
+    transport: &mut Transport,
+    address: SocketAddr,
+    reuse_port: bool,
+) -> Result<u64, String> {
+    let listener = if reuse_port {
+        bind_reusable_listener(address)
+    } else {
+        TcpListener::bind(address)
+    }
+    .map_err(|error| error.to_string())?;
     listener
         .set_nonblocking(true)
         .map_err(|error| error.to_string())?;
     let id = transport.id()?;
     transport.listeners.insert(id, listener);
     Ok(id)
+}
+
+// Node's net.Server.listen uses 511 when no backlog was supplied.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "aix"
+))]
+const DEFAULT_TCP_LISTEN_BACKLOG: i32 = 511;
+
+fn bind_reusable_listener(address: SocketAddr) -> std::io::Result<TcpListener> {
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "aix"
+    ))]
+    {
+        let socket = socket2::Socket::new(
+            socket2::Domain::for_address(address),
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )?;
+        socket.set_reuse_address(true)?;
+        #[cfg(target_os = "freebsd")]
+        socket.set_reuse_port_lb(true)?;
+        #[cfg(not(target_os = "freebsd"))]
+        socket.set_reuse_port(true)?;
+        socket.bind(&address.into())?;
+        socket.listen(DEFAULT_TCP_LISTEN_BACKLOG)?;
+        Ok(socket.into())
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "aix"
+    )))]
+    {
+        let _ = address;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "TCP reusePort is unsupported on this platform",
+        ))
+    }
 }
 
 pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Result<u64, String> {
@@ -1098,7 +1161,20 @@ pub(crate) fn server_listen_operation(
         .next()
         .ok_or_else(|| RootedError::host("net.Server.listen host did not resolve"))?;
     let shared = context.host_mut().shared_state();
-    let listener = listen(&mut shared.borrow_mut().tcp, address).map_err(RootedError::host)?;
+    let reuse_port = if let Some(options) = args
+        .get(3)
+        .copied()
+        .filter(|root| context.is_object_rooted(*root).unwrap_or(false))
+    {
+        let key = context.string_rooted("reusePort");
+        let value = context.get_property_rooted(options, key)?;
+        let yes = context.boolean(true);
+        context.strict_equal_rooted(value, yes)?
+    } else {
+        false
+    };
+    let listener = listen_with_reuse_port(&mut shared.borrow_mut().tcp, address, reuse_port)
+        .map_err(RootedError::host)?;
     let key = context.string_rooted("__quenchNetServerId");
     let value = context.number(listener as f64);
     if !context.set_property_rooted(server, key, value, server)? {
