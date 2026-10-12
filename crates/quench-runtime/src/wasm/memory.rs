@@ -42,6 +42,12 @@ pub(crate) const HOST_PAGE: usize = 4096;
 pub(crate) const GUARDED_RESERVATION: usize =
     (u32::MAX as usize + 1) * 2 + HOST_PAGE;
 
+/// Where a guarded reservation is asked to start: low enough that its base
+/// fits a signed 32-bit displacement, so compiled code can address the
+/// memory as index plus constant. The kernel places the reservation
+/// elsewhere when the range is taken.
+const RESERVATION_HINT: usize = 1 << 30;
+
 impl LinearBytes {
     pub(crate) fn heap(bytes: Vec<u8>) -> Self {
         Self {
@@ -58,7 +64,7 @@ impl LinearBytes {
         // SAFETY: an inaccessible, unbacked private reservation; checked.
         let base = unsafe {
             libc::mmap(
-                std::ptr::null_mut(),
+                RESERVATION_HINT as *mut libc::c_void,
                 GUARDED_RESERVATION,
                 libc::PROT_NONE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
