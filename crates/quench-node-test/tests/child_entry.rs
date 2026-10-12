@@ -2786,3 +2786,372 @@ console.log(JSON.stringify(result));
         String::from_utf8_lossy(&observations[1].stdout)
     );
 }
+
+#[test]
+fn trace_categories_retain_enabled_objects_and_capture_array_policy() {
+    const SOURCE: &str = r#"
+const api=require('trace_events'),util=require('util'),result=[];
+for(const value of [undefined,null,1,'x',true,[],()=>{}])try{api.createTracing(value)}catch(e){result.push([e.name,e.code])}
+for(const categories of [undefined,null,'x',[1],[]])try{api.createTracing({categories})}catch(e){result.push([e.name,e.code])}
+const categories=['z','a','a'],tracing=api.createTracing({categories});
+result.push(tracing.constructor.name,tracing.enabled,tracing.categories,Reflect.ownKeys(tracing).length,api.getEnabledCategories());
+const direct=new tracing.constructor(['direct']);result.push(direct.categories,direct.enabled);direct.enable();result.push(api.getEnabledCategories());direct.disable();
+const proto=Object.getPrototypeOf(tracing);for(const name of ['enabled','categories']){const d=Object.getOwnPropertyDescriptor(proto,name);try{d.get.call({})}catch(e){result.push([e.name,e.message])}}
+
+tracing.enable();tracing.enable();result.push(tracing.enabled,api.getEnabledCategories());categories[0]='mutated';result.push(tracing.categories,api.getEnabledCategories(),util.inspect(tracing));
+tracing.disable();tracing.disable();result.push(tracing.enabled,api.getEnabledCategories());tracing.enable();result.push(api.getEnabledCategories());tracing.disable();
+let reads=0;const dynamic=api.createTracing({get categories(){reads++;return ['q']}});result.push(reads,dynamic.categories);
+let unreachable=api.createTracing({categories:['retained']});unreachable.enable();unreachable=undefined;gc();result.push(api.getEnabledCategories());
+const warnings=[];process.emitWarning=message=>warnings.push(message);const objects=[];for(let i=0;i<11;i++){const t=api.createTracing({categories:['x']});t.enable();objects.push(t)}result.push(warnings);for(const t of objects)t.disable();
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(executable);
+        command
+            .current_dir(directory.path())
+            .args(["--expose-gc", "--no-warnings", "-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn console_counters_and_timer_coercion_order_match_node() {
+    const SOURCE: &str = r#"
+const {Console}=require('console'),result=[],sink={write(){},on(){},removeListener(){}};
+const c=new Console(sink,sink);c.log=(...args)=>result.push(['log',...args]);process.emitWarning=message=>result.push(['warning',message]);
+c.count('x');c.count('x');c.countReset('x');c.countReset('x');c.count('x');c.count({toString(){return 'object'}});c.countReset({toString(){return 'object'}});
+try{c.count(Symbol('x'))}catch(e){result.push(['error',e.name])}
+process.hrtime=previous=>previous===undefined?[1,0]:[0,123000];
+c.time('a');c.time('a');c.timeLog('a','extra');c.timeEnd('a');c.timeLog('a');c.timeEnd('a');
+const trace=[],label={toString(){trace.push('label');return 'b'}};c.time(label);c.timeEnd(label);result.push(trace);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--no-warnings", "-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn tracing_writes_console_events_to_expanded_file_pattern() {
+    const SOURCE: &str = "console.count('x');console.count('x');console.countReset('x');console.time('a');setImmediate(()=>{console.timeLog('a');setImmediate(()=>console.timeEnd('a'))})";
+    let projections = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args([
+            "--trace-event-categories",
+            "node.console",
+            "--trace-event-file-pattern",
+            "${pid}-${rotation}.trace.json",
+            "-e",
+            SOURCE,
+        ]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let observation =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                .unwrap();
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        let paths: Vec<_> = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(paths.len(), 1);
+        let document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&paths[0]).unwrap()).unwrap();
+        let events = document["traceEvents"].as_array().unwrap();
+        let pid = events[0]["pid"].as_u64().unwrap();
+        assert_eq!(
+            paths[0].file_name().unwrap().to_string_lossy(),
+            format!("{pid}-1.trace.json")
+        );
+        events
+            .iter()
+            .filter(|event| event["cat"] != "__metadata")
+            .map(|event| {
+                assert_eq!(event["pid"].as_u64(), Some(pid));
+                serde_json::json!([event["cat"], event["name"], event["ph"], event["args"]])
+            })
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(projections[0], projections[1]);
+}
+
+#[test]
+fn before_exit_restarts_referenced_work_and_precedes_exit() {
+    const SOURCE: &str = r#"
+const result=[];let visits=0;process.on('beforeExit',code=>{result.push(['beforeExit',code]);if(visits++===0)setImmediate(()=>result.push(['immediate']));});process.on('exit',code=>{result.push(['exit',code]);console.log(JSON.stringify(result))});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn child_launches_inherit_guest_cwd_and_resolve_relative_overrides() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("nested/other")).unwrap();
+    std::fs::write(
+        directory.path().join("child.cjs"),
+        "console.log(require('path').basename(process.cwd()))",
+    )
+    .unwrap();
+    const SOURCE: &str = r#"
+const cp=require('child_process'),path=require('path'),original=process.cwd(),child=path.join(original,'child.cjs'),result=[];process.chdir('nested');
+for(const [tag,options] of [['default',{}],['relative',{cwd:'other'}],['absolute',{cwd:original}]]){const r=cp.spawnSync(process.execPath,['-e',"console.log(require('path').basename(process.cwd()))"],options);result.push([tag,r.status,r.stdout.toString().trim(),!!r.error]);}
+let pending=3;for(const [tag,options] of [['async-default',{}],['async-relative',{cwd:'other'}],['fork-default',{silent:true,execArgv:[]}]]){const p=tag==='fork-default'?cp.fork(child,[],options):cp.spawn(process.execPath,['-e',"console.log(require('path').basename(process.cwd()))"],options);let text='';p.stdout.on('data',chunk=>text+=chunk);p.on('close',code=>{result.push([tag,code,text.trim()]);if(--pending===0)console.log(JSON.stringify(result.sort((a,b)=>a[0].localeCompare(b[0]))));});}
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn tracing_intrinsics_validate_in_order_and_serialize_with_original_json() {
+    const SOURCE: &str = r#"
+const {internalBinding}=require('internal/test/binding'),{trace,isTraceCategoryEnabled}=internalBinding('trace_events'),original=JSON.stringify,result=[],calls=[];
+for(const args of [[0,1,'x'],['bad','disabled',null],['bad','custom','x'],[98,'custom',1],[98,'custom','x','id'],[98,'custom','']])try{result.push(trace(...args))}catch(e){result.push([e.name,e.message])}
+try{isTraceCategoryEnabled({toString(){throw 'coercion'}})}catch(e){result.push([e.name,e.message])}
+JSON.stringify=()=>{throw 'public JSON'};
+const marker={};try{trace(98,'custom','throw',1,{toJSON(){throw marker}})}catch(e){result.push(e===marker)}
+result.push(trace(98,'disabled','ignored',null,{toJSON(){throw 'disabled data'}}));
+const data={toJSON(key){calls.push(['toJSON',key]);return {get value(){calls.push('value');return 7},list:[null,true,'text']}}};
+result.push(trace(98,'custom','payload',-1,data),trace(101,'custom','payload',-1),isTraceCategoryEnabled('custom'),isTraceCategoryEnabled('disabled'));
+console.log(original({result,calls}));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args([
+            "--no-warnings",
+            "--expose-internals",
+            "--trace-event-categories=custom",
+            "-e",
+            SOURCE,
+        ]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let observation =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                .unwrap();
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        let file: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(directory.path().join("node_trace.1.log")).unwrap(),
+        )
+        .unwrap();
+        let events = file["traceEvents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["cat"] != "__metadata")
+            .map(|e| serde_json::json!([e["ph"], e["cat"], e["name"], e["id"], e["args"]]))
+            .collect::<Vec<_>>();
+        (observation.stdout, events)
+    });
+    assert_eq!(observations[0], observations[1]);
+}
+
+#[test]
+fn trace_category_buffers_follow_activation_without_retaining_dead_views() {
+    const SOURCE: &str = r#"
+const {internalBinding}=require('internal/test/binding'),binding=internalBinding('trace_events'),api=require('trace_events'),result=[];
+const a=binding.getCategoryEnabledBuffer('custom'),b=binding.getCategoryEnabledBuffer('custom'),other=binding.getCategoryEnabledBuffer('other');result.push(a.constructor.name,a.length,a.byteLength,a.byteOffset,a.buffer.byteLength,a===b,a[0],b[0],other[0]);
+const first=api.createTracing({categories:['custom']}),second=api.createTracing({categories:['custom']});first.enable();result.push(a[0],b[0],other[0]);second.enable();first.disable();result.push(a[0],b[0]);second.disable();result.push(a[0],b[0]);
+for(let i=0;i<20;i++)binding.getCategoryEnabledBuffer('unreachable');gc();first.enable();result.push(a[0],b[0]);first.disable();
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args([
+            "--expose-gc",
+            "--expose-internals",
+            "--no-warnings",
+            "-e",
+            SOURCE,
+        ]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn environment_tracing_records_real_spans_and_matching_lifetime_ids() {
+    const SOURCE: &str = "setImmediate(()=>{});setTimeout(()=>{},1)";
+    let projections = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args([
+            "--trace-event-categories=node.environment",
+            "-e",
+            SOURCE,
+        ]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let observation =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                .unwrap();
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        let file: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(directory.path().join("node_trace.1.log")).unwrap(),
+        )
+        .unwrap();
+        let events = file["traceEvents"].as_array().unwrap();
+        let lifetime: Vec<_> = events
+            .iter()
+            .filter(|e| e["name"] == "Environment")
+            .collect();
+        assert_eq!(lifetime.len(), 2);
+        assert_eq!(lifetime[0]["id"], lifetime[1]["id"]);
+        assert_eq!(lifetime[0]["ph"], "b");
+        assert_eq!(lifetime[1]["ph"], "e");
+        assert_eq!(
+            lifetime[0]["args"]["args"]["exec_args"],
+            serde_json::json!(["--trace-event-categories=node.environment", "-e", SOURCE])
+        );
+        let pid = lifetime[0]["pid"].as_u64().unwrap();
+        let mut projected = std::collections::BTreeSet::new();
+        for event in events.iter().filter(|e| e["cat"] != "__metadata") {
+            assert_eq!(event["pid"].as_u64(), Some(pid));
+            assert!(event["ts"].as_u64().is_some());
+            assert!(event["tts"].as_u64().is_some());
+            assert!(event["dur"].as_u64().is_some());
+            assert!(event["tdur"].as_u64().is_some());
+            projected.insert((
+                event["name"].as_str().unwrap().to_owned(),
+                event["ph"].as_str().unwrap().to_owned(),
+            ));
+        }
+        projected
+    });
+    assert_eq!(projections[0], projections[1]);
+}
+
+#[test]
+fn before_exit_routes_original_exceptions_before_restarting_work() {
+    const SOURCE: &str = r#"
+const marker={get stack(){throw 'handled stack read'}},result=[];let calls=0;
+process.on('beforeExit',()=>{result.push('before');if(calls++===0)throw marker});
+process.on('uncaughtException',error=>{result.push(error===marker);setImmediate(()=>result.push('immediate'))});
+process.on('exit',()=>console.log(JSON.stringify(result)));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}

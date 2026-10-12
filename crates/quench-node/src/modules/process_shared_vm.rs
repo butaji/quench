@@ -1670,12 +1670,34 @@ pub(crate) fn finish_execution(
         .borrow()
         .process_control
         .clone();
-    let checkpoint = drain_checkpoint(runtime, program);
+    let checkpoint = (|| {
+        loop {
+            drain_checkpoint(runtime, program)?;
+            if process_control.requested_exit_code().is_some() {
+                return Ok(());
+            }
+            let state = runtime.host_mut().shared_state();
+            let span = crate::modules::trace_state::EnvironmentSpan::enter(&state, "BeforeExit");
+            let code = runtime.root(Value::number(
+                process_control.exit_code().unwrap_or(0) as f64
+            ));
+            let emitted = emit_before_exit(runtime, program, code);
+            runtime.release_root(code);
+            drop(span);
+            emitted?;
+            drain_shared_jobs(runtime, program, &state)?;
+            if process_control.requested_exit_code().is_some()
+                || !has_referenced_shared_work(&state)
+            {
+                return Ok(());
+            }
+        }
+    })();
     if process_control.requested_exit_code().is_some() {
         return finish_requested_exit(runtime, program);
     }
     let shared_state = runtime.host_mut().shared_state();
-    crate::modules::http_shared_vm::cleanup(runtime, &shared_state);
+    cleanup_environment(runtime, &shared_state);
     let exit_code = match checkpoint {
         Ok(()) => process_control.exit_code().unwrap_or(0),
         Err(_) => {
@@ -1686,6 +1708,36 @@ pub(crate) fn finish_execution(
     let exit = emit_exit(runtime, program, exit_code);
 
     checkpoint.and(exit)
+}
+
+fn emit_before_exit(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    code: RootId,
+) -> Result<(), String> {
+    let Some(process) = shared_process_root(runtime) else {
+        return Ok(());
+    };
+    let key = runtime.string_rooted("emit");
+    let operation = runtime.get_property_rooted(process, key);
+    runtime.release_root(key);
+    let operation = match operation {
+        Ok(operation) => operation,
+        Err(failure) => return route_callback_failure(runtime, program, failure),
+    };
+    let event = runtime.string_rooted("beforeExit");
+    let callback = crate::modules::shared_event_loop::SharedCallback {
+        callback: operation,
+        receiver: process,
+        args: vec![event, code],
+    };
+    let result = call_shared_callback(runtime, &callback);
+    runtime.release_root(operation);
+    runtime.release_root(event);
+    match result {
+        Ok(()) => Ok(()),
+        Err(failure) => route_callback_failure(runtime, program, failure),
+    }
 }
 
 pub(crate) fn finish_after_uncaught_error(
@@ -1707,7 +1759,7 @@ pub(crate) fn finish_after_uncaught_error(
     let handler_error = routed.err();
     process_control.set_exit_code(Some(1));
     let shared_state = runtime.host_mut().shared_state();
-    crate::modules::http_shared_vm::cleanup(runtime, &shared_state);
+    cleanup_environment(runtime, &shared_state);
     emit_exit(runtime, program, 1)?;
     handler_error.map_or(Ok(false), Err)
 }
@@ -1723,7 +1775,7 @@ pub(crate) fn finish_requested_exit(
         .process_control
         .clone();
     let shared_state = runtime.host_mut().shared_state();
-    crate::modules::http_shared_vm::cleanup(runtime, &shared_state);
+    cleanup_environment(runtime, &shared_state);
     emit_exit(runtime, program, process_control.exit_code().unwrap_or(0))
 }
 
@@ -1863,7 +1915,10 @@ fn drain_checkpoint(
             None
         };
         if let Some(timer) = due {
+            let _span =
+                crate::modules::trace_state::EnvironmentSpan::enter(&shared_state, "RunTimers");
             let callback_result = invoke_timer_callback(runtime, program, &timer.callback);
+
             if callback_result.is_err() {
                 shared_state
                     .borrow_mut()
@@ -1903,7 +1958,15 @@ fn drain_checkpoint(
             release_unreferenced_shared_callbacks(runtime, &shared_state);
             break;
         };
-        let mut ran_immediate = false;
+        let _check_span =
+            crate::modules::trace_state::EnvironmentSpan::enter(&shared_state, "CheckImmediate");
+        let mut ran_immediate = run_and_clear_native_immediates(runtime, program, &shared_state)?;
+        let cutoff = shared_state
+            .borrow()
+            .scheduler
+            .shared_immediate_cutoff()
+            .unwrap_or(cutoff);
+
         loop {
             let immediate = {
                 shared_state
@@ -1954,6 +2017,29 @@ fn drain_checkpoint(
         }
     }
     Ok(())
+}
+
+fn run_and_clear_native_immediates(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    state: &Rc<RefCell<crate::host::SharedNodeState>>,
+) -> Result<bool, String> {
+    let _span =
+        crate::modules::trace_state::EnvironmentSpan::enter(state, "RunAndClearNativeImmediates");
+    let mut ran = false;
+    loop {
+        let immediate = state.borrow_mut().scheduler.take_shared_native_immediate();
+        let Some(immediate) = immediate else {
+            return Ok(ran);
+        };
+        ran = true;
+        if let Err(error) = invoke_async_callback(runtime, program, immediate.callback)
+            .and_then(|()| drain_shared_jobs(runtime, program, state))
+        {
+            release_pending_shared_immediates(runtime, state);
+            return Err(error);
+        }
+    }
 }
 
 fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>) -> bool {
@@ -2711,12 +2797,21 @@ fn schedule_rejection_warning(
         .map_err(|error| rooted_error_message(runtime, program, error))
 }
 
+fn cleanup_environment(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    state: &Rc<RefCell<crate::host::SharedNodeState>>,
+) {
+    let _span = crate::modules::trace_state::EnvironmentSpan::enter(state, "RunCleanup");
+    crate::modules::http_shared_vm::cleanup(runtime, state);
+}
+
 fn emit_exit(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     code: i32,
 ) -> Result<(), String> {
     let shared_state = runtime.host_mut().shared_state();
+    let _span = crate::modules::trace_state::EnvironmentSpan::enter(&shared_state, "AtExit");
     shared_state
         .borrow()
         .process_control

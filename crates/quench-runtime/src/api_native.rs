@@ -428,6 +428,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Serialize through the intrinsic JSON operation, preserving toJSON,
+    /// property access, cycles, BigInt failures and original guest exceptions.
+    pub fn stringify_json_rooted(&mut self, value: RootId) -> Result<RootId, RootedError> {
+        let result = self.vm.stringify_embedding_json(value);
+        self.completion(result)
+    }
+
     /// Structured-clone a rooted value using the active realm's object graph.
     pub fn structured_clone_rooted(
         &mut self,
