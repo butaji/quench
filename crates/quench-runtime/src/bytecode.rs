@@ -1589,6 +1589,32 @@ impl ProgramKind {
     }
 }
 
+/// Compiler source snapshot and wrapper origin, retained for diagnostics.
+#[derive(Clone, Debug)]
+pub(crate) struct ProgramSource {
+    pub(crate) text: std::sync::Arc<str>,
+    pub(crate) line_offset: u32,
+    pub(crate) column_offset: u32,
+}
+
+impl ProgramSource {
+    pub(crate) fn source_line(&self, line: u32) -> Option<&str> {
+        let compiled_line = line.checked_add(self.line_offset)?.checked_sub(1)?;
+        let text = self.text.lines().nth(compiled_line as usize)?;
+        if line != 1 {
+            return Some(text);
+        }
+        let mut offset = 0;
+        for (byte, character) in text.char_indices() {
+            if offset == self.column_offset {
+                return Some(&text[byte..]);
+            }
+            offset += character.len_utf16() as u32;
+        }
+        (offset == self.column_offset).then_some("")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
     pub(crate) specialized: bool,
@@ -1597,6 +1623,7 @@ pub struct ResidualProgram {
     pub(crate) module_imports: Vec<ModuleImportBinding>,
     pub(crate) module_link_plan: Option<ModuleLinkPlan>,
     pub(crate) source_name: String,
+    pub(crate) source: Option<ProgramSource>,
     pub(crate) atoms: AtomTable,
     pub(crate) constants: Vec<Constant>,
     pub(crate) functions: Vec<Function>,
@@ -1629,6 +1656,28 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
+    pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
+        let positions = &self.functions.get(function as usize)?.source_positions;
+        let mut position = *positions.get(
+            positions
+                .partition_point(|position| position.pc <= pc)
+                .checked_sub(1)?,
+        )?;
+        if let Some(source) = &self.source {
+            position.line = position
+                .line
+                .checked_sub(source.line_offset)
+                .filter(|line| *line > 0)?;
+            if position.line == 1 {
+                position.column = position
+                    .column
+                    .checked_sub(source.column_offset)
+                    .filter(|column| *column > 0)?;
+            }
+        }
+        Some(position)
+    }
+
     pub const FORMAT_VERSION: u8 = 84;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;

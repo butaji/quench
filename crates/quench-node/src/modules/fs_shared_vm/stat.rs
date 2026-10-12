@@ -1,7 +1,15 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
+use std::collections::VecDeque;
 use std::io;
+use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(unix)]
+use std::{
+    ffi::CString,
+    os::unix::ffi::OsStrExt,
+    os::unix::fs::PermissionsExt,
+};
 
 #[cfg(not(unix))]
 const S_IF_DIRECTORY: f64 = 0o040000 as f64;
@@ -51,6 +59,30 @@ const STAT_API: &str = r#"(readMetadata) => {
   };
 }"#;
 
+const DECORATE_STATS: &str = quench_js_check::checked_js!(r#"(stats) => {
+  for (const name of ["atime", "mtime", "ctime", "birthtime"]) {
+    stats[name] = new Date(stats[`${name}Ms`]);
+  }
+  for (const name of ["isDirectory", "isFile", "isSymbolicLink", "isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"]) {
+    const result = stats[name];
+    Object.defineProperty(stats, name, { value: () => result, configurable: true, enumerable: false });
+  }
+  return stats;
+}"#);
+
+const STATS_CONSTRUCTOR: &str = quench_js_check::checked_js!(r#"(emitWarning) => {
+  function Stats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atime, mtime, ctime, birthtime) {
+    emitWarning('fs.Stats constructor is deprecated.', { type: 'DeprecationWarning', code: 'DEP0180' });
+    for (const [name, value] of Object.entries({ dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks })) this[name] = value;
+    for (const [name, value] of Object.entries({ atime, mtime, ctime, birthtime })) {
+      this[`${name}Ms`] = value;
+      this[name] = new Date(value);
+    }
+    for (const name of ['isDirectory', 'isFile', 'isSymbolicLink', 'isBlockDevice', 'isCharacterDevice', 'isFIFO', 'isSocket']) this[name] = () => false;
+  }
+  return Stats;
+}"#);
+
 pub(crate) fn install(
     context: &mut NativeContext<'_, NodeHost>,
     module: RootId,
@@ -60,7 +92,66 @@ pub(crate) fn install(
     let factory = context.evaluate_script_rooted(STAT_API, "node:fs/shared-stat.js")?;
     let undefined = context.undefined();
     let stat = context.call_rooted(factory, undefined, &[host_operation])?;
-    set(context, module, "stat", stat)
+    set(context, module, "stat", stat)?;
+    let global = context.global_root()?;
+    let process = get(context, global, "process")?;
+    let emit_warning = get(context, process, "emitWarning")?;
+    let constructor_factory =
+        context.evaluate_script_rooted(STATS_CONSTRUCTOR, "node:fs/shared-stats-constructor.js")?;
+    let stats = context.call_rooted(constructor_factory, undefined, &[emit_warning])?;
+    set(context, module, "Stats", stats)?;
+    let utimes = context.host_function(crate::host::shared_vm::operation("fsUtimesSync"))?;
+    set(context, module, "utimesSync", utimes)
+}
+
+pub(crate) fn utimes_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let seconds = |index: usize| {
+        args.get(index)
+            .copied()
+            .and_then(|value| context.rooted_value(value))
+            .and_then(|value| value.as_number())
+            .unwrap_or(0.0)
+    };
+    let atime = seconds(1);
+    let mtime = seconds(2);
+    #[cfg(unix)]
+    let result = {
+        let path = CString::new(path.as_bytes()).map_err(|_| {
+            RootedError::host("utimes path contains an interior null byte")
+        })?;
+        let times = [to_timespec(atime), to_timespec(mtime)];
+        // SAFETY: path and times point to valid C values for the duration of the call.
+        let result = unsafe {
+            libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0)
+        };
+        if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+    };
+    #[cfg(not(unix))]
+    let result = std::fs::metadata(&path).map(|_| ());
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, &path, "utime")?),
+    }
+}
+
+#[cfg(unix)]
+fn to_timespec(seconds: f64) -> libc::timespec {
+    let whole = seconds.floor();
+    libc::timespec {
+        tv_sec: whole as libc::time_t,
+        tv_nsec: ((seconds - whole) * 1_000_000_000.0) as libc::c_long,
+    }
 }
 
 pub(crate) fn metadata(
@@ -77,6 +168,533 @@ pub(crate) fn metadata(
     let path = super::resolve_shared_path(context, path);
     match std::fs::metadata(&path) {
         Ok(metadata) => stats(context, &metadata),
+        Err(error) => Err(stat_error(context, error, &path)?),
+    }
+}
+
+pub(crate) fn stat_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    sync_metadata(context, args, false)
+}
+
+pub(crate) fn statfs_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    #[cfg(target_os = "linux")]
+    let result = {
+        let c_path = CString::new(std::path::Path::new(&path).as_os_str().as_bytes());
+        match c_path {
+            Ok(c_path) => {
+                let mut stats = std::mem::MaybeUninit::<libc::statfs>::uninit();
+                let status = unsafe { libc::statfs(c_path.as_ptr(), stats.as_mut_ptr()) };
+                if status == 0 {
+                    let stats = unsafe { stats.assume_init() };
+                    Ok([
+                        ("type", stats.f_type as f64),
+                        ("bsize", stats.f_bsize as f64),
+                        ("frsize", stats.f_frsize as f64),
+                        ("blocks", stats.f_blocks as f64),
+                        ("bfree", stats.f_bfree as f64),
+                        ("bavail", stats.f_bavail as f64),
+                        ("files", stats.f_files as f64),
+                        ("ffree", stats.f_ffree as f64),
+                    ])
+                } else {
+                    Err(io::Error::last_os_error())
+                }
+            }
+            Err(_) => Err(io::Error::from_raw_os_error(libc::EINVAL)),
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let result: Result<[(&str, f64); 8], io::Error> =
+        Err(io::Error::from_raw_os_error(libc::ENOSYS));
+    match result {
+        Ok(values) => {
+            let object = context.object_rooted()?;
+            for (name, value) in values {
+                set_number(context, object, name, value)?;
+            }
+            Ok(object)
+        }
+        Err(error) => Err(path_error(context, error, &path, "statfs")?),
+    }
+}
+
+pub(crate) fn truncate_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let length = truncate_length(context, args.get(1).copied());
+    let result = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .and_then(|file| file.set_len(length));
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, &path, "open")?),
+    }
+}
+
+pub(crate) fn ftruncate_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let length = truncate_length(context, args.get(1).copied());
+    let result = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        let result = state
+            .fs
+            .descriptors()
+            .get(&fd)
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::EBADF))
+            .and_then(|descriptor| descriptor.file.set_len(length));
+        result
+    };
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, "", "ftruncate")?),
+    }
+}
+
+fn truncate_length(
+    context: &NativeContext<'_, NodeHost>,
+    value: Option<RootId>,
+) -> u64 {
+    value
+        .and_then(|value| context.rooted_value(value))
+        .and_then(|value| value.as_number())
+        .filter(|value| value.is_finite() && *value >= 0.0 && *value <= u64::MAX as f64)
+        .map(|value| value as u64)
+        .unwrap_or(0)
+}
+
+pub(crate) fn access_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let mode = args
+        .get(1)
+        .copied()
+        .and_then(|mode| context.rooted_value(mode))
+        .and_then(|mode| mode.as_number())
+        .unwrap_or(0.0) as i32;
+    #[cfg(unix)]
+    let result = match CString::new(std::path::Path::new(&path).as_os_str().as_bytes()) {
+        Ok(path_string) => {
+            let status = unsafe { libc::access(path_string.as_ptr(), mode) };
+            if status == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        }
+        Err(_) => Err(io::Error::from_raw_os_error(libc::EINVAL)),
+    };
+    #[cfg(not(unix))]
+    let result = std::fs::metadata(&path).map(|_| ());
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, &path, "access")?),
+    }
+}
+
+pub(crate) fn chmod_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let mode = args
+        .get(1)
+        .copied()
+        .and_then(|mode| context.rooted_value(mode))
+        .and_then(|mode| mode.as_number())
+        .unwrap_or(0.0) as u32;
+    #[cfg(unix)]
+    let result = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode));
+    #[cfg(not(unix))]
+    let result = std::fs::metadata(&path).map(|_| ());
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, &path, "chmod")?),
+    }
+}
+
+pub(crate) fn fchmod_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let mode = args
+        .get(1)
+        .copied()
+        .and_then(|mode| context.rooted_value(mode))
+        .and_then(|mode| mode.as_number())
+        .unwrap_or(0.0) as u32;
+    let result = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        let result = state
+            .fs
+            .descriptors()
+            .get(&fd)
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::EBADF))
+            .and_then(|descriptor| {
+                #[cfg(unix)]
+                {
+                    descriptor
+                        .file
+                        .set_permissions(std::fs::Permissions::from_mode(mode))
+                }
+                #[cfg(not(unix))]
+                {
+                    descriptor.file.metadata().map(|_| ())
+                }
+            });
+        result
+    };
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, "", "fchmod")?),
+    }
+}
+
+pub(crate) fn chown_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    change_owner(context, args, false)
+}
+
+pub(crate) fn lchown_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    change_owner(context, args, true)
+}
+
+fn change_owner(
+    context: &mut NativeContext<'_, NodeHost>,
+    args: &[RootId],
+    no_follow: bool,
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let uid = owner_id(context, args.get(1).copied());
+    let gid = owner_id(context, args.get(2).copied());
+    #[cfg(unix)]
+    let result = match CString::new(std::path::Path::new(&path).as_os_str().as_bytes()) {
+        Ok(path_string) => {
+            let status = unsafe {
+                if no_follow {
+                    libc::lchown(path_string.as_ptr(), uid, gid)
+                } else {
+                    libc::chown(path_string.as_ptr(), uid, gid)
+                }
+            };
+            if status == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+        }
+        Err(_) => Err(io::Error::from_raw_os_error(libc::EINVAL)),
+    };
+    #[cfg(not(unix))]
+    let result = std::fs::metadata(&path).map(|_| ());
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(
+            context,
+            error,
+            &path,
+            if no_follow { "lchown" } else { "chown" },
+        )?),
+    }
+}
+
+pub(crate) fn fchown_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let uid = owner_id(context, args.get(1).copied());
+    let gid = owner_id(context, args.get(2).copied());
+    #[cfg(unix)]
+    let result = {
+        use std::os::fd::AsRawFd;
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        let descriptor = state.fs.descriptors();
+        match descriptor.get(&fd) {
+            Some(descriptor) => {
+                let status = unsafe { libc::fchown(descriptor.file.as_raw_fd(), uid, gid) };
+                if status == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+            }
+            None => Err(io::Error::from_raw_os_error(libc::EBADF)),
+        }
+    };
+    #[cfg(not(unix))]
+    let result = Err(io::Error::from_raw_os_error(libc::EBADF));
+    match result {
+        Ok(()) => Ok(context.undefined()),
+        Err(error) => Err(path_error(context, error, "", "fchown")?),
+    }
+}
+
+fn owner_id(context: &NativeContext<'_, NodeHost>, value: Option<RootId>) -> libc::uid_t {
+    value
+        .and_then(|value| context.rooted_value(value))
+        .and_then(|value| value.as_number())
+        .filter(|value| value.is_finite() && *value >= -1.0 && *value <= u32::MAX as f64)
+        .map(|value| if value == -1.0 { u32::MAX } else { value as u32 })
+        .unwrap_or(u32::MAX)
+}
+
+pub(crate) fn lstat_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    sync_metadata(context, args, true)
+}
+
+fn sync_metadata(
+    context: &mut NativeContext<'_, NodeHost>,
+    args: &[RootId],
+    follow_links: bool,
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let result = if follow_links {
+        std::fs::symlink_metadata(&path)
+    } else {
+        std::fs::metadata(&path)
+    };
+    match result {
+        Ok(metadata) => stats(context, &metadata),
+        Err(error) => Err(stat_error(context, error, &path)?),
+    }
+}
+
+pub(crate) fn realpath_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    match std::fs::canonicalize(&path) {
+        Ok(canonical) => Ok(context.string_rooted(&canonical.to_string_lossy())),
+        Err(error) => {
+            // Some platforms report EIO for a symlink cycle where Node reports
+            // ELOOP. Detect the cycle before translating the host error.
+            let error = if symlink_loop(Path::new(&path)) {
+                io::Error::from_raw_os_error(libc::ELOOP)
+            } else {
+                error
+            };
+            Err(stat_error(context, error, &path)?)
+        }
+    }
+}
+
+fn symlink_loop(path: &Path) -> bool {
+    let mut pending = path
+        .components()
+        .map(|part| PathBuf::from(part.as_os_str()))
+        .collect::<VecDeque<_>>();
+    let mut current = PathBuf::new();
+    let mut followed = 0;
+
+    while let Some(component) = pending.pop_front() {
+        match component.components().next() {
+            Some(Component::Prefix(prefix)) => current.push(prefix.as_os_str()),
+            Some(Component::RootDir) => current.push(component.as_os_str()),
+            Some(Component::CurDir) | None => {}
+            Some(Component::ParentDir) => {
+                current.pop();
+            }
+            Some(Component::Normal(name)) => {
+                current.push(name);
+                let Ok(metadata) = std::fs::symlink_metadata(&current) else {
+                    return false;
+                };
+                if !metadata.file_type().is_symlink() {
+                    continue;
+                }
+                followed += 1;
+                if followed > 40 {
+                    return true;
+                }
+                let Ok(target) = std::fs::read_link(&current) else {
+                    return false;
+                };
+                let mut replacement = if target.is_absolute() {
+                    target
+                } else {
+                    current
+                        .parent()
+                        .unwrap_or_else(|| Path::new("/"))
+                        .join(target)
+                };
+                replacement.extend(pending.into_iter());
+                pending = replacement
+                    .components()
+                    .map(|part| PathBuf::from(part.as_os_str()))
+                    .collect();
+                current = PathBuf::new();
+            }
+        }
+    }
+    false
+}
+
+pub(crate) fn read_dir_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    let entries = match std::fs::read_dir(&path) {
+        Ok(entries) => entries,
+        Err(error) => return Err(stat_error(context, error, &path)?),
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => return Err(stat_error(context, error, &path)?),
+        };
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) => return Err(stat_error(context, error, &path)?),
+        };
+        let dirent = context.object_rooted()?;
+        set_string(context, dirent, "name", &entry.file_name().to_string_lossy())?;
+        set_bool(context, dirent, "isFile", metadata.is_file())?;
+        set_bool(context, dirent, "isDirectory", metadata.is_dir())?;
+        set_bool(context, dirent, "isSymbolicLink", metadata.file_type().is_symlink())?;
+        for name in ["isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"] {
+            set_bool(context, dirent, name, false)?;
+        }
+        names.push(dirent);
+    }
+    context.array_rooted(&names)
+}
+
+pub(crate) fn fstat_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let descriptor_metadata = {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow();
+        let descriptor = state
+            .fs
+            .descriptors()
+            .get(&fd)
+            .map(|descriptor| (descriptor.file.metadata(), descriptor.path.clone()));
+        descriptor
+    };
+    let (metadata, path) = match descriptor_metadata {
+        Some((metadata, path)) => (metadata, path),
+        None => {
+            #[cfg(unix)]
+            let metadata = {
+                use std::os::fd::BorrowedFd;
+                let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
+                borrowed
+                    .try_clone_to_owned()
+                    .map(std::fs::File::from)
+                    .and_then(|file| file.metadata())
+            };
+            #[cfg(not(unix))]
+            let metadata = Err(io::Error::from_raw_os_error(libc::EBADF));
+            (metadata, String::new())
+        }
+    };
+    match metadata {
+        Ok(metadata) => stats(context, &metadata),
+        Err(error) => Err(super::stream_io_error(context, error, "fstat", &path)?),
+    }
+}
+
+pub(crate) fn read_link_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args
+        .first()
+        .copied()
+        .map(|path| context.to_string(path))
+        .transpose()?
+        .unwrap_or_else(|| "undefined".to_owned());
+    let path = super::resolve_shared_path(context, path);
+    match std::fs::read_link(&path) {
+        Ok(target) => Ok(context.string_rooted(&target.to_string_lossy())),
         Err(error) => Err(stat_error(context, error, &path)?),
     }
 }
@@ -106,7 +724,14 @@ fn stats(
         set_number(context, result, name, value)?;
     }
     set_bool(context, result, "isDirectory", snapshot.is_directory)?;
-    Ok(result)
+    set_bool(context, result, "isFile", metadata.is_file())?;
+    set_bool(context, result, "isSymbolicLink", metadata.file_type().is_symlink())?;
+    for name in ["isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"] {
+        set_bool(context, result, name, false)?;
+    }
+    let decorator = context.evaluate_script_rooted(DECORATE_STATS, "node:fs/shared-stat-methods.js")?;
+    let undefined = context.undefined();
+    context.call_rooted(decorator, undefined, &[result])
 }
 
 struct StatSnapshot {
@@ -209,12 +834,36 @@ fn stat_error(
         io::ErrorKind::PermissionDenied => "permission denied",
         io::ErrorKind::NotADirectory => "not a directory",
         io::ErrorKind::IsADirectory => "illegal operation on a directory",
+        _ if error.raw_os_error() == Some(libc::ELOOP) => "too many symbolic links encountered",
         _ if error.raw_os_error() == Some(libc::EBADF) => "bad file descriptor",
         _ => "input/output error",
     };
     let exception = context.error_rooted(&format!("{code}: {description}, stat '{path}'"))?;
     set_string(context, exception, "code", code)?;
     set_string(context, exception, "syscall", "stat")?;
+    set_string(context, exception, "path", path)?;
+    if let Some(errno) = error.raw_os_error() {
+        set_number(context, exception, "errno", -f64::from(errno))?;
+    }
+    Ok(context.throw(exception))
+}
+
+fn path_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: io::Error,
+    path: &str,
+    syscall: &str,
+) -> Result<RootedError, RootedError> {
+    let code = error_code(&error);
+    let description = match error.kind() {
+        io::ErrorKind::NotFound => "no such file or directory",
+        io::ErrorKind::PermissionDenied => "permission denied",
+        io::ErrorKind::NotADirectory => "not a directory",
+        _ => "input/output error",
+    };
+    let exception = context.error_rooted(&format!("{code}: {description}, {syscall} '{path}'"))?;
+    set_string(context, exception, "code", code)?;
+    set_string(context, exception, "syscall", syscall)?;
     set_string(context, exception, "path", path)?;
     if let Some(errno) = error.raw_os_error() {
         set_number(context, exception, "errno", -f64::from(errno))?;
@@ -231,6 +880,7 @@ fn error_code(error: &io::Error) -> &'static str {
         Some(libc::EINVAL) => "EINVAL",
         Some(libc::ENOTDIR) => "ENOTDIR",
         Some(libc::ENOENT) => "ENOENT",
+        Some(libc::ELOOP) => "ELOOP",
         _ => match error.kind() {
             io::ErrorKind::NotFound => "ENOENT",
             io::ErrorKind::PermissionDenied => "EACCES",
@@ -251,6 +901,15 @@ fn set(
         return Err(RootedError::host("cannot set shared fs stat property"));
     }
     Ok(())
+}
+
+fn get(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+) -> Result<RootId, RootedError> {
+    let key = context.string_rooted(name);
+    context.get_property_rooted(object, key)
 }
 
 fn set_number(

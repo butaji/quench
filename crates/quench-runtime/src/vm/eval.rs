@@ -277,6 +277,15 @@ impl<H: Host> Vm<H> {
         source: &str,
         name: &str,
     ) -> Result<Value, JsError> {
+        self.evaluate_embedding_specialized_script_with_origin(source, name, None)
+    }
+
+    pub(crate) fn evaluate_embedding_specialized_script_with_origin(
+        &mut self,
+        source: &str,
+        name: &str,
+        origin: Option<(u32, u32)>,
+    ) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         let atom_count = self.atom_text.len() + self.dynamic_atoms.len();
         let mut atom_prefix = Vec::with_capacity(atom_count);
@@ -290,7 +299,7 @@ impl<H: Host> Vm<H> {
                 unindexable_prefix_atoms.push(atom);
             }
         }
-        let residual = crate::Engine::specialize_script_with_atom_prefix(
+        let mut residual = crate::Engine::specialize_script_with_atom_prefix(
             source,
             name,
             &atom_prefix,
@@ -309,6 +318,10 @@ impl<H: Host> Vm<H> {
             self.syntax_error_result(&program, &message)
                 .expect_err("specialized host-script syntax errors must throw")
         })?;
+        if let (Some(source), Some((line_offset, column_offset))) = (&mut residual.source, origin) {
+            source.line_offset = line_offset;
+            source.column_offset = column_offset;
+        }
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(&program, "dynamic program store is full".into()));
         };

@@ -6,7 +6,10 @@ mod embedding;
 pub use embedding::RootedError;
 #[path = "api_native.rs"]
 mod native;
-pub use native::{HostFunction, HostFunctionId, NativeContext};
+pub use native::{
+    BuiltinBrand, BuiltinData, HostFunction, HostFunctionId, HostWeakRoot, NativeContext,
+    RootedIterator,
+};
 
 /// The syntax context used when compiling source. Script and Module use
 /// their OXC parse goals; contextual Eval requires an active guest activation.
@@ -99,6 +102,11 @@ impl<H: Host> Runtime<H> {
     pub fn execute_deferred_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         program.validate().map_err(JsError::validation)?;
         self.vm.execute_deferred_jobs(program).map(drop)
+    }
+
+    /// Release WeakRef targets after the host completes a job and its microtasks.
+    pub fn clear_kept_objects(&mut self) {
+        self.vm.clear_kept_objects();
     }
 
     /// Drain VM jobs at a host-selected checkpoint, including module jobs.
@@ -331,6 +339,21 @@ impl<H: Host> Runtime<H> {
 
     pub fn root(&mut self, value: Value) -> RootId {
         self.vm.root(value)
+    }
+
+    /// A private weak reference is live only while its target remains reachable.
+    pub fn host_weak_root_is_live(&self, reference: HostWeakRoot) -> bool {
+        self.vm.embedding_host_weak_value(reference.0).is_some()
+    }
+
+    pub fn resolve_host_weak_root(&mut self, reference: HostWeakRoot) -> Option<RootId> {
+        self.vm
+            .embedding_host_weak_value(reference.0)
+            .map(|value| self.vm.root(value))
+    }
+
+    pub fn release_host_weak_root(&mut self, reference: HostWeakRoot) -> bool {
+        self.vm.release_root(reference.0)
     }
 
     pub fn update_root(&mut self, root: RootId, value: Value) -> bool {
@@ -9571,13 +9594,20 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
             var replacements = ["", "x-foo", "de-u-co", "en-US"];
             for (var index = 0; index < replacements.length; index++) {
                 String.prototype[Symbol.split] = function() { return [replacements[index]]; };
-                var formatted = Intl.DateTimeFormat("de", {}).format(86400000);
+                var formatted = Intl.DateTimeFormat("de", { timeZone: "UTC" }).format(86400000);
                 print(formatted);
                 print(possibleAnswers.includes(formatted));
             }
             "#,
             &[
-                "1.1.1970", "true", "1.1.1970", "true", "1.1.1970", "true", "1.1.1970", "true",
+                "2.1.1970",
+                "true",
+                "2.1.1970",
+                "true",
+                "2.1.1970",
+                "true",
+                "2.1.1970",
+                "true",
             ],
         );
     }
