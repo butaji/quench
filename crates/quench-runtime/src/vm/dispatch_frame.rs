@@ -1,5 +1,8 @@
 use super::*;
 
+/// Values a pooled frame's buffers keep across activations; larger buffers are shrunk.
+const RETAINED_FRAME_VALUES: usize = 256;
+
 #[derive(Clone, Copy)]
 struct GeneralCodeCursor {
     program: ProgramId,
@@ -881,25 +884,31 @@ impl<H: Host> Vm<H> {
         frame.context = CallContext::Internal;
         frame.original_arguments.clear();
         frame.with_objects.clear();
-        const RETAINED_VALUES: usize = 256;
-        if frame.original_arguments.capacity() > RETAINED_VALUES {
-            frame.original_arguments.shrink_to(RETAINED_VALUES);
-        }
-        if frame.locals.capacity() > RETAINED_VALUES {
-            frame.locals.clear();
-            frame.locals.shrink_to(RETAINED_VALUES);
-        }
-        if frame.registers.capacity() > RETAINED_VALUES {
-            frame.registers.clear();
-            frame.registers.shrink_to(RETAINED_VALUES);
-        }
-        if frame.dynamic_bindings.capacity() > RETAINED_VALUES {
-            frame.dynamic_bindings.clear();
-            frame.dynamic_bindings.shrink_to(RETAINED_VALUES);
-        } else {
-            frame.dynamic_bindings.clear();
-        }
+        frame.dynamic_bindings.clear();
         frame.active_iterators.clear();
+        let retained = frame
+            .original_arguments
+            .capacity()
+            .max(frame.locals.capacity())
+            .max(frame.registers.capacity())
+            .max(frame.dynamic_bindings.capacity());
+        if retained > RETAINED_FRAME_VALUES {
+            Self::shrink_frame_buffers(frame);
+        }
+    }
+
+    /// Bounds what a pooled frame's buffers retain after an unusually large activation.
+    #[cold]
+    #[inline(never)]
+    fn shrink_frame_buffers(frame: &mut Frame) {
+        frame.original_arguments.shrink_to(RETAINED_FRAME_VALUES);
+        for buffer in [&mut frame.locals, &mut frame.registers] {
+            if buffer.capacity() > RETAINED_FRAME_VALUES {
+                buffer.clear();
+                buffer.shrink_to(RETAINED_FRAME_VALUES);
+            }
+        }
+        frame.dynamic_bindings.shrink_to(RETAINED_FRAME_VALUES);
     }
 
     pub(super) fn run_frame_general(
@@ -1118,7 +1127,9 @@ impl<H: Host> Vm<H> {
                         debug_assert_eq!(frame, pending.caller + 1);
                         let completed_frame = self.frames.pop().unwrap();
                         self.finish_frame_scopes(&completed_frame);
-                        self.persist_global_lexical_bindings(p, &completed_frame);
+                        // In-loop pushes never enter a script root, the only activation that
+                        // publishes global lexical bindings.
+                        debug_assert_ne!(completed_frame.function, super::ROOT_FUNCTION_ID);
                         self.pool_frame(completed_frame);
                         frame = pending.caller;
                         self.active_registers = self.frames[frame].registers.as_mut_ptr();
