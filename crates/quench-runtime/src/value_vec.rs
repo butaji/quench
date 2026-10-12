@@ -328,6 +328,12 @@ impl ValueArena {
         }
     }
 
+    /// Whether `release(vector)` would leave the arena unchanged: inline or empty storage.
+    pub(crate) fn release_is_noop(&self, vector: ValueVec) -> bool {
+        vector.has_inline_property_storage()
+            || (!vector.is_dictionary() && self.capacity(vector) == 0)
+    }
+
     pub(crate) fn has_released_ranges(&self) -> bool {
         self.free.iter().any(|bucket| !bucket.is_empty())
     }
