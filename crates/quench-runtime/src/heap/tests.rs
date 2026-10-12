@@ -111,9 +111,7 @@ fn ordinary_object_payloads_live_in_compact_records() {
         size_of::<Object>(),
         size_of::<Value>() + size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
     );
-    assert_eq!(size_of::<SlotEntry>(), slots::SLOT_ENTRY_WIDTH_BYTES);
-    assert_eq!(size_of::<SlotEntry>(), size_of::<u32>());
-    assert!(size_of::<SlotEntry>() < size_of::<Option<Cell>>());
+    assert_eq!(size_of::<Slot>(), size_of::<Option<Cell>>());
 }
 
 #[test]

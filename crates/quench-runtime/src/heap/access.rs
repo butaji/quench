@@ -1,4 +1,3 @@
-use super::slots::SlotEntry;
 use super::{Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, Object};
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
@@ -106,30 +105,37 @@ impl Heap {
     }
 
     pub fn get(&self, value: Value) -> Option<&Cell> {
-        let record_id = self.slot_entry(value)?.cell_record_id()?;
-        // SAFETY: slot_entry accepts only a live Cell slot, and sweep removes
-        // the record only after clearing its SlotEntry.
-        Some(unsafe { self.legacy_cells.get_live(record_id) })
+        let HeapReference::LegacySlot(index) = value.heap_reference()? else {
+            return None;
+        };
+        self.get_legacy(index)
     }
 
     pub(crate) fn get_legacy(&self, index: u32) -> Option<&Cell> {
-        let record_id = self.slot_entry_at(index)?.cell_record_id()?;
-        // SAFETY: slot_entry_at accepts only a live Cell slot.
-        Some(unsafe { self.legacy_cells.get_live(record_id) })
+        let index = index as usize;
+        if index >= self.slots.len() {
+            return None;
+        }
+        // SAFETY: the explicit range check proves the slot index is valid.
+        unsafe { self.slots.get_unchecked(index) }.cell.as_ref()
     }
 
     pub fn get_mut(&mut self, value: Value) -> Option<&mut Cell> {
-        let record_id = self.slot_entry(value)?.cell_record_id()?;
-        // SAFETY: slot_entry accepts only a live Cell slot, and `&mut self`
-        // guarantees exclusive access to the heap record.
-        Some(unsafe { self.legacy_cells.get_live_mut(record_id) })
+        let HeapReference::LegacySlot(index) = value.heap_reference()? else {
+            return None;
+        };
+        let index = index as usize;
+        if index >= self.slots.len() {
+            return None;
+        }
+        // SAFETY: the explicit range check proves the slot index is valid.
+        unsafe { self.slots.get_unchecked_mut(index) }.cell.as_mut()
     }
 
     pub(crate) fn object(&self, value: Value) -> Option<&Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: a direct-object Value is only created after the
-            // ObjectRecord is initialized, and object records are released only
-            // after their weak owners are pruned.
+            // ObjectRecord is initialized, and records retire after weak pruning.
             return Some(unsafe { self.object_records.get_live(record_id) });
         }
         self.get(value)?.object()
@@ -137,8 +143,7 @@ impl Heap {
 
     pub(crate) fn object_mut(&mut self, value: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
-            // SAFETY: direct-object Values only name live records, and the
-            // mutable heap borrow provides exclusive access.
+            // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
             return Some(unsafe { self.object_records.get_live_mut(record_id) });
         }
         self.get_mut(value)?.object_mut()
@@ -150,16 +155,14 @@ impl Heap {
     }
 
     pub(crate) fn object_record_by_id(&self, record_id: u32) -> &Object {
-        // SAFETY: direct-object Values name live records. Sweep retires a
-        // record only after the Values that can reach it have been pruned.
+        // SAFETY: direct-object Values name live records, retired after weak pruning.
         unsafe { self.object_records.get_live(record_id) }
     }
 
     #[cfg(test)]
     pub(crate) fn object_record_mut(&mut self, value: Value) -> Option<&mut Object> {
         let record_id = value.direct_object_index()?;
-        // SAFETY: direct-object Values name live records, and the exclusive
-        // heap borrow guarantees unique access.
+        // SAFETY: direct-object Values name live records and `&mut self` is exclusive.
         Some(unsafe { self.object_records.get_live_mut(record_id) })
     }
 
@@ -167,57 +170,26 @@ impl Heap {
         if let Some(record_id) = value.direct_object_index() {
             return self.object_records.is_live(record_id);
         }
-        self.slot_entry(value).is_some()
-    }
-
-    pub(super) fn slot_entry(&self, value: Value) -> Option<SlotEntry> {
-        let HeapReference::LegacySlot(index) = value.heap_reference()? else {
-            return None;
-        };
-        self.slot_entry_at(index)
-    }
-
-    fn slot_entry_at(&self, index: u32) -> Option<SlotEntry> {
-        let index = index as usize;
-        if index >= self.slots.len() {
-            return None;
-        }
-        // SAFETY: the flat-index check proves the slot index is valid.
-        let entry = unsafe { *self.slots.get_unchecked(index) };
-        entry.is_live().then_some(entry)
+        self.get(value).is_some()
     }
 
     #[cfg(feature = "profile-memory")]
     pub(super) fn for_each_live_value(&self, mut visit: impl FnMut(Value)) {
         self.object_records
             .for_each_live(|record_id, _| visit(Value::direct_object(record_id)));
-        for (index, entry) in self.slots.iter().enumerate() {
-            if entry.is_live() {
+        for (index, slot) in self.slots.iter().enumerate() {
+            if slot.is_live() {
                 visit(Value::heap(index as u32));
             }
         }
     }
 
     pub(super) fn object_at_index_mut(&mut self, index: usize) -> Option<&mut Object> {
-        let entry = *self.slots.get(index)?;
-        self.object_for_entry_mut(entry)
-    }
-
-    pub(super) fn object_for_entry_mut(&mut self, entry: SlotEntry) -> Option<&mut Object> {
-        let record_id = entry.cell_record_id()?;
-        // SAFETY: callers obtain entries from a live heap slot.
-        unsafe { self.legacy_cells.get_live_mut(record_id) }.object_mut()
+        self.slots.get_mut(index)?.cell.as_mut()?.object_mut()
     }
 
     #[cfg(test)]
     pub(super) fn cell_at_index(&self, index: usize) -> Option<&Cell> {
-        self.cell_for_entry(*self.slots.get(index)?)
-    }
-
-    #[cfg(any(test, feature = "profile-memory"))]
-    pub(super) fn cell_for_entry(&self, entry: SlotEntry) -> Option<&Cell> {
-        let record_id = entry.cell_record_id()?;
-        // SAFETY: this helper is used for live slots in tests and profiling.
-        Some(unsafe { self.legacy_cells.get_live(record_id) })
+        self.slots.get(index)?.cell.as_ref()
     }
 }
