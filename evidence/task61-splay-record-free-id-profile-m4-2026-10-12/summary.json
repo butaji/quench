@@ -1,0 +1,102 @@
+{
+  "schema": 1,
+  "measurement": "profile-memory heap accounting only; not a performance or RSS measurement",
+  "source_revision": "7513a05067acb790f133214837f2a27afd3f4aa8",
+  "host": {
+    "uname": "macOS-26.5-arm64-arm-64bit",
+    "machine": "arm64",
+    "model": "Mac16,10",
+    "logical_cpus": 10,
+    "memory_bytes": 17179869184,
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2\n"
+  },
+  "profile": {
+    "feature": "quench-runtime/profile-memory",
+    "binary": "target/pinned/d0925ac62d9e8a88f6e7f654e7988bc7912472878cad1ee3779207fcc0931e22/quench-node-profile-memory",
+    "binary_sha256": "d0925ac62d9e8a88f6e7f654e7988bc7912472878cad1ee3779207fcc0931e22",
+    "input": "evidence/task61-splay-step0-post-merge-2026-10-10/profile-input.js",
+    "input_sha256": "ac9c33765fb2968c78c1f116563913f575451d84826ea8a7bdf79a791bb3f345",
+    "runs_per_work_sample": 300,
+    "environment": {
+      "QUENCH_MEMORY": "1",
+      "QUENCH_MEMORY_PEAK": "1"
+    },
+    "command": "QUENCH_MEMORY=1 QUENCH_MEMORY_PEAK=1 target/pinned/d0925ac62d9e8a88f6e7f654e7988bc7912472878cad1ee3779207fcc0931e22/quench-node-profile-memory evidence/task61-splay-step0-post-merge-2026-10-10/profile-input.js"
+  },
+  "host_load_context": {
+    "before": "12:54 UTC, load averages 13.82 / 9.55 / 8.97; Deno test workers active",
+    "after": "12:54 UTC, load averages 16.50 / 10.43 / 9.30; Deno test workers active",
+    "use": "No timing or process RSS result is used."
+  },
+  "snapshots": {
+    "gc_15_before": {
+      "phase": "gc_15_before",
+      "collection": 14,
+      "occupied_slots": 1563848,
+      "slot_arena_reserved_bytes": 1867776,
+      "object_record_reserved_bytes": 35323904,
+      "object_record_free_id_capacity_bytes": 2097152,
+      "array_record_reserved_bytes": 20520960,
+      "array_record_free_id_capacity_bytes": 524288,
+      "legacy_cell_record_reserved_bytes": 0,
+      "accounted_runtime_bytes": 65175263,
+      "profile_instrumentation_bytes": 90217136
+    },
+    "gc_15_after": {
+      "phase": "gc_15_after",
+      "collection": 15,
+      "occupied_slots": 781735,
+      "slot_arena_reserved_bytes": 1867776,
+      "object_record_reserved_bytes": 35323904,
+      "object_record_free_id_capacity_bytes": 2097152,
+      "array_record_reserved_bytes": 21045248,
+      "array_record_free_id_capacity_bytes": 1048576,
+      "legacy_cell_record_reserved_bytes": 0,
+      "accounted_runtime_bytes": 63817719,
+      "profile_instrumentation_bytes": 80852832
+    },
+    "gc_16_before": {
+      "phase": "gc_16_before",
+      "collection": 15,
+      "occupied_slots": 1563561,
+      "slot_arena_reserved_bytes": 1867776,
+      "object_record_reserved_bytes": 35323904,
+      "object_record_free_id_capacity_bytes": 2097152,
+      "array_record_reserved_bytes": 21045248,
+      "array_record_free_id_capacity_bytes": 1048576,
+      "legacy_cell_record_reserved_bytes": 0,
+      "accounted_runtime_bytes": 65887961,
+      "profile_instrumentation_bytes": 151024672
+    },
+    "gc_16_after": {
+      "phase": "gc_16_after",
+      "collection": 16,
+      "occupied_slots": 781977,
+      "slot_arena_reserved_bytes": 1867776,
+      "object_record_reserved_bytes": 35323904,
+      "object_record_free_id_capacity_bytes": 2097152,
+      "array_record_reserved_bytes": 21045248,
+      "array_record_free_id_capacity_bytes": 1048576,
+      "legacy_cell_record_reserved_bytes": 0,
+      "accounted_runtime_bytes": 63844095,
+      "profile_instrumentation_bytes": 142913088
+    },
+    "complete": {
+      "phase": "complete",
+      "collection": 16,
+      "occupied_slots": 1328066,
+      "slot_arena_reserved_bytes": 1867776,
+      "object_record_reserved_bytes": 35323904,
+      "object_record_free_id_capacity_bytes": 2097152,
+      "array_record_reserved_bytes": 21045248,
+      "array_record_free_id_capacity_bytes": 1048576,
+      "legacy_cell_record_reserved_bytes": 0,
+      "accounted_runtime_bytes": 65369760,
+      "profile_instrumentation_bytes": 147348608
+    }
+  },
+  "raw": {
+    "stdout_sha256": "23132be07c08afbd908b074771717b5430b8fd7e7ae574771aebd4091539ae7a",
+    "stderr_sha256": "2583e443928886981dd567d67a7065a5d38b0a22b8dda6aa6587b58d73bd3d7f"
+  }
+}
