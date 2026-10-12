@@ -873,6 +873,8 @@ const _: () = {
 /// Entries after which a function's packed code is expanded into fixed-width instructions.
 /// Decoding costs 1.5x the packed code's memory, so cold bootstrap and one-shot code keeps
 /// decoding on the fly while repeatedly entered functions skip the per-dispatch unpacking.
+/// A function with a loop is primed to expand on its first entry instead (`prime_loop`):
+/// one entry can dispatch without bound.
 const HOT_DECODE_ENTRIES: u32 = 64;
 
 #[derive(Clone, Debug, Default)]
@@ -902,6 +904,14 @@ impl HotDecoding {
         None
     }
 
+    /// Makes a function whose code loops expand on its first entry. Priming at installation
+    /// leaves the entry path itself unchanged.
+    pub(crate) fn prime_loop(&self, code: &[Instr], wide: &[WideInstruction]) {
+        if self.entries.get() == 0 && has_backward_branch(code, wide) {
+            self.entries.set(HOT_DECODE_ENTRIES - 1);
+        }
+    }
+
     #[cold]
     #[inline(never)]
     fn expand(&self, code: &[Instr], wide: &[WideInstruction]) -> &[WideInstruction] {
@@ -920,6 +930,21 @@ impl HotDecoding {
             })
             .as_slice()
     }
+}
+
+/// Whether some jump in `code` targets its own or an earlier instruction: a loop.
+fn has_backward_branch(code: &[Instr], wide: &[WideInstruction]) -> bool {
+    code.iter().enumerate().any(|(pc, packed)| {
+        let instruction = if packed.is_wide() {
+            wide[packed.wide_index()]
+        } else {
+            packed.as_wide()
+        };
+        matches!(
+            instruction.op().control_flow_layout(),
+            ControlFlowLayout::Jump | ControlFlowLayout::ConditionalJump
+        ) && instruction.jump_target() as usize <= pc
+    })
 }
 
 #[derive(Clone, Debug)]
