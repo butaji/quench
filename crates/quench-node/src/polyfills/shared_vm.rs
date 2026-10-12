@@ -308,19 +308,13 @@ pub const ABORT: &str = quench_js_check::checked_js!(
     writable: true,
     configurable: true,
   });
-  Object.defineProperty(globalThis, "__quenchAbortListenerCount", {
-    value: (signal, event) => {
-      const state = signalStates.get(signal);
-      return event === "abort" && state ? state.listeners.length : 0;
-    },
-    configurable: true,
-  });
+  return (signal) => signalStates.get(signal);
 })();
 "#
 );
 
 pub const EVENT_TARGET: &str = quench_js_check::checked_js!(
-    r#"
+    r#"(recordsKey) => {
 if (globalThis.Event === undefined) Object.defineProperty(globalThis, "Event", {
   value: class Event {
   constructor(type, options = {}) {
@@ -355,22 +349,22 @@ if (typeof globalThis.Event === "function" &&
 if (globalThis.EventTarget === undefined) Object.defineProperty(globalThis, "EventTarget", {
   value: class EventTarget {
   constructor() {
-    this._listeners = Object.create(null);
+    this[recordsKey] = Object.create(null);
   }
   addEventListener(type, listener, options = undefined) {
     if (listener == null || typeof listener !== "function") return;
-    const records = this._listeners[type] ||= [];
+    const records = this[recordsKey][type] ||= [];
     if (records.some((record) => record.listener === listener)) return;
     const once = Boolean(options && typeof options === "object" && options.once);
     records.push({ listener, once });
   }
   removeEventListener(type, listener) {
-    const records = this._listeners[type];
-    if (records) this._listeners[type] = records.filter((record) => record.listener !== listener);
+    const records = this[recordsKey][type];
+    if (records) this[recordsKey][type] = records.filter((record) => record.listener !== listener);
   }
   dispatchEvent(event) {
-    for (const record of (this._listeners[event.type] || []).slice()) {
-      if (!(this._listeners[event.type] || []).includes(record)) continue;
+    for (const record of (this[recordsKey][event.type] || []).slice()) {
+      if (!(this[recordsKey][event.type] || []).includes(record)) continue;
       if (record.once) this.removeEventListener(event.type, record.listener);
       record.listener.call(this, event);
       if (event._quenchImmediatePropagationStopped) break;
@@ -497,5 +491,6 @@ if (globalThis.MessageChannel === undefined) Object.defineProperty(globalThis, "
   writable: true,
   configurable: true,
 });
+}
 "#
 );
