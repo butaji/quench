@@ -7,6 +7,7 @@ use std::rc::Rc;
 use quench_runtime::RootId;
 
 pub(crate) const ROOT_ASYNC_ID: u64 = 1;
+pub(crate) const ROOT_TRIGGER_ASYNC_ID: i64 = 0;
 const FIRST_ASYNC_ID: u64 = ROOT_ASYNC_ID + 1;
 const FIRST_LOCAL_STORAGE_ID: u64 = 1;
 
@@ -19,6 +20,7 @@ pub(crate) struct AsyncIdentity(Rc<AsyncIdentityCells>);
 struct AsyncIdentityCells {
     next_async_id: Cell<u64>,
     current_async_id: Cell<u64>,
+    current_trigger_id: Cell<i64>,
     next_local_storage_id: Cell<u64>,
 }
 
@@ -27,6 +29,7 @@ impl AsyncIdentity {
         Self(Rc::new(AsyncIdentityCells {
             next_async_id: Cell::new(FIRST_ASYNC_ID),
             current_async_id: Cell::new(ROOT_ASYNC_ID),
+            current_trigger_id: Cell::new(ROOT_TRIGGER_ASYNC_ID),
             next_local_storage_id: Cell::new(FIRST_LOCAL_STORAGE_ID),
         }))
     }
@@ -45,6 +48,13 @@ impl AsyncIdentity {
         self.0.current_async_id.replace(id)
     }
 
+    pub(crate) fn current_trigger_id(&self) -> i64 {
+        self.0.current_trigger_id.get()
+    }
+    pub(crate) fn replace_current_trigger_id(&self, id: i64) -> i64 {
+        self.0.current_trigger_id.replace(id)
+    }
+
     pub(crate) fn allocate_local_storage_id(&self) -> u64 {
         let id = self.0.next_local_storage_id.get();
         self.0.next_local_storage_id.set(id + 1);
@@ -56,6 +66,9 @@ impl AsyncIdentity {
 pub(crate) struct SharedAsyncHooksState {
     pub(super) identity: AsyncIdentity,
     pub(super) module: Option<RootId>,
+    pub(super) registry: super::async_hook_registry_shared_vm::Registry,
+    pub(super) context_triggers: HashMap<u64, i64>,
+    pub(super) scoped_resource: Option<(u64, RootId)>,
     pub(super) local_stores: HashMap<(u64, u64), RootId>,
     pub(super) store_references: HashMap<RootId, usize>,
     pub(super) destroyed_resources: HashSet<u64>,
@@ -66,6 +79,9 @@ impl SharedAsyncHooksState {
         Self {
             identity,
             module: None,
+            registry: super::async_hook_registry_shared_vm::Registry::new(),
+            context_triggers: HashMap::new(),
+            scoped_resource: None,
             local_stores: HashMap::new(),
             store_references: HashMap::new(),
             destroyed_resources: HashSet::new(),

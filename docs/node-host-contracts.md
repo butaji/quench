@@ -39,6 +39,35 @@ the error code while reading/coercing the receiver's name and message. The
 private prototype brand is owned by these native errors; identity with every
 constructor/brand exported by upstream `internal/errors` is not established.
 
+## Async resources and hooks
+
+Async execution identity uses the shared native identity owner. Creating a
+resource emits init with its captured trigger identity while preserving the
+caller's execution context. Manual `runInAsyncScope` exchanges execution and
+trigger identities, exposes the resource to `executionAsyncResource`, emits
+before/after, and restores the caller even when the callback throws.
+
+Hook constructors copy callback slots after JavaScript parameter destructuring.
+Subscriptions use a private captured Set and Uint32 callback counts. An outer
+hook emission retains an array snapshot and its counts; nested emissions use
+that snapshot while enable/disable changes apply to the next outer emission.
+An enabled hook with no callback slots still counts as an enabled subscription.
+Manual destroy notifications run in the host immediate phase after current
+promise jobs. The existing async-local-storage backend remains in use.
+
+`EventEmitterAsyncResource` lazily composes the canonical emitter and resource
+classes. Private weak maps own emitter/resource links and brand checks. The
+resource's emitter link is initialized after its base resource constructor,
+including init hooks. Dispatch resolves the current super emit hook and calls
+it through the resource's public scope method. Argument prepending uses the
+captured array primitive. Public resource getters and destruction methods
+retain their Node method/getter shapes.
+
+This covers explicit resource scopes and manual lifecycle notifications.
+Promise hook emission, automatic GC destroy callbacks, fatal hook-callback
+error handling, timer/network callback context propagation, and full internal
+symbol/frame identity still require implementation and oracle evidence.
+
 ## Working directories and preloads
 
 A successful `process.chdir` replaces the logical directory owner and clears
@@ -61,6 +90,11 @@ executable directory when cwd cannot be queried. Absolute entry and preload
 paths do not require a readable cwd pathname. `-r`, `--require`, and
 `--require=...` preloads execute in order through the ordinary CommonJS loader
 and cache before the entry. A preload is separate from the main entry.
+
+POSIX `path.resolve` validates consumed arguments from right to left and stops
+at an absolute prefix. Absolute resolutions do not read `process.cwd`; empty
+and dot-only resolutions retain Node's early cwd shortcut and retry behavior
+when a replaced cwd hook returns a relative path.
 
 ## Verification
 

@@ -91,6 +91,23 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "utilInspectCustom" (4) => crate::modules::util_shared_vm::inspect_custom,
         method "nodeErrorConstructor" (0) => crate::modules::node_errors_shared_vm::constructor,
         method "nodeErrorBrand" (0) => crate::modules::node_errors_shared_vm::brand,
+        method "asyncHookInit" (7) => crate::modules::async_hook_registry_shared_vm::initialize_hook,
+        method "asyncHookEnable" (1) => crate::modules::async_hook_registry_shared_vm::enable,
+        method "asyncHookDisable" (1) => crate::modules::async_hook_registry_shared_vm::disable,
+        method "asyncHooksEnabled" (0) => crate::modules::async_hook_registry_shared_vm::enabled,
+        method "asyncExecutionId" (0) => crate::modules::async_hooks_shared_vm::execution_id,
+        method "asyncTriggerId" (0) => crate::modules::async_hooks_shared_vm::trigger_id,
+        method "asyncExecutionResource" (0) => crate::modules::async_hooks_shared_vm::execution_resource,
+        method "asyncExternalInit" (3) => crate::modules::async_hooks_shared_vm::external_init,
+        method "asyncDestroyDispatch" (0) => crate::modules::async_hooks_shared_vm::destroy_dispatch,
+        method "emitterAsyncConstructor" (0) => crate::modules::emitter_async_resource_shared_vm::constructor,
+        method "emitterAsyncPrepare" (2) => crate::modules::emitter_async_resource_shared_vm::prepare,
+        method "emitterAsyncInit" (3) => crate::modules::emitter_async_resource_shared_vm::initialize,
+        method "emitterAsyncEmit" (3) => crate::modules::emitter_async_resource_shared_vm::emit,
+        method "emitterAsyncDestroy" (1) => crate::modules::emitter_async_resource_shared_vm::destroy,
+        method "emitterAsyncGet" (2) => crate::modules::emitter_async_resource_shared_vm::get_value,
+        method "emitterAsyncLink" (2) => crate::modules::emitter_async_resource_shared_vm::link,
+        method "emitterAsyncOwner" (1) => crate::modules::emitter_async_resource_shared_vm::owner,
         method "nodeErrorToString" (1) => crate::modules::node_errors_shared_vm::to_string,
         method "utilInspectQuote" (1) => crate::modules::util_shared_vm::inspect_quote,
         method "styleText" (3) => crate::modules::util_style_shared_vm::style_text,
@@ -554,6 +571,7 @@ impl quench_runtime::Host for NodeHost {
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_process");
         crate::modules::events_shared_vm::initialize_targets(context)?;
+        crate::modules::async_hook_registry_shared_vm::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_target_polyfill");
         let event_data = context
