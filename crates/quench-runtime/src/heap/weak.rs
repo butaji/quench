@@ -74,9 +74,13 @@ impl Heap {
         let mut finalization_jobs = Vec::new();
         let marks = &self.marks;
         let object_records = &self.object_records;
+        let array_records = &self.array_records;
         let is_marked = |value: Value| {
             if let Some(record_id) = value.direct_object_index() {
                 return object_records.is_marked(record_id);
+            }
+            if let Some(record_id) = value.direct_array_index() {
+                return array_records.is_marked(record_id);
             }
             let Some(index) = value.legacy_heap_index().map(|index| index as usize) else {
                 return false;

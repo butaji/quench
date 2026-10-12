@@ -146,7 +146,7 @@ impl<H: Host> Vm<H> {
                         TypedArrayIndexKey::NotCanonical => {}
                     }
                 }
-                if matches!(self.heap.get(object), Some(Cell::Array { .. })) {
+                if self.heap.array(object).is_some() {
                     if atom == self.length_atom
                         && !self
                             .object_data(object)

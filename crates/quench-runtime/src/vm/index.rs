@@ -72,7 +72,7 @@ impl<H: Host> Vm<H> {
         if let Some(index) = self.array_index_key(key) {
             let index = index as usize;
             // Accessor indices are stored as holes, so a present dense element is a data property.
-            if let Some(Cell::Array { elements, .. }) = self.heap.get(object)
+            if let Some((_, elements)) = self.heap.array(object)
                 && let Some(value) = elements
                     .get(index)
                     .copied()
@@ -90,7 +90,7 @@ impl<H: Host> Vm<H> {
             {
                 return self.get_property(p, object, atom);
             }
-            if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            if self.heap.array(object).is_some()
                 && let Some(value) = self
                     .heap
                     .sparse_get(object, index)
@@ -170,7 +170,7 @@ impl<H: Host> Vm<H> {
                 }
                 return self.set_property_with_program(p, object, atom, value);
             }
-            if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            if self.heap.array(object).is_some()
                 && !self.has_own_array_index(object, index)
                 && self.set_inherited_index_accessor(p, object, index, value, strict)?
             {
@@ -186,7 +186,7 @@ impl<H: Host> Vm<H> {
                     Ok(())
                 };
             }
-            if let Some(Cell::Array { elements, .. }) = self.heap.get(object) {
+            if let Some((_, elements)) = self.heap.array(object) {
                 let existing = index < elements.len()
                     && elements.get(index).is_some_and(|value| !value.is_deleted())
                     || self
@@ -206,7 +206,7 @@ impl<H: Host> Vm<H> {
             if self.typed_array_set(p, object, index, value)? {
                 return Ok(());
             }
-            if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            if self.heap.array(object).is_some()
                 && !self.has_own_array_index(object, index)
                 && self.lookup_array_index_atom(index).is_none()
                 && !self.prototype_chain_has_indexed_set_exotic(object)
@@ -231,11 +231,7 @@ impl<H: Host> Vm<H> {
         replacement: DenseElementReplacement,
     ) -> bool {
         let mapped_slot = {
-            let Some(Cell::Array {
-                object: data,
-                elements,
-            }) = self.heap.get_mut(object)
-            else {
+            let Some((data, elements)) = self.heap.array_mut(object) else {
                 return false;
             };
             if !elements
@@ -284,9 +280,7 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "cannot assign symbol property".into()))
             };
         }
-        if matches!(self.heap.get(object), Some(Cell::Array { .. }))
-            && self.prototype_chain_contains_proxy(object)
-        {
+        if self.heap.array(object).is_some() && self.prototype_chain_contains_proxy(object) {
             let key = self.coerce_js_string(p, key)?;
             let atom = self.intern_js_atom(&key);
             return self.set_property_with_program(p, object, atom, value);
@@ -294,7 +288,7 @@ impl<H: Host> Vm<H> {
 
         let key = self.coerce_js_string(p, key)?;
         if let Some(index) = super::object_static::array_index(key.host_string())
-            && matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            && self.heap.array(object).is_some()
             && !self.has_own_array_index(object, index as usize)
             && self.prototype_chain_has_typed_array(object)
         {
@@ -302,7 +296,7 @@ impl<H: Host> Vm<H> {
             return self.set_property_with_program_mode(p, object, atom, value, strict);
         }
         if let Some(index) = super::object_static::array_index(key.host_string())
-            && matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            && self.heap.array(object).is_some()
         {
             if self
                 .array_descriptor(object, index as usize)
@@ -374,7 +368,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
+        let Some((_, elements)) = self.heap.array(object) else {
             return false;
         };
         if self.check_array_element_write(object, index).is_err() {
@@ -382,7 +376,7 @@ impl<H: Host> Vm<H> {
         }
         let dense_len = elements.len();
         if index < dense_len {
-            let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) else {
+            let Some((_, elements)) = self.heap.array_mut(object) else {
                 unreachable!()
             };
             #[cfg(feature = "profile-aggregate")]
@@ -395,7 +389,7 @@ impl<H: Host> Vm<H> {
         let sparse = self.array_index_uses_sparse_storage(object, index, dense_len);
         if sparse {
             self.heap.sparse_set(object, index, value);
-        } else if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(object) {
+        } else if let Some((_, elements)) = self.heap.array_mut(object) {
             #[cfg(feature = "profile-aggregate")]
             self.profile
                 .array_write_ownership(Rc::strong_count(elements) != 1);
@@ -436,7 +430,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         index: usize,
     ) -> Result<(), JsError> {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(object) else {
+        let Some((_, elements)) = self.heap.array(object) else {
             return Err(JsError("array receiver is not array".into()));
         };
         let existing = index < elements.len()
@@ -475,7 +469,7 @@ mod tests {
             elements: Rc::new(vec![]),
         });
         assert!(vm.set_array_element(array, 1_000_000, Value::TRUE));
-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+        let Some((_, elements)) = vm.heap.array(array) else {
             panic!("array cell")
         };
         assert!(elements.is_empty());
@@ -488,7 +482,7 @@ mod tests {
         let mut vm = Vm::new(SilentHost);
         let array = vm.array_create(&program, 16_900).unwrap();
 
-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+        let Some((_, elements)) = vm.heap.array(array) else {
             panic!("array cell")
         };
         assert_eq!(elements.len(), 16_900);
@@ -496,7 +490,7 @@ mod tests {
         assert_eq!(vm.heap.sparse_length(array), None);
 
         assert!(vm.set_array_element(array, 16_899, Value::TRUE));
-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+        let Some((_, elements)) = vm.heap.array(array) else {
             panic!("array cell")
         };
         assert_eq!(elements[16_899], Value::TRUE);
@@ -514,7 +508,7 @@ mod tests {
 
         assert!(vm.set_array_element(array, 2_048, Value::TRUE));
 
-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+        let Some((_, elements)) = vm.heap.array(array) else {
             panic!("array cell")
         };
         assert_eq!(elements.len(), 2_049);
@@ -536,7 +530,7 @@ mod tests {
 
         vm.heap.sparse_set_length(array, 16_900);
 
-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+        let Some((_, elements)) = vm.heap.array(array) else {
             panic!("array cell")
         };
         assert_eq!(elements.len(), 16_900);
@@ -583,7 +577,7 @@ mod tests {
 
         assert_eq!(vm.delete_array_index(array, 1023), Value::TRUE);
 
-        let Some(Cell::Array { elements, .. }) = vm.heap.get(array) else {
+        let Some((_, elements)) = vm.heap.array(array) else {
             panic!("array cell")
         };
         assert!(elements[1023].is_deleted());

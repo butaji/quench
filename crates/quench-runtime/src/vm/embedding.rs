@@ -85,6 +85,9 @@ impl<H: Host> Vm<H> {
         if self.heap.object_record(value).is_some() {
             return "#<Object>".into();
         }
+        if self.heap.array(value).is_some() {
+            return "[object Array]".into();
+        }
 
         match self.heap.get(value) {
             Some(Cell::String(text)) => text.host_string().to_owned(),

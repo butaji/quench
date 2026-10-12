@@ -94,7 +94,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let method = self.active_native_env().and_then(|env| {
-            let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
+            let Some((_, elements)) = self.heap.array(env) else {
                 return None;
             };
             elements.first().and_then(|value| value.as_number())

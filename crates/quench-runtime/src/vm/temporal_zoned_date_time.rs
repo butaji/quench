@@ -1278,12 +1278,12 @@ impl<H: Host> Vm<H> {
             .object_record(partial)
             .is_some_and(|object| object.proto == self.temporal_plain_time_proto);
         if !self.is_object_like(partial)
+            || self.heap.array(partial).is_some()
             || is_plain_time
             || matches!(
                 self.heap.get(partial),
                 Some(
-                    Cell::Array { .. }
-                        | Cell::TemporalPlainDate { .. }
+                    Cell::TemporalPlainDate { .. }
                         | Cell::TemporalPlainDateTime { .. }
                         | Cell::TemporalPlainMonthDay { .. }
                         | Cell::TemporalPlainYearMonth { .. }
