@@ -979,7 +979,7 @@ impl<H: Host> Vm<H> {
                     let stack_guard = result?;
                     return Ok(StepResult::PushFrame {
                         destination: i.result_register(),
-                        stack_guard,
+                        stack_guard: Some(stack_guard),
                         construct_this: None,
                     });
                 }
@@ -1108,15 +1108,10 @@ impl<H: Host> Vm<H> {
                     return Ok(StepResult::Continue);
                 }
                 self.frames[f].pc = *pc;
-                let stack_guard = self.push_wasm_frame(
-                    p,
-                    f,
-                    u32::from(i.known_function_index()),
-                    i.call_window(),
-                )?;
+                self.push_wasm_frame(p, f, u32::from(i.known_function_index()), i.call_window())?;
                 return Ok(StepResult::PushFrame {
                     destination: i.result_register(),
-                    stack_guard,
+                    stack_guard: None,
                     construct_this: None,
                 });
             }
@@ -1228,7 +1223,7 @@ impl<H: Host> Vm<H> {
                         self.construct_target = None;
                         return Ok(StepResult::PushFrame {
                             destination: i.result_register(),
-                            stack_guard: pushed?,
+                            stack_guard: Some(pushed?),
                             construct_this: Some(this),
                         });
                     }
