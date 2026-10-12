@@ -346,6 +346,41 @@ fn apply(
         }
         return Ok(context.boolean(path_matches_glob(&values[0], &values[1], windows)));
     }
+    if matches!((flavor, method), (Flavor::Posix, Method::Resolve)) {
+        // Node validates from the right and stops at the first absolute path.
+        // A fully resolved prefix never queries process.cwd.
+        let single_dot = if args.len() == 1 {
+            context
+                .string_text(args[0])?
+                .is_some_and(|value| value.is_empty() || value == ".")
+        } else {
+            false
+        };
+        if args.is_empty() || single_dot {
+            let cwd = process_cwd(context)?;
+            if cwd.starts_with('/') {
+                return Ok(context.string_rooted(&cwd));
+            }
+        }
+        let mut paths = Vec::new();
+        let mut absolute = false;
+        for (index, argument) in args.iter().enumerate().rev() {
+            let path = argument_string(context, *argument, index, method)?;
+            absolute = path.starts_with('/');
+            paths.push(path);
+            if absolute {
+                break;
+            }
+        }
+        paths.reverse();
+        let cwd = if absolute {
+            String::new()
+        } else {
+            process_cwd(context)?
+        };
+        let result = crate::modules::path_algorithms::posix::resolve_strings(&paths, &cwd);
+        return Ok(context.string_rooted(&result));
+    }
     let arguments = &args[..method.argument_count(args.len())];
     let path_arguments = &arguments[..method.path_count(arguments.len())];
     if matches!(
@@ -394,8 +429,7 @@ fn apply(
             crate::modules::path_algorithms::win32_extra::join_strings(&paths)
         }
         (Flavor::Posix, Method::Resolve) => {
-            let cwd = process_cwd(context)?;
-            crate::modules::path_algorithms::posix::resolve_strings(&paths, &cwd)
+            unreachable!("POSIX resolve exits before generic path argument projection")
         }
         (Flavor::Win32, Method::Resolve) => {
             let cwd = process_cwd(context)?;

@@ -3471,3 +3471,39 @@ console.log(JSON.stringify(result));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn posix_resolve_validates_only_consumed_paths_and_queries_cwd_lazily() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),path=require('path').posix,marker={},result=[];let calls=0;
+process.cwd=()=>{calls++;throw marker};
+assert.strictEqual(path.resolve('/absolute','leaf'),'/absolute/leaf');
+assert.strictEqual(path.resolve({get toString(){throw 'unused path'}},'/absolute','leaf'),'/absolute/leaf');
+assert.throws(()=>path.resolve('/absolute',42),{code:'ERR_INVALID_ARG_TYPE'});
+assert.strictEqual(calls,0);
+for(const args of [[],['.'],[''],['relative']])assert.throws(()=>path.resolve(...args),error=>error===marker);
+result.push(calls);process.cwd=()=>{calls++;return '/parent/base'};
+result.push(path.resolve('relative'),path.resolve('/root','..','leaf'),calls);
+for(const args of [[],['.'],['']]) {let reads=0;process.cwd=()=>++reads===1?'relative':'/second';result.push(path.resolve(...args),reads)}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
