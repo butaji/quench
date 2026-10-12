@@ -378,13 +378,10 @@ pub(crate) fn spawn_child(
     set_command_arg0(&mut command, argv0.as_deref());
     command.args(&arguments);
     let stdio = super::child_process_stdio_shared_vm::normalize(context, options)?;
-    if let Some(cwd) = options
+    let cwd = options
         .map(|root| property_string(context, root, "cwd"))
         .transpose()?
-        .flatten()
-    {
-        command.current_dir(cwd);
-    }
+        .flatten();
     if let Some(env) = options
         .map(|root| property(context, root, "env"))
         .transpose()?
@@ -393,6 +390,7 @@ pub(crate) fn spawn_child(
         super::child_process_env_shared_vm::configure(context, &mut command, env)?;
     }
 
+    command.current_dir(child_cwd(context, cwd.as_deref()));
     let configured = super::child_process_stdio_shared_vm::configure(&mut command, &stdio);
     let start = match configured
         .and_then(|configured| command.spawn().map(|child| (child, configured)))
@@ -1128,9 +1126,7 @@ pub(crate) fn spawn_sync(
     set_command_arg0(&mut process, argv0.as_deref());
     process.args(&arguments);
     process.stdout(Stdio::piped()).stderr(Stdio::piped());
-    if let Some(cwd) = cwd {
-        process.current_dir(cwd);
-    }
+
     let env = options
         .map(|root| property(context, root, "env"))
         .transpose()?;
@@ -1138,6 +1134,7 @@ pub(crate) fn spawn_sync(
         super::child_process_env_shared_vm::configure(context, &mut process, env)?;
     }
 
+    process.current_dir(child_cwd(context, cwd.as_deref()));
     let output = match process.spawn() {
         Ok(child) => {
             let pid = child.id();
@@ -1282,6 +1279,19 @@ fn string_array(context: &mut NativeContext<'_, NodeHost>, array: RootId) -> Res
             context.to_string(value)
         })
         .collect()
+}
+
+/// Resolve the OS launch boundary against the logical process directory after
+/// guest argument/environment hooks finish. Keep kernel symlink resolution.
+fn child_cwd(
+    context: &mut NativeContext<'_, NodeHost>,
+    requested: Option<&str>,
+) -> std::path::PathBuf {
+    let base = context.host_mut().shared_state().borrow().cwd.path();
+    match requested {
+        Some(path) => base.join(path),
+        None => base,
+    }
 }
 
 fn property_string(context: &mut NativeContext<'_, NodeHost>, object: RootId, name: &str) -> Result<Option<String>, RootedError> {

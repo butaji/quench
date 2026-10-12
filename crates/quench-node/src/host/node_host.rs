@@ -56,6 +56,7 @@ pub(crate) struct SharedNodeState {
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
     pub(crate) event_targets_api: Option<quench_runtime::RootId>,
+    pub(crate) trace: crate::modules::trace_state::TraceState,
     pub(crate) util_intrinsics: Option<crate::modules::util_shared_vm::UtilIntrinsics>,
     /// Immutable startup arguments used to build guest process.argv.
     pub(crate) process_argv: crate::modules::process_state::ProcessArgs,
@@ -149,6 +150,7 @@ impl SharedNodeState {
             primordials_module: None,
             event_targets_api: None,
             util_intrinsics: None,
+            trace: crate::modules::trace_state::TraceState::default(),
             process_argv,
             process_control,
             process_signals: crate::modules::process_signals_state::SignalState::default(),
@@ -260,6 +262,7 @@ impl NodeHost {
                 &exec_argv,
             );
         let mut shared = self.shared_state.borrow_mut();
+        shared.trace.configure(&exec_argv);
         shared.exec_argv = exec_argv;
         shared.unhandled_rejection_mode = mode;
         if let Some(net_timeout) = net_timeout {

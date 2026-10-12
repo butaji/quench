@@ -328,10 +328,14 @@ pub(super) fn require(
         Some(BuiltinModule::InternalTestBinding) => {
             let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
             context.release_root(dgram);
-            return context.evaluate_script_rooted(
-                r#"(() => {
+            let binding =
+                context.host_function(crate::host::shared_vm::operation("traceInternal"))?;
+            let factory = context.evaluate_script_rooted(
+                r#"((nativeBinding) => {
   const internals = globalThis[Symbol.for("quench.dgram.internals")];
   return { internalBinding(name) {
+    const native = nativeBinding(name);
+    if (native !== undefined) return native;
     if (name === "udp_wrap") return { UDP: internals.UDP };
     if (name === "tcp_wrap") return { TCP: internals.TCP, constants: { SOCKET: 0 } };
     if (name === "uv") return {
@@ -340,9 +344,11 @@ pub(super) fn require(
     };
     return {};
   } };
-})()"#,
+})"#,
                 "internal/test/binding.js",
-            );
+            )?;
+            let undefined = context.undefined();
+            return context.call_rooted(factory, undefined, &[binding]);
         }
         Some(BuiltinModule::InternalBlockList) => {
             return context.evaluate_script_rooted(
@@ -942,12 +948,12 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             "({ request: function request() { throw new Error('HTTPS transport is unavailable'); }, get: function get() { throw new Error('HTTPS transport is unavailable'); } })",
             "node:https.js",
         ),
+        BuiltinModule::TraceEvents => crate::modules::trace_shared_vm::module(context),
         BuiltinModule::Http2
         | BuiltinModule::Inspector
         | BuiltinModule::Repl
         | BuiltinModule::Cluster
-        | BuiltinModule::Wasi
-        | BuiltinModule::TraceEvents => context.object_rooted(),
+        | BuiltinModule::Wasi => context.object_rooted(),
         BuiltinModule::Sea => context.evaluate_script_rooted(
             "({ isSea: function isSea() { return false; } })",
             "node:sea.js",
