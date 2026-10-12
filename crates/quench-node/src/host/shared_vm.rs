@@ -170,6 +170,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netSocketAccountWrite" (4) => crate::modules::net_shared_vm::account_write_operation,
         method "netSocketWrite" (3) => crate::modules::net_shared_vm::write_operation,
         method "netSocketEnd" (1) => crate::modules::net_shared_vm::end_operation,
+        method "netSocketEmit" (3) => crate::modules::net_shared_vm::emit_operation,
         method "netSocketDestroy" (2) => crate::modules::net_shared_vm::destroy_operation,
         method "netSocketSetEncoding" (2) => crate::modules::net_shared_vm::set_encoding_operation,
         method "netServerListen" (4) => crate::modules::net_shared_vm::server_listen_operation,
