@@ -67,9 +67,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let module = context.get_property_rooted(global, class_key)?;
     set(context, module, "EventEmitter", module)?;
 
-    let utility = crate::modules::util_shared_vm::module(context)?;
-    let inspect_key = context.string_rooted("inspect");
-    let inspect = context.get_property_rooted(utility, inspect_key)?;
+    let inspect = crate::modules::util_shared_vm::internal_inspect(context)?;
     let internal_inspect = context.evaluate_script_rooted(
         "Symbol.for('quench.internal.eventEmitter.inspect')",
         "node:events/internal-inspect-symbol",
@@ -153,7 +151,11 @@ pub(crate) fn initialize_targets(
     let description = context.string_rooted("events.maxEventTargetListenersWarned");
     let warned_key = context.call_rooted(symbol, undefined, &[description])?;
     let data = context.null_object_rooted()?;
-    for (field, description) in [("captureKey", "kCapture"), ("shapeKey", "shapeMode")] {
+    for (field, description) in [
+        ("captureKey", "kCapture"),
+        ("shapeKey", "shapeMode"),
+        ("emittingKey", "events.emitting"),
+    ] {
         let key = context.symbol_rooted(Some(description));
         set(context, data, field, key)?;
     }
@@ -169,6 +171,11 @@ pub(crate) fn initialize_targets(
         "node:events/assignment.js",
     )?;
     set(context, data, "assign", assign)?;
+    let delete = context.evaluate_script_rooted(
+        "(object, key) => { 'use strict'; delete object[key]; }",
+        "node:events/deletion.js",
+    )?;
+    set(context, data, "delete", delete)?;
     let string = get(context, global, "String")?;
     set(context, data, "stringCtor", string)?;
     let max_default = context.host_function_with_data(
@@ -193,6 +200,18 @@ pub(crate) fn initialize_targets(
         undefined,
         &[records_key, max_key, warned_key, max_default],
     )?;
+    let event = get(context, global, "Event")?;
+    // Node exposes immutable DOM event phase constants on the constructor.
+    for (name, phase) in [
+        ("NONE", 0.0),
+        ("CAPTURING_PHASE", 1.0),
+        ("AT_TARGET", 2.0),
+        ("BUBBLING_PHASE", 3.0),
+    ] {
+        let key = context.string_rooted(name);
+        let value = context.number(phase);
+        context.define_data_property_rooted(event, key, value, false, true, false)?;
+    }
     let target = get(context, global, "EventTarget")?;
     let yes = context.boolean(true);
     context.define_data_property_rooted(target, brand_key, yes, true, true, true)?;

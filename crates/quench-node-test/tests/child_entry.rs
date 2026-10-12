@@ -2490,3 +2490,228 @@ console.log(JSON.stringify(result));
         String::from_utf8_lossy(&observations[1].stdout)
     );
 }
+
+#[test]
+fn util_custom_inspection_preserves_depth_receiver_and_hook_order() {
+    const SOURCE: &str = r#"
+const util=require('util'),inspect=util.inspect,key=Symbol.for('nodejs.util.inspect.custom'),result=[],calls=[];
+const object={};Object.defineProperty(object,key,{value:function(depth,options,fn){calls.push([this===object,depth,options.depth,options.customInspect,fn===inspect]);return 'custom'}});
+result.push(inspect(object,{depth:-1}),inspect({object},{depth:1}),inspect(object,{depth:null}));
+let reads=0;const disabled={};Object.defineProperty(disabled,key,{get(){reads++;throw new Error('getter')}});
+for(const customInspect of [false,0,null])result.push(inspect(disabled,{customInspect}));result.push(reads);
+const returned={};Object.defineProperty(returned,key,{value(){return {value:1}}});result.push(inspect(returned,{depth:0}));
+const self={value:1};Object.defineProperty(self,key,{value(){return this}});result.push(inspect(self));
+function customFunction(){}customFunction[key]=()=> 'function hook';result.push(inspect(customFunction));
+const error=new Error('unused');error[key]=()=> 'error hook';result.push(inspect(error));
+const marker={};const getter={};Object.defineProperty(getter,'constructor',{get(){throw marker}});Object.defineProperty(getter,key,{value(){return 'no constructor getter'}});result.push(inspect(getter));
+const prototype=Object.create(null);Object.defineProperty(prototype,'constructor',{value:{prototype}});let prototypeCalls=0;Object.defineProperty(prototype,key,{value(){prototypeCalls++;return 'unexpected'}});inspect(prototype);result.push(prototypeCalls);
+const throwing={};Object.defineProperty(throwing,key,{value(){throw marker}});try{inspect(throwing)}catch(error){result.push(error===marker)}
+const saved=inspect.custom;inspect.custom=Symbol('replacement');result.push(inspect(object));inspect.custom=saved;
+console.log(JSON.stringify({result,calls}));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn dom_event_phase_constants_match_node_descriptors() {
+    const SOURCE: &str = r#"
+const result=[];
+for(const name of ['NONE','CAPTURING_PHASE','AT_TARGET','BUBBLING_PHASE']){const d=Object.getOwnPropertyDescriptor(Event,name);result.push([name,d.value,d.writable,d.enumerable,d.configurable,Object.getOwnPropertyDescriptor(Event.prototype,name)===undefined]);}
+const event=new Event('phase');result.push(event.NONE,event.CAPTURING_PHASE,event.AT_TARGET,event.BUBBLING_PHASE);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn emitter_listener_store_tracks_nested_emission_and_copy_on_mutation() {
+    const SOURCE: &str = r#"
+const EE=require('events'),result=[];
+const idle=new EE();idle.setMaxListeners(0);const a=()=>{},b=()=>{},c=()=>{};idle.on('x',a).on('x',b);const list=idle._events.x;idle.on('x',c);result.push(idle._events.x===list,list.length);idle.removeListener('x',b);result.push(idle._events.x===list,list.length,list[0]===a,list[1]===c);
+const emitter=new EE();emitter.setMaxListeners(0);const calls=[];let old,key;
+function first(){calls.push('first');emitter.removeListener('x',second);const copy=emitter._events.x;emitter.on('x',last);result.push([old[key],copy!==old,copy===emitter._events.x,old.length,copy.length,copy.warned]);}
+function second(){calls.push('second')}function third(){calls.push('third')}function last(){calls.push('last')}
+emitter.on('x',first).on('x',second).on('x',third);old=emitter._events.x;old.warned=true;key=Object.getOwnPropertySymbols(old).find(s=>s.description==='events.emitting');result.push(typeof key);emitter.emit('x');result.push(calls,old[key],emitter._events.x[key]);
+const nested=new EE(),depths=[];let inside=false,nestedList,nestedKey;
+nested.on('x',()=>{depths.push(nestedList[nestedKey]);if(!inside){inside=true;nested.emit('x');depths.push(nestedList[nestedKey]);}}).on('x',()=>depths.push(nestedList[nestedKey]));nestedList=nested._events.x;nestedKey=Object.getOwnPropertySymbols(nestedList).find(s=>s.description==='events.emitting');nested.emit('x');result.push(depths,nestedList[nestedKey]);
+const throwing=new EE(),marker={};throwing.on('x',a).on('x',()=>{throw marker});const throwingList=throwing._events.x,throwingKey=Object.getOwnPropertySymbols(throwingList).find(s=>s.description==='events.emitting');try{throwing.emit('x')}catch(error){result.push(error===marker,throwingList[throwingKey]);}
+const duplicate=new EE();duplicate.on('x',a).on('x',b).on('x',a);duplicate.removeListener('x',a);result.push(duplicate.rawListeners('x').map(fn=>fn===a?'a':'b'));
+const once=new EE();once.once('x',a).once('x',a);const wrappers=once.rawListeners('x');once.removeListener('x',a);result.push(once.rawListeners('x')[0]===wrappers[0],once.listenerCount('x'));
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn emitter_removal_preserves_duplicate_notifications_and_numeric_rules() {
+    const SOURCE: &str = r#"
+const EE=require('events'),result=[],a=()=>{},b=()=>{};
+const notify=new EE();notify.on('x',a).on('x',a);const notifications=[];notify.on('removeListener',(type,listener)=>notifications.push([type,listener===a]));notify.removeAllListeners('x');result.push(notifications,notify._eventsCount);
+const order=new EE(),calls=[];function one(type){calls.push(['one',type])}function two(type){calls.push(['two',type])}order.on('x',a).on('removeListener',one).on('removeListener',two);order.removeAllListeners();result.push(calls,order._eventsCount,order.eventNames());
+const explicit=new EE();explicit.on('undefined',a).on('x',b);explicit.removeAllListeners(undefined);result.push(explicit.eventNames(),explicit._eventsCount);
+const numeric=new EE();numeric.on('x',a).on('y',b);numeric._eventsCount=2n;numeric.removeAllListeners('x');result.push(String(numeric._eventsCount),typeof numeric._eventsCount,numeric.listenerCount('x'));try{numeric.removeListener('y',b)}catch(error){result.push(error.name,numeric.listenerCount('y'));}
+const changed=new EE();let fired=0;changed.on('newListener',(type)=>{if(type==='newListener')fired++});changed.on('newListener',()=>{});result.push(fired);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn emitter_public_method_metadata_and_once_override_order_match_node() {
+    const SOURCE: &str = r#"
+const EE=require('events'),result=[],listener=()=>{};
+for(const name of ['addListener','on','prependListener','once','prependOnceListener','removeListener','off','removeAllListeners','emit','eventNames','listeners','rawListeners','listenerCount','getMaxListeners','setMaxListeners']){const d=Object.getOwnPropertyDescriptor(EE.prototype,name),fn=d.value;result.push([name,fn.name,fn.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(fn,'prototype')]);}
+result.push(EE.prototype.on===EE.prototype.addListener,EE.prototype.off===EE.prototype.removeListener,Object.keys(Reflect.construct(EE.prototype.emit,['x'])));
+const overridden=new EE(),calls=[];overridden.on=function(type,wrapper){calls.push([this===overridden,type,wrapper.name,wrapper.length,wrapper.listener===listener]);return 'ignored'};result.push(overridden.once('x',listener)===overridden);
+overridden.prependListener=function(type,wrapper){calls.push([this===overridden,type,wrapper.name,wrapper.length,wrapper.listener===listener]);return 'ignored'};result.push(overridden.prependOnceListener('y',listener)===overridden,calls);
+const once=new EE(),trace=[];function single(value){trace.push(['called',value])}once.once('x',single);const raw=once.rawListeners('x')[0];once.on('removeListener',(type)=>{if(type==='x'){trace.push('removed');raw('nested')}});once.emit('x','first');raw('again');result.push(trace,raw.listener===single,raw.name,raw.length);
+const poison=new EE(),marker={};let fired=0;poison.once('x',()=>fired++);const wrapped=poison.rawListeners('x')[0];poison.removeListener=()=>{throw marker};try{wrapped()}catch(error){result.push(error===marker)}poison.removeListener=EE.prototype.removeListener;wrapped();result.push(fired);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn internal_inspect_retains_canonical_identity_when_public_alias_changes() {
+    const SOURCE: &str = r#"
+const EE=require('events'),util=require('util'),original=util.inspect,result=[],calls=[];
+const emitter=new EE();emitter.setMaxListeners(1);emitter[Symbol.for('nodejs.util.inspect.custom')]=function(depth,options,fn){calls.push([this===emitter,depth,options.depth,fn===original]);return 'owned'};
+util.inspect=()=>{throw new Error('public inspector replaced')};
+process.emitWarning=warning=>result.push([warning.name,warning.message,warning.emitter===emitter,warning.type,warning.count]);emitter.on('x',()=>{}).on('x',()=>{});
+const errorValue={};errorValue[Symbol.for('nodejs.util.inspect.custom')]=function(depth,options,fn){calls.push([depth,fn===original]);return 'payload'};try{new EE().emit('error',errorValue)}catch(error){result.push([error.code,error.message,error.context===errorValue])}
+console.log(JSON.stringify({result,calls}));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
