@@ -682,11 +682,11 @@ impl<H: Host> Vm<H> {
         changes: Value,
     ) -> Result<(), JsError> {
         if !self.is_object_like(changes)
+            || self.heap.array(changes).is_some()
             || matches!(
                 self.heap.get(changes),
                 Some(
-                    Cell::Array { .. }
-                        | Cell::TemporalPlainDate { .. }
+                    Cell::TemporalPlainDate { .. }
                         | Cell::TemporalPlainDateTime { .. }
                         | Cell::TemporalPlainMonthDay { .. }
                         | Cell::TemporalPlainYearMonth { .. }
@@ -1056,11 +1056,11 @@ impl<H: Host> Vm<H> {
         changes: Value,
     ) -> Result<(), JsError> {
         if !self.is_object_like(changes)
+            || self.heap.array(changes).is_some()
             || matches!(
                 self.heap.get(changes),
                 Some(
-                    Cell::Array { .. }
-                        | Cell::TemporalPlainDate { .. }
+                    Cell::TemporalPlainDate { .. }
                         | Cell::TemporalPlainDateTime { .. }
                         | Cell::TemporalPlainMonthDay { .. }
                         | Cell::TemporalPlainYearMonth { .. }
@@ -1952,7 +1952,8 @@ pub(super) fn native<H: Host>(
         ..
     }) = vm.heap.get(this)
     {
-        let (month, day, calendar, year) = (*month, *day, calendar.to_string(), *reference_iso_year);
+        let (month, day, calendar, year) =
+            (*month, *day, calendar.to_string(), *reference_iso_year);
         let text = vm.temporal_plain_date_to_string(p, year, month, day, &calendar, options)?;
         let text = if calendar == "iso8601" && !text.contains('[') {
             format!("{month:02}-{day:02}")
@@ -1969,7 +1970,8 @@ pub(super) fn native<H: Host>(
         ..
     }) = vm.heap.get(this)
     {
-        let (year, month, calendar, day) = (*year, *month, calendar.to_string(), *reference_iso_day);
+        let (year, month, calendar, day) =
+            (*year, *month, calendar.to_string(), *reference_iso_day);
         let text = vm.temporal_plain_date_to_string(p, year, month, day, &calendar, options)?;
         let (date, annotation) = text.split_once('[').unwrap_or((&text, ""));
         let month_end = if annotation.is_empty() && calendar == "iso8601" {

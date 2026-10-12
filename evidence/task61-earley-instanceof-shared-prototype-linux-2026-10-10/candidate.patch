@@ -1,0 +1,56 @@
+diff --git a/crates/quench-runtime/src/heap/cell_access.rs b/crates/quench-runtime/src/heap/cell_access.rs
+index 773e8d342..0bb7d40a9 100644
+--- a/crates/quench-runtime/src/heap/cell_access.rs
++++ b/crates/quench-runtime/src/heap/cell_access.rs
+@@ -1,6 +1,15 @@
+ use super::cell::{Cell, Object};
+ 
+ impl Cell {
++    #[inline(always)]
++    pub(crate) fn ordinary_prototype(&self) -> Option<crate::Value> {
++        if matches!(self, Self::Proxy { .. }) {
++            None
++        } else {
++            self.object().map(|object| object.proto)
++        }
++    }
++
+     pub(crate) fn typed_array_backing(&self) -> Option<(&Object, crate::Value)> {
+         match self {
+             Self::TypedArray { object, buffer, .. } => Some((object, *buffer)),
+diff --git a/crates/quench-runtime/src/vm/object_integrity.rs b/crates/quench-runtime/src/vm/object_integrity.rs
+index a15471a08..11e3f377c 100644
+--- a/crates/quench-runtime/src/vm/object_integrity.rs
++++ b/crates/quench-runtime/src/vm/object_integrity.rs
+@@ -252,8 +252,9 @@ impl<H: Host> Vm<H> {
+         }
+         let value = self.box_object_or_type_error(p, value)?;
+         Ok(self
+-            .object_data(value)
+-            .map(|object| object.proto)
++            .heap
++            .get(value)
++            .and_then(Cell::ordinary_prototype)
+             .unwrap_or(Value::NULL))
+     }
+ 
+diff --git a/crates/quench-runtime/src/vm/relational.rs b/crates/quench-runtime/src/vm/relational.rs
+index b1c6c4569..4ede5f8ae 100644
+--- a/crates/quench-runtime/src/vm/relational.rs
++++ b/crates/quench-runtime/src/vm/relational.rs
+@@ -219,7 +219,14 @@ impl<H: Host> Vm<H> {
+                         let current = vm
+                             .root_value(current_root)
+                             .expect("rooted instanceof traversal object");
+-                        let next = vm.object_get_prototype_of(p, current)?;
++                        // Ordinary [[GetPrototypeOf]] is just the prototype
++                        // stored in the object header. Preserve the generic
++                        // path for proxies, whose trap is observable.
++                        let next = vm
++                            .heap
++                            .get(current)
++                            .and_then(Cell::ordinary_prototype)
++                            .map_or_else(|| vm.object_get_prototype_of(p, current), Ok)?;
+                         vm.heap.update_root(current_root, next);
+                         if next.is_null() {
+                             return Ok(false);

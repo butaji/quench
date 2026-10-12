@@ -1,4 +1,6 @@
+mod compiled;
 mod wasm;
+pub use compiled::ExecutionMode;
 mod wasm_exception;
 mod wasm_gc;
 mod wasm_host;
@@ -11,7 +13,8 @@ use crate::bytecode::{
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    CallSiteLocation, CallSiteRecord, Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper,
+    CallSiteLocation, CallSiteRecord, Cell, FunctionKind, GcTraceKind, Heap, IteratorConsumer,
+    IteratorHelper,
     IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
@@ -33,6 +36,12 @@ pub(super) const ROOT_FUNCTION_ID: u32 = 0;
 struct RuntimeAtoms {
     lexical_this: Atom,
     new_target: Atom,
+    /// The RegExp members the builtin fast paths check on every call.
+    regexp_exec: Atom,
+    regexp_flags: Atom,
+    last_index: Atom,
+    /// `regexp::REGEXP_FLAG_ACCESSORS` names, in that order.
+    regexp_flag_accessors: [Atom; regexp::REGEXP_FLAG_ACCESSORS.len()],
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -58,7 +67,9 @@ mod construction;
 mod data_view;
 mod date;
 mod dispatch;
+mod dispatch_fast;
 mod dispatch_frame;
+mod dispatch_wasm;
 mod dynamic_strings;
 mod embedding;
 mod environment;
@@ -162,6 +173,9 @@ mod tests;
 pub(super) struct Frame {
     // Actual callable identity is distinct from the code ID and captured environment.
     context: CallContext,
+    /// Leading actual arguments that legacy `f.arguments` reflects live from the parameter
+    /// storage; `original_arguments` holds the arguments after them.
+    reflected_parameters: u16,
     original_arguments: Vec<Value>,
     program: ProgramId,
     function: u32,
@@ -185,9 +199,83 @@ pub(super) struct Frame {
     fixed_this: bool,
 }
 impl Frame {
-    fn prepare_registers(&mut self, register_count: usize) {
-        self.registers.resize(register_count, Value::UNDEFINED);
-        self.registers.fill(Value::UNDEFINED);
+    fn empty(program: ProgramId, with_base: usize) -> Self {
+        Self {
+            context: CallContext::Internal,
+            reflected_parameters: 0,
+            original_arguments: vec![],
+            program,
+            function: 0,
+            pc: 0,
+            binding_site_pc: None,
+            env: Value::NULL,
+            this: Value::UNDEFINED,
+            locals: vec![],
+            dynamic_bindings: vec![],
+            captured: false,
+            registers: vec![],
+            active_iterators: vec![],
+            with_objects: Vec::new(),
+            with_base,
+            fixed_this: false,
+        }
+    }
+
+    /// Arguments for a body that keeps its parameters in registers.
+    #[inline(always)]
+    fn bind_register_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
+        if let Some(base) = function.parameter_registers {
+            for offset in 0..function.params {
+                self.registers[usize::from(base + offset)] = args
+                    .get(usize::from(offset))
+                    .copied()
+                    .unwrap_or(Value::UNDEFINED);
+            }
+        }
+    }
+
+    /// A Wasm activation's registers: the parameters where the function
+    /// keeps them, every other register its default, each written once.
+    #[inline(always)]
+    fn prepare_wasm_registers(
+        &mut self,
+        function: &crate::bytecode::Function,
+        arguments: &[Value],
+    ) {
+        let initial = function.initial_register.value();
+        let count = usize::from(function.registers);
+        let (base, parameters) = match function.parameter_registers {
+            Some(base) => (
+                usize::from(base),
+                &arguments[..arguments.len().min(usize::from(function.params))],
+            ),
+            None => (0, &[][..]),
+        };
+        assert!(
+            base + parameters.len() <= count,
+            "parameters fit the register file"
+        );
+        self.registers.clear();
+        self.registers.reserve(count);
+        let registers = self.registers.as_mut_ptr();
+        // SAFETY: capacity holds `count` values; every slot below `count` is
+        // written before the length covers it, parameters in their window.
+        unsafe {
+            for index in 0..count {
+                registers.add(index).write(initial);
+            }
+            // A few values: an inline copy, not a library call.
+            for (offset, value) in parameters.iter().enumerate() {
+                registers.add(base + offset).write(*value);
+            }
+            self.registers.set_len(count);
+        }
+    }
+
+    #[inline(always)]
+    fn prepare_registers(&mut self, count: u16, initial: crate::bytecode::InitialRegister) {
+        self.registers.clear();
+        self.registers.resize(usize::from(count), initial.value());
     }
 
     /// Sizes the register file for `function`. Compiled code writes every register before
@@ -195,15 +283,59 @@ impl Frame {
     /// matter only to a collector that scans the whole file. A function with a liveness root
     /// map is scanned through it, so only functions without one, and generator or async
     /// activations whose suspended registers are scanned whole, are cleared.
+    /// A body whose registers start at a value other than `undefined` (Wasm's i32 zero) relies
+    /// on that fill, so it is always cleared.
+    #[inline(always)]
     fn prepare_registers_for(&mut self, function: &crate::bytecode::Function) {
         let register_count = usize::from(function.registers);
         if function.register_root_offset == crate::bytecode::NO_REGISTER_ROOT_MAP
             || function.is_generator
             || function.is_async
+            || function.initial_register != crate::bytecode::InitialRegister::Undefined
         {
-            self.prepare_registers(register_count);
+            self.prepare_registers(function.registers, function.initial_register);
         } else {
             self.registers.resize(register_count, Value::UNDEFINED);
+            if let Some(register) = function.undefined_register {
+                // Validation bounds the register by the function's register count.
+                self.registers[usize::from(register)] = Value::UNDEFINED;
+            }
+        }
+    }
+
+    /// Makes `locals` `count` undefined values. A pooled frame usually has the capacity already,
+    /// so this is one capacity check and the stores.
+    #[inline(always)]
+    fn reset_locals_undefined(&mut self, count: usize) {
+        self.locals.clear();
+        self.locals.reserve(count);
+        for slot in &mut self.locals.spare_capacity_mut()[..count] {
+            slot.write(Value::UNDEFINED);
+        }
+        // SAFETY: the loop initialized the first `count` slots, which `reserve` provided.
+        unsafe { self.locals.set_len(count) };
+    }
+
+    /// `initialize_promoted_registers` for a plain activation, whose locals already start
+    /// undefined: its promoted entries, ordered by local, begin with every parameter.
+    #[inline(always)]
+    fn place_plain_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
+        debug_assert_eq!(self.registers.len(), usize::from(function.registers));
+        let (parameters, variables) = function
+            .local_registers
+            .split_at(usize::from(function.params));
+        for (index, entry) in parameters.iter().enumerate() {
+            debug_assert_eq!(usize::from(entry.local), index);
+            // SAFETY: residual validation bounds each promoted register by the register count
+            // the file was sized to.
+            unsafe {
+                *self.registers.get_unchecked_mut(usize::from(entry.register)) =
+                    args.get(index).copied().unwrap_or(Value::UNDEFINED);
+            }
+        }
+        for entry in variables {
+            // SAFETY: as above.
+            unsafe { *self.registers.get_unchecked_mut(usize::from(entry.register)) = Value::UNDEFINED };
         }
     }
 
@@ -227,7 +359,9 @@ impl Frame {
             // register counts, which frame setup sized these buffers to.
             unsafe {
                 *self.locals.get_unchecked_mut(usize::from(entry.local)) = Value::UNDEFINED;
-                *self.registers.get_unchecked_mut(usize::from(entry.register)) = initial;
+                *self
+                    .registers
+                    .get_unchecked_mut(usize::from(entry.register)) = initial;
             }
         }
     }
@@ -309,6 +443,19 @@ struct FieldCache {
     slot: u16,
 }
 const NO_FIELD_HOLDER: u32 = u32::MAX;
+/// Prototypes an inherited field load may traverse to its holder. DeltaBlue's constraint
+/// methods sit three prototypes above their instances; deeper chains stay uncached.
+const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 4;
+/// A field load answered by a data property `depth` prototypes above a receiver of shape
+/// `receiver`: the chain still has exactly `prototype_shapes[..depth]`, the last of which
+/// holds the property at `slot`.
+#[derive(Clone, Copy)]
+struct InheritedFieldCache {
+    receiver: u32,
+    prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
+    depth: u8,
+    slot: u16,
+}
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
 // DeltaBlue's measured inherited writes reach three prototypes; keep the
 // residual cache bounded while covering that common constructor shape.
@@ -321,14 +468,71 @@ const EMPTY_CACHE: FieldCache = FieldCache {
     holder: NO_FIELD_HOLDER,
     slot: 0,
 };
-#[derive(Clone)]
+/// One cached property-add transition: an extensible ordinary object of `source_shape` whose
+/// prototype chain still has exactly `prototype_shapes[..prototype_depth]` gains `atom` at `slot`
+/// and moves to `target_shape`.
+#[derive(Clone, Copy)]
 struct FieldAddCache {
     atom: Atom,
     source_shape: u32,
     target_shape: u32,
     slot: u16,
-    prototype_shapes: Vec<u32>,
+    prototype_depth: u8,
+    prototype_shapes: [u32; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
 }
+impl FieldAddCache {
+    const EMPTY: Self = Self {
+        atom: u32::MAX,
+        source_shape: NO_FIELD_RECEIVER,
+        target_shape: NO_FIELD_RECEIVER,
+        slot: 0,
+        prototype_depth: 0,
+        prototype_shapes: [NO_FIELD_RECEIVER; FIELD_ADD_CACHE_MAX_PROTO_DEPTH],
+    };
+    fn prototype_shapes(&self) -> &[u32] {
+        &self.prototype_shapes[..usize::from(self.prototype_depth)]
+    }
+}
+/// The add transitions one site remembers, oldest first.
+#[derive(Clone, Copy)]
+struct FieldAddCacheSet {
+    len: u8,
+    entries: [FieldAddCache; FIELD_ADD_CACHE_WAYS],
+}
+impl FieldAddCacheSet {
+    const EMPTY: Self = Self {
+        len: 0,
+        entries: [FieldAddCache::EMPTY; FIELD_ADD_CACHE_WAYS],
+    };
+    #[inline(always)]
+    fn find(&self, source_shape: u32, atom: Atom) -> Option<&FieldAddCache> {
+        self.entries[..usize::from(self.len)]
+            .iter()
+            .find(|cache| cache.source_shape == source_shape && cache.atom == atom)
+    }
+    /// Replaces the entry for the same source shape and atom, else appends, evicting the oldest
+    /// entry when the set is full.
+    fn insert(&mut self, cache: FieldAddCache) {
+        let len = usize::from(self.len);
+        let kept = match self.entries[..len]
+            .iter()
+            .position(|entry| entry.source_shape == cache.source_shape && entry.atom == cache.atom)
+        {
+            Some(index) => {
+                self.entries.copy_within(index + 1..len, index);
+                len - 1
+            }
+            None if len == FIELD_ADD_CACHE_WAYS => {
+                self.entries.copy_within(1..len, 0);
+                len - 1
+            }
+            None => len,
+        };
+        self.entries[kept] = cache;
+        self.len = (kept + 1) as u8;
+    }
+}
+const NO_FIELD_ADD_SET: u32 = u32::MAX;
 const NO_MEGAMORPHIC_FIELD: u32 = u32::MAX;
 const FIELD_MEGAMORPHIC_INLINE: usize = 4;
 // Bound each site's overflow to 256 recorded shapes; unseen shapes keep the generic fallback.
@@ -360,7 +564,7 @@ struct MethodCacheSet {
     len: u8,
     entries: [MethodCache; METHOD_MEGAMORPHIC_LIMIT],
 }
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct ProgramCacheLayout {
     field_base: usize,
     method_base: usize,
@@ -492,7 +696,13 @@ struct Shape {
     /// Lookups that walked at least `SHAPE_INDEX_WALK_DISTANCE` transitions
     /// from this shape before it had an index.
     long_walks: std::cell::Cell<u8>,
+    /// Memo of this immutable shape's own data `prototype` slot, which every `new F` reads:
+    /// `PROTOTYPE_SLOT_UNKNOWN` until first derived, `PROTOTYPE_SLOT_NONE` when absent or an
+    /// accessor. Dictionary shapes never memoize.
+    prototype_slot: std::cell::Cell<u32>,
 }
+const PROTOTYPE_SLOT_UNKNOWN: u32 = u32::MAX;
+const PROTOTYPE_SLOT_NONE: u32 = u32::MAX - 1;
 impl Shape {
     fn root() -> Self {
         Self::child(None, ShapeTransition::Root, 0, None, false)
@@ -513,6 +723,7 @@ impl Shape {
             may_have_gc_roots: parent_may_have_gc_roots || transition.introduces_gc_roots(),
             lookup_index: OnceCell::new(),
             long_walks: std::cell::Cell::new(0),
+            prototype_slot: std::cell::Cell::new(PROTOTYPE_SLOT_UNKNOWN),
         }
     }
 }
@@ -674,17 +885,31 @@ pub(crate) struct Vm<H> {
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
     frame_pool: Vec<Box<Frame>>,
+    /// Wasm activations a running lane holds without frames.
+    lane_stack: dispatch_fast::LaneStack,
+    /// Whether Wasm functions with a compiled denotation run as native code.
+    execution_mode: ExecutionMode,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// Set by the first `with` entry and never cleared: `Native::WithEnter` is
     /// the only source of with objects, so until it runs no environment
     /// carries any.
     with_scope_entered: bool,
+    /// An installed program declares global lexical bindings, which its running root frame
+    /// holds before they reach the realm's map. Cleared only by a reset for a new main program.
+    script_lexicals_seen: bool,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
     programs: ProgramStore,
     program_cache_layouts: Vec<ProgramCacheLayout>,
+    /// The register file of the frame the general loop dispatches; see `run_general_loop`.
+    active_registers: *mut Value,
+    /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
+    active_layout: ProgramCacheLayout,
+    /// The active program's materialized constants, kept by `set_active_program` and by
+    /// constant installation. A program's constant buffer never moves once installed.
+    active_constants: *const [Value],
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
@@ -703,16 +928,24 @@ pub(crate) struct Vm<H> {
     well_known_symbols: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
     field_caches: Vec<FieldCache>,
-    field_add_caches: FxHashMap<usize, Vec<FieldAddCache>>,
+    /// Field load sites whose data property was found beyond the immediate prototype, by
+    /// global site index; cleared with the field caches.
+    inherited_field_caches: FxHashMap<usize, InheritedFieldCache>,
+    field_add_indices: Vec<u32>,
+    field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
     megamorphic_fields: Vec<FieldCacheSet>,
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
-    size_atom: Atom,
-    byte_length_atom: Atom,
-    byte_offset_atom: Atom,
-    buffer_atom: Atom,
+    /// A non-dictionary constructor shape verified to have no own `@@hasInstance` and a
+    /// data `prototype` at the paired slot; derived from shapes, so field-cache invalidation
+    /// clears it.
+    instanceof_constructor_layout: Option<(u32, usize)>,
+    /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
+    /// non-writable, non-configurable data property, which it then holds for its lifetime;
+    /// rooted so the identity stays meaningful. `Value::NULL` when none.
+    instanceof_has_instance_holder: Value,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
@@ -1120,19 +1353,8 @@ impl<H: Host> Vm<H> {
                     + frame.registers.capacity() * size_of::<Value>()
             })
             .sum();
-        let field_add_cache_bytes = self.field_add_caches.capacity()
-            * size_of::<(usize, Vec<FieldAddCache>)>()
-            + self
-                .field_add_caches
-                .values()
-                .map(|caches| {
-                    caches.capacity() * size_of::<FieldAddCache>()
-                        + caches
-                            .iter()
-                            .map(|cache| cache.prototype_shapes.capacity() * size_of::<u32>())
-                            .sum::<usize>()
-                })
-                .sum::<usize>();
+        let field_add_cache_bytes = self.field_add_indices.capacity() * size_of::<u32>()
+            + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>();
         eprintln!(
             "{{\"kind\":\"quench-memory\",\"phase\":\"{phase}\",\"heap_slots\":{slots},\"slot_bytes\":{slot_bytes},\"free_bytes\":{free_bytes},\"cell_bytes\":{cell_bytes},\"cell_counts\":{cell_counts:?},\"property_values\":{property_values},\"property_capacity\":{property_capacity},\"property_free_ranges\":{property_free},\"live_property_values\":{live_property_values},\"live_property_capacity\":{live_property_capacity},\"array_elements\":{array_elements},\"array_capacity\":{array_capacity},\"shapes\":{},\"shape_capacity\":{},\"max_shape_width\":{max_shape_width},\"shape_bytes\":{shape_bytes},\"shape_lookup_index_payload_bytes\":{shape_lookup_index_payload_bytes},\"transitions\":{},\"transition_bytes\":{},\"frame_bytes\":{frame_bytes},\"field_cache_bytes\":{},\"megamorphic_field_sites\":{},\"megamorphic_field_entries\":{megamorphic_field_entries},\"max_megamorphic_field_entries\":{max_megamorphic_field_entries},\"method_cache_bytes\":{},\"megamorphic_method_sites\":{}}}",
             self.shapes.len(),
@@ -1155,6 +1377,18 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "profile-memory")]
     pub(crate) fn report_memory_snapshot(&self, phase: &str) {
         let heap = self.heap.memory_composition();
+        let page_size = std::env::var("QUENCH_MEMORY_PAGE_SIZE")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|page_size| page_size.is_power_of_two());
+        let (
+            complete_slot_slabs,
+            fully_free_slot_slabs,
+            partial_slot_slabs,
+            fully_empty_slot_pages,
+        ) = self.heap.slot_slab_census(page_size);
+        let fully_empty_slot_pages =
+            fully_empty_slot_pages.map_or_else(|| "null".to_string(), |count| count.to_string());
         let shape_table_bytes = self.shapes.capacity() * size_of::<Shape>();
         let shape_lookup_bytes = self
             .shapes
@@ -1168,7 +1402,8 @@ impl<H: Host> Vm<H> {
             * size_of::<((Value, property_key::PropertyKey), PropertyAttributes)>();
         let cache_side_table_bytes = self.field_caches.capacity() * size_of::<FieldCache>()
             + self.megamorphic_field_indices.capacity() * size_of::<u32>()
-            + self.field_add_caches.capacity() * size_of::<(usize, FieldAddCache)>()
+            + self.field_add_indices.capacity() * size_of::<u32>()
+            + self.field_add_sets.capacity() * size_of::<FieldAddCacheSet>()
             + self.method_caches.capacity() * size_of::<[MethodCache; 2]>();
         let atom_side_table_bytes = self.atoms.capacity() * size_of::<(u64, Atom)>()
             + self.atom_collisions.capacity() * size_of::<(u64, Vec<Atom>)>()
@@ -1203,20 +1438,33 @@ impl<H: Host> Vm<H> {
             + atom_side_table_bytes
             + frame_bytes;
         let accounted_runtime_bytes = heap.slot_arena_reserved_bytes
+            + heap.object_record_reserved_bytes
+            + heap.array_record_reserved_bytes
+            + heap.legacy_cell_record_reserved_bytes
+            + heap.free_slot_metadata_bytes
             + property_arena_bytes
             + heap.cell_payload_bytes
             + heap.boxed_object_header_bytes
             + heap.sparse_array_sidecar_bytes
             + vm_metadata_bytes;
         eprintln!(
-            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"slot_arena_reserved_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_free_id_capacity_bytes\":{},\"array_record_reserved_bytes\":{},\"array_record_free_id_capacity_bytes\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
             self.heap.collection_count(),
             CellKind::NAMES,
             heap.cell_counts,
             heap.cell_variant_names,
             heap.cell_variant_counts,
             heap.occupied_slots,
+            complete_slot_slabs,
+            fully_free_slot_slabs,
+            partial_slot_slabs,
             heap.slot_arena_reserved_bytes,
+            heap.object_record_reserved_bytes,
+            heap.object_record_free_id_capacity_bytes,
+            heap.array_record_reserved_bytes,
+            heap.array_record_free_id_capacity_bytes,
+            heap.legacy_cell_record_reserved_bytes,
+            heap.free_slot_metadata_bytes,
             heap.object_headers,
             heap.embedded_object_headers,
             heap.boxed_object_headers,
@@ -1256,9 +1504,13 @@ impl<H: Host> Vm<H> {
         crate::report_allocator_memory(phase);
     }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        self.initialize_shared(&Rc::new(program.clone()))
+        self.initialize_shared(&Rc::new(program.clone()), builtins::RealmScope::Complete)
     }
-    fn initialize_shared(&mut self, program: &Rc<ResidualProgram>) -> Result<(), JsError> {
+    fn initialize_shared(
+        &mut self,
+        program: &Rc<ResidualProgram>,
+        scope: builtins::RealmScope,
+    ) -> Result<(), JsError> {
         self.specialized = program.specialized;
         self.realm.intrinsics.arguments_objects.clear();
         self.heap.reset();
@@ -1286,7 +1538,8 @@ impl<H: Host> Vm<H> {
         self.atom_classes.clear();
         self.regexp_subject = None;
         self.regexp_matchers.clear();
-        self.atom_classes.resize_with(self.atom_text.len(), Default::default);
+        self.atom_classes
+            .resize_with(self.atom_text.len(), Default::default);
         self.dynamic_strings = None;
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
@@ -1297,20 +1550,26 @@ impl<H: Host> Vm<H> {
         }
         let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
         let new_target = self.intern_atom(NEW_TARGET_BINDING);
+        let regexp_flag_accessors = std::array::from_fn(|index| {
+            self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0)
+        });
         self.runtime_atoms = RuntimeAtoms {
             lexical_this,
             new_target,
+            regexp_exec: self.intern_atom("exec"),
+            regexp_flags: self.intern_atom("flags"),
+            last_index: self.intern_atom("lastIndex"),
+            regexp_flag_accessors,
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
-        self.field_add_caches.clear();
+        Self::prime_loop_decoding(program);
+        self.inherited_field_caches.clear();
+        self.field_add_indices = vec![NO_FIELD_ADD_SET; program.cache_sites as usize];
+        self.field_add_sets.clear();
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
         self.megamorphic_fields.clear();
         self.length_atom = self.intern_atom("length");
         self.prototype_atom = self.intern_atom("prototype");
-        self.size_atom = self.intern_atom("size");
-        self.byte_length_atom = self.intern_atom("byteLength");
-        self.byte_offset_atom = self.intern_atom("byteOffset");
-        self.buffer_atom = self.intern_atom("buffer");
         self.to_fixed_atom = self.intern_atom("toFixed");
         self.to_precision_atom = self.intern_atom("toPrecision");
         self.method_caches = vec![[EMPTY_METHOD_CACHE; 2]; program.method_sites.len()];
@@ -1320,10 +1579,14 @@ impl<H: Host> Vm<H> {
         self.descriptors.clear();
         self.function_values.clear();
         self.programs.reset(program.clone());
+        self.script_lexicals_seen = false;
+        self.instanceof_constructor_layout = None;
+        self.instanceof_has_instance_holder = Value::NULL;
+        self.observe_program_declarations(program);
         self.program_cache_layouts.clear();
         self.program_cache_layouts
             .push(ProgramCacheLayout::default());
-        self.active_program = ProgramId::MAIN;
+        self.set_active_program(ProgramId::MAIN);
         self.typed_array_proto = Value::NULL;
         self.finalization_registry_proto = Value::NULL;
         self.temporal_plain_date_proto = Value::NULL;
@@ -1339,7 +1602,7 @@ impl<H: Host> Vm<H> {
         self.materialize_program_constants(ProgramId::MAIN, program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("program_constants");
-        self.install_builtins(program)?;
+        self.install_builtins(program, scope)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins");
         self.initialize_host(program)?;
@@ -1350,7 +1613,7 @@ impl<H: Host> Vm<H> {
     fn materialize_constant(&mut self, constant: &Constant) -> Value {
         match constant {
             Constant::Number(v) => Value::number(*v),
-            Constant::WasmBits64(bits) => self.heap.alloc(Cell::WasmBits64(*bits)),
+            Constant::WasmBits64(bits) => self.encode_bits64(*bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
             Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
             Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
@@ -1368,9 +1631,13 @@ impl<H: Host> Vm<H> {
             constants.push(value);
         }
         self.programs.set_constants(id, constants);
+        if id == self.active_program {
+            self.set_active_program(id);
+        }
     }
     pub(super) fn store_module_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.intern_program_atoms(&program);
+        self.observe_program_declarations(&program);
         let id = self.programs.insert_module(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
@@ -1379,14 +1646,29 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_dynamic_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.intern_program_atoms(&program);
+        self.observe_program_declarations(&program);
         let id = self.programs.insert(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);
         Some(id)
     }
+    fn observe_program_declarations(&mut self, program: &ResidualProgram) {
+        self.script_lexicals_seen |= program
+            .functions
+            .first()
+            .is_some_and(|root| !root.global_lexical_atoms.is_empty());
+    }
+    /// Primes every looping function of an installed `program` to expand on first entry.
+    fn prime_loop_decoding(program: &ResidualProgram) {
+        for function in &program.functions {
+            function.decoded.prime_loop(&function.code, &function.wide);
+        }
+    }
+
     fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
+        Self::prime_loop_decoding(program);
         self.program_cache_layouts.push(ProgramCacheLayout {
             field_base: self.field_caches.len(),
             method_base: self.method_caches.len(),
@@ -1400,6 +1682,10 @@ impl<H: Host> Vm<H> {
             self.megamorphic_field_indices.len() + usize::from(program.cache_sites),
             NO_MEGAMORPHIC_FIELD,
         );
+        self.field_add_indices.resize(
+            self.field_add_indices.len() + usize::from(program.cache_sites),
+            NO_FIELD_ADD_SET,
+        );
         self.method_caches.resize(
             self.method_caches.len() + program.method_sites.len(),
             [EMPTY_METHOD_CACHE; 2],
@@ -1409,14 +1695,42 @@ impl<H: Host> Vm<H> {
             u32::MAX,
         );
     }
+    /// Makes `program` the executing program and caches its layout, the projection every cache
+    /// index reads. A program's layout is appended before the program can run.
+    #[inline(always)]
+    pub(super) fn set_active_program(&mut self, program: ProgramId) {
+        self.active_program = program;
+        self.active_layout = self.program_cache_layouts[program.raw() as usize];
+        self.active_constants = self.programs.constants(program);
+    }
+
+    /// Constant `index` of the active program.
+    #[inline(always)]
+    pub(super) fn active_constant(&self, index: usize) -> Option<Value> {
+        debug_assert!(std::ptr::eq(
+            self.active_constants,
+            self.programs.constants(self.active_program)
+        ));
+        // SAFETY: `active_constants` is re-derived whenever the active program or its constants
+        // change, and an installed constant buffer stays put until the store is reset, which
+        // reactivates the main program.
+        unsafe { (&*self.active_constants).get(index).copied() }
+    }
+
+    #[inline(always)]
+    pub(super) fn replace_active_program(&mut self, program: ProgramId) -> ProgramId {
+        let previous = self.active_program;
+        self.set_active_program(program);
+        previous
+    }
+
     #[inline(always)]
     fn active_cache_layout(&self) -> ProgramCacheLayout {
-        let program = self.active_program.raw() as usize;
-        debug_assert!(program < self.program_cache_layouts.len());
-        // SAFETY: program ids come only from the main-program reset and the module and dynamic
-        // program stores, each of which appends that program's layout; layouts are never
-        // removed while ids live.
-        unsafe { *self.program_cache_layouts.get_unchecked(program) }
+        debug_assert_eq!(
+            self.active_layout,
+            self.program_cache_layouts[self.active_program.raw() as usize]
+        );
+        self.active_layout
     }
     #[inline(always)]
     pub(super) fn field_cache_index(&self, site: u16) -> usize {
@@ -1520,7 +1834,7 @@ impl<H: Host> Vm<H> {
                 let program = self.programs.get(program_id).ok_or_else(|| {
                     self.type_error(p, "function belongs to an unavailable program".into())
                 })?;
-                let active_program = std::mem::replace(&mut self.active_program, program_id);
+                let active_program = self.replace_active_program(program_id);
                 let realm = match self.heap.get(callee) {
                     Some(Cell::Function { realm, .. }) => *realm,
                     _ => self.realm.globals,
@@ -1543,7 +1857,7 @@ impl<H: Host> Vm<H> {
                         CallContext::user_function(id, callee),
                     )
                 };
-                self.active_program = active_program;
+                self.set_active_program(active_program);
                 self.realm.globals = current_global;
                 result
             }
@@ -1580,7 +1894,7 @@ impl<H: Host> Vm<H> {
         let program = self.programs.get(program_id).ok_or_else(|| {
             self.type_error(p, "function belongs to an unavailable program".into())
         })?;
-        let previous_program = std::mem::replace(&mut self.active_program, program_id);
+        let previous_program = self.replace_active_program(program_id);
         let previous_global = std::mem::replace(&mut self.realm.globals, realm);
         let outcome = self.call_user_construct_frame(
             &program,
@@ -1589,7 +1903,7 @@ impl<H: Host> Vm<H> {
             args,
             CallContext::user_function(id, callee),
         );
-        self.active_program = previous_program;
+        self.set_active_program(previous_program);
         self.realm.globals = previous_global;
         match outcome? {
             FrameOutcome::ConstructComplete { value, this } => Ok((value, this)),

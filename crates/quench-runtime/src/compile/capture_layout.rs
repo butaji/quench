@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use crate::bytecode::{Function, ImmediateLayout, Op};
+use crate::bytecode::{Function, Op};
 
 pub(super) fn apply(functions: &mut [Function], atoms: &[Rc<str>]) {
     let captured = captured_slots(functions);
@@ -72,7 +72,7 @@ fn dynamic_scope_ancestors(functions: &[Function]) -> Vec<bool> {
     let inherited_dynamic_scope = inherited_dynamic_scope(functions);
     let mut unsafe_layout = vec![false; functions.len()];
     for (id, function) in functions.iter().enumerate() {
-        if !has_dynamic_scope_access(function) && !inherited_dynamic_scope[id] {
+        if !function.has_dynamic_scope_access() && !inherited_dynamic_scope[id] {
             continue;
         }
         let mut current = Some(id);
@@ -93,26 +93,6 @@ fn inherited_dynamic_scope(functions: &[Function]) -> Vec<bool> {
         inherited[id] = inherited[parent] || !functions[parent].binding_sites.is_empty();
     }
     inherited
-}
-
-fn has_dynamic_scope_access(function: &Function) -> bool {
-    function.inherited_with_scope
-        || !function.binding_sites.is_empty()
-        || function
-            .code
-            .iter()
-            .any(|instruction| dynamic_scope_opcode(instruction.op(), instruction.imm()))
-        || function
-            .wide
-            .iter()
-            .any(|instruction| dynamic_scope_opcode(instruction.op(), instruction.imm()))
-}
-
-fn dynamic_scope_opcode(op: Op, immediate: u32) -> bool {
-    matches!(op, Op::ResolveName | Op::CallDirectEvalArray)
-        || (op == Op::Call
-            && (ImmediateLayout::direct_eval(immediate)
-                || ImmediateLayout::parameter_eval(immediate)))
 }
 
 fn selective_layout_is_safe(
@@ -146,7 +126,7 @@ fn selective_layout_is_safe(
             .wide
             .iter()
             .all(|instruction| !matches!(instruction.op(), Op::InitializeTdz | Op::CloneEnv))
-        && !has_dynamic_scope_access(function)
+        && !function.has_dynamic_scope_access()
 }
 
 fn has_closure(function: &Function) -> bool {

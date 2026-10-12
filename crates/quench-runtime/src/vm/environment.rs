@@ -164,7 +164,11 @@ impl<H: Host> Vm<H> {
         else {
             return None;
         };
-        Some((super::ProgramId::from_raw(scope.program?), *function, *parent))
+        Some((
+            super::ProgramId::from_raw(scope.program?),
+            *function,
+            *parent,
+        ))
     }
 
     pub(super) fn initialize_this_binding(
@@ -197,7 +201,7 @@ impl<H: Host> Vm<H> {
                 .get(program_id)
                 .ok_or_else(|| JsError("constructor program is unavailable".into()))?;
             if let Some(initializer) = program.functions[function as usize].instance_initializer {
-                let previous = std::mem::replace(&mut self.active_program, program_id);
+                let previous = self.replace_active_program(program_id);
                 let result = self.call_user(
                     &program,
                     initializer,
@@ -206,7 +210,7 @@ impl<H: Host> Vm<H> {
                     &[],
                     CallContext::Internal,
                 );
-                self.active_program = previous;
+                self.set_active_program(previous);
                 result?;
             }
         }
@@ -229,7 +233,7 @@ impl<H: Host> Vm<H> {
                     || self
                         .atom_name(*candidate)
                         .strip_prefix(name)
-                        .is_some_and(|suffix| suffix.starts_with("\0quench:self-binding:"))
+                        .is_some_and(|suffix| suffix.starts_with(crate::bytecode::SELF_BINDING_MARKER))
             })
     }
 
@@ -440,15 +444,12 @@ impl<H: Host> Vm<H> {
         let slot = self.activation_binding_slot(frame, atom)?;
         let frame = self.frames.get(frame)?;
         let environment_owned = frame.captured
-            && self
-                .programs
-                .get(frame.program)
-                .is_none_or(|program| {
-                    program
-                        .functions
-                        .get(frame.function as usize)
-                        .is_none_or(|function| function.local_slot_uses_environment(slot))
-                });
+            && self.programs.get(frame.program).is_none_or(|program| {
+                program
+                    .functions
+                    .get(frame.function as usize)
+                    .is_none_or(|function| function.local_slot_uses_environment(slot))
+            });
         if environment_owned {
             self.heap.environment_slot(frame.env, slot)
         } else {
@@ -472,15 +473,12 @@ impl<H: Host> Vm<H> {
             )
         };
         let environment_owned = captured
-            && self
-                .programs
-                .get(program_id)
-                .is_none_or(|program| {
-                    program
-                        .functions
-                        .get(function_id as usize)
-                        .is_none_or(|function| function.local_slot_uses_environment(slot))
-                });
+            && self.programs.get(program_id).is_none_or(|program| {
+                program
+                    .functions
+                    .get(function_id as usize)
+                    .is_none_or(|function| function.local_slot_uses_environment(slot))
+            });
         let binding = if environment_owned {
             self.heap.environment_slot_mut(env, slot)
         } else {
@@ -640,7 +638,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn is_self_binding(&self, atom: Atom) -> bool {
-        self.atom_name(atom).contains("\0quench:self-binding:")
+        self.atom_class(atom).contains(AtomClass::SELF_BINDING)
     }
 
     pub(super) fn captured_lexical_this(&self, mut env: Value) -> Option<Value> {
@@ -781,7 +779,8 @@ impl<H: Host> Vm<H> {
         frame: usize,
         atom: Atom,
     ) -> Result<Option<(Value, Value)>, JsError> {
-        if self.atom_name(atom).starts_with('\0') {
+        // Object environments exist only after some `with` statement was entered.
+        if !self.with_scope_entered || self.atom_class(atom).contains(AtomClass::INTERNAL) {
             return Ok(None);
         }
         let objects = self.with_objects_before_binding(frame, atom);
@@ -1387,7 +1386,63 @@ impl<H: Host> Vm<H> {
         Some(env)
     }
 
+    #[inline(always)]
     pub(super) fn capture(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        depth: u16,
+        slot: u16,
+    ) -> Result<Value, JsError> {
+        match self.direct_capture(frame, depth, slot) {
+            Some(value) => Ok(value),
+            None => self.walked_capture(p, frame, depth, slot),
+        }
+    }
+
+    /// The capture read when every layer on the walk belongs to a function, so no with-object
+    /// or lexical-this wrapper is skipped, and the binding is an initialized slot its non-root
+    /// environment owns. One cell read per layer; anything else is `None`.
+    #[inline(always)]
+    pub(super) fn direct_capture(&self, frame: usize, depth: u16, slot: u16) -> Option<Value> {
+        let frame = &self.frames[frame];
+        let mut cell = self.heap.get(frame.env)?;
+        if frame.captured {
+            let Cell::Environment { parent, .. } = cell else {
+                return None;
+            };
+            cell = self.heap.get(*parent)?;
+        }
+        let mut remaining = depth;
+        loop {
+            let Cell::Environment {
+                parent,
+                function,
+                slots,
+                ..
+            } = cell
+            else {
+                return None;
+            };
+            if *function == u32::MAX {
+                return None;
+            }
+            if remaining == 0 {
+                if *function == super::ROOT_FUNCTION_ID {
+                    return None;
+                }
+                return slots
+                    .owned(usize::from(slot))
+                    .filter(|value| !value.is_deleted());
+            }
+            remaining -= 1;
+            cell = self.heap.get(*parent)?;
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn walked_capture(
         &mut self,
         p: &ResidualProgram,
         frame: usize,
@@ -1507,7 +1562,57 @@ impl<H: Host> Vm<H> {
         let env = self
             .capture_env(frame, depth)
             .ok_or_else(|| JsError("invalid capture environment".into()))?;
+        if self.direct_store_environment(p, frame, env, slot, value) {
+            return Ok(());
+        }
         self.store_environment_binding(p, frame, env, slot, value)
+    }
+
+    /// The capture write when the binding is an initialized slot of a nested function's own
+    /// environment in the executing program, and neither that function's self binding nor a
+    /// parameter aliased by a mapped `arguments` object: then the slot write is the whole
+    /// store. Root bindings, with-object layers and everything else return false for
+    /// `store_environment_binding`.
+    #[inline(always)]
+    fn direct_store_environment(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        env: Value,
+        slot: u16,
+        value: Value,
+    ) -> bool {
+        let Some(Cell::Environment {
+            function, scope, ..
+        }) = self.heap.get(env)
+        else {
+            return false;
+        };
+        let function = *function;
+        let program = self.frames[frame].program;
+        debug_assert_eq!(program, self.active_program);
+        if function == super::ROOT_FUNCTION_ID
+            || function == u32::MAX
+            || scope.program.is_some_and(|owner| owner != program.raw())
+        {
+            return false;
+        }
+        let slot = usize::from(slot);
+        let Some(owner) = p.functions.get(function as usize) else {
+            return false;
+        };
+        if owner.is_self_binding_slot(slot)
+            || super::arguments::mapped_arguments_slot(owner, slot).is_some()
+        {
+            return false;
+        }
+        match self.heap.environment_slot_mut(env, slot) {
+            Some(binding) if !binding.is_deleted() => {
+                *binding = value;
+                true
+            }
+            _ => false,
+        }
     }
 
     fn store_environment_binding(
@@ -1641,33 +1746,18 @@ impl<H: Host> Vm<H> {
         cache: Option<u16>,
         allow_unresolvable: bool,
     ) -> Result<Value, JsError> {
-        let name = self.atom_name(atom);
-        if name == "\0quench:dynamic-import" {
-            return Ok(self.native_value(Native::DynamicImport));
+        let internal = self.atom_class(atom).contains(AtomClass::INTERNAL);
+        if internal {
+            let name = self.atom_name(atom);
+            if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
+                return Ok(self.regexp_intrinsic_constructor());
+            }
+            if let Some(native) = internal_name_native(name) {
+                return Ok(self.native_value(native));
+            }
         }
-        if name == crate::bytecode::INTRINSIC_REGEXP_BINDING {
-            return Ok(self.regexp_intrinsic_constructor());
-        }
-        if name == "\0quench:intrinsic-promise" {
-            return Ok(self.native_value(Native::Promise));
-        }
-        if name == "\0quench:super-get" {
-            return Ok(self.native_value(Native::ReflectGet));
-        }
-        if name == "\0quench:super-set" {
-            return Ok(self.native_value(Native::SuperSet));
-        }
-        if name == "\0quench:super-base" {
-            return Ok(self.native_value(Native::ReflectGetPrototypeOf));
-        }
-        if name == "\0quench:object-literal-prototype" {
-            return Ok(self.native_value(Native::ObjectLiteralPrototype));
-        }
-        if name == "\0quench:object-define-property" {
-            return Ok(self.native_value(Native::ObjectDefineProperty));
-        }
-        if name == "\0quench:object-freeze" {
-            return Ok(self.native_value(Native::ObjectFreeze));
+        if !internal && self.names_resolve_to_global_object(p) {
+            return self.load_global_object_name(p, atom, cache, allow_unresolvable);
         }
         if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
             return self.checked_binding_read(p, atom, value);
@@ -1677,7 +1767,7 @@ impl<H: Host> Vm<H> {
         {
             return self.load_name_binding(p, frame, binding);
         }
-        if !name.starts_with('\0') {
+        if !internal {
             if let Some(frame) = self.frames.last()
                 && (self.function_environment_binding(p, frame.function, atom)
                     || p.functions[frame.function as usize]
@@ -1708,6 +1798,45 @@ impl<H: Host> Vm<H> {
             if let Some(value) = self.active_global_lexical_value(atom) {
                 return self.checked_binding_read(p, atom, value);
             }
+        }
+        self.load_global_object_name(p, atom, cache, allow_unresolvable)
+    }
+
+    /// Whether a source name loaded by the executing activation can only denote a global
+    /// object property: its function is nested and, with every enclosing function, free of
+    /// dynamic scope access, so the compiler resolved every lexical binding statically; the
+    /// code is ordinary script code; and no global lexical binding exists in the realm or a
+    /// started script. None of the dynamic layers `load_name_without_with` searches can then
+    /// hold the name.
+    #[inline(always)]
+    fn names_resolve_to_global_object(&self, p: &ResidualProgram) -> bool {
+        !self.script_lexicals_seen
+            && p.kind == crate::bytecode::ProgramKind::Script
+            && self.realm.global_lexical_bindings.is_empty()
+            && self.frames.last().is_some_and(|frame| {
+                frame.function != super::ROOT_FUNCTION_ID
+                    && p.functions
+                        .get(frame.function as usize)
+                        .is_some_and(|function| {
+                            function.names_resolve_statically(&p.functions, &p.atoms)
+                        })
+            })
+    }
+
+    /// The global object step of a by-name load: the property, or a `ReferenceError` (or
+    /// `undefined` for `typeof`) when the global object has no such binding.
+    fn load_global_object_name(
+        &mut self,
+        p: &ResidualProgram,
+        atom: Atom,
+        cache: Option<u16>,
+        allow_unresolvable: bool,
+    ) -> Result<Value, JsError> {
+        if let Some(cache) = cache
+            && let super::object::FieldCacheProbe::Hit(value) =
+                self.cached_field_hit(p, self.realm.globals, cache)
+        {
+            return Ok(value);
         }
         if !self.has_global_object_binding(p, atom)? {
             if allow_unresolvable {
@@ -2001,7 +2130,7 @@ impl<H: Host> Vm<H> {
         }
         // Each script/eval activation has its own local layout. The global
         // object owns the binding; refresh every active projection in this realm.
-        for frame in &mut self.frames {
+        for frame in self.frames.iter_mut() {
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != object {
                 continue;
             }
@@ -2030,4 +2159,19 @@ impl<H: Host> Vm<H> {
             }
         }
     }
+}
+
+/// The built-in each engine-internal binding name the compiler emits resolves to.
+fn internal_name_native(name: &str) -> Option<Native> {
+    Some(match name {
+        "\0quench:dynamic-import" => Native::DynamicImport,
+        "\0quench:intrinsic-promise" => Native::Promise,
+        "\0quench:super-get" => Native::ReflectGet,
+        "\0quench:super-set" => Native::SuperSet,
+        "\0quench:super-base" => Native::ReflectGetPrototypeOf,
+        "\0quench:object-literal-prototype" => Native::ObjectLiteralPrototype,
+        "\0quench:object-define-property" => Native::ObjectDefineProperty,
+        "\0quench:object-freeze" => Native::ObjectFreeze,
+        _ => return None,
+    })
 }

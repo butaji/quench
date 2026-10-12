@@ -1,0 +1,583 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "V2 RegExp literal matcher cache, isolated Linux RegExp production pairs",
+  "source": {
+    "baseline_revision": "d4d0ff19f57a6bf79054e55c08b34365ac8b5140",
+    "candidate_base_revision": "d4d0ff19f57a6bf79054e55c08b34365ac8b5140",
+    "candidate_dirty": true,
+    "candidate_patch_sha256": "71338506ed19d1550e907144db0f8ad4dad6c63916eb13cb78396199b0e43823"
+  },
+  "host": {
+    "uname": {
+      "system": "Linux",
+      "node": "1c7595109800",
+      "release": "6.18.44",
+      "version": "#1 SMP Sat Sep 26 20:02:31 UTC 2026",
+      "machine": "x86_64",
+      "processor": ""
+    },
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "cpu_quota": "400000 100000",
+    "memory_limit_bytes": 17179869184,
+    "rss_backend": "Linux wait4 ru_maxrss, KiB normalized to bytes"
+  },
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "runner_sha256": "9fdcef7d006e1b37f4265f76859da99ae63d33d33299cfb68cac4cfb11425dbb",
+  "rounds_per_fixture": 11,
+  "bootstrap_resamples": 100000,
+  "binary_sha256": {
+    "baseline": "13420569b20285cdb9833af1314527c1d83af7d9fdba8ecefc162be30bf348b6",
+    "candidate": "c3611c6562103af2ae285f9bb87b3813e9838fa207006815c06b0dbd107f1651"
+  },
+  "commands": {
+    "baseline": [
+      "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-baseline",
+      "<materialized-fixture>"
+    ],
+    "candidate": [
+      "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-candidate",
+      "<materialized-fixture>"
+    ]
+  },
+  "measurement_environment": {
+    "HOME": "/home/agent",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "PATH": "/workspace/quench/work/stageb-tools/cargo-home/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+  },
+  "fixtures": {
+    "regexp.js": {
+      "source_sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+      "materialized_sha256": "2ec05d15bfdece58aea94cd92b47dcd60ea605787c81f6e50db0c2830f3cbb16",
+      "materialized_path": "work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js",
+      "valid": true,
+      "output_equal": true,
+      "rounds": [
+        {
+          "pair": 1,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 38.2,
+              "maximum_rss_bytes": 38342656,
+              "wall_ns": 81199510889,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 38.2"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 38.2\n----\nScore: 38.2\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 49.1,
+              "maximum_rss_bytes": 31879168,
+              "wall_ns": 63322689296,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 49.1"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 49.1\n----\nScore: 49.1\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 2,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 48.4,
+              "maximum_rss_bytes": 32186368,
+              "wall_ns": 64676882562,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 48.4"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 48.4\n----\nScore: 48.4\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 39.2,
+              "maximum_rss_bytes": 38334464,
+              "wall_ns": 79131991883,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 39.2"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 39.2\n----\nScore: 39.2\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 3,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 38.1,
+              "maximum_rss_bytes": 38440960,
+              "wall_ns": 81976199006,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 38.1"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 38.1\n----\nScore: 38.1\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 52.5,
+              "maximum_rss_bytes": 31846400,
+              "wall_ns": 59397141238,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 52.5"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 52.5\n----\nScore: 52.5\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 4,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 50.2,
+              "maximum_rss_bytes": 31580160,
+              "wall_ns": 62378153253,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 50.2"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 50.2\n----\nScore: 50.2\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 36.7,
+              "maximum_rss_bytes": 38277120,
+              "wall_ns": 84581156776,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 36.7"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 36.7\n----\nScore: 36.7\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 5,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 35.9,
+              "maximum_rss_bytes": 38416384,
+              "wall_ns": 87749971684,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 35.9"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 35.9\n----\nScore: 35.9\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 50.7,
+              "maximum_rss_bytes": 32043008,
+              "wall_ns": 61431666828,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 50.7"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 50.7\n----\nScore: 50.7\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 6,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 51.2,
+              "maximum_rss_bytes": 31936512,
+              "wall_ns": 60880484592,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 51.2"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 51.2\n----\nScore: 51.2\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 40.3,
+              "maximum_rss_bytes": 38404096,
+              "wall_ns": 77136812216,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 40.3"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 40.3\n----\nScore: 40.3\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 7,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 40.5,
+              "maximum_rss_bytes": 38408192,
+              "wall_ns": 77142658944,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 40.5"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 40.5\n----\nScore: 40.5\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 54.9,
+              "maximum_rss_bytes": 31870976,
+              "wall_ns": 56895164022,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 54.9"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 54.9\n----\nScore: 54.9\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 8,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 54.6,
+              "maximum_rss_bytes": 31911936,
+              "wall_ns": 57116945895,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 54.6"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 54.6\n----\nScore: 54.6\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 41.1,
+              "maximum_rss_bytes": 38383616,
+              "wall_ns": 75660657477,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 41.1"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 41.1\n----\nScore: 41.1\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 9,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 40.4,
+              "maximum_rss_bytes": 38281216,
+              "wall_ns": 77144686741,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 40.4"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 40.4\n----\nScore: 40.4\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 54.7,
+              "maximum_rss_bytes": 31977472,
+              "wall_ns": 56964534481,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 54.7"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 54.7\n----\nScore: 54.7\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 10,
+          "execution_order": [
+            "candidate",
+            "baseline"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "candidate": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 55.7,
+              "maximum_rss_bytes": 31879168,
+              "wall_ns": 56133507460,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 55.7"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 55.7\n----\nScore: 55.7\n",
+              "stderr": ""
+            },
+            "baseline": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 42.3,
+              "maximum_rss_bytes": 38330368,
+              "wall_ns": 73425021759,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 42.3"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 42.3\n----\nScore: 42.3\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "pair": 11,
+          "execution_order": [
+            "baseline",
+            "candidate"
+          ],
+          "valid": true,
+          "output_equal": true,
+          "results": {
+            "baseline": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-baseline",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 41.2,
+              "maximum_rss_bytes": 38420480,
+              "wall_ns": 75469182229,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 41.2"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 41.2\n----\nScore: 41.2\n",
+              "stderr": ""
+            },
+            "candidate": {
+              "command": [
+                "work/task61-regexp-literal-site-cache-linux-2026-10-09/quench-node-candidate",
+                "/workspace/quench/work/task61-regexp-literal-site-cache-linux-2026-10-09/materialized/regexp-materialized.js"
+              ],
+              "exit_code": 0,
+              "timed_out": false,
+              "score": 55.4,
+              "maximum_rss_bytes": 32034816,
+              "wall_ns": 56233029617,
+              "result_lines": [
+                "__quenchBenchResult: RegExp: 55.4"
+              ],
+              "semantic_output": [],
+              "stdout": "__quenchBenchResult: RegExp: 55.4\n----\nScore: 55.4\n",
+              "stderr": ""
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline_median_score": 40.3,
+        "candidate_median_score": 52.5,
+        "score_delta": 12.200000000000003,
+        "score_delta_percent": 30.272952853598035,
+        "score_delta_95_percentile_interval": {
+          "lower_95": 10.900000000000006,
+          "upper_95": 14.399999999999999,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "baseline_median_maximum_rss_bytes": 38383616,
+        "candidate_median_maximum_rss_bytes": 31911936,
+        "maximum_rss_delta_bytes": -6471680,
+        "maximum_rss_delta_95_percentile_interval": {
+          "lower_95": -6537216.0,
+          "upper_95": -6352896.0,
+          "resamples": 100000,
+          "method": "paired percentile bootstrap of difference in medians",
+          "seed": 20261009
+        },
+        "candidate_lower_score_pairs": 0,
+        "candidate_lower_rss_pairs": 11
+      }
+    }
+  },
+  "valid": true,
+  "qualification_ready": false,
+  "decision_rule": "Report paired Score and maximum-RSS intervals per affected fixture; output must match. This Quench-only screen does not establish Task 61 engine leadership."
+}

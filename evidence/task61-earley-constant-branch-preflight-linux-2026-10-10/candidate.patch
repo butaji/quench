@@ -1,0 +1,234 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 315d451f8..93a370f9c 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -104,6 +104,7 @@ pub(crate) enum FieldLayout {
+     NumericLocalTarget,
+     NumericLocalStoreMarker,
+     FunctionIndex,
++    ConstantIndex,
+     ConstructArguments,
+     ElementCount,
+     RegisterWindowBase,
+@@ -575,6 +576,7 @@ opcodes!(
+     Construct => CALL_EFFECT; layout ConstructCountAndFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, ConstructArguments),
+     Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump, @ Register, @ fields(Unused, Unused, Unused),
+     JumpFalse => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
++    KnownConstJumpFalse => Effect::PURE.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(ResultRegister, ConstantIndex, BooleanFlag),
+     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(BinaryOperator, Operand, Operand),
+     JumpUnaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(UnaryOperator, Operand, Unused),
+     Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
+diff --git a/crates/quench-runtime/src/bytecode/disassemble.rs b/crates/quench-runtime/src/bytecode/disassemble.rs
+index a465c2c08..2623595f7 100644
+--- a/crates/quench-runtime/src/bytecode/disassemble.rs
++++ b/crates/quench-runtime/src/bytecode/disassemble.rs
+@@ -87,6 +87,7 @@ fn write_field(
+         | FieldLayout::ReadWriteRegister
+         | FieldLayout::OptionalRegister
+         | FieldLayout::FunctionIndex
++        | FieldLayout::ConstantIndex
+         | FieldLayout::LocalSlot
+         | FieldLayout::ElementCount
+         | FieldLayout::CacheSiteIndex
+@@ -147,6 +148,9 @@ fn write_scalar_field(
+         (InstructionField::B, FieldLayout::FunctionIndex) => {
+             write!(output, " b=function:{}", instruction.known_function_index())
+         }
++        (InstructionField::B, FieldLayout::ConstantIndex) => {
++            write!(output, " b=constant:{}", instruction.constant_field_index())
++        }
+         (InstructionField::A, FieldLayout::LocalSlot) => {
+             write!(output, " source-local={}", instruction.field_value(field))
+         }
+diff --git a/crates/quench-runtime/src/bytecode/instruction.rs b/crates/quench-runtime/src/bytecode/instruction.rs
+index f78fbaa05..8499b89af 100644
+--- a/crates/quench-runtime/src/bytecode/instruction.rs
++++ b/crates/quench-runtime/src/bytecode/instruction.rs
+@@ -449,6 +449,15 @@ macro_rules! layout_accessors {
+                 self.imm() as usize
+             }
+ 
++            #[allow(dead_code)]
++            pub(crate) fn constant_field_index(self) -> usize {
++                debug_assert_eq!(
++                    self.op().field_layout(InstructionField::B),
++                    FieldLayout::ConstantIndex
++                );
++                self.b() as usize
++            }
++
+             #[allow(dead_code)]
+             pub(crate) fn array_length(self) -> usize {
+                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::ArrayLength);
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index 7378d54b3..604daa732 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -141,6 +141,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
+             FieldLayout::FieldLookupCacheSiteIndex => true,
+             FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
+             FieldLayout::FunctionIndex => usize::from(value) < bounds.functions,
++            FieldLayout::ConstantIndex => usize::from(value) < bounds.constants,
+             FieldLayout::ElementCount => instruction
+                 .constant_index()
+                 .checked_add(usize::from(value))
+diff --git a/crates/quench-runtime/src/compile.rs b/crates/quench-runtime/src/compile.rs
+index c58cd5045..b11e1e6dd 100644
+--- a/crates/quench-runtime/src/compile.rs
++++ b/crates/quench-runtime/src/compile.rs
+@@ -2131,6 +2131,7 @@ impl<'a> Compiler<'a> {
+         if self.mode == SpecializationMode::Enabled {
+             Self::apply_rewrites(
+                 &mut functions,
++                &self.constants,
+                 &self.method_sites,
+                 &mut self.field_sites,
+                 &mut self.superinstructions,
+@@ -2722,13 +2723,20 @@ impl<'a> Compiler<'a> {
+ 
+     fn apply_rewrites(
+         functions: &mut [BcFunction],
++        constants: &[Constant],
+         method_sites: &[MethodSiteSpec],
+         field_sites: &mut Vec<FieldSite>,
+         superinstructions: &mut Vec<Superinstruction>,
+     ) {
+         for function in functions {
+             if function.wide.is_empty() {
+-                rewrite::apply(function, method_sites, field_sites, superinstructions);
++                rewrite::apply(
++                    function,
++                    constants,
++                    method_sites,
++                    field_sites,
++                    superinstructions,
++                );
+             }
+         }
+     }
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 44e54a12a..ee12dbadb 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -131,6 +131,19 @@ fusion_recipes! {
+                 second.jump_target(),
+             )
+         };
++    KnownConstantJumpFalse: [LoadConst, JumpFalse] =>
++        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
++            if first.result_register() != second.register_a() {
++                return None;
++            }
++            Instr::try_new(
++                Op::KnownConstJumpFalse,
++                first.result_register(),
++                u16::try_from(first.constant_index()).ok()?,
++                0,
++                second.jump_target(),
++            )
++        };
+     ReturnResult: [
+         Binary, Return; GetField, Return; Call, Return; CallKnown, Return;
+         CallMethod, Return; CallThisMethod, Return; Construct, Return;
+@@ -167,6 +180,7 @@ fusion_recipes! {
+ 
+ pub(super) fn apply(
+     function: &mut BcFunction,
++    constants: &[Constant],
+     methods: &[MethodSiteSpec],
+     field_sites: &mut Vec<FieldSite>,
+     superinstructions: &mut Vec<Superinstruction>,
+@@ -176,7 +190,7 @@ pub(super) fn apply(
+     while rewrite_super_window(function, superinstructions) {
+         changed_passes += 1;
+     }
+-    while rewrite_once(function, methods, field_sites, superinstructions) {
++    while rewrite_once(function, constants, methods, field_sites, superinstructions) {
+         changed_passes += 1;
+     }
+     if std::env::var_os("QUENCH_REWRITE_STATS").is_some() {
+@@ -318,6 +332,7 @@ pub(super) fn protected_positions(
+ 
+ fn rewrite_once(
+     function: &mut BcFunction,
++    constants: &[Constant],
+     methods: &[MethodSiteSpec],
+     field_sites: &mut Vec<FieldSite>,
+     superinstructions: &[Superinstruction],
+@@ -356,7 +371,8 @@ fn rewrite_once(
+                     .iter()
+                     .filter(|rule| rule.pattern == [first.op(), second.op()])
+                     .find_map(|rule| {
+-                        let replacement = apply_rule(*rule, first, *second, field_sites)?;
++                        let replacement =
++                            apply_rule(*rule, first, *second, field_sites, constants)?;
+                         let removed_definitions = original_definitions
+                             & !liveness::definitions(replacement, superinstructions);
+                         (live_out & removed_definitions == 0).then_some(replacement)
+@@ -391,11 +407,27 @@ fn apply_rule(
+     first: Instr,
+     second: Instr,
+     field_sites: &mut Vec<FieldSite>,
++    constants: &[Constant],
+ ) -> Option<Instr> {
+-    let replacement = apply_recipe(rule.recipe, first, second, field_sites)?;
++    let mut replacement = apply_recipe(rule.recipe, first, second, field_sites)?;
++    if matches!(rule.recipe, Recipe::KnownConstantJumpFalse) {
++        let truthy = constant_truthiness(constants, first.constant_index())?;
++        replacement.set_c(u16::from(truthy));
++    }
+     sound_replacement(first, second, replacement)
+ }
+ 
++fn constant_truthiness(constants: &[Constant], index: usize) -> Option<bool> {
++    Some(match constants.get(index)? {
++        Constant::Number(number) => *number != 0.0 && !number.is_nan(),
++        Constant::String(value) => !value.is_empty(),
++        Constant::StringUnits(value) => !value.is_empty(),
++        Constant::Boolean(value) => *value,
++        Constant::Null | Constant::Undefined => false,
++        Constant::BigInt(_) | Constant::WasmBits64(_) | Constant::WasmV128(_) => return None,
++    })
++}
++
+ fn sound_replacement(first: Instr, second: Instr, replacement: Instr) -> Option<Instr> {
+     replacement
+         .effect()
+@@ -578,7 +610,7 @@ mod tests {
+         let function = &mut program.functions[0];
+         function.code = code;
+         function.registers = registers;
+-        rewrite_once(function, &[], &mut vec![], &[]);
++        rewrite_once(function, &[], &[], &mut vec![], &[]);
+         std::mem::take(&mut function.code)
+     }
+ 
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 46ba9a381..6a2522417 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -1508,6 +1508,24 @@ impl<H: Host> Vm<H> {
+                     *pc = i.jump_target() as usize;
+                 }
+             }
++            Op::KnownConstJumpFalse => {
++                let value = self
++                    .programs
++                    .constant(self.frames[f].program, i.constant_field_index())
++                    .ok_or_else(|| {
++                        JsError::validation("constant index is outside program".into())
++                    })?;
++                self.write(f, i.result_register(), value);
++                let truthy = i
++                    .boolean_field(crate::bytecode::InstructionField::C)
++                    .ok_or_else(|| JsError::validation("invalid constant truthiness flag".into()))?;
++                #[cfg(feature = "profile-aggregate")]
++                self.profile
++                    .branch_value(value.profile_kind() as usize, truthy);
++                if !truthy {
++                    *pc = i.jump_target() as usize;
++                }
++            }
+             Op::JumpBinaryFalse => {
+                 let operator = i.binary_operator_field();
+                 let left_operand = i.operand_b();

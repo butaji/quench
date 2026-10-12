@@ -885,6 +885,15 @@ impl<H: Host> Vm<H> {
             return self.json_serialize_value(p, unboxed, state);
         }
         let value = unboxed;
+        if let Some(raw) = self.json_raw_text(value) {
+            return Ok(Some(JsonValue::Raw(raw)));
+        }
+        if self.heap.object_record(value).is_some() {
+            return self.json_serialize_object(p, value, state).map(Some);
+        }
+        if self.heap.array(value).is_some() {
+            return self.json_serialize_array(p, value, state).map(Some);
+        }
         match self.heap.get(value).cloned() {
             Some(Cell::String(value)) => Ok(Some(JsonValue::String(value))),
             Some(Cell::Symbol(_)) => Ok(None),
@@ -892,13 +901,15 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "Do not know how to serialize a BigInt".into()))
             }
             Some(Cell::Function { .. }) | None => Ok(None),
+            Some(Cell::Array { .. }) => {
+                unreachable!("heap.array classifies live arrays before this match")
+            }
             _ if self.json_raw_text(value).is_some() => {
                 Ok(self.json_raw_text(value).map(JsonValue::Raw))
             }
-            Some(Cell::Array { .. }) => self.json_serialize_array(p, value, state).map(Some),
             _ if self.is_array(p, value)? => self.json_serialize_array(p, value, state).map(Some),
-            Some(Cell::Object(_))
-            | Some(Cell::Proxy { .. })
+            Some(Cell::Object(_)) => self.json_serialize_object(p, value, state).map(Some),
+            Some(Cell::Proxy { .. })
             | Some(Cell::Date { .. })
             | Some(Cell::Error(_))
             | Some(Cell::Map { .. })
@@ -1059,17 +1070,19 @@ impl<H: Host> Vm<H> {
             let keys = self.object_own_keys(p, object)?;
             let keys_handle = self.heap.root(keys);
             keys_root = Some(keys_handle);
-            let length = match self.heap.get(keys) {
-                Some(Cell::Array { elements, .. }) => elements.len(),
-                _ => unreachable!("OwnPropertyKeys projects an array"),
-            };
+            let length = self
+                .heap
+                .array(keys)
+                .map(|(_, elements)| elements.len())
+                .expect("OwnPropertyKeys projects an array");
             let mut names = Vec::new();
             for index in 0..length {
                 let keys = self.heap.root_value(keys_handle).unwrap();
-                let key = match self.heap.get(keys) {
-                    Some(Cell::Array { elements, .. }) => elements[index],
-                    _ => unreachable!("rooted own-key projection"),
-                };
+                let key = self
+                    .heap
+                    .array(keys)
+                    .map(|(_, elements)| elements[index])
+                    .expect("rooted own-key projection");
                 if !matches!(self.heap.get(key), Some(Cell::String(_))) {
                     continue;
                 }

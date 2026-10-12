@@ -26,14 +26,11 @@ impl<H: Host> Vm<H> {
         let Some(index) = self.mapped_argument_index(arguments, slot) else {
             return fallback;
         };
-        match self.heap.get(arguments) {
-            Some(Cell::Array { elements, .. }) => elements
-                .get(index)
-                .copied()
-                .filter(|value| !value.is_deleted())
-                .unwrap_or(Value::UNDEFINED),
-            _ => fallback,
-        }
+        self.heap
+            .array(arguments)
+            .and_then(|(_, elements)| elements.get(index).copied())
+            .filter(|value| !value.is_deleted())
+            .unwrap_or(fallback)
     }
 
     pub(super) fn mapped_argument_store(
@@ -101,13 +98,19 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn sync_mapped_argument(&mut self, object: Value, index: usize, value: Value) {
-        let Some(slot) = self
+        let slot = self
             .object_data(object)
-            .and_then(Object::arguments_map)
-            .and_then(|mapping| mapping.get(index).copied())
-            .filter(|slot| *slot != u16::MAX)
-            .map(usize::from)
-        else {
+            .and_then(|object| object.mapped_argument_slot(index));
+        self.sync_mapped_argument_slot(object, slot, value);
+    }
+
+    pub(super) fn sync_mapped_argument_slot(
+        &mut self,
+        object: Value,
+        slot: Option<usize>,
+        value: Value,
+    ) {
+        let Some(slot) = slot else {
             return;
         };
         // The mapping belongs to the one activation whose `arguments` binding holds this object.
@@ -120,10 +123,7 @@ impl<H: Host> Vm<H> {
             return;
         };
         if self.frames[owner].captured {
-            if let Some(target) = self
-                .heap
-                .environment_slot_mut(self.frames[owner].env, slot)
-            {
+            if let Some(target) = self.heap.environment_slot_mut(self.frames[owner].env, slot) {
                 *target = value;
             }
         } else if let Some(target) = self.frames[owner].locals.get_mut(slot) {
@@ -161,7 +161,10 @@ impl<H: Host> Vm<H> {
     }
 }
 
-fn mapped_arguments_slot(function: &crate::bytecode::Function, parameter: usize) -> Option<usize> {
+pub(super) fn mapped_arguments_slot(
+    function: &crate::bytecode::Function,
+    parameter: usize,
+) -> Option<usize> {
     let slot = function.arguments_slot?;
     (function.arguments_are_mapped() && parameter < usize::from(function.params))
         .then_some(usize::from(slot))

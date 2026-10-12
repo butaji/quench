@@ -7,9 +7,10 @@ use std::collections::BTreeMap;
 
 pub(super) const MAX_RETRIES: usize = 2;
 
-const IPC_REFERENCE_PERCENTILE: usize = 75;
-const MIN_IPC_REFERENCE_SAMPLES: usize = 5;
+const RATE_REFERENCE_PERCENTILE: usize = 75;
+const MIN_RATE_REFERENCE_SAMPLES: usize = 5;
 const MIN_IPC_REFERENCE_RATIO: f64 = 0.90;
+const MIN_CYCLE_RATE_REFERENCE_RATIO: f64 = 0.90;
 const INVOLUNTARY_SWITCH_REFERENCE_PERCENTILE: usize = 25;
 const MIN_INVOLUNTARY_SWITCH_REFERENCE_SAMPLES: usize = 5;
 const MAX_INVOLUNTARY_SWITCH_RATE_RATIO: f64 = 4.0;
@@ -18,9 +19,10 @@ const MAX_LOAD_PER_LOGICAL_CPU: f64 = 1.0;
 
 #[derive(Clone, Serialize)]
 pub(super) struct Policy {
-    ipc_reference_percentile: usize,
-    min_ipc_reference_samples: usize,
+    rate_reference_percentile: usize,
+    min_rate_reference_samples: usize,
     min_ipc_reference_ratio: f64,
+    min_cycle_rate_reference_ratio: f64,
     involuntary_switch_reference_percentile: usize,
     min_involuntary_switch_reference_samples: usize,
     max_involuntary_switch_rate_ratio: f64,
@@ -29,9 +31,10 @@ pub(super) struct Policy {
 }
 
 pub(super) const POLICY: Policy = Policy {
-    ipc_reference_percentile: IPC_REFERENCE_PERCENTILE,
-    min_ipc_reference_samples: MIN_IPC_REFERENCE_SAMPLES,
+    rate_reference_percentile: RATE_REFERENCE_PERCENTILE,
+    min_rate_reference_samples: MIN_RATE_REFERENCE_SAMPLES,
     min_ipc_reference_ratio: MIN_IPC_REFERENCE_RATIO,
+    min_cycle_rate_reference_ratio: MIN_CYCLE_RATE_REFERENCE_RATIO,
     involuntary_switch_reference_percentile: INVOLUNTARY_SWITCH_REFERENCE_PERCENTILE,
     min_involuntary_switch_reference_samples: MIN_INVOLUNTARY_SWITCH_REFERENCE_SAMPLES,
     max_involuntary_switch_rate_ratio: MAX_INVOLUNTARY_SWITCH_RATE_RATIO,
@@ -49,7 +52,10 @@ pub(super) fn verified_clean_assessment() -> Assessment {
         load_checked: true,
         ipc: Some(1.0),
         reference_ipc: Some(1.0),
-        ipc_reference_samples: Some(MIN_IPC_REFERENCE_SAMPLES),
+        ipc_reference_samples: Some(MIN_RATE_REFERENCE_SAMPLES),
+        effective_cycle_rate_hz: Some(4_000_000_000.0),
+        reference_effective_cycle_rate_hz: Some(4_000_000_000.0),
+        cycle_rate_reference_samples: Some(MIN_RATE_REFERENCE_SAMPLES),
         involuntary_switches_per_second: Some(1.0),
         reference_involuntary_switches_per_second: Some(1.0),
         involuntary_switch_reference_samples: Some(MIN_INVOLUNTARY_SWITCH_REFERENCE_SAMPLES),
@@ -68,6 +74,9 @@ pub(super) struct Assessment {
     ipc: Option<f64>,
     reference_ipc: Option<f64>,
     ipc_reference_samples: Option<usize>,
+    effective_cycle_rate_hz: Option<f64>,
+    reference_effective_cycle_rate_hz: Option<f64>,
+    cycle_rate_reference_samples: Option<usize>,
     involuntary_switches_per_second: Option<f64>,
     reference_involuntary_switches_per_second: Option<f64>,
     involuntary_switch_reference_samples: Option<usize>,
@@ -79,6 +88,7 @@ pub(super) struct Assessment {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Reason {
     IpcBelowReference { ratio: f64, minimum_ratio: f64 },
+    EffectiveCycleRateBelowReference { ratio: f64, minimum_ratio: f64 },
     InvoluntarySwitchRateAboveReference { ratio: f64, maximum_ratio: f64 },
     LoadAtCapacity { load_per_logical_cpu: f64 },
 }
@@ -86,6 +96,7 @@ enum Reason {
 #[derive(Default)]
 pub(super) struct References {
     ipc: BTreeMap<(String, FixedWorkSampleKind), MetricReference>,
+    effective_cycle_rate: BTreeMap<(String, FixedWorkSampleKind), MetricReference>,
     involuntary_switch_rate: BTreeMap<(String, FixedWorkSampleKind), MetricReference>,
 }
 
@@ -188,6 +199,7 @@ fn annotate_maps(
                 sample,
                 references,
                 &cohort,
+                FixedWorkSampleKind::Work,
                 host.logical_cpus,
             ));
         }
@@ -200,6 +212,7 @@ fn annotate_maps(
                 sample,
                 references,
                 &cohort,
+                FixedWorkSampleKind::SetupOnly,
                 host.logical_cpus,
             ));
         }
@@ -212,11 +225,13 @@ fn build_references(
     plan: FixedWorkPlan,
 ) -> References {
     let mut ipc_values: BTreeMap<(String, FixedWorkSampleKind), Vec<f64>> = BTreeMap::new();
+    let mut cycle_rate_values: BTreeMap<(String, FixedWorkSampleKind), Vec<f64>> = BTreeMap::new();
     let mut switch_rate_values: BTreeMap<(String, FixedWorkSampleKind), Vec<f64>> = BTreeMap::new();
     for round in rounds {
         for engine in engines {
             add_references(
                 &mut ipc_values,
+                &mut cycle_rate_values,
                 &mut switch_rate_values,
                 engine,
                 FixedWorkSampleKind::Work,
@@ -226,6 +241,7 @@ fn build_references(
             );
             add_references(
                 &mut ipc_values,
+                &mut cycle_rate_values,
                 &mut switch_rate_values,
                 engine,
                 FixedWorkSampleKind::SetupOnly,
@@ -238,8 +254,13 @@ fn build_references(
     References {
         ipc: percentile_references(
             ipc_values,
-            MIN_IPC_REFERENCE_SAMPLES,
-            IPC_REFERENCE_PERCENTILE,
+            MIN_RATE_REFERENCE_SAMPLES,
+            RATE_REFERENCE_PERCENTILE,
+        ),
+        effective_cycle_rate: percentile_references(
+            cycle_rate_values,
+            MIN_RATE_REFERENCE_SAMPLES,
+            RATE_REFERENCE_PERCENTILE,
         ),
         involuntary_switch_rate: percentile_references(
             switch_rate_values,
@@ -251,6 +272,7 @@ fn build_references(
 
 fn add_references(
     ipc_values: &mut BTreeMap<(String, FixedWorkSampleKind), Vec<f64>>,
+    cycle_rate_values: &mut BTreeMap<(String, FixedWorkSampleKind), Vec<f64>>,
     switch_rate_values: &mut BTreeMap<(String, FixedWorkSampleKind), Vec<f64>>,
     engine: &EngineSpec,
     kind: FixedWorkSampleKind,
@@ -264,6 +286,16 @@ fn add_references(
     let cohort = (engine.executable_sha256.clone(), kind);
     if let Some(ipc) = sample_ipc(sample) {
         ipc_values.entry(cohort.clone()).or_default().push(ipc);
+    }
+    let cycle_rate = match kind {
+        FixedWorkSampleKind::Work => sample_effective_cycle_rate(sample),
+        FixedWorkSampleKind::SetupOnly => None,
+    };
+    if let Some(cycle_rate) = cycle_rate {
+        cycle_rate_values
+            .entry(cohort.clone())
+            .or_default()
+            .push(cycle_rate);
     }
     if let Some(rate) = sample_involuntary_switch_rate(sample) {
         switch_rate_values.entry(cohort).or_default().push(rate);
@@ -300,12 +332,20 @@ fn assess_sample(
     sample: &Sample,
     references: &References,
     cohort: &(String, FixedWorkSampleKind),
+    kind: FixedWorkSampleKind,
     logical_cpus: Option<usize>,
 ) -> Assessment {
     let ipc = sample_ipc(sample);
     let ipc_reference = references.ipc.get(cohort);
     let reference_ipc = ipc_reference.map(|reference| reference.value);
     let ipc_reference_samples = ipc_reference.map(|reference| reference.samples);
+    let (cycle_rate_required, effective_cycle_rate_hz) = match kind {
+        FixedWorkSampleKind::Work => (true, sample_effective_cycle_rate(sample)),
+        FixedWorkSampleKind::SetupOnly => (false, None),
+    };
+    let cycle_rate_reference = references.effective_cycle_rate.get(cohort);
+    let reference_effective_cycle_rate_hz = cycle_rate_reference.map(|reference| reference.value);
+    let cycle_rate_reference_samples = cycle_rate_reference.map(|reference| reference.samples);
     let involuntary_switches_per_second = sample_involuntary_switch_rate(sample);
     let switch_rate_reference = references.involuntary_switch_rate.get(cohort);
     let reference_involuntary_switches_per_second =
@@ -322,6 +362,17 @@ fn assess_sample(
             reasons.push(Reason::IpcBelowReference {
                 ratio,
                 minimum_ratio: MIN_IPC_REFERENCE_RATIO,
+            });
+        }
+    }
+    if let (Some(rate), Some(reference)) =
+        (effective_cycle_rate_hz, reference_effective_cycle_rate_hz)
+    {
+        let ratio = rate / reference;
+        if ratio < MIN_CYCLE_RATE_REFERENCE_RATIO {
+            reasons.push(Reason::EffectiveCycleRateBelowReference {
+                ratio,
+                minimum_ratio: MIN_CYCLE_RATE_REFERENCE_RATIO,
             });
         }
     }
@@ -349,6 +400,9 @@ fn assess_sample(
         clean: reasons.is_empty(),
         checks_complete: ipc.is_some()
             && reference_ipc.is_some()
+            && (!cycle_rate_required
+                || (effective_cycle_rate_hz.is_some()
+                    && reference_effective_cycle_rate_hz.is_some()))
             && involuntary_switches_per_second.is_some()
             && reference_involuntary_switches_per_second.is_some()
             && load_per_logical_cpu.is_some(),
@@ -359,6 +413,9 @@ fn assess_sample(
         ipc,
         reference_ipc,
         ipc_reference_samples,
+        effective_cycle_rate_hz,
+        reference_effective_cycle_rate_hz,
+        cycle_rate_reference_samples,
         involuntary_switches_per_second,
         reference_involuntary_switches_per_second,
         involuntary_switch_reference_samples,
@@ -371,6 +428,11 @@ fn sample_ipc(sample: &Sample) -> Option<f64> {
     let instructions = sample.instructions?;
     let cycles = sample.cycles?;
     (cycles > 0).then_some(instructions as f64 / cycles as f64)
+}
+
+fn sample_effective_cycle_rate(sample: &Sample) -> Option<f64> {
+    let cycles = sample.cycles?;
+    (sample.wall_ns > 0).then_some(cycles as f64 * NANOSECONDS_PER_SECOND / sample.wall_ns as f64)
 }
 
 fn sample_involuntary_switch_rate(sample: &Sample) -> Option<f64> {
@@ -395,7 +457,10 @@ fn percentile(mut values: Vec<f64>, percentile_value: usize) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{assess_sample, percentile, MetricReference, References, MIN_IPC_REFERENCE_RATIO};
+    use super::{
+        assess_sample, percentile, MetricReference, References, MIN_CYCLE_RATE_REFERENCE_RATIO,
+        MIN_IPC_REFERENCE_RATIO, MIN_RATE_REFERENCE_SAMPLES,
+    };
     use crate::{FixedWorkSampleKind, HostSnapshot, LoadAverage, Sample};
     use std::collections::BTreeMap;
 
@@ -406,12 +471,28 @@ mod tests {
         let reference = percentile(vec![5.7, 5.8, 5.9, 6.0, 5.75], 75).unwrap();
         let references = References {
             ipc: BTreeMap::from([(COHORT.clone(), metric_reference(reference))]),
+            effective_cycle_rate: BTreeMap::from([(
+                COHORT.clone(),
+                metric_reference(4_000_000_000.0),
+            )]),
             ..References::default()
         };
         let quiet = sample(5.7, 100, 1_000_000_000, None);
         let loaded = sample(4.8, 2_000, 1_000_000_000, None);
-        let quiet_assessment = assess_sample(&quiet, &references, &COHORT, Some(10));
-        let loaded_assessment = assess_sample(&loaded, &references, &COHORT, Some(10));
+        let quiet_assessment = assess_sample(
+            &quiet,
+            &references,
+            &COHORT,
+            FixedWorkSampleKind::Work,
+            Some(10),
+        );
+        let loaded_assessment = assess_sample(
+            &loaded,
+            &references,
+            &COHORT,
+            FixedWorkSampleKind::Work,
+            Some(10),
+        );
 
         assert!(quiet_assessment.clean);
         assert!(!loaded_assessment.clean);
@@ -423,6 +504,10 @@ mod tests {
         let quiet_rates = [78.0, 95.0, 156.0, 174.0, 249.0];
         let reference = percentile(quiet_rates.to_vec(), 25).unwrap();
         let references = References {
+            effective_cycle_rate: BTreeMap::from([(
+                COHORT.clone(),
+                metric_reference(4_000_000_000.0),
+            )]),
             involuntary_switch_rate: BTreeMap::from([(
                 COHORT.clone(),
                 metric_reference(reference),
@@ -431,8 +516,20 @@ mod tests {
         };
         let quiet = sample(5.8, 174, 1_000_000_000, None);
         let loaded = sample(5.8, 761, 1_000_000_000, None);
-        let quiet_assessment = assess_sample(&quiet, &references, &COHORT, Some(10));
-        let loaded_assessment = assess_sample(&loaded, &references, &COHORT, Some(10));
+        let quiet_assessment = assess_sample(
+            &quiet,
+            &references,
+            &COHORT,
+            FixedWorkSampleKind::Work,
+            Some(10),
+        );
+        let loaded_assessment = assess_sample(
+            &loaded,
+            &references,
+            &COHORT,
+            FixedWorkSampleKind::Work,
+            Some(10),
+        );
 
         assert!(quiet_assessment.clean);
         assert!(quiet_assessment.involuntary_switch_rate_checked);
@@ -448,9 +545,19 @@ mod tests {
         let sample = sample(5.8, 100, 1_000_000_000, Some(10.0));
         let references = References {
             ipc: BTreeMap::from([(COHORT.clone(), metric_reference(5.8))]),
+            effective_cycle_rate: BTreeMap::from([(
+                COHORT.clone(),
+                metric_reference(4_000_000_000.0),
+            )]),
             involuntary_switch_rate: BTreeMap::from([(COHORT.clone(), metric_reference(100.0))]),
         };
-        let assessment = assess_sample(&sample, &references, &COHORT, Some(10));
+        let assessment = assess_sample(
+            &sample,
+            &references,
+            &COHORT,
+            FixedWorkSampleKind::Work,
+            Some(10),
+        );
 
         assert!(!assessment.clean);
         assert!(matches!(
@@ -459,8 +566,77 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn cycle_rate_rejects_a_descheduled_sample_with_normal_ipc() {
+        let cycles = 2_085_913_496_u64;
+        let instructions = 12_999_847_321_u64;
+        let wall_ns = 979_003_875;
+        let ipc = instructions as f64 / cycles as f64;
+        let references = References {
+            ipc: BTreeMap::from([(COHORT.clone(), metric_reference(ipc))]),
+            effective_cycle_rate: BTreeMap::from([(
+                COHORT.clone(),
+                metric_reference(3_950_000_000.0),
+            )]),
+            involuntary_switch_rate: BTreeMap::from([(COHORT.clone(), metric_reference(105.0))]),
+        };
+        let mut measured = sample(ipc, 105, wall_ns, Some(9.47));
+        measured.instructions = Some(instructions);
+        measured.cycles = Some(cycles);
+        let assessment = assess_sample(
+            &measured,
+            &references,
+            &COHORT,
+            FixedWorkSampleKind::Work,
+            Some(10),
+        );
+
+        assert!(assessment.ipc_checked);
+        assert!(assessment.involuntary_switch_rate_checked);
+        assert!(assessment.load_checked);
+        assert!(assessment.checks_complete);
+        assert!(!assessment.clean);
+        assert!(matches!(
+            assessment.reasons.as_slice(),
+            [super::Reason::EffectiveCycleRateBelowReference { .. }]
+        ));
+        assert_eq!(MIN_CYCLE_RATE_REFERENCE_RATIO, 0.90);
+    }
+
+    #[test]
+    fn setup_only_samples_skip_the_work_cycle_rate_check() {
+        let setup_cohort = (String::new(), FixedWorkSampleKind::SetupOnly);
+        let ipc = 6.2;
+        let references = References {
+            ipc: BTreeMap::from([(setup_cohort.clone(), metric_reference(ipc))]),
+            involuntary_switch_rate: BTreeMap::from([(
+                setup_cohort.clone(),
+                metric_reference(100.0),
+            )]),
+            ..References::default()
+        };
+        let mut setup = sample(ipc, 100, 1_000_000_000, Some(1.0));
+        setup.cycles = Some(2_000_000_000);
+        setup.instructions = Some(12_400_000_000);
+        let assessment = assess_sample(
+            &setup,
+            &references,
+            &setup_cohort,
+            FixedWorkSampleKind::SetupOnly,
+            Some(10),
+        );
+
+        assert!(assessment.clean);
+        assert!(assessment.checks_complete);
+        assert_eq!(assessment.effective_cycle_rate_hz, None);
+        assert_eq!(assessment.reference_effective_cycle_rate_hz, None);
+    }
+
     fn metric_reference(value: f64) -> MetricReference {
-        MetricReference { value, samples: 5 }
+        MetricReference {
+            value,
+            samples: MIN_RATE_REFERENCE_SAMPLES,
+        }
     }
 
     fn sample(
@@ -469,7 +645,7 @@ mod tests {
         wall_ns: u128,
         one_minute_load: Option<f64>,
     ) -> Sample {
-        let cycles = 1_000;
+        let cycles = 4_000_000_000;
         let snapshot = || {
             one_minute_load.map(|one_minute| HostSnapshot {
                 captured_unix_ns: 0,

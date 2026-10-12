@@ -1,0 +1,665 @@
+{
+  "engine": "quench",
+  "failed": 0,
+  "families": {},
+  "outcomes": [
+    {
+      "outcome": "pass",
+      "path": "language/import/dup-bound-names.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/escaped-as-import-specifier.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/escaped-as-namespace-import.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/escaped-from.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/json-extensibility-array.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/json-extensibility-object.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/json-idempotency.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/json-invalid.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/json-named-bindings.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/json-value-array.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/json-value-boolean.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/json-value-null.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/json-value-number.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/json-value-object.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/json-value-string.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/json-via-namespace.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/text-empty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/text-javascript.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/text-self.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/text-string.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-attributes/text-via-namespace.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-bytes/bytes-from-empty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-bytes/bytes-from-js.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-bytes/bytes-from-json.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-bytes/bytes-from-png.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-bytes/bytes-from-txt.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/deferred-namespace-object/exotic-object-behavior.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/deferred-namespace-object/identity.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/deferred-namespace-object/json-module.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/deferred-namespace-object/reexport-deferred-ns-evaluation.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/deferred-namespace-object/to-string-tag.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/errors/get-other-while-dep-evaluating/main.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/errors/get-other-while-dep-evaluating-async/main.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/errors/get-other-while-evaluating/main.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/errors/get-other-while-evaluating-async/main.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/errors/get-self-while-defer-evaluating/main.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/errors/get-self-while-evaluating-async/main.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/errors/get-self-while-evaluating.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/errors/module-throws/defer-import-after-evaluation.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/errors/module-throws/third-party-evaluation-after-defer-import.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/errors/module-throws/trigger-evaluation.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/errors/resolution-error/import-defer-of-missing-module-fails.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/errors/syntax-error/import-defer-of-syntax-error-fails.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-sync/import-defer-does-not-evaluate.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-sync/module-imported-defer-and-eager.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-top-level-await/flattening-order/main.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-top-level-await/import-defer-async-module/main.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-top-level-await/import-defer-transitive-async-module/main.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-top-level-await/sync-dependency-of-deferred-async-module/main.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-exported-then-defineOwnProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-exported-then-delete.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-exported-then-get-in-prototype.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-exported-then-get.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-exported-then-getOwnProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-exported-then-hasProperty-in-prototype.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-exported-then-hasProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-exported-then-super-get.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-exported-then-super-property-define.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-exported-then-super-property-set-exported.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-getPrototypeOf.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-isExtensible.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-not-exported-then-defineOwnProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-not-exported-then-delete.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-not-exported-then-get-in-prototype.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-not-exported-then-get.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-not-exported-then-getOwnProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-not-exported-then-hasProperty-in-prototype.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-not-exported-then-hasProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-not-exported-then-super-get.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-not-exported-then-super-property-define.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-not-exported-then-super-property-set-exported.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-preventExtensions.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-private-name-access.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-set-string-exported.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-set-string-not-exported.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-setPrototypeOf.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-other-defineOwnProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-other-delete.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-other-get-in-prototype.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-other-get.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-other-getOwnProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-other-hasProperty-in-prototype.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-other-hasProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-other-super-get.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-other-super-property-define.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-other-super-property-set-exported.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-toStringTag-defineOwnProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-toStringTag-delete.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-toStringTag-get-in-prototype.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-toStringTag-get.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-toStringTag-getOwnProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-toStringTag-hasProperty-in-prototype.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-toStringTag-hasProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-toStringTag-super-get.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-toStringTag-super-property-define.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/ignore-symbol-toStringTag-super-property-set-exported.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-exported-string-defineOwnProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-exported-string-delete.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-exported-string-get-in-prototype.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-exported-string-get.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-exported-string-getOwnProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-exported-string-hasProperty-in-prototype.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-exported-string-hasProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-exported-string-super-get.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-exported-string-super-property-define.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-exported-string-super-property-set-exported.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-not-exported-string-defineOwnProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-not-exported-string-delete.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-not-exported-string-get-in-prototype.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-not-exported-string-get.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-not-exported-string-getOwnProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-not-exported-string-hasProperty-in-prototype.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-not-exported-string-hasProperty.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-not-exported-string-super-get.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-not-exported-string-super-property-define.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-not-exported-string-super-property-set-exported.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-ownPropertyKey-names.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-ownPropertyKeys-symbols.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/evaluation-triggers/trigger-ownPropertyKeys.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/syntax/import-attributes.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/syntax/invalid-default-and-defer-namespace.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/syntax/invalid-defer-as-with-no-asterisk.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/syntax/invalid-defer-default-and-namespace.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/syntax/invalid-defer-default.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/syntax/invalid-defer-named.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/syntax/invalid-export-defer-namespace.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/syntax/valid-default-binding-named-defer.js",
+      "stage": "16"
+    },
+    {
+      "outcome": "pass",
+      "path": "language/import/import-defer/syntax/valid-defer-namespace.js",
+      "stage": "16"
+    }
+  ],
+  "passed": 128,
+  "provenance": {
+    "binary": "/workspace/quench/target/iteration/run-stages",
+    "host": "linux-x86_64",
+    "jobs": 4,
+    "source_dirty": true,
+    "source_revision": "bb954aaf3e9bc499067bfebd7f3e05c6a75de6bf",
+    "timeout_ms": 60000
+  },
+  "schema": 1,
+  "stages": {
+    "16": {
+      "failed": 0,
+      "passed": 128,
+      "total": 128
+    }
+  },
+  "total": 128
+}

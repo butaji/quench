@@ -1,0 +1,429 @@
+{
+  "schema": 2,
+  "checkpoint": {
+    "schema": 2,
+    "created_unix_ns": 1791788145864994000,
+    "updated_unix_ns": 1791788343528965000,
+    "change_kind": "layout",
+    "minimum_clean_pairs": 7,
+    "top_up_rounds": 7,
+    "maximum_top_up_batches_per_fixture": 2,
+    "instruction_aa_band_percent": 0.14,
+    "maximum_rss_increase_percent": 0.5,
+    "measurement_runner": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109/quench-bench",
+      "sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109"
+    },
+    "baseline": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/8432da1159e301d021c236148a4f4a13e5f1b8de40fb87893fb54a2ebf5795dd/quench-node",
+      "sha256": "8432da1159e301d021c236148a4f4a13e5f1b8de40fb87893fb54a2ebf5795dd"
+    },
+    "candidate": {
+      "path": "/Users/admin/Code/GitHub/quench-v2/target/pinned/afde285b7f8dff56da12f44eb915034b0599d7aec95a2ff39d55ae18a8d7c4cf/quench-node",
+      "sha256": "afde285b7f8dff56da12f44eb915034b0599d7aec95a2ff39d55ae18a8d7c4cf"
+    },
+    "timeout_ms": 300000,
+    "source_revision": "597dd55d41a79584e73d8965a16d5243a784349b",
+    "source_dirty": true,
+    "corpus": {
+      "checkout_clean": true,
+      "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+      "fixture_set_matches": true,
+      "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b"
+    },
+    "suite_inputs": [
+      {
+        "modified_unix_ns": 1791399842589165942,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+        "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+        "size_bytes": 9351
+      },
+      {
+        "modified_unix_ns": 1791399842589772400,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+        "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+        "size_bytes": 48043
+      },
+      {
+        "modified_unix_ns": 1791399842589978359,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+        "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+        "size_bytes": 25653
+      },
+      {
+        "modified_unix_ns": 1791399842590910109,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+        "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+        "size_bytes": 195205
+      },
+      {
+        "modified_unix_ns": 1791399842591090359,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+        "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+        "size_bytes": 12690
+      },
+      {
+        "modified_unix_ns": 1791399842591280317,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+        "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+        "size_bytes": 27996
+      },
+      {
+        "modified_unix_ns": 1791399842592027317,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+        "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+        "size_bytes": 111299
+      },
+      {
+        "modified_unix_ns": 1791399842592243692,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+        "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+        "size_bytes": 15776
+      },
+      {
+        "modified_unix_ns": 1791399842592552609,
+        "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+        "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+        "size_bytes": 10746
+      }
+    ],
+    "initial_report": {
+      "path": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-schema5-initial-1.json",
+      "sha256": "0eedfd30653848e12c74eec74056b2ec49376819fcb3b670f4b08307676a1dec"
+    },
+    "top_up_batches": [
+      {
+        "fixture": "crypto.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/crypto.js-batch-1.json",
+        "state": "planned",
+        "report_sha256": null,
+        "runner_exit_code": 2
+      },
+      {
+        "fixture": "crypto.js",
+        "ordinal": 2,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/crypto.js-batch-2.json",
+        "state": "complete",
+        "report_sha256": "b1d6056d617fc5e72903a6ed4e58b8a34e520318bdcd7bf191f53ba3ae7934d3",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "deltablue.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/deltablue.js-batch-1.json",
+        "state": "complete",
+        "report_sha256": "8ef8d16838d5fe0d57a6e1d05e998891e5dfe1752ee39b470996ba7f5467d6e3",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "earley-boyer.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/earley-boyer.js-batch-1.json",
+        "state": "complete",
+        "report_sha256": "6a3109d981af8d78827bae307ca42e067997d2595f3eadef7e4be69faa73f98e",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "navier-stokes.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/navier-stokes.js-batch-1.json",
+        "state": "complete",
+        "report_sha256": "29173154a702991196eba0be574c2f1b57cfdefc64b67748b5e813dfbf384af5",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "raytrace.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/raytrace.js-batch-1.json",
+        "state": "complete",
+        "report_sha256": "822493c25c6060656ef29e4e24c071ab80b70e2127ce3910b2e6de2534ca43bb",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "regexp.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/regexp.js-batch-1.json",
+        "state": "complete",
+        "report_sha256": "4776440fd062bfad46245f52d94d333fdc47d1162a9dc204e58540c50f2d62a1",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "richards.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/richards.js-batch-1.json",
+        "state": "complete",
+        "report_sha256": "10fb6b7503fdfb04bf82e4d98b06cb7d8a9cf9653f0c5f2172d4e9fdb0d4b34a",
+        "runner_exit_code": 0
+      },
+      {
+        "fixture": "splay.js",
+        "ordinal": 1,
+        "rounds": 7,
+        "report": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/splay.js-batch-1.json",
+        "state": "complete",
+        "report_sha256": "362d1691c8c8c2d6bccf6017000fef8baa1127c0342b3368d54205b618458158",
+        "runner_exit_code": 0
+      }
+    ]
+  },
+  "reports": [
+    {
+      "path": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-schema5-initial-1.json",
+      "sha256": "0eedfd30653848e12c74eec74056b2ec49376819fcb3b670f4b08307676a1dec"
+    },
+    {
+      "path": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/crypto.js-batch-2.json",
+      "sha256": "b1d6056d617fc5e72903a6ed4e58b8a34e520318bdcd7bf191f53ba3ae7934d3"
+    },
+    {
+      "path": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/deltablue.js-batch-1.json",
+      "sha256": "8ef8d16838d5fe0d57a6e1d05e998891e5dfe1752ee39b470996ba7f5467d6e3"
+    },
+    {
+      "path": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/earley-boyer.js-batch-1.json",
+      "sha256": "6a3109d981af8d78827bae307ca42e067997d2595f3eadef7e4be69faa73f98e"
+    },
+    {
+      "path": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/navier-stokes.js-batch-1.json",
+      "sha256": "29173154a702991196eba0be574c2f1b57cfdefc64b67748b5e813dfbf384af5"
+    },
+    {
+      "path": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/raytrace.js-batch-1.json",
+      "sha256": "822493c25c6060656ef29e4e24c071ab80b70e2127ce3910b2e6de2534ca43bb"
+    },
+    {
+      "path": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/regexp.js-batch-1.json",
+      "sha256": "4776440fd062bfad46245f52d94d333fdc47d1162a9dc204e58540c50f2d62a1"
+    },
+    {
+      "path": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/richards.js-batch-1.json",
+      "sha256": "10fb6b7503fdfb04bf82e4d98b06cb7d8a9cf9653f0c5f2172d4e9fdb0d4b34a"
+    },
+    {
+      "path": "/private/tmp/quench-task61-record-trunk-fixed/evidence/task61-splay-record-trunk-fixed-m4-2026-10-12/all-eight-ab-guard-topups/splay.js-batch-1.json",
+      "sha256": "362d1691c8c8c2d6bccf6017000fef8baa1127c0342b3368d54205b618458158"
+    }
+  ],
+  "fixtures": {
+    "crypto.js": {
+      "clean_pairs": 7,
+      "valid_pairs": 8,
+      "cycles": {
+        "median_percent": 0.10205518255788082,
+        "interval_95_percent": [
+          -1.624967947985101,
+          0.8773409537274679
+        ],
+        "samples": 7,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -0.631835560991989,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.9415519931905203,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "deltablue.js": {
+      "clean_pairs": 7,
+      "valid_pairs": 8,
+      "cycles": {
+        "median_percent": -7.257739263272278,
+        "interval_95_percent": [
+          -7.486876345743743,
+          -6.807724478360566
+        ],
+        "samples": 7,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -8.124198433779672,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -3.3543513687263604,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "earley-boyer.js": {
+      "clean_pairs": 7,
+      "valid_pairs": 8,
+      "cycles": {
+        "median_percent": -1.1873632700084458,
+        "interval_95_percent": [
+          -1.5669105635959912,
+          -0.9435452161652869
+        ],
+        "samples": 7,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -2.1066150160037713,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -9.831324043219025,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "navier-stokes.js": {
+      "clean_pairs": 7,
+      "valid_pairs": 8,
+      "cycles": {
+        "median_percent": -0.9653761264568184,
+        "interval_95_percent": [
+          -1.8976627120638079,
+          -0.6294266248126124
+        ],
+        "samples": 7,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -0.6084027891773314,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -0.9327332422200185,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "raytrace.js": {
+      "clean_pairs": 7,
+      "valid_pairs": 8,
+      "cycles": {
+        "median_percent": -4.039548476318256,
+        "interval_95_percent": [
+          -4.672628505962962,
+          -3.821716739230374
+        ],
+        "samples": 7,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -4.020673042656814,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -4.207277097902102,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "regexp.js": {
+      "clean_pairs": 7,
+      "valid_pairs": 8,
+      "cycles": {
+        "median_percent": 1.4196992428486377,
+        "interval_95_percent": [
+          0.7775880753014386,
+          4.344615632760607
+        ],
+        "samples": 7,
+        "status": "regression"
+      },
+      "instructions": {
+        "median_percent": 0.761833876763407,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "over_budget"
+      },
+      "max_rss": {
+        "median_percent": -3.273042910558488,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "classification": "regression"
+    },
+    "richards.js": {
+      "clean_pairs": 7,
+      "valid_pairs": 8,
+      "cycles": {
+        "median_percent": -1.0379202663778897,
+        "interval_95_percent": [
+          -1.3378009887759945,
+          0.054996354511693823
+        ],
+        "samples": 7,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -0.6516063891745749,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -3.160818815941674,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    },
+    "splay.js": {
+      "clean_pairs": 7,
+      "valid_pairs": 8,
+      "cycles": {
+        "median_percent": -6.858193444374017,
+        "interval_95_percent": [
+          -7.055358107552601,
+          -6.258817325210176
+        ],
+        "samples": 7,
+        "status": "no_detected_regression"
+      },
+      "instructions": {
+        "median_percent": -4.643035692293285,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "max_rss": {
+        "median_percent": -24.60942749497316,
+        "interval_95_percent": null,
+        "samples": 8,
+        "status": "within_budget"
+      },
+      "classification": "cycles"
+    }
+  },
+  "pending_fixtures": [],
+  "all_fixtures_classified": true,
+  "overall": "rejected"
+}

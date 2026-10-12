@@ -68,6 +68,7 @@ impl CallContext {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Continuation {
     pub context: CallContext,
+    pub reflected_parameters: u16,
     pub original_arguments: Vec<Value>,
     pub program: ProgramId,
     pub function: u32,
@@ -142,6 +143,7 @@ impl Continuation {
     ) -> Self {
         Self {
             context: std::mem::replace(&mut frame.context, CallContext::Internal),
+            reflected_parameters: std::mem::take(&mut frame.reflected_parameters),
             original_arguments: std::mem::take(&mut frame.original_arguments),
             program: frame.program,
             function: frame.function,
@@ -163,6 +165,7 @@ impl Continuation {
     pub(super) fn into_frame(self, with_base: usize) -> super::Frame {
         super::Frame {
             context: self.context,
+            reflected_parameters: self.reflected_parameters,
             original_arguments: self.original_arguments,
             program: self.program,
             function: self.function,
@@ -211,6 +214,7 @@ mod tests {
     fn continuation_roots_include_frame_and_completion_values() {
         let continuation = Continuation {
             context: CallContext::Function(Value::heap(9)),
+            reflected_parameters: 0,
             original_arguments: vec![Value::heap(10)],
             program: ProgramId::MAIN,
             function: 3,

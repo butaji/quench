@@ -1,0 +1,79 @@
+{
+  "experiment": "EarleyBoyer LoadConst -> Return direct-return fusion",
+  "baseline_sha256": "e46537823eb25a37cf5646af793e6873ceaeff1069fb878a96813cae3a86ab32",
+  "candidate_sha256": "b5e48540e41d50373cca5e2c5988f9d140ef1f6d24ceb48a286e1e894addd9e7",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "node_oracle_sha256": "2d34d3a74fd1f8c4cbb975be8bbf3d89804a8d9ceba12c5847ef4171f10ada4e",
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 413.0,
+      "candidate_score": 424.0,
+      "score_delta": 11.0,
+      "baseline_rss_bytes": 41783296,
+      "candidate_rss_bytes": 41455616,
+      "rss_delta_bytes": -327680,
+      "baseline_wall_ns": 22555839017,
+      "candidate_wall_ns": 21907843628
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 422.0,
+      "candidate_score": 419.0,
+      "score_delta": -3.0,
+      "baseline_rss_bytes": 41717760,
+      "candidate_rss_bytes": 41705472,
+      "rss_delta_bytes": -12288,
+      "baseline_wall_ns": 22091969693,
+      "candidate_wall_ns": 22072634864
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 415.0,
+      "candidate_score": 418.0,
+      "score_delta": 3.0,
+      "baseline_rss_bytes": 41705472,
+      "candidate_rss_bytes": 41824256,
+      "rss_delta_bytes": 118784,
+      "baseline_wall_ns": 22096546443,
+      "candidate_wall_ns": 22132825900
+    }
+  ],
+  "rounds": 3,
+  "bootstrap_replicates": 100000,
+  "baseline_score_median": 415.0,
+  "candidate_score_median": 419.0,
+  "score_delta_median": 3.0,
+  "score_delta_95_ci": [
+    -3.0,
+    11.0
+  ],
+  "baseline_maximum_rss_median_bytes": 41717760,
+  "candidate_maximum_rss_median_bytes": 41705472,
+  "maximum_rss_delta_median_bytes": -12288,
+  "maximum_rss_delta_95_ci_bytes": [
+    -327680,
+    118784
+  ],
+  "valid": true,
+  "output_equal": true,
+  "qualification_ready": false
+}
