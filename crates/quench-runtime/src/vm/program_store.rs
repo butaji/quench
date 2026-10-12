@@ -370,12 +370,16 @@ impl ProgramStore {
         &self,
         id: ProgramId,
         function: u32,
-        derive: impl FnOnce(&crate::bytecode::Function, &[Value]) -> super::dispatch_fast::LaneView,
+        derive: impl FnOnce(
+            &crate::bytecode::Function,
+            &[Value],
+            crate::bytecode::ProgramKind,
+        ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
         let entry = self.programs.get(id.index())?;
         let code = entry.residual.functions.get(function as usize)?;
         let view = entry.lane_views.get(function as usize)?;
-        Some(view.get_or_init(|| derive(code, &entry.constants)))
+        Some(view.get_or_init(|| derive(code, &entry.constants, entry.residual.kind)))
     }
 
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
