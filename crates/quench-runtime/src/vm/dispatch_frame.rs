@@ -1121,7 +1121,19 @@ impl<H: Host> Vm<H> {
             // for every iteration that dispatches it.
             debug_assert!(std::ptr::eq(published_pc, &self.frames[frame].pc));
             unsafe { *published_pc = instruction_pc };
-            match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
+            // Returns and inline calls produce their step result here rather than through the
+            // general `step` dispatch.
+            let step = match ins.op() {
+                Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
+                Op::Call if allow_inline_calls => {
+                    match self.try_inline_user_call(p, frame, ins, pc) {
+                        Some(result) => result,
+                        None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                    }
+                }
+                _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+            };
+            match step {
                 Ok(StepResult::Return(value)) => {
                     if let Some(pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);

@@ -43,6 +43,69 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Starts a plain `Call` of a same-realm, same-program user function as an activation of
+    /// the running dispatch loop, or returns `None` to leave the instruction to `step`. Such a
+    /// call involves no direct eval (its callee is not the eval intrinsic) and neither eval mode
+    /// is set before it, so the frame push leaves both untouched.
+    #[inline(always)]
+    pub(super) fn try_inline_user_call(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: WideInstruction,
+        pc: usize,
+    ) -> Option<Result<StepResult, JsError>> {
+        // Compilation flags every call that falls into a return of its result.
+        if i.op() != Op::Call
+            || self.direct_eval
+            || self.parameter_eval
+            || i.returns_from_frame()
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || f + 1 != self.frames.len()
+            || self.frames[f].function == super::ROOT_FUNCTION_ID
+        {
+            return None;
+        }
+        let callee = self.read(f, i.register_b());
+        let (program_id, id, env) = self.same_realm_user_target(callee)?;
+        if id == super::ROOT_FUNCTION_ID
+            || program_id != self.active_program
+            || !p.functions.get(id as usize).is_some_and(|function| {
+                !function.is_async
+                    && !function.is_generator
+                    && !function.is_class_constructor
+                    && !function.derived_constructor
+                    && !function.class_field_initializer
+                    && !function.parameter_eval_arguments_error
+            })
+        {
+            return None;
+        }
+        self.profile.call_source(0);
+        let window = i.call_window();
+        let this = self.read(f, i.register_c());
+        self.frames[f].pc = pc;
+        self.profile.call_target(1, usize::from(window.count));
+        // Collection happens only at back edges, tail calls and explicit host safepoints, none
+        // of which can run while a frame is pushed; afterwards the new frame itself roots the
+        // callee, receiver and arguments.
+        let arguments: *const [Value] = self.register_window(f, window);
+        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+        let call_guard = self.push_general_user_frame(
+            p,
+            id,
+            env,
+            this,
+            unsafe { &*arguments },
+            CallContext::user_function(id, callee),
+        );
+        Some(call_guard.map(|call_guard| StepResult::PushFrame {
+            destination: i.result_register(),
+            call_guard,
+            construct_this: None,
+        }))
+    }
+
     #[inline(always)]
     pub(super) fn step(
         &mut self,
@@ -1538,7 +1601,6 @@ impl<H: Host> Vm<H> {
                 let callee = self.read(f, i.register_b());
                 let caller = &mut *self.frames[f];
                 caller.pc = *pc;
-                let caller_function = caller.function;
                 debug_assert_eq!(caller.program, self.active_program);
                 let direct_eval = i.direct_eval()
                     && matches!(
@@ -1562,51 +1624,9 @@ impl<H: Host> Vm<H> {
                 let previous_parameter_eval = self.parameter_eval;
                 let previous_this = (direct_eval && !this.is_undefined())
                     .then(|| std::mem::replace(&mut self.frames[f].this, this));
+                // The dispatch loop offers every plain call to `try_inline_user_call` first.
                 // Compilation flags every call that falls into a return of its result.
                 let terminal = i.returns_from_frame();
-                if allow_inline_calls
-                    && i.op() == Op::Call
-                    && !direct_eval
-                    && !previous_direct_eval
-                    && !previous_parameter_eval
-                    && !terminal
-                    && p.kind != crate::bytecode::ProgramKind::Wasm
-                    && f + 1 == self.frames.len()
-                    && caller_function != super::ROOT_FUNCTION_ID
-                    && let Some((program_id, id, env)) = self.same_realm_user_target(callee)
-                    && id != super::ROOT_FUNCTION_ID
-                    && program_id == self.active_program
-                    && p.functions.get(id as usize).is_some_and(|function| {
-                        !function.is_async
-                            && !function.is_generator
-                            && !function.is_class_constructor
-                            && !function.derived_constructor
-                            && !function.class_field_initializer
-                            && !function.parameter_eval_arguments_error
-                    })
-                {
-                    // Neither eval mode is set before or by this call, so the frame push leaves
-                    // both untouched.
-                    self.profile.call_target(1, usize::from(window.count));
-                    // Collection happens only at back edges, tail calls and explicit host
-                    // safepoints, none of which can run while a frame is pushed; afterwards the
-                    // new frame itself roots the callee, receiver and arguments.
-                    let arguments: *const [Value] = self.register_window(f, window);
-                    // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-                    let call_guard = self.push_general_user_frame(
-                        p,
-                        id,
-                        env,
-                        this,
-                        unsafe { &*arguments },
-                        CallContext::user_function(id, callee),
-                    )?;
-                    return Ok(StepResult::PushFrame {
-                        destination: i.result_register(),
-                        call_guard,
-                        construct_this: None,
-                    });
-                }
                 self.direct_eval = direct_eval;
                 self.parameter_eval = parameter_eval;
                 let arguments = spread_arguments
