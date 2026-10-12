@@ -156,6 +156,17 @@ through the shared VM's canonical integrity operation. On Unix,
 image owning the host implementation; it does not infer linkage from fixture
 names or a build environment. Non-Unix retains the previous linkage fact.
 
+Child process handles keep separate open/closing/closed phases and one
+reference flag. Public ref/unref methods observe the handle guard and method
+lookup, including the repeated getter, and return undefined. Native handle
+methods validate their receiver identity. Process exit starts closure;
+close dispatch and handle closure are distinct transitions. Captured hasRef
+remains observable during closing and returns undefined after release.
+Referenced process handles, pipe demand/ownership and parent IPC channels
+contribute independently to loop liveness. The current handle adapter covers
+reference ownership; complete ProcessWrap construction/spawn/close methods and
+internal channel ref-count semantics remain separate work.
+
 ## TLS material validation
 
 Secure-context CRL and PKCS12 checks use native OpenSSL parsers. CRLs use

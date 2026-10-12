@@ -67,6 +67,14 @@ struct Progress {
 }
 
 impl IpcChannel {
+    pub(crate) fn parent_has_work(&self) -> bool {
+        !self.closed()
+            && (!self.writes.is_empty()
+                || !self.completed.is_empty()
+                || matches!(self.phase, Phase::Disconnecting(_))
+                || self.reference.unwrap_or(true))
+    }
+
     #[cfg(unix)]
     pub(crate) fn new(socket: std::os::unix::net::UnixStream) -> Self {
         Self {
