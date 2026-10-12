@@ -1599,10 +1599,21 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.builder.ins().jump(block, &[]);
     }
 
+    /// A loop latch (a branch whose taken target lies behind its
+    /// fallthrough) leaves the loop through a block of its own, so values
+    /// only the exit passes (merge arguments) are computed after the loop,
+    /// not on every iteration. The back edge stays direct.
     fn branch(&mut self, condition: ir::Value, target: usize, fallthrough: usize) {
         let taken = self.edge(target);
         let next = self.edge(fallthrough);
-        self.builder.ins().brif(condition, taken, &[], next, &[]);
+        if target >= fallthrough {
+            self.builder.ins().brif(condition, taken, &[], next, &[]);
+            return;
+        }
+        let exit = self.builder.create_block();
+        self.builder.ins().brif(condition, taken, &[], exit, &[]);
+        self.builder.switch_to_block(exit);
+        self.builder.ins().jump(next, &[]);
     }
 
     /// The block a jump from here to `target` enters: a threaded copy when
