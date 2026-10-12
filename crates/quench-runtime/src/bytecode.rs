@@ -983,6 +983,8 @@ pub struct Function {
     pub(crate) activation_bindings: std::cell::OnceCell<bool>,
     /// Lazily derived `reflects_live_parameters`; never serialized.
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
+    /// Lazily derived `plain_activation`; never serialized.
+    pub(crate) plain_activation: std::cell::OnceCell<bool>,
     pub(crate) handlers: Vec<Handler>,
     pub(crate) register_root_offset: u32,
     /// A register that holds `undefined` for the whole activation, set at frame entry and
@@ -1042,20 +1044,6 @@ impl Function {
 
     /// Whether the instruction at `pc` returns `register`. A call is in tail position only
     /// when the instruction after it returns that call's own result.
-    /// Whether the instruction at `pc` returns `register`. Only a wide predecessor can fall into
-    /// such a `Return` without carrying the return flag itself; see
-    /// `return_through_shared_returns`.
-    pub(crate) fn returns_register_at(&self, pc: usize, register: Register) -> bool {
-        !self.wide.is_empty() && self.code.get(pc).is_some_and(|packed| {
-            let next = if packed.is_wide() {
-                self.wide[packed.wide_index()]
-            } else {
-                packed.as_wide()
-            };
-            next.op() == Op::Return && next.register_a() == register
-        })
-    }
-
     pub(crate) fn has_restricted_legacy_caller_access(&self) -> bool {
         self.strict || !self.constructible || self.is_class_constructor
     }
@@ -1252,6 +1240,35 @@ impl Function {
                             .iter()
                             .any(|entry| entry.local == parameter)
                 })
+        })
+    }
+
+    /// Whether an activation is fully described by the function's static layout: a nested,
+    /// non-arrow, non-derived function whose parameters all live in registers, with no rest
+    /// array, self binding, `arguments` object, parameter-scope `arguments` error, inherited
+    /// `with` scope, observable implicit bindings, or register file that must start cleared.
+    /// Such a frame needs only its storage sized, its parameters placed and its scalar state
+    /// set; see `activate_plain_frame`.
+    pub(crate) fn plain_activation(&self, atoms: &AtomTable) -> bool {
+        *self.plain_activation.get_or_init(|| {
+            let promoted_parameters = self
+                .local_registers
+                .iter()
+                .filter(|entry| entry.local < self.params)
+                .count();
+            self.parent.is_some()
+                && !self.is_arrow
+                && !self.derived_constructor
+                && !self.rest
+                && self.self_binding_slot.is_none()
+                && self.arguments_slot.is_none()
+                && !self.parameter_eval_arguments_error
+                && !self.inherited_with_scope
+                && !self.is_generator
+                && !self.is_async
+                && self.register_root_offset != NO_REGISTER_ROOT_MAP
+                && promoted_parameters == usize::from(self.params)
+                && !self.activation_bindings_observable(atoms)
         })
     }
 

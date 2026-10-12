@@ -319,7 +319,77 @@ impl<H: Host> Vm<H> {
     }
 
     /// Binds a user function's activation and pushes it on the frame stack, returning its index.
+    #[inline(always)]
     fn activate_user_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        parent: Value,
+        this: Value,
+        args: &[Value],
+        context: CallContext,
+    ) -> Result<usize, JsError> {
+        let function = &p.functions[id as usize];
+        if id != super::ROOT_FUNCTION_ID && function.plain_activation(&p.atoms) {
+            self.activate_plain_frame(p, id, function, parent, this, args, context)
+        } else {
+            self.activate_general_frame(p, id, parent, this, args, context)
+        }
+    }
+
+    /// `activate_user_frame` for a function whose static layout describes its whole
+    /// activation (`Function::plain_activation`): every local starts undefined because every
+    /// parameter lives in a register, `this` is the coerced receiver, and no implicit binding,
+    /// rest array or `arguments` object exists.
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn activate_plain_frame(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        function: &crate::bytecode::Function,
+        parent: Value,
+        this: Value,
+        args: &[Value],
+        context: CallContext,
+    ) -> Result<usize, JsError> {
+        self.profile
+            .function(self.active_program.raw(), id as usize);
+        let this = self.call_this_value(this, function.strict)?;
+        let mut frame = self.pooled_frame();
+        frame.locals.clear();
+        frame
+            .locals
+            .resize(usize::from(function.locals), Value::UNDEFINED);
+        self.initialize_frame_invocation(&p.atoms, &mut frame, function, context, args);
+        frame.function = id;
+        frame.program = self.active_program;
+        frame.pc = 0;
+        frame.binding_site_pc = None;
+        frame.env = parent;
+        frame.this = this;
+        frame.fixed_this = !this.is_deleted();
+        frame.captured = false;
+        frame.with_base = self.with_stack.len();
+        if self.with_scope_entered {
+            self.with_stack
+                .extend(self.captured_with_objects_for_function(parent, function, p.kind));
+        }
+        // A `new.target` set for this activation has no observable binding to land in.
+        self.construct_target = None;
+        frame.prepare_registers_for(function);
+        frame.initialize_promoted_registers(function, args);
+        self.frames.push(frame);
+        Ok(self.frames.len() - 1)
+    }
+
+    /// A frame from the pool, or a fresh one; its fields are set by activation.
+    pub(super) fn pooled_frame(&mut self) -> Box<Frame> {
+        self.frame_pool.pop().unwrap_or_else(|| self.empty_frame())
+    }
+
+    #[inline(never)]
+    fn activate_general_frame(
         &mut self,
         p: &ResidualProgram,
         id: u32,
@@ -336,7 +406,7 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let mut frame = self.frame_pool.pop().unwrap_or_else(|| self.empty_frame());
+        let mut frame = self.pooled_frame();
         self.bind_activation_arguments(&p.atoms, &mut frame, function, context, args)?;
         frame.function = id;
         frame.program = self.active_program;
@@ -417,7 +487,7 @@ impl<H: Host> Vm<H> {
                 .expect_err("syntax_error_result must throw"));
         }
         let function = &p.functions[id as usize];
-        let placeholder = self.frame_pool.pop().unwrap_or_else(|| self.empty_frame());
+        let placeholder = self.pooled_frame();
         let old = std::mem::replace(&mut self.frames[frame_index], placeholder);
         self.with_stack.truncate(old.with_base);
         let mut frame = old;
@@ -898,11 +968,13 @@ impl<H: Host> Vm<H> {
         self.frame_pool.push(frame);
     }
 
+    /// Empties a finished frame's appendable buffers and drops its callee for reuse, bounding
+    /// what the buffers retain. Every activation sets legacy argument reflection and
+    /// `fixed_this` itself.
     pub(super) fn recycle_frame(frame: &mut Frame) {
         frame.context = CallContext::Internal;
-        frame.reflected_parameters = 0;
         frame.original_arguments.clear();
-        frame.with_objects = Vec::new();
+        frame.with_objects.clear();
         const RETAINED_VALUES: usize = RETAINED_FRAME_VALUES;
         if frame.original_arguments.capacity() > RETAINED_VALUES {
             frame.original_arguments.shrink_to(RETAINED_VALUES);
@@ -922,7 +994,6 @@ impl<H: Host> Vm<H> {
             frame.dynamic_bindings.clear();
         }
         frame.active_iterators.clear();
-        frame.fixed_this = false;
     }
 
     pub(super) fn run_frame_general(

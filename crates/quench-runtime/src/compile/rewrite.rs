@@ -283,31 +283,38 @@ fn coalesce_distant_producer_moves(
     changed
 }
 
-/// Lets a packed producer whose fallthrough successor returns its result return directly,
-/// including when that `Return` is a jump target, the case `ReturnResult` cannot fuse; the
-/// `Return` stays for its other predecessors. A `Return` on a region boundary is left alone:
-/// returning on its other side would cross a handler. Run on every function, so outside the
-/// wide-instruction table each producer that falls into a `Return` of its result carries the
-/// flag and dispatch needs no look-ahead to recognize a terminal call.
+/// Lets a producer whose fallthrough successor returns its result return directly, including
+/// when that `Return` is a jump target, the case `ReturnResult` cannot fuse; the `Return` stays
+/// for its other predecessors. A `Return` on a handler or parameter-region boundary is left
+/// alone: returning on its other side would cross the region. A binding site's resume PC only
+/// projects the preceding call's lexical scope, so it does not block the flag. Run on every
+/// function, so each producer that falls into a `Return` of its result carries the flag and
+/// dispatch needs no look-ahead for terminal calls.
 pub(super) fn return_through_shared_returns(function: &mut BcFunction) {
     let boundaries = region_boundaries(
         function.code.len(),
         &function.handlers,
         function.parameter_end_pc,
-        &function.binding_sites,
+        &[],
     );
-    for pc in 1..function.code.len() {
-        let (producer, next) = (function.code[pc - 1], function.code[pc]);
-        if !boundaries[pc]
-            && !producer.is_wide()
-            && next.op() == Op::Return
-            && fuses(producer.op(), Op::Return, |recipe| {
+    let decoded = function.instructions().collect::<Vec<_>>();
+    for pc in 1..decoded.len() {
+        let (producer, next) = (decoded[pc - 1], decoded[pc]);
+        if boundaries[pc]
+            || next.op() != Op::Return
+            || !fuses(producer.op(), Op::Return, |recipe| {
                 matches!(recipe, Recipe::ReturnResult)
             })
-            && producer.result_flags() == 0
-            && producer.result_register() == next.register_a()
+            || producer.result_flags() != 0
+            || producer.result_register() != next.register_a()
         {
-            function.code[pc - 1].set_returns_from_frame();
+            continue;
+        }
+        let packed = &mut function.code[pc - 1];
+        if packed.is_wide() {
+            function.wide[packed.wide_index()].set_returns_from_frame();
+        } else {
+            packed.set_returns_from_frame();
         }
     }
 }
