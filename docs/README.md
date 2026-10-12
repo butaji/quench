@@ -529,8 +529,16 @@ for module in KERNELS...; do for mode in no-jit jit; do
     target/production/coremark -$mode $module
 done; done
 target/production/symbol-order target/production/coremark \
-  crates/quench-wasm-test/link/x86_64-linux.order train/*.out
+  crates/quench-wasm-test/link/x86_64-linux.order \
+  train/coremark-no-jit.out train/coremark-jit.out \
+  train/KERNEL-no-jit.out... train/KERNEL-jit.out...
 ```
+
+Profiles go in priority order. Functions are laid out in first-appearance
+order, so the first profile's run touches one contiguous region and later
+profiles add only what earlier ones did not execute. With a compiled-mode
+profile first, the interpreter's functions interleave with the compiler's and
+fault-around makes the whole span resident (CoreMark `-no-jit`: 5.2 -> 6.1 MB).
 
 Measure peak RSS with a launcher whose own image is small (`vfork`, `exec`,
 `wait4`): a forked interpreter's pre-`exec` image counts toward the child's
