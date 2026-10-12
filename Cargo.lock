@@ -1541,10 +1541,12 @@ dependencies = [
  "crc32fast",
  "encoding_rs",
  "flate2",
+ "foreign-types",
  "hex",
  "idna",
  "libc",
  "openssl",
+ "openssl-sys",
  "oxc_resolver",
  "quench-js-check",
  "quench-runtime",
@@ -1562,6 +1564,7 @@ name = "quench-node-test"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "openssl",
  "quench-node",
  "serde",
  "serde_json",

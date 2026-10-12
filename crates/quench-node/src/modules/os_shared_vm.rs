@@ -31,6 +31,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "devNull",
         if cfg!(windows) { "\\.\\nul" } else { "/dev/null" },
     )?;
+    #[cfg(target_os = "linux")]
+    {
+        let constants = context.null_object_rooted()?;
+        let signals = signal_constants(context)?;
+        set(context, constants, "signals", signals)?;
+        set(context, module, "constants", constants)?;
+    }
     Ok(module)
 }
 
@@ -196,4 +203,20 @@ fn set_number(
 ) -> Result<(), RootedError> {
     let value = context.number(value);
     set(context, object, name, value)
+}
+
+/// Public and captured-private projections derive from the OS signal owner.
+pub(crate) fn signal_constants(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
+    let signals = context.null_object_rooted()?;
+    for (name, number) in super::process_signals_state::SIGNALS {
+        let key = context.string_rooted(name);
+        let value = context.number(f64::from(*number));
+        context.define_data_property_rooted(signals, key, value, false, true, false)?;
+    }
+    if !context.prevent_extensions_rooted(signals)? {
+        return Err(RootedError::host("cannot seal OS signal constants"));
+    }
+    Ok(signals)
 }

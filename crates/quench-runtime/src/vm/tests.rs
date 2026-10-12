@@ -4084,10 +4084,18 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
             let error = vm.construct_error_native(&program, kind, &[]).unwrap();
             assert!(vm.error_is_error(error));
             let root = vm.heap.root(error);
+            assert!(matches!(
+                vm.embedding_builtin_data(root),
+                Ok(Some(crate::BuiltinData::Error))
+            ));
             let weak = vm.heap.weak_handle(error).unwrap();
             vm.collect_now(&program);
             let error = vm.heap.root_value(root).unwrap();
             assert!(vm.error_is_error(error));
+            assert!(matches!(
+                vm.embedding_builtin_data(root),
+                Ok(Some(crate::BuiltinData::Error))
+            ));
             let clone = vm
                 .heap
                 .alloc(super::Cell::Object(vm.object_data(error).unwrap().clone()));

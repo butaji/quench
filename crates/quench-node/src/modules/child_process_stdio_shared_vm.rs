@@ -72,6 +72,21 @@ pub(crate) fn normalize(
     context: &mut NativeContext<'_, NodeHost>,
     options: Option<RootId>,
 ) -> Result<Vec<Specification>, RootedError> {
+    normalize_for(context, options, false)
+}
+
+pub(crate) fn normalize_sync(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: Option<RootId>,
+) -> Result<Vec<Specification>, RootedError> {
+    normalize_for(context, options, true)
+}
+
+fn normalize_for(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: Option<RootId>,
+    synchronous: bool,
+) -> Result<Vec<Specification>, RootedError> {
     let mut result = vec![Specification::Pipe; STANDARD_CHANNELS];
     let Some(options) = options else {
         return Ok(result);
@@ -120,6 +135,13 @@ pub(crate) fn normalize(
             channel(context, item)?
         };
         if matches!(*specification, Specification::Ipc) {
+            if synchronous {
+                let error = context.error_rooted("IPC cannot be used with synchronous forks")?;
+                let key = context.string_rooted("code");
+                let code = context.string_rooted("ERR_IPC_SYNC_FORK");
+                context.define_data_property_rooted(error, key, code, true, true, true)?;
+                return Err(context.throw(error));
+            }
             if ipc {
                 let error = context.error_rooted("Child process can have only one IPC pipe")?;
                 let key = context.string_rooted("code");

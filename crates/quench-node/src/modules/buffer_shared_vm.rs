@@ -708,14 +708,23 @@ pub(crate) fn encode(
             "ERR_INVALID_ARG_TYPE",
         )?);
     };
-    let Some(input) = context.string_text(input)? else {
+    let bytes = encode_bytes(context, input, args.get(1).copied())?;
+    number_array(context, &bytes)
+}
+
+pub(crate) fn encode_bytes(
+    context: &mut NativeContext<'_, NodeHost>,
+    input: RootId,
+    requested_encoding: Option<RootId>,
+) -> Result<Vec<u8>, RootedError> {
+    let Some(input) = context.string_code_units(input)? else {
         return Err(type_error(
             context,
             "The \"string\" argument must be of type string",
             "ERR_INVALID_ARG_TYPE",
         )?);
     };
-    let encoding_name = encoding(context, args.get(1).copied())?;
+    let encoding_name = encoding(context, requested_encoding)?;
     let Some(encoding) = crate::modules::buffer_codec::canonical_encoding(&encoding_name) else {
         return Err(type_error(
             context,
@@ -723,8 +732,7 @@ pub(crate) fn encode(
             "ERR_UNKNOWN_ENCODING",
         )?);
     };
-    let bytes = crate::modules::buffer_codec::encode_str(&input, encoding);
-    number_array(context, &bytes)
+    Ok(crate::modules::buffer_codec::encode_units(&input, encoding))
 }
 
 pub(crate) fn decode(

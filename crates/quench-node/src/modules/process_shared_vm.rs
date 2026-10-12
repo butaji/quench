@@ -60,6 +60,15 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, process, name, function)?;
     }
+    #[cfg(unix)]
+    {
+        let function =
+            context.host_function(crate::host::shared_vm::operation("processGetgroups"))?;
+        let key = context.string_rooted("name");
+        let name = context.string_rooted("getgroups");
+        context.define_data_property_rooted(function, key, name, false, false, true)?;
+        install(context, process, "getgroups", function)?;
+    }
     let error_instance = context.evaluate_script_rooted(
         "((Error) => value => value instanceof Error)(Error)",
         "node:process/warning-instance.js",
@@ -85,12 +94,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install(context, process, "_kill", kill)?;
     #[cfg(target_os = "linux")]
     {
-        let signals = context.null_object_rooted()?;
-        for (name, number) in super::process_signals_state::SIGNALS {
-            let key = context.string_rooted(name);
-            let value = context.number(f64::from(*number));
-            context.define_data_property_rooted(signals, key, value, false, true, false)?;
-        }
+        let signals = super::os_shared_vm::signal_constants(context)?;
         let util = crate::host::shared_vm::commonjs::util_module(context)?;
         let key = context.string_rooted("inspect");
         let inspect = context.get_property_rooted(util, key)?;
@@ -368,6 +372,7 @@ fn fact_value(
     fact: ProcessFact,
 ) -> Result<RootId, RootedError> {
     match fact {
+        ProcessFact::SharedOpenSsl => Ok(context.boolean(process_state::shared_openssl())),
         ProcessFact::Boolean(value) => Ok(context.boolean(value)),
         ProcessFact::Number(value) => Ok(context.number(value)),
         ProcessFact::String(value) => Ok(context.string_rooted(value)),
@@ -620,20 +625,36 @@ pub(crate) fn stream_write(
     let Some(chunk) = args.first().copied() else {
         return invalid_stream_chunk(context);
     };
-    let text = context.to_string(chunk)?;
+    let bytes = if let Some(text) = context.string_text(chunk)? {
+        text.into_bytes()
+    } else if context
+        .has_builtin_brand_rooted(chunk, quench_runtime::BuiltinBrand::ArrayBufferView)?
+    {
+        context
+            .view_bytes_rooted(chunk)
+            .ok_or_else(|| RootedError::host("process stream byte view unavailable"))?
+    } else {
+        return Err(super::util_shared_vm::argument_type_error_with_expected(
+            context,
+            chunk,
+            "chunk",
+            "of type string or an instance of Buffer, TypedArray, or DataView",
+        )?);
+    };
     if fd == STDERR_FD {
         std::io::stderr()
             .lock()
-            .write_all(text.as_bytes())
+            .write_all(&bytes)
             .map_err(|error| RootedError::host(error.to_string()))?;
     } else {
         let output = context.host_mut().shared_state().borrow().output.clone();
         if let Some(output) = output {
-            output(&text);
+            // Preserve the embedding API's existing text-only sink contract.
+            output(&String::from_utf8_lossy(&bytes));
         } else {
             let mut stdout = std::io::stdout().lock();
             stdout
-                .write_all(text.as_bytes())
+                .write_all(&bytes)
                 .and_then(|()| stdout.flush())
                 .map_err(|error| RootedError::host(error.to_string()))?;
         }
@@ -2076,8 +2097,6 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
         || crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
         || crate::modules::http_shared_vm::has_work(shared_state)
-        || !shared_state.borrow().net_sockets.is_empty()
-        || !shared_state.borrow().net_servers.is_empty()
         || shared_state.borrow().scheduler.has_refed_shared_timers()
         || shared_state
             .borrow()
@@ -3726,4 +3745,48 @@ pub(crate) fn kill(
         return Err(throw_with_code(context, error, &code));
     }
     Ok(context.boolean(true))
+}
+
+pub(crate) fn getgroups(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    #[cfg(unix)]
+    {
+        let query = || {
+            let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+            if count < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let mut groups = vec![0 as libc::gid_t; count as usize];
+            let count = unsafe { libc::getgroups(count, groups.as_mut_ptr()) };
+            if count < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            groups.truncate(count as usize);
+            let effective = unsafe { libc::getegid() };
+            if !groups.contains(&effective) {
+                groups.push(effective);
+            }
+            Ok(groups)
+        };
+        match query() {
+            Ok(groups) => { let values = groups.into_iter().map(|group| context.number(f64::from(group))).collect::<Vec<_>>();context.array_rooted(&values) },
+            Err(error) => {
+                let errno = error.raw_os_error().unwrap_or(libc::EIO);
+                let code = super::util_system_error_shared_vm::system_error_name(-f64::from(errno));
+                let error = context.error_rooted(&format!("getgroups {code}"))?;
+                let number = context.number(-f64::from(errno));
+                install(context, error, "errno", number)?;
+                let code = context.string_rooted(&code);
+                install(context, error, "code", code)?;
+                let syscall = context.string_rooted("getgroups");
+                install(context, error, "syscall", syscall)?;
+                Err(context.throw(error))
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    context.array_rooted(&[])
 }
