@@ -2749,6 +2749,7 @@ impl<'a> Compiler<'a> {
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
+            plain_activation: Default::default(),
             handlers: function.handlers,
             register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
             undefined_register,

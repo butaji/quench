@@ -73,6 +73,11 @@ impl WideInstruction {
     pub(crate) fn set_imm(&mut self, imm: u32) {
         self.imm = imm;
     }
+
+    pub(crate) fn set_returns_from_frame(&mut self) {
+        debug_assert!(self.op().result_layout().allows_return());
+        self.a |= RETURN_REGISTER;
+    }
 }
 
 macro_rules! layout_accessors {
