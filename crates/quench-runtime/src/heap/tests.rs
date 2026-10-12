@@ -133,7 +133,10 @@ fn object_extras_keep_inline_values() {
     object.set_inline_property(1, Value::TRUE);
     let copy = object.clone();
     assert!(copy.is_raw_json());
-    assert_eq!(copy.inline_properties().copied(), Some([first, Value::TRUE]));
+    assert_eq!(
+        copy.inline_properties().copied(),
+        Some([first, Value::TRUE])
+    );
 }
 
 #[test]
@@ -311,8 +314,7 @@ fn finalization_registry_clears_dead_tokens_before_slot_reuse() {
 fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
     let mut heap = Heap::new();
     let array = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::new(Vec::new()),
+        object: crate::heap::ArrayObject::new(plain_object(), Rc::new(Vec::new())),
     });
     let slot = array.heap_index().unwrap();
     let index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
@@ -322,8 +324,7 @@ fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
     heap.collect([]);
 
     let reused = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::new(Vec::new()),
+        object: crate::heap::ArrayObject::new(plain_object(), Rc::new(Vec::new())),
     });
     assert_eq!(reused.heap_index(), Some(slot));
     assert_eq!(heap.sparse_get(reused, index), None);

@@ -125,23 +125,28 @@ fn sweep_run(context: &SweepContext<'_>, run: SlabRun<'_>) -> SweepShare {
                     // Nothing to drop: the object owns no allocation and no arena storage.
                     std::mem::forget(slot.cell.take());
                 }
-                Some(Cell::Array { object, elements })
+                Some(Cell::Array { object })
                     if object.owns_no_allocation()
                         && context.properties.release_is_noop(object.properties)
                         && context
                             .sparse_arrays
                             .is_none_or(|arrays| !arrays.contains_key(&(index as u32))) =>
                 {
+                    let elements = object.elements();
                     let unique = Rc::strong_count(elements) == 1 && Rc::weak_count(elements) == 0;
-                    let Some(Cell::Array { object, elements }) = slot.cell.take() else {
+                    let Some(Cell::Array { object }) = slot.cell.take() else {
                         unreachable!("matched an array above");
                     };
+                    let (object, elements) = object.into_parts();
                     std::mem::forget(object);
                     if unique {
                         // No other cell holds this backing, so no other thread touches it.
                         drop(elements);
                     } else {
-                        *share.shared_backings.entry(Rc::into_raw(elements)).or_default() += 1;
+                        *share
+                            .shared_backings
+                            .entry(Rc::into_raw(elements))
+                            .or_default() += 1;
                     }
                 }
                 Some(_) => {}

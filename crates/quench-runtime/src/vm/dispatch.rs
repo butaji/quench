@@ -449,8 +449,10 @@ impl<H: Host> Vm<H> {
             }
             Op::MakeArray => {
                 let v = self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                    elements: Rc::new(vec![Value::DELETED; i.array_length()]),
+                    object: crate::heap::ArrayObject::new(
+                        Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                        Rc::new(vec![Value::DELETED; i.array_length()]),
+                    ),
                 });
                 self.write(f, i.result_register(), v);
             }
@@ -464,8 +466,10 @@ impl<H: Host> Vm<H> {
                         JsError::validation("constant array is outside program".into())
                     })?;
                 let v = self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                    elements,
+                    object: crate::heap::ArrayObject::new(
+                        Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                        elements,
+                    ),
                 });
                 self.write(f, i.result_register(), v);
             }

@@ -530,8 +530,10 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
         self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-            elements: Rc::new(rest.to_vec()),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                Rc::new(rest.to_vec()),
+            ),
         })
     }
 
@@ -546,8 +548,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let mapped = function.arguments_are_mapped();
         let arguments = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.object_proto),
-            elements: Rc::new(args.to_vec()),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.object_proto),
+                Rc::new(args.to_vec()),
+            ),
         });
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
         if mapped {
@@ -580,7 +584,9 @@ impl<H: Host> Vm<H> {
         };
         frame.reflected_parameters = reflected as u16;
         if reflected < args.len() {
-            frame.original_arguments.extend_from_slice(&args[reflected..]);
+            frame
+                .original_arguments
+                .extend_from_slice(&args[reflected..]);
         }
     }
 
@@ -946,13 +952,8 @@ impl<H: Host> Vm<H> {
         let previous_global = self.realm.globals;
         // A nested loop leaves the caller's register file active again.
         let caller_registers = self.active_registers;
-        let outcome = self.run_general_loop::<STOPS>(
-            p,
-            frame,
-            stop_pc,
-            initial_error,
-            allow_inline_calls,
-        );
+        let outcome =
+            self.run_general_loop::<STOPS>(p, frame, stop_pc, initial_error, allow_inline_calls);
         self.active_registers = caller_registers;
         self.set_active_program(previous_program);
         self.realm.globals = previous_global;
@@ -1057,7 +1058,11 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 Op::Move => {
-                    self.write(frame, ins.result_register(), self.read(frame, ins.register_b()));
+                    self.write(
+                        frame,
+                        ins.result_register(),
+                        self.read(frame, ins.register_b()),
+                    );
                     continue;
                 }
                 Op::LoadConst => {
@@ -1093,8 +1098,11 @@ impl<H: Host> Vm<H> {
                         self.inert_operand(frame, ins.operand_c()),
                     ) && let Some(truthy) = self.number_comparison_truthy(operator, left, right)
                     {
-                        self.profile
-                            .binary(operator as usize, ins.operand_b().0, ins.operand_c().0);
+                        self.profile.binary(
+                            operator as usize,
+                            ins.operand_b().0,
+                            ins.operand_c().0,
+                        );
                         if !truthy {
                             pc = ins.jump_target() as usize;
                         }
@@ -1105,7 +1113,9 @@ impl<H: Host> Vm<H> {
                 Op::GetField
                     if ins.result_flags() == 0
                         && let Some(crate::bytecode::FieldLookup::Atom {
-                            base, cache_site, ..
+                            base,
+                            cache_site,
+                            ..
                         }) = ins.field_lookup()
                         && let Some(register) = base.register_index()
                         && let super::object::FieldCacheProbe::Hit(value) =
@@ -1179,8 +1189,7 @@ impl<H: Host> Vm<H> {
                     pc = self.frames[frame].pc;
                     let callee_program = self.frames[frame].program;
                     debug_assert_eq!(callee_program, executing_program);
-                    cursor =
-                        GeneralCodeCursor::new(callee_program, p, self.frames[frame].function);
+                    cursor = GeneralCodeCursor::new(callee_program, p, self.frames[frame].function);
                     published_pc = &mut self.frames[frame].pc;
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
                 }
@@ -1234,13 +1243,8 @@ impl<H: Host> Vm<H> {
                     let mut error = error;
                     loop {
                         let function = self.frames[frame].function as usize;
-                        match self.exception_handler_target(
-                            p,
-                            frame,
-                            function,
-                            throwing_pc,
-                            error,
-                        ) {
+                        match self.exception_handler_target(p, frame, function, throwing_pc, error)
+                        {
                             Ok(target) => {
                                 pc = target;
                                 break;
@@ -1257,7 +1261,8 @@ impl<H: Host> Vm<H> {
                                     pc = self.frames[frame].pc;
                                     cursor = pending.caller_cursor;
                                     published_pc = &mut self.frames[frame].pc;
-                                    self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                                    self.active_registers =
+                                        self.frames[frame].registers.as_mut_ptr();
                                     throwing_pc = pending.call_pc;
                                     drop(pending.call_guard);
                                     error = match result {
@@ -1348,10 +1353,12 @@ impl<H: Host> Vm<H> {
         f: usize,
         window: crate::bytecode::RegisterWindow,
     ) -> &[Value] {
-        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(std::ptr::eq(
+            self.active_registers,
+            self.frames[f].registers.as_ptr()
+        ));
         debug_assert!(
-            usize::from(window.base) + usize::from(window.count)
-                <= self.frames[f].registers.len()
+            usize::from(window.base) + usize::from(window.count) <= self.frames[f].registers.len()
         );
         // SAFETY: as for `read`: the window lies in frame `f`'s register file, which
         // `active_registers` names.
@@ -1380,7 +1387,10 @@ impl<H: Host> Vm<H> {
 
     #[inline(always)]
     pub(super) fn read(&self, f: usize, r: u16) -> Value {
-        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(std::ptr::eq(
+            self.active_registers,
+            self.frames[f].registers.as_ptr()
+        ));
         debug_assert!(usize::from(r) < self.frames[f].registers.len());
         // SAFETY: register access happens only while dispatching frame `f`, whose register file
         // `active_registers` names (see `run_general_loop`); compiler-issued registers are below
@@ -1390,7 +1400,10 @@ impl<H: Host> Vm<H> {
 
     #[inline(always)]
     pub(super) fn write(&mut self, f: usize, r: u16, v: Value) {
-        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(std::ptr::eq(
+            self.active_registers,
+            self.frames[f].registers.as_ptr()
+        ));
         debug_assert!(usize::from(r) < self.frames[f].registers.len());
         // SAFETY: same active-frame invariant as `read`; mutation stays here.
         unsafe { *self.active_registers.add(usize::from(r)) = v };

@@ -92,7 +92,12 @@ impl<H: Host> Vm<H> {
             }
             let array = self.object_own_keys(p, input)?;
             let keys = match self.heap.get(array) {
-                Some(Cell::Array { elements, .. }) => elements.as_ref().clone(),
+                Some(Cell::Array {
+                    object: array_object,
+                }) => {
+                    let elements = array_object.elements();
+                    elements.as_ref().clone()
+                }
                 _ => Vec::new(),
             };
             return Ok(AggregateInput::Keyed {
