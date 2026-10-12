@@ -702,7 +702,7 @@ pub(crate) fn once(
     Ok(target)
 }
 
-/// Ordinary events dispatch directly; the retained bridge owns legacy error/domain policy.
+/// Dispatch from the canonical store; domain forwarding preserves primitive errors.
 pub(crate) fn emit(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -722,8 +722,59 @@ pub(crate) fn emit(
         return emit_listeners(context, missing, &[target, event, arguments, record]);
     }
     let data = context.host_function_data()?;
+    let events = get(context, target, "_events")?;
+    if !undefined(context, events) {
+        let monitor_key = get(context, data, "monitorKey")?;
+        let monitor = context.get_property_rooted(events, monitor_key)?;
+        if !undefined(context, monitor) {
+            // Node dispatches through the public emit hook, including overrides.
+            let public_emit = get(context, target, "emit")?;
+            let mut values = vec![monitor_key];
+            values.extend(listener_arguments(context, arguments)?);
+            context.call_rooted(public_emit, target, &values)?;
+        }
+    }
+    let listeners = if undefined(context, events) {
+        missing
+    } else {
+        context.get_property_rooted(events, event)?
+    };
+    if undefined(context, listeners) {
+        let domain = get(context, target, "domain")?;
+        let has_domain = !context
+            .rooted_value(domain)
+            .is_some_and(|value| value.is_null() || value.is_undefined());
+        let process = context.host_mut().shared_state().borrow().process_module;
+        let is_process = if let Some(process) = process {
+            context.strict_equal_rooted(target, process)?
+        } else {
+            false
+        };
+        if has_domain && !is_process {
+            let values = listener_arguments(context, arguments)?;
+            let provided = values.first().copied().unwrap_or(missing);
+            let error = if context.truthy_rooted(provided)? {
+                provided
+            } else {
+                let error = context.error_rooted("Unhandled error.")?;
+                let code = context.string_rooted("ERR_UNHANDLED_ERROR");
+                super::event_constructor_shared_vm::named_set(context, data, error, "code", code)?;
+                error
+            };
+            if context.is_object_rooted(error)? {
+                use super::event_constructor_shared_vm::named_set;
+                named_set(context, data, error, "domainEmitter", target)?;
+                let domain_key = context.string_rooted("domain");
+                context
+                    .define_data_property_rooted(error, domain_key, domain, true, false, true)?;
+                let no = context.boolean(false);
+                named_set(context, data, error, "domainThrown", no)?;
+            }
+            let domain_emit = get(context, domain, "emit")?;
+            context.call_rooted(domain_emit, domain, &[event, error])?;
+            return Ok(context.boolean(true));
+        }
+    }
     let bridge = get(context, data, "emitBridge")?;
-    let mut values = vec![event];
-    values.extend(listener_arguments(context, arguments)?);
-    context.call_rooted(bridge, target, &values)
+    context.call_rooted(bridge, target, &[event, arguments, listeners])
 }

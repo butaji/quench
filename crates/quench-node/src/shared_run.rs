@@ -266,7 +266,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
             "--experimental-vfs" | "--no-experimental-vfs" => {
                 exec_argv.push(args[index].clone());
             }
-            "--trace-event-categories" | "--trace-event-file-pattern" => {
+            "--trace-event-categories" | "--trace-event-file-pattern" | "-r" | "--require" => {
                 let option = args[index].clone();
                 index += 1;
                 let value = args
@@ -314,7 +314,11 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                 exec_argv.push(args[index].clone());
             }
             path => {
-                let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+                let cwd = if std::path::Path::new(path).is_absolute() {
+                    std::path::PathBuf::from(std::path::MAIN_SEPARATOR.to_string())
+                } else {
+                    std::env::current_dir().map_err(|error| error.to_string())?
+                };
                 let cwd = cwd.to_string_lossy();
                 let paths = [path.to_owned()];
                 let path = if cfg!(windows) {
