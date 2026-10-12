@@ -10,10 +10,11 @@ use std::os::unix::net::{UnixListener, UnixStream};
 const FIRST_TRANSPORT_ID: u64 = 1;
 const TCP_READ_CHUNK: usize = 16 * 1024;
 const TCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, emitOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, emitOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation) => {
   const listeners = (socket) => socket._listeners;
   class Socket extends Duplex {
     constructor(options = {}) {
+      options = socketOptionsOperation(options, false);
       super({
         ...options, autoDestroy: true, allowHalfOpen: true,
         read() {},
@@ -144,7 +145,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
   Socket.prototype.ref = function() { 'use strict'; return socketReferenceOperation(this,true); };
   Socket.prototype.unref = function() { 'use strict'; return socketReferenceOperation(this,false); };
   const connect = function connect(port, host, callback) {
-    const socket = new Socket();
+    const socket = new Socket(socketOptionsOperation(port, true));
     return socket.connect(port, host, callback);
   };
   function Server(options, listener) {
@@ -1067,6 +1068,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.host_function(crate::host::shared_vm::operation("netSocketReference"))?;
     let unref_timeout =
         context.host_function(crate::host::shared_vm::operation("netSocketUnrefTimeout"))?;
+    let socket_options =
+        context.host_function(crate::host::shared_vm::operation("netSocketOptions"))?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
@@ -1088,6 +1091,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             reference,
             socket_reference,
             unref_timeout,
+            socket_options,
         ],
     )?;
     for name in ["Socket", "Stream", "Server", "BlockList", "SocketAddress", "connect", "createConnection", "createServer"] {
@@ -1142,7 +1146,7 @@ pub(crate) fn is_ipv6(
     Ok(context.boolean(is_ipv6))
 }
 
-fn parse_ip(input: &str) -> Option<IpAddr> {
+pub(super) fn parse_ip(input: &str) -> Option<IpAddr> {
     if let Ok(address) = input.parse::<IpAddr>() {
         return Some(address);
     }

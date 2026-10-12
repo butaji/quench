@@ -360,7 +360,6 @@ const UTIL: &str = quench_js_check::checked_js!(
 pub(crate) struct UtilIntrinsics {
     pub(crate) module: RootId,
     pub(crate) inspect: RootId,
-    pub(crate) argument_type_prototype: RootId,
 }
 
 pub(crate) fn internal_inspect(
@@ -467,8 +466,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     }
     let key = context.string_rooted("types");
     context.set_property_rooted(module, key, types, module)?;
-    let argument_type_prototype = super::node_errors_shared_vm::argument_type_prototype(context)?;
-    let argument_type_prototype = context.retain(argument_type_prototype)?;
     let module = context.retain(module)?;
     let inspect = context.retain(inspect)?;
     context
@@ -478,7 +475,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .util_intrinsics = Some(UtilIntrinsics {
         module,
         inspect,
-        argument_type_prototype,
     });
     Ok(module)
 }
