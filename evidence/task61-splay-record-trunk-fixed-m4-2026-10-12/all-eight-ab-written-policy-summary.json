@@ -1,0 +1,1183 @@
+{
+  "baseline_binary_sha256": "8432da1159e301d021c236148a4f4a13e5f1b8de40fb87893fb54a2ebf5795dd",
+  "candidate_binary_sha256": "afde285b7f8dff56da12f44eb915034b0599d7aec95a2ff39d55ae18a8d7c4cf",
+  "candidate_source_revision": "11efad0ec7d7a4bf44885a07cc321627e79f017f",
+  "corpus_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "fixtures": {
+    "quench-bench/js-engine-benchmark/v8-v7/crypto.js": {
+      "clean_pairs": 12,
+      "cycles_percent": {
+        "interval_95": [
+          -0.7961746498011291,
+          2.528075803953056
+        ],
+        "median": 0.686630667142385
+      },
+      "instructions_percent": {
+        "interval_95": [
+          -0.6360265522834474,
+          -0.62623992249492
+        ],
+        "median": -0.6330142758784851
+      },
+      "source_pairs": [
+        {
+          "cycles_percent": 0.6224049681821331,
+          "instructions_percent": -0.6334815883687006,
+          "source_report": "all-eight-ab-guard-topups/crypto.js-batch-2.json",
+          "source_round": 0,
+          "wall_percent": 0.6426497929779007,
+          "work_max_rss_percent": -1.8018018018018056
+        },
+        {
+          "cycles_percent": -1.624967947985101,
+          "instructions_percent": -0.6336231837185902,
+          "source_report": "all-eight-ab-guard-topups/crypto.js-batch-2.json",
+          "source_round": 1,
+          "wall_percent": -1.7883426323212381,
+          "work_max_rss_percent": -0.9774436090225547
+        },
+        {
+          "cycles_percent": 2.5425770955904037,
+          "instructions_percent": -0.6218825341223089,
+          "source_report": "all-eight-ab-guard-topups/crypto.js-batch-2.json",
+          "source_round": 2,
+          "wall_percent": 2.6732204194149123,
+          "work_max_rss_percent": -0.5259203606311047
+        },
+        {
+          "cycles_percent": 0.10205518255788082,
+          "instructions_percent": -0.6350719463510068,
+          "source_report": "all-eight-ab-guard-topups/crypto.js-batch-2.json",
+          "source_round": 3,
+          "wall_percent": -0.35781391618101566,
+          "work_max_rss_percent": -1.5048908954100826
+        },
+        {
+          "cycles_percent": 0.8773409537274679,
+          "instructions_percent": -0.6214037694422081,
+          "source_report": "all-eight-ab-guard-topups/crypto.js-batch-2.json",
+          "source_round": 4,
+          "wall_percent": 1.7558833404268226,
+          "work_max_rss_percent": -0.6772009029345383
+        },
+        {
+          "cycles_percent": -0.7055319043358987,
+          "instructions_percent": -0.6305973108675311,
+          "source_report": "all-eight-ab-guard-topups/crypto.js-batch-2.json",
+          "source_round": 5,
+          "wall_percent": -0.8307248170429826,
+          "work_max_rss_percent": -0.9056603773584859
+        },
+        {
+          "cycles_percent": -1.7162067483451837,
+          "instructions_percent": -0.631803306220402,
+          "source_report": "all-eight-ab-guard-topups/crypto.js-batch-2.json",
+          "source_round": 6,
+          "wall_percent": -1.8135466514562881,
+          "work_max_rss_percent": -1.5801354401805856
+        },
+        {
+          "cycles_percent": 2.976220577742761,
+          "instructions_percent": -0.645097587444432,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 0,
+          "wall_percent": 2.2385003025818806,
+          "work_max_rss_percent": -0.6761833208114187
+        },
+        {
+          "cycles_percent": 3.4422111999222738,
+          "instructions_percent": -0.6064451223368628,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 1,
+          "wall_percent": 7.206227550625943,
+          "work_max_rss_percent": -3.3707865168539297
+        },
+        {
+          "cycles_percent": 2.5135745123157083,
+          "instructions_percent": -0.6325469633882697,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 2,
+          "wall_percent": 2.7470502295486865,
+          "work_max_rss_percent": 0.0
+        },
+        {
+          "cycles_percent": -0.8868173952663594,
+          "instructions_percent": -0.6753473364832896,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 3,
+          "wall_percent": -1.2063811265638158,
+          "work_max_rss_percent": -2.102102102102099
+        },
+        {
+          "cycles_percent": 0.7508563661026368,
+          "instructions_percent": -0.636981158215888,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 4,
+          "wall_percent": 0.5286620661699493,
+          "work_max_rss_percent": -1.6541353383458635
+        }
+      ],
+      "wall_percent": {
+        "interval_95": [
+          -1.0185529718033992,
+          2.4558603609983964
+        ],
+        "median": 0.585655929573925
+      },
+      "work_max_rss_percent": {
+        "interval_95": [
+          -1.7279685700738345,
+          -0.6766921118729785
+        ],
+        "median": -1.2411672522163186
+      }
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/deltablue.js": {
+      "clean_pairs": 12,
+      "cycles_percent": {
+        "interval_95": [
+          -7.436704915897563,
+          -6.781562938595059
+        ],
+        "median": -7.272062445041027
+      },
+      "instructions_percent": {
+        "interval_95": [
+          -8.12889382390059,
+          -8.117748844057171
+        ],
+        "median": -8.125800150511107
+      },
+      "source_pairs": [
+        {
+          "cycles_percent": -7.386533486051383,
+          "instructions_percent": -8.128574343301453,
+          "source_report": "all-eight-ab-guard-topups/deltablue.js-batch-1.json",
+          "source_round": 0,
+          "wall_percent": -7.553453459845838,
+          "work_max_rss_percent": -3.9308176100628978
+        },
+        {
+          "cycles_percent": -7.068116877694274,
+          "instructions_percent": -8.119875900029827,
+          "source_report": "all-eight-ab-guard-topups/deltablue.js-batch-1.json",
+          "source_round": 1,
+          "wall_percent": -6.843644975826613,
+          "work_max_rss_percent": -2.920284135753748
+        },
+        {
+          "cycles_percent": -7.486876345743743,
+          "instructions_percent": -8.138645913517218,
+          "source_report": "all-eight-ab-guard-topups/deltablue.js-batch-1.json",
+          "source_round": 2,
+          "wall_percent": -7.33992044238887,
+          "work_max_rss_percent": -3.7884767166535105
+        },
+        {
+          "cycles_percent": -7.509128061363601,
+          "instructions_percent": -8.127822689235142,
+          "source_report": "all-eight-ab-guard-topups/deltablue.js-batch-1.json",
+          "source_round": 3,
+          "wall_percent": -7.6221751239219255,
+          "work_max_rss_percent": -3.3175355450236976
+        },
+        {
+          "cycles_percent": -7.257739263272278,
+          "instructions_percent": -8.123305703815243,
+          "source_report": "all-eight-ab-guard-topups/deltablue.js-batch-1.json",
+          "source_round": 4,
+          "wall_percent": -7.213099761921937,
+          "work_max_rss_percent": -3.855232100708106
+        },
+        {
+          "cycles_percent": -6.7554013988295525,
+          "instructions_percent": -8.125091163744102,
+          "source_report": "all-eight-ab-guard-topups/deltablue.js-batch-1.json",
+          "source_round": 5,
+          "wall_percent": -6.885649146777295,
+          "work_max_rss_percent": -3.080568720379151
+        },
+        {
+          "cycles_percent": -6.807724478360566,
+          "instructions_percent": -8.114542053189389,
+          "source_report": "all-eight-ab-guard-topups/deltablue.js-batch-1.json",
+          "source_round": 6,
+          "wall_percent": -6.701961613511253,
+          "work_max_rss_percent": -3.159557661927326
+        },
+        {
+          "cycles_percent": -7.526899575584112,
+          "instructions_percent": -8.129213304499727,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 0,
+          "wall_percent": -7.851127101243128,
+          "work_max_rss_percent": -3.63349131121643
+        },
+        {
+          "cycles_percent": -6.7465140025961485,
+          "instructions_percent": -8.146781587515662,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 1,
+          "wall_percent": -7.337248343097224,
+          "work_max_rss_percent": -3.001579778830965
+        },
+        {
+          "cycles_percent": -7.286385626809777,
+          "instructions_percent": -8.11074798107445,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 2,
+          "wall_percent": -6.898408836766268,
+          "work_max_rss_percent": -3.1620553359683834
+        },
+        {
+          "cycles_percent": -7.292832361385715,
+          "instructions_percent": -8.126509137278115,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 3,
+          "wall_percent": -7.3771701252859145,
+          "work_max_rss_percent": -2.9318541996830483
+        },
+        {
+          "cycles_percent": -6.694941381204755,
+          "instructions_percent": -8.115621788084514,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 4,
+          "wall_percent": -6.8462878934996585,
+          "work_max_rss_percent": -3.235990528808208
+        }
+      ],
+      "wall_percent": {
+        "interval_95": [
+          -7.465311792565876,
+          -6.865968520138477
+        ],
+        "median": -7.2751740525095805
+      },
+      "work_max_rss_percent": {
+        "interval_95": [
+          -3.7109840139349703,
+          -3.041074249605058
+        ],
+        "median": -3.1990229323882957
+      }
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js": {
+      "clean_pairs": 12,
+      "cycles_percent": {
+        "interval_95": [
+          -1.769483631493074,
+          -0.9425769355136726
+        ],
+        "median": -1.2589056905681073
+      },
+      "instructions_percent": {
+        "interval_95": [
+          -2.1226733299749947,
+          -2.09099276602554
+        ],
+        "median": -2.1050784717423774
+      },
+      "source_pairs": [
+        {
+          "cycles_percent": -1.117529792860017,
+          "instructions_percent": -2.1305408733437226,
+          "source_report": "all-eight-ab-guard-topups/earley-boyer.js-batch-1.json",
+          "source_round": 0,
+          "wall_percent": -1.3087666053341995,
+          "work_max_rss_percent": -9.90712074303406
+        },
+        {
+          "cycles_percent": -0.9435452161652869,
+          "instructions_percent": -2.0873435210492453,
+          "source_report": "all-eight-ab-guard-topups/earley-boyer.js-batch-1.json",
+          "source_round": 1,
+          "wall_percent": -1.0673158834354046,
+          "work_max_rss_percent": -9.857904085257552
+        },
+        {
+          "cycles_percent": -1.1873632700084458,
+          "instructions_percent": -2.077688198628125,
+          "source_report": "all-eight-ab-guard-topups/earley-boyer.js-batch-1.json",
+          "source_round": 2,
+          "wall_percent": -0.9838407670130778,
+          "work_max_rss_percent": -9.959982214317476
+        },
+        {
+          "cycles_percent": -0.801943227159374,
+          "instructions_percent": -2.1151121830478403,
+          "source_report": "all-eight-ab-guard-topups/earley-boyer.js-batch-1.json",
+          "source_round": 3,
+          "wall_percent": -0.7958474069720056,
+          "work_max_rss_percent": -9.844789356984474
+        },
+        {
+          "cycles_percent": -1.5669105635959912,
+          "instructions_percent": -2.119179513928182,
+          "source_report": "all-eight-ab-guard-topups/earley-boyer.js-batch-1.json",
+          "source_round": 4,
+          "wall_percent": -1.589115935041785,
+          "work_max_rss_percent": -9.729009329187033
+        },
+        {
+          "cycles_percent": -1.9720566993901567,
+          "instructions_percent": -2.1043241737247476,
+          "source_report": "all-eight-ab-guard-topups/earley-boyer.js-batch-1.json",
+          "source_round": 5,
+          "wall_percent": -2.133043290806935,
+          "work_max_rss_percent": -9.35412026726058
+        },
+        {
+          "cycles_percent": -1.3304481111277688,
+          "instructions_percent": -2.1039219285904354,
+          "source_report": "all-eight-ab-guard-topups/earley-boyer.js-batch-1.json",
+          "source_round": 6,
+          "wall_percent": -1.2631018344640865,
+          "work_max_rss_percent": -9.817858729453576
+        },
+        {
+          "cycles_percent": -2.1076383440273627,
+          "instructions_percent": -2.126167146021807,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 0,
+          "wall_percent": -1.0858554128319597,
+          "work_max_rss_percent": -12.8051391862955
+        },
+        {
+          "cycles_percent": -0.8847859824821835,
+          "instructions_percent": -2.094642011001835,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 1,
+          "wall_percent": -0.9234523508007797,
+          "work_max_rss_percent": -9.853528628495345
+        },
+        {
+          "cycles_percent": -0.9416086548620584,
+          "instructions_percent": -2.0816629501553274,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 2,
+          "wall_percent": -1.1087447699541508,
+          "work_max_rss_percent": -9.175946547884184
+        },
+        {
+          "cycles_percent": -1.4262857706461851,
+          "instructions_percent": -2.1058327697600077,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 3,
+          "wall_percent": -1.256683952325166,
+          "work_max_rss_percent": -9.320905459387486
+        },
+        {
+          "cycles_percent": -1.989978548675908,
+          "instructions_percent": -2.129791495424238,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 4,
+          "wall_percent": -2.248759968144831,
+          "work_max_rss_percent": -9.564056939501775
+        }
+      ],
+      "wall_percent": {
+        "interval_95": [
+          -1.4489412701879922,
+          -1.0255783252242412
+        ],
+        "median": -1.1827143611396584
+      },
+      "work_max_rss_percent": {
+        "interval_95": [
+          -9.882512414145806,
+          -9.459088603381177
+        ],
+        "median": -9.831324043219025
+      }
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js": {
+      "clean_pairs": 12,
+      "cycles_percent": {
+        "interval_95": [
+          -1.7724045485994322,
+          -0.5894475907795793
+        ],
+        "median": -0.7808735328446281
+      },
+      "instructions_percent": {
+        "interval_95": [
+          -0.6111364509857442,
+          -0.6052493702658646
+        ],
+        "median": -0.6083730138909615
+      },
+      "source_pairs": [
+        {
+          "cycles_percent": -0.9653761264568184,
+          "instructions_percent": -0.6053370710606853,
+          "source_report": "all-eight-ab-guard-topups/navier-stokes.js-batch-1.json",
+          "source_round": 0,
+          "wall_percent": -0.8720749040992515,
+          "work_max_rss_percent": -1.0101010101010055
+        },
+        {
+          "cycles_percent": -0.6294266248126124,
+          "instructions_percent": -0.6080855261142548,
+          "source_report": "all-eight-ab-guard-topups/navier-stokes.js-batch-1.json",
+          "source_round": 1,
+          "wall_percent": -0.6466123090850484,
+          "work_max_rss_percent": -1.3219284603421477
+        },
+        {
+          "cycles_percent": -0.5494685567465463,
+          "instructions_percent": -0.6113855246831723,
+          "source_report": "all-eight-ab-guard-topups/navier-stokes.js-batch-1.json",
+          "source_round": 2,
+          "wall_percent": -0.8739565545393346,
+          "work_max_rss_percent": -0.8553654743390315
+        },
+        {
+          "cycles_percent": -2.9525277824906437,
+          "instructions_percent": -0.6110125316471593,
+          "source_report": "all-eight-ab-guard-topups/navier-stokes.js-batch-1.json",
+          "source_round": 3,
+          "wall_percent": -2.8507822667122262,
+          "work_max_rss_percent": -1.1627906976744207
+        },
+        {
+          "cycles_percent": -1.8976627120638079,
+          "instructions_percent": -0.607093946185655,
+          "source_report": "all-eight-ab-guard-topups/navier-stokes.js-batch-1.json",
+          "source_round": 4,
+          "wall_percent": -2.004871379940254,
+          "work_max_rss_percent": -0.6225680933852118
+        },
+        {
+          "cycles_percent": -0.7179014264204087,
+          "instructions_percent": -0.5898983983538053,
+          "source_report": "all-eight-ab-guard-topups/navier-stokes.js-batch-1.json",
+          "source_round": 5,
+          "wall_percent": -0.060050275579115464,
+          "work_max_rss_percent": -0.6998444790046632
+        },
+        {
+          "cycles_percent": -1.6991143013215027,
+          "instructions_percent": -0.6087200522404079,
+          "source_report": "all-eight-ab-guard-topups/navier-stokes.js-batch-1.json",
+          "source_round": 6,
+          "wall_percent": -1.5826450884699916,
+          "work_max_rss_percent": -1.010886469673411
+        },
+        {
+          "cycles_percent": -0.7214107570406192,
+          "instructions_percent": -0.6051616694710438,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 0,
+          "wall_percent": -0.7430947714317182,
+          "work_max_rss_percent": -0.853374709076804
+        },
+        {
+          "cycles_percent": -1.8456947958773617,
+          "instructions_percent": -0.6086605016676683,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 1,
+          "wall_percent": -1.5741766378944533,
+          "work_max_rss_percent": -0.38850038850039015
+        },
+        {
+          "cycles_percent": -0.4986452857236423,
+          "instructions_percent": -0.6112603703243291,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 2,
+          "wall_percent": -0.43473524711294953,
+          "work_max_rss_percent": -1.0038610038610063
+        },
+        {
+          "cycles_percent": -0.8403363086486371,
+          "instructions_percent": -0.6118651539765874,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 3,
+          "wall_percent": -0.9953040980241523,
+          "work_max_rss_percent": -1.5515903801396447
+        },
+        {
+          "cycles_percent": -0.06847701927177319,
+          "instructions_percent": -0.6046897732105094,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 4,
+          "wall_percent": 0.0468335734864711,
+          "work_max_rss_percent": -1.0886469673405896
+        }
+      ],
+      "wall_percent": {
+        "interval_95": [
+          -1.5784108631822225,
+          -0.540673778098999
+        ],
+        "median": -0.873015729319293
+      },
+      "work_max_rss_percent": {
+        "interval_95": [
+          -1.1257188325075052,
+          -0.7766095940407336
+        ],
+        "median": -1.006981006981006
+      }
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/raytrace.js": {
+      "clean_pairs": 12,
+      "cycles_percent": {
+        "interval_95": [
+          -4.474072059177109,
+          -3.7728188712533695
+        ],
+        "median": -4.0338082919538945
+      },
+      "instructions_percent": {
+        "interval_95": [
+          -4.043317295939408,
+          -4.011160810917163
+        ],
+        "median": -4.030453642514031
+      },
+      "source_pairs": [
+        {
+          "cycles_percent": -7.745125923943008,
+          "instructions_percent": -4.04173932139309,
+          "source_report": "all-eight-ab-guard-topups/raytrace.js-batch-1.json",
+          "source_round": 0,
+          "wall_percent": -11.711961901206946,
+          "work_max_rss_percent": -5.363984674329503
+        },
+        {
+          "cycles_percent": -3.9093510798960507,
+          "instructions_percent": -4.03992700869974,
+          "source_report": "all-eight-ab-guard-topups/raytrace.js-batch-1.json",
+          "source_round": 1,
+          "wall_percent": -3.920064368523435,
+          "work_max_rss_percent": -3.296703296703296
+        },
+        {
+          "cycles_percent": -4.672628505962962,
+          "instructions_percent": -4.01486501048992,
+          "source_report": "all-eight-ab-guard-topups/raytrace.js-batch-1.json",
+          "source_round": 2,
+          "wall_percent": -4.6237183205888215,
+          "work_max_rss_percent": -4.6583850931677055
+        },
+        {
+          "cycles_percent": -3.7239210032763648,
+          "instructions_percent": -4.026481074823707,
+          "source_report": "all-eight-ab-guard-topups/raytrace.js-batch-1.json",
+          "source_round": 3,
+          "wall_percent": -3.6912481409449693,
+          "work_max_rss_percent": -3.5321821036106704
+        },
+        {
+          "cycles_percent": -4.039548476318256,
+          "instructions_percent": -4.044895270485727,
+          "source_report": "all-eight-ab-guard-topups/raytrace.js-batch-1.json",
+          "source_round": 4,
+          "wall_percent": -4.0118974620646615,
+          "work_max_rss_percent": -4.059328649492588
+        },
+        {
+          "cycles_percent": -3.821716739230374,
+          "instructions_percent": -4.002245182118147,
+          "source_report": "all-eight-ab-guard-topups/raytrace.js-batch-1.json",
+          "source_round": 5,
+          "wall_percent": -3.7344142216369725,
+          "work_max_rss_percent": -4.218750000000004
+        },
+        {
+          "cycles_percent": -4.275515612391256,
+          "instructions_percent": -3.9849042713371086,
+          "source_report": "all-eight-ab-guard-topups/raytrace.js-batch-1.json",
+          "source_round": 6,
+          "wall_percent": -4.166874518096608,
+          "work_max_rss_percent": -4.347826086956519
+        },
+        {
+          "cycles_percent": -4.736986836052903,
+          "instructions_percent": -4.069437783824837,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 0,
+          "wall_percent": -4.9152131692204115,
+          "work_max_rss_percent": -3.3646322378716786
+        },
+        {
+          "cycles_percent": -4.028068107589533,
+          "instructions_percent": -4.007456611344407,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 1,
+          "wall_percent": -4.097266639244657,
+          "work_max_rss_percent": -3.5881435257410277
+        },
+        {
+          "cycles_percent": -3.7125637830766944,
+          "instructions_percent": -4.019991342492036,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 2,
+          "wall_percent": -3.794428508415293,
+          "work_max_rss_percent": -3.8281250000000044
+        },
+        {
+          "cycles_percent": -4.101989317329002,
+          "instructions_percent": -4.034426210204356,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 3,
+          "wall_percent": -4.011811566189238,
+          "work_max_rss_percent": -6.36363636363636
+        },
+        {
+          "cycles_percent": -3.6078621804675692,
+          "instructions_percent": -4.048209673614844,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 4,
+          "wall_percent": -3.609984018870782,
+          "work_max_rss_percent": -4.040404040404044
+        }
+      ],
+      "wall_percent": {
+        "interval_95": [
+          -4.395296419342715,
+          -3.7644213650261324
+        ],
+        "median": -4.01185451412695
+      },
+      "work_max_rss_percent": {
+        "interval_95": [
+          -4.503105590062113,
+          -3.560162814675849
+        ],
+        "median": -4.049866344948317
+      }
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/regexp.js": {
+      "clean_pairs": 23,
+      "cycles_percent": {
+        "interval_95": [
+          0.7775880753014386,
+          2.668229688560464
+        ],
+        "median": 1.4196992428486377
+      },
+      "instructions_percent": {
+        "interval_95": [
+          0.7469610103929103,
+          0.7727899737796307
+        ],
+        "median": 0.7627238653390656
+      },
+      "source_pairs": [
+        {
+          "cycles_percent": 4.344615632760607,
+          "instructions_percent": 0.7783115019036169,
+          "source_report": "all-eight-ab-guard-topups/regexp.js-batch-1.json",
+          "source_round": 0,
+          "wall_percent": 4.317899872782283,
+          "work_max_rss_percent": -2.3407022106632036
+        },
+        {
+          "cycles_percent": 0.7234258847641284,
+          "instructions_percent": 0.7510408476623098,
+          "source_report": "all-eight-ab-guard-topups/regexp.js-batch-1.json",
+          "source_round": 1,
+          "wall_percent": 0.5325396754504608,
+          "work_max_rss_percent": -2.975420439844756
+        },
+        {
+          "cycles_percent": 4.3802594274777285,
+          "instructions_percent": 0.7627238653390656,
+          "source_report": "all-eight-ab-guard-topups/regexp.js-batch-1.json",
+          "source_round": 2,
+          "wall_percent": 8.804283075444786,
+          "work_max_rss_percent": -3.967576791808869
+        },
+        {
+          "cycles_percent": 0.7775880753014386,
+          "instructions_percent": 0.7909264363901158,
+          "source_report": "all-eight-ab-guard-topups/regexp.js-batch-1.json",
+          "source_round": 3,
+          "wall_percent": 0.5825899201137297,
+          "work_max_rss_percent": -3.8445108927808613
+        },
+        {
+          "cycles_percent": 2.775796163040023,
+          "instructions_percent": 0.7964918461686343,
+          "source_report": "all-eight-ab-guard-topups/regexp.js-batch-1.json",
+          "source_round": 4,
+          "wall_percent": 3.00065231572082,
+          "work_max_rss_percent": -3.2702237521514577
+        },
+        {
+          "cycles_percent": 1.4196992428486377,
+          "instructions_percent": 0.7609438881877484,
+          "source_report": "all-eight-ab-guard-topups/regexp.js-batch-1.json",
+          "source_round": 5,
+          "wall_percent": 0.9046450419417651,
+          "work_max_rss_percent": -3.2758620689655182
+        },
+        {
+          "cycles_percent": 1.3143177398409867,
+          "instructions_percent": 0.7368888306902521,
+          "source_report": "all-eight-ab-guard-topups/regexp.js-batch-1.json",
+          "source_round": 6,
+          "wall_percent": 1.2668841287408528,
+          "work_max_rss_percent": -3.4600598035027796
+        },
+        {
+          "cycles_percent": 1.2090888690643675,
+          "instructions_percent": 0.599020533243122,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 0,
+          "wall_percent": 1.3562269535332572,
+          "work_max_rss_percent": -2.7284538761368604
+        },
+        {
+          "cycles_percent": -0.6898268908463678,
+          "instructions_percent": 0.7837116926377341,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 1,
+          "wall_percent": -0.8849897550575081,
+          "work_max_rss_percent": -3.3949290932531184
+        },
+        {
+          "cycles_percent": 0.9459073581848054,
+          "instructions_percent": 0.7430867759595117,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 2,
+          "wall_percent": 1.3438907062023553,
+          "work_max_rss_percent": -2.512998266897748
+        },
+        {
+          "cycles_percent": 1.4768957046966236,
+          "instructions_percent": 0.7718552527518519,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 3,
+          "wall_percent": 1.9948049010574787,
+          "work_max_rss_percent": -2.5585429314830876
+        },
+        {
+          "cycles_percent": 2.8585169881431893,
+          "instructions_percent": 0.7664713162690129,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 4,
+          "wall_percent": 3.672070864326793,
+          "work_max_rss_percent": -2.3356401384083014
+        },
+        {
+          "cycles_percent": 0.3575964391328901,
+          "instructions_percent": 0.808723213778606,
+          "source_report": "regexp-ab-schema5-wall-topup-11.json",
+          "source_round": 0,
+          "wall_percent": 0.13146410968143396,
+          "work_max_rss_percent": -2.4728850325379637
+        },
+        {
+          "cycles_percent": 0.2855685214887549,
+          "instructions_percent": 0.7653222038550123,
+          "source_report": "regexp-ab-schema5-wall-topup-11.json",
+          "source_round": 1,
+          "wall_percent": -0.09447645098620283,
+          "work_max_rss_percent": -3.5591766723842233
+        },
+        {
+          "cycles_percent": 0.8093094711959736,
+          "instructions_percent": 0.6688358046562426,
+          "source_report": "regexp-ab-schema5-wall-topup-11.json",
+          "source_round": 2,
+          "wall_percent": 1.0111674125923509,
+          "work_max_rss_percent": -2.3386747509744454
+        },
+        {
+          "cycles_percent": 3.6913599079441584,
+          "instructions_percent": 0.8095803288703518,
+          "source_report": "regexp-ab-schema5-wall-topup-11.json",
+          "source_round": 3,
+          "wall_percent": 4.001832887422396,
+          "work_max_rss_percent": -0.5625270445694497
+        },
+        {
+          "cycles_percent": 2.042037155879628,
+          "instructions_percent": 0.7727899737796307,
+          "source_report": "regexp-ab-schema5-wall-topup-11.json",
+          "source_round": 4,
+          "wall_percent": 1.9775527380236468,
+          "work_max_rss_percent": -3.2147449635662184
+        },
+        {
+          "cycles_percent": 0.19420742432947335,
+          "instructions_percent": 0.7599047812692827,
+          "source_report": "regexp-ab-schema5-wall-topup-11.json",
+          "source_round": 5,
+          "wall_percent": -2.3551356032102233,
+          "work_max_rss_percent": -2.124946876328093
+        },
+        {
+          "cycles_percent": 2.668229688560464,
+          "instructions_percent": 0.7469610103929103,
+          "source_report": "regexp-ab-schema5-wall-topup-11.json",
+          "source_round": 6,
+          "wall_percent": 2.740118319855833,
+          "work_max_rss_percent": -3.2948224219084277
+        },
+        {
+          "cycles_percent": 3.681861939566966,
+          "instructions_percent": 0.719151903638271,
+          "source_report": "regexp-ab-schema5-wall-topup-11.json",
+          "source_round": 7,
+          "wall_percent": 3.382972399627193,
+          "work_max_rss_percent": -2.5552187093980105
+        },
+        {
+          "cycles_percent": 3.048361356866369,
+          "instructions_percent": 0.780949193545255,
+          "source_report": "regexp-ab-schema5-wall-topup-11.json",
+          "source_round": 8,
+          "wall_percent": 3.136726233354148,
+          "work_max_rss_percent": -3.344917463075592
+        },
+        {
+          "cycles_percent": 2.0105799692546666,
+          "instructions_percent": 0.7398464039275243,
+          "source_report": "regexp-ab-schema5-wall-topup-11.json",
+          "source_round": 9,
+          "wall_percent": 1.895282595017056,
+          "work_max_rss_percent": -3.9726612558735552
+        },
+        {
+          "cycles_percent": -0.5654375071716289,
+          "instructions_percent": 0.7312387496707817,
+          "source_report": "regexp-ab-schema5-wall-topup-11.json",
+          "source_round": 10,
+          "wall_percent": -0.6103177023608186,
+          "work_max_rss_percent": -1.9488956258120416
+        }
+      ],
+      "wall_percent": {
+        "interval_95": [
+          0.5825899201137297,
+          2.740118319855833
+        ],
+        "median": 1.3562269535332572
+      },
+      "work_max_rss_percent": {
+        "interval_95": [
+          -3.344917463075592,
+          -2.512998266897748
+        ],
+        "median": -2.975420439844756
+      }
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/richards.js": {
+      "clean_pairs": 12,
+      "cycles_percent": {
+        "interval_95": [
+          -1.6197866943409078,
+          -0.5756394053205716
+        ],
+        "median": -1.0518163615701515
+      },
+      "instructions_percent": {
+        "interval_95": [
+          -0.6552517059332796,
+          -0.6505568707579734
+        ],
+        "median": -0.6537184747223312
+      },
+      "source_pairs": [
+        {
+          "cycles_percent": -1.0657124567624132,
+          "instructions_percent": -0.6555872422143061,
+          "source_report": "all-eight-ab-guard-topups/richards.js-batch-1.json",
+          "source_round": 0,
+          "wall_percent": -1.2559743637644671,
+          "work_max_rss_percent": -3.1914893617021267
+        },
+        {
+          "cycles_percent": 0.054996354511693823,
+          "instructions_percent": -0.6507034653339683,
+          "source_report": "all-eight-ab-guard-topups/richards.js-batch-1.json",
+          "source_round": 1,
+          "wall_percent": 0.2771202455892574,
+          "work_max_rss_percent": -2.868852459016391
+        },
+        {
+          "cycles_percent": -1.3378009887759945,
+          "instructions_percent": -0.6546795238851932,
+          "source_report": "all-eight-ab-guard-topups/richards.js-batch-1.json",
+          "source_round": 2,
+          "wall_percent": -1.3225015585082711,
+          "work_max_rss_percent": -3.352412101390023
+        },
+        {
+          "cycles_percent": -0.47845473175136544,
+          "instructions_percent": -0.6504102761819786,
+          "source_report": "all-eight-ab-guard-topups/richards.js-batch-1.json",
+          "source_round": 3,
+          "wall_percent": -0.3875189429984438,
+          "work_max_rss_percent": -2.5389025389025432
+        },
+        {
+          "cycles_percent": -1.0379202663778897,
+          "instructions_percent": -0.6525093130151816,
+          "source_report": "all-eight-ab-guard-topups/richards.js-batch-1.json",
+          "source_round": 4,
+          "wall_percent": -0.9507277405400028,
+          "work_max_rss_percent": -3.352412101390023
+        },
+        {
+          "cycles_percent": 0.18228402605224847,
+          "instructions_percent": -0.6527857610117538,
+          "source_report": "all-eight-ab-guard-topups/richards.js-batch-1.json",
+          "source_round": 5,
+          "wall_percent": 0.18930585449041804,
+          "work_max_rss_percent": -3.130148270181221
+        },
+        {
+          "cycles_percent": -1.9017723999058211,
+          "instructions_percent": -0.6485633047952799,
+          "source_report": "all-eight-ab-guard-topups/richards.js-batch-1.json",
+          "source_round": 6,
+          "wall_percent": -1.4222245871649553,
+          "work_max_rss_percent": -3.1198686371100126
+        },
+        {
+          "cycles_percent": -2.8052258029992005,
+          "instructions_percent": -0.6452960299983435,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 0,
+          "wall_percent": -2.5197799450968783,
+          "work_max_rss_percent": -3.035274815422473
+        },
+        {
+          "cycles_percent": -0.7165900556728277,
+          "instructions_percent": -0.6581613753171345,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 1,
+          "wall_percent": -0.6108316993848839,
+          "work_max_rss_percent": -2.2203947368421018
+        },
+        {
+          "cycles_percent": -0.6728240788897777,
+          "instructions_percent": -0.6549161696522532,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 2,
+          "wall_percent": -1.0605707094460626,
+          "work_max_rss_percent": -3.0278232405892003
+        },
+        {
+          "cycles_percent": -1.336037641238097,
+          "instructions_percent": -0.6586320699649706,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 3,
+          "wall_percent": -1.5119407245098082,
+          "work_max_rss_percent": -3.3469387755102
+        },
+        {
+          "cycles_percent": -3.055635308183946,
+          "instructions_percent": -0.6546511884329087,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 4,
+          "wall_percent": -3.3136067755997645,
+          "work_max_rss_percent": -4.7696038803556995
+        }
+      ],
+      "wall_percent": {
+        "interval_95": [
+          -1.4670826558373817,
+          -0.49917532119166386
+        ],
+        "median": -1.1582725366052649
+      },
+      "work_max_rss_percent": {
+        "interval_95": [
+          -3.3496754384501113,
+          -2.9483378498027957
+        ],
+        "median": -3.125008453645617
+      }
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/splay.js": {
+      "clean_pairs": 12,
+      "cycles_percent": {
+        "interval_95": [
+          -7.031204325592643,
+          -6.076968055153465
+        ],
+        "median": -6.845088655329567
+      },
+      "instructions_percent": {
+        "interval_95": [
+          -4.662882494073701,
+          -4.625313872558734
+        ],
+        "median": -4.644788282857304
+      },
+      "source_pairs": [
+        {
+          "cycles_percent": -6.858193444374017,
+          "instructions_percent": -4.674481558408294,
+          "source_report": "all-eight-ab-guard-topups/splay.js-batch-1.json",
+          "source_round": 0,
+          "wall_percent": -7.4513154303330165,
+          "work_max_rss_percent": -24.54264002251618
+        },
+        {
+          "cycles_percent": -7.955550168447878,
+          "instructions_percent": -4.664802918783495,
+          "source_report": "all-eight-ab-guard-topups/splay.js-batch-1.json",
+          "source_round": 1,
+          "wall_percent": -8.342002084416366,
+          "work_max_rss_percent": -24.655414908579466
+        },
+        {
+          "cycles_percent": -3.13341241039069,
+          "instructions_percent": -4.627386196128169,
+          "source_report": "all-eight-ab-guard-topups/splay.js-batch-1.json",
+          "source_round": 2,
+          "wall_percent": -0.3204741767647734,
+          "work_max_rss_percent": -24.658498802985495
+        },
+        {
+          "cycles_percent": -7.055358107552601,
+          "instructions_percent": -4.648677921191602,
+          "source_report": "all-eight-ab-guard-topups/splay.js-batch-1.json",
+          "source_round": 3,
+          "wall_percent": -7.2294926610718235,
+          "work_max_rss_percent": -24.553005772208923
+        },
+        {
+          "cycles_percent": -6.258817325210176,
+          "instructions_percent": -4.623241548989299,
+          "source_report": "all-eight-ab-guard-topups/splay.js-batch-1.json",
+          "source_round": 4,
+          "wall_percent": -6.327487417924916,
+          "work_max_rss_percent": -24.627075710667047
+        },
+        {
+          "cycles_percent": -6.747564517262594,
+          "instructions_percent": -4.673172832327244,
+          "source_report": "all-eight-ab-guard-topups/splay.js-batch-1.json",
+          "source_round": 5,
+          "wall_percent": -6.6572111471236095,
+          "work_max_rss_percent": -24.59177927927928
+        },
+        {
+          "cycles_percent": -7.007050543632687,
+          "instructions_percent": -4.637393463394968,
+          "source_report": "all-eight-ab-guard-topups/splay.js-batch-1.json",
+          "source_round": 6,
+          "wall_percent": -6.953050041998243,
+          "work_max_rss_percent": -24.65888310592207
+        },
+        {
+          "cycles_percent": -5.318147436931353,
+          "instructions_percent": -4.604088168687682,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 0,
+          "wall_percent": -5.321675465566145,
+          "work_max_rss_percent": -24.50014080540692
+        },
+        {
+          "cycles_percent": -6.873523940557192,
+          "instructions_percent": -4.640898644523006,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 1,
+          "wall_percent": -6.949515013627061,
+          "work_max_rss_percent": -24.436302142051858
+        },
+        {
+          "cycles_percent": -6.8319838662851184,
+          "instructions_percent": -4.660962069363905,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 2,
+          "wall_percent": -6.4878886568481615,
+          "work_max_rss_percent": -24.57794034890265
+        },
+        {
+          "cycles_percent": -8.516970923366074,
+          "instructions_percent": -4.660084088824934,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 3,
+          "wall_percent": -8.466390757563346,
+          "work_max_rss_percent": -24.697609001406473
+        },
+        {
+          "cycles_percent": -5.895118785096754,
+          "instructions_percent": -4.557932662201436,
+          "source_report": "all-eight-ab-schema5-topup-5-wall-policy.json",
+          "source_round": 4,
+          "wall_percent": -5.938924287461078,
+          "work_max_rss_percent": -24.623398563987042
+        }
+      ],
+      "wall_percent": {
+        "interval_95": [
+          -7.34040404570242,
+          -6.133205852692997
+        ],
+        "median": -6.803363080375336
+      },
+      "work_max_rss_percent": {
+        "interval_95": [
+          -24.656956855782482,
+          -24.54782289736255
+        ],
+        "median": -24.60758892163316
+      }
+    }
+  },
+  "host": "Apple M4 arm64 macOS",
+  "measurement_runner_sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109",
+  "method": {
+    "bootstrap": "20,000 median resamples of paired percentages; deterministic xorshift64 seed 0x61_F1_7E_D5_2026_1010 XOR n; 2.5% and 97.5% quantiles",
+    "clean_filter": "all work and setup samples have contention.clean and checks_complete true",
+    "pair": "marginal-per-run percent = 100*((candidate work - candidate setup)/(baseline work - baseline setup)-1)",
+    "rss": "work sample peak RSS percent"
+  },
+  "schema": 1,
+  "source_reports": [
+    {
+      "path": "all-eight-ab-schema5-initial-1.json",
+      "sha256": "0eedfd30653848e12c74eec74056b2ec49376819fcb3b670f4b08307676a1dec"
+    },
+    {
+      "path": "all-eight-ab-guard-topups/crypto.js-batch-2.json",
+      "sha256": "b1d6056d617fc5e72903a6ed4e58b8a34e520318bdcd7bf191f53ba3ae7934d3"
+    },
+    {
+      "path": "all-eight-ab-guard-topups/deltablue.js-batch-1.json",
+      "sha256": "8ef8d16838d5fe0d57a6e1d05e998891e5dfe1752ee39b470996ba7f5467d6e3"
+    },
+    {
+      "path": "all-eight-ab-guard-topups/earley-boyer.js-batch-1.json",
+      "sha256": "6a3109d981af8d78827bae307ca42e067997d2595f3eadef7e4be69faa73f98e"
+    },
+    {
+      "path": "all-eight-ab-guard-topups/navier-stokes.js-batch-1.json",
+      "sha256": "29173154a702991196eba0be574c2f1b57cfdefc64b67748b5e813dfbf384af5"
+    },
+    {
+      "path": "all-eight-ab-guard-topups/raytrace.js-batch-1.json",
+      "sha256": "822493c25c6060656ef29e4e24c071ab80b70e2127ce3910b2e6de2534ca43bb"
+    },
+    {
+      "path": "all-eight-ab-guard-topups/regexp.js-batch-1.json",
+      "sha256": "4776440fd062bfad46245f52d94d333fdc47d1162a9dc204e58540c50f2d62a1"
+    },
+    {
+      "path": "all-eight-ab-guard-topups/richards.js-batch-1.json",
+      "sha256": "10fb6b7503fdfb04bf82e4d98b06cb7d8a9cf9653f0c5f2172d4e9fdb0d4b34a"
+    },
+    {
+      "path": "all-eight-ab-guard-topups/splay.js-batch-1.json",
+      "sha256": "362d1691c8c8c2d6bccf6017000fef8baa1127c0342b3368d54205b618458158"
+    },
+    {
+      "path": "all-eight-ab-schema5-topup-5-wall-policy.json",
+      "sha256": "4c151ceefc2f8e5341663c86e66b898ae5e93597d79a1ea1bcc6cdf1de8764d5"
+    },
+    {
+      "path": "regexp-ab-schema5-wall-topup-11.json",
+      "sha256": "4b8ad97afc8e5a37c30ca0bd29221a9601db4223e26ce02dd49124fd1c7f7807"
+    }
+  ]
+}

@@ -35,23 +35,25 @@ The fixed-work tools already pinned for the M4 campaign are `quench-bench` SHA-2
 
 The same-binary all-eight A/A control is reused from the prior M4 campaign and copied here as `all-eight-aa-schema5-11.json` (SHA-256 `963a116fccdbec9f320e12c76d73443066dfbcb58a83c0f4afee6925d50fdb26`). It used the exact trunk executable SHA above, the same schema-5 runner SHA, and the same clean V8-v7 corpus submodule `64e1860c736c1b899708f4cd646721bc71e53d8b`; all eight fixtures had 11/11 clean pairs and equal output. Its report's `source_dirty` describes the source worktree from that earlier candidate session; the measured executable and runner are pinned by their SHA-256 values, and the corpus checkout is recorded clean. This is A/A noise-control evidence only, never a candidate result.
 
-## Candidate fixed-work screen (M4, preliminary)
+## Candidate fixed-work screen (M4)
 
-Candidate binary SHA `afde285b…a8d7c4cf` vs trunk binary SHA `8432da11…bf5795dd`, runner SHA `bdc9d6c4…98db109`, corpus commit `64e1860c736c1b899708f4cd646721bc71e53d8b`. The resumable schema-5 guard has 7 clean paired rounds per fixture (one additional valid one-round pilot had incomplete contention calibration and is excluded from clean-pair wall/cycle summaries). All top-up reports are stored in `all-eight-ab-guard-topups/`; the guard checkpoint and raw decision are `all-eight-ab-guard.json` and `all-eight-ab-guard.decision.json`. The initial one-round pilot is `all-eight-ab-schema5-initial-1.json`.
+Candidate binary SHA `afde285b…a8d7c4cf` vs trunk binary SHA `8432da11…bf5795dd`, runner SHA `bdc9d6c4…98db109`, corpus commit `64e1860c736c1b899708f4cd646721bc71e53d8b`. The all-eight pool has 12 clean paired rounds per fixture: seven from the resumable guard batches and five from `all-eight-ab-schema5-topup-5-wall-policy.json`. RegExp has 23 clean rounds after the additional `regexp-ab-schema5-wall-topup-11.json`. The seven-round guard reports are in `all-eight-ab-guard-topups/`; the checkpoint and its cycle-based decision are `all-eight-ab-guard.json` and `all-eight-ab-guard.decision.json`.
 
-Percentages below are candidate vs trunk, medians of the 7 detector-clean paired marginal-per-run samples for wall, cycles, and instructions, and paired work max RSS. Negative means lower. The 95% intervals are bootstrap intervals over the seven paired deltas.
+The initial one-round pilot `all-eight-ab-schema5-initial-1.json` had incomplete contention calibration and is excluded. An attempted 11-round all-eight report was stopped when six Deno workers drove one-minute load to 16.56; its Crypto fixture was 11/11 valid and 0/11 clean, and no complete report was emitted. The first guard-resume attempt ran from the candidate worktree without the benchmark submodule and failed before samples; the resumed batch ran from the root checkout. The failed Crypto batch is retained in the checkpoint, while `crypto.js-batch-2.json` is the successful seven-round top-up.
+
+Percentages are candidate vs trunk. Wall, cycles, and instructions compare paired marginal-per-run values (`work − setup-only`); max RSS compares paired work-sample peaks. Intervals are deterministic 95% bootstrap intervals over the paired percentages, matching the fixed-work guard's bootstrap policy. Each row uses 12 clean pairs except RegExp, which uses 23. Negative means lower.
 
 | Fixture | Wall | Cycles | Instructions | Work max RSS |
 | -- | --: | --: | --: | --: |
-| Crypto | −0.358% [−1.788, +1.756] | +0.102% [−1.625, +0.877] | −0.632% | −0.977% |
-| DeltaBlue | −7.213% [−7.553, −6.844] | −7.258% [−7.487, −6.808] | −8.125% | −3.318% |
-| EarleyBoyer | −1.263% [−1.589, −0.984] | −1.187% [−1.567, −0.944] | −2.104% | −9.845% |
-| NavierStokes | −0.874% [−2.005, −0.647] | −0.965% [−1.898, −0.629] | −0.608% | −1.010% |
-| RayTrace | −4.012% [−4.624, −3.734] | −4.040% [−4.673, −3.822] | −4.026% | −4.219% |
-| RegExp | +1.267% [+0.583, +4.318] | +1.420% [+0.778, +4.345] | +0.763% | −3.276% |
-| Richards | −0.951% [−1.323, +0.189] | −1.038% [−1.338, +0.055] | −0.653% | −3.130% |
-| Splay | −6.953% [−7.451, −6.327] | −6.858% [−7.055, −6.259] | −4.649% | −24.627% |
+| Crypto | +0.586% [−1.019, +2.456] | +0.687% [−0.796, +2.528] | −0.633% | −1.241% |
+| DeltaBlue | −7.275% [−7.465, −6.866] | −7.272% [−7.437, −6.782] | −8.126% | −3.199% |
+| EarleyBoyer | −1.183% [−1.449, −1.026] | −1.259% [−1.769, −0.943] | −2.105% | −9.831% |
+| NavierStokes | −0.873% [−1.578, −0.541] | −0.781% [−1.772, −0.589] | −0.608% | −1.007% |
+| RayTrace | −4.012% [−4.395, −3.764] | −4.034% [−4.474, −3.773] | −4.030% | −4.050% |
+| RegExp | +1.356% [+0.583, +2.740] | +1.420% [+0.778, +2.668] | +0.763% | −2.975% |
+| Richards | −1.158% [−1.467, −0.499] | −1.052% [−1.620, −0.576] | −0.654% | −3.125% |
+| Splay | −6.803% [−7.340, −6.133] | −6.845% [−7.031, −6.077] | −4.645% | −24.608% |
 
-The fixed-work guard's `overall` field says `rejected` because it treats a positive cycle interval on RegExp as a regression. TOD-11's WP6 merge rule instead uses the other-fixture wall limit (2%) and RSS limit (1% beyond the A/A band); RegExp's seven-pair wall median is +1.267% and its RSS fell 3.276%. Its wall interval extends above 2%, so this seven-pair screen does not settle the written wall rule. The same-binary RegExp A/A wall interval is wide (−1.391% to +4.977%). Do not merge or claim an official Splay distance from this screen; complete 11 clean pairs and report both the tool result and the explicit TOD-11 wall/RSS evaluation. The official stock distances remain 1.664× Score / 1.810× max RSS.
+The 12-pair all-eight result has no cross-fixture wall median above TOD-11's 2% WP6 cap, and every fixture's work max RSS fell. Splay's active marginal wall interval is below zero and its RSS fell 24.608%. RegExp is the only positive wall median (+1.356%); after 23 clean pairs its 95% interval still extends above 2%, while the same-binary A/A wall interval is −1.391% to +4.977%. Thus the candidate meets the point-estimate form of the written wall/RSS rule, but a conservative upper-confidence interpretation of the 2% ceiling remains unresolved. The generic fixed-work guard's `overall: rejected` reflects a different, cycle-based zero-regression rule; keep both outcomes distinct until TOD-11 aligns the tool and written policy. No stock candidate run or official distance change is recorded here.
 
-An 11-round confirmation was interrupted after its Crypto fixture because six Deno workers raised one-minute load to 16.56 on the 10-CPU M4; Crypto was 11/11 valid and 0/11 detector-clean. The process was stopped before using those samples, and no complete report was produced. The first guard-resume attempt also ran from the candidate worktree, where the benchmark submodule is absent; it exited before collecting samples. Resuming from the root checkout succeeded. This is recorded in the checkpoint; the successful Crypto top-up is `crypto.js-batch-2.json`.
+All fixed-work reports were launched from the root checkout to use its pinned corpus; the report's `source_revision`/`source_dirty` therefore describe that launcher checkout, not the engine source. The candidate executable identity is the pinned SHA above; its source is `11efad0ec7d7a4bf44885a07cc321627e79f017f`.
