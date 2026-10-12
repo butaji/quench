@@ -19,12 +19,14 @@ This is an uninstrumented OS-level snapshot of the pinned record-candidate proce
 | `vmmap` physical footprint (and reported peak) | 38.7 MiB | 74.3 MiB | +35.6 MiB |
 | Default malloc-zone resident | 37.5 MiB | 73.2 MiB | +35.7 MiB |
 | MALLOC_LARGE resident | 15.8 MiB | 33.1 MiB | +17.3 MiB |
+| 512 MiB ObjectRecordSpace-size range | 512 MiB virtual (128 MiB mapped + 384 MiB reserved), 15.8 MiB resident | 512 MiB virtual (128 MiB mapped + 384 MiB reserved), 31.5 MiB resident | +15.7 MiB resident |
+| Additional MALLOC_LARGE mapping | — | 2,160 KiB virtual, 1,728 KiB resident | Appears after work |
 | MALLOC_SMALL resident | 21.2 MiB | 39.4 MiB | +18.2 MiB |
 | MALLOC_TINY resident | 224 KiB | 208 KiB | −16 KiB |
 
-The record space reserves 16,777,216 × 32 B = 512 MiB virtually (`OBJECT_RECORD_SPACE_CAPACITY` and `size_of::<Object>() == 32`); `vmmap` reports a 512 MiB MALLOC_LARGE region at setup. This matches the source-level reservation size. The region is not tagged by `vmmap` with its Rust owner, so treat the association as a correlation, not an allocation trace.
+The record space reserves exactly 16,777,216 × 32 B = 512 MiB virtually (`OBJECT_RECORD_SPACE_CAPACITY` and `size_of::<Object>() == 32`). The single source allocation matches the unique contiguous 512 MiB MALLOC_LARGE range in both vmmap snapshots; that range is split into a 128 MiB mapped subrange and a 384 MiB reserved subrange. The mapped segment’s resident size grows 15.8 → 31.5 MiB (+15.7 MiB). A separate 2,160 KiB large mapping appears after work, with 1,728 KiB resident. vmmap does not label the Rust owner, so the record-range association is strongly supported by the unique size match but remains an OS-map correlation.
 
-The observed resident growth is split almost evenly between MALLOC_LARGE and MALLOC_SMALL. This narrows the OS mapping class that grows during work, but it does not tell us which bytes are live object records versus metadata, fragmentation, or other allocations. The next exact structural answer still requires a profile-memory census on the same candidate and stage.
+MALLOC_SMALL residency grows another 18.2 MiB. This identifies where pages become resident, but not how much is live array data versus allocator metadata, fragmentation or other allocations. The exact structural answer still requires a profile-memory census on the same candidate and stage.
 
 ## Limits and qualification status
 
