@@ -206,6 +206,23 @@ handle adapter implements ref/unref/hasRef; complete TCP/Pipe wrap methods and
 prototype metadata, fd adoption and socket reference behavior remain separate
 work.
 
+## Socket reference ownership
+
+`net.Socket` ref/unref methods preserve the public `_handle` getter and method
+lookups. Without a handle, the public `once` hook receives the public ref/unref
+method for the connect event. Connecting, connected and accepted sockets carry
+one transport reference bit; successful connection transfers that bit rather
+than adding another wrapper reference. Pending connect/write requests and close
+completion retain their independent work lifetime after an unref request. Socket
+activity timeouts use the canonical native timer reference operation to avoid
+keeping an otherwise unreferenced transport alive.
+
+Oracle checks cover public hooks and exceptions, method metadata, unref before
+and after connecting, accepted-socket unref, and ref restoration. The handle
+adapter supports ref/unref/hasRef. Socket close callback timing and closed-handle
+queries still differ from Node, and complete TCP/Pipe wrap methods, prototypes,
+fd adoption and kernel keepalive/nodelay option hooks remain separate work.
+
 ## TLS material validation
 
 Secure-context CRL and PKCS12 checks use native OpenSSL parsers. CRLs use
