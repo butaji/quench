@@ -358,6 +358,14 @@ impl ProgramStore {
         }
     }
 
+    /// A program's lane views by function, derived on first use.
+    pub(super) fn lane_views(
+        &self,
+        id: ProgramId,
+    ) -> Option<&[std::cell::OnceCell<super::dispatch_fast::LaneView>]> {
+        Some(&self.programs.get(id.index())?.lane_views)
+    }
+
     pub(super) fn lane_view(
         &self,
         id: ProgramId,
