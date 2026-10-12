@@ -2211,6 +2211,11 @@ impl<'a> Compiler<'a> {
             module_imports,
             module_link_plan,
             source_name: self.source.to_owned(),
+            source: Some(crate::bytecode::ProgramSource {
+                text: std::sync::Arc::from(self.text),
+                line_offset: 0,
+                column_offset: 0,
+            }),
             atoms,
             constants: self.constants,
             functions,

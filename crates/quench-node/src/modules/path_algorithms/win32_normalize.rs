@@ -34,6 +34,24 @@ pub(crate) fn normalize_str(path: &str) -> String {
     finish_normalize(&chars, &root, tail)
 }
 
+pub(crate) fn to_namespaced_path(path: &str) -> String {
+    let chars: Vec<char> = path.chars().collect();
+    if chars.len() <= 2 {
+        return path.to_owned();
+    }
+    if chars[0] == '\\' && chars[1] == '\\' {
+        if chars[2] != '?' && chars[2] != '.' {
+            return format!("\\\\?\\UNC\\{}", chars[2..].iter().collect::<String>());
+        }
+    } else if super::common::is_device_root(chars[0])
+        && chars[1] == ':'
+        && chars[2] == '\\'
+    {
+        return format!("\\\\?\\{path}");
+    }
+    path.to_owned()
+}
+
 pub(crate) struct NormalizeRoot {
     pub root_end: usize,
     pub device: Option<String>,

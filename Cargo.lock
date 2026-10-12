@@ -1364,6 +1364,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "brotli",
+ "crc32fast",
  "encoding_rs",
  "flate2",
  "hex",
@@ -1373,6 +1374,7 @@ dependencies = [
  "oxc_resolver",
  "quench-js-check",
  "quench-runtime",
+ "regex",
  "serde_json",
  "sha1",
  "sysinfo",

@@ -1393,10 +1393,16 @@ impl<H: Host> Vm<H> {
         right: Value,
     ) -> Result<Value, JsError> {
         let Some(Cell::BigInt(left)) = self.heap.get(left) else {
-            return Err(self.type_error(p, "Cannot mix BigInt and other types".into()));
+            return Err(self.type_error(
+                p,
+                "Cannot mix BigInt and other types, use explicit conversions".into(),
+            ));
         };
         let Some(Cell::BigInt(right)) = self.heap.get(right) else {
-            return Err(self.type_error(p, "Cannot mix BigInt and other types".into()));
+            return Err(self.type_error(
+                p,
+                "Cannot mix BigInt and other types, use explicit conversions".into(),
+            ));
         };
         let result = match op {
             8 => crate::bigint::binary(left, right, |a, b| Ok(a + b)),

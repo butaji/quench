@@ -202,6 +202,12 @@ gate together with Test262 and Wasm.
 See
 [task 21 qualification](../evidence/task21-shared-commonjs-loader.json).
 
+For local Node oracle checks, put a Node executable matching the pinned
+checkout's major version (`tests/node/src/node_version.h`) on `PATH`. The current
+checkout targets Node 27; earlier majors can differ on API contracts such as
+`util.parseEnv` object prototypes. Run the CLI/API oracle checks with
+`cargo test --profile iteration -p quench-node-test --test child_entry`.
+
 Run the selected upstream Node `test/parallel` profile against the shared VM
 with the canonical `run-parallel` worker. Profile membership
 comes from `crates/quench-node-test/node-tests/parallel.txt`; `--filter`
@@ -211,6 +217,31 @@ narrowly selects cases within that profile for affected-case checks.
 cargo run --profile iteration -p quench-node-test --bin run-parallel -- \
   --profile framework-core --filter test-path-join.js
 ```
+
+For the full inventory, use an unchanged Node checkout outside any enclosing
+JavaScript package. Otherwise a parent `package.json` can change the module
+type of upstream child scripts. Workers run from that checkout's root, matching
+the upstream harness; production module resolution uses ordinary package scopes.
+The runner supplies that checkout as `QUENCH_NODE_LIBRARY_ROOT` for Node library
+assets. The host resolves this installation root once at startup, so guest cwd
+changes cannot move its internal-module lookup. Direct CLI users can set this
+variable to an installation containing `lib/` and `deps/`; its default is the
+`node/` directory beside the executable. Node library sources use their builtin
+CommonJS wrapper contract independently of enclosing application package scopes.
+
+```sh
+NODE_FIXTURE_WORKTREE=$(mktemp -d)
+git -C tests/node worktree add --detach "$NODE_FIXTURE_WORKTREE" HEAD
+cargo build --profile iteration -p quench-node -p quench-node-test \
+  --bin quench-node --bin run-parallel
+target/iteration/run-parallel --all \
+  --parallel-dir "$NODE_FIXTURE_WORKTREE/test/parallel" \
+  --jobs 4 --timeout-secs 10 --results evidence/node-parallel.json
+```
+
+The report records the selected fixture revision and inventory hash at launch.
+Cases print as they complete. Every worker's process group is stopped after
+completion, failure, or timeout; Linux workers also reap orphaned children.
 
 ## Shared Wasm scopes
 

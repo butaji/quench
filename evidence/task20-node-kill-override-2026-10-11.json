@@ -1,0 +1,26 @@
+{
+  "scope": "Shared ChildProcess constructor identity and callback reporting for kill override exceptions",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "validation": {
+    "child_entry": {
+      "pass": 18,
+      "fail": 0,
+      "log": "work/exec-kill-override-integration.log"
+    },
+    "execution_subset": {
+      "counts": {
+        "pass": 15,
+        "skip": 1,
+        "fail": 2
+      },
+      "total": 18,
+      "inventory_hash": "33b0084ac9056ec4",
+      "raw_results": "work/exec-kill-override-subset.json",
+      "timeout_secs": 10,
+      "jobs": 2
+    }
+  },
+  "gain": "15 execution passes, up from 14; kill override fixture passes and no old execution pass lost.",
+  "remaining": "Internal child_process exports are partial; public ChildProcess manual construction/spawn and synchronous output limits remain unimplemented. Complete parallel goal remains open.",
+  "performance_claim": false
+}

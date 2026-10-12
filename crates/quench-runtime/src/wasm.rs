@@ -807,6 +807,7 @@ impl Engine {
             module_imports: vec![],
             module_link_plan: None,
             source_name: name.into(),
+            source: None,
             atoms: AtomTable::default(),
             constants,
             functions,

@@ -1,0 +1,54 @@
+{
+  "scope": "Error stack capture, formatted-value state and native embedding frames",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "validation": {
+    "child_entry": {
+      "pass": 9,
+      "fail": 0,
+      "log": "work/error-intrinsics-oracle2.log"
+    },
+    "gc_lifecycle": {
+      "pass": 1,
+      "fail": 0,
+      "log": "work/error-stack-roots.log"
+    },
+    "runtime_subset": {
+      "pass": 8,
+      "fail": 0,
+      "log": "work/error-intrinsics-runtime.log"
+    }
+  },
+  "contracts": [
+    "Error constructors capture after message and cause evaluation; AggregateError before iterable evaluation",
+    "Per-realm original Error constructor and shared stack accessor identity",
+    "Numeric data-only stackTraceLimit lookup without coercion or accessor invocation",
+    "Cached prepareStackTrace results and arbitrary stack assignments",
+    "Constructor frame omission, Script root source positions and strict-frame receiver hiding",
+    "Native nextTick frames without invented JavaScript source positions; panic-safe scoped cleanup"
+  ],
+  "affected_subsets": {
+    "assertions": {
+      "counts": {
+        "fail": 9,
+        "pass": 5
+      },
+      "inventory_hash": "8ea2039d6ae15ebb",
+      "timeout_secs": 10,
+      "jobs": 2,
+      "raw_results": "work/assert-intrinsics.json"
+    },
+    "utilities": {
+      "counts": {
+        "fail": 19,
+        "pass": 11,
+        "skip": 1
+      },
+      "inventory_hash": "9db1c1006acbd125",
+      "timeout_secs": 10,
+      "jobs": 2,
+      "raw_results": "work/util-intrinsics.json"
+    }
+  },
+  "remaining": "Callbackify upstream advances to two uncalled execFile callbacks; assertion and utility inventories remain incomplete",
+  "performance_claim": false
+}
