@@ -951,6 +951,145 @@ lane_handler! {
     }
 }
 
+/// The float operators a lane record runs as one hardware operation or
+/// comparison, by index: the operator is part of the handler, not a
+/// selector it decodes.
+const FLOAT_ADD: u8 = 0;
+const FLOAT_SUBTRACT: u8 = 1;
+const FLOAT_MULTIPLY: u8 = 2;
+const FLOAT_DIVIDE: u8 = 3;
+/// Comparisons, whose result is an i32 truth value.
+const FLOAT_EQUAL: u8 = 4;
+const FLOAT_NOT_EQUAL: u8 = 5;
+const FLOAT_LESS: u8 = 6;
+const FLOAT_GREATER: u8 = 7;
+const FLOAT_LESS_EQUAL: u8 = 8;
+const FLOAT_GREATER_EQUAL: u8 = 9;
+const FLOAT_ARITHMETIC: usize = 10;
+
+/// The arithmetic index of a float binary selector, when it has one.
+fn float_arithmetic(op: Op, selector: u32) -> Option<u8> {
+    Some(match op {
+        Op::WasmF64Binary => match F64BinaryOperator::from_tag(selector)? {
+            F64BinaryOperator::Add => FLOAT_ADD,
+            F64BinaryOperator::Subtract => FLOAT_SUBTRACT,
+            F64BinaryOperator::Multiply => FLOAT_MULTIPLY,
+            F64BinaryOperator::Divide => FLOAT_DIVIDE,
+            F64BinaryOperator::Equal => FLOAT_EQUAL,
+            F64BinaryOperator::NotEqual => FLOAT_NOT_EQUAL,
+            F64BinaryOperator::Less => FLOAT_LESS,
+            F64BinaryOperator::Greater => FLOAT_GREATER,
+            F64BinaryOperator::LessEqual => FLOAT_LESS_EQUAL,
+            F64BinaryOperator::GreaterEqual => FLOAT_GREATER_EQUAL,
+            _ => return None,
+        },
+        Op::WasmF32Binary => match F32BinaryOperator::from_tag(selector)? {
+            F32BinaryOperator::Add => FLOAT_ADD,
+            F32BinaryOperator::Subtract => FLOAT_SUBTRACT,
+            F32BinaryOperator::Multiply => FLOAT_MULTIPLY,
+            F32BinaryOperator::Divide => FLOAT_DIVIDE,
+            F32BinaryOperator::Equal => FLOAT_EQUAL,
+            F32BinaryOperator::NotEqual => FLOAT_NOT_EQUAL,
+            F32BinaryOperator::Less => FLOAT_LESS,
+            F32BinaryOperator::Greater => FLOAT_GREATER,
+            F32BinaryOperator::LessEqual => FLOAT_LESS_EQUAL,
+            F32BinaryOperator::GreaterEqual => FLOAT_GREATER_EQUAL,
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+
+lane_handler! {
+    /// Float arithmetic `ARITH` of width f64 (`WIDE`) or f32, with the
+    /// operators' own semantics (`crate::wasm::float`): the hardware result.
+    fn lane_float_arithmetic<WIDE: bool, ARITH: u8, ACC: u8>(cx, r, ip, i, view) {
+        let left = read::<ACC, ACC_B>(r, i.b, view);
+        let right = read::<ACC, ACC_C>(r, i.c, view);
+        /// The arithmetic result, or a comparison's truth value.
+        enum Outcome<F> {
+            Float(F),
+            Truth(bool),
+        }
+        macro_rules! apply {
+            ($left:expr, $right:expr) => {{
+                let (left, right) = ($left, $right);
+                match ARITH {
+                    FLOAT_ADD => Outcome::Float(left + right),
+                    FLOAT_SUBTRACT => Outcome::Float(left - right),
+                    FLOAT_MULTIPLY => Outcome::Float(left * right),
+                    FLOAT_DIVIDE => Outcome::Float(left / right),
+                    FLOAT_EQUAL => Outcome::Truth(left == right),
+                    FLOAT_NOT_EQUAL => Outcome::Truth(left != right),
+                    FLOAT_LESS => Outcome::Truth(left < right),
+                    FLOAT_GREATER => Outcome::Truth(left > right),
+                    FLOAT_LESS_EQUAL => Outcome::Truth(left <= right),
+                    _ => Outcome::Truth(left >= right),
+                }
+            }};
+        }
+        let value = if WIDE {
+            let (Some(left), Some(right)) = (left.bits64(), right.bits64()) else {
+                return exit(ip);
+            };
+            match apply!(f64::from_bits(left), f64::from_bits(right)) {
+                Outcome::Float(result) => {
+                    let Some(value) = Value::from_bits64(result.to_bits()) else {
+                        return exit(ip);
+                    };
+                    value
+                }
+                Outcome::Truth(truth) => view.integers.encode(i32::from(truth)),
+            }
+        } else {
+            let (Some(left), Some(right)) = (left.as_int(), right.as_int()) else {
+                return exit(ip);
+            };
+            match apply!(f32::from_bits(left as u32), f32::from_bits(right as u32)) {
+                Outcome::Float(result) => view.integers.encode(result.to_bits() as i32),
+                Outcome::Truth(truth) => view.integers.encode(i32::from(truth)),
+            }
+        };
+        produce!(cx, r, ip, i.a, value, view)
+    }
+}
+
+struct FloatArithmetic<H>(std::marker::PhantomData<H>);
+
+macro_rules! float_arithmetic_handlers {
+    ($host:ty, $wide:expr) => {
+        [
+            float_arithmetic_handlers!($host, $wide, FLOAT_ADD),
+            float_arithmetic_handlers!($host, $wide, FLOAT_SUBTRACT),
+            float_arithmetic_handlers!($host, $wide, FLOAT_MULTIPLY),
+            float_arithmetic_handlers!($host, $wide, FLOAT_DIVIDE),
+            float_arithmetic_handlers!($host, $wide, FLOAT_EQUAL),
+            float_arithmetic_handlers!($host, $wide, FLOAT_NOT_EQUAL),
+            float_arithmetic_handlers!($host, $wide, FLOAT_LESS),
+            float_arithmetic_handlers!($host, $wide, FLOAT_GREATER),
+            float_arithmetic_handlers!($host, $wide, FLOAT_LESS_EQUAL),
+            float_arithmetic_handlers!($host, $wide, FLOAT_GREATER_EQUAL),
+        ]
+    };
+    ($host:ty, $wide:expr, $arith:expr) => {
+        [
+            lane_float_arithmetic::<$host, $wide, $arith, ACC_NONE> as Handler,
+            lane_float_arithmetic::<$host, $wide, $arith, ACC_A> as Handler,
+            lane_float_arithmetic::<$host, $wide, $arith, ACC_B> as Handler,
+            lane_float_arithmetic::<$host, $wide, $arith, ACC_C> as Handler,
+            lane_float_arithmetic::<$host, $wide, $arith, ACC_PAIR> as Handler,
+        ]
+    };
+}
+
+impl<H: Host> FloatArithmetic<H> {
+    /// By width (f32, then f64), arithmetic index and accumulator field.
+    const HANDLERS: [[[Handler; ACC_POSITIONS]; FLOAT_ARITHMETIC]; 2] = [
+        float_arithmetic_handlers!(H, false),
+        float_arithmetic_handlers!(H, true),
+    ];
+}
+
 lane_handler! {
     fn lane_float_unary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let input = read::<ACC, ACC_B>(r, i.b, view);
@@ -1803,6 +1942,13 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                 Some(LaneHandler {
                     handler: lane_instance_binding::<H, true> as Handler,
                     produces: false,
+                })
+            } else if let Some(arith) = float_arithmetic(op, instruction.imm()) {
+                tables[usize::from(backward_jump)][usize::from(acc)][op as usize].and_then(|_| {
+                    LaneHandler::producer(
+                        FloatArithmetic::<H>::HANDLERS[usize::from(op == Op::WasmF64Binary)]
+                            [usize::from(arith)][usize::from(acc)],
+                    )
                 })
             } else {
                 tables[usize::from(backward_jump)][usize::from(acc)][op as usize]

@@ -9,6 +9,22 @@ const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
 const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
+/// The tags occupy one contiguous range of tag-field values, so a tag test
+/// is one range comparison.
+const FIRST_TAG: u64 = TAG_UNDEFINED;
+/// The tag field's position: above the payload.
+const TAG_SHIFT: u32 = PAYLOAD_MASK.count_ones();
+const LAST_TAG: u64 = TAG_DELETED;
+const _: () = {
+    let tags = [TAG_UNDEFINED, TAG_NULL, TAG_BOOL, TAG_HEAP, TAG_INT, TAG_DELETED];
+    let step = 1 << TAG_SHIFT;
+    let mut index = 1;
+    while index < tags.len() {
+        assert!(tags[index] == tags[index - 1] + step);
+        index += 1;
+    }
+    assert!(tags[0] == FIRST_TAG && tags[tags.len() - 1] == LAST_TAG);
+};
 
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy)]
@@ -143,11 +159,11 @@ impl Value {
         self.0 == TAG_DELETED
     }
 
+    #[inline(always)]
     fn is_tagged(self) -> bool {
-        matches!(
-            self.0 & TAG_MASK,
-            TAG_UNDEFINED | TAG_NULL | TAG_BOOL | TAG_HEAP | TAG_INT | TAG_DELETED
-        )
+        // The tag field, shifted down, compared as one small range.
+        let field = (self.0 >> TAG_SHIFT) as u32;
+        field.wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32) <= ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32
     }
 
     #[cfg(feature = "profile-aggregate")]
