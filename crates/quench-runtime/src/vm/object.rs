@@ -399,6 +399,7 @@ impl<H: Host> Vm<H> {
         self.field_add_sets.clear();
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
         self.megamorphic_fields.clear();
+        self.instanceof_constructor_layout = None;
     }
     fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
         match key {

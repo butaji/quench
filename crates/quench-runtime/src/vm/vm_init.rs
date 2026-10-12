@@ -101,6 +101,8 @@ impl<H: Host> Vm<H> {
             megamorphic_fields: vec![],
             length_atom: u32::MAX,
             prototype_atom: super::builtins::NO_CACHED_ATOM,
+            instanceof_constructor_layout: None,
+            instanceof_has_instance_holder: Value::NULL,
             to_fixed_atom: u32::MAX,
             to_precision_atom: u32::MAX,
             runtime_atoms: RuntimeAtoms::default(),

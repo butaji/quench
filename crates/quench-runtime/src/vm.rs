@@ -824,6 +824,14 @@ pub(crate) struct Vm<H> {
     length_atom: Atom,
     // Cached `prototype` atom; `NO_CACHED_ATOM` until first use after a program reset.
     prototype_atom: Atom,
+    /// A non-dictionary constructor shape verified to have no own `@@hasInstance` and a
+    /// data `prototype` at the paired slot; derived from shapes, so field-cache invalidation
+    /// clears it.
+    instanceof_constructor_layout: Option<(u32, usize)>,
+    /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
+    /// non-writable, non-configurable data property, which it then holds for its lifetime;
+    /// rooted so the identity stays meaningful. `Value::NULL` when none.
+    instanceof_has_instance_holder: Value,
     to_fixed_atom: Atom,
     to_precision_atom: Atom,
     runtime_atoms: RuntimeAtoms,
@@ -1427,6 +1435,8 @@ impl<H: Host> Vm<H> {
         self.function_values.clear();
         self.programs.reset(program.clone());
         self.script_lexicals_seen = false;
+        self.instanceof_constructor_layout = None;
+        self.instanceof_has_instance_holder = Value::NULL;
         self.observe_program_declarations(program);
         self.program_cache_layouts.clear();
         self.program_cache_layouts
