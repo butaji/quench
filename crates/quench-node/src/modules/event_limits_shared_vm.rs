@@ -288,6 +288,13 @@ pub(crate) fn registered(
     let event = args.get(1).copied().unwrap_or(undefined);
     let previous = args.get(2).copied().unwrap_or(undefined);
     let current = args.get(3).copied().unwrap_or(undefined);
+    let data = context.host_function_data()?;
+    if context
+        .rooted_value(previous)
+        .is_some_and(|value| value.is_undefined())
+    {
+        super::event_constructor_shared_vm::event_added(context, data, target)?;
+    }
     if !context.is_array_rooted(current)? {
         return Ok(undefined);
     }
@@ -298,7 +305,6 @@ pub(crate) fn registered(
             return Ok(undefined);
         }
     }
-    let data = context.host_function_data()?;
     let limit = emitter_max(context, data, target)?;
     let limit_value = context
         .rooted_value(limit)

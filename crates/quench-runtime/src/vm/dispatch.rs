@@ -1452,21 +1452,7 @@ impl<H: Host> Vm<H> {
             Op::IncDec => {
                 let input = self.read(f, i.register_b());
                 let is_decrement = i.boolean_flag().expect("validated boolean immediate");
-                let delta = if is_decrement { -1.0 } else { 1.0 };
-                let value = if matches!(self.heap.get(input), Some(Cell::BigInt(_))) {
-                    let one = self.heap.alloc(Cell::BigInt("1".into()));
-                    self.binary(p, if is_decrement { 9 } else { 8 }, input, one)?
-                } else if let Some(integer) = input.as_int() {
-                    let next = if is_decrement {
-                        integer.checked_sub(1)
-                    } else {
-                        integer.checked_add(1)
-                    };
-                    next.map(Value::integer)
-                        .unwrap_or_else(|| Value::number(f64::from(integer) + delta))
-                } else {
-                    Value::number(self.to_number(p, input)? + delta)
-                };
+                let value = self.numeric_update(p, input, is_decrement)?;
                 self.write(f, i.result_register(), value);
             }
             Op::Unary => {

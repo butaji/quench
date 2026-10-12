@@ -1,7 +1,7 @@
 //! Shared guest bridge for Node's EventEmitter listener semantics.
 
 pub const JS: &str = quench_js_check::checked_js!(
-    r#"(registered) => {
+    r#"(registered, initialize, captureResult, removedEvent) => {
 const ERROR_INSPECT = Symbol.for("quench.internal.eventEmitter.inspect");
 const STREAM_OWNER = Symbol.for("quench.internal.streamOwner");
 const checkListener = (listener) => {
@@ -53,17 +53,7 @@ const registerOnce = (emitter, event, listener, prepend) => {
   wrapped.listener = listener;
   return registerListener(emitter, event, wrapped, prepend);
 };
-class EventEmitter {
-  constructor(options = {}) {
-    this._events = Object.create(null);
-    const activeDomain = globalThis.__quench_active_domain;
-    if (activeDomain) {
-      this.domain = activeDomain;
-      activeDomain.add(this);
-    }
-    this.captureRejections = options.captureRejections ??
-      EventEmitter.captureRejections ?? false;
-  }
+class EventEmitterBridge {
   addListener(event, listener) {
     return registerListener(this, event, listener, false);
   }
@@ -130,18 +120,7 @@ class EventEmitter {
     values.slice().filter((listener) => typeof listener === "function").forEach(
       (listener) => {
         const result = Reflect.apply(listener, this, args);
-        if (result?.then) {
-          result.catch((error) => setImmediate(() => {
-            if (this.captureRejections && event !== "error") {
-              const rejection = this[Symbol.for("nodejs.rejection")];
-              if (typeof rejection === "function") {
-                rejection.call(this, error, event, ...args);
-              } else this.emit("error", error);
-            } else {
-              process.emit("unhandledRejection", error);
-            }
-          }));
-        }
+        captureResult(this, result, event, args);
       },
     );
     return values.length > 0;
@@ -154,7 +133,7 @@ class EventEmitter {
     );
     if (!removed) return this;
     const values = current.filter((item) => item !== removed);
-    if (values.length === 0) delete this._events[event];
+    if (values.length === 0) { delete this._events[event]; removedEvent(this); }
     else this._events[event] = values.length === 1 ? values[0] : values;
     if (event !== "removeListener") {
       this.emit("removeListener", event, removed.listener || removed);
@@ -180,6 +159,17 @@ class EventEmitter {
   }
 
 }
+const prototype = EventEmitterBridge.prototype;
+const EventEmitter = function EventEmitter(options) {
+  'use strict';
+  EventEmitter.init.call(this, options);
+};
+EventEmitter.prototype = prototype;
+Object.defineProperty(prototype, 'constructor', {value: EventEmitter, writable: true, configurable: true});
+EventEmitter.init = function init(options) {
+  'use strict';
+  return initialize(this, options);
+};
 const aliasMethod = (source, alias) => {
   const descriptor = Object.getOwnPropertyDescriptor(
     EventEmitter.prototype,

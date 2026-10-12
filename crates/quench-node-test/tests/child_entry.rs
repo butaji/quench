@@ -2365,3 +2365,128 @@ socket.on('close',hadError=>{{result.push(['close',hadError]);console.log(JSON.s
         String::from_utf8_lossy(&observations[1].stdout)
     );
 }
+
+#[test]
+fn emitter_callable_construction_matches_metadata_defaults_and_numeric_counters() {
+    const SOURCE: &str = r#"
+const EE=require('events'),result=[];
+function view(emitter){return Reflect.ownKeys(emitter).map(key=>[typeof key==='symbol'?String(key):key,typeof key==='symbol'?Symbol.keyFor(key)??null:null,typeof emitter[key]==='object'?'object':emitter[key]??'undefined'])}
+const emitter=new EE();result.push(EE.name,EE.length,emitter instanceof EE,view(emitter),Object.getPrototypeOf(emitter._events)===null);
+function Derived(){EE.call(this)}Object.setPrototypeOf(Derived.prototype,EE.prototype);
+const left=new Derived(),right=new Derived();left.on('x',()=>{});result.push(left instanceof EE,right.listenerCount('x'),left._eventsCount,right._eventsCount);
+const original=emitter._events;EE.init.call(emitter);result.push(emitter._events===original,view(emitter));
+const inherited=Object.create(emitter);EE.call(inherited);result.push(inherited._events!==emitter._events,inherited._eventsCount);
+EE.captureRejections=true;const overridden=new EE({captureRejections:false});const capture=Object.getOwnPropertySymbols(overridden).find(key=>String(key)==='Symbol(kCapture)');result.push(overridden[capture],Object.hasOwn(overridden,'captureRejections'));
+const descriptor=Object.getOwnPropertyDescriptor(EE,'captureRejections');result.push(descriptor.enumerable,descriptor.configurable,EE.captureRejections);
+EE.captureRejections=false;
+for(const captureRejections of [undefined,null,false,0,true,1,'x',{},0n,1n]){
+ try{const value=new EE({captureRejections});result.push([captureRejections===true?'true':'other',value[capture]])}catch(error){result.push([error.name,error.code,error.message])}
+}
+let reads=0;const options={get captureRejections(){reads++;return reads<3}};const counted=new EE(options);result.push(reads,counted[capture]);
+for(const value of [undefined,null,1,{},'x']){try{EE.captureRejections=value}catch(error){result.push([error.name,error.code,error.message])}}
+const counts=new EE();counts._eventsCount='7';counts.on('x',()=>{});result.push(counts._eventsCount,typeof counts._eventsCount);counts.removeAllListeners('x');result.push(counts._eventsCount);
+counts._eventsCount=7n;counts.on('big',()=>{});result.push(String(counts._eventsCount),typeof counts._eventsCount);
+const trace=[];counts._eventsCount={valueOf(){trace.push('valueOf');return 3}};counts.on('converted',()=>{});result.push(trace,counts._eventsCount);
+const marker={};counts._eventsCount={valueOf(){throw marker}};try{counts.on('throws',()=>{})}catch(error){result.push(error===marker,counts.listenerCount('throws'))}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn emitter_capture_rejections_preserves_thenable_identity_and_tick_order() {
+    const SOURCE: &str = r#"
+const EE=require('events'),result=[],marker={};
+const disabled=new EE();disabled.on('x',()=>({get then(){throw marker}}));result.push(['disabled',disabled.emit('x')]);
+const emitter=new EE({captureRejections:true});let gets=0;
+const thenable={get then(){gets++;return function(resolve,reject){result.push(['then',this===thenable,resolve===undefined,arguments.length]);reject(marker)}}};
+emitter[EE.captureRejectionSymbol]=function(error,type,...args){result.push(['rejection',this===emitter,error===marker,type,args])};
+emitter.on('event',()=>thenable);result.push('before');result.push(emitter.emit('event',1,'two'),'after',gets);
+const throws=new EE({captureRejections:true});throws.on('error',error=>result.push(['getter-error',error===marker]));throws.on('throws',()=>({get then(){throw marker}}));throws.emit('throws');
+const promiseEmitter=new EE({captureRejections:true});const first={},second={};
+promiseEmitter.on('event',()=>Promise.reject(first));promiseEmitter.on('error',error=>{result.push(['error',error===first]);return Promise.reject(second)});
+process.on('unhandledRejection',error=>result.push(['unhandled',error===second]));promiseEmitter.emit('event');
+setImmediate(()=>console.log(JSON.stringify(result)));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn primitive_constructor_names_descriptors_and_prototype_aliases_match_node() {
+    const SOURCE: &str = r#"
+const result=[];
+for(const constructor of [Number,String]){
+ const descriptor=Object.getOwnPropertyDescriptor(constructor,'name');
+ result.push([constructor.name,constructor.prototype.constructor===constructor,descriptor.value,descriptor.writable,descriptor.enumerable,descriptor.configurable]);
+}
+result.push((42).constructor.name,'value'.constructor.name,new Number(1).constructor.name,new String('x').constructor.name);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}

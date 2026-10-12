@@ -53,8 +53,11 @@ symbol keys, `listeners()` unwraps once wrappers, `rawListeners()` copies the
 stored wrappers, and `listenerCount(type, listener)` filters by function identity.
 Counts do not call an overridden public `listeners()` method. Removal and error
 monitor bridges consume raw wrappers so inspection cannot disable once cleanup.
-Constructor metadata, callable constructor behavior, and some mutation/removal
-semantics remain incomplete.
+Callable construction, constructor metadata, listener counters, and capture
+rejection policy are native. Thenable rejections use the shared next-tick queue
+and preserve the original error and public rejection hook. Mutation during
+emission, duplicate removal, and some event-map shape transitions remain
+incomplete.
 
 
 Listener limits use one native default shared by EventEmitter's accessor and

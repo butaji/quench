@@ -299,6 +299,22 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Apply ToNumeric and the shared ++/-- numeric update, preserving BigInt.
+    pub fn numeric_update_rooted(
+        &mut self,
+        value: RootId,
+        decrement: bool,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_numeric_update(value, decrement);
+        self.completion(result)
+    }
+
+    /// Apply ordinary subtraction, including guest conversion hooks and BigInt checks.
+    pub fn subtract_rooted(&mut self, left: RootId, right: RootId) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_subtract(left, right);
+        self.completion(result)
+    }
+
     /// Apply the shared greater-than operation, including string/BigInt
     /// comparison and ordinary guest primitive-conversion hooks.
     pub fn greater_than_rooted(

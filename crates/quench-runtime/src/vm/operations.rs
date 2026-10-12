@@ -1537,6 +1537,36 @@ impl<H: Host> Vm<H> {
         let value = self.binary(p, op, left, right)?;
         Ok(self.truthy(value))
     }
+    /// Shared numeric update after ToNumeric, used by bytecode and native hosts.
+    pub(super) fn numeric_update(
+        &mut self,
+        p: &ResidualProgram,
+        input: Value,
+        decrement: bool,
+    ) -> Result<Value, JsError> {
+        let delta = if decrement { -1.0 } else { 1.0 };
+        if matches!(self.heap.get(input), Some(Cell::BigInt(_))) {
+            let one = self.heap.alloc(Cell::BigInt("1".into()));
+            let operator = if decrement {
+                BinaryOperator::Subtraction
+            } else {
+                BinaryOperator::Addition
+            };
+            self.binary(p, operator as u32, input, one)
+        } else if let Some(integer) = input.as_int() {
+            let next = if decrement {
+                integer.checked_sub(1)
+            } else {
+                integer.checked_add(1)
+            };
+            Ok(next
+                .map(Value::integer)
+                .unwrap_or_else(|| Value::number(f64::from(integer) + delta)))
+        } else {
+            Ok(Value::number(self.to_number(p, input)? + delta))
+        }
+    }
+
     pub(super) fn numeric(
         &mut self,
         p: &ResidualProgram,
