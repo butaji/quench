@@ -723,8 +723,7 @@ impl<H: Host> Vm<H> {
                     i.atom_index(),
                     value,
                     i.cache_site_index(),
-                    p.functions[self.frames[f].function as usize].strict
-                        || i.op() == Op::SetFieldStrict,
+                    i.op() == Op::SetFieldStrict,
                 )?;
             }
             Op::DefinePropertyRecord => {
@@ -764,8 +763,7 @@ impl<H: Host> Vm<H> {
                     i.atom_index(),
                     self.read(f, i.register_a()),
                     i.cache_site_index(),
-                    p.functions[self.frames[f].function as usize].strict
-                        || i.op() == Op::SetThisFieldStrict,
+                    i.op() == Op::SetThisFieldStrict,
                 )?;
             }
             Op::SetIndex => {
