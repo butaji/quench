@@ -186,6 +186,8 @@ impl MemoryView {
     unsafe fn read(self, load: MemoryLoad, address: u64) -> Option<crate::WasmValue> {
         // Addresses are at most 33 bits, so the signed comparison is exact.
         if (address as i64) > self.reach as i64 || load.width() > WIDEST_DIRECT_ACCESS {
+            // Off the hot path: the access falls through to its dispatch.
+            std::hint::cold_path();
             return None;
         }
         // SAFETY: the access ends at or before the memory's end.
@@ -199,6 +201,7 @@ impl MemoryView {
     unsafe fn write(self, store: MemoryStore, address: u64, value: crate::WasmValue) -> Option<()> {
         // Addresses are at most 33 bits, so the signed comparison is exact.
         if (address as i64) > self.reach as i64 || store.width() > WIDEST_DIRECT_ACCESS {
+            std::hint::cold_path();
             return None;
         }
         // SAFETY: the access ends at or before the memory's end.
@@ -1173,6 +1176,57 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// An f64 load, the f64 arithmetic `ARITH` taking the loaded value as
+    /// its left (`LEFT`) or right operand, and the f64 store writing the
+    /// arithmetic's result (`mem[x] += v`): three records run here, each
+    /// result written as its own record writes it. An access the general
+    /// path must run exits at its record.
+    fn lane_f64_update<ARITH: u8, LEFT: bool>(cx, r, ip, i, view) {
+        // SAFETY: as for `lane_load`.
+        let Some(crate::WasmValue::F64(bits)) = (unsafe {
+            view.memory.read(MemoryLoad::F64Load, lane_address::<ACC_NONE>(r, i, view))
+        }) else {
+            return exit(ip);
+        };
+        let Some(loaded) = Value::from_bits64(bits) else {
+            return exit(ip);
+        };
+        r.set(i.a, loaded);
+        let operator = following(ip);
+        // SAFETY: the view fuses a load only with a following operator and
+        // store.
+        let o = unsafe { &*operator };
+        let first = f64::from_bits(bits);
+        let (left, right) = if LEFT {
+            (first, f64::from_bits(r.get(o.c).float_bits64()))
+        } else {
+            (f64::from_bits(r.get(o.b).float_bits64()), first)
+        };
+        let Ok(result) = f64_operation(ARITH, left, right) else {
+            unreachable!("a fused update's operator is arithmetic");
+        };
+        let value = Value::from_float_bits64(result.to_bits());
+        r.set(o.a, value);
+        let store = following(operator);
+        // SAFETY: as above.
+        let access = unsafe { &*store };
+        // SAFETY: as for `lane_store`.
+        if unsafe {
+            view.memory.write(
+                MemoryStore::F64Store,
+                lane_address::<ACC_NONE>(r, access, view),
+                crate::WasmValue::F64(value.float_bits64()),
+            )
+        }
+        .is_none()
+        {
+            return exit(store);
+        }
+        next!(cx, r, following(store), view)
+    }
+}
+
+lane_handler! {
     /// An f64 arithmetic `ARITH` whose result the next record, an f64
     /// store, writes to memory: both records run here. A store the general
     /// path must run exits at its record, the result already written.
@@ -1288,6 +1342,26 @@ impl<H: Host> FloatPairs<H> {
         float_store_pair_handlers!(H, FLOAT_SUBTRACT),
         float_store_pair_handlers!(H, FLOAT_MULTIPLY),
         float_store_pair_handlers!(H, FLOAT_DIVIDE),
+    ];
+    /// An f64 load, arithmetic and store of its result, by operator and
+    /// whether the loaded value is the left operand.
+    const UPDATES: [[Handler; 2]; FLOAT_PAIR_FIRSTS] = [
+        [
+            lane_f64_update::<H, FLOAT_ADD, false>,
+            lane_f64_update::<H, FLOAT_ADD, FUSED_LEFT>,
+        ],
+        [
+            lane_f64_update::<H, FLOAT_SUBTRACT, false>,
+            lane_f64_update::<H, FLOAT_SUBTRACT, FUSED_LEFT>,
+        ],
+        [
+            lane_f64_update::<H, FLOAT_MULTIPLY, false>,
+            lane_f64_update::<H, FLOAT_MULTIPLY, FUSED_LEFT>,
+        ],
+        [
+            lane_f64_update::<H, FLOAT_DIVIDE, false>,
+            lane_f64_update::<H, FLOAT_DIVIDE, FUSED_LEFT>,
+        ],
     ];
     const LOADS: [[Handler; 2]; FLOAT_ARITHMETIC] = float_load_pair_handlers!(H;
         FLOAT_ADD, FLOAT_SUBTRACT, FLOAT_MULTIPLY, FLOAT_DIVIDE, FLOAT_EQUAL,
@@ -1867,6 +1941,19 @@ lane_handler! {
     }
 }
 
+/// The scalar direct store `store` writes for slot value `value`: registers
+/// hold their static Wasm types, and a value whose bits need a box has none.
+#[inline(always)]
+fn stored_value(store: MemoryStore, value: Value) -> Option<crate::WasmValue> {
+    Some(match store.value_type() {
+        crate::WasmType::I32 => crate::WasmValue::I32(value.wasm_bits32() as i32),
+        crate::WasmType::F32 => crate::WasmValue::F32(value.as_int()? as u32),
+        crate::WasmType::I64 => crate::WasmValue::I64(value.bits64()? as i64),
+        crate::WasmType::F64 => crate::WasmValue::F64(value.bits64()?),
+        _ => return None,
+    })
+}
+
 lane_handler! {
     fn lane_store<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let store = const {
@@ -1875,21 +1962,8 @@ lane_handler! {
                 None => panic!("not a direct store"),
             }
         };
-        let value = match store.value_type() {
-            crate::WasmType::I32 => crate::WasmValue::I32(read_i32::<ACC, ACC_A>(r, i.a, view)),
-            crate::WasmType::F32 => match r.get(i.a).as_int() {
-                Some(bits) => crate::WasmValue::F32(bits as u32),
-                None => return exit(ip),
-            },
-            crate::WasmType::I64 => match r.get(i.a).bits64() {
-                Some(bits) => crate::WasmValue::I64(bits as i64),
-                None => return exit(ip),
-            },
-            crate::WasmType::F64 => match r.get(i.a).bits64() {
-                Some(bits) => crate::WasmValue::F64(bits),
-                None => return exit(ip),
-            },
-            _ => return exit(ip),
+        let Some(value) = stored_value(store, read::<ACC, ACC_A>(r, i.a, view)) else {
+            return exit(ip);
         };
         // SAFETY: as for `lane_load`.
         if unsafe { view.memory.write(store, lane_address::<ACC>(r, i, view), value) }
@@ -1899,6 +1973,58 @@ lane_handler! {
         }
         next!(cx, r, following(ip), view)
     }
+}
+
+lane_handler! {
+    /// A constant that the next record, direct store `OP`, writes to
+    /// memory: both records run here, the constant written to its register
+    /// as its own record writes it.
+    fn lane_constant_store<OP: u16>(cx, r, ip, i, view) {
+        let store = const {
+            match MemoryStore::from_direct_op(opcode(OP)) {
+                Some(store) => store,
+                None => panic!("not a direct store"),
+            }
+        };
+        let constant = i.constant();
+        r.set(i.a, constant);
+        let next = following(ip);
+        // SAFETY: the view fuses a constant only with a following store.
+        let access = unsafe { &*next };
+        let Some(value) = stored_value(store, constant) else {
+            return exit(next);
+        };
+        // SAFETY: as for `lane_load`.
+        if unsafe { view.memory.write(store, lane_address::<ACC_NONE>(r, access, view), value) }
+            .is_none()
+        {
+            return exit(next);
+        }
+        next!(cx, r, following(next), view)
+    }
+}
+
+/// The constant-store handler for direct store `op`.
+const fn constant_store_handler<H: Host>(op: Op) -> Option<Handler> {
+    macro_rules! stores {
+        ($($store:ident),+) => {
+            match op {
+                $(Op::$store => Some(lane_constant_store::<H, { Op::$store as u16 }> as Handler),)+
+                _ => None,
+            }
+        };
+    }
+    stores!(
+        WasmI32Store,
+        WasmI64Store,
+        WasmF32Store,
+        WasmF64Store,
+        WasmI32Store8,
+        WasmI32Store16,
+        WasmI64Store8,
+        WasmI64Store16,
+        WasmI64Store32
+    )
 }
 
 /// Continue in `frame` at `pc`: the record the frame's function resumes at.
@@ -2658,6 +2784,17 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             records[pc].handler = ScaledIndex::<H>::HANDLERS[field][left] as *const ();
         }
     }
+    // A constant that the next record stores runs with that store as one
+    // record.
+    for pc in 0..records.len().saturating_sub(1) {
+        let next = decoded_instruction(function, function.code[pc + 1]);
+        if serves(records[pc].handler, Op::LoadConst, ACC_NONE)
+            && serves(records[pc + 1].handler, next.op(), ACC_A)
+            && let Some(fused) = constant_store_handler::<H>(next.op())
+        {
+            records[pc].handler = fused as *const ();
+        }
+    }
     // A load whose value the next record stores runs with that store as
     // one record.
     for pc in 0..records.len().saturating_sub(1) {
@@ -2776,7 +2913,27 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                     return None;
                 }
                 let left = left_of(&records)?;
-                return Some(FloatPairs::<H>::LOADS[usize::from(second)][usize::from(left)]);
+                // An arithmetic whose result the record after it stores
+                // (`mem[x] += v`) joins as well.
+                let updates =
+                    pc + 2 < records.len() && usize::from(second) < FLOAT_PAIR_FIRSTS && {
+                        let store = decoded_instruction(function, function.code[pc + 2]);
+                        store.op() == Op::WasmF64Store
+                            && store.a() == next.a()
+                            && [ACC_NONE, ACC_A]
+                                .into_iter()
+                                .any(|acc| serves(records[pc + 2].handler, Op::WasmF64Store, acc))
+                    };
+                if updates {
+                    return Some((
+                        FloatPairs::<H>::UPDATES[usize::from(second)][usize::from(left)],
+                        3,
+                    ));
+                }
+                return Some((
+                    FloatPairs::<H>::LOADS[usize::from(second)][usize::from(left)],
+                    2,
+                ));
             }
             if instruction.op() != Op::WasmF64Binary {
                 return None;
@@ -2791,22 +2948,27 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                         as *const ()
             })?;
             let left = left_of(&records)?;
-            Some(
+            Some((
                 FloatPairs::<H>::HANDLERS[usize::from(first)][usize::from(second)]
                     [usize::from(left)][field],
-            )
+                2,
+            ))
         })();
         // An f64 arithmetic whose result the next record stores, when only
         // the arithmetic reaches that store.
         let pair = pair.or_else(|| {
             let first = float_arithmetic(instruction.op(), instruction.imm())?;
-            let store = tables[0][usize::from(ACC_NONE)][Op::WasmF64Store as usize]?;
+            // The fused record writes the arithmetic's result itself, so the
+            // store may read it plainly or through the accumulator.
+            let store_runs = [ACC_NONE, ACC_A]
+                .into_iter()
+                .any(|acc| serves(records[pc + 1].handler, Op::WasmF64Store, acc));
             if instruction.op() != Op::WasmF64Binary
                 || usize::from(first) >= FLOAT_PAIR_FIRSTS
                 || next.op() != Op::WasmF64Store
                 || next.a() != instruction.a()
                 || jump_targets[pc + 1]
-                || records[pc + 1].handler != store.handler as *const ()
+                || !store_runs
             {
                 return None;
             }
@@ -2815,12 +2977,12 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                     == FloatArithmetic::<H>::HANDLERS[1][usize::from(first)][usize::from(*acc)]
                         as *const ()
             })?;
-            Some(FloatPairs::<H>::STORES[usize::from(first)][field])
+            Some((FloatPairs::<H>::STORES[usize::from(first)][field], 2))
         });
         match pair {
-            Some(fused) => {
+            Some((fused, span)) => {
                 records[pc].handler = fused as *const ();
-                pc += 2;
+                pc += span;
             }
             None => pc += 1,
         }
