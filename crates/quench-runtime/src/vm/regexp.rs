@@ -63,6 +63,14 @@ enum RegExpConstructorInput {
     },
 }
 
+/// The replace value of a fast `RegExp.prototype[@@replace]`: a template already converted
+/// to a string, or a callable invoked per match.
+#[derive(Clone, Copy)]
+enum FastReplacement<'a> {
+    Template(&'a JsString),
+    Function(Value),
+}
+
 impl<H: Host> Vm<H> {
     pub(super) fn regexp_intrinsic_constructor(&self) -> Value {
         self.realm
@@ -377,11 +385,19 @@ impl<H: Host> Vm<H> {
                 };
                 let input_value = vm.heap.alloc(Cell::String(input.clone()));
                 vm.with_call_roots([input_value], |vm| {
-                    if let Some(template) = template.as_ref()
-                        && let Some((matcher, flags)) = vm.regexp_replace_fast_matcher(receiver)
-                    {
+                    if let Some((matcher, flags)) = vm.regexp_replace_fast_matcher(receiver) {
+                        let replacement = match template.as_ref() {
+                            Some(template) => FastReplacement::Template(template),
+                            None => FastReplacement::Function(replacement),
+                        };
                         return vm.regexp_symbol_replace_fast(
-                            p, receiver, &input, template, &matcher, &flags,
+                            p,
+                            receiver,
+                            &input,
+                            input_value,
+                            replacement,
+                            &matcher,
+                            &flags,
                         );
                     }
                     let atom = vm.intern_atom("flags");
@@ -526,7 +542,10 @@ impl<H: Host> Vm<H> {
             return None;
         };
         let flags = &meta.flags;
-        if !flags.contains('g') || matcher.capture_count() != 0 {
+        let global = flags.contains('g');
+        // A non-global exec reads lastIndex through ToLength and updates it when sticky;
+        // only a numeric lastIndex without stickiness leaves both unobservable.
+        if !global && flags.contains('y') {
             return None;
         }
         let intrinsics = self
@@ -573,6 +592,13 @@ impl<H: Host> Vm<H> {
             {
                 return None;
             }
+        }
+        if !global
+            && !self
+                .own_property(receiver, last_index)
+                .is_some_and(|value| value.as_number().is_some())
+        {
+            return None;
         }
         Some((Rc::clone(matcher), flags.clone()))
     }
@@ -638,52 +664,92 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `RegExp.prototype[@@replace]` for a receiver whose exec, flags and lastIndex are its
+    /// builtins (`regexp_replace_fast_matcher`). The spec runs every exec before computing
+    /// any replacement; with the builtin exec those execs run no guest code, so matching
+    /// collects the results directly. A replacer then observes the same state: lastIndex
+    /// reset by the final failed exec of a global match, and the last match's legacy statics.
+    #[allow(clippy::too_many_arguments)]
     fn regexp_symbol_replace_fast(
         &mut self,
         p: &ResidualProgram,
         receiver: Value,
         input: &JsString,
-        template: &JsString,
+        input_value: Value,
+        replacement: FastReplacement<'_>,
         matcher: &quench_regexp::Regex,
         flags: &str,
     ) -> Result<Value, JsError> {
         let last_index = self
             .lookup_atom("lastIndex")
             .expect("RegExp installation interns lastIndex");
-        self.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
+        let subject = self.regexp_subject(input);
+        let mut matches = Vec::new();
+        if flags.contains('g') {
+            self.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
+            let sticky = flags.contains('y');
+            let unicode = flags.contains('u') || flags.contains('v');
+            let mut search_start = 0;
+            while let Some(found) = matcher.find_in_subject(&subject, search_start).next() {
+                if sticky && found.range.start != search_start {
+                    break;
+                }
+                search_start = if found.range.is_empty() {
+                    advance_string_index_units(input.units(), found.range.end, unicode)
+                } else {
+                    found.range.end
+                };
+                matches.push(found);
+            }
+            self.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
+        } else if let Some(found) = matcher.find_in_subject(&subject, 0).next() {
+            matches.push(found);
+        }
+        if let Some(last) = matches.last() {
+            self.record_regexp_legacy_match(receiver, input.clone(), last.clone())?;
+        }
 
         let mut output = super::wtf16::JsStringBuilder::default();
         let mut next_source = 0;
-        let mut search_start = 0;
-        let sticky = flags.contains('y');
-        let unicode = flags.contains('u') || flags.contains('v');
-        let subject = self.regexp_subject(input);
-        while let Some(found) = matcher.find_in_subject(&subject, search_start).next() {
-            let start = found.range.start;
-            let end = found.range.end;
-            if sticky && start != search_start {
-                break;
-            }
-            output.append_slice(input, next_source..start);
-            let matched = JsString::from_units(&input.units()[start..end]);
-            let replacement = self.replacement_substitution(
-                p,
-                template,
-                input,
-                start,
-                &matched,
-                &[],
-                Value::UNDEFINED,
-            )?;
-            output.append(&replacement);
-            next_source = end;
-            search_start = if start == end {
-                advance_string_index_units(input.units(), end, unicode)
-            } else {
-                end
-            };
+        for found in &matches {
+            let position = found.range.start;
+            let matched = JsString::from_units(&input.units()[found.range.clone()]);
+            let captures = found
+                .captures
+                .iter()
+                .map(|range| {
+                    range.clone().map_or(Value::UNDEFINED, |range| {
+                        self.heap
+                            .alloc(Cell::String(JsString::from_units(&input.units()[range])))
+                    })
+                })
+                .collect::<Vec<_>>();
+            let named = regexp_named_capture_ranges(found);
+            let groups = self.regexp_groups_object(&named, input.units())?;
+            let text = self.with_call_roots(captures.iter().copied().chain([groups]), |vm| {
+                match replacement {
+                    FastReplacement::Template(template) => vm.replacement_substitution(
+                        p, template, input, position, &matched, &captures, groups,
+                    ),
+                    FastReplacement::Function(function) => {
+                        let matched = vm.heap.alloc(Cell::String(matched.clone()));
+                        let mut args = Vec::with_capacity(captures.len() + 4);
+                        args.push(matched);
+                        args.extend(captures.iter().copied());
+                        args.push(Value::number(position as f64));
+                        args.push(input_value);
+                        if !groups.is_undefined() {
+                            args.push(groups);
+                        }
+                        let value = vm.call_value(p, function, Value::UNDEFINED, &args)?;
+                        vm.coerce_js_string(p, value)
+                    }
+                }
+            })?;
+            output.append_slice(input, next_source..position);
+            output.append(&text);
+            next_source = found.range.end;
         }
-        self.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
         output.append_slice(input, next_source..input.units().len());
         let output = self.string_build_result(p, output.finish())?;
         Ok(self.heap.alloc(Cell::String(output)))
