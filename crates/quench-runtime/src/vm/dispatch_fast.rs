@@ -1292,6 +1292,15 @@ impl<H: Host> FloatArithmetic<H> {
 }
 
 lane_handler! {
+    /// f64 square root: an arithmetic operator, so a NaN operand matters
+    /// only as a NaN (see `float_bits64`), and its result is held in place.
+    fn lane_f64_sqrt<ACC: u8>(cx, r, ip, i, view) {
+        let input = f64::from_bits(read::<ACC, ACC_B>(r, i.b, view).float_bits64());
+        produce!(cx, r, ip, i.a, Value::from_float_bits64(input.sqrt().to_bits()), view)
+    }
+}
+
+lane_handler! {
     fn lane_float_unary<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let input = read::<ACC, ACC_B>(r, i.b, view);
         let value = if const { matches!(opcode(OP), Op::WasmF64Unary) } {
@@ -1512,6 +1521,64 @@ lane_handler! {
         };
         produce!(cx, r, next, access.a, value, view)
     }
+}
+
+lane_handler! {
+    /// An i32 add of a constant, the f64 load reading its sum, and the f64
+    /// operator `SECOND` taking the loaded value as its left (`LEFT`) or
+    /// right operand: three records run here, each result written as its
+    /// own record writes it. Bits that need a box leave at the load.
+    fn lane_add_load_f64<SECOND: u8, LEFT: bool>(cx, r, ip, i, view) {
+        let sum = r.i32(i.b).wrapping_add(i.imm() as i32);
+        r.set(i.a, view.integers.encode(sum));
+        let load = following(ip);
+        // SAFETY: the view fuses an add only with a following load and
+        // float operator.
+        let access = unsafe { &*load };
+        let address = u64::from(sum as u32) + u64::from(access.imm());
+        // SAFETY: as for `lane_load`.
+        let Ok(crate::WasmValue::F64(bits)) =
+            MemoryLoad::F64Load.read(unsafe { view.memory.bytes() }, address)
+        else {
+            return exit(load);
+        };
+        let Some(loaded) = Value::from_bits64(bits) else {
+            return exit(load);
+        };
+        r.set(access.a, loaded);
+        let next = following(load);
+        let second = unsafe { &*next };
+        let first = f64::from_bits(bits);
+        let (left, right) = if LEFT {
+            (first, f64::from_bits(r.get(second.c).float_bits64()))
+        } else {
+            (f64::from_bits(r.get(second.b).float_bits64()), first)
+        };
+        let value = match f64_operation(SECOND, left, right) {
+            Ok(result) => Value::from_float_bits64(result.to_bits()),
+            Err(truth) => view.integers.encode(i32::from(truth)),
+        };
+        produce!(cx, r, next, second.a, value, view)
+    }
+}
+
+macro_rules! add_load_f64_handlers {
+    ($host:ty; $($second:expr),+) => {
+        [$([
+            lane_add_load_f64::<$host, $second, false> as Handler,
+            lane_add_load_f64::<$host, $second, FUSED_LEFT> as Handler,
+        ]),+]
+    };
+}
+
+struct AddLoadF64<H>(std::marker::PhantomData<H>);
+
+impl<H: Host> AddLoadF64<H> {
+    /// By the float operator and whether the loaded value is its left
+    /// operand.
+    const HANDLERS: [[Handler; 2]; FLOAT_ARITHMETIC] = add_load_f64_handlers!(H;
+        FLOAT_ADD, FLOAT_SUBTRACT, FLOAT_MULTIPLY, FLOAT_DIVIDE, FLOAT_EQUAL,
+        FLOAT_NOT_EQUAL, FLOAT_LESS, FLOAT_GREATER, FLOAT_LESS_EQUAL, FLOAT_GREATER_EQUAL);
 }
 
 /// The fused add-and-load handler for direct load `op`.
@@ -2200,6 +2267,19 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                     handler: lane_instance_binding::<H, true> as Handler,
                     produces: false,
                 })
+            } else if op == Op::WasmF64Unary
+                && F64UnaryOperator::from_tag(instruction.imm())
+                    == Some(F64UnaryOperator::SquareRoot)
+            {
+                tables[usize::from(backward_jump)][usize::from(acc)][op as usize].and_then(|_| {
+                    LaneHandler::producer(match acc {
+                        ACC_NONE => lane_f64_sqrt::<H, ACC_NONE> as Handler,
+                        ACC_A => lane_f64_sqrt::<H, ACC_A> as Handler,
+                        ACC_B => lane_f64_sqrt::<H, ACC_B> as Handler,
+                        ACC_C => lane_f64_sqrt::<H, ACC_C> as Handler,
+                        _ => lane_f64_sqrt::<H, ACC_PAIR> as Handler,
+                    })
+                })
             } else if let Some(arith) = float_arithmetic(op, instruction.imm()) {
                 tables[usize::from(backward_jump)][usize::from(acc)][op as usize].and_then(|_| {
                     LaneHandler::producer(
@@ -2252,7 +2332,20 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             && carried_load
             && let Some(fused) = add_load_handler::<H>(next.op())
         {
-            records[pc].handler = fused as *const ();
+            // A float operator taking the loaded f64 joins the fusion.
+            let operator = (next.op() == Op::WasmF64Load && pc + 2 < records.len())
+                .then(|| decoded_instruction(function, function.code[pc + 2]))
+                .filter(|third| third.op() == Op::WasmF64Binary)
+                .and_then(|third| {
+                    let second = float_arithmetic(third.op(), third.imm())?;
+                    let left = [ACC_B, ACC_C].into_iter().find(|acc| {
+                        records[pc + 2].handler
+                            == FloatArithmetic::<H>::HANDLERS[1][usize::from(second)]
+                                [usize::from(*acc)] as *const ()
+                    })? == ACC_B;
+                    Some(AddLoadF64::<H>::HANDLERS[usize::from(second)][usize::from(left)])
+                });
+            records[pc].handler = operator.unwrap_or(fused) as *const ();
         }
     }
     // An f64 arithmetic record whose result the next f64 operator takes
