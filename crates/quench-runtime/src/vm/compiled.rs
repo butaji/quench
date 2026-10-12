@@ -316,6 +316,10 @@ pub(super) struct CompiledProgram {
     /// displacement (see `displacement_base`); calls with another base fall
     /// back to the interpreter.
     fixed_base: Option<i32>,
+    /// The guarded memory repeats itself above 2^32, so an i32 sum may be
+    /// formed in 64 bits (see `WRAP_ALIAS`); calls with a memory that does
+    /// not fall back to the interpreter.
+    wraps: bool,
     /// The environment slots of the globals compiled code accesses, in the
     /// order of the context's global addresses.
     globals: Vec<u32>,
@@ -1099,6 +1103,10 @@ fn thread_path(
 
 struct Emitter<'a, 'b, H: Host> {
     guarded: bool,
+    /// The guarded memory repeats above 2^32 (`CompiledProgram::wraps`).
+    wraps: bool,
+    /// The memory base addressed as a displacement (`displacement_base`).
+    fixed_base: Option<i32>,
     /// Per `Region`, its alias region in this function.
     regions: [ir::AliasRegion; Region::COUNT],
     globals: &'a [u32],
@@ -1477,6 +1485,37 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// The host address of a checked `width`-byte access at `address + offset`.
     fn address(&mut self, address: ir::Value, offset: u32, width: usize) -> ir::Value {
+        // An i32 sum without an offset may be formed in 64 bits when the
+        // memory repeats above 2^32: a sum that wrapped reads the bytes its
+        // wrapped value names, and one past the accessible prefix faults.
+        if self.wraps
+            && offset == 0
+            && let Some([left, right]) = self.i32_sum(address)
+        {
+            let left = self.builder.ins().uextend(types::I64, left);
+            let right = self.builder.ins().uextend(types::I64, right);
+            let index = self.builder.ins().iadd(left, right);
+            return self.builder.ins().iadd(self.base, index);
+        }
+        if self.wraps && offset != 0 {
+            // An index whose offset carries it past 2^32 would meet the
+            // repeated memory instead of the guard: it traps here. The
+            // memory ends below `RESERVED_LIMIT`, so for offsets up to a Wasm
+            // page that limit bounds the index alone, and accesses through
+            // one index share one check.
+            use crate::wasm::memory::{RESERVED_LIMIT, WASM_PAGE, WRAP_ALIAS};
+            let limit = if offset as usize <= WASM_PAGE {
+                RESERVED_LIMIT
+            } else {
+                WRAP_ALIAS - offset as usize
+            };
+            let past = self.builder.ins().icmp_imm_u(
+                IntCC::UnsignedGreaterThanOrEqual,
+                address,
+                limit as i64,
+            );
+            self.trap_if(past, crate::WasmTrap::OutOfBoundsMemory);
+        }
         let address = self.builder.ins().uextend(types::I64, address);
         if self.guarded {
             // Index plus offset plus width stays inside the reservation; past
@@ -1497,6 +1536,43 @@ impl<H: Host> Emitter<'_, '_, H> {
         self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
         let host = self.builder.ins().iadd(self.base, address);
         self.builder.ins().iadd_imm_s(host, i64::from(offset))
+    }
+
+    /// The operands of `value` when an i32 add defines it, worth forming
+    /// in 64 bits: a constant operand joins the access's displacement, so
+    /// one that is negative as i32 (its 64-bit form past 2^31) or carries
+    /// the displacement past 32 bits keeps the add.
+    fn i32_sum(&self, value: ir::Value) -> Option<[ir::Value; 2]> {
+        let dfg = &self.builder.func.dfg;
+        let ir::ValueDef::Result(inst, _) = dfg.value_def(value) else {
+            return None;
+        };
+        let ir::InstructionData::Binary {
+            opcode: ir::Opcode::Iadd,
+            args,
+        } = dfg.insts[inst]
+        else {
+            return None;
+        };
+        if dfg.value_type(value) != types::I32 {
+            return None;
+        }
+        let displacement_fits = |operand: ir::Value| {
+            let ir::ValueDef::Result(constant, _) = dfg.value_def(operand) else {
+                return true;
+            };
+            let ir::InstructionData::UnaryImm { imm, .. } = dfg.insts[constant] else {
+                return true;
+            };
+            let fixed = self.fixed_base.map_or(0, i64::from);
+            u32::try_from(imm.bits())
+                .ok()
+                .and_then(|constant| i32::try_from(fixed + i64::from(constant)).ok())
+                .is_some()
+        };
+        args.iter()
+            .all(|&operand| displacement_fits(operand))
+            .then_some(args)
     }
 
     /// The address of the value of the global bound at `slot`.
@@ -2022,6 +2098,7 @@ impl<H: Host> Analysis<'_, H> {
         plan: &Plan,
         plans: &[Option<Plan>],
         guarded: bool,
+        wraps: bool,
         fixed_base: Option<i32>,
         globals: &[u32],
     ) -> Option<(Vec<u8>, Vec<Call>)> {
@@ -2077,6 +2154,8 @@ impl<H: Host> Analysis<'_, H> {
         selectors.dedup();
         let mut emitter = Emitter {
             guarded,
+            wraps,
+            fixed_base,
             regions,
             globals,
             analysis: self,
@@ -2315,13 +2394,27 @@ fn displacement_base(base: *mut u8) -> Option<i32> {
 }
 
 fn guarded_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
+    memory_bytes(vm, binding, crate::wasm::memory::LinearBytes::guard)
+}
+
+/// Whether the guarded memory `binding` names repeats above 2^32.
+fn wrapping_memory<H: Host>(vm: &Vm<H>, binding: Value) -> bool {
+    memory_bytes(vm, binding, |bytes| Some(bytes.wraps())) == Some(true)
+}
+
+/// `query` of the bytes of the unshared memory `binding` names.
+fn memory_bytes<H: Host, T>(
+    vm: &Vm<H>,
+    binding: Value,
+    query: impl FnOnce(&crate::wasm::memory::LinearBytes) -> Option<T>,
+) -> Option<T> {
     let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
         return None;
     };
     let crate::wasm::memory::MemoryStorage::Unshared(state) = &**bytes else {
         return None;
     };
-    state.try_borrow().ok()?.bytes.guard()
+    query(&state.try_borrow().ok()?.bytes)
 }
 
 thread_local! {
@@ -2646,6 +2739,10 @@ impl<H: Host> Vm<H> {
                 displacement_base(guarded_memory(self, binding)?.0)
             })
             .flatten();
+        let wraps = guarded
+            && memory_slot
+                .and_then(|slot| self.heap.environment_slot(env, slot as usize))
+                .is_some_and(|binding| wrapping_memory(self, binding));
         let isa = target_isa()?;
         // The full plan of a callable function, derived again where needed.
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
@@ -2689,6 +2786,7 @@ impl<H: Host> Vm<H> {
                 &plan(index)?,
                 &plans,
                 guarded,
+                wraps,
                 fixed_base,
                 &globals,
             )?;
@@ -2731,6 +2829,7 @@ impl<H: Host> Vm<H> {
             memory_slot,
             guarded,
             fixed_base,
+            wraps,
             globals,
         })
     }
@@ -2791,6 +2890,9 @@ impl<H: Host> Vm<H> {
                 let guard = guarded_memory(self, binding);
                 // Code compiled without bounds checks needs this memory's guard.
                 if compiled.guarded && guard.is_none() {
+                    return None;
+                }
+                if compiled.wraps && !wrapping_memory(self, binding) {
                     return None;
                 }
                 if compiled.fixed_base.is_some_and(|fixed| {
