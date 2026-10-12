@@ -1,4 +1,4 @@
-//! Server reference requests project onto the listener's single reference bit.
+//! Public net reference requests project onto the owning transport endpoint.
 use super::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
@@ -31,6 +31,12 @@ pub(crate) fn reference_server(
     }
     Ok(server)
 }
+#[derive(Clone, Copy)]
+pub(crate) enum EndpointKind {
+    Listener,
+    Socket,
+}
+
 pub(crate) fn install(
     context: &mut NativeContext<'_, NodeHost>,
     id: u64,
@@ -43,11 +49,40 @@ pub(crate) fn install(
         id,
         referenced,
     );
+    install_handle(context, id, server, EndpointKind::Listener)
+}
+pub(crate) fn install_socket(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = args[0];
+    let id = context
+        .rooted_value(args[1])
+        .and_then(|value| value.as_number())
+        .ok_or_else(|| RootedError::host("socket owner missing"))? as u64;
+    install_handle(context, id, socket, EndpointKind::Socket)?;
+    Ok(socket)
+}
+pub(crate) fn install_socket_handle(
+    context: &mut NativeContext<'_, NodeHost>,
+    id: u64,
+    socket: RootId,
+) -> Result<(), RootedError> {
+    install_handle(context, id, socket, EndpointKind::Socket)
+}
+fn install_handle(
+    context: &mut NativeContext<'_, NodeHost>,
+    id: u64,
+    object: RootId,
+    kind: EndpointKind,
+) -> Result<(), RootedError> {
+    let is_socket = context.boolean(matches!(kind, EndpointKind::Socket));
     let handle = context.object_rooted()?;
     let id_root = context.number(id as f64);
     for (name, referenced) in [("ref", true), ("unref", false)] {
         let referenced = context.boolean(referenced);
-        let data = context.array_rooted(&[id_root, handle, referenced])?;
+        let data = context.array_rooted(&[id_root, handle, is_socket, referenced])?;
         let method = context.host_function_with_data(
             crate::host::shared_vm::operation("netListenerReference"),
             data,
@@ -57,19 +92,19 @@ pub(crate) fn install(
         context.define_data_property_rooted(method, key, name_root, false, false, true)?;
         set(context, handle, name, method)?;
     }
-    let data = context.array_rooted(&[id_root, handle])?;
+    let data = context.array_rooted(&[id_root, handle, is_socket])?;
     let method = context
         .host_function_with_data(crate::host::shared_vm::operation("netListenerHasRef"), data)?;
     let key = context.string_rooted("name");
     let name = context.string_rooted("hasRef");
     context.define_data_property_rooted(method, key, name, false, false, true)?;
     set(context, handle, "hasRef", method)?;
-    set(context, server, "_handle", handle)
+    set(context, object, "_handle", handle)
 }
 fn owner(
     context: &mut NativeContext<'_, NodeHost>,
     receiver: RootId,
-) -> Result<(u64, RootId), RootedError> {
+) -> Result<(u64, RootId, EndpointKind), RootedError> {
     let data = context.host_function_data()?;
     let handle = get(context, data, "1")?;
     if !context.strict_equal_rooted(receiver, handle)? {
@@ -81,21 +116,32 @@ fn owner(
         .rooted_value(id)
         .and_then(|value| value.as_number())
         .ok_or_else(|| RootedError::host("listener owner missing"))? as u64;
-    Ok((id, data))
+    let socket = get(context, data, "2")?;
+    let kind = if context.truthy_rooted(socket)? {
+        EndpointKind::Socket
+    } else {
+        EndpointKind::Listener
+    };
+    Ok((id, data, kind))
 }
 pub(crate) fn reference_handle(
     context: &mut NativeContext<'_, NodeHost>,
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let (id, data) = owner(context, receiver)?;
-    let value = get(context, data, "2")?;
+    let (id, data, kind) = owner(context, receiver)?;
+    let value = get(context, data, "3")?;
     let referenced = context.truthy_rooted(value)?;
-    super::net_shared_vm::listener_reference(
-        &mut context.host_mut().shared_state().borrow_mut().tcp,
-        id,
-        referenced,
-    );
+    let state = context.host_mut().shared_state();
+    let mut state = state.borrow_mut();
+    match kind {
+        EndpointKind::Listener => {
+            super::net_shared_vm::listener_reference(&mut state.tcp, id, referenced)
+        }
+        EndpointKind::Socket => {
+            super::net_shared_vm::socket_reference(&mut state.tcp, id, referenced)
+        }
+    }
     Ok(context.undefined())
 }
 pub(crate) fn handle_has_ref(
@@ -103,11 +149,53 @@ pub(crate) fn handle_has_ref(
     receiver: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let (id, _) = owner(context, receiver)?;
-    let value =
-        super::net_shared_vm::listener_has_ref(&context.host_mut().shared_state().borrow().tcp, id);
+    let (id, _, kind) = owner(context, receiver)?;
+    let state = context.host_mut().shared_state();
+    let value = match kind {
+        EndpointKind::Listener => super::net_shared_vm::listener_has_ref(&state.borrow().tcp, id),
+        EndpointKind::Socket => super::net_shared_vm::socket_has_ref(&state.borrow().tcp, id),
+    };
     Ok(match value {
         Some(value) => context.boolean(value),
         None => context.undefined(),
     })
+}
+
+pub(crate) fn reference_socket(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = args[0];
+    let referenced = context.truthy_rooted(args[1])?;
+    let name = if referenced { "ref" } else { "unref" };
+    let handle = get(context, socket, "_handle")?;
+    if !context.truthy_rooted(handle)? {
+        let once = get(context, socket, "once")?;
+        let method = get(context, socket, name)?;
+        let event = context.string_rooted("connect");
+        context.call_rooted(once, socket, &[event, method])?;
+        return Ok(socket);
+    }
+    let handle = get(context, socket, "_handle")?;
+    let method = get(context, handle, name)?;
+    if context.is_callable_rooted(method)? {
+        let handle = get(context, socket, "_handle")?;
+        let method = get(context, handle, name)?;
+        context.call_rooted(method, handle, &[])?;
+    }
+    Ok(socket)
+}
+
+/// Stream timeouts observe activity without independently keeping a socket alive.
+pub(crate) fn unref_timeout(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let timer = args
+        .first()
+        .copied()
+        .ok_or_else(|| RootedError::host("socket timeout missing"))?;
+    super::timers_shared_vm::timer_unref(context, timer, &[])
 }
