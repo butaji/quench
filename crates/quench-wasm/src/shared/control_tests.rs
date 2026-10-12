@@ -294,3 +294,83 @@ fn bytecode_interpreter_matches_model_in_both_modes() {
         }
     }
 }
+
+/// f64 accumulations through memory (`mem[i] += a * b`, `mem[i] = x -
+/// mem[i]`) and an f64 result stored right after it is computed: the
+/// results match a direct model in both execution modes.
+#[test]
+fn f64_memory_updates_match_model_in_both_modes() {
+    const UPDATES: &str = r#"(module
+      (memory 1)
+      (func (export "f") (param $n i32) (result f64)
+        (local $i i32) (local $k i32) (local $x f64) (local $sum f64)
+        (loop $fill
+          (f64.store (i32.shl (local.get $i) (i32.const 3))
+            (f64.convert_i32_s (i32.add (local.get $i) (i32.const 1))))
+          (f64.store offset=64 (i32.shl (local.get $i) (i32.const 3)) (f64.const 0))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br_if $fill (i32.lt_u (local.get $i) (i32.const 8))))
+        (loop $round
+          (local.set $i (i32.const 0))
+          (loop $cell
+            (local.set $x (f64.convert_i32_s (i32.add (local.get $i) (local.get $k))))
+            (f64.store (i32.shl (local.get $i) (i32.const 3))
+              (f64.add (f64.load (i32.shl (local.get $i) (i32.const 3)))
+                (f64.mul (local.get $x) (f64.const 0.5))))
+            (f64.store offset=64 (i32.shl (local.get $i) (i32.const 3))
+              (f64.sub (local.get $x)
+                (f64.load offset=64 (i32.shl (local.get $i) (i32.const 3)))))
+            (f64.store offset=128 (i32.shl (local.get $i) (i32.const 3))
+              (f64.div (local.get $x) (f64.add (local.get $x) (f64.const 1))))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br_if $cell (i32.lt_u (local.get $i) (i32.const 8))))
+          (local.set $k (i32.add (local.get $k) (i32.const 1)))
+          (br_if $round (i32.lt_u (local.get $k) (local.get $n))))
+        (local.set $i (i32.const 0))
+        (loop $total
+          (local.set $sum (f64.add (local.get $sum)
+            (f64.add (f64.load (i32.shl (local.get $i) (i32.const 3)))
+              (f64.add (f64.load offset=64 (i32.shl (local.get $i) (i32.const 3)))
+                (f64.load offset=128 (i32.shl (local.get $i) (i32.const 3)))))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br_if $total (i32.lt_u (local.get $i) (i32.const 8))))
+        (local.get $sum)))"#;
+    fn model(n: i32) -> f64 {
+        let mut a: [f64; 8] = std::array::from_fn(|i| (i + 1) as f64);
+        let mut b = [0.0_f64; 8];
+        let mut c = [0.0_f64; 8];
+        let mut k = 0;
+        loop {
+            for i in 0..8 {
+                let x = f64::from(i as i32 + k);
+                a[i] += x * 0.5;
+                b[i] = x - b[i];
+                c[i] = x / (x + 1.0);
+            }
+            k += 1;
+            if (k as u32) >= (n as u32) {
+                break;
+            }
+        }
+        (0..8).fold(0.0, |sum, i| sum + (a[i] + (b[i] + c[i])))
+    }
+    let engine = crate::Engine::new().compile_wat(UPDATES).unwrap();
+    for mode in [
+        quench_runtime::ExecutionMode::Interpreted,
+        quench_runtime::ExecutionMode::Compiled,
+    ] {
+        let module = engine.lower_shared_module_for(mode).unwrap();
+        let mut runtime = Runtime::new(TestHost);
+        runtime.set_execution_mode(mode);
+        let instance = runtime.instantiate_wasm_module(&module).unwrap();
+        for n in [1, 2, 7, 100] {
+            assert_eq!(
+                runtime
+                    .invoke_wasm(&instance, 0, &[quench_runtime::WasmValue::I32(n)])
+                    .unwrap(),
+                Some(quench_runtime::WasmValue::F64(model(n).to_bits())),
+                "{mode:?} n={n}"
+            );
+        }
+    }
+}
