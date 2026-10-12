@@ -1050,6 +1050,101 @@ lane_handler! {
     }
 }
 
+/// The f64 operator `ARITH` over two operands, as `lane_float_arithmetic`
+/// applies it: the hardware result, or a comparison's truth value.
+#[inline(always)]
+fn f64_operation(arith: u8, left: f64, right: f64) -> Result<f64, bool> {
+    match arith {
+        FLOAT_ADD => Ok(left + right),
+        FLOAT_SUBTRACT => Ok(left - right),
+        FLOAT_MULTIPLY => Ok(left * right),
+        FLOAT_DIVIDE => Ok(left / right),
+        FLOAT_EQUAL => Err(left == right),
+        FLOAT_NOT_EQUAL => Err(left != right),
+        FLOAT_LESS => Err(left < right),
+        FLOAT_GREATER => Err(left > right),
+        FLOAT_LESS_EQUAL => Err(left <= right),
+        _ => Err(left >= right),
+    }
+}
+
+/// Which operand of the second fused float record the first one's result
+/// is: its left (`b`) or right (`c`) register.
+const FUSED_LEFT: bool = true;
+
+lane_handler! {
+    /// An f64 arithmetic `FIRST` whose result the next record, f64 operator
+    /// `SECOND`, takes as its left (`LEFT`) or right operand: both records
+    /// run here, each result written as its own record writes it.
+    fn lane_f64_pair<FIRST: u8, SECOND: u8, LEFT: bool>(cx, r, ip, i, view) {
+        let first = match f64_operation(
+            FIRST,
+            f64::from_bits(r.get(i.b).float_bits64()),
+            f64::from_bits(r.get(i.c).float_bits64()),
+        ) {
+            Ok(result) => result,
+            Err(_) => unreachable!("a fused first operator is arithmetic"),
+        };
+        r.set(i.a, Value::from_float_bits64(first.to_bits()));
+        let next = following(ip);
+        // SAFETY: the view fuses a float record only with a following one.
+        let second = unsafe { &*next };
+        let (left, right) = if LEFT {
+            (first, f64::from_bits(r.get(second.c).float_bits64()))
+        } else {
+            (f64::from_bits(r.get(second.b).float_bits64()), first)
+        };
+        let value = match f64_operation(SECOND, left, right) {
+            Ok(result) => Value::from_float_bits64(result.to_bits()),
+            Err(truth) => view.integers.encode(i32::from(truth)),
+        };
+        produce!(cx, r, next, second.a, value, view)
+    }
+}
+
+struct FloatPairs<H>(std::marker::PhantomData<H>);
+
+macro_rules! float_pair_handlers {
+    ($host:ty) => {
+        [
+            float_pair_handlers!($host, FLOAT_ADD),
+            float_pair_handlers!($host, FLOAT_SUBTRACT),
+            float_pair_handlers!($host, FLOAT_MULTIPLY),
+            float_pair_handlers!($host, FLOAT_DIVIDE),
+        ]
+    };
+    ($host:ty, $first:expr) => {
+        [
+            float_pair_handlers!($host, $first, FLOAT_ADD),
+            float_pair_handlers!($host, $first, FLOAT_SUBTRACT),
+            float_pair_handlers!($host, $first, FLOAT_MULTIPLY),
+            float_pair_handlers!($host, $first, FLOAT_DIVIDE),
+            float_pair_handlers!($host, $first, FLOAT_EQUAL),
+            float_pair_handlers!($host, $first, FLOAT_NOT_EQUAL),
+            float_pair_handlers!($host, $first, FLOAT_LESS),
+            float_pair_handlers!($host, $first, FLOAT_GREATER),
+            float_pair_handlers!($host, $first, FLOAT_LESS_EQUAL),
+            float_pair_handlers!($host, $first, FLOAT_GREATER_EQUAL),
+        ]
+    };
+    ($host:ty, $first:expr, $second:expr) => {
+        [
+            lane_f64_pair::<$host, $first, $second, false> as Handler,
+            lane_f64_pair::<$host, $first, $second, FUSED_LEFT> as Handler,
+        ]
+    };
+}
+
+/// The f64 arithmetic operators a fused pair can begin with: add,
+/// subtract, multiply and divide, whose results are floats.
+const FLOAT_PAIR_FIRSTS: usize = 4;
+
+impl<H: Host> FloatPairs<H> {
+    /// By first operator, second operator and whether the first result is
+    /// the second's left operand.
+    const HANDLERS: [[[Handler; 2]; FLOAT_ARITHMETIC]; FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H);
+}
+
 struct FloatArithmetic<H>(std::marker::PhantomData<H>);
 
 macro_rules! float_arithmetic_handlers {
@@ -2048,6 +2143,43 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             && let Some(fused) = add_load_handler::<H>(next.op())
         {
             records[pc].handler = fused as *const ();
+        }
+    }
+    // An f64 arithmetic record whose result the next f64 operator takes
+    // through the accumulator runs with it as one record; pairs tile a
+    // chain from its start.
+    let mut pc = 0;
+    while pc + 1 < records.len() {
+        let instruction = decoded_instruction(function, function.code[pc]);
+        let next = decoded_instruction(function, function.code[pc + 1]);
+        let pair = (|| {
+            if instruction.op() != Op::WasmF64Binary || next.op() != Op::WasmF64Binary {
+                return None;
+            }
+            let first = float_arithmetic(instruction.op(), instruction.imm())?;
+            let second = float_arithmetic(next.op(), next.imm())?;
+            let plain =
+                FloatArithmetic::<H>::HANDLERS[1][usize::from(first)][usize::from(ACC_NONE)];
+            if usize::from(first) >= FLOAT_PAIR_FIRSTS || records[pc].handler != plain as *const ()
+            {
+                return None;
+            }
+            let left = [ACC_B, ACC_C].into_iter().find(|acc| {
+                records[pc + 1].handler
+                    == FloatArithmetic::<H>::HANDLERS[1][usize::from(second)][usize::from(*acc)]
+                        as *const ()
+            })? == ACC_B;
+            Some(
+                FloatPairs::<H>::HANDLERS[usize::from(first)][usize::from(second)]
+                    [usize::from(left)],
+            )
+        })();
+        match pair {
+            Some(fused) => {
+                records[pc].handler = fused as *const ();
+                pc += 2;
+            }
+            None => pc += 1,
         }
     }
     let mut entries = vec![false; records.len()].into_boxed_slice();
