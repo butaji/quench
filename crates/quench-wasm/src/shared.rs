@@ -1,6 +1,25 @@
 //! Decode validated modules for the shared VM. There is no executor here.
 
 use crate::{Error, Module};
+
+/// A body's operators with an upper bound on their count: every operator
+/// takes at least one byte of the body.
+struct BoundedOperators<'a> {
+    bound: usize,
+    operators: wasmparser::OperatorsIterator<'a>,
+}
+
+impl<'a> Iterator for BoundedOperators<'a> {
+    type Item = wasmparser::Result<wasmparser::Operator<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.operators.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.bound))
+    }
+}
 use quench_runtime::{
     Engine, WasmData, WasmDataMode, WasmFunction, WasmFunctionBody, WasmGlobal,
     WasmGlobalInitializer, WasmI32Function, WasmMemory, WasmModule, WasmType, WasmTypes,
@@ -33,7 +52,8 @@ impl Module {
 
     /// Lower validated module functions into the single shared VM.
     pub fn lower_shared(&self, export: &str) -> Result<WasmFunction, Error> {
-        let (module, index) = self.lower_shared_definition(Some(export))?;
+        let (module, index) =
+            self.lower_shared_definition(Some(export), quench_runtime::ExecutionMode::Interpreted)?;
         index
             .and_then(|index| module.function(index))
             .ok_or_else(|| Error::Unsupported(format!("unknown function export: {export}")))
@@ -41,12 +61,22 @@ impl Module {
 
     /// Lower module facts without requiring a function or an export.
     pub fn lower_shared_module(&self) -> Result<WasmModule, Error> {
-        self.lower_shared_definition(None).map(|(module, _)| module)
+        self.lower_shared_module_for(quench_runtime::ExecutionMode::Interpreted)
+    }
+
+    /// Lower module facts for the execution mode that will run them.
+    pub fn lower_shared_module_for(
+        &self,
+        mode: quench_runtime::ExecutionMode,
+    ) -> Result<WasmModule, Error> {
+        self.lower_shared_definition(None, mode)
+            .map(|(module, _)| module)
     }
 
     fn lower_shared_definition(
         &self,
         export: Option<&str>,
+        mode: quench_runtime::ExecutionMode,
     ) -> Result<(WasmModule, Option<u32>), Error> {
         let mut types = WasmTypes::default();
         let mut functions = Vec::new();
@@ -250,10 +280,14 @@ impl Module {
             inputs.push(WasmFunctionBody {
                 ty: quench_runtime::WasmCallableType::Declared(type_index),
                 locals,
-                operators: body.get_operators_reader().map_err(parse_error)?,
+                operators: BoundedOperators {
+                    bound: body.range().len(),
+                    operators: body.get_operators_reader().map_err(parse_error)?.into_iter(),
+                },
             });
         }
-        Engine::lower_wasm_module_with_tags(
+        Engine::lower_wasm_module_for(
+            mode,
             export.unwrap_or("wasm-instance"),
             inputs,
             &types,

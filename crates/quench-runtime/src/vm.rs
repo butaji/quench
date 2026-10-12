@@ -1,4 +1,6 @@
+mod compiled;
 mod wasm;
+pub use compiled::ExecutionMode;
 mod wasm_exception;
 mod wasm_gc;
 mod wasm_host;
@@ -11,8 +13,9 @@ use crate::bytecode::{
 #[cfg(feature = "profile-memory")]
 use crate::heap::CellKind;
 use crate::heap::{
-    CallSiteRecord, Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind,
-    Native, Object, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
+    CallSiteLocation, CallSiteRecord, Cell, FunctionKind, GcTraceKind, Heap, IteratorConsumer,
+    IteratorHelper,
+    IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
@@ -58,7 +61,9 @@ mod construction;
 mod data_view;
 mod date;
 mod dispatch;
+mod dispatch_fast;
 mod dispatch_frame;
+mod dispatch_wasm;
 mod dynamic_strings;
 mod embedding;
 mod environment;
@@ -188,9 +193,83 @@ pub(super) struct Frame {
     fixed_this: bool,
 }
 impl Frame {
-    fn prepare_registers(&mut self, register_count: usize) {
-        self.registers.resize(register_count, Value::UNDEFINED);
-        self.registers.fill(Value::UNDEFINED);
+    fn empty(program: ProgramId, with_base: usize) -> Self {
+        Self {
+            context: CallContext::Internal,
+            reflected_parameters: 0,
+            original_arguments: vec![],
+            program,
+            function: 0,
+            pc: 0,
+            binding_site_pc: None,
+            env: Value::NULL,
+            this: Value::UNDEFINED,
+            locals: vec![],
+            dynamic_bindings: vec![],
+            captured: false,
+            registers: vec![],
+            active_iterators: vec![],
+            with_objects: Vec::new(),
+            with_base,
+            fixed_this: false,
+        }
+    }
+
+    /// Arguments for a body that keeps its parameters in registers.
+    #[inline(always)]
+    fn bind_register_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
+        if let Some(base) = function.parameter_registers {
+            for offset in 0..function.params {
+                self.registers[usize::from(base + offset)] = args
+                    .get(usize::from(offset))
+                    .copied()
+                    .unwrap_or(Value::UNDEFINED);
+            }
+        }
+    }
+
+    /// A Wasm activation's registers: the parameters where the function
+    /// keeps them, every other register its default, each written once.
+    #[inline(always)]
+    fn prepare_wasm_registers(
+        &mut self,
+        function: &crate::bytecode::Function,
+        arguments: &[Value],
+    ) {
+        let initial = function.initial_register.value();
+        let count = usize::from(function.registers);
+        let (base, parameters) = match function.parameter_registers {
+            Some(base) => (
+                usize::from(base),
+                &arguments[..arguments.len().min(usize::from(function.params))],
+            ),
+            None => (0, &[][..]),
+        };
+        assert!(
+            base + parameters.len() <= count,
+            "parameters fit the register file"
+        );
+        self.registers.clear();
+        self.registers.reserve(count);
+        let registers = self.registers.as_mut_ptr();
+        // SAFETY: capacity holds `count` values; every slot below `count` is
+        // written before the length covers it, parameters in their window.
+        unsafe {
+            for index in 0..count {
+                registers.add(index).write(initial);
+            }
+            // A few values: an inline copy, not a library call.
+            for (offset, value) in parameters.iter().enumerate() {
+                registers.add(base + offset).write(*value);
+            }
+            self.registers.set_len(count);
+        }
+    }
+
+    #[inline(always)]
+    fn prepare_registers(&mut self, count: u16, initial: crate::bytecode::InitialRegister) {
+        self.registers.clear();
+        self.registers.resize(usize::from(count), initial.value());
     }
 
     /// Sizes the register file for `function`. Compiled code writes every register before
@@ -198,19 +277,59 @@ impl Frame {
     /// matter only to a collector that scans the whole file. A function with a liveness root
     /// map is scanned through it, so only functions without one, and generator or async
     /// activations whose suspended registers are scanned whole, are cleared.
+    /// A body whose registers start at a value other than `undefined` (Wasm's i32 zero) relies
+    /// on that fill, so it is always cleared.
+    #[inline(always)]
     fn prepare_registers_for(&mut self, function: &crate::bytecode::Function) {
         let register_count = usize::from(function.registers);
         if function.register_root_offset == crate::bytecode::NO_REGISTER_ROOT_MAP
             || function.is_generator
             || function.is_async
+            || function.initial_register != crate::bytecode::InitialRegister::Undefined
         {
-            self.prepare_registers(register_count);
+            self.prepare_registers(function.registers, function.initial_register);
         } else {
             self.registers.resize(register_count, Value::UNDEFINED);
             if let Some(register) = function.undefined_register {
                 // Validation bounds the register by the function's register count.
                 self.registers[usize::from(register)] = Value::UNDEFINED;
             }
+        }
+    }
+
+    /// Makes `locals` `count` undefined values. A pooled frame usually has the capacity already,
+    /// so this is one capacity check and the stores.
+    #[inline(always)]
+    fn reset_locals_undefined(&mut self, count: usize) {
+        self.locals.clear();
+        self.locals.reserve(count);
+        for slot in &mut self.locals.spare_capacity_mut()[..count] {
+            slot.write(Value::UNDEFINED);
+        }
+        // SAFETY: the loop initialized the first `count` slots, which `reserve` provided.
+        unsafe { self.locals.set_len(count) };
+    }
+
+    /// `initialize_promoted_registers` for a plain activation, whose locals already start
+    /// undefined: its promoted entries, ordered by local, begin with every parameter.
+    #[inline(always)]
+    fn place_plain_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
+        debug_assert_eq!(self.registers.len(), usize::from(function.registers));
+        let (parameters, variables) = function
+            .local_registers
+            .split_at(usize::from(function.params));
+        for (index, entry) in parameters.iter().enumerate() {
+            debug_assert_eq!(usize::from(entry.local), index);
+            // SAFETY: residual validation bounds each promoted register by the register count
+            // the file was sized to.
+            unsafe {
+                *self.registers.get_unchecked_mut(usize::from(entry.register)) =
+                    args.get(index).copied().unwrap_or(Value::UNDEFINED);
+            }
+        }
+        for entry in variables {
+            // SAFETY: as above.
+            unsafe { *self.registers.get_unchecked_mut(usize::from(entry.register)) = Value::UNDEFINED };
         }
     }
 
@@ -268,6 +387,7 @@ struct RealmIntrinsics {
     iterator_prototypes: FxHashMap<Value, IteratorRealmPrototypes>,
     builtin_prototypes: FxHashMap<(Value, Native), Value>,
     promise_constructors: FxHashMap<Value, Value>,
+    error_intrinsics: FxHashMap<Value, ErrorRealmIntrinsics>,
     regexp_intrinsics: FxHashMap<Value, regexp::RegExpIntrinsics>,
     intl_number_format_constructors: FxHashMap<Value, Value>,
     intl_number_format_prototypes: FxHashMap<Value, Value>,
@@ -289,6 +409,12 @@ struct RealmIntrinsics {
     intl_segment_iterator_prototypes: FxHashMap<Value, Value>,
     intl_segments_prototypes: FxHashMap<Value, Value>,
     intl_locale_prototypes: FxHashMap<Value, Value>,
+}
+#[derive(Clone, Copy)]
+struct ErrorRealmIntrinsics {
+    constructor: Value,
+    stack_getter: Value,
+    stack_setter: Value,
 }
 #[derive(Clone, Copy)]
 struct ArgumentsObjectTemplate {
@@ -719,6 +845,8 @@ pub(crate) struct Vm<H> {
     weak_map_proto: Value,
     weak_set_proto: Value,
     weak_ref_proto: Value,
+    /// ECMAScript [[KeptAlive]] targets, held until the host ends a job turn.
+    kept_alive: Vec<RootId>,
     finalization_registry_proto: Value,
     iterator_proto: Value,
     string_iterator_proto: Value,
@@ -736,13 +864,19 @@ pub(crate) struct Vm<H> {
     temporal_plain_year_month_proto: Value,
     natives: Vec<(Native, Value)>,
     frames: Vec<Box<Frame>>,
+    native_stack_frames: Vec<(usize, String)>,
     frame_pool: Vec<Box<Frame>>,
+    /// Whether Wasm functions with a compiled denotation run as native code.
+    execution_mode: ExecutionMode,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
     /// Set by the first `with` entry and never cleared: `Native::WithEnter` is
     /// the only source of with objects, so until it runs no environment
     /// carries any.
     with_scope_entered: bool,
+    /// An installed program declares global lexical bindings, which its running root frame
+    /// holds before they reach the realm's map. Cleared only by a reset for a new main program.
+    script_lexicals_seen: bool,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
@@ -752,6 +886,9 @@ pub(crate) struct Vm<H> {
     active_registers: *mut Value,
     /// `program_cache_layouts[active_program]`, kept by `set_active_program`.
     active_layout: ProgramCacheLayout,
+    /// The active program's materialized constants, kept by `set_active_program` and by
+    /// constant installation. A program's constant buffer never moves once installed.
+    active_constants: *const [Value],
     active_program: ProgramId,
     profile: Profile,
     shapes: Vec<Shape>,
@@ -1208,6 +1345,18 @@ impl<H: Host> Vm<H> {
     #[cfg(feature = "profile-memory")]
     pub(crate) fn report_memory_snapshot(&self, phase: &str) {
         let heap = self.heap.memory_composition();
+        let page_size = std::env::var("QUENCH_MEMORY_PAGE_SIZE")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|page_size| page_size.is_power_of_two());
+        let (
+            complete_slot_slabs,
+            fully_free_slot_slabs,
+            partial_slot_slabs,
+            fully_empty_slot_pages,
+        ) = self.heap.slot_slab_census(page_size);
+        let fully_empty_slot_pages =
+            fully_empty_slot_pages.map_or_else(|| "null".to_string(), |count| count.to_string());
         let shape_table_bytes = self.shapes.capacity() * size_of::<Shape>();
         let shape_lookup_bytes = self
             .shapes
@@ -1259,22 +1408,27 @@ impl<H: Host> Vm<H> {
         let accounted_runtime_bytes = heap.slot_arena_reserved_bytes
             + heap.object_record_reserved_bytes
             + heap.legacy_cell_record_reserved_bytes
+            + heap.free_slot_metadata_bytes
             + property_arena_bytes
             + heap.cell_payload_bytes
             + heap.boxed_object_header_bytes
             + heap.sparse_array_sidecar_bytes
             + vm_metadata_bytes;
         eprintln!(
-            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"legacy_cell_record_reserved_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
             self.heap.collection_count(),
             CellKind::NAMES,
             heap.cell_counts,
             heap.cell_variant_names,
             heap.cell_variant_counts,
             heap.occupied_slots,
+            complete_slot_slabs,
+            fully_free_slot_slabs,
+            partial_slot_slabs,
             heap.slot_arena_reserved_bytes,
             heap.object_record_reserved_bytes,
             heap.legacy_cell_record_reserved_bytes,
+            heap.free_slot_metadata_bytes,
             heap.object_headers,
             heap.embedded_object_headers,
             heap.boxed_object_headers,
@@ -1314,9 +1468,13 @@ impl<H: Host> Vm<H> {
         crate::report_allocator_memory(phase);
     }
     fn initialize(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
-        self.initialize_shared(&Rc::new(program.clone()))
+        self.initialize_shared(&Rc::new(program.clone()), builtins::RealmScope::Complete)
     }
-    fn initialize_shared(&mut self, program: &Rc<ResidualProgram>) -> Result<(), JsError> {
+    fn initialize_shared(
+        &mut self,
+        program: &Rc<ResidualProgram>,
+        scope: builtins::RealmScope,
+    ) -> Result<(), JsError> {
         self.specialized = program.specialized;
         self.realm.intrinsics.arguments_objects.clear();
         self.heap.reset();
@@ -1376,6 +1534,8 @@ impl<H: Host> Vm<H> {
         self.descriptors.clear();
         self.function_values.clear();
         self.programs.reset(program.clone());
+        self.script_lexicals_seen = false;
+        self.observe_program_declarations(program);
         self.program_cache_layouts.clear();
         self.program_cache_layouts
             .push(ProgramCacheLayout::default());
@@ -1395,7 +1555,7 @@ impl<H: Host> Vm<H> {
         self.materialize_program_constants(ProgramId::MAIN, program);
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("program_constants");
-        self.install_builtins(program)?;
+        self.install_builtins(program, scope)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins");
         self.initialize_host(program)?;
@@ -1406,7 +1566,7 @@ impl<H: Host> Vm<H> {
     fn materialize_constant(&mut self, constant: &Constant) -> Value {
         match constant {
             Constant::Number(v) => Value::number(*v),
-            Constant::WasmBits64(bits) => self.heap.alloc(Cell::WasmBits64(*bits)),
+            Constant::WasmBits64(bits) => self.encode_bits64(*bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(*bits)),
             Constant::String(v) => self.heap.alloc(Cell::String(v.clone().into())),
             Constant::StringUnits(v) => self.heap.alloc(Cell::String(JsString::from_units(v))),
@@ -1424,9 +1584,13 @@ impl<H: Host> Vm<H> {
             constants.push(value);
         }
         self.programs.set_constants(id, constants);
+        if id == self.active_program {
+            self.set_active_program(id);
+        }
     }
     pub(super) fn store_module_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.intern_program_atoms(&program);
+        self.observe_program_declarations(&program);
         let id = self.programs.insert_module(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
@@ -1435,11 +1599,18 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_dynamic_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.intern_program_atoms(&program);
+        self.observe_program_declarations(&program);
         let id = self.programs.insert(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);
         Some(id)
+    }
+    fn observe_program_declarations(&mut self, program: &ResidualProgram) {
+        self.script_lexicals_seen |= program
+            .functions
+            .first()
+            .is_some_and(|root| !root.global_lexical_atoms.is_empty());
     }
     fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
@@ -1475,6 +1646,20 @@ impl<H: Host> Vm<H> {
     pub(super) fn set_active_program(&mut self, program: ProgramId) {
         self.active_program = program;
         self.active_layout = self.program_cache_layouts[program.raw() as usize];
+        self.active_constants = self.programs.constants(program);
+    }
+
+    /// Constant `index` of the active program.
+    #[inline(always)]
+    pub(super) fn active_constant(&self, index: usize) -> Option<Value> {
+        debug_assert!(std::ptr::eq(
+            self.active_constants,
+            self.programs.constants(self.active_program)
+        ));
+        // SAFETY: `active_constants` is re-derived whenever the active program or its constants
+        // change, and an installed constant buffer stays put until the store is reset, which
+        // reactivates the main program.
+        unsafe { (&*self.active_constants).get(index).copied() }
     }
 
     #[inline(always)]

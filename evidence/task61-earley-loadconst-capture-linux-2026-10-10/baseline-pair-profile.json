@@ -1,0 +1,125 @@
+{
+  "schema": 1,
+  "task": "61",
+  "experiment": "EarleyBoyer per-residual profiler accounting verification",
+  "source_revision_before_profile_fix": "875ceb1bda17ddf9c30ce3d93caaa294bc19a026",
+  "source_tree_dirty_during_profile": true,
+  "fixture": "V8-v7 EarleyBoyer materialized with pinned Rust runner",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "profile_binary_sha256": "1bac4f2db7484c5cc0f89f8f11162dd86ef9d9873d38efce787482d992216695",
+  "build_command": "cargo build -p quench-node --profile production --features profile-memory,quench-runtime/profile-aggregate",
+  "run_environment": [
+    "QUENCH_OPCODE_CENSUS=1 for census pass",
+    "QUENCH_MEMORY=1"
+  ],
+  "census": {
+    "program_scope": "MAIN residual (program id 0)",
+    "physical_dispatches": 734166270,
+    "physical_site_counts": 734166270,
+    "dispatch_equals_site_count": true
+  },
+  "top_adjacent_physical_pairs": [
+    [
+      "StoreLocalPlain",
+      "LoadLocalPlain",
+      53844690
+    ],
+    [
+      "LoadLocalPlain",
+      "GetField",
+      52590048
+    ],
+    [
+      "LoadLocalPlain",
+      "StoreLocalPlain",
+      45599170
+    ],
+    [
+      "Binary",
+      "JumpFalse",
+      33275973
+    ],
+    [
+      "GetField",
+      "StoreLocalPlain",
+      22960789
+    ],
+    [
+      "Move",
+      "Move",
+      22826231
+    ],
+    [
+      "LoadLocalPlain",
+      "Binary",
+      22108499
+    ],
+    [
+      "LoadCapture",
+      "LoadLocalPlain",
+      21140002
+    ],
+    [
+      "LoadLocalPlain",
+      "SetThisFieldStrict",
+      17914503
+    ],
+    [
+      "LoadLocalPlain",
+      "LoadCapture",
+      17844019
+    ],
+    [
+      "JumpFalse",
+      "LoadLocalPlain",
+      17629574
+    ],
+    [
+      "LoadConst",
+      "LoadCapture",
+      17492201
+    ],
+    [
+      "Move",
+      "Call",
+      17248857
+    ],
+    [
+      "LoadCapture",
+      "Binary",
+      16653628
+    ],
+    [
+      "LoadConst",
+      "Return",
+      16520613
+    ],
+    [
+      "Binary",
+      "Unary",
+      15466308
+    ],
+    [
+      "Unary",
+      "JumpFalse",
+      15466308
+    ],
+    [
+      "StoreLocalPlain",
+      "LoadConst",
+      11531290
+    ],
+    [
+      "GetField",
+      "Move",
+      10195958
+    ],
+    [
+      "LoadConst",
+      "JumpFalse",
+      10036435
+    ]
+  ],
+  "profile_instrumentation_bytes": 7712,
+  "interpretation": "The corrected report scopes bytecode opcode and pair counts to a residual program. Instrumented Score is excluded from performance claims."
+}

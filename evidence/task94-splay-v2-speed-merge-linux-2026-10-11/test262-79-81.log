@@ -1,0 +1,10 @@
+    Finished `iteration` profile [optimized] target(s) in 0.09s
+     Running `target/iteration/run-stages 79 81`
+stage  79 batch   1/2   passed=100 failed=0 total=100
+stage  79 batch   2/2   passed=41 failed=0 total=41
+stage  79: built-ins/WeakMap passed=141 failed=0 total=141
+stage  80 batch   1/1   passed=29 failed=0 total=29
+stage  80: built-ins/WeakRef passed=29 failed=0 total=29
+stage  81 batch   1/1   passed=85 failed=0 total=85
+stage  81: built-ins/WeakSet passed=85 failed=0 total=85
+stages=3 passed=255 failed=0 total=255

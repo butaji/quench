@@ -73,6 +73,11 @@ impl WideInstruction {
     pub(crate) fn set_imm(&mut self, imm: u32) {
         self.imm = imm;
     }
+
+    pub(crate) fn set_returns_from_frame(&mut self) {
+        debug_assert!(self.op().result_layout().allows_return());
+        self.a |= RETURN_REGISTER;
+    }
 }
 
 macro_rules! layout_accessors {
@@ -109,19 +114,22 @@ macro_rules! layout_accessors {
                 *self = Self::new(self.op(), register | flags, self.b(), self.c(), self.imm());
             }
 
+            // Each result-flag predicate tests its bit first: the bit is clear on almost every
+            // dispatch, and only a set bit needs the op's layout to tell the flag from other
+            // field-A data.
             pub(crate) fn returns_from_frame(self) -> bool {
-                self.op().result_layout().allows_return()
-                    && self.result_flags() & RETURN_REGISTER != 0
+                self.result_flags() & RETURN_REGISTER != 0
+                    && self.op().result_layout().allows_return()
             }
 
             pub(crate) fn writes_current_this(self) -> bool {
-                self.op().result_layout().allows_this_write()
-                    && self.result_flags() & SET_THIS_REGISTER != 0
+                self.result_flags() & SET_THIS_REGISTER != 0
+                    && self.op().result_layout().allows_this_write()
             }
 
             pub(crate) fn writes_numeric_local(self) -> bool {
-                self.op().result_layout().allows_numeric_local()
-                    && self.result_flags() & super::NUMERIC_LOCAL_TARGET != 0
+                self.result_flags() & super::NUMERIC_LOCAL_TARGET != 0
+                    && self.op().result_layout().allows_numeric_local()
             }
 
             #[allow(dead_code)]
@@ -880,6 +888,11 @@ impl Instr {
                 u16::MAX
             };
         }
+        Self::unpack_plain_field(packed)
+    }
+
+    const fn unpack_plain_field(packed: u16) -> u16 {
+        let packed = packed & Self::FIELD_MASK as u16;
         (packed & Self::FIELD_PAYLOAD_MASK)
             | ((packed >> Self::FIELD_PACKED_HIGH_SHIFT) << Self::FIELD_SOURCE_HIGH_SHIFT)
     }

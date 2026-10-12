@@ -1,0 +1,75 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 315d451f8..b4e2f98f4 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -578,6 +578,7 @@ opcodes!(
+     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(BinaryOperator, Operand, Operand),
+     JumpUnaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(UnaryOperator, Operand, Unused),
+     Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
++    ReturnConst => Effect::CONTROL; layout Scalar; meaning ConstantIndex; flow Terminal, @ Register, @ fields(Unused, Unused, Unused),
+     Throw => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
+     NumericAdd => READ_THROW; layout Scalar; meaning AdditionOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+     NumericMultiply => READ_THROW; layout Scalar; meaning MultiplicationOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 44e54a12a..ccee9eccf 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -106,6 +106,17 @@ fusion_recipes! {
+         first.set_result_register(second.result_register());
+         Some(first)
+     };
++    LoadConstReturn: [LoadConst, Return] =>
++        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
++            if first.result_register() != second.register_a() { return None; }
++            Instr::try_new(
++                Op::ReturnConst,
++                0,
++                0,
++                0,
++                u32::try_from(first.constant_index()).ok()?,
++            )
++        };
+     BinaryJumpFalse: [Binary, JumpFalse] =>
+         |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+             if first.result_register() != second.register_a() { return None; }
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 46ba9a381..9c0cfa29f 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -1863,6 +1863,15 @@ impl<H: Host> Vm<H> {
+                 self.write(f, i.result_register(), v);
+             }
+             Op::Return => return Ok(StepResult::Return(self.read(f, i.register_a()))),
++            Op::ReturnConst => {
++                let value = self
++                    .programs
++                    .constant(self.frames[f].program, i.constant_index())
++                    .ok_or_else(|| {
++                        JsError::validation("constant index is outside program".into())
++                    })?;
++                return Ok(StepResult::Return(value));
++            }
+             Op::WasmExceptionNew => {
+                 use crate::wasm::tag::ExceptionInput;
+                 let window = i.register_window();
+diff --git a/crates/quench-runtime/src/vm/dispatch_numeric.rs b/crates/quench-runtime/src/vm/dispatch_numeric.rs
+index 502da4c3a..1bff19a45 100644
+--- a/crates/quench-runtime/src/vm/dispatch_numeric.rs
++++ b/crates/quench-runtime/src/vm/dispatch_numeric.rs
+@@ -307,6 +307,16 @@ impl<H: Host> Vm<H> {
+                         self.frames[frame].pc = pc;
+                         return Ok(StepResult::Return(self.read(frame, ins.register_a())));
+                     }
++                    Op::ReturnConst => {
++                        let value = self
++                            .programs
++                            .constant(self.frames[frame].program, ins.constant_index())
++                            .ok_or_else(|| {
++                                JsError::validation("constant index is outside program".into())
++                            })?;
++                        self.frames[frame].pc = pc;
++                        return Ok(StepResult::Return(value));
++                    }
+                     _ => {
+                         self.frames[frame].pc = pc;
+                         let result = self.numeric_step_fallback(p, frame, ins);

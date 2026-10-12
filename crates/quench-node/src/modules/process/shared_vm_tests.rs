@@ -8,6 +8,8 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
     std::fs::create_dir_all(&directory).unwrap();
     let filename = directory.join("main.cjs");
     std::fs::write(&filename, "module.exports = { answer: 42 };").unwrap();
+    let filename = std::fs::canonicalize(filename).unwrap();
+    let module_key = filename.to_string_lossy().into_owned();
     let host = NodeHost::new(vec!["quench-node".into()]).with_commonjs_entry(filename);
     let roots = host.shared_state();
     let mut runtime = Runtime::new(host);
@@ -18,8 +20,7 @@ fn shared_module_cache_roots_survive_collection_and_expire_on_fresh_execution() 
         if let Some(previous) = previous {
             assert!(!runtime.root_is_live(previous));
         }
-        let cached = *roots.borrow().module_cache.values().next().unwrap();
-        assert_eq!(roots.borrow().module_cache.len(), 1);
+        let cached = *roots.borrow().module_cache.get(&module_key).unwrap();
         runtime.collect(&program).unwrap();
         let key = runtime.string_rooted("exports");
         let exports = runtime.get_property_rooted(cached, key).unwrap();

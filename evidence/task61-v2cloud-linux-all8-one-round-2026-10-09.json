@@ -1,0 +1,980 @@
+{
+  "schema": 5,
+  "created_unix_ns": 1791547712199317393,
+  "rounds_requested": 1,
+  "timeout_ms": 300000,
+  "source_revision": "4bfd8a0cf0622ac6fcfe871fd4cd593ff36b102c",
+  "source_dirty": false,
+  "corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": true
+  },
+  "host": {
+    "uname": "Linux 1c7595109800 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 18882699264,
+    "memory_limit_bytes": 17179869184,
+    "cpu_quota": "400000 100000",
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/workspace/quench/target/production/quench-node",
+      "executable_sha256": "9196108119f93745f12da83d40bb628871b6b5af770cf4cdf0ed9116a8a4b54d",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/quench/work/stageb-tools/cargo-home/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quench/target/production/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    },
+    {
+      "name": "quickjs",
+      "executable": "/workspace/quench/work/stageb-tools/qjs/quickjs-2026-06-04/qjs",
+      "executable_sha256": "a3f1c3280388e1ee2332d7b21b9a1b5f82d6d7aa6686f1f03f1b8d0de3d5ef57",
+      "version": "QuickJS version 2026-06-04",
+      "argv": [],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/quench/work/stageb-tools/cargo-home/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/workspace/quench/work/stageb-tools/qjs/quickjs-2026-06-04/qjs",
+        "--version"
+      ],
+      "jit_proof": "QuickJS qjs executes bytecode in its interpreter; binary version and SHA-256 are recorded"
+    },
+    {
+      "name": "bun",
+      "executable": "/workspace/quench/work/stageb-tools/bun/bun-linux-x64/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/quench/work/stageb-tools/cargo-home/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/workspace/quench/work/stageb-tools/bun/bun-linux-x64/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "executable_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+      "version": "v24.19.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/home/agent",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "PATH": "/workspace/quench/work/stageb-tools/cargo-home/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/override:/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin:/opt/codex/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/opt/codex/runtimes/codex-primary-runtime/dependencies/node/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true"
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+      "size_bytes": 9351,
+      "modified_unix_ns": 1791547439556316234,
+      "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "size_bytes": 48043,
+      "modified_unix_ns": 1791547439556805314,
+      "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "size_bytes": 25653,
+      "modified_unix_ns": 1791547439556805314,
+      "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "size_bytes": 195205,
+      "modified_unix_ns": 1791547439556805314,
+      "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "size_bytes": 12690,
+      "modified_unix_ns": 1791547439556805314,
+      "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "size_bytes": 27996,
+      "modified_unix_ns": 1791547439556805314,
+      "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "size_bytes": 111299,
+      "modified_unix_ns": 1791547439556805314,
+      "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "size_bytes": 15776,
+      "modified_unix_ns": 1791547439556805314,
+      "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "size_bytes": 10746,
+      "modified_unix_ns": 1791547439556805314,
+      "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+    }
+  ],
+  "fixtures": {
+    "quench-bench/js-engine-benchmark/v8-v7/crypto.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+        "size_bytes": 48043,
+        "modified_unix_ns": 1791547439556805314,
+        "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 1812.0,
+          "median_max_rss_bytes": 28680192,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 1483.0,
+          "median_max_rss_bytes": 26456064,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 147.0,
+          "median_max_rss_bytes": 20594688,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 1146.0,
+          "median_max_rss_bytes": 2285568,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 5128720123,
+              "peak_rss_bytes": 28680192,
+              "score": 1812.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 4586,
+              "page_reclaims": 4586,
+              "involuntary_context_switches": 14,
+              "stdout": "__quenchBenchResult: Crypto: 1812\n----\nScore: 1812\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 6212158271,
+              "peak_rss_bytes": 26456064,
+              "score": 1483.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 6736,
+              "page_reclaims": 6736,
+              "involuntary_context_switches": 22,
+              "stdout": "__quenchBenchResult: Crypto: 1483\n----\nScore: 1483\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 28441895767,
+              "peak_rss_bytes": 20594688,
+              "score": 147.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 4093,
+              "page_reclaims": 4093,
+              "involuntary_context_switches": 82,
+              "stdout": "__quenchBenchResult: Crypto: 147\n----\nScore: 147\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 7227774146,
+              "peak_rss_bytes": 2285568,
+              "score": 1146.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 403,
+              "page_reclaims": 403,
+              "involuntary_context_switches": 22,
+              "stdout": "__quenchBenchResult: Crypto: 1146\n----\nScore: 1146\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/deltablue.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+        "size_bytes": 25653,
+        "modified_unix_ns": 1791547439556805314,
+        "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 1118.0,
+          "median_max_rss_bytes": 28504064,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 1752.0,
+          "median_max_rss_bytes": 28295168,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 90.0,
+          "median_max_rss_bytes": 21336064,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 952.0,
+          "median_max_rss_bytes": 2584576,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2015443559,
+              "peak_rss_bytes": 28504064,
+              "score": 1118.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12434,
+              "page_reclaims": 12434,
+              "involuntary_context_switches": 6,
+              "stdout": "__quenchBenchResult: DeltaBlue: 1118\n----\nScore: 1118\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2037150018,
+              "peak_rss_bytes": 28295168,
+              "score": 1752.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 7223,
+              "page_reclaims": 7223,
+              "involuntary_context_switches": 7,
+              "stdout": "__quenchBenchResult: DeltaBlue: 1752\n----\nScore: 1752\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 4176286472,
+              "peak_rss_bytes": 21336064,
+              "score": 90.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 4284,
+              "page_reclaims": 4284,
+              "involuntary_context_switches": 18,
+              "stdout": "__quenchBenchResult: DeltaBlue: 90.0\n----\nScore: 90.0\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2013978243,
+              "peak_rss_bytes": 2584576,
+              "score": 952.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 560,
+              "page_reclaims": 560,
+              "involuntary_context_switches": 4,
+              "stdout": "__quenchBenchResult: DeltaBlue: 952\n----\nScore: 952\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+        "size_bytes": 195205,
+        "modified_unix_ns": 1791547439556805314,
+        "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 4323.0,
+          "median_max_rss_bytes": 31858688,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 6095.0,
+          "median_max_rss_bytes": 134901760,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 142.0,
+          "median_max_rss_bytes": 52240384,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 2243.0,
+          "median_max_rss_bytes": 16072704,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 5116230318,
+              "peak_rss_bytes": 31858688,
+              "score": 4323.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36957,
+              "page_reclaims": 36957,
+              "involuntary_context_switches": 70,
+              "stdout": "__quenchBenchResult: EarleyBoyer: 4323\n----\nScore: 4323\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 5118295935,
+              "peak_rss_bytes": 134901760,
+              "score": 6095.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 33440,
+              "page_reclaims": 33440,
+              "involuntary_context_switches": 26,
+              "stdout": "__quenchBenchResult: EarleyBoyer: 6095\n----\nScore: 6095\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 44773852727,
+              "peak_rss_bytes": 52240384,
+              "score": 142.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12321,
+              "page_reclaims": 12321,
+              "involuntary_context_switches": 301,
+              "stdout": "__quenchBenchResult: EarleyBoyer: 142\n----\nScore: 142\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 7229944035,
+              "peak_rss_bytes": 16072704,
+              "score": 2243.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 64238,
+              "page_reclaims": 64238,
+              "involuntary_context_switches": 19,
+              "stdout": "__quenchBenchResult: EarleyBoyer: 2243\n----\nScore: 2243\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+        "size_bytes": 12690,
+        "modified_unix_ns": 1791547439556805314,
+        "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 2688.0,
+          "median_max_rss_bytes": 20512768,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 1960.0,
+          "median_max_rss_bytes": 31039488,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 77.7,
+          "median_max_rss_bytes": 22568960,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 2154.0,
+          "median_max_rss_bytes": 4452352,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 3085995863,
+              "peak_rss_bytes": 20512768,
+              "score": 2688.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1486,
+              "page_reclaims": 1486,
+              "involuntary_context_switches": 6,
+              "stdout": "__quenchBenchResult: NavierStokes: 2688\n----\nScore: 2688\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 4165476349,
+              "peak_rss_bytes": 31039488,
+              "score": 1960.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 7942,
+              "page_reclaims": 7942,
+              "involuntary_context_switches": 11,
+              "stdout": "__quenchBenchResult: NavierStokes: 1960\n----\nScore: 1960\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 63557212668,
+              "peak_rss_bytes": 22568960,
+              "score": 77.7,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 5918,
+              "page_reclaims": 5918,
+              "involuntary_context_switches": 162,
+              "stdout": "__quenchBenchResult: NavierStokes: 77.7\n----\nScore: 77.7\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 4156632424,
+              "peak_rss_bytes": 4452352,
+              "score": 2154.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1464,
+              "page_reclaims": 1464,
+              "involuntary_context_switches": 12,
+              "stdout": "__quenchBenchResult: NavierStokes: 2154\n----\nScore: 2154\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/raytrace.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+        "size_bytes": 27996,
+        "modified_unix_ns": 1791547439556805314,
+        "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 2524.0,
+          "median_max_rss_bytes": 28278784,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 4487.0,
+          "median_max_rss_bytes": 33271808,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 157.0,
+          "median_max_rss_bytes": 21995520,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 1880.0,
+          "median_max_rss_bytes": 2154496,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2054334890,
+              "peak_rss_bytes": 28278784,
+              "score": 2524.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 21160,
+              "page_reclaims": 21160,
+              "involuntary_context_switches": 19,
+              "stdout": "__quenchBenchResult: RayTrace: 2524\n----\nScore: 2524\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2078965152,
+              "peak_rss_bytes": 33271808,
+              "score": 4487.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8395,
+              "page_reclaims": 8395,
+              "involuntary_context_switches": 9,
+              "stdout": "__quenchBenchResult: RayTrace: 4487\n----\nScore: 4487\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 16980822111,
+              "peak_rss_bytes": 21995520,
+              "score": 157.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 4540,
+              "page_reclaims": 4540,
+              "involuntary_context_switches": 38,
+              "stdout": "__quenchBenchResult: RayTrace: 157\n----\nScore: 157\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 3068515566,
+              "peak_rss_bytes": 2154496,
+              "score": 1880.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 359,
+              "page_reclaims": 359,
+              "involuntary_context_switches": 6,
+              "stdout": "__quenchBenchResult: RayTrace: 1880\n----\nScore: 1880\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/regexp.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+        "size_bytes": 111299,
+        "modified_unix_ns": 1791547439556805314,
+        "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 910.0,
+          "median_max_rss_bytes": 33693696,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 3311.0,
+          "median_max_rss_bytes": 36810752,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 26.2,
+          "median_max_rss_bytes": 41660416,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 522.0,
+          "median_max_rss_bytes": 5607424,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 4379329771,
+              "peak_rss_bytes": 33693696,
+              "score": 910.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 27060,
+              "page_reclaims": 27060,
+              "involuntary_context_switches": 32,
+              "stdout": "__quenchBenchResult: RegExp: 910\n----\nScore: 910\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2119354318,
+              "peak_rss_bytes": 36810752,
+              "score": 3311.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 9302,
+              "page_reclaims": 9302,
+              "involuntary_context_switches": 8,
+              "stdout": "__quenchBenchResult: RegExp: 3311\n----\nScore: 3311\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 118204259634,
+              "peak_rss_bytes": 41660416,
+              "score": 26.2,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 9057,
+              "page_reclaims": 9057,
+              "involuntary_context_switches": 182,
+              "stdout": "__quenchBenchResult: RegExp: 26.2\n----\nScore: 26.2\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 7714919352,
+              "peak_rss_bytes": 5607424,
+              "score": 522.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1201,
+              "page_reclaims": 1201,
+              "involuntary_context_switches": 60,
+              "stdout": "__quenchBenchResult: RegExp: 522\n----\nScore: 522\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/richards.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+        "size_bytes": 15776,
+        "modified_unix_ns": 1791547439556805314,
+        "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 1670.0,
+          "median_max_rss_bytes": 19660800,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 1779.0,
+          "median_max_rss_bytes": 26329088,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 123.0,
+          "median_max_rss_bytes": 18468864,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 985.0,
+          "median_max_rss_bytes": 2154496,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2007648136,
+              "peak_rss_bytes": 19660800,
+              "score": 1670.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 1425,
+              "page_reclaims": 1425,
+              "involuntary_context_switches": 3,
+              "stdout": "__quenchBenchResult: Richards: 1670\n----\nScore: 1670\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2042536966,
+              "peak_rss_bytes": 26329088,
+              "score": 1779.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 6686,
+              "page_reclaims": 6686,
+              "involuntary_context_switches": 4,
+              "stdout": "__quenchBenchResult: Richards: 1779\n----\nScore: 1779\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2118599321,
+              "peak_rss_bytes": 18468864,
+              "score": 123.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 3316,
+              "page_reclaims": 3316,
+              "involuntary_context_switches": 38,
+              "stdout": "__quenchBenchResult: Richards: 123\n----\nScore: 123\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2008516446,
+              "peak_rss_bytes": 2154496,
+              "score": 985.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 377,
+              "page_reclaims": 377,
+              "involuntary_context_switches": 5,
+              "stdout": "__quenchBenchResult: Richards: 985\n----\nScore: 985\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    },
+    "quench-bench/js-engine-benchmark/v8-v7/splay.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+        "size_bytes": 10746,
+        "modified_unix_ns": 1791547439556805314,
+        "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 4758.0,
+          "median_max_rss_bytes": 60272640,
+          "valid_samples": 1
+        },
+        "node": {
+          "median_score": 7456.0,
+          "median_max_rss_bytes": 502644736,
+          "valid_samples": 1
+        },
+        "quench": {
+          "median_score": 825.0,
+          "median_max_rss_bytes": 202244096,
+          "valid_samples": 1
+        },
+        "quickjs": {
+          "median_score": 3188.0,
+          "median_max_rss_bytes": 149766144,
+          "valid_samples": 1
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2138640934,
+              "peak_rss_bytes": 60272640,
+              "score": 4758.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12173,
+              "page_reclaims": 12173,
+              "involuntary_context_switches": 729,
+              "stdout": "__quenchBenchResult: Splay: 4758\n----\nScore: 4758\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2219500998,
+              "peak_rss_bytes": 502644736,
+              "score": 7456.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 123074,
+              "page_reclaims": 123074,
+              "involuntary_context_switches": 581,
+              "stdout": "__quenchBenchResult: Splay: 7456\n----\nScore: 7456\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2856754388,
+              "peak_rss_bytes": 202244096,
+              "score": 825.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 50804,
+              "page_reclaims": 50804,
+              "involuntary_context_switches": 7,
+              "stdout": "__quenchBenchResult: Splay: 825\n----\nScore: 825\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2535143499,
+              "peak_rss_bytes": 149766144,
+              "score": 3188.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 36405,
+              "page_reclaims": 36405,
+              "involuntary_context_switches": 15,
+              "stdout": "__quenchBenchResult: Splay: 3188\n----\nScore: 3188\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

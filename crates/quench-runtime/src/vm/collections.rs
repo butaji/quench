@@ -9,6 +9,23 @@ enum WeakCollectionKind {
 }
 include!("collections_set_relations.rs");
 impl<H: Host> Vm<H> {
+    fn keep_alive(&mut self, value: Value) {
+        if !self
+            .kept_alive
+            .iter()
+            .any(|root| self.heap.root_value(*root) == Some(value))
+        {
+            let root = self.heap.root(value);
+            self.kept_alive.push(root);
+        }
+    }
+
+    pub(crate) fn clear_kept_objects(&mut self) {
+        for root in self.kept_alive.drain(..) {
+            self.heap.release_root(root);
+        }
+    }
+
     pub(super) fn is_collection_native(native: Native) -> bool {
         matches!(
             native,
@@ -223,6 +240,7 @@ impl<H: Host> Vm<H> {
         if !self.is_weak_key_value(target) {
             return Err(self.type_error(p, "WeakRef target must be an object".into()));
         }
+        self.keep_alive(target);
         let target = self
             .heap
             .weak_handle(target)
@@ -790,6 +808,7 @@ impl<H: Host> Vm<H> {
                         let Some(index) = self.map_entry_index(this, key) else {
                             return Ok(Value::FALSE);
                         };
+                        self.heap.collection_entry_deleted(this, index, true);
                         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
                             unreachable!("receiver validated above")
                         };
@@ -797,6 +816,7 @@ impl<H: Host> Vm<H> {
                         Ok(Value::TRUE)
                     }
                     Native::MapClear => {
+                        self.heap.collection_cleared(this, true);
                         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
                             unreachable!("receiver validated above")
                         };
@@ -947,6 +967,7 @@ impl<H: Host> Vm<H> {
                 let Some(index) = self.set_entry_index(this, value) else {
                     return Ok(Value::FALSE);
                 };
+                self.heap.collection_entry_deleted(this, index, false);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(self.type_error(
                         p,
@@ -963,6 +984,7 @@ impl<H: Host> Vm<H> {
                         "Set.prototype.clear called on incompatible receiver".into(),
                     ));
                 }
+                self.heap.collection_cleared(this, false);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(self.type_error(
                         p,
@@ -1209,9 +1231,13 @@ impl<H: Host> Vm<H> {
                         "WeakRef.prototype.deref called on incompatible receiver".into(),
                     ));
                 };
-                Ok(target
+                let value = target
                     .and_then(|target| self.heap.weak_value(target))
-                    .unwrap_or(Value::UNDEFINED))
+                    .unwrap_or(Value::UNDEFINED);
+                if !value.is_undefined() {
+                    self.keep_alive(value);
+                }
+                Ok(value)
             }
             _ => Err(JsError("invalid collection native".into())),
         }

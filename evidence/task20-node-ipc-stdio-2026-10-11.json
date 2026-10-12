@@ -1,0 +1,289 @@
+{
+  "recorded_at": "2026-10-11T22:25:50.071177+00:00",
+  "base_commit": "25f3fce1037fd04631dbe93abe16a4a1bf6d2ef8",
+  "change": "Normalize one IPC stdio slot and map a real UnixStream peer into the child descriptor; keep the parent endpoint owned until child reap. No JSON IPC API compatibility claim.",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "resources": {
+    "cpu.max": "400000 100000",
+    "memory.max": "17179869184"
+  },
+  "validation": {
+    "child_entry_oracles": {
+      "passed": 40,
+      "failed": 0,
+      "log": "work/ipc-stdio-all-oracles.log",
+      "sha256": "ef5227f22d8fb3e63aad79e608e7d0395fa591917bd8bbaad11efa5ff91428bd"
+    },
+    "ipc_oracle_contract": "External pinned Node child sees a real socket at IPC descriptor 0/3/5 and consumes NODE_CHANNEL_FD; stdio null projections and child exit output match.",
+    "focused": [
+      {
+        "path": "work/ipc-stdio-regression.json",
+        "sha256": "79b373e515dfb71fe76a402edf2bbc5d5cffdcf2563e22b93ff0ccbbee461714",
+        "result": {
+          "schema_version": 2,
+          "inventory_hash": "12290132776d5179",
+          "timeout_secs": 30,
+          "jobs": 1,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "25f3fce1037fd04631dbe93abe16a4a1bf6d2ef8",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64",
+          "results": [
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdin-ipc.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "path": "work/ipc-stdio-group.json",
+        "sha256": "c10471070c214ff1555fc4d8b172218aa9734a88e2e14c86da5221b04089657d",
+        "result": {
+          "schema_version": 2,
+          "inventory_hash": "7c73ed6da4f575b9",
+          "timeout_secs": 20,
+          "jobs": 2,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "25f3fce1037fd04631dbe93abe16a4a1bf6d2ef8",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64",
+          "results": [
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-big-write-end.js",
+              "status": "timeout",
+              "observation": {
+                "Ok": {
+                  "exit_code": null,
+                  "signal": 9,
+                  "timed_out": true,
+                  "worker": null,
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-inherit.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "node:stream/shared.js:1219\n        if (!options || options.end !== false) dest.end();\n                                               ^\n\nTypeError: value is not callable\n    at node:stream/shared.js:1219:48\n    at node:stream/shared.js:80:22\n    at node:bootstrap/event-emitter.js:127:24\n    at emit (node:bootstrap/event-emitter.js:125:5)\n    at completeReadableEnd (node:stream/shared.js:546:5)\n    at node:stream/shared.js:663:13\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-merge-stdouts-into-cat.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "node:child_process/shared.js:170\n    return new ChildProcess(file, args, spawnNative(file, args, options), options);\n                                        ^\n\nTypeError: The argument 'stdio' is invalid. Received { _emitter: { _events: { error: [Function: onError] }, captureRejections: false }, _listenerWrappers: [], _events: {}, _eventsCount: 0, _writableState: { objectMode: false, writable: undefined, decodeStrings: true, defaultEncoding: 'utf8', highWaterMark: 65536, buffered: 0, needDrain: false, drainPending: false, bufferedRequestCount: 0, pending: [], writing: false, ending: false, ended: false, finished: false, errored: null, errorEmitted: false, corked: 0, prefinished: false, finishScheduled: false, final: [Function: final], endCallbacks: [], autoDestroy: true, destroyed: false, getBuffer: [Function (anonymous)] }, writable: true, writableAborted: false, _write: [Function: write] }\n    at node:child_process/shared.js:170:41\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-stdio-merge-stdouts-into-cat.js:10:12\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-overlapped.js",
+              "status": "skip",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "guestexit",
+                    "code": 0
+                  },
+                  "stdout": [
+                    49,
+                    46,
+                    46,
+                    48,
+                    32,
+                    35,
+                    32,
+                    83,
+                    107,
+                    105,
+                    112,
+                    112,
+                    101,
+                    100,
+                    58,
+                    32,
+                    111,
+                    118,
+                    101,
+                    114,
+                    108,
+                    97,
+                    112,
+                    112,
+                    101,
+                    100,
+                    45,
+                    99,
+                    104,
+                    101,
+                    99,
+                    107,
+                    101,
+                    114,
+                    32,
+                    98,
+                    105,
+                    110,
+                    97,
+                    114,
+                    121,
+                    32,
+                    105,
+                    115,
+                    32,
+                    110,
+                    111,
+                    116,
+                    32,
+                    97,
+                    118,
+                    97,
+                    105,
+                    108,
+                    97,
+                    98,
+                    108,
+                    101,
+                    10
+                  ],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-reuse-readable-stdio.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "node:child_process/shared.js:170\n    return new ChildProcess(file, args, spawnNative(file, args, options), options);\n                                        ^\n\nTypeError: The argument 'stdio' is invalid. Received { _emitter: { _events: { error: [Function: onError], prefinish: [Function (anonymous)], end: [Function (anonymous)], close: [Function (anonymous)] }, captureRejections: false }, _listenerWrappers: [ { name: 'prefinish', fn: [Function (anonymous)], wrapper: [Function (anonymous)] }, { name: 'end', fn: [Function (anonymous)], wrapper: [Function (anonymous)] }, { name: 'close', fn: [Function (anonymous)], wrapper: [Function (anonymous)] } ], _events: { prefinish: [Function (anonymous)], end: [Function (anonymous)], close: [Function (anonymous)] }, _eventsCount: 3, _readableState: { objectMode: false, highWaterMark: 65536, buffer: [], bufferIndex: 0, length: [Getter], sync: false, flowing: null, flowScheduled: false, reading: false, readableListening: false, needReadable: false, readingMore: true, readingMoreScheduled: false, resumeScheduled: false, resumeEventPending: false, readRequests: 0, ended: false, endEmitted: false, endScheduled: false, emittedReadable: false, errorEmitted: false, errored: null, closeEmitted: false, encoding: null, decoder: null, awaitDrainWriters: null, pipes: [], pipeListeners: [], autoDestroy: true, defaultEncoding: 'utf8' }, readable: true, readableDidRead: false, destroyed: false, closed: false, readableAborted: false, _isDuplex: true, _writableState: { objectMode: false, writable: undefined, decodeStrings: true, defaultEncoding: 'utf8', highWaterMark: 65536, buffered: 0, needDrain: false, drainPending: false, bufferedRequestCount: 0, pending: [], writing: false, ending: false, ended: false, finished: false, errored: null, errorEmitted: false, corked: 0, prefinished: false, finishScheduled: false, final: null, endCallbacks: [], autoDestroy: true, destroyed: false, getBuffer: [Function (anonymous)] }, writable: true, writableAborted: false, allowHalfOpen: true, _isTransform: true, _transformBackpressure: null, _passThrough: true, _passThroughRead: false, _transform: [Function (anonymous)] }\n    at node:child_process/shared.js:170:41\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-stdio-reuse-readable-stdio.js:17:12\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "path": "work/full-regression-runner-complex-isolated.json",
+        "sha256": "ab11d51689f63e2ffa457ede2a567215980dc3982d07f54ed7d84cabdcce7e72",
+        "result": {
+          "schema_version": 2,
+          "inventory_hash": "9a8c5e78b29083cb",
+          "timeout_secs": 30,
+          "jobs": 1,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "25f3fce1037fd04631dbe93abe16a4a1bf6d2ef8",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64",
+          "results": [
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-runner-complex-dependencies.mjs",
+              "status": "timeout",
+              "observation": {
+                "Ok": {
+                  "exit_code": null,
+                  "signal": 9,
+                  "timed_out": true,
+                  "worker": null,
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "path": "work/full-regression-runner-watch-isolated.json",
+        "sha256": "144ea49d286749a9ab22dfc038f97777b12d7571163d1e50cbcd0ca1cbec931e",
+        "result": {
+          "schema_version": 2,
+          "inventory_hash": "fe00ec12716b8a8a",
+          "timeout_secs": 30,
+          "jobs": 1,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "25f3fce1037fd04631dbe93abe16a4a1bf6d2ef8",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64",
+          "results": [
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-runner-watch-mode-complex.mjs",
+              "status": "timeout",
+              "observation": {
+                "Ok": {
+                  "exit_code": null,
+                  "signal": 9,
+                  "timed_out": true,
+                  "worker": null,
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "remaining": "JSON IPC send/receive, public channel lifecycle, descriptor passing, advanced serialization and extra non-IPC stdio pipes remain unsupported. Full suite goal remains unmet; runner watch tests also timeout in isolation."
+}

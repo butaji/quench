@@ -29,7 +29,7 @@ pub struct StackGuard(PhantomData<Rc<()>>);
 pub struct GuestCallGuard(PhantomData<Rc<()>>);
 
 impl StackGuard {
-    #[inline(never)]
+    #[inline]
     pub fn enter() -> Result<Self, ()> {
         let current_stack_pointer = current_stack_pointer();
         ACTIVE_TRANSITIONS.with(|depth| {

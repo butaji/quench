@@ -1,0 +1,1606 @@
+{
+  "scope": "Owned Unix child stdio stream forwarding and separate native legacy/Readable pipe completion",
+  "base_commit": "a2e0083a6eb221a3467943323f06ed39b68d1411",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "host": {
+    "platform": "linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max_bytes": 17179869184
+  },
+  "implementation": [
+    "Unix standard pipe channels use libuv-sized duplex socket pairs; per-operation nonblocking send/recv preserve blocking descriptors when inherited by another child.",
+    "Native output demand and ownership prevent an inherited pipe from being consumed by an eager parent reader. Actual owned descriptors are duplicated for registered stream identities.",
+    "Canonical native next-tick retention is shared by JSON IPC and stdio flush scheduling. Reaped children with inactive inherited readers do not keep the parent alive.",
+    "Native pipe plans separate legacy end/close destruction and once-only completion from modern Readable EOF and listener lifetimes. Genuine standard streams expose _isStdio."
+  ],
+  "node_oracles": {
+    "passed": 47,
+    "total": 47,
+    "log": "work/stdio-legacy-retain-oracles.log"
+  },
+  "framework_core": {
+    "passed": 43,
+    "total": 43,
+    "log": "work/stdio-legacy-framework-core.log"
+  },
+  "groups": {
+    "child_process": {
+      "counts": {
+        "fail": 33,
+        "timeout": 6,
+        "pass": 71,
+        "skip": 2
+      },
+      "total": 112,
+      "inventory_hash": "a3a03b5546a7e293",
+      "jobs": 2,
+      "timeout_secs": 30,
+      "raw_path": "work/stdio-legacy-child-group.json",
+      "raw_sha256": "4a6cc0b317cdeec9fb1598d231fe7a325854d832a411a48343581ef3b02fef51",
+      "gained_passes": [
+        "test-child-process-stdio-merge-stdouts-into-cat.js",
+        "test-child-process-stdio-reuse-readable-stdio.js"
+      ],
+      "lost_passes": [],
+      "results": [
+        {
+          "fixture": "test-child-process-advanced-serialization-host-objects.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-advanced-serialization-largebuffer.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-child-process-advanced-serialization-splitted-length-field.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-advanced-serialization.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-bad-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-can-write-to-stdout.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-constructor.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-cwd.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-default-options.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-destroy.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-detached.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-child-process-dgram-reuseport.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-child-process-disconnect.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-child-process-double-pipe.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-env.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-exec-abortcontroller-promisified.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-any-shells-windows.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-child-process-exec-cwd.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-env.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-kill-throws.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-std-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-stdout-stderr-data-string.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-timeout-expire.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-timeout-kill.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-timeout-not-expired.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execFile-promisified-abortController.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execfile-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execfile.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execfilesync-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execsync-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exit-code.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-flush-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-abort-signal.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-advanced-header-serialization.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-and-spawn.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-args.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-close.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-closed-channel-segfault.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-detached.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-dgram.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-fork-exec-argv.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-exec-path.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-getconnections.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-fork-net-server.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-fork-net-socket.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-fork-net.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-fork-no-shell.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-ref.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-ref2.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-stdio-string-variant.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-stdio.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-fork-timeout-kill-signal.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-fork-url.mjs",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork3.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-http-socket-leak.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-internal.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-ipc-next-tick.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-ipc.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-kill.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-child-process-net-reuseport.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-child-process-no-deprecation.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-pipe-dataflow.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-promisified.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-prototype-tampering.mjs",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-recv-handle.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-reject-null-bytes.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-send-after-close.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-send-cb.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-send-keep-open.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-send-returns-boolean.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-send-type-error.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-send-utf8.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-server-close.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-set-blocking.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-silent.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-args.mjs",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-argv0.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-controller.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-event.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-shell.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-timeout-kill-signal.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-typeerror.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-windows-batch-file.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-args.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-env.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-input.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-kill-signal.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-non-string-args.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-shell.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-timeout.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-validation-errors.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-spawnsync.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-stdin-ipc.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdin.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-stdio-big-write-end.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio-inherit.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio-merge-stdouts-into-cat.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio-overlapped.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-child-process-stdio-reuse-readable-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdout-flush-exit.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdout-flush.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdout-ipc.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-uid-gid.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-validate-stdio.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-child-process-windows-hide.js",
+          "status": "fail"
+        }
+      ]
+    },
+    "streams": {
+      "counts": {
+        "fail": 118,
+        "pass": 131,
+        "timeout": 4
+      },
+      "total": 253,
+      "inventory_hash": "32da9cf39fe36388",
+      "jobs": 2,
+      "timeout_secs": 30,
+      "raw_path": "work/stdio-legacy-stream-group.json",
+      "raw_sha256": "98d7a28b3f8192998e7f6694813c9c38f640a30cc8b8bfd741210341bf626e33",
+      "gained_passes": [
+        "test-stream-pipe-cleanup.js"
+      ],
+      "lost_passes": [],
+      "results": [
+        {
+          "fixture": "test-stream-add-abort-signal.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-auto-destroy.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-await-drain-writers-in-synchronously-recursion-write.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-backpressure.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-base-prototype-accessors-enumerability.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-big-packet.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-big-push.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-catch-rejections.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-compose.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-construct.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-consumers.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-decoder-objectmode.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-destroy-event-order.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-destroy.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-drop-take.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-duplex-destroy.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-duplex-end.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-duplex-from.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-duplex-props.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-duplex-readable-end.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-duplex-readable-writable.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-duplex-writable-finished.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-duplex.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-duplexpair.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-end-of-streams.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-end-paused.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-err-multiple-callback-construction.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-error-once.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-event-names.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-events-prepend.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-filter.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-finished-async-local-storage.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-finished-bindAsyncResource-path.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-finished-default-path.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-finished.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-flatMap.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-forEach.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-inheritance.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-ispaused.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-iter-broadcast-backpressure.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-broadcast-basic.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-broadcast-coverage.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-broadcast-from.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-consumers-bytes.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-consumers-merge.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-consumers-tap.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-consumers-text.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-cross-realm.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-disabled.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-duplex.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-from-async.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-from-coverage.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-from-sync.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-from-writable-cache-options.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-namespace.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-pipeto-edge.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-pipeto-signal.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-pipeto-writev.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-pipeto.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-pull-async.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-pull-sync.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-push-backpressure.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-push-basic.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-push-writer.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-readable-interop-disabled.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-readable-interop.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-share-async.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-share-coverage.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-share-from.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-share-sync.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-sharedarraybuffer.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-to-readable.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-transform-compat.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-transform-coverage.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-transform-errors.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-transform-output.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-transform-params.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-transform-roundtrip.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-transform-sync.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-validation.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-writable-from.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iter-writable-interop.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-iterator-helpers-test262-tests.mjs",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-map.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-objectmode-undefined.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-once-readable-pipe.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-passthrough-drain.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-pipe-after-end.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-pipe-await-drain-manual-resume.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-await-drain-push-while-write.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-await-drain.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-cleanup-pause.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-cleanup.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-deadlock.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-error-handling.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-error-unhandled.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-stream-pipe-event.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-flow-after-unpipe.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-pipe-flow.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-manual-resume.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-multiple-destinations-error.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-pipe-multiple-pipes.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-needDrain.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-pipe-objectmode-to-non-objectmode.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-pipe-same-destination-twice.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-unpipe-streams.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-pipe-without-listenerCount.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipeline-async-iterator.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipeline-duplex.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipeline-http2.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-pipeline-listeners.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipeline-process.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-pipeline-queued-end-in-destroy.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-pipeline-uncaught.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipeline-with-empty-string.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-pipeline.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-preprocess.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-promises.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-push-order.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-push-strings.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-aborted.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-add-chunk-during-data.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-async-iter-half-open-duplex.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-async-iterators.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-compose.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-constructor-set-methods.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-data.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-default-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-destroy.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-didRead.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-dispose.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-emit-readable-short-stream.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-emittedReadable.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-end-destroyed.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-ended.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-error-end.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-event.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-flow-recursion.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-from-web-termination.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-hwm-0-async.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-hwm-0-no-flow-data.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-hwm-0.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-infinite-read.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-invalid-chunk.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-needReadable.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-next-no-null.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-no-unneeded-readable.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-object-multi-push-async.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-pause-and-resume.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-readable-one.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-readable-then-resume.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-readable.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-reading-readingMore.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-resume-hwm.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-resumeScheduled.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-setEncoding-existing-buffers.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-setEncoding-null.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-strategy-option.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-to-web-byob.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-to-web-termination-byob.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-to-web-termination.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-to-web.mjs",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-unpipe-resume.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readable-unshift.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-readable-with-unimplemented-_read.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-readableListening-state.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-reduce.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-set-default-hwm.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-some-find-every.mjs",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-toArray.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-toWeb-allows-server-response.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-transform-callback-twice.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-transform-constructor-set-methods.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-transform-destroy.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-transform-final-sync.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-transform-final.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-transform-flush-data.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-transform-hwm0.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-transform-objectmode-falsey-value.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-transform-split-highwatermark.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-transform-split-objectmode.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-typedarray.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-uint8array.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-unpipe-event.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-unshift-empty-chunk.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-unshift-read-race.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-wrap-drain.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-wrap-encoding.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-wrap.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-writable-aborted.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-change-default-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-clear-buffer.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-constructor-set-methods.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-decoded-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-destroy.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-writable-end-cb-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-end-cb-uncaught.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-writable-end-multiple.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-ended-state.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-final-async.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-final-destroy.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-final-throw.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-finish-destroyed.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-finished-state.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-finished.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-invalid-chunk.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-needdrain-state.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-null.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-properties.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-samecb-singletick.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream-writable-writable.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-write-cb-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-write-cb-twice.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-write-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writable-write-writev-finish.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writableState-ending.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writableState-uncorked-bufferedRequestCount.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-write-destroy.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-write-drain.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-write-final.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-writev.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-base64-single-char-read-end.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream2-basic.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-compatibility.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-decode-partial.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream2-finish-pipe-error.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-finish-pipe.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream2-httpclient-response-end.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream2-large-read-stall.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-objects.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-pipe-error-handling.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-pipe-error-once-listener.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream2-push.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream2-read-correct-num-bytes-in-utf8.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream2-read-sync-stack.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-stream2-readable-empty-buffer-no-eof.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-readable-legacy-drain.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream2-readable-non-empty-end.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream2-readable-wrap-destroy.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-readable-wrap-empty.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-readable-wrap-error.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-readable-wrap-proxy-methods.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-readable-wrap.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-set-encoding.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-transform.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream2-unpipe-drain.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream2-unpipe-leak.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-stream2-writable.js",
+          "status": "fail"
+        },
+        {
+          "fixture": "test-stream3-cork-end.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream3-cork-uncork.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream3-pause-then-read.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-stream3-pipeline-async-iterator.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-streams-highwatermark.js",
+          "status": "fail"
+        }
+      ]
+    },
+    "stdio": {
+      "counts": {
+        "pass": 5,
+        "skip": 1
+      },
+      "total": 6,
+      "inventory_hash": "7c73ed6da4f575b9",
+      "jobs": 1,
+      "timeout_secs": 30,
+      "raw_path": "work/stdio-legacy-final-stdio.json",
+      "raw_sha256": "ee907f9c3bb9bfa7202756c50cf794462b3e1adbbe952a22c669d36aedfb030c",
+      "gained_passes": [
+        "test-child-process-stdio-merge-stdouts-into-cat.js",
+        "test-child-process-stdio-reuse-readable-stdio.js"
+      ],
+      "lost_passes": [],
+      "results": [
+        {
+          "fixture": "test-child-process-stdio-big-write-end.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio-inherit.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio-merge-stdouts-into-cat.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio-overlapped.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-child-process-stdio-reuse-readable-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio.js",
+          "status": "pass"
+        }
+      ]
+    },
+    "legacy_cleanup": {
+      "counts": {
+        "pass": 2
+      },
+      "total": 2,
+      "inventory_hash": "b6d50e1aa24e07f9",
+      "jobs": 1,
+      "timeout_secs": 30,
+      "raw_path": "work/legacy-pipe-final-cleanup.json",
+      "raw_sha256": "a5ecd477c295580dfb92aff9c2822ad1accb6982d2ecb80737399d643091314b",
+      "gained_passes": [
+        "test-stream-pipe-cleanup.js"
+      ],
+      "lost_passes": [],
+      "results": [
+        {
+          "fixture": "test-stream-pipe-cleanup-pause.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-stream-pipe-cleanup.js",
+          "status": "pass"
+        }
+      ]
+    }
+  },
+  "memory_events": "low 0\nhigh 0\nmax 4764411\noom 177\noom_kill 47\noom_group_kill 0\n",
+  "binary_sha256": "9228ed54dfafb61e835a8581e069ce746ab6e0a3ab31e32ab1417543b2abc020  work/stdio-legacy-final-bin/run-parallel\n4e3db046c73393cba650b12c27ac22fe74d2360b527a8a27ba18d9a1e99d2605  work/stdio-legacy-final-bin/quench-node\n",
+  "qualifications": [
+    "Stream and framework groups used the prior frozen artifact before a callback-return correction; the correction returns undefined after guest completion rather than forwarding the guest return, and all 47 oracles were rerun afterward.",
+    "Focused checks overlapped with builds/other focused checks; no performance claim.",
+    "Full-suite goal is open: latest complete retained sweep remains 1,265 PASS / 685 SKIP / 2,652 FAIL / 125 TIMEOUT / 0 CRASH.",
+    "JSON IPC only: V8 advanced serialization and handle transfer remain unsupported.",
+    "Extra stdio pipes, genuine net.Socket/PipeWrap projections, imported descriptor close ownership, and classic child-process ref/unref semantics remain incomplete.",
+    "Non-Unix pipe IO retains its existing blocking input and eager output adapters."
+  ]
+}

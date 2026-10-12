@@ -31,7 +31,7 @@ impl<H: Host> Vm<H> {
                 &[],
             )
             .map_err(|error| JsError::validation(error.to_string()))?;
-            self.initialize_shared(&bootstrap.program)?;
+            self.initialize_shared(&bootstrap.program, super::builtins::RealmScope::Core)?;
         }
         let length = signature.params.len();
         let environment = self.heap.alloc(Cell::WasmHostFunction {

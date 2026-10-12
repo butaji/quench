@@ -202,6 +202,12 @@ gate together with Test262 and Wasm.
 See
 [task 21 qualification](../evidence/task21-shared-commonjs-loader.json).
 
+For local Node oracle checks, put a Node executable matching the pinned
+checkout's major version (`tests/node/src/node_version.h`) on `PATH`. The current
+checkout targets Node 27; earlier majors can differ on API contracts such as
+`util.parseEnv` object prototypes. Run the CLI/API oracle checks with
+`cargo test --profile iteration -p quench-node-test --test child_entry`.
+
 Run the selected upstream Node `test/parallel` profile against the shared VM
 with the canonical `run-parallel` worker. Profile membership
 comes from `crates/quench-node-test/node-tests/parallel.txt`; `--filter`
@@ -211,6 +217,31 @@ narrowly selects cases within that profile for affected-case checks.
 cargo run --profile iteration -p quench-node-test --bin run-parallel -- \
   --profile framework-core --filter test-path-join.js
 ```
+
+For the full inventory, use an unchanged Node checkout outside any enclosing
+JavaScript package. Otherwise a parent `package.json` can change the module
+type of upstream child scripts. Workers run from that checkout's root, matching
+the upstream harness; production module resolution uses ordinary package scopes.
+The runner supplies that checkout as `QUENCH_NODE_LIBRARY_ROOT` for Node library
+assets. The host resolves this installation root once at startup, so guest cwd
+changes cannot move its internal-module lookup. Direct CLI users can set this
+variable to an installation containing `lib/` and `deps/`; its default is the
+`node/` directory beside the executable. Node library sources use their builtin
+CommonJS wrapper contract independently of enclosing application package scopes.
+
+```sh
+NODE_FIXTURE_WORKTREE=$(mktemp -d)
+git -C tests/node worktree add --detach "$NODE_FIXTURE_WORKTREE" HEAD
+cargo build --profile iteration -p quench-node -p quench-node-test \
+  --bin quench-node --bin run-parallel
+target/iteration/run-parallel --all \
+  --parallel-dir "$NODE_FIXTURE_WORKTREE/test/parallel" \
+  --jobs 4 --timeout-secs 10 --results evidence/node-parallel.json
+```
+
+The report records the selected fixture revision and inventory hash at launch.
+Cases print as they complete. Every worker's process group is stopped after
+completion, failure, or timeout; Linux workers also reap orphaned children.
 
 ## Shared Wasm scopes
 
@@ -465,3 +496,72 @@ retains its fresh-execution reset contract. Unsupported shared operations
 are failures, never legacy fallbacks or skips. The legacy `run` target is only a pre-cutover
 reference; task 27 removes it. Module state/imports and remaining operators
 still need the shared implementation and complete suite proof recorded in tasks.
+
+## Wasm execution modes and link order
+
+`coremark -no-jit` (default) runs Wasm on the shared interpreter; `-jit`
+compiles each Wasm function with a compiled denotation through Cranelift
+(`crates/quench-runtime/src/vm/compiled.rs`) and leaves the rest interpreted.
+`run -jit` runs the testsuite in the compiled mode; both modes must pass the
+whole suite. A module is lowered for the mode that runs it
+(`Module::lower_shared_module_for`): the interpreter's residual inlines leaf
+calls up to a large budget, since a call costs it a frame and a dispatch, while
+the compiled mode keeps every call, since Cranelift calls cheaply and a copied
+body only adds register pressure. The residual's meaning is the same in both.
+
+On Linux the harness binaries link position-dependent, and on x86-64 with
+`ld.lld` available they link in the trained symbol order
+`crates/quench-wasm-test/link/x86_64-linux.order`: executed functions share
+pages instead of each faulting in its own fault-around window, which bounds
+resident text. The order is layout only. Symbol names carry the profile's crate
+hashes, so train on the profile you link (debug info and stripping change them;
+`production` keeps its symbol table for this). Retrain after large changes from
+cachegrind profiles of every Wasm kernel and CoreMark in both modes. Profiles
+name executed functions (`--demangle=no`), so they stay valid across relinks;
+cachegrind keeps no call stack, which the lane's sibling-call chains would
+exhaust in callgrind:
+
+```sh
+cargo build --profile production -p quench-wasm-test --bin coremark --bin symbol-order
+for module in KERNELS...; do for mode in no-jit jit; do
+  COREMARK_CLOCK_STEPS_MS=1,1,2000 valgrind --tool=cachegrind --cache-sim=no \
+    --demangle=no --cachegrind-out-file=train/$(basename $module)-$mode.out \
+    target/production/coremark -$mode $module
+done; done
+target/production/symbol-order target/production/coremark \
+  crates/quench-wasm-test/link/x86_64-linux.order \
+  train/coremark-no-jit.out train/coremark-jit.out \
+  train/KERNEL-no-jit.out... train/KERNEL-jit.out...
+```
+
+Profiles go in priority order. Functions are laid out in first-appearance
+order, so the first profile's run touches one contiguous region and later
+profiles add only what earlier ones did not execute. With a compiled-mode
+profile first, the interpreter's functions interleave with the compiler's and
+fault-around makes the whole span resident (CoreMark `-no-jit`: 5.2 -> 6.1 MB).
+
+Qualification builds link the C runtime statically, position-dependent:
+
+```sh
+RUSTFLAGS="-D warnings -C llvm-args=-align-all-functions=6 \
+  -C target-feature=+crt-static -C relocation-model=static" \
+  CARGO_TARGET_DIR=target/static cargo build --profile production \
+  --target x86_64-unknown-linux-gnu -p quench-wasm-test --bin coremark --bin run
+```
+
+`RUSTFLAGS` replaces the workspace `build.rustflags`, so it repeats them; the
+explicit `--target` keeps build scripts and proc macros dynamic. Only the C
+runtime functions a run executes are then resident, laid out by the link
+order instead of faulting in shared-library windows. Static builds name
+symbols differently and use `link/x86_64-linux-static.order`, trained the same
+way on the static binary. Their start code would register `.eh_frame` with
+the unwinder, which reads the whole section at startup; `build.rs` resolves
+the registration hooks to null instead (production aborts on panic, and
+backtraces find frames through `PT_GNU_EH_FRAME`). CoreMark on the x86-64
+container: dynamic -no-jit 5.2 MB / -jit 7.6 MB, static 3.5 MB / 6.3 MB.
+A static position-independent build relocates its read-only pointers at
+startup and measured 9.1 MB.
+
+Measure peak RSS with a launcher whose own image is small (`vfork`, `exec`,
+`wait4`): a forked interpreter's pre-`exec` image counts toward the child's
+`ru_maxrss`.

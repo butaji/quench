@@ -1,0 +1,15 @@
+{
+  "scope": "Error own causes, sparse partial arrays and genuine URL comparison",
+  "validation": "All 6 child-entry integration tests pass against Node v24.19.0, including missing-vs-own undefined causes, sparse holes, URL href equality and subset cases.",
+  "assert_subset": {
+    "pass": 5,
+    "fail": 9,
+    "timeout": 0,
+    "total": 14,
+    "inventory_hash": "8ea2039d6ae15ebb",
+    "timeout_secs": 10,
+    "jobs": 2
+  },
+  "remaining": "Diagnostic wrapper around unchanged partial fixture now reaches different KeyObject payloads; no fixture source edits.",
+  "performance_claim": false
+}

@@ -22,7 +22,11 @@ macro_rules! selectors {
         #[repr(u32)]
         pub(crate) enum $enum { $($name,)+ }
         impl $enum {
+            // Families with first-class opcodes, such as i32 binary operators,
+            // are never decoded from a selector.
+            #[allow(dead_code)]
             pub(super) const ALL: &'static [Self] = &[$(Self::$name,)+];
+            #[allow(dead_code)]
             pub(crate) fn from_tag(tag: u32) -> Option<Self> { Self::ALL.get(tag as usize).copied() }
             pub(crate) fn from_wasm(operator: &wasmparser::Operator<'_>) -> Option<Self> {
                 match operator { $(wasmparser::Operator::$wasm => Some(Self::$name),)+ _ => None }
@@ -39,7 +43,7 @@ pub(super) const fn sign_mask(bit_width: u32) -> u64 {
     1 << (bit_width - 1)
 }
 
-pub(super) const fn canonical_nan_bits(precision: u32, infinity: u64) -> u64 {
+pub(crate) const fn canonical_nan_bits(precision: u32, infinity: u64) -> u64 {
     let fraction_width = precision - IEEE_IMPLICIT_SIGNIFICAND_BITS;
     let quiet_bit = 1 << (fraction_width - 1);
     infinity | quiet_bit
