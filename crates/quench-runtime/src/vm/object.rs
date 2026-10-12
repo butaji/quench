@@ -697,7 +697,7 @@ impl<H: Host> Vm<H> {
             let receiver = self.heap.object_record_by_id(record_id);
             if let Some(hit) = self
                 .cached_field_value(index, receiver)
-                .or_else(|| self.cached_ordinary_holder_field_value(index, receiver))
+                .or_else(|| self.cached_holder_field_value(index, receiver, atom))
             {
                 self.profile
                     .field_cache_hit(usize::from(hit.tier), hit.depth);
