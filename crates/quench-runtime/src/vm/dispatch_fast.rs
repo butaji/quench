@@ -1102,6 +1102,47 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// An f64 load whose value the next record, f64 operator `SECOND`,
+    /// takes as its left (`LEFT`) or right operand: both records run here.
+    /// Bits that need a box leave the lane at the load.
+    fn lane_f64_load_pair<SECOND: u8, LEFT: bool>(cx, r, ip, i, view) {
+        // SAFETY: as for `lane_load`.
+        let Ok(crate::WasmValue::F64(bits)) = MemoryLoad::F64Load
+            .read(unsafe { view.memory.bytes() }, lane_address::<ACC_NONE>(r, i, view))
+        else {
+            return exit(ip);
+        };
+        let Some(loaded) = Value::from_bits64(bits) else {
+            return exit(ip);
+        };
+        r.set(i.a, loaded);
+        let next = following(ip);
+        // SAFETY: the view fuses a load only with a following record.
+        let second = unsafe { &*next };
+        let first = f64::from_bits(bits);
+        let (left, right) = if LEFT {
+            (first, f64::from_bits(r.get(second.c).float_bits64()))
+        } else {
+            (f64::from_bits(r.get(second.b).float_bits64()), first)
+        };
+        let value = match f64_operation(SECOND, left, right) {
+            Ok(result) => Value::from_float_bits64(result.to_bits()),
+            Err(truth) => view.integers.encode(i32::from(truth)),
+        };
+        produce!(cx, r, next, second.a, value, view)
+    }
+}
+
+macro_rules! float_load_pair_handlers {
+    ($host:ty; $($second:expr),+) => {
+        [$([
+            lane_f64_load_pair::<$host, $second, false> as Handler,
+            lane_f64_load_pair::<$host, $second, FUSED_LEFT> as Handler,
+        ]),+]
+    };
+}
+
 struct FloatPairs<H>(std::marker::PhantomData<H>);
 
 macro_rules! float_pair_handlers {
@@ -1143,6 +1184,11 @@ impl<H: Host> FloatPairs<H> {
     /// By first operator, second operator and whether the first result is
     /// the second's left operand.
     const HANDLERS: [[[Handler; 2]; FLOAT_ARITHMETIC]; FLOAT_PAIR_FIRSTS] = float_pair_handlers!(H);
+    /// An f64 load fused with the operator taking its value, by second
+    /// operator and whether the value is its left operand.
+    const LOADS: [[Handler; 2]; FLOAT_ARITHMETIC] = float_load_pair_handlers!(H;
+        FLOAT_ADD, FLOAT_SUBTRACT, FLOAT_MULTIPLY, FLOAT_DIVIDE, FLOAT_EQUAL,
+        FLOAT_NOT_EQUAL, FLOAT_LESS, FLOAT_GREATER, FLOAT_LESS_EQUAL, FLOAT_GREATER_EQUAL);
 }
 
 struct FloatArithmetic<H>(std::marker::PhantomData<H>);
@@ -2153,22 +2199,39 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
         let instruction = decoded_instruction(function, function.code[pc]);
         let next = decoded_instruction(function, function.code[pc + 1]);
         let pair = (|| {
-            if instruction.op() != Op::WasmF64Binary || next.op() != Op::WasmF64Binary {
+            if next.op() != Op::WasmF64Binary {
+                return None;
+            }
+            let second = float_arithmetic(next.op(), next.imm())?;
+            let left_of = |records: &[LaneInstruction]| {
+                [ACC_B, ACC_C]
+                    .into_iter()
+                    .find(|acc| {
+                        records[pc + 1].handler
+                            == FloatArithmetic::<H>::HANDLERS[1][usize::from(second)]
+                                [usize::from(*acc)] as *const ()
+                    })
+                    .map(|acc| acc == ACC_B)
+            };
+            if instruction.op() == Op::WasmF64Load {
+                let plain = tables[0][usize::from(ACC_NONE)][Op::WasmF64Load as usize]?;
+                if records[pc].handler != plain.handler as *const () {
+                    return None;
+                }
+                let left = left_of(&records)?;
+                return Some(FloatPairs::<H>::LOADS[usize::from(second)][usize::from(left)]);
+            }
+            if instruction.op() != Op::WasmF64Binary {
                 return None;
             }
             let first = float_arithmetic(instruction.op(), instruction.imm())?;
-            let second = float_arithmetic(next.op(), next.imm())?;
             let plain =
                 FloatArithmetic::<H>::HANDLERS[1][usize::from(first)][usize::from(ACC_NONE)];
             if usize::from(first) >= FLOAT_PAIR_FIRSTS || records[pc].handler != plain as *const ()
             {
                 return None;
             }
-            let left = [ACC_B, ACC_C].into_iter().find(|acc| {
-                records[pc + 1].handler
-                    == FloatArithmetic::<H>::HANDLERS[1][usize::from(second)][usize::from(*acc)]
-                        as *const ()
-            })? == ACC_B;
+            let left = left_of(&records)?;
             Some(
                 FloatPairs::<H>::HANDLERS[usize::from(first)][usize::from(second)]
                     [usize::from(left)],
