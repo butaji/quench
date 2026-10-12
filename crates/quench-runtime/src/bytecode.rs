@@ -1,6 +1,8 @@
 use smallvec::SmallVec;
 
 pub(crate) const INTRINSIC_REGEXP_BINDING: &str = "\0quench:intrinsic-regexp";
+/// The engine-internal global a `with` statement calls to enter its object scope.
+pub(crate) const WITH_ENTER_BINDING: &str = "\0quench:with-enter";
 pub(crate) const LEXICAL_THIS_BINDING: &str = "\0quench:lexical-this";
 pub(crate) const NEW_TARGET_BINDING: &str = "\0quench:new-target";
 
@@ -983,6 +985,8 @@ pub struct Function {
     pub(crate) activation_bindings: std::cell::OnceCell<bool>,
     /// Lazily derived `reflects_live_parameters`; never serialized.
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
+    /// Lazily derived `names_resolve_statically`; never serialized.
+    pub(crate) static_name_scope: std::cell::OnceCell<bool>,
     /// Lazily derived `plain_activation`; never serialized.
     pub(crate) plain_activation: std::cell::OnceCell<bool>,
     pub(crate) handlers: Vec<Handler>,
@@ -1269,6 +1273,40 @@ impl Function {
                 && self.register_root_offset != NO_REGISTER_ROOT_MAP
                 && promoted_parameters == usize::from(self.params)
                 && !self.activation_bindings_observable(atoms)
+        })
+    }
+
+    /// Whether the function itself can reach bindings by name at run time: it was created
+    /// inside a `with` scope, records by-name lexical sites, resolves names dynamically, or
+    /// calls direct eval (also from a parameter scope).
+    pub(crate) fn has_dynamic_scope_access(&self) -> bool {
+        self.inherited_with_scope
+            || !self.binding_sites.is_empty()
+            || self.instructions().any(|instruction| {
+                matches!(instruction.op(), Op::ResolveName | Op::CallDirectEvalArray)
+                    || (instruction.op() == Op::Call
+                        && (ImmediateLayout::direct_eval(instruction.imm())
+                            || ImmediateLayout::parameter_eval(instruction.imm())))
+            })
+    }
+
+    /// Whether neither this function nor any enclosing one has dynamic scope access or
+    /// contains a `with` statement. The compiler then resolved every lexical binding the body
+    /// names, so a by-name load in it can only denote a global binding.
+    pub(crate) fn names_resolve_statically(&self, functions: &[Function], atoms: &AtomTable) -> bool {
+        *self.static_name_scope.get_or_init(|| {
+            !self.has_dynamic_scope_access()
+                && !self.instructions().any(|instruction| {
+                    matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
+                        && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
+                            atom < atoms.len() && &atoms[atom] == WITH_ENTER_BINDING
+                        })
+                })
+                && self.parent.is_none_or(|parent| {
+                    functions
+                        .get(parent as usize)
+                        .is_some_and(|parent| parent.names_resolve_statically(functions, atoms))
+                })
         })
     }
 
@@ -1839,7 +1877,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 85;
+    pub const FORMAT_VERSION: u8 = 87;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
