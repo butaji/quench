@@ -2142,6 +2142,7 @@ impl<'a> Compiler<'a> {
         }
         for function in &mut functions {
             rewrite::return_through_shared_returns(function);
+            rewrite::express_strict_sets(function);
             function.dispatch = if self.mode == SpecializationMode::Enabled {
                 Self::dispatch_class(&function.code, &function.wide)
             } else {
@@ -2749,6 +2750,7 @@ impl<'a> Compiler<'a> {
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
             plain_activation: Default::default(),
             handlers: function.handlers,
             register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,

@@ -319,6 +319,29 @@ pub(super) fn return_through_shared_returns(function: &mut BcFunction) {
     }
 }
 
+/// Spells a strict function's property sets as their strict ops, so the op alone carries the
+/// set's strictness and dispatch need not consult the function.
+pub(super) fn express_strict_sets(function: &mut BcFunction) {
+    if !function.strict {
+        return;
+    }
+    let strict_op = |op| match op {
+        Op::SetField => Some(Op::SetFieldStrict),
+        Op::SetThisField => Some(Op::SetThisFieldStrict),
+        _ => None,
+    };
+    for packed in &mut function.code {
+        if packed.is_wide() {
+            let wide = &mut function.wide[packed.wide_index()];
+            if let Some(op) = strict_op(wide.op()) {
+                wide.set_op(op);
+            }
+        } else if let Some(op) = strict_op(packed.op()) {
+            packed.set_op(op);
+        }
+    }
+}
+
 /// Whether a rule of the selected recipe fuses `[first, second]`.
 fn fuses(first: Op, second: Op, recipe: impl Fn(Recipe) -> bool) -> bool {
     RULES
