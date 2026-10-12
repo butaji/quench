@@ -104,6 +104,22 @@ values. These options still use the same retained-directory launch owner.
 URL branding currently shares the existing URL adapter; this does not establish
 conformance when guests replace the global URL prototype.
 
+## TLS material validation
+
+Secure-context CRL and PKCS12 checks use native OpenSSL parsers. CRLs use
+the PEM parser; arrays follow the guest iterator protocol and close on a
+validation error. PKCS12 uses the BIO decoder and native password bytes,
+including zero termination, so malformed input and incorrect passwords come
+from the same parsing operations as Node. PFX arrays capture length, skip
+holes and read each entry immediately before validation. Missing private keys
+and certificates produce the corresponding coded operation errors. Parser
+failures drain the OpenSSL error stack and expose the first reason.
+
+This checkpoint validates material; the existing SecureContext object remains
+a compatibility shell. It does not retain an SSL_CTX, configure trust stores
+or establish TLS socket/handshake support. Provider-dependent unsupported
+archives and the complete secure-context option surface need further work.
+
 ## Verification
 
 Use the selected pinned Node oracle on `PATH` and build both sibling entry
