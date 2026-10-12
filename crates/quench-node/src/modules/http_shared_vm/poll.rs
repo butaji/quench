@@ -625,14 +625,29 @@ pub(crate) fn poll(
                     progressed = true;
                 }
             }
-            net_shared_vm::TransportEvent::Error { socket, message } => {
+            net_shared_vm::TransportEvent::Error {
+                socket,
+                error,
+                syscall,
+            } => {
+                // The OS error owns errno; presentation never recovers it from
+                // localized text. Derive the Node code and syscall message.
+                let errno = error.raw_os_error().map(|errno| -f64::from(errno));
+                let code = errno
+                    .map(crate::modules::util_system_error_shared_vm::system_error_name)
+                    .unwrap_or_else(|| "EIO".to_owned());
+                let message = format!("{syscall} {code}");
                 let net_root = shared_state
                     .borrow()
                     .net_sockets
                     .get(&socket)
                     .map(|socket| socket.root);
                 if let Some(net_root) = net_root {
-                    let error = net_socket_error(runtime, &message)?;
+                    let error = net_socket_error_with_code(runtime, &message, &code)?;
+                    set_text(runtime, error, "syscall", syscall)?;
+                    if let Some(errno) = errno {
+                        set_number(runtime, error, "errno", errno)?;
+                    }
                     queue_net_method(runtime, shared_state, net_root, "destroy", &[error])?;
                     runtime.release_root(error);
                     progressed = true;
