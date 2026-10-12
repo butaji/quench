@@ -152,19 +152,58 @@ impl Registers {
 #[derive(Clone, Copy)]
 struct MemoryView {
     bytes: *mut u8,
-    len: usize,
+    /// The memory's length less the widest direct access: an access
+    /// starting at or below it is in bounds whatever its width, so the hot
+    /// path compares the address alone. Negative when the memory is
+    /// narrower than that access.
+    reach: isize,
 }
 
-impl MemoryView {
-    const NONE: Self = Self {
-        bytes: std::ptr::null_mut(),
-        len: 0,
-    };
+/// The widest access a lane record makes directly.
+const WIDEST_DIRECT_ACCESS: usize = size_of::<u64>();
 
+impl MemoryView {
+    const NONE: Self = Self::new(std::ptr::null_mut(), 0);
+
+    const fn new(bytes: *mut u8, len: usize) -> Self {
+        Self {
+            bytes,
+            reach: len as isize - WIDEST_DIRECT_ACCESS as isize,
+        }
+    }
+
+    #[inline(always)]
+    fn len(self) -> usize {
+        (self.reach + WIDEST_DIRECT_ACCESS as isize) as usize
+    }
+
+    /// Direct load `load` at `address`, when the access lies within the
+    /// reach; `None` leaves it to the general path, which also decides the
+    /// last bytes before the memory's end exactly.
+    ///
     /// SAFETY: the view must have been resolved during the current lane run.
     #[inline(always)]
-    unsafe fn bytes<'a>(self) -> &'a mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.bytes, self.len) }
+    unsafe fn read(self, load: MemoryLoad, address: u64) -> Option<crate::WasmValue> {
+        // Addresses are at most 33 bits, so the signed comparison is exact.
+        if (address as i64) > self.reach as i64 || load.width() > WIDEST_DIRECT_ACCESS {
+            return None;
+        }
+        // SAFETY: the access ends at or before the memory's end.
+        Some(unsafe { load.read_at(self.bytes.add(address as usize)) })
+    }
+
+    /// Direct store `store` of `value` at `address`, as for `read`.
+    ///
+    /// SAFETY: the view must have been resolved during the current lane run.
+    #[inline(always)]
+    unsafe fn write(self, store: MemoryStore, address: u64, value: crate::WasmValue) -> Option<()> {
+        // Addresses are at most 33 bits, so the signed comparison is exact.
+        if (address as i64) > self.reach as i64 || store.width() > WIDEST_DIRECT_ACCESS {
+            return None;
+        }
+        // SAFETY: the access ends at or before the memory's end.
+        unsafe { store.write_at(self.bytes.add(address as usize), value) };
+        Some(())
     }
 }
 
@@ -238,7 +277,7 @@ struct LaneContext<H: Host> {
 /// [`EXIT_TAG`] when the general path must execute it. The carried state is
 /// passed as scalars so every argument stays in a register; the context,
 /// which hot handlers do not touch, is reached through [`LANE_CONTEXT`].
-type Handler = fn(Registers, Ip, *mut u8, usize, crate::value::IntegerEncoding, Value) -> Ip;
+type Handler = fn(Registers, Ip, *mut u8, isize, crate::value::IntegerEncoding, Value) -> Ip;
 
 thread_local! {
     /// The context of this thread's running lane. A lane run never calls
@@ -346,7 +385,7 @@ macro_rules! next {
             $r,
             ip,
             view.memory.bytes,
-            view.memory.len,
+            view.memory.reach,
             view.integers,
             view.acc,
         );
@@ -371,13 +410,13 @@ macro_rules! lane_handler {
             $r: Registers,
             $ip: Ip,
             bytes: *mut u8,
-            len: usize,
+            reach: isize,
             integers: crate::value::IntegerEncoding,
             acc: Value,
         ) -> Ip {
             let $cx = lane_context::<H>();
             let $view = Carried {
-                memory: MemoryView { bytes, len },
+                memory: MemoryView { bytes, reach },
                 integers,
                 acc,
             };
@@ -1108,8 +1147,7 @@ lane_handler! {
     /// Bits that need a box leave the lane at the load.
     fn lane_f64_load_pair<SECOND: u8, LEFT: bool>(cx, r, ip, i, view) {
         // SAFETY: as for `lane_load`.
-        let Ok(crate::WasmValue::F64(bits)) = MemoryLoad::F64Load
-            .read(unsafe { view.memory.bytes() }, lane_address::<ACC_NONE>(r, i, view))
+        let Some(crate::WasmValue::F64(bits)) = (unsafe { view.memory.read(MemoryLoad::F64Load, lane_address::<ACC_NONE>(r, i, view)) })
         else {
             return exit(ip);
         };
@@ -1154,13 +1192,14 @@ lane_handler! {
         let store = unsafe { &*next };
         let bits = value.float_bits64();
         // SAFETY: as for `lane_store`.
-        if MemoryStore::F64Store
-            .write(
-                unsafe { view.memory.bytes() },
+        if unsafe {
+            view.memory.write(
+                MemoryStore::F64Store,
                 lane_address::<ACC_NONE>(r, store, view),
                 crate::WasmValue::F64(bits),
             )
-            .is_err()
+        }
+        .is_none()
         {
             return exit(next);
         }
@@ -1393,7 +1432,7 @@ fn lane_address<const ACC: u8>(r: Registers, i: &LaneInstruction, view: Carried)
 /// lane or compiled code can access it directly.
 pub(super) fn unshared_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
     let view = memory_view(vm, binding);
-    (!view.bytes.is_null()).then_some((view.bytes, view.len))
+    (!view.bytes.is_null()).then_some((view.bytes, view.len()))
 }
 
 fn memory_view<H: Host>(vm: &Vm<H>, binding: Value) -> MemoryView {
@@ -1408,10 +1447,7 @@ fn memory_view<H: Host>(vm: &Vm<H>, binding: Value) -> MemoryView {
     let Ok(mut state) = state.try_borrow_mut() else {
         return MemoryView::NONE;
     };
-    MemoryView {
-        bytes: state.bytes.as_mut_ptr(),
-        len: state.bytes.len(),
-    }
+    MemoryView::new(state.bytes.as_mut_ptr(), state.bytes.len())
 }
 
 /// The view of memory binding `binding`, reusing the run's last resolution.
@@ -1484,7 +1520,7 @@ lane_handler! {
         };
         // SAFETY: the view admits direct accesses only through the memory
         // register, whose bytes `view` holds; see MemoryView.
-        let Ok(value) = load.read(unsafe { view.memory.bytes() }, lane_address::<ACC>(r, i, view))
+        let Some(value) = (unsafe { view.memory.read(load, lane_address::<ACC>(r, i, view)) })
         else {
             return exit(ip);
         };
@@ -1542,8 +1578,8 @@ lane_handler! {
         // SAFETY: the view fuses an add only with a following load record.
         let i = unsafe { &*ip };
         // SAFETY: as for `lane_load`.
-        let Ok(crate::WasmValue::I32(selector)) =
-            load.read(unsafe { view.memory.bytes() }, lane_address::<ACC>(r, i, view))
+        let Some(crate::WasmValue::I32(selector)) =
+            (unsafe { view.memory.read(load, lane_address::<ACC>(r, i, view)) })
         else {
             return exit(ip);
         };
@@ -1575,7 +1611,7 @@ lane_handler! {
         let access = unsafe { &*next };
         let address = u64::from(sum as u32) + u64::from(access.imm());
         // SAFETY: as for `lane_load`.
-        let Ok(value) = load.read(unsafe { view.memory.bytes() }, address) else {
+        let Some(value) = (unsafe { view.memory.read(load, address) }) else {
             return exit(next);
         };
         let Some(value) = lane_encode(view, value) else {
@@ -1676,8 +1712,8 @@ lane_handler! {
         let access = unsafe { &*load };
         let address = u64::from(sum as u32) + u64::from(access.imm());
         // SAFETY: as for `lane_load`.
-        let Ok(crate::WasmValue::F64(bits)) =
-            MemoryLoad::F64Load.read(unsafe { view.memory.bytes() }, address)
+        let Some(crate::WasmValue::F64(bits)) =
+            (unsafe { view.memory.read(MemoryLoad::F64Load, address) })
         else {
             return exit(load);
         };
@@ -1810,7 +1846,7 @@ lane_handler! {
             }
         };
         // SAFETY: as for `lane_load`.
-        let Ok(value) = load.read(unsafe { view.memory.bytes() }, lane_address::<ACC>(r, i, view))
+        let Some(value) = (unsafe { view.memory.read(load, lane_address::<ACC>(r, i, view)) })
         else {
             return exit(ip);
         };
@@ -1822,9 +1858,8 @@ lane_handler! {
         // SAFETY: the view fuses a load only with a following store record.
         let access = unsafe { &*next };
         // SAFETY: as for `lane_load`.
-        if store
-            .write(unsafe { view.memory.bytes() }, lane_address::<ACC_NONE>(r, access, view), value)
-            .is_err()
+        if unsafe { view.memory.write(store, lane_address::<ACC_NONE>(r, access, view), value) }
+            .is_none()
         {
             return exit(next);
         }
@@ -1857,9 +1892,8 @@ lane_handler! {
             _ => return exit(ip),
         };
         // SAFETY: as for `lane_load`.
-        if store
-            .write(unsafe { view.memory.bytes() }, lane_address::<ACC>(r, i, view), value)
-            .is_err()
+        if unsafe { view.memory.write(store, lane_address::<ACC>(r, i, view), value) }
+            .is_none()
         {
             return exit(ip);
         }
@@ -2928,7 +2962,7 @@ impl<H: Host> Vm<H> {
                 registers,
                 ip,
                 view.bytes,
-                view.len,
+                view.reach,
                 crate::value::IntegerEncoding::TAG,
                 Value::UNDEFINED,
             );
