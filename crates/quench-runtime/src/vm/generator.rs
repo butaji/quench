@@ -132,8 +132,7 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(&mut frame, false, Value::UNDEFINED, true);
         frame.captured = false;
         frame.with_base = self.with_stack.len();
-        let register_count = function.registers as usize;
-        frame.prepare_registers(register_count);
+        frame.prepare_registers(function.registers, function.initial_register);
         if function.parameter_end_pc != 0 {
             self.frames.push(frame);
             let result = self.run_frame_general_until::<true>(

@@ -416,18 +416,34 @@ impl<H: Host> Vm<H> {
     /// not authoritative.
     #[inline(never)]
     fn resolved_this_binding(&mut self, p: &ResidualProgram, frame: usize) -> Result<Value, JsError> {
+        self.lexical_this(frame).ok_or_else(|| {
+            self.reference_error(
+                p,
+                "Must call super constructor before accessing 'this'".into(),
+            )
+        })
+    }
+
+    /// The frame's `this`, refreshed from its lexical binding; `None` while
+    /// a derived constructor has not yet initialized it.
+    #[inline(always)]
+    pub(super) fn current_this(&mut self, frame: usize) -> Option<Value> {
+        if self.frames[frame].fixed_this {
+            return Some(self.frames[frame].this);
+        }
+        self.lexical_this(frame)
+    }
+
+    /// Refresh the frame's `this` from its lexical-this binding; `None` while a derived
+    /// constructor has not yet initialized it.
+    #[inline(never)]
+    fn lexical_this(&mut self, frame: usize) -> Option<Value> {
         let atom = self.runtime_atoms.lexical_this;
         let value = self
             .dynamic_binding(frame, atom)
             .unwrap_or(self.frames[frame].this);
         self.frames[frame].this = value;
-        if value.is_deleted() {
-            return Err(self.reference_error(
-                p,
-                "Must call super constructor before accessing 'this'".into(),
-            ));
-        }
-        Ok(value)
+        (!value.is_deleted()).then_some(value)
     }
 
     #[inline(always)]
@@ -716,17 +732,7 @@ impl<H: Host> Vm<H> {
             }
             Some(Cell::Proxy { .. }) => FieldCacheRead::Proxy,
             Some(cell) if self.specialized && p.specialized => {
-                let Some(receiver) = self.shape_property_lookup_cell(cell, atom) else {
-                    return self.get_property(p, object, atom);
-                };
-                let site = self.field_cache_index(site);
-                match self
-                    .cached_field_value(site, receiver)
-                    .or_else(|| self.cached_holder_field_value(site, receiver, atom))
-                {
-                    Some(hit) => FieldCacheRead::Hit(hit),
-                    None => FieldCacheRead::Miss(site),
-                }
+                self.object_field_cache_read(cell, atom, site)
             }
             Some(_) | None => FieldCacheRead::Generic,
         };
@@ -749,6 +755,71 @@ impl<H: Host> Vm<H> {
                     .field_cache_hit(usize::from(hit.tier), hit.depth);
                 Ok(hit.value)
             }
+        }
+    }
+
+    /// The field cache's answer for an object cell other than a string or a
+    /// proxy: a hit, a miss at the resolved site, or no cacheable receiver.
+    #[inline(always)]
+    fn object_field_cache_read(&self, cell: &Cell, atom: Atom, site: u16) -> FieldCacheRead {
+        let Some(receiver) = self.shape_property_lookup_cell(cell, atom) else {
+            return FieldCacheRead::Generic;
+        };
+        let site = self.field_cache_index(site);
+        match self
+            .cached_field_value(site, receiver)
+            .or_else(|| self.cached_holder_field_value(site, receiver, atom))
+        {
+            Some(hit) => FieldCacheRead::Hit(hit),
+            None => FieldCacheRead::Miss(site),
+        }
+    }
+
+    /// A monomorphic own-shape hit for an ordinary object. A site is only populated after the
+    /// atom and a non-dictionary receiver shape passed `shape_property_lookup_cell`, and an
+    /// ordinary object is eligible whenever those hold, so this hit needs no further
+    /// eligibility probe.
+    #[inline(always)]
+    fn own_shape_field_hit(
+        &self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<FieldCacheHit> {
+        if !(self.specialized && p.specialized) {
+            return None;
+        }
+        let Some(Cell::Object(receiver)) = self.heap.get(object) else {
+            return None;
+        };
+        if receiver.is_module_namespace() {
+            return None;
+        }
+        self.cached_field_value(self.field_cache_index(site), receiver)
+    }
+
+    /// The value `get_field_cached` reads on a field cache hit, without
+    /// side effects; `None` when it would take any other path.
+    #[inline(always)]
+    pub(super) fn field_cache_hit(
+        &self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+    ) -> Option<Value> {
+        if let Some(hit) = self.own_shape_field_hit(p, object, site) {
+            return Some(hit.value);
+        }
+        match self.heap.get(object)? {
+            Cell::String(_) | Cell::Proxy { .. } => None,
+            cell if self.specialized && p.specialized => {
+                match self.object_field_cache_read(cell, atom, site) {
+                    FieldCacheRead::Hit(hit) => Some(hit.value),
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 
@@ -1369,22 +1440,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         // Only an ordinary object reaches the shape cache, so a nullish base always falls
         // through to the uncached path's TypeError.
-        if self.specialized
-            && p.specialized
-            && !self.is_private_name(atom)
-            && let Some(Cell::Object(data)) = self.heap.get(object)
-            && !data.is_module_namespace()
-            && !data.is_arguments_object()
-        {
-            let site = self.field_cache_index(site);
-            let (shape, proto, extensible) = (data.shape(), data.proto, data.is_extensible());
-            if self.try_cached_field_store(object, atom, shape, value, site)
-                || (extensible
-                    && self.field_cache_atom_eligible(atom)
-                    && self.try_cached_field_add(object, atom, shape, proto, value, site))
-            {
-                return Ok(());
-            }
+        if self.set_field_cache_hit(p, object, atom, value, site) {
+            return Ok(());
         }
         self.set_field_uncached(p, object, atom, value, site, strict)
     }
@@ -1661,6 +1718,34 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(always)]
+    /// Store through the field cache when it covers the write: a plain data
+    /// object whose shape hits the site. Strictness only shapes failures, so
+    /// a hit is the same store either way; a miss changes nothing.
+    pub(super) fn set_field_cache_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+    ) -> bool {
+        if !(self.specialized && p.specialized) || self.is_private_name(atom) {
+            return false;
+        }
+        let Some(Cell::Object(data)) = self.heap.get(object) else {
+            return false;
+        };
+        if data.is_module_namespace() || data.is_arguments_object() {
+            return false;
+        }
+        let site = self.field_cache_index(site);
+        let (shape, proto, extensible) = (data.shape(), data.proto, data.is_extensible());
+        self.try_cached_field_store(object, atom, shape, value, site)
+            || (extensible
+                && self.field_cache_atom_eligible(atom)
+                && self.try_cached_field_add(object, atom, shape, proto, value, site))
+    }
+
     fn try_cached_field_store(
         &mut self,
         object: Value,

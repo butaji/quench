@@ -33,6 +33,25 @@ impl ProfileKind {
 #[repr(transparent)]
 pub struct Value(u64);
 
+/// The integer tag as a value. Interpreter code that keeps it in a machine
+/// register (passing it along like any other argument) encodes an integer
+/// with one bitwise or instead of first materializing the tag constant.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub(crate) struct IntegerEncoding(u64);
+
+/// The tag bits an encoded i32 carries; compiled code encodes in place.
+pub(crate) const INTEGER_TAG_BITS: u64 = TAG_INT;
+
+impl IntegerEncoding {
+    pub(crate) const TAG: Self = Self(TAG_INT);
+
+    #[inline(always)]
+    pub(crate) fn encode(self, value: i32) -> Value {
+        Value(self.0 | u64::from(value as u32))
+    }
+}
+
 impl Value {
     pub const UNDEFINED: Self = Self(TAG_UNDEFINED);
     pub const NULL: Self = Self(TAG_NULL);
@@ -51,12 +70,34 @@ impl Value {
 
     #[inline(always)]
     pub(crate) fn integer(value: i32) -> Self {
-        Self(TAG_INT | u64::from(value as u32))
+        IntegerEncoding::TAG.encode(value)
+    }
+
+    /// A 64-bit Wasm payload held in place. Every payload outside the tag
+    /// space already reads as an untagged value, so only tag-space payloads
+    /// need a heap box (`Cell::WasmBits64`); a static Wasm type tells the
+    /// two encodings of a slot apart from its 32-bit integer encoding.
+    #[inline(always)]
+    pub(crate) fn from_bits64(bits: u64) -> Option<Self> {
+        let value = Self(bits);
+        (!value.is_tagged()).then_some(value)
+    }
+
+    /// The 64-bit Wasm payload a value holds in place.
+    #[inline(always)]
+    pub(crate) fn bits64(self) -> Option<u64> {
+        (!self.is_tagged()).then_some(self.0)
     }
 
     #[inline(always)]
     pub(crate) fn as_int(self) -> Option<i32> {
         ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)
+    }
+
+    /// The 32-bit payload of a slot whose Wasm type is statically i32 or f32.
+    #[inline(always)]
+    pub(crate) const fn wasm_bits32(self) -> u32 {
+        self.0 as u32
     }
 
     #[inline(always)]
