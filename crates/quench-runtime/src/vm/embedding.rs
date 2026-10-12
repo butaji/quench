@@ -306,6 +306,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<crate::BuiltinData<Value>>, JsError> {
         use crate::{BuiltinBrand as B, BuiltinData as D};
         let value = self.embedding_value(root)?;
+        // Error branding is owned by object error data, including direct records.
+        if self.error_is_error(value) {
+            return Ok(Some(D::Error));
+        }
         if self.realm.promise.records.contains_key(&value) {
             return Ok(Some(D::Opaque));
         }
@@ -357,11 +361,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Set { entries, .. }) => D::Set(entries.clone()),
             Some(Cell::RegExp { .. }) => D::RegExp,
             Some(Cell::WeakMap { .. } | Cell::WeakSet { .. }) => D::Opaque,
-            _ if self.error_is_error(value)
-                || matches!(self.heap.get(value), Some(Cell::Error(_))) =>
-            {
-                D::Error
-            }
+            Some(Cell::Error(_)) => D::Error,
             Some(Cell::Object(_)) => {
                 for &(brand, marker) in BOXED_MARKERS {
                     if let Some(payload) = self
