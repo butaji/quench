@@ -4245,3 +4245,43 @@ console.log(JSON.stringify(result));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn net_server_reference_requests_preserve_public_hooks_and_real_listener_liveness() {
+    const SOURCE: &str = r#"
+const net=require('net'),cp=require('child_process'),assert=require('assert'),result=[];
+for(const name of ['ref','unref']) {
+ const method=net.Server.prototype[name],descriptor=Object.getOwnPropertyDescriptor(net.Server.prototype,name),trace=[];
+ result.push([method.name,method.length,Object.hasOwn(method,'prototype'),descriptor.enumerable]);assert.throws(()=>method(),{name:'TypeError'});
+ const handle={[name](){trace.push(this===handle)}},receiver={set _unref(value){trace.push(value)},get _handle(){trace.push('get');return handle}};
+ assert.strictEqual(method.call(receiver),receiver);assert.deepStrictEqual(trace,[name==='unref','get','get',true]);
+ const marker={};assert.throws(()=>method.call({_handle:{[name](){throw marker}}}),error=>error===marker);
+}
+for(const mode of ['before','after','ref']) {
+ const source='const net=require("net");const server=net.createServer();'+(mode==='before'?'server.unref();':'')+'server.listen(0,()=>console.log("listening"));'+(mode==='after'?'server.unref();':'')+(mode==='ref'?'server.unref();server.ref();':'');
+ const child=cp.spawnSync(process.execPath,['-e',source],{encoding:'utf8',timeout:1500});assert.strictEqual(child.stdout,'listening\n');
+ if(mode==='ref'){assert.strictEqual(child.error.code,'ETIMEDOUT');result.push([mode,child.error.code])}else{assert.strictEqual(child.status,0);assert.strictEqual(child.error,undefined);result.push([mode,child.status])}
+}
+const server=net.createServer();assert.strictEqual(server._handle,null);assert.strictEqual(server._unref,false);assert.strictEqual(server.unref(),server);assert.strictEqual(server._unref,true);
+server.listen(0,()=>{const handle=server._handle;assert.strictEqual(handle.hasRef(),false);assert.strictEqual(server.ref(),server);assert.strictEqual(handle.hasRef(),true);server.close(()=>{assert.strictEqual(server._handle,null);assert.strictEqual(handle.hasRef(),true);setTimeout(()=>{assert.strictEqual(handle.hasRef(),undefined);console.log(JSON.stringify(result))},10)});assert.strictEqual(handle.hasRef(),true);assert.strictEqual(server._handle,null);});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}

@@ -10,7 +10,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 const FIRST_TRANSPORT_ID: u64 = 1;
 const TCP_READ_CHUNK: usize = 16 * 1024;
 const TCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, emitOperation, endpointOperation) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, emitOperation, endpointOperation, referenceOperation) => {
   const listeners = (socket) => socket._listeners;
   class Socket extends Duplex {
     constructor(options = {}) {
@@ -149,6 +149,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
   function Server(options, listener) {
     if (!(this instanceof Server)) return new Server(options, listener);
     this._listeners = new Map();
+    this._handle = null; this._unref = false;
     this.listening = false;
     if (typeof options === 'function') listener = options;
     if (typeof listener === 'function') this.on('connection', listener);
@@ -174,8 +175,8 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
     };
   Server.prototype.address = function() { return addressOperation(this); };
   Server.prototype.close = function(callback) { if (typeof callback === 'function') this.once('close', callback); closeOperation(this); this.listening = false; return this; };
-  Server.prototype.ref = function() { return this; };
-  Server.prototype.unref = function() { return this; };
+  Server.prototype.ref = function() { 'use strict'; return referenceOperation(this, true); };
+  Server.prototype.unref = function() { 'use strict'; return referenceOperation(this, false); };
   const createServer = function createServer(listener) { return new Server(listener); };
   function Stream(options) { return new Socket(options); }
   Stream.prototype = Socket.prototype;
@@ -397,7 +398,7 @@ impl Write for SocketStream {
     }
 }
 
-enum Listener {
+enum ListenerSocket {
     Tcp(TcpListener),
     #[cfg(unix)]
     Local {
@@ -406,7 +407,7 @@ enum Listener {
         display: String,
     },
 }
-impl Listener {
+impl ListenerSocket {
     fn accept(&self) -> std::io::Result<(SocketStream, Option<SocketAddr>)> {
         match self {
             Self::Tcp(listener) => listener
@@ -419,7 +420,7 @@ impl Listener {
         }
     }
 }
-impl Drop for Listener {
+impl Drop for ListenerSocket {
     fn drop(&mut self) {
         #[cfg(unix)]
         if let Self::Local {
@@ -427,6 +428,33 @@ impl Drop for Listener {
         } = self
         {
             let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+// The reference bit belongs to the physical listener, independently of the
+// public Server object and accepted sockets. Closing retains handle queries
+// through callback dispatch, then releases them on the next native poll.
+struct Listener {
+    state: ListenerState,
+    referenced: bool,
+}
+enum ListenerState {
+    Open(ListenerSocket),
+    CloseRequested,
+    Closing,
+}
+impl Listener {
+    fn new(socket: ListenerSocket) -> Self {
+        Self {
+            state: ListenerState::Open(socket),
+            referenced: true,
+        }
+    }
+    fn socket(&self) -> Option<&ListenerSocket> {
+        match &self.state {
+            ListenerState::Open(socket) => Some(socket),
+            _ => None,
         }
     }
 }
@@ -533,7 +561,9 @@ fn listen_with_reuse_port(
         .set_nonblocking(true)
         .map_err(|error| error.to_string())?;
     let id = transport.id()?;
-    transport.listeners.insert(id, Listener::Tcp(listener));
+    transport
+        .listeners
+        .insert(id, Listener::new(ListenerSocket::Tcp(listener)));
     Ok(id)
 }
 
@@ -611,10 +641,11 @@ pub(crate) fn address(transport: &Transport, listener: u64) -> Option<SocketAddr
     transport
         .listeners
         .get(&listener)
+        .and_then(Listener::socket)
         .and_then(|listener| match listener {
-            Listener::Tcp(listener) => listener.local_addr().ok(),
+            ListenerSocket::Tcp(listener) => listener.local_addr().ok(),
             #[cfg(unix)]
-            Listener::Local { .. } => None,
+            ListenerSocket::Local { .. } => None,
         })
 }
 
@@ -655,7 +686,11 @@ pub(crate) fn end(transport: &mut Transport, socket: u64) -> Result<(), String> 
 }
 
 pub(crate) fn close_listener(transport: &mut Transport, listener: u64) {
-    transport.listeners.remove(&listener);
+    if let Some(listener) = transport.listeners.get_mut(&listener) {
+        if matches!(listener.state, ListenerState::Open(_)) {
+            listener.state = ListenerState::CloseRequested;
+        }
+    }
 }
 
 pub(crate) fn close_socket(transport: &mut Transport, socket: u64) {
@@ -664,6 +699,11 @@ pub(crate) fn close_socket(transport: &mut Transport, socket: u64) {
 }
 
 pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
+    transport.listeners.retain(|_, listener| match listener.state {
+        ListenerState::Closing => false,
+        ListenerState::CloseRequested => { listener.state = ListenerState::Closing; true },
+        ListenerState::Open(_) => true,
+    });
     let mut events = poll_connects(transport);
     events.extend(poll_accepts(transport));
     events.extend(poll_sockets(transport));
@@ -671,7 +711,13 @@ pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
 }
 
 pub(crate) fn has_work(transport: &Transport) -> bool {
-    !transport.listeners.is_empty()
+    transport
+        .listeners
+        .values()
+        .any(|listener| match listener.state {
+            ListenerState::Open(_) => listener.referenced,
+            ListenerState::CloseRequested | ListenerState::Closing => true,
+        })
         || !transport.sockets.is_empty()
         || !transport.connecting.is_empty()
 }
@@ -736,6 +782,9 @@ fn poll_accepts(transport: &mut Transport) -> Vec<TransportEvent> {
         .iter_mut()
         .flat_map(|(listener_id, listener)| {
             let mut accepted = Vec::new();
+            let Some(listener) = listener.socket() else {
+                return accepted;
+            };
             loop {
                 match listener.accept() {
                     Ok((stream, remote)) => accepted.push((*listener_id, stream, remote)),
@@ -963,6 +1012,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let endpoint =
         context.host_function(crate::host::shared_vm::operation("netNormalizeEndpoint"))?;
+    let reference =
+        context.host_function(crate::host::shared_vm::operation("netServerReference"))?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
@@ -970,7 +1021,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         undefined,
         &[
             duplex, connect, write, end, destroy, encoding, listen, close, address, account, emit,
-            endpoint,
+            endpoint, reference,
         ],
     )?;
     for name in ["Socket", "Stream", "Server", "BlockList", "SocketAddress", "connect", "createConnection", "createServer"] {
@@ -1312,6 +1363,9 @@ pub(crate) fn server_close_operation(
             close_listener(&mut state.tcp, listener);
         }
     }
+    let key = context.string_rooted("_handle");
+    let null = context.null();
+    context.set_property_rooted(server, key, null, server)?;
     Ok(server)
 }
 
@@ -1449,16 +1503,16 @@ fn listen_local(
     display: String,
 ) -> std::io::Result<u64> {
     let (socket, unlink) = bind_local_address(&path, &display)?;
-    let listener = Listener::Local {
+    let socket = ListenerSocket::Local {
         listener: socket,
         path: unlink,
         display,
     };
-    if let Listener::Local { listener, .. } = &listener {
+    if let ListenerSocket::Local { listener, .. } = &socket {
         listener.set_nonblocking(true)?;
     }
     let id = transport.id().map_err(std::io::Error::other)?;
-    transport.listeners.insert(id, listener);
+    transport.listeners.insert(id, Listener::new(socket));
     Ok(id)
 }
 #[cfg(unix)]
@@ -1488,9 +1542,9 @@ fn connect_local(
     Ok(id)
 }
 fn listener_path(transport: &Transport, id: u64) -> Option<&str> {
-    match transport.listeners.get(&id)? {
+    match transport.listeners.get(&id)?.socket()? {
         #[cfg(unix)]
-        Listener::Local { display, .. } => Some(display),
+        ListenerSocket::Local { display, .. } => Some(display),
         _ => None,
     }
 }
@@ -1542,6 +1596,7 @@ fn register_server(
             listening_pending: true,
         },
     );
+    super::net_reference_shared_vm::install(context, listener, server)?;
     Ok(server)
 }
 
@@ -1656,4 +1711,16 @@ fn resolve_local_path(
         return Ok(path.to_owned());
     }
     cwd.current_path().map(|directory| directory.join(path))
+}
+
+pub(crate) fn listener_reference(transport: &mut Transport, id: u64, referenced: bool) {
+    if let Some(listener) = transport.listeners.get_mut(&id) {
+        listener.referenced = referenced;
+    }
+}
+pub(crate) fn listener_has_ref(transport: &Transport, id: u64) -> Option<bool> {
+    transport
+        .listeners
+        .get(&id)
+        .map(|listener| listener.referenced)
 }
