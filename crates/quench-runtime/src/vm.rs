@@ -33,6 +33,12 @@ pub(super) const ROOT_FUNCTION_ID: u32 = 0;
 struct RuntimeAtoms {
     lexical_this: Atom,
     new_target: Atom,
+    /// The RegExp members the builtin fast paths check on every call.
+    regexp_exec: Atom,
+    regexp_flags: Atom,
+    last_index: Atom,
+    /// `regexp::REGEXP_FLAG_ACCESSORS` names, in that order.
+    regexp_flag_accessors: [Atom; regexp::REGEXP_FLAG_ACCESSORS.len()],
 }
 pub(crate) mod activation;
 mod activation_lifecycle;
@@ -1393,9 +1399,16 @@ impl<H: Host> Vm<H> {
         }
         let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
         let new_target = self.intern_atom(NEW_TARGET_BINDING);
+        let regexp_flag_accessors = std::array::from_fn(|index| {
+            self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0)
+        });
         self.runtime_atoms = RuntimeAtoms {
             lexical_this,
             new_target,
+            regexp_exec: self.intern_atom("exec"),
+            regexp_flags: self.intern_atom("flags"),
+            last_index: self.intern_atom("lastIndex"),
+            regexp_flag_accessors,
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
         self.field_add_indices = vec![NO_FIELD_ADD_SET; program.cache_sites as usize];
