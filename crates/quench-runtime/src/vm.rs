@@ -297,6 +297,42 @@ impl Frame {
         }
     }
 
+    /// Makes `locals` `count` undefined values. A pooled frame usually has the capacity already,
+    /// so this is one capacity check and the stores.
+    #[inline(always)]
+    fn reset_locals_undefined(&mut self, count: usize) {
+        self.locals.clear();
+        self.locals.reserve(count);
+        for slot in &mut self.locals.spare_capacity_mut()[..count] {
+            slot.write(Value::UNDEFINED);
+        }
+        // SAFETY: the loop initialized the first `count` slots, which `reserve` provided.
+        unsafe { self.locals.set_len(count) };
+    }
+
+    /// `initialize_promoted_registers` for a plain activation, whose locals already start
+    /// undefined: its promoted entries, ordered by local, begin with every parameter.
+    #[inline(always)]
+    fn place_plain_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
+        debug_assert_eq!(self.registers.len(), usize::from(function.registers));
+        let (parameters, variables) = function
+            .local_registers
+            .split_at(usize::from(function.params));
+        for (index, entry) in parameters.iter().enumerate() {
+            debug_assert_eq!(usize::from(entry.local), index);
+            // SAFETY: residual validation bounds each promoted register by the register count
+            // the file was sized to.
+            unsafe {
+                *self.registers.get_unchecked_mut(usize::from(entry.register)) =
+                    args.get(index).copied().unwrap_or(Value::UNDEFINED);
+            }
+        }
+        for entry in variables {
+            // SAFETY: as above.
+            unsafe { *self.registers.get_unchecked_mut(usize::from(entry.register)) = Value::UNDEFINED };
+        }
+    }
+
     fn initialize_promoted_registers(
         &mut self,
         function: &crate::bytecode::Function,
@@ -836,6 +872,9 @@ pub(crate) struct Vm<H> {
     /// the only source of with objects, so until it runs no environment
     /// carries any.
     with_scope_entered: bool,
+    /// An installed program declares global lexical bindings, which its running root frame
+    /// holds before they reach the realm's map. Cleared only by a reset for a new main program.
+    script_lexicals_seen: bool,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
@@ -1489,6 +1528,8 @@ impl<H: Host> Vm<H> {
         self.descriptors.clear();
         self.function_values.clear();
         self.programs.reset(program.clone());
+        self.script_lexicals_seen = false;
+        self.observe_program_declarations(program);
         self.program_cache_layouts.clear();
         self.program_cache_layouts
             .push(ProgramCacheLayout::default());
@@ -1543,6 +1584,7 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_module_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.intern_program_atoms(&program);
+        self.observe_program_declarations(&program);
         let id = self.programs.insert_module(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
@@ -1551,11 +1593,18 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_dynamic_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.intern_program_atoms(&program);
+        self.observe_program_declarations(&program);
         let id = self.programs.insert(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);
         Some(id)
+    }
+    fn observe_program_declarations(&mut self, program: &ResidualProgram) {
+        self.script_lexicals_seen |= program
+            .functions
+            .first()
+            .is_some_and(|root| !root.global_lexical_atoms.is_empty());
     }
     fn append_program_cache_layout(&mut self, id: ProgramId, program: &ResidualProgram) {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());

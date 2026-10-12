@@ -357,10 +357,7 @@ impl<H: Host> Vm<H> {
             .function(self.active_program.raw(), id as usize);
         let this = self.call_this_value(this, function.strict)?;
         let mut frame = self.pooled_frame();
-        frame.locals.clear();
-        frame
-            .locals
-            .resize(usize::from(function.locals), Value::UNDEFINED);
+        frame.reset_locals_undefined(usize::from(function.locals));
         self.initialize_frame_invocation(&p.atoms, &mut frame, function, context, args);
         frame.function = id;
         frame.program = self.active_program;
@@ -378,7 +375,7 @@ impl<H: Host> Vm<H> {
         // A `new.target` set for this activation has no observable binding to land in.
         self.construct_target = None;
         frame.prepare_registers_for(function);
-        frame.initialize_promoted_registers(function, args);
+        frame.place_plain_parameters(function, args);
         self.frames.push(frame);
         Ok(self.frames.len() - 1)
     }
@@ -1149,8 +1146,8 @@ impl<H: Host> Vm<H> {
             );
             #[cfg(not(feature = "profile-aggregate"))]
             self.profile.opcode(ins.op() as usize);
-            // Register/local moves cannot allocate, collect or throw, so they need neither the
-            // published root-map PC nor the general step result.
+            // Register/local moves and field cache hits cannot allocate, collect or throw, so they
+            // need neither the published root-map PC nor the general step result.
             match ins.op() {
                 Op::LoadLocalPlain => {
                     // SAFETY: validated bytecode bounds the slot by Function.locals.
@@ -1169,6 +1166,60 @@ impl<H: Host> Vm<H> {
                 }
                 Op::Move => {
                     self.write(frame, ins.result_register(), self.read(frame, ins.register_b()));
+                    continue;
+                }
+                Op::LoadConst => {
+                    if let Some(value) = self.active_constant(ins.constant_index()) {
+                        self.write(frame, ins.result_register(), value);
+                        continue;
+                    }
+                }
+                Op::LoadCapture => {
+                    if let Some(value) =
+                        self.direct_capture(frame, ins.capture_depth(), ins.capture_slot())
+                    {
+                        self.write(frame, ins.result_register(), value);
+                        continue;
+                    }
+                }
+                Op::JumpFalse | Op::JumpTrue => {
+                    // ToBoolean runs no guest code.
+                    let value = self.read(frame, ins.register_a());
+                    let truthy = self.truthy(value);
+                    #[cfg(feature = "profile-aggregate")]
+                    self.profile
+                        .branch_value(value.profile_kind() as usize, truthy);
+                    if truthy == (ins.op() == Op::JumpTrue) {
+                        pc = ins.jump_target() as usize;
+                    }
+                    continue;
+                }
+                Op::JumpBinaryFalse => {
+                    let operator = ins.binary_operator_field();
+                    if let (Some(left), Some(right)) = (
+                        self.inert_operand(frame, ins.operand_b()),
+                        self.inert_operand(frame, ins.operand_c()),
+                    ) && let Some(truthy) = self.number_comparison_truthy(operator, left, right)
+                    {
+                        self.profile
+                            .binary(operator as usize, ins.operand_b().0, ins.operand_c().0);
+                        if !truthy {
+                            pc = ins.jump_target() as usize;
+                        }
+                        continue;
+                    }
+                }
+                // A field cache hit reads a data slot: it neither allocates nor throws.
+                Op::GetField
+                    if ins.result_flags() == 0
+                        && let Some(crate::bytecode::FieldLookup::Atom {
+                            base, cache_site, ..
+                        }) = ins.field_lookup()
+                        && let Some(register) = base.register_index()
+                        && let super::object::FieldCacheProbe::Hit(value) =
+                            self.cached_field_hit(p, self.read(frame, register), cache_site) =>
+                {
+                    self.write(frame, ins.result_register(), value);
                     continue;
                 }
                 _ => {}
@@ -1394,6 +1445,21 @@ impl<H: Host> Vm<H> {
     ) -> &[Value] {
         let start = usize::from(window.base);
         &self.frames[f].registers[start..start + usize::from(window.count)]
+    }
+
+    /// An operand's value when reading it can run no guest code and cannot throw: a register
+    /// or a constant. Field and local operands go through `resolve_operand`.
+    #[inline(always)]
+    fn inert_operand(&self, frame: usize, operand: crate::bytecode::Operand) -> Option<Value> {
+        match operand.kind() {
+            Some(crate::bytecode::OperandKind::Register) => {
+                Some(self.read(frame, operand.payload() as Register))
+            }
+            Some(crate::bytecode::OperandKind::Constant) => {
+                self.active_constant(operand.payload() as usize)
+            }
+            _ => None,
+        }
     }
 
     #[inline(always)]
