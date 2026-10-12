@@ -72,39 +72,9 @@ benefit.
 - `cargo test -p quench-wasm`: 31 passed; 0 failed.
 - `crates/quench-runtime/tests/subset.rs`: 6 passed; 0 failed.
 - The expanded Node v26.10.0 `--jitless` array-semantics probe now matches byte-for-byte after the `own_property` fix.
-- The first revised-source Splay attempt below was contaminated; a later clean Splay-only screen is recorded next. The revised-source all-eight guard is pending.
+- The Splay fixed-work attempt below has 0/11 clean rounds; the all-eight guard has not been rerun on this revised source.
 
-## Revised-source Splay screen — clean, all-eight pending
-
-Raw report: [`splay-fixed-work-11-m4-rerun.json`](splay-fixed-work-11-m4-rerun.json).
-The production-CJS runner used 300 `run()` calls per sample and 11 alternating
-baseline/candidate pairs. All 11 pairs were valid and clean, and stdout matched.
-Runner SHA-256: `f8e02485d1724f130fb318fdf26089896dcdc540c03131173464d92301765bfa`.
-Baseline binary SHA-256:
-`127b3fdc659ba5944bf03658d5f2e2f85b5971a4b91121e40a7e66dc00649543`.
-Candidate binary SHA-256:
-`7331fe083eba26249a4955764419a6695ec708aaf391df37645cb254544effc5`.
-
-| M4 metric | Baseline | Candidate | Candidate change |
-| --- | ---: | ---: | ---: |
-| Marginal cycles / `run()` | 5,721,421 | 5,629,649 | −1.60% |
-| Marginal instructions / `run()` | 33,087,840 | 33,116,028 | +0.085% |
-| Work max RSS | 122,765,312 B | 97,206,272 B | −20.82% |
-| Setup-only max RSS | 68,665,344 B | 55,672,832 B | −18.92% |
-
-The paired median changes are −1.117% cycles (bootstrap 95% interval
-−1.509% to +0.104%), +0.083% instructions (+0.075% to +0.116%), and
-−20.793% work max RSS (−20.877% to −20.767%). Thus the candidate has a clear
-RSS reduction and no detected cycle regression on Splay, but the point cycle
-delta is not resolved from zero by the paired interval.
-
-Against the prior M4 references (Node `--jitless` marginal cycles 4,678,660;
-Bun no-JIT max RSS 58,753,024 B), the fixed-work proxy distances are **1.203x
-speed / 1.654x RSS**. These references were not retaken in this campaign, and
-this is not the required stock-harness qualification. Splay remains unwon;
-the all-eight guard must pass before retaining this layout.
-
-## Earlier revised-source Splay attempt — contention rejected
+## Revised-source Splay attempt — contention rejected
 
 Raw report: [`splay-fixed-work-11-revised.json`](splay-fixed-work-11-revised.json).
 It used the pinned CJS fixed-work runner, 300 `run()` calls per sample, and 11
@@ -113,8 +83,15 @@ alternating pairs of baseline binary `127b3fdc…` and revised candidate binary
 detector. Sampled load ranged from 1.676 to 3.094 runnable tasks per logical
 CPU, so cycles, instructions, and elapsed-time deltas are unavailable.
 
-Its RSS values were directional only; the clean screen above supersedes that
-attempt for the revised source.
+The valid-process max-RSS medians were 113.66 MiB baseline vs 90.50 MiB
+candidate for the work sample (−20.37%), and 63.83 MiB vs 51.52 MiB for
+setup-only (−19.29%). Treat these as directional observations from a
+contended campaign, not as the RSS gate: no paired clean-sample decision was
+made. The candidate's speed and RSS distances therefore remain unqualified.
+
+The clean-trunk M4 distances remain **1.24× speed / 2.09× RSS**. The revised
+candidate's distances are unmeasured and must be established with the
+production-CJS fixed-work gate after the host-contention detector is clean.
 
 ## Initial candidate correctness and remaining requirements
 
@@ -122,19 +99,6 @@ For the initial source, the runtime and Wasm suites passed before timing, and
 the smaller Node array-semantics probe matched byte-for-byte. The expanded
 probe found the inherited non-writable index case, now covered by the revised
 source's matching output and unit test. WAST discovery and Test262 inputs are
-absent from this checkout. A retained revision still needs the all-eight
-fixed-work layout guard and eventually a stock-harness qualification campaign.
-
-
-## Revised-source all-eight guard — rejected on M4
-
-Raw report: [`all-eight-fixed-work-11-revised-m4.json`](all-eight-fixed-work-11-revised-m4.json). Guard classification checkpoint: [`all-eight-guard-checkpoint-revised-m4.json`](all-eight-guard-checkpoint-revised-m4.json). This is the revised source at `ac928099b795952804f65abc8439268694f25ea5`, measured on the Apple M4 arm64 host with 11 fixed-work pairs per fixture; source was clean and stdout matched.
-
-The layout candidate is rejected for M4 integration because two fixtures have clean cycle regressions whose bootstrap intervals exclude zero:
-
-- DeltaBlue: 9/11 clean; cycles +1.886% (95% interval +0.810% to +5.188%); instructions +0.973% (above the 0.14% A/A band); max RSS −2.141%.
-- Richards: 11/11 clean; cycles +1.513% (95% interval +0.960% to +1.861%); instructions +0.049%; max RSS −0.898%.
-
-Other results: Crypto 11/11 clean, cycles +0.023%, instructions +0.136% (within the 0.14% band), RSS −0.601%; Splay 9/11 clean, cycles −2.125% (95% interval −4.534% to −0.676%), instructions +0.067%, RSS −20.745%. EarleyBoyer, NavierStokes, RayTrace and RegExp had 0/11, 3/11, 0/11 and 0/11 clean pairs respectively; their cycle outcomes remain inconclusive, and instruction changes exceeded the A/A band. No top-up was run because the clean DeltaBlue and Richards regressions already reject the candidate under the layout gate.
-
-The revised Splay-only result remains a strong Splay trade-off, not a keep: fixed-work proxy distances are 1.203× speed and 1.654× RSS versus the previous M4 bars, and the candidate has not won either bar. The pushed candidate ref remains available for the Linux lane's own-host experiment, but this M4 layout must not merge to trunk in its current form.
+absent from this checkout. A retained revision still needs the Splay gate, the
+all-eight fixed-work layout guard, and eventually a stock-harness qualification
+campaign.
