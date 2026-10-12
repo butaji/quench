@@ -390,12 +390,7 @@ pub(crate) fn spawn_child(
         .transpose()?
         .filter(|root| context.is_object_rooted(*root).unwrap_or(false))
     {
-        command.env_clear();
-        for key in object_keys(context, env)? {
-            let name = context.to_string(key)?;
-            let value = property_string(context, env, &name)?.unwrap_or_default();
-            command.env(name, value);
-        }
+        super::child_process_env_shared_vm::configure(context, &mut command, env)?;
     }
 
     let configured = super::child_process_stdio_shared_vm::configure(&mut command, &stdio);
@@ -1140,12 +1135,7 @@ pub(crate) fn spawn_sync(
         .map(|root| property(context, root, "env"))
         .transpose()?;
     if let Some(env) = env.filter(|root| context.is_object_rooted(*root).unwrap_or(false)) {
-        process.env_clear();
-        for key in object_keys(context, env)? {
-            let name = context.to_string(key)?;
-            let value = property_string(context, env, &name)?.unwrap_or_default();
-            process.env(name, value);
-        }
+        super::child_process_env_shared_vm::configure(context, &mut process, env)?;
     }
 
     let output = match process.spawn() {
@@ -1290,21 +1280,6 @@ fn string_array(context: &mut NativeContext<'_, NodeHost>, array: RootId) -> Res
             let key = context.string_rooted(&index.to_string());
             let value = context.get_property_rooted(array, key)?;
             context.to_string(value)
-        })
-        .collect()
-}
-
-fn object_keys(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<Vec<RootId>, RootedError> {
-    let global = context.global_root()?;
-    let object = property(context, global, "Object")?;
-    let keys = property(context, object, "keys")?;
-    let array = context.call_rooted(keys, object, &[value])?;
-    let length = property(context, array, "length")?;
-    let length = context.rooted_value(length).and_then(|value| value.as_number()).unwrap_or_default().max(0.0) as usize;
-    (0..length)
-        .map(|index| {
-            let key = context.string_rooted(&index.to_string());
-            context.get_property_rooted(array, key)
         })
         .collect()
 }

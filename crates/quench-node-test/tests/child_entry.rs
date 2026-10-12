@@ -1928,3 +1928,51 @@ console.log(JSON.stringify(result));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn child_environment_coercion_inheritance_and_undefined_match_node() {
+    const SOURCE: &str = r#"
+const {spawn,spawnSync}=require('child_process');const trace=[];
+const env=Object.create({INHERITED:9,MASKED:'prototype'});
+Object.defineProperty(env,'MASKED',{value:'hidden',enumerable:false});
+Object.assign(env,{NUMBER:42,BOOL:false,NULL:null,UNDEFINED:undefined,EMPTY:'',
+ OBJECT:{toString(){trace.push('coerce');return 'object-value'}}});
+Object.defineProperty(env,'GETTER',{enumerable:true,get(){trace.push('get');return 7}});
+env[Symbol('ignored')]='symbol';
+const childSource="console.log(JSON.stringify(['NUMBER','BOOL','NULL','UNDEFINED','EMPTY','OBJECT','GETTER','INHERITED','MASKED'].map(key=>[key,process.env[key]??null])))";
+const sync=spawnSync(process.execPath,['-e',childSource],{env});
+const result=[sync.status,sync.stdout.toString().trim(),trace.slice()];
+for(const value of ['x\0y',Symbol('value')]){
+ try{spawnSync(process.execPath,['-e',''],{env:{VALUE:value}})}
+ catch(error){result.push([error.name,error.code??null,error.message])}
+}
+const marker={};try{spawnSync(process.execPath,['-e',''],{env:{get VALUE(){throw marker}}})}
+catch(error){result.push(error===marker)}
+trace.length=0;const child=spawn(process.execPath,['-e',childSource],{env});let output='';
+child.stdout.on('data',chunk=>output+=chunk);child.on('error',error=>{throw error});
+child.on('close',code=>{result.push(code,output.trim(),trace.slice());console.log(JSON.stringify(result))});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}

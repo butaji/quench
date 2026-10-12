@@ -24,3 +24,13 @@ maintain a second count. Event names retain their key types during inspection.
 The target's constructor and delegated-method getters remain observable.
 AbortSignal inherits EventTarget's constructor and prototype chains. General
 EventTarget capture/options handling remains incomplete.
+
+## Child environments
+
+Async and synchronous spawning share native environment normalization. Enumerable
+string keys include inherited properties and respect nearer non-enumerable
+shadows. Undefined values are omitted; other values use JavaScript's ordinary
+string coercion, preserving getter/conversion errors. String keys and values with
+null bytes produce Node-compatible argument errors before OS spawning. Windows
+keys are sorted and deduplicated without regard to case; validation evidence is
+currently from Linux.
