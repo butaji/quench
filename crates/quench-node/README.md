@@ -55,3 +55,31 @@ Counts do not call an overridden public `listeners()` method. Removal and error
 monitor bridges consume raw wrappers so inspection cannot disable once cleanup.
 Constructor metadata, callable constructor behavior, and some mutation/removal
 semantics remain incomplete.
+
+
+Listener limits use one native default shared by EventEmitter's accessor and
+`events.setMaxListeners()` with no targets. Emitters consult that default until
+an instance override is assigned; EventTarget snapshots it at construction,
+while AbortSignal starts at zero. Target limits and warning state use Node's
+private, exported symbol keys. Numeric validation permits Infinity and rejects
+negative values and NaN; strict assignments preserve runtime property errors.
+Emitter registration derives leak warnings from the canonical listener array
+and schedules the original Error object. `process.emitWarning()` validates
+options natively and preserves supplied Error identity through delivery and
+`throwDeprecation`. Stack-constructor options and stderr formatting remain
+incomplete, as do EventTarget leak warnings and emitter capture-rejection policy.
+
+Console's write boundary handles errors natively. The instance's `_ignoreErrors`
+policy defaults to true and honors an explicit false value. An owned temporary
+error listener protects synchronous writes; per-stream callbacks install a
+listener for asynchronous errors. Cleanup runs even after a write throws.
+RangeError with the engine's stack-overflow message propagates unchanged.
+Constructor validation, method binding, grouping and full formatting remain open.
+
+TCP read/write failures keep the original OS error until projection, deriving
+Node's code, errno, syscall and message from that authority. Interrupted reads
+retry; interrupted writes retry on the next transport poll. Socket destruction
+latches its error outcome before guest handlers run, and automatic close
+delivery projects `hadError` from that outcome. Linux reset behavior is checked
+against an independent OS TCP peer. Connect/listen error projection and public
+Socket emit interception remain incomplete.

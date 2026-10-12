@@ -62,6 +62,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processRemoveAllListeners" (2) => crate::modules::process_shared_vm::remove_all_listeners,
         method "processEmit" (2) => crate::modules::process_shared_vm::emit,
         method "processEmitWarning" (2) => crate::modules::process_shared_vm::emit_warning,
+        method "processThrowWarning" (1) => crate::modules::process_shared_vm::throw_warning,
         method "processDispatchWarning" (1) => crate::modules::process_shared_vm::dispatch_warning,
         method "require" (1) => commonjs::require,
         method "resolve" (2) => commonjs::resolve,
@@ -86,6 +87,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "exec" (3) => crate::modules::child_process_exec_shared_vm::exec,
         method "childProcessPromiseExec" (1) => crate::modules::child_process_exec_shared_vm::promise_exec,
         method "childProcessPromiseExecSettled" (3) => crate::modules::child_process_exec_shared_vm::promise_settled,
+        method "utilInspectShallowLabel" (1) => crate::modules::util_shared_vm::inspect_shallow_label,
         method "utilInspectQuote" (1) => crate::modules::util_shared_vm::inspect_quote,
         method "styleText" (3) => crate::modules::util_style_shared_vm::style_text,
         method "utilColorAliasGet" (0) => crate::modules::util_style_shared_vm::alias_get,
@@ -146,6 +148,13 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netIsIPv6" (1) => crate::modules::net_shared_vm::is_ipv6,
         method "netConnect" (3) => crate::modules::net_shared_vm::connect_operation,
         method "streamPipePlan" (3) => crate::modules::stream_pipe_shared_vm::plan,
+        method "emitterRegistered" (4) => crate::modules::event_limits_shared_vm::registered,
+        method "eventsDefaultMaxGet" (0) => crate::modules::event_limits_shared_vm::default_get,
+        method "eventsDefaultMaxSet" (1) => crate::modules::event_limits_shared_vm::default_set,
+        method "emitterMaxGet" (1) => crate::modules::event_limits_shared_vm::emitter_get,
+        method "emitterMaxSet" (2) => crate::modules::event_limits_shared_vm::emitter_set,
+        method "eventsMaxGet" (1) => crate::modules::event_limits_shared_vm::global_get,
+        method "eventsMaxSet" (1) => crate::modules::event_limits_shared_vm::global_set,
         method "emitterEventNames" (1) => crate::modules::event_emitter_shared_vm::names,
         method "emitterListeners" (2) => crate::modules::event_emitter_shared_vm::listeners,
         method "emitterRawListeners" (2) => crate::modules::event_emitter_shared_vm::raw_listeners,
@@ -161,6 +170,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netSocketAccountWrite" (4) => crate::modules::net_shared_vm::account_write_operation,
         method "netSocketWrite" (3) => crate::modules::net_shared_vm::write_operation,
         method "netSocketEnd" (1) => crate::modules::net_shared_vm::end_operation,
+        method "netSocketEmit" (3) => crate::modules::net_shared_vm::emit_operation,
         method "netSocketDestroy" (2) => crate::modules::net_shared_vm::destroy_operation,
         method "netSocketSetEncoding" (2) => crate::modules::net_shared_vm::set_encoding_operation,
         method "netServerListen" (4) => crate::modules::net_shared_vm::server_listen_operation,
@@ -310,6 +320,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fileURLToPathBuffer" (2) => crate::modules::url_shared_vm::file_url_to_path_buffer,
         global "structuredClone" (1) => crate::modules::clone_shared_vm::structured_clone,
         method "ttyIsatty" (1) => crate::modules::tty_shared_vm::isatty,
+        method "consoleNoop" (0) => crate::modules::console_shared_vm::noop,
+        method "consoleInitializeWrite" (3) => crate::modules::console_shared_vm::initialize_write,
+        method "consoleWrite" (3) => crate::modules::console_shared_vm::write,
+        method "consoleWriteError" (1) => crate::modules::console_shared_vm::write_error,
         method "consoleTrace" (0) => crate::modules::console_shared_vm::trace,
     ]
 }
@@ -489,22 +503,26 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::process_shared_vm::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_process");
-        let abort = context.evaluate_script_rooted(
-            crate::polyfills::shared_vm::ABORT,
-            "node:bootstrap/shared-vm/abort.js",
-        )?;
-        #[cfg(feature = "profile-memory")]
-        context.profile_memory_checkpoint("node_abort_polyfill");
-        crate::modules::events_shared_vm::initialize_targets(context, abort)?;
-        context.release_root(abort);
+        crate::modules::events_shared_vm::initialize_targets(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_target_polyfill");
-        let event_emitter = context.evaluate_script_rooted(
+        let event_data = context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .event_targets_api
+            .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
+        let registered =
+            context.host_function_with_data(operation("emitterRegistered"), event_data)?;
+        let emitter_factory = context.evaluate_script_rooted(
             crate::polyfills::bootstrap::event_emitter::JS,
             "node:bootstrap/event-emitter.js",
         )?;
+        let undefined = context.undefined();
+        let event_emitter = context.call_rooted(emitter_factory, undefined, &[registered])?;
         context.release_root(event_emitter);
         crate::modules::event_emitter_shared_vm::initialize(context)?;
+        crate::modules::event_limits_shared_vm::initialize(context)?;
         // Native stdio writes still participate in the shared EventEmitter
         // protocol; consumers such as util.styleText validate that protocol.
         let global = context.global_root()?;

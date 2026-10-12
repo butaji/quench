@@ -1,6 +1,7 @@
 //! Shared guest bridge for Node's EventEmitter listener semantics.
 
-pub const JS: &str = quench_js_check::checked_js!(r#"const MAX_LISTENERS = Symbol("maxListeners");
+pub const JS: &str = quench_js_check::checked_js!(
+    r#"(registered) => {
 const ERROR_INSPECT = Symbol.for("quench.internal.eventEmitter.inspect");
 const STREAM_OWNER = Symbol.for("quench.internal.streamOwner");
 const checkListener = (listener) => {
@@ -35,7 +36,9 @@ const registerListener = (emitter, event, listener, prepend) => {
   const next = prepend
     ? [listener, ...listeners]
     : [...listeners, listener];
-  emitter._events[event] = next.length === 1 ? listener : next;
+  const value = next.length === 1 ? listener : next;
+  emitter._events[event] = value;
+  registered(emitter, event, current, value);
   return emitter;
 };
 const registerOnce = (emitter, event, listener, prepend) => {
@@ -175,23 +178,7 @@ class EventEmitter {
     }
     return this;
   }
-  getMaxListeners() {
-    return this[MAX_LISTENERS] ?? EventEmitter.defaultMaxListeners;
-  }
-  setMaxListeners(limit) {
-    if (typeof limit !== "number") {
-      const error = new TypeError("The \"n\" argument must be of type number");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (!Number.isFinite(limit) || limit < 0) {
-      const error = new RangeError("The value of \"n\" is out of range");
-      error.code = "ERR_OUT_OF_RANGE";
-      throw error;
-    }
-    this[MAX_LISTENERS] = limit;
-    return this;
-  }
+
 }
 const aliasMethod = (source, alias) => {
   const descriptor = Object.getOwnPropertyDescriptor(
@@ -212,9 +199,10 @@ for (const name of Object.getOwnPropertyNames(EventEmitter.prototype)) {
     });
   }
 }
-EventEmitter.defaultMaxListeners = 10;
 EventEmitter.captureRejectionSymbol = Symbol.for("nodejs.rejection");
 Object.defineProperty(globalThis, "__nodeEventEmitter", {
   value: EventEmitter,
   configurable: true,
-});"#);
+});
+}"#
+);

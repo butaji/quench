@@ -56,11 +56,19 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         ("getgid", "processGetgid"),
         ("getegid", "processGetegid"),
         ("umask", "processUmask"),
-        ("emitWarning", "processEmitWarning"),
     ] {
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, process, name, function)?;
     }
+    let error_instance = context.evaluate_script_rooted(
+        "((Error) => value => value instanceof Error)(Error)",
+        "node:process/warning-instance.js",
+    )?;
+    let emit_warning = context.host_function_with_data(
+        crate::host::shared_vm::operation("processEmitWarning"),
+        error_instance,
+    )?;
+    install(context, process, "emitWarning", emit_warning)?;
     #[cfg(unix)]
     for (name, operation) in [
         ("setuid", "processSetuid"),
@@ -3192,78 +3200,149 @@ pub(crate) fn emit_warning(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let message_root = args.first().copied().unwrap_or_else(|| context.undefined());
-    let Some(message) = context.string_text(message_root)? else {
-        let received = received_type(context, message_root)?;
-        let error = context.type_error_rooted(&format!(
-            "The \"warning\" argument must be of type string. Received {received}"
-        ))?;
-        return Err(throw_with_code(context, error, "ERR_INVALID_ARG_TYPE"));
+    let undefined = context.undefined();
+    let payload = args.first().copied().unwrap_or(undefined);
+    let options = args.get(1).copied().unwrap_or(undefined);
+    let mut kind = options;
+    let mut code = args.get(2).copied().unwrap_or(undefined);
+    let mut detail = None;
+    let mut host_stack = None;
+    let mut rejection_id = None;
+    let global = context.global_root()?;
+    let process_key = context.string_rooted("process");
+    let process = context.get_property_rooted(global, process_key)?;
+    let no_deprecation_key = context.string_rooted("noDeprecation");
+    let no_deprecation = context.get_property_rooted(process, no_deprecation_key)?;
+    if context.truthy_rooted(no_deprecation)?
+        && context.string_text(kind)?.as_deref() == Some("DeprecationWarning")
+    {
+        return Ok(undefined);
+    }
+    if context.is_object_rooted(options)?
+        && !context.is_array_rooted(options)?
+        && !context.is_callable_rooted(options)?
+    {
+        // Keep the upstream property access order, including the ignored stack
+        // constructor option. Host stack/id options are private rejection plumbing.
+        let ctor_key = context.string_rooted("ctor");
+        context.get_property_rooted(options, ctor_key)?;
+        let code_key = context.string_rooted("code");
+        code = context.get_property_rooted(options, code_key)?;
+        let detail_key = context.string_rooted("detail");
+        let detail_value = context.get_property_rooted(options, detail_key)?;
+        if context.string_text(detail_value)?.is_some() {
+            // Upstream reads the detail getter again after checking its type.
+            let detail_value = context.get_property_rooted(options, detail_key)?;
+            detail = Some(detail_value);
+        }
+        let kind_key = context.string_rooted("type");
+        kind = context.get_property_rooted(options, kind_key)?;
+        if !context.truthy_rooted(kind)? {
+            kind = context.string_rooted("Warning");
+        }
+        host_stack = string_property(context, options, HOST_WARNING_STACK_OPTION)?;
+        rejection_id = number_property(context, options, HOST_WARNING_ID_OPTION)?
+            .filter(|id| id.is_finite() && *id >= 1.0 && id.fract() == 0.0);
+    } else if context.is_callable_rooted(options)? {
+        kind = context.string_rooted("Warning");
+        code = undefined;
+    }
+    if !context
+        .rooted_value(kind)
+        .is_some_and(|value| value.is_undefined())
+        && context.string_text(kind)?.is_none()
+    {
+        return Err(super::util_shared_vm::argument_type_error(
+            context, kind, "type", "string",
+        )?);
+    }
+    if context.is_callable_rooted(code)? {
+        code = undefined;
+    } else if !context
+        .rooted_value(code)
+        .is_some_and(|value| value.is_undefined())
+        && context.string_text(code)?.is_none()
+    {
+        return Err(super::util_shared_vm::argument_type_error(
+            context, code, "code", "string",
+        )?);
+    }
+    let warning = if let Some(message) = context.string_text(payload)? {
+        let warning = context.error_rooted(&message)?;
+        let name = context
+            .string_text(kind)?
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "Warning".into());
+        let name = context.string_rooted(&name);
+        install(context, warning, "name", name)?;
+        if !context
+            .rooted_value(code)
+            .is_some_and(|value| value.is_undefined())
+        {
+            install(context, warning, "code", code)?;
+        }
+        if let Some(detail) = detail {
+            install(context, warning, "detail", detail)?;
+        }
+        if let Some(stack) = host_stack {
+            let stack = context.string_rooted(&stack);
+            install(context, warning, "stack", stack)?;
+        }
+        if let Some(id) = rejection_id {
+            let id = context.number(id);
+            install(context, warning, "id", id)?;
+        }
+        warning
+    } else {
+        // The syntax bridge performs ordinary instanceof, including public
+        // Symbol.hasInstance and Error prototype changes; policy stays native.
+        let check = context.host_function_data()?;
+        let result = context.call_rooted(check, undefined, &[payload])?;
+        if !context.truthy_rooted(result)? {
+            return Err(super::util_shared_vm::argument_type_error_with_expected(
+                context,
+                payload,
+                "warning",
+                "of type string or an instance of Error",
+            )?);
+        }
+        payload
     };
+    if string_property(context, warning, "name")?.as_deref() == Some("DeprecationWarning") {
+        let no_deprecation = context.get_property_rooted(process, no_deprecation_key)?;
+        if context.truthy_rooted(no_deprecation)? {
+            return Ok(undefined);
+        }
+        let throw_key = context.string_rooted("throwDeprecation");
+        let should_throw = context.get_property_rooted(process, throw_key)?;
+        if context.truthy_rooted(should_throw)? {
+            let callback =
+                context.host_function(crate::host::shared_vm::operation("processThrowWarning"))?;
+            super::shared_event_loop::queue_next_tick(context, callback, undefined, &[warning])?;
+            return Ok(undefined);
+        }
+    }
+    queue_warning(context, warning)?;
+    Ok(undefined)
+}
 
-    let options = args.get(1).copied();
-    let options_value = options
-        .map(|options| context.rooted_value(options))
-        .flatten()
-        .ok_or_else(|| RootedError::host("invalid warning options root"));
-    let (name, option_code, detail, host_stack, rejection_id) = match (options, options_value) {
-        (Some(options), Ok(value)) if !value.is_undefined() && !value.is_null() => (
-            string_property(context, options, "type")?
-                .or(string_property(context, options, "name")?)
-                .or(context.string_text(options)?)
-                .unwrap_or_else(|| "Warning".into()),
-            string_property(context, options, "code")?,
-            string_property(context, options, "detail")?,
-            string_property(context, options, HOST_WARNING_STACK_OPTION)?,
-            number_property(context, options, HOST_WARNING_ID_OPTION)?
-                .filter(|id| id.is_finite() && *id >= 1.0 && id.fract() == 0.0)
-                .map(|id| id as u64),
-        ),
-        (Some(_), Err(error)) => return Err(error),
-        _ => ("Warning".into(), None, None, None, None),
-    };
-    let code = match args.get(2).copied() {
-        Some(code) => context.string_text(code)?.or(option_code),
-        None => option_code,
-    };
+pub(crate) fn throw_warning(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let warning = args.first().copied().unwrap_or_else(|| context.undefined());
+    Err(context.throw(warning))
+}
 
-    let warning = context.error_rooted(&message)?;
-    let name_value = context.string_rooted(&name);
-    install(context, warning, "name", name_value)?;
-    if let Some(code) = &code {
-        let code_value = context.string_rooted(code);
-        install(context, warning, "code", code_value)?;
-    }
-    if let Some(detail) = &detail {
-        let detail_value = context.string_rooted(detail);
-        install(context, warning, "detail", detail_value)?;
-    }
-    if let Some(stack) = host_stack {
-        let stack_value = context.string_rooted(&stack);
-        install(context, warning, "stack", stack_value)?;
-    }
-    if let Some(id) = rejection_id {
-        let id_value = context.number(id as f64);
-        install(context, warning, "id", id_value)?;
-    }
-
+fn queue_warning(
+    context: &mut NativeContext<'_, NodeHost>,
+    warning: RootId,
+) -> Result<(), RootedError> {
     let callback =
         context.host_function(crate::host::shared_vm::operation("processDispatchWarning"))?;
-    let callback = context.retain(callback)?;
     let undefined = context.undefined();
-    let receiver = context.retain(undefined)?;
-    let warning_argument = context.retain(warning)?;
-    context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .scheduler
-        .queue_shared_next_tick(crate::modules::shared_event_loop::SharedCallback {
-            callback,
-            receiver,
-            args: vec![warning_argument],
-        });
-    Ok(context.undefined())
+    crate::modules::shared_event_loop::queue_next_tick(context, callback, undefined, &[warning])
 }
 
 pub(crate) fn dispatch_warning(

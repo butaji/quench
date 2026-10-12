@@ -105,55 +105,6 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
         }
       });
     }
-    if (typeof globalThis.process.emitWarning === "function") {
-      const emitWarning = globalThis.process.emitWarning.bind(globalThis.process);
-      globalThis.process.emitWarning = (warning, type, code) => {
-        let message;
-        let options = {};
-        if (typeof warning === "string") {
-          message = warning;
-        } else if (warning instanceof Error) {
-          message = warning.message;
-          options.type = warning.name;
-          if (typeof warning.code === "string") options.code = warning.code;
-          if (typeof warning.detail === "string") options.detail = warning.detail;
-        } else {
-          const received = warning === undefined ? "undefined" :
-            warning === null ? "null" : `an instance of ${warning?.constructor?.name || typeof warning}`;
-          const error = new TypeError(`The "warning" argument must be of type string or an instance of Error. Received ${received}`);
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
-        }
-        if (typeof type === "string") {
-          options.type = type;
-          if (typeof code === "string") options.code = code;
-          else if (code !== undefined && typeof code !== "function") {
-            const error = new TypeError('The "code" argument must be of type string.');
-            error.code = "ERR_INVALID_ARG_TYPE";
-            throw error;
-          }
-        } else if (typeof type === "function") {
-          options.type = type.name;
-        } else if (type && typeof type === "object" && !Array.isArray(type)) {
-          options = type;
-        } else if (type !== undefined) {
-          const error = new TypeError('The "type" argument must be of type string or an object.');
-          error.code = "ERR_INVALID_ARG_TYPE";
-          throw error;
-        }
-        if (options.type === "DeprecationWarning" && globalThis.process.noDeprecation) {
-          return undefined;
-        }
-        if (options.type === "DeprecationWarning" && globalThis.process.throwDeprecation) {
-          const error = new Error(message);
-          error.name = options.type;
-          if (typeof options.code === "string") error.code = options.code;
-          if (typeof options.detail === "string") error.detail = options.detail;
-          return globalThis.process.nextTick(() => { throw error; });
-        }
-        return emitWarning(message, options);
-      };
-    }
     const activeTimers = new Map();
     const originalSetTimeout = globalThis.setTimeout;
     const originalClearTimeout = globalThis.clearTimeout;

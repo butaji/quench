@@ -52,7 +52,7 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
 pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 
 const UTIL: &str = quench_js_check::checked_js!(
-    r#"((quote) => {
+    r#"((quote, shallowLabel) => {
   const propertyName = (key) => /^[A-Za-z_$][\w$]*$/.test(key) ? key : quote(key);
 
   function inspect(value, options = {}) {
@@ -96,7 +96,7 @@ const UTIL: &str = quench_js_check::checked_js!(
         return `${current.name || "Error"}${current.message ? `: ${current.message}` : ""}`;
       }
       if (depth > maxDepth) {
-        return current?.constructor?.name === "BlockList" ? "[BlockList]" : Array.isArray(current) ? "[Array]" : "[Object]";
+        return shallowLabel(current);
       }
       const customInspect = current[inspect.custom];
       if (settings.customInspect !== false && typeof customInspect === "function") {
@@ -360,7 +360,15 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let factory = context.evaluate_script_rooted(UTIL, "node:util/shared.js")?;
     let quote = context.host_function(crate::host::shared_vm::operation("utilInspectQuote"))?;
     let undefined = context.undefined();
-    let module = context.call_rooted(factory, undefined, &[quote])?;
+    let instance = context.evaluate_script_rooted(
+        "(object, constructor) => object instanceof constructor",
+        "node:util/instance.js",
+    )?;
+    let shallow = context.host_function_with_data(
+        crate::host::shared_vm::operation("utilInspectShallowLabel"),
+        instance,
+    )?;
+    let module = context.call_rooted(factory, undefined, &[quote, shallow])?;
     let inspect_key = context.string_rooted("inspect");
     let inspect = context.get_property_rooted(module, inspect_key)?;
     super::util_style_shared_vm::install(context, module, inspect)?;
@@ -664,4 +672,41 @@ pub(crate) fn range_error_received(context: &mut NativeContext<'_, NodeHost>, va
         }
         Ok(result)
     } else { Ok(text) }
+}
+
+/// Inspect's depth boundary derives the constructor from prototype descriptors,
+/// without invoking a user constructor getter.
+pub(crate) fn inspect_shallow_label(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let object = args.first().copied().unwrap_or_else(|| context.undefined());
+    let mut current = object;
+    let constructor_key = context.string_rooted("constructor");
+    let value_key = context.string_rooted("value");
+    let name_key = context.string_rooted("name");
+    let instance = context.host_function_data()?;
+    let undefined = context.undefined();
+    while context.is_object_rooted(current)? {
+        let descriptor = context.own_property_descriptor_rooted(current, constructor_key)?;
+        if context.is_object_rooted(descriptor)? {
+            let constructor = context.get_property_rooted(descriptor, value_key)?;
+            if context.is_callable_rooted(constructor)? {
+                let name = context.get_property_rooted(constructor, name_key)?;
+                let name_text = context.to_string(name)?;
+                if !name_text.is_empty() {
+                    if let Ok(result) =
+                        context.call_rooted(instance, undefined, &[object, constructor])
+                    {
+                        if context.truthy_rooted(result)? {
+                            return Ok(context.string_rooted(&format!("[{name_text}]")));
+                        }
+                    }
+                }
+            }
+        }
+        current = context.prototype_rooted(current)?;
+    }
+    Ok(context.string_rooted("[Object: null prototype]"))
 }
