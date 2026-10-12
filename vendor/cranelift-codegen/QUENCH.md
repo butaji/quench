@@ -6,10 +6,11 @@ upstream revision `5554cc1a651da536af2cc46c7324bdc085b162e3`, path
 `cranelift/codegen`. The matching upstream Apache-2.0 WITH LLVM-exception
 license is retained.
 
-The local patch aligns the header of each small loop without calls to the
-target's `small_loop_alignment` (x64: one 64-byte cache line; other targets
-unchanged), so a hot inner loop's body sits in the fewest fetch windows
-instead of wherever the preceding code leaves it. Upstream Cranelift aligns
+The local patch aligns the header of each small loop without calls, and of
+each loop whose header dispatches through a jump table (an interpreter's
+switch), to the target's `small_loop_alignment` (x64: one 64-byte cache
+line; other targets unchanged), so a hot loop's code sits in the fewest
+fetch windows instead of wherever the preceding code leaves it. Upstream Cranelift aligns
 only functions.
 
 The patch also scopes the elaborator's loop stack to the dominator tree:
