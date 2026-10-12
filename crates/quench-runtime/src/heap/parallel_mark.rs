@@ -168,7 +168,7 @@ impl Heap {
     }
 }
 
-fn mark_threads() -> usize {
+pub(super) fn mark_threads() -> usize {
     std::thread::available_parallelism()
         .map_or(1, usize::from)
         .min(MAX_MARK_THREADS)
