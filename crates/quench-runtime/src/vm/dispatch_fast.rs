@@ -2710,7 +2710,17 @@ const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
 
 /// Derive a function's lane view from its bytecode and its program's
 /// constants.
-fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneView {
+fn derive_lane_view<H: Host>(
+    function: &Function,
+    constants: &[Value],
+    kind: crate::bytecode::ProgramKind,
+) -> LaneView {
+    // A backward jump is a safepoint where the lane can meet a due
+    // collection. Wasm records never allocate, so no collection becomes due
+    // inside a Wasm run (one due at entry is taken there), and with sibling
+    // calls the run's stack never grows: a Wasm function's jumps all take
+    // the plain path.
+    let safepoints = kind != crate::bytecode::ProgramKind::Wasm;
     let tables = const { &LaneTable::<H>::TABLES };
     let memory_register = memory_register(function);
     let jump_targets = jump_targets(function);
@@ -2746,13 +2756,15 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
                 accumulator_field(instruction, register)
             });
             // A table is backward when one of its entries jumps back.
-            let backward_jump = if op == Op::WasmBranchTable {
-                crate::bytecode::branch_table_entries(pc, instruction).any(|entry| {
-                    decoded_instruction(function, function.code[entry]).imm() as usize <= pc
-                })
-            } else {
-                op.immediate_role() == ImmediateRole::JumpTarget && instruction.imm() as usize <= pc
-            };
+            let backward_jump = safepoints
+                && if op == Op::WasmBranchTable {
+                    crate::bytecode::branch_table_entries(pc, instruction).any(|entry| {
+                        decoded_instruction(function, function.code[entry]).imm() as usize <= pc
+                    })
+                } else {
+                    op.immediate_role() == ImmediateRole::JumpTarget
+                        && instruction.imm() as usize <= pc
+                };
             let selected = operand.and(if binds_memory {
                 Some(LaneHandler {
                     handler: lane_instance_binding::<H, true> as Handler,
@@ -2966,7 +2978,7 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
         }
         let absorbed = decoded_instruction(function, function.code[target]);
         let plain = |op: Op| absorbed.op() == op && serves(records[target].handler, op, ACC_NONE);
-        let backward = target < pc;
+        let backward = safepoints && target < pc;
         let (handler, c) = if plain(Op::Move) {
             (JumpFusions::<H>::THROUGH[0][usize::from(backward)], 0)
         } else if plain(Op::WasmI32AddImmediate)
