@@ -47,3 +47,11 @@ support, and explicit backlog handling remain incomplete.
 Process stdout writes flush the host's line buffer at each write boundary, making
 bytes visible to another process before the writer exits or emits a newline.
 The embedding's configured text sink continues to receive writes directly.
+
+EventEmitter inspection methods are native: `eventNames()` preserves string and
+symbol keys, `listeners()` unwraps once wrappers, `rawListeners()` copies the
+stored wrappers, and `listenerCount(type, listener)` filters by function identity.
+Counts do not call an overridden public `listeners()` method. Removal and error
+monitor bridges consume raw wrappers so inspection cannot disable once cleanup.
+Constructor metadata, callable constructor behavior, and some mutation/removal
+semantics remain incomplete.
