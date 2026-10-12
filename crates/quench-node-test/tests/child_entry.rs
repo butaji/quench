@@ -1976,3 +1976,50 @@ child.on('close',code=>{result.push(code,output.trim(),trace.slice());console.lo
         String::from_utf8_lossy(&observations[1].stdout)
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn tcp_reuse_port_shares_os_listeners_across_processes_like_node() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),net=require('net'),cp=require('child_process');
+const hosts=['127.0.0.1','::'];const result=[];
+function next(){if(!hosts.length){console.log(JSON.stringify(result));return}
+ const host=hosts.shift();const first=net.createServer();
+ first.listen({host,port:0,reusePort:true},()=>{
+  const port=first.address().port;const second=net.createServer();
+  second.listen({host,port,reusePort:true},()=>{
+   assert.strictEqual(second.address().port,port);
+   const source="const net=require('net');const server=net.createServer();server.listen({host:process.env.HOST,port:+process.env.PORT,reusePort:true},()=>server.close(()=>console.log('bound')));";
+   const child=cp.spawnSync(process.execPath,['-e',source],{env:{...process.env,HOST:host,PORT:port}});
+   assert.strictEqual(child.status,0,child.stderr.toString());
+   assert.strictEqual(child.stdout.toString(),'bound\n');
+   result.push([first.address().family,second.address().family,true]);
+   second.close(()=>first.close(next));
+  });
+ });
+}next();
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
