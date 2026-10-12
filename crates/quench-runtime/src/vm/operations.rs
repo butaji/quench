@@ -115,13 +115,17 @@ pub(super) fn numeric_integer_multiply_result(left: i32, right: i32) -> Value {
 }
 
 #[inline(always)]
+fn numeric_integer_subtract_result(left: i32, right: i32) -> Value {
+    left.checked_sub(right)
+        .map(Value::integer)
+        .unwrap_or_else(|| Value::number(f64::from(left) - f64::from(right)))
+}
+
+#[inline(always)]
 fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Option<Value> {
     Some(match operator {
         BinaryOperator::Addition => numeric_integer_add_result(left, right),
-        BinaryOperator::Subtraction => left
-            .checked_sub(right)
-            .map(Value::integer)
-            .unwrap_or_else(|| Value::number(f64::from(left) - f64::from(right))),
+        BinaryOperator::Subtraction => numeric_integer_subtract_result(left, right),
         BinaryOperator::Multiplication => numeric_integer_multiply_result(left, right),
         BinaryOperator::Division => {
             if right == 0 || (left == 0 && right < 0) {
@@ -231,17 +235,17 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Option<Value> {
-        if !is_numeric_binary_operator(operator) {
-            return None;
-        }
+        const ADDITION: u32 = BinaryOperator::Addition as u32;
+        const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
+        const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
         let (left, right) = Value::int_pair(left, right)?;
-        if operator == BinaryOperator::Addition as u32 {
-            return Some(numeric_integer_add_result(left, right));
+        // The common operators match the immediate directly; the rest go through the table.
+        match operator {
+            ADDITION => Some(numeric_integer_add_result(left, right)),
+            SUBTRACTION => Some(numeric_integer_subtract_result(left, right)),
+            MULTIPLICATION => Some(numeric_integer_multiply_result(left, right)),
+            _ => numeric_integer_result(numeric_binary_operator(operator)?, left, right),
         }
-        if operator == BinaryOperator::Multiplication as u32 {
-            return Some(numeric_integer_multiply_result(left, right));
-        }
-        numeric_integer_result(numeric_binary_operator(operator)?, left, right)
     }
 
     pub(super) fn call_native(

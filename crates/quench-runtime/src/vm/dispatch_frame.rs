@@ -1325,8 +1325,19 @@ impl<H: Host> Vm<H> {
         f: usize,
         window: crate::bytecode::RegisterWindow,
     ) -> &[Value] {
-        let start = usize::from(window.base);
-        &self.frames[f].registers[start..start + usize::from(window.count)]
+        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(
+            usize::from(window.base) + usize::from(window.count)
+                <= self.frames[f].registers.len()
+        );
+        // SAFETY: as for `read`: the window lies in frame `f`'s register file, which
+        // `active_registers` names.
+        unsafe {
+            std::slice::from_raw_parts(
+                self.active_registers.add(usize::from(window.base)),
+                usize::from(window.count),
+            )
+        }
     }
 
     /// An operand's value when reading it can run no guest code and cannot throw: a register
