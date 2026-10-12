@@ -1,90 +1,20 @@
 use std::alloc::Layout;
-use std::alloc::{alloc, dealloc, handle_alloc_error};
-use std::mem::{MaybeUninit, size_of};
+use std::alloc::{alloc, dealloc};
+use std::mem::MaybeUninit;
+#[cfg(feature = "profile-memory")]
+use std::mem::size_of;
 use std::ptr::NonNull;
 
-use super::slots::{MAX_RECORD_COUNT, RecordId};
+pub(super) type RecordId = u32;
 
 const RECORDS_PER_BLOCK: usize = 1_024;
-const RECORDS_PER_BLOCK_U32: u32 = RECORDS_PER_BLOCK as u32;
 const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
 const OBJECT_RECORD_SPACE_CAPACITY: usize = 1 << 24;
 
 const _: () = assert!(RECORDS_PER_BLOCK.is_power_of_two());
-const _: () = assert!(RECORDS_PER_BLOCK <= MAX_RECORD_COUNT as usize);
 const _: () = assert!(OBJECT_RECORD_SPACE_CAPACITY.is_power_of_two());
 const _: () = assert!(OBJECT_RECORD_SPACE_CAPACITY.is_multiple_of(RECORDS_PER_BLOCK));
-
-pub(super) struct RecordArena<T> {
-    base: NonNull<MaybeUninit<T>>,
-    reserved: bool,
-    blocks: Vec<RecordBlock>,
-    next_block: usize,
-}
-
-impl<T> Default for RecordArena<T> {
-    fn default() -> Self {
-        Self {
-            base: NonNull::dangling(),
-            reserved: false,
-            blocks: Vec::new(),
-            next_block: 0,
-        }
-    }
-}
-
-struct RecordBlock {
-    occupied: Vec<u64>,
-    next_word: usize,
-}
-
-impl RecordBlock {
-    fn new() -> Self {
-        let bitmap_words = RECORDS_PER_BLOCK.div_ceil(OCCUPANCY_WORD_BITS);
-        Self {
-            occupied: vec![0; bitmap_words],
-            next_word: 0,
-        }
-    }
-
-    fn claim(&mut self) -> Option<usize> {
-        for offset in 0..self.occupied.len() {
-            let word_index = (self.next_word + offset) % self.occupied.len();
-            let free_bits = !self.occupied[word_index];
-            if free_bits == 0 {
-                continue;
-            }
-            let bit = free_bits.trailing_zeros() as usize;
-            let index = word_index * OCCUPANCY_WORD_BITS + bit;
-            if index >= RECORDS_PER_BLOCK {
-                continue;
-            }
-            self.occupied[word_index] |= 1 << bit;
-            self.next_word = word_index;
-            return Some(index);
-        }
-        None
-    }
-
-    fn is_occupied(&self, index: usize) -> bool {
-        let word_index = index / OCCUPANCY_WORD_BITS;
-        let bit = index % OCCUPANCY_WORD_BITS;
-        self.occupied
-            .get(word_index)
-            .is_some_and(|word| word & (1_u64 << bit) != 0)
-    }
-
-    fn remove(&mut self, index: usize) -> bool {
-        if !self.is_occupied(index) {
-            return false;
-        }
-        let word_index = index / OCCUPANCY_WORD_BITS;
-        let bit = index % OCCUPANCY_WORD_BITS;
-        self.occupied[word_index] &= !(1_u64 << bit);
-        self.next_word = self.next_word.min(word_index);
-        true
-    }
-}
+const _: () = assert!(OBJECT_RECORD_SPACE_CAPACITY <= u32::MAX as usize);
 
 /// Object locators index one fixed address range. Block metadata controls
 /// allocation and sweep, but resolving a live locator never walks it.
@@ -233,8 +163,8 @@ impl<T> ObjectRecordSpace<T> {
     }
 
     /// # Safety
-    /// `id` must come from a live direct Object Value or Object SlotEntry.
-    /// Sweep clears that entry only after removing its record from this space.
+    /// `id` must come from a live direct Object Value. Sweep removes the
+    /// record only after all weak owners have been pruned.
     pub(super) unsafe fn get_live(&self, id: RecordId) -> &T {
         debug_assert!(
             self.is_occupied(id),
@@ -245,7 +175,7 @@ impl<T> ObjectRecordSpace<T> {
     }
 
     /// # Safety
-    /// `id` must come from a live direct Object Value or Object SlotEntry, and
+    /// `id` must come from a live direct Object Value, and
     /// the caller must have exclusive access to the heap.
     pub(super) unsafe fn get_live_mut(&mut self, id: RecordId) -> &mut T {
         debug_assert!(
@@ -432,217 +362,10 @@ impl<T> Drop for ObjectRecordSpace<T> {
     }
 }
 
-impl<T> RecordArena<T> {
-    pub(super) fn insert(&mut self, value: T) -> RecordId {
-        assert!(
-            size_of::<T>() != 0,
-            "record blocks require non-zero-sized records"
-        );
-        self.ensure_reserved();
-        for offset in 0..self.blocks.len() {
-            let block_index = (self.next_block + offset) % self.blocks.len();
-            if let Some(record_index) = self.blocks[block_index].claim() {
-                self.next_block = block_index;
-                let id = Self::record_id(block_index, record_index);
-                // SAFETY: claim set the occupancy bit for a previously vacant
-                // ID, and the reserved range keeps this address stable.
-                unsafe {
-                    self.base
-                        .as_ptr()
-                        .add(id as usize)
-                        .write(MaybeUninit::new(value))
-                };
-                return id;
-            }
-        }
-
-        assert!(
-            self.blocks.len() < MAX_RECORD_COUNT as usize / RECORDS_PER_BLOCK,
-            "record arena exhausted its encoded locator space"
-        );
-        let mut block = RecordBlock::new();
-        let record_index = block.claim().expect("a new record block is empty");
-        let block_index = self.blocks.len();
-        self.blocks.push(block);
-        self.next_block = block_index;
-        let id = Self::record_id(block_index, record_index);
-        // SAFETY: the new block claims this previously vacant ID, and the
-        // reserved range keeps this address stable.
-        unsafe {
-            self.base
-                .as_ptr()
-                .add(id as usize)
-                .write(MaybeUninit::new(value))
-        };
-        id
-    }
-
-    #[cfg(test)]
-    pub(super) fn get(&self, id: RecordId) -> Option<&T> {
-        let (block_index, record_index) = Self::split_id(id);
-        self.blocks
-            .get(block_index)?
-            .is_occupied(record_index)
-            .then(|| {
-                // SAFETY: the occupancy bit proves initialization.
-                unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_ref() }
-            })
-    }
-
-    /// # Safety
-    /// `id` must be named by a live Cell `SlotEntry`; the slot entry is cleared
-    /// before this record is released during sweep.
-    pub(super) unsafe fn get_live(&self, id: RecordId) -> &T {
-        debug_assert!(self.is_occupied(id), "live Cell locator names a record");
-        // SAFETY: guaranteed by the caller's SlotEntry liveness invariant.
-        unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_ref() }
-    }
-
-    /// # Safety
-    /// `id` must be named by a live Cell `SlotEntry`, and the caller must have
-    /// exclusive access to the heap.
-    pub(super) unsafe fn get_live_mut(&mut self, id: RecordId) -> &mut T {
-        debug_assert!(self.is_occupied(id), "live Cell locator names a record");
-        // SAFETY: guaranteed by the caller's liveness invariant and `&mut self`.
-        unsafe { (*self.base.as_ptr().add(id as usize)).assume_init_mut() }
-    }
-
-    pub(super) fn remove(&mut self, id: RecordId) -> Option<T> {
-        let (block_index, record_index) = Self::split_id(id);
-        if !self.blocks.get_mut(block_index)?.remove(record_index) {
-            return None;
-        }
-        // SAFETY: the occupancy bit proved initialization, and clearing it
-        // transfers the value to the caller exactly once.
-        Some(unsafe { self.base.as_ptr().add(id as usize).read().assume_init() })
-    }
-
-    fn record_id(block_index: usize, record_index: usize) -> RecordId {
-        let id = block_index
-            .checked_mul(RECORDS_PER_BLOCK)
-            .and_then(|base| base.checked_add(record_index))
-            .expect("record block index fits usize");
-        debug_assert!(
-            id < MAX_RECORD_COUNT as usize,
-            "record id exceeds its encoded locator space"
-        );
-        id as RecordId
-    }
-
-    fn split_id(id: RecordId) -> (usize, usize) {
-        (
-            (id / RECORDS_PER_BLOCK_U32) as usize,
-            (id % RECORDS_PER_BLOCK_U32) as usize,
-        )
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn allocated_bytes(&self) -> usize {
-        self.blocks.len() * RECORDS_PER_BLOCK * size_of::<T>()
-            + self.blocks.capacity() * size_of::<RecordBlock>()
-            + self
-                .blocks
-                .iter()
-                .map(|block| block.occupied.capacity() * size_of::<u64>())
-                .sum::<usize>()
-    }
-
-    fn ensure_reserved(&mut self) {
-        if self.reserved {
-            return;
-        }
-        let layout = Layout::array::<MaybeUninit<T>>(MAX_RECORD_COUNT as usize)
-            .expect("encoded record locator range has a representable layout");
-        // SAFETY: the layout is the full encoded record range. The allocator
-        // reserves virtual address space and pages become resident as records
-        // are written.
-        let Some(base) = NonNull::new(unsafe { alloc(layout) }.cast()) else {
-            handle_alloc_error(layout);
-        };
-        self.base = base;
-        self.reserved = true;
-    }
-
-    fn is_occupied(&self, id: RecordId) -> bool {
-        let (block_index, record_index) = Self::split_id(id);
-        self.blocks
-            .get(block_index)
-            .is_some_and(|block| block.is_occupied(record_index))
-    }
-}
-
-impl<T> Drop for RecordArena<T> {
-    fn drop(&mut self) {
-        if !self.reserved {
-            return;
-        }
-        for (block_index, block) in self.blocks.iter().enumerate() {
-            for (word_index, word) in block.occupied.iter().copied().enumerate() {
-                let mut live = word;
-                while live != 0 {
-                    let bit = live.trailing_zeros() as usize;
-                    let id =
-                        block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS + bit;
-                    if id < MAX_RECORD_COUNT as usize {
-                        // SAFETY: every occupied bit names one initialized T.
-                        unsafe {
-                            self.base
-                                .as_ptr()
-                                .add(id)
-                                .as_mut()
-                                .unwrap()
-                                .assume_init_drop()
-                        };
-                    }
-                    live &= live - 1;
-                }
-            }
-        }
-        let layout = Layout::array::<MaybeUninit<T>>(MAX_RECORD_COUNT as usize)
-            .expect("encoded record locator range has a representable layout");
-        // SAFETY: base was allocated with this exact layout in ensure_reserved.
-        unsafe { dealloc(self.base.as_ptr().cast(), layout) };
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{OBJECT_RECORD_SPACE_CAPACITY, ObjectRecordSpace, RECORDS_PER_BLOCK, RecordArena};
+    use super::{OBJECT_RECORD_SPACE_CAPACITY, ObjectRecordSpace, RECORDS_PER_BLOCK};
     use std::mem::size_of;
-
-    #[test]
-    fn record_ids_resolve_across_blocks_and_reuse_vacancies() {
-        let mut arena = RecordArena::default();
-        let first = arena.insert(String::from("first"));
-        let second = arena.insert(String::from("second"));
-        assert_eq!(first, 0);
-        assert_eq!(second, 1);
-        // SAFETY: both IDs were returned by successful insertions and are live.
-        let first_address = unsafe { arena.get_live(first) } as *const String as usize;
-        // SAFETY: both IDs were returned by successful insertions and are live.
-        let second_address = unsafe { arena.get_live(second) } as *const String as usize;
-        assert_eq!(second_address - first_address, size_of::<String>());
-        assert_eq!(arena.get(first).map(String::as_str), Some("first"));
-        assert_eq!(arena.remove(first).as_deref(), Some("first"));
-        assert!(arena.get(first).is_none());
-
-        let reused = arena.insert(String::from("reused"));
-        assert_eq!(reused, first);
-        assert_eq!(arena.get(reused).map(String::as_str), Some("reused"));
-        assert_eq!(arena.get(second).map(String::as_str), Some("second"));
-
-        let last_in_first_block = (2..RECORDS_PER_BLOCK)
-            .map(|value| arena.insert(value.to_string()))
-            .last()
-            .unwrap();
-        let first_in_second_block = arena.insert(String::from("next"));
-        assert_eq!(last_in_first_block as usize, RECORDS_PER_BLOCK - 1);
-        assert_eq!(first_in_second_block as usize, RECORDS_PER_BLOCK);
-        assert_eq!(
-            arena.get(first_in_second_block).map(String::as_str),
-            Some("next")
-        );
-    }
 
     #[test]
     fn object_record_addresses_are_dense_and_reuse_vacancies() {

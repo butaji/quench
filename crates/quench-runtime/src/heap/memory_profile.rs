@@ -523,10 +523,10 @@ impl Heap {
             cell_counts,
             cell_variant_names: cell_variant_counts.keys().copied().collect(),
             cell_variant_counts: cell_variant_counts.values().copied().collect(),
-            slot_arena_reserved_bytes: self.slots.capacity() * size_of::<super::SlotEntry>(),
+            slot_arena_reserved_bytes: self.slots.capacity() * size_of::<super::Slot>(),
             object_record_reserved_bytes: self.object_records.allocated_bytes(),
-            legacy_cell_record_reserved_bytes: self.legacy_cells.allocated_bytes(),
-            slot_size_bytes: size_of::<super::SlotEntry>(),
+            legacy_cell_record_reserved_bytes: 0,
+            slot_size_bytes: size_of::<super::Slot>(),
             cell_size_bytes: size_of::<Cell>(),
             object_header_size_bytes: size_of::<Object>(),
             occupied_slots,
@@ -590,7 +590,6 @@ impl Heap {
     pub fn memory_stats(&self) -> (usize, usize, usize, usize, usize, usize, usize) {
         let dynamic = self.properties.memory_bytes()
             + self.object_records.allocated_bytes()
-            + self.legacy_cells.allocated_bytes()
             + self.live_value_payload_bytes()
             + self
                 .sparse_arrays
@@ -603,7 +602,7 @@ impl Heap {
         let property = self.properties.stats();
         (
             self.slots.len() + self.object_records.high_water(),
-            self.slots.capacity() * size_of::<super::SlotEntry>(),
+            self.slots.capacity() * size_of::<super::Slot>(),
             self.free.capacity() * size_of::<u32>(),
             dynamic,
             property.0,
@@ -639,7 +638,7 @@ impl Heap {
     pub(crate) fn array_element_stats(&self) -> (usize, usize) {
         self.slots
             .iter()
-            .filter_map(|entry| match self.cell_for_entry(*entry)? {
+            .filter_map(|slot| match slot.cell.as_ref()? {
                 Cell::Array { elements, .. } => Some((elements.len(), elements.capacity())),
                 _ => None,
             })

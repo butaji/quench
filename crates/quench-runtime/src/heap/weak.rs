@@ -74,8 +74,6 @@ impl Heap {
         let mut finalization_jobs = Vec::new();
         let marks = &self.marks;
         let object_records = &self.object_records;
-        let slots = &self.slots;
-        let legacy_cells = &mut self.legacy_cells;
         let is_marked = |value: Value| {
             if let Some(record_id) = value.direct_object_index() {
                 return object_records.is_marked(record_id);
@@ -83,17 +81,14 @@ impl Heap {
             let Some(index) = value.legacy_heap_index().map(|index| index as usize) else {
                 return false;
             };
-            slots
-                .get(index)
-                .is_some_and(|entry| entry.is_live() && Self::marked(marks, index))
+            marks
+                .get(index / u64::BITS as usize)
+                .is_some_and(|word| word & (1 << (index % u64::BITS as usize)) != 0)
         };
-        for index in 0..slots.len() {
-            let Some(record_id) = slots.get(index).and_then(|entry| entry.cell_record_id()) else {
+        for slot in self.slots.iter_mut() {
+            let Some(cell) = slot.cell.as_mut() else {
                 continue;
             };
-            // SAFETY: the Cell SlotEntry supplied this locator and remains
-            // live until weak pruning has completed.
-            let cell = unsafe { legacy_cells.get_live_mut(record_id) };
             match cell {
                 Cell::WeakMap { entries, .. } => entries.retain(|(key, _)| is_marked(*key)),
                 Cell::WeakSet { entries, .. } => entries.retain(|key| is_marked(*key)),
