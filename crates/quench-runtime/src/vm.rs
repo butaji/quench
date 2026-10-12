@@ -864,6 +864,8 @@ pub(crate) struct Vm<H> {
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
     frame_pool: Vec<Box<Frame>>,
+    /// Wasm activations a running lane holds without frames.
+    lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
     active_call_roots: Vec<Value>,
