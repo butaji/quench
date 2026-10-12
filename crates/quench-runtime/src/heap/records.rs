@@ -331,6 +331,11 @@ impl<T> RecordSpace<T> {
             + self.blocks.capacity() * size_of::<RecordBlock>()
             + self.free.capacity() * size_of::<RecordId>()
     }
+
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn free_id_vector_capacity_bytes(&self) -> usize {
+        self.free.capacity() * size_of::<RecordId>()
+    }
 }
 
 impl<T> Drop for RecordSpace<T> {
