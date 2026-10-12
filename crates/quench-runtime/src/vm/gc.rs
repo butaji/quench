@@ -65,6 +65,7 @@ struct LiveShapes {
 
 impl LiveShapes {
     /// Adds `shape`, returning whether it was new.
+    #[inline(always)]
     fn insert(&mut self, shape: u32) -> bool {
         let index = shape as usize;
         let (word, mask) = (index / u64::BITS as usize, 1_u64 << (index % u64::BITS as usize));
@@ -100,6 +101,7 @@ impl crate::heap::ObjectRootTracer for ShapeRootTracer<'_> {
         LiveShapes::empty(self.shapes.len())
     }
 
+    #[inline(always)]
     fn visit(&self, local: &mut LiveShapes, owner: Value, shape: u32, roots: &mut Vec<Value>) {
         if local.insert(shape) && self.shapes[shape as usize].may_have_gc_roots {
             append_shape_roots(self.shapes, shape, roots);

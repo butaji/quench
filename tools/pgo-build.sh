@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Profile-guided production build of quench-node.
+#
+# usage: tools/pgo-build.sh [PROFILE]   (default: production)
+#
+# 1. Builds an instrumented quench-node into target/pgo-instrumented.
+# 2. Runs the training corpus: the interpreter curriculum micro programs and the Node
+#    compatibility fixtures. The scored engine suites under quench-bench/js-engine-benchmark
+#    are never run, so the profile describes general workloads, not benchmark identity.
+# 3. Builds PROFILE with the merged profile; the binary lands at target/PROFILE/quench-node,
+#    where the benchmark tooling reads it.
+#
+# Requires llvm-profdata from the toolchain's llvm-tools component
+# (`rustup component add llvm-tools`).
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+profile="${1:-production}"
+target_dir="${CARGO_TARGET_DIR:-$root_dir/target}"
+instrumented_dir="$target_dir/pgo-instrumented"
+data_dir="$target_dir/pgo-data"
+profdata="$target_dir/pgo-quench-node.profdata"
+# Seconds each corpus program may run; fixtures that wait on the network or a child process
+# only add their startup path.
+per_program_timeout=10
+# Each curriculum program runs this many times so interpreter loops, not the startup paths
+# the many Node fixtures share, dominate the profile (3 repeats measured 3-7% less Score).
+curriculum_repeats=20
+
+host="$(rustc -vV | sed -n 's/^host: //p')"
+llvm_profdata="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-profdata"
+if [[ ! -x "$llvm_profdata" ]]; then
+    printf 'llvm-profdata not found; run: rustup component add llvm-tools\n' >&2
+    exit 1
+fi
+run_limited() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$per_program_timeout" "$@"
+    elif command -v gtimeout >/dev/null 2>&1; then
+        gtimeout "$per_program_timeout" "$@"
+    else
+        "$@"
+    fi
+}
+
+cd "$root_dir"
+rm -rf "$data_dir"
+mkdir -p "$data_dir"
+# `--config` appends to the repository's configured rustflags instead of replacing them.
+CARGO_TARGET_DIR="$instrumented_dir" cargo build --profile "$profile" -p quench-node \
+    --config "build.rustflags=[\"-Cprofile-generate=$data_dir\"]"
+instrumented="$instrumented_dir/$profile/quench-node"
+
+# A fixed pool of profiles merged in place as programs exit keeps the raw data small.
+export LLVM_PROFILE_FILE="$data_dir/quench-%4m.profraw"
+for program in quench-bench/deegen-curriculum/*.js quench-bench/property-get.js; do
+    for _ in $(seq "$curriculum_repeats"); do
+        run_limited "$instrumented" "$program" >/dev/null 2>&1 || true
+    done
+done
+while IFS= read -r fixture; do
+    (cd "$(dirname "$fixture")" && run_limited "$instrumented" "$(basename "$fixture")" \
+        >/dev/null 2>&1) || true
+done < <(find tests/node-compat -name '*.js' | sort)
+unset LLVM_PROFILE_FILE
+
+"$llvm_profdata" merge -o "$profdata" "$data_dir"/*.profraw
+rm -rf "$data_dir"
+CARGO_TARGET_DIR="$target_dir" cargo build --profile "$profile" -p quench-node \
+    --config "build.rustflags=[\"-Cprofile-use=$profdata\"]"
+printf 'PGO build: %s\n' "$target_dir/$profile/quench-node"
