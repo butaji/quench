@@ -312,6 +312,10 @@ pub(super) struct CompiledProgram {
     /// Memory accesses rely on the memory's guard reservation instead of
     /// bounds checks.
     guarded: bool,
+    /// The guarded memory's base, when code addresses it as a constant
+    /// displacement (see `displacement_base`); calls with another base fall
+    /// back to the interpreter.
+    fixed_base: Option<i32>,
     /// The environment slots of the globals compiled code accesses, in the
     /// order of the context's global addresses.
     globals: Vec<u32>,
@@ -1735,6 +1739,7 @@ impl<H: Host> Analysis<'_, H> {
         plan: &Plan,
         plans: &[Option<Plan>],
         guarded: bool,
+        fixed_base: Option<i32>,
         globals: &[u32],
     ) -> Option<(Vec<u8>, Vec<Call>)> {
         let function = &self.code.functions[index];
@@ -1754,6 +1759,12 @@ impl<H: Host> Analysis<'_, H> {
         builder.seal_block(entry);
         let parameters = builder.block_params(entry).to_vec();
         let (context, base, length) = (parameters[0], parameters[1], parameters[2]);
+        // A constant base folds into each access's addressing mode and
+        // frees the register the parameter would occupy.
+        let base = match fixed_base {
+            Some(fixed) => builder.ins().iconst(types::I64, i64::from(fixed)),
+            None => base,
+        };
         let regions = Region::ALL.map(|region| {
             builder.func.dfg.alias_regions.insert(ir::AliasRegionData {
                 user_id: region as u32,
@@ -1974,6 +1985,12 @@ impl<H: Host> Analysis<'_, H> {
 }
 
 /// The guard reservation of an unshared memory binding.
+/// A memory base an x86-64 addressing mode can carry as its signed 32-bit
+/// displacement.
+fn displacement_base(base: *mut u8) -> Option<i32> {
+    i32::try_from(base as usize).ok()
+}
+
 fn guarded_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
     let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
         return None;
@@ -2300,6 +2317,12 @@ impl<H: Host> Vm<H> {
         if plans.iter().all(Option::is_none) {
             return None;
         }
+        let fixed_base = guarded
+            .then(|| {
+                let binding = self.heap.environment_slot(env, memory_slot? as usize)?;
+                displacement_base(guarded_memory(self, binding)?.0)
+            })
+            .flatten();
         let isa = target_isa()?;
         // The full plan of a callable function, derived again where needed.
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
@@ -2343,6 +2366,7 @@ impl<H: Host> Vm<H> {
                 &plan(index)?,
                 &plans,
                 guarded,
+                fixed_base,
                 &globals,
             )?;
             let offset = place(&mut bytes, body);
@@ -2382,6 +2406,7 @@ impl<H: Host> Vm<H> {
             functions,
             memory_slot,
             guarded,
+            fixed_base,
             globals,
         })
     }
@@ -2442,6 +2467,12 @@ impl<H: Host> Vm<H> {
                 let guard = guarded_memory(self, binding);
                 // Code compiled without bounds checks needs this memory's guard.
                 if compiled.guarded && guard.is_none() {
+                    return None;
+                }
+                if compiled
+                    .fixed_base
+                    .is_some_and(|fixed| guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed)))
+                {
                     return None;
                 }
                 (view.0 as u64, view.1 as u64, guard)
