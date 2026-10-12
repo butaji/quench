@@ -4088,3 +4088,160 @@ child.on('exit',()=>{assert.strictEqual(child._handle,null);assert.strictEqual(h
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[cfg(unix)]
+#[test]
+fn local_socket_transport_exchanges_raw_bytes_with_an_external_process_and_unlinks_listener() {
+    const SOURCE: &str = r#"
+const net=require('net'),fs=require('fs'),cp=require('child_process'),assert=require('assert');
+const path='/tmp/quench-local-'+process.pid+'.sock';
+const server=net.createServer(socket=>{const chunks=[];socket.on('data',chunk=>chunks.push(chunk));socket.on('end',()=>{assert.deepStrictEqual(Buffer.concat(chunks),Buffer.from([0,255,128,65]));socket.end(Buffer.from([1,254,127,66]));});});
+server.listen(path,()=>{
+ assert.strictEqual(server.address(),path);assert.strictEqual(fs.existsSync(path),true);
+ const child=cp.spawn('python3',['-c','import socket,sys;s=socket.socket(socket.AF_UNIX);s.connect(sys.argv[1]);s.sendall(bytes([0,255,128,65]));s.shutdown(socket.SHUT_WR);out=b""\nwhile True:\n data=s.recv(1024)\n if not data:break\n out+=data\nassert out==bytes([1,254,127,66]);s.close()',path],{stdio:'inherit'});
+ child.on('exit',code=>{assert.strictEqual(code,0);server.close(()=>{assert.strictEqual(fs.existsSync(path),false);console.log('external local bytes and unlink')});});
+});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[cfg(unix)]
+#[test]
+fn local_socket_path_overloads_and_os_connection_errors_are_observable() {
+    const SOURCE: &str = r#"
+const net=require('net'),assert=require('assert'),fs=require('fs');const path='/tmp/quench-local-errors-'+process.pid+'.sock';
+const missing=net.connect(path);missing.on('error',error=>{assert.strictEqual(error.code,'ENOENT');assert.strictEqual(error.errno,-2);assert.strictEqual(error.syscall,'connect');assert.strictEqual(error.address,path);});missing.on('close',()=>{
+ const server=net.createServer(socket=>socket.end('ok'));server.listen({path},()=>{assert.strictEqual(server.address(),path);const socket=net.connect({path},()=>{assert.strictEqual(socket.connecting,false)});let output='';socket.setEncoding('utf8');socket.on('data',data=>output+=data);socket.on('end',()=>{assert.strictEqual(output,'ok');socket.end()});socket.on('close',()=>server.close(()=>{assert.strictEqual(fs.existsSync(path),false);console.log('local overload and actual ENOENT')}));});
+});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[cfg(unix)]
+#[test]
+fn local_socket_bind_errors_are_async_and_long_paths_preserve_os_errno() {
+    const SOURCE: &str = r#"
+const net=require('net'),assert=require('assert');const path='/tmp/quench-local-boundary-'+process.pid+'.sock';
+const first=net.createServer();first.listen(path,()=>{
+ const second=net.createServer();let returned=false;second.on('error',error=>{assert.strictEqual(returned,true);assert.strictEqual(error.code,'EADDRINUSE');assert.strictEqual(error.syscall,'listen');assert.strictEqual(error.address,path);assert.strictEqual(error.port,-1);first.close(()=>{
+  const long='/tmp/'+ 'x'.repeat(10000);const server=net.createServer();server.on('error',error=>{assert.strictEqual(error.code,'EINVAL');net.connect(long).on('error',error=>{assert.strictEqual(error.code,'EINVAL');console.log('actual bind conflict and path boundary')})});server.listen(long);
+ });});second.listen(path);returned=true;
+});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn local_abstract_socket_uses_kernel_namespace_and_releases_on_close() {
+    const SOURCE: &str = r#"
+const net=require('net'),assert=require('assert');const path='\0quench-abstract-'+process.pid;
+const server=net.createServer(socket=>socket.end('abstract'));server.listen(path,()=>{assert.strictEqual(server.address(),path);const client=net.connect(path);let result='';client.setEncoding('utf8');client.on('data',chunk=>result+=chunk);client.on('end',()=>{assert.strictEqual(result,'abstract');client.end()});client.on('close',()=>server.close(()=>{const again=net.createServer();again.listen(path,()=>again.close(()=>console.log('kernel abstract close and rebind')))}));});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn net_endpoint_invalid_options_preserve_node_error_codes_and_messages() {
+    const SOURCE: &str = r#"
+const net=require('net'),assert=require('assert'),result=[];
+for(const value of [false,true,{port:false},{port:true},{path:-1},{},{host:'localhost'}]) {
+ try {net.createServer().listen(value);assert.fail('expected options rejection')}catch(error){result.push([error.name,error.code,error.message]);}
+}
+for(const value of [-1,NaN,Infinity,-Infinity,1.5,65536,'65536','']) {
+ for(const connect of [false,true])try{if(connect)net.connect({port:value});else net.createServer().listen({port:value});assert.fail('expected port rejection')}catch(error){result.push([error.name,error.code,error.message]);}
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
