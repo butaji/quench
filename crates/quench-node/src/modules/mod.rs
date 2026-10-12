@@ -29,6 +29,7 @@ pub(crate) mod diagnostics_channel_shared_vm;
 pub(crate) mod domain_shared_vm;
 pub(crate) mod dns_shared_vm;
 pub(crate) mod events_shared_vm;
+pub(crate) mod event_limits_shared_vm;
 pub(crate) mod event_emitter_shared_vm;
 pub(crate) mod fetch_shared_vm;
 pub(crate) mod fs_error_codes;
