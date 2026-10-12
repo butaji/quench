@@ -512,6 +512,9 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        crate::modules::text_decoder_shared_vm::install_global(context)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_text_decoder");
         crate::modules::process_shared_vm::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_process");
@@ -556,9 +559,6 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::child_process_ipc_shared_vm::install_process(context, process, emitter)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_emitter_polyfill");
-        crate::modules::text_decoder_shared_vm::install_global(context)?;
-        #[cfg(feature = "profile-memory")]
-        context.profile_memory_checkpoint("node_text_decoder");
         let expose_gc = context
             .host_mut()
             .shared_state()
