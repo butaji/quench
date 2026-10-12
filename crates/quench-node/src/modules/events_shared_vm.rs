@@ -66,6 +66,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let class_key = context.string_rooted("__nodeEventEmitter");
     let module = context.get_property_rooted(global, class_key)?;
     set(context, module, "EventEmitter", module)?;
+    super::emitter_async_resource_shared_vm::install(context, module)?;
 
     let inspect = crate::modules::util_shared_vm::internal_inspect(context)?;
     let internal_inspect = context.evaluate_script_rooted(
