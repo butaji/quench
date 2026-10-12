@@ -9,6 +9,13 @@ pub(crate) const CONSOLE_CLASS: &str = r#"(class Console {
     this._inspectOptions = options ? options.inspectOptions : undefined;
     if (!this._stdout) this._stdout = globalThis?.process?.stdout;
     if (!this._stderr) this._stderr = globalThis?.process?.stderr;
+    // Like Node, bind the public methods to this instance, read through it so subclass
+    // overrides win, keeping each method's name.
+    for (const key of Object.getOwnPropertyNames(Console.prototype)) {
+      if (key === "constructor" || key.startsWith("_")) continue;
+      this[key] = this[key].bind(this);
+      Object.defineProperty(this[key], "name", { value: key });
+    }
   }
   _format(output, args) {
     const util = (typeof require === "function"
