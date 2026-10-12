@@ -419,31 +419,6 @@ fn coded_error(
     Ok(error)
 }
 
-fn queue_context(
-    context: &mut NativeContext<'_, NodeHost>,
-    callback: RootId,
-    receiver: RootId,
-    args: &[RootId],
-) -> Result<(), RootedError> {
-    let callback = context.retain(callback)?;
-    let receiver = context.retain(receiver)?;
-    let args = args
-        .iter()
-        .map(|root| context.retain(*root))
-        .collect::<Result<Vec<_>, _>>()?;
-    context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .scheduler
-        .queue_shared_next_tick(super::shared_event_loop::SharedCallback {
-            callback,
-            receiver,
-            args,
-        });
-    Ok(())
-}
-
 pub(crate) fn send(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -470,12 +445,17 @@ pub(crate) fn send(
         let error = coded_error(context, "ERR_IPC_CHANNEL_CLOSED", "Channel closed")?;
         if let Some(callback) = callback {
             let undefined = context.undefined();
-            queue_context(context, callback, undefined, &[error])?;
+            super::shared_event_loop::queue_next_tick(context, callback, undefined, &[error])?;
         } else {
             let emit = context.host_function(crate::host::shared_vm::operation("ipcEmit"))?;
             let event = context.string_rooted("error");
             let undefined = context.undefined();
-            queue_context(context, emit, undefined, &[target, event, error])?;
+            super::shared_event_loop::queue_next_tick(
+                context,
+                emit,
+                undefined,
+                &[target, event, error],
+            )?;
         }
         return Ok(context.boolean(false));
     }
@@ -546,7 +526,12 @@ pub(crate) fn send(
         let complete = context.host_function(crate::host::shared_vm::operation("ipcComplete"))?;
         let undefined = context.undefined();
         let failed = context.boolean(failed);
-        queue_context(context, complete, undefined, &[callback, failed])?;
+        super::shared_event_loop::queue_next_tick(
+            context,
+            complete,
+            undefined,
+            &[callback, failed],
+        )?;
         context.release_root(callback);
     }
     Ok(context.boolean(accepted))

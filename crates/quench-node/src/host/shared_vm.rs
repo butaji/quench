@@ -102,7 +102,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "ipcDecode" (2) => crate::modules::child_process_ipc_shared_vm::decode,
         method "ipcEmit" (3) => crate::modules::child_process_ipc_shared_vm::emit,
         method "childProcessSpawn" (3) => crate::modules::child_process_shared_vm::spawn_child,
-        method "childProcessRegister" (4) => crate::modules::child_process_shared_vm::register_child,
+        method "childProcessFlushStdio" (1) => crate::modules::child_process_shared_vm::queue_stdio_flush,
+        method "childProcessFlushStdioRun" (1) => crate::modules::child_process_shared_vm::flush_stdio,
+        method "childProcessRead" (2) => crate::modules::child_process_shared_vm::request_read,
+        method "childProcessRegister" (5) => crate::modules::child_process_shared_vm::register_child,
         method "childProcessStreamClosed" (0) => crate::modules::child_process_shared_vm::stream_closed,
         method "childProcessWrite" (3) => crate::modules::child_process_shared_vm::write_child,
         method "childProcessInputComplete" (2) => crate::modules::child_process_input_shared_vm::complete,
@@ -142,6 +145,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netIsIPv4" (1) => crate::modules::net_shared_vm::is_ipv4,
         method "netIsIPv6" (1) => crate::modules::net_shared_vm::is_ipv6,
         method "netConnect" (3) => crate::modules::net_shared_vm::connect_operation,
+        method "streamPipePlan" (3) => crate::modules::stream_pipe_shared_vm::plan,
+        method "eventsListenerCount" (2) => crate::modules::events_shared_vm::listener_count,
+        method "streamPipeEnd" (0) => crate::modules::stream_pipe_shared_vm::end,
+        method "streamPipeClose" (0) => crate::modules::stream_pipe_shared_vm::close,
         method "streamPipeShouldEnd" (2) => crate::modules::stream_shared_vm::pipe_should_end,
         method "streamApplyTransformOptions" (2) => crate::modules::stream_shared_vm::apply_transform_options,
         method "streamGetDefaultHighWaterMark" (1) => crate::modules::stream_shared_vm::get_default_high_water_mark,
@@ -152,7 +159,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netSocketEnd" (1) => crate::modules::net_shared_vm::end_operation,
         method "netSocketDestroy" (2) => crate::modules::net_shared_vm::destroy_operation,
         method "netSocketSetEncoding" (2) => crate::modules::net_shared_vm::set_encoding_operation,
-        method "netServerListen" (3) => crate::modules::net_shared_vm::server_listen_operation,
+        method "netServerListen" (4) => crate::modules::net_shared_vm::server_listen_operation,
         method "netServerClose" (1) => crate::modules::net_shared_vm::server_close_operation,
         method "netServerAddress" (1) => crate::modules::net_shared_vm::server_address_operation,
         method "httpCreateServer" (1) => crate::modules::http_shared_vm::create_server,
@@ -482,14 +489,10 @@ impl quench_runtime::Host for NodeHost {
             crate::polyfills::shared_vm::ABORT,
             "node:bootstrap/shared-vm/abort.js",
         )?;
-        context.release_root(abort);
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_abort_polyfill");
-        let event_target = context.evaluate_script_rooted(
-            crate::polyfills::shared_vm::EVENT_TARGET,
-            "node:bootstrap/shared-vm/event-target.js",
-        )?;
-        context.release_root(event_target);
+        crate::modules::events_shared_vm::initialize_targets(context, abort)?;
+        context.release_root(abort);
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_target_polyfill");
         let event_emitter = context.evaluate_script_rooted(
