@@ -7,6 +7,7 @@ pub(crate) const NODE_VERSION: &str = "22.0.0";
 
 #[derive(Clone, Copy)]
 pub(crate) enum ProcessFact {
+    SharedOpenSsl,
     Boolean(bool),
     Number(f64),
     String(&'static str),
@@ -26,7 +27,7 @@ pub(crate) fn config_variable_facts() -> &'static [(&'static str, ProcessFact)] 
         ("node_use_amaro", ProcessFact::Boolean(false)),
         ("node_use_ffi", ProcessFact::Boolean(false)),
         ("node_shared", ProcessFact::Boolean(false)),
-        ("node_shared_openssl", ProcessFact::Boolean(false)),
+        ("node_shared_openssl", ProcessFact::SharedOpenSsl),
     ]
 }
 
@@ -428,3 +429,24 @@ impl ProcessControl {
 #[cfg(not(unix))]
 const INITIAL_UMASK: u32 = 0o022;
 const UMASK_BITS: u32 = 0o777;
+
+/// Derive linkage from loaded images, without guessing from a library name or
+/// a build environment that may differ from the executable being run.
+pub(crate) fn shared_openssl() -> bool {
+    #[cfg(unix)]
+    unsafe {
+        let mut host: libc::Dl_info = std::mem::zeroed();
+        let mut ssl: libc::Dl_info = std::mem::zeroed();
+        libc::dladdr(
+            shared_openssl as *const () as *const libc::c_void,
+            &mut host,
+        ) != 0
+            && libc::dladdr(
+                openssl_sys::SSL_CTX_new as *const () as *const libc::c_void,
+                &mut ssl,
+            ) != 0
+            && host.dli_fbase != ssl.dli_fbase
+    }
+    #[cfg(not(unix))]
+    false
+}

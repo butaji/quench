@@ -652,7 +652,12 @@ fn relocate_source_positions(
             continue;
         };
         let location = (position.line, position.column);
-        if previous_location == Some(location) {
+        // Call anchors are observable even when their location matches a
+        // preceding Move that a later pass may remove.
+        if previous_location == Some(location)
+            && old_code[anchor].op().control_flow_layout()
+                != crate::bytecode::ControlFlowLayout::Call
+        {
             continue;
         }
         relocated.push(crate::bytecode::SourcePosition {

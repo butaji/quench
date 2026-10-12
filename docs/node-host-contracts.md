@@ -96,6 +96,132 @@ at an absolute prefix. Absolute resolutions do not read `process.cwd`; empty
 and dot-only resolutions retain Node's early cwd shortcut and retry behavior
 when a replaced cwd hook returns a relative path.
 
+Child-process cwd options accept strings, file URLs, Buffer and Uint8Array
+views. URL conversion and null-byte validation run before launch. Validated
+byte views then use public string coercion, matching the child binding: Buffer
+uses its string conversion, while an ordinary Uint8Array produces comma-separated
+values. These options still use the same retained-directory launch owner.
+URL branding currently shares the existing URL adapter; this does not establish
+conformance when guests replace the global URL prototype.
+
+Synchronous child output uses intrinsic byte views with the captured Buffer
+prototype, independent of a replaced `Buffer.from`. The result owns one output
+array; stdout and stderr are projections of its entries. Encoding conversion
+calls the public Buffer `toString` hook and replaces those same entries.
+Successful launches omit `error`; failed launches have pid zero, null output
+and undefined stdout/stderr. Result property order matches the Node binding.
+
+Process stdout/stderr writes pass ArrayBufferView bytes directly to OS
+descriptors instead of converting through UTF-8. The existing embedding
+`NodeOutputSink` remains text-only and uses its prior lossy text projection.
+This does not establish complete Writable metadata, callbacks, string-encoding
+options, backpressure or stream-error handling.
+
+On Unix, synchronous child input and output share one nonblocking poll loop.
+The configured stdio specifications own the OS descriptors and determine null
+output slots. String input shares Buffer's codec using the original UTF-16
+units; views use their raw bytes. Empty input closes the parent stdin endpoint.
+Runner errors take precedence over the first pipe error. A timeout or buffer
+overflow sends the selected signal, closes every parent endpoint and reaps the
+child. A failing signal operation uses Node's SIGKILL fallback. The child's
+actual exit status is preserved, including handlers that exit with a code and
+children that exit before a grandchild-held pipe reaches the deadline.
+
+Linux signal constants are read-only entries in a null-prototype record,
+derived from the same OS table as captured process-kill constants and
+synchronous child signal validation. Collection is implemented on Unix; non-Unix retains its previous
+collection path. Signal selection and these additions are verified on Linux. Extra synchronous stdio channels,
+wrap-based synchronous stdio, full option normalization and mutable internal
+child-process callback routing still require conformance work.
+
+Common child options are copied into a null-prototype record through own keys,
+per-key descriptor checks and original getter receivers. Common field rules
+validate boolean flags, signed 32-bit uid/gid, shell/argv0 strings, timeouts,
+kill signals and asynchronous serialization mode. Native option and file/NUL
+validation replace the former bridge checks. Argument snapshots and the full
+internal mutable child-process routing still need separate work.
+
+Unix child credential/session configuration runs in pre-exec after directory
+setup, with no guest calls. It clears supplementary groups opportunistically,
+then applies gid and uid. Async launch errors preserve Node's synchronous
+versus queued errno boundary. Sync errors retain the actual kernel errno;
+code names and messages are projections, not reverse lookups. `getgroups`
+queries the kernel and includes the effective gid when absent.
+
+Synchronous command options preserve `execFileSync` shell choices and apply
+`execSync` shell defaults in native code. Child disposal observes public killed
+and kill hooks and returns undefined. Linux signal records are non-extensible
+through the shared VM's canonical integrity operation. On Unix,
+`node_shared_openssl` compares the loaded image owning SSL_CTX_new with the
+image owning the host implementation; it does not infer linkage from fixture
+names or a build environment. Non-Unix retains the previous linkage fact.
+
+Child process handles keep separate open/closing/closed phases and one
+reference flag. Public ref/unref methods observe the handle guard and method
+lookup, including the repeated getter, and return undefined. Native handle
+methods validate their receiver identity. Process exit starts closure;
+close dispatch and handle closure are distinct transitions. Captured hasRef
+remains observable during closing and returns undefined after release.
+Referenced process handles, pipe demand/ownership and parent IPC channels
+contribute independently to loop liveness. The current handle adapter covers
+reference ownership; complete ProcessWrap construction/spawn/close methods and
+internal channel ref-count semantics remain separate work.
+
+## Local socket transport
+
+On Unix, `net` path endpoints use OS Unix-domain listeners and streams. TCP
+and local streams share the same native byte reads, queued write completions,
+half-close operations and socket ownership. Accepted local sockets have no
+fabricated IP peer address. Listener ownership unlinks a filesystem socket on
+close; Linux abstract addresses use the kernel namespace and own no path.
+Connect failures preserve OS errno, code, syscall and the requested path.
+Listen failures enter the canonical next-tick queue, including bind conflicts
+and overlong-path rejection. Endpoint overload selection is native; connect
+and listen retain their different port/path precedence.
+
+Oracle checks cover bytes exchanged with an external AF_UNIX process,
+filesystem unlink, ordinary path overloads, ENOENT, asynchronous EADDRINUSE,
+EINVAL for long paths, and Linux abstract close/rebind. Relative paths resolve
+against the live working-directory path. Resolving a relative path to an
+absolute pathname can still change the socket address length limit, and does
+not preserve directory-fd semantics through concurrent renames. Server fd
+adoption, the complete option/property-access surface, permissions flags,
+socket reference ownership and Windows named pipes remain separate work.
+
+## Listener reference ownership
+
+`net.Server` ref/unref methods preserve the public `_unref` request and the
+repeated `_handle` getter/method lookup. An unref request before listen applies
+when the native listener is installed; changing an installed handle changes
+the listener's single reference bit. Accepted sockets contribute independently.
+The event loop derives net liveness from the transport, rather than counting
+retained wrapper maps as additional references.
+
+Native listeners transition from open to close-requested to closing, releasing
+the OS endpoint at close and retaining handle reference queries through close
+callback dispatch. The next native poll releases the handle metadata. Oracle
+checks cover before/after-listen unref, ref restoration, public setter/getter
+hooks, strict detached calls and close-phase hasRef observations. The exposed
+handle adapter implements ref/unref/hasRef; complete TCP/Pipe wrap methods and
+prototype metadata, fd adoption and socket reference behavior remain separate
+work.
+
+## TLS material validation
+
+Secure-context CRL and PKCS12 checks use native OpenSSL parsers. CRLs use
+the PEM parser; arrays follow the guest iterator protocol and close on a
+validation error. PKCS12 uses the BIO decoder and native password bytes,
+including zero termination, so malformed input and incorrect passwords come
+from the same parsing operations as Node. PFX arrays capture length, skip
+holes and read each entry immediately before validation. Missing private keys
+and certificates produce the corresponding coded operation errors. Parser
+failures drain the OpenSSL error stack and expose the first reason.
+
+This checkpoint validates material; the existing SecureContext object remains
+a compatibility shell. It does not retain an SSL_CTX, configure trust stores
+or establish TLS socket/handshake support. Provider-dependent unsupported
+archives and the complete secure-context option surface need further work.
+
 ## Verification
 
 Use the selected pinned Node oracle on `PATH` and build both sibling entry
