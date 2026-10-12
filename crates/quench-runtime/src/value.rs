@@ -9,6 +9,22 @@ const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
 const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
+/// The tags occupy one contiguous range of tag-field values, so a tag test
+/// is one range comparison.
+const FIRST_TAG: u64 = TAG_UNDEFINED;
+/// The tag field's position: above the payload.
+const TAG_SHIFT: u32 = PAYLOAD_MASK.count_ones();
+const LAST_TAG: u64 = TAG_DELETED;
+const _: () = {
+    let tags = [TAG_UNDEFINED, TAG_NULL, TAG_BOOL, TAG_HEAP, TAG_INT, TAG_DELETED];
+    let step = 1 << TAG_SHIFT;
+    let mut index = 1;
+    while index < tags.len() {
+        assert!(tags[index] == tags[index - 1] + step);
+        index += 1;
+    }
+    assert!(tags[0] == FIRST_TAG && tags[tags.len() - 1] == LAST_TAG);
+};
 
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy)]
@@ -94,6 +110,28 @@ impl Value {
         ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)
     }
 
+    /// The bits of a slot whose Wasm type is statically f64, for an operator
+    /// whose result depends on a NaN operand only through being a NaN (float
+    /// arithmetic and comparison). A boxed payload's bits are a quiet NaN, so
+    /// such an operator sees a NaN exactly where the payload is one.
+    #[inline(always)]
+    pub(crate) const fn float_bits64(self) -> u64 {
+        self.0
+    }
+
+    /// A float arithmetic result held in place. A NaN whose bits fall in the
+    /// tag space becomes the canonical NaN: arithmetic may produce any
+    /// arithmetic NaN, and the canonical one is.
+    #[inline(always)]
+    pub(crate) fn from_float_bits64(bits: u64) -> Self {
+        let value = Self(bits);
+        if value.is_tagged() {
+            Self(CANONICAL_NAN)
+        } else {
+            value
+        }
+    }
+
     /// The 32-bit payload of a slot whose Wasm type is statically i32 or f32.
     #[inline(always)]
     pub(crate) const fn wasm_bits32(self) -> u32 {
@@ -143,11 +181,11 @@ impl Value {
         self.0 == TAG_DELETED
     }
 
+    #[inline(always)]
     fn is_tagged(self) -> bool {
-        matches!(
-            self.0 & TAG_MASK,
-            TAG_UNDEFINED | TAG_NULL | TAG_BOOL | TAG_HEAP | TAG_INT | TAG_DELETED
-        )
+        // The tag field, shifted down, compared as one small range.
+        let field = (self.0 >> TAG_SHIFT) as u32;
+        field.wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32) <= ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32
     }
 
     #[cfg(feature = "profile-aggregate")]

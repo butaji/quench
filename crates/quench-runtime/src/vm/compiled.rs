@@ -312,6 +312,10 @@ pub(super) struct CompiledProgram {
     /// Memory accesses rely on the memory's guard reservation instead of
     /// bounds checks.
     guarded: bool,
+    /// The guarded memory's base, when code addresses it as a constant
+    /// displacement (see `displacement_base`); calls with another base fall
+    /// back to the interpreter.
+    fixed_base: Option<i32>,
     /// The environment slots of the globals compiled code accesses, in the
     /// order of the context's global addresses.
     globals: Vec<u32>,
@@ -886,14 +890,45 @@ fn invariant() -> MemFlagsData {
     MemFlagsData::trusted().with_readonly().with_can_move()
 }
 
-/// The internal signature of a compiled function.
+/// The memory facts a compiled call passes after the context: the base
+/// unless the program fixes it as a constant, and the length unless the
+/// guard bounds accesses. One program's functions share them.
+#[derive(Clone, Copy)]
+struct MemoryArguments {
+    base: bool,
+    length: bool,
+}
+
+impl MemoryArguments {
+    fn of(fixed_base: Option<i32>, guarded: bool) -> Self {
+        Self {
+            base: fixed_base.is_none(),
+            length: !guarded,
+        }
+    }
+
+    /// The passed ones of `base` and `length`, in parameter order.
+    fn select(self, base: ir::Value, length: ir::Value) -> impl Iterator<Item = ir::Value> {
+        [self.base.then_some(base), self.length.then_some(length)]
+            .into_iter()
+            .flatten()
+    }
+
+    fn count(self) -> usize {
+        usize::from(self.base) + usize::from(self.length)
+    }
+}
+
+/// The internal signature of a compiled function: the context, the memory
+/// arguments, then the Wasm parameters.
 fn internal_signature(
+    memory: MemoryArguments,
     plan_params: &[crate::WasmType],
     result: Option<crate::WasmType>,
     call_conv: cranelift_codegen::isa::CallConv,
 ) -> Signature {
     let mut signature = Signature::new(call_conv);
-    for _ in 0..3 {
+    for _ in 0..1 + memory.count() {
         signature.params.push(AbiParam::new(types::I64));
     }
     for ty in plan_params {
@@ -910,6 +945,158 @@ fn internal_signature(
     signature
 }
 
+/// Instructions a threaded copy may repeat between a constant's jump and the
+/// branch table the constant decides; bounds the code each copy adds.
+const THREAD_BUDGET: usize = 16;
+
+/// Where a threaded copy continues once its path is done.
+#[derive(Clone, Copy)]
+enum ThreadEnd {
+    /// The branch table's case for the constant.
+    Case(usize),
+    /// The successor the constant decided a branch to.
+    Exit(usize),
+}
+
+/// A copy of the instructions from a jump target to a branch table, for a
+/// jump that leaves the table's selector holding a known constant: along
+/// the copy the selector cannot change, so branches on it are decided and
+/// the table becomes a direct jump (jump threading; a state machine's
+/// dispatch on the state it just set disappears). The copy repeats each
+/// instruction at its own PC and exits only to block leaders.
+struct Thread {
+    selector: u16,
+    value: i32,
+    path: Vec<usize>,
+    end: ThreadEnd,
+}
+
+/// Whether `instruction` may write `register`; windows and other register
+/// groups count as writing every register.
+fn writes_register(instruction: WideInstruction, register: u16) -> bool {
+    use crate::bytecode::{FieldLayout, InstructionField};
+    InstructionField::ALL.iter().any(|field| {
+        let operand = match field {
+            InstructionField::A => instruction.a(),
+            InstructionField::B => instruction.b(),
+            InstructionField::C => instruction.c(),
+        };
+        match instruction.op().field_layout(*field) {
+            FieldLayout::ResultRegister
+            | FieldLayout::WriteRegister
+            | FieldLayout::ReadWriteRegister => operand == register,
+            FieldLayout::RegisterWindowBase
+            | FieldLayout::RegisterCount
+            | FieldLayout::ConstructArguments
+            | FieldLayout::NumericLocalTarget => true,
+            _ => false,
+        }
+    })
+}
+
+/// Whether conditional jump `instruction` is taken when `register` holds
+/// `value`, if that alone decides it.
+fn decided_branch(instruction: WideInstruction, register: u16, value: i32) -> Option<bool> {
+    let op = instruction.op();
+    if instruction.a() != register {
+        return None;
+    }
+    if let Some(operator) = I32BinaryOperator::from_immediate_jump_op(op) {
+        let right = i32::from(instruction.b() as i16);
+        return operator.evaluate(value, right).ok().map(|holds| holds != 0);
+    }
+    match op {
+        Op::WasmJumpI32Zero => Some(value == 0),
+        Op::WasmJumpI32NonZero => Some(value != 0),
+        _ => None,
+    }
+}
+
+/// The threaded copy from `start` for `selector` holding `value`, when one
+/// reaches a branch table on the selector, or a branch the value decides,
+/// within the budget.
+fn thread_path(
+    instructions: &[WideInstruction],
+    plan: &Plan,
+    start: usize,
+    selector: u16,
+    value: i32,
+) -> Option<Thread> {
+    fn walk(
+        instructions: &[WideInstruction],
+        plan: &Plan,
+        pc: usize,
+        selector: u16,
+        value: i32,
+        path: &mut Vec<usize>,
+    ) -> Option<ThreadEnd> {
+        if path.len() == THREAD_BUDGET || !plan.reachable(pc) {
+            return None;
+        }
+        let instruction = *instructions.get(pc)?;
+        if writes_register(instruction, selector) {
+            return None;
+        }
+        path.push(pc);
+        let end = match instruction.op().control_flow_layout() {
+            ControlFlowLayout::BranchTable if instruction.a() == selector => {
+                let entries: Vec<usize> = crate::bytecode::branch_table_entries(pc, instruction)
+                    .map(|entry| instructions[entry].jump_target() as usize)
+                    .collect();
+                let (default, cases) = entries.split_last()?;
+                let case = usize::try_from(value as u32).ok();
+                Some(ThreadEnd::Case(
+                    *case.and_then(|case| cases.get(case)).unwrap_or(default),
+                ))
+            }
+            ControlFlowLayout::Fallthrough => {
+                walk(instructions, plan, pc + 1, selector, value, path)
+            }
+            ControlFlowLayout::Jump => walk(
+                instructions,
+                plan,
+                instruction.jump_target() as usize,
+                selector,
+                value,
+                path,
+            ),
+            ControlFlowLayout::ConditionalJump => {
+                let target = instruction.jump_target() as usize;
+                match decided_branch(instruction, selector, value) {
+                    Some(taken) => {
+                        let next = if taken { target } else { pc + 1 };
+                        let length = path.len();
+                        walk(instructions, plan, next, selector, value, path).or_else(|| {
+                            path.truncate(length);
+                            Some(ThreadEnd::Exit(next))
+                        })
+                    }
+                    None => [target, pc + 1].into_iter().find_map(|next| {
+                        let length = path.len();
+                        walk(instructions, plan, next, selector, value, path).or_else(|| {
+                            path.truncate(length);
+                            None
+                        })
+                    }),
+                }
+            }
+            _ => None,
+        };
+        if end.is_none() {
+            path.pop();
+        }
+        end
+    }
+    let mut path = Vec::new();
+    let end = walk(instructions, plan, start, selector, value, &mut path)?;
+    Some(Thread {
+        selector,
+        value,
+        path,
+        end,
+    })
+}
+
 struct Emitter<'a, 'b, H: Host> {
     guarded: bool,
     /// Per `Region`, its alias region in this function.
@@ -922,13 +1109,28 @@ struct Emitter<'a, 'b, H: Host> {
     blocks: Vec<Option<ir::Block>>,
     context: ir::Value,
     base: ir::Value,
-    length: ir::Value,
+    /// The memory's length, which only unguarded accesses compare.
+    length: Option<ir::Value>,
+    memory: MemoryArguments,
     trap_blocks: [Option<ir::Block>; TRAPS.len()],
     /// Per callee, its imported name in this function.
     callees: Vec<Option<ir::FuncRef>>,
     callout_signature: Option<ir::SigRef>,
     plans: &'a [Option<Plan>],
     call_conv: cranelift_codegen::isa::CallConv,
+    instructions: &'a [WideInstruction],
+    /// Registers some branch table dispatches on.
+    selectors: Vec<u16>,
+    /// Selectors known to hold an i32 constant since the current block began.
+    known: Vec<(u16, i32)>,
+    /// Threaded copies by (target, selector, value); `None` where none fits.
+    threads: Vec<((usize, u16, i32), Option<ir::Block>)>,
+    /// Copies to emit once the function body is done.
+    pending: Vec<(ir::Block, Thread)>,
+    /// While a copy emits a branch, the block standing in for one target.
+    redirect: Option<(usize, ir::Block)>,
+    /// Whether jumps may enter threaded copies (not from within one).
+    threading: bool,
 }
 
 impl<H: Host> Emitter<'_, '_, H> {
@@ -956,6 +1158,7 @@ impl<H: Host> Emitter<'_, '_, H> {
     /// Define the register as `value` of type `ty`, in both views; a view no
     /// instruction reads costs nothing, since its conversion is dead.
     fn write_typed(&mut self, register: u16, ty: crate::WasmType, value: ir::Value) {
+        self.known.retain(|(known, _)| *known != register);
         let other = counterpart(ty);
         let converted = self
             .builder
@@ -968,6 +1171,10 @@ impl<H: Host> Emitter<'_, '_, H> {
 
     /// Define the register as the constant `bits` of width `kind`.
     fn write_constant(&mut self, register: u16, kind: Kind, bits: i64) {
+        self.known.retain(|(known, _)| *known != register);
+        if kind == Kind::I32 && self.selectors.contains(&register) {
+            self.known.push((register, bits as i32));
+        }
         let (integer, float) = match kind {
             Kind::I32 => (
                 self.builder.ins().iconst(types::I32, bits),
@@ -1282,10 +1489,11 @@ impl<H: Host> Emitter<'_, '_, H> {
             .builder
             .ins()
             .iadd_imm_s(address, i64::from(offset) + width as i64);
-        let out_of_bounds = self
-            .builder
-            .ins()
-            .icmp(IntCC::UnsignedGreaterThan, end, self.length);
+        let out_of_bounds = self.builder.ins().icmp(
+            IntCC::UnsignedGreaterThan,
+            end,
+            self.length.expect("unguarded accesses receive the length"),
+        );
         self.trap_if(out_of_bounds, crate::WasmTrap::OutOfBoundsMemory);
         let host = self.builder.ins().iadd(self.base, address);
         self.builder.ins().iadd_imm_s(host, i64::from(offset))
@@ -1421,14 +1629,88 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn jump(&mut self, target: usize) {
-        let block = self.block(target);
+        let block = self.edge(target);
         self.builder.ins().jump(block, &[]);
     }
 
+    /// A loop latch (a branch whose taken target lies behind its
+    /// fallthrough) leaves the loop through a block of its own, so values
+    /// only the exit passes (merge arguments) are computed after the loop,
+    /// not on every iteration. The back edge stays direct.
     fn branch(&mut self, condition: ir::Value, target: usize, fallthrough: usize) {
-        let taken = self.block(target);
-        let next = self.block(fallthrough);
-        self.builder.ins().brif(condition, taken, &[], next, &[]);
+        let taken = self.edge(target);
+        let next = self.edge(fallthrough);
+        if target >= fallthrough {
+            self.builder.ins().brif(condition, taken, &[], next, &[]);
+            return;
+        }
+        let exit = self.builder.create_block();
+        self.builder.ins().brif(condition, taken, &[], exit, &[]);
+        self.builder.switch_to_block(exit);
+        self.builder.ins().jump(next, &[]);
+    }
+
+    /// The block a jump from here to `target` enters: a threaded copy when
+    /// a known selector decides a branch table ahead, else the target's.
+    fn edge(&mut self, target: usize) -> ir::Block {
+        if let Some((redirected, block)) = self.redirect
+            && redirected == target
+        {
+            return block;
+        }
+        if self.threading {
+            for (selector, value) in self.known.clone() {
+                if let Some(block) = self.thread(target, selector, value) {
+                    return block;
+                }
+            }
+        }
+        self.block(target)
+    }
+
+    fn thread(&mut self, target: usize, selector: u16, value: i32) -> Option<ir::Block> {
+        let key = (target, selector, value);
+        if let Some((_, block)) = self.threads.iter().find(|(known, _)| *known == key) {
+            return *block;
+        }
+        let thread = thread_path(self.instructions, self.plan, target, selector, value);
+        let block = thread.map(|thread| {
+            let block = self.builder.create_block();
+            self.pending.push((block, thread));
+            block
+        });
+        self.threads.push((key, block));
+        block
+    }
+
+    /// Emit the threaded copy `thread` into `block`.
+    fn emit_thread(&mut self, function: &Function, block: ir::Block, thread: &Thread) {
+        self.builder.switch_to_block(block);
+        for (index, &pc) in thread.path.iter().enumerate() {
+            let instruction = self.instructions[pc];
+            match instruction.op().control_flow_layout() {
+                // The path continues at the jump's target, or the table's
+                // case: nothing to emit.
+                ControlFlowLayout::Jump | ControlFlowLayout::BranchTable => {}
+                ControlFlowLayout::ConditionalJump => {
+                    if decided_branch(instruction, thread.selector, thread.value).is_some() {
+                        continue;
+                    }
+                    let next = thread.path[index + 1];
+                    let continuation = self.builder.create_block();
+                    self.redirect = Some((next, continuation));
+                    self.instruction(function, pc, instruction);
+                    self.redirect = None;
+                    self.builder.switch_to_block(continuation);
+                }
+                _ => {
+                    self.instruction(function, pc, instruction);
+                }
+            }
+        }
+        let (ThreadEnd::Case(target) | ThreadEnd::Exit(target)) = thread.end;
+        let target = self.block(target);
+        self.builder.ins().jump(target, &[]);
     }
 
     /// Emit the instruction at `pc`; returns whether control falls through.
@@ -1647,7 +1929,11 @@ impl<H: Host> Emitter<'_, '_, H> {
                 let callee = usize::from(instruction.known_function_index());
                 let callee_plan = self.plans[callee].as_ref().expect("callable");
                 let window = instruction.call_window();
-                let mut args = vec![self.context, self.base, self.length];
+                let mut args = vec![self.context];
+                if self.memory.base {
+                    args.push(self.base);
+                }
+                args.extend(self.length);
                 for (offset, ty) in callee_plan.params.iter().enumerate() {
                     let kind = Kind::of(*ty).expect("planned");
                     args.push(self.read(window.base + offset as u16, kind));
@@ -1658,6 +1944,7 @@ impl<H: Host> Emitter<'_, '_, H> {
                     Some(target) => target,
                     None => {
                         let signature = internal_signature(
+                            self.memory,
                             &callee_plan.params,
                             callee_plan.result,
                             self.call_conv,
@@ -1735,13 +2022,15 @@ impl<H: Host> Analysis<'_, H> {
         plan: &Plan,
         plans: &[Option<Plan>],
         guarded: bool,
+        fixed_base: Option<i32>,
         globals: &[u32],
     ) -> Option<(Vec<u8>, Vec<Call>)> {
         let function = &self.code.functions[index];
         let call_conv = isa.default_call_conv();
+        let memory = MemoryArguments::of(fixed_base, guarded);
         let mut func = ir::Function::with_name_signature(
             UserFuncName::User(function_name(index)),
-            internal_signature(&plan.params, plan.result, call_conv),
+            internal_signature(memory, &plan.params, plan.result, call_conv),
         );
         let mut builder_context = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut func, &mut builder_context);
@@ -1753,13 +2042,39 @@ impl<H: Host> Analysis<'_, H> {
         builder.switch_to_block(entry);
         builder.seal_block(entry);
         let parameters = builder.block_params(entry).to_vec();
-        let (context, base, length) = (parameters[0], parameters[1], parameters[2]);
+        let context = parameters[0];
+        let mut passed = parameters[1..].iter().copied();
+        // A constant base folds into each access's addressing mode and
+        // frees the register a parameter would occupy.
+        let base = match fixed_base {
+            Some(fixed) => builder.ins().iconst(types::I64, i64::from(fixed)),
+            None => passed.next().expect("a passed base"),
+        };
+        let length = memory
+            .length
+            .then(|| passed.next().expect("a passed length"));
+        let wasm_parameters = &parameters[1 + memory.count()..];
         let regions = Region::ALL.map(|region| {
             builder.func.dfg.alias_regions.insert(ir::AliasRegionData {
                 user_id: region as u32,
                 description: format!("{region:?}").into(),
             })
         });
+        let instructions: Vec<WideInstruction> = function
+            .code
+            .iter()
+            .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
+            .collect();
+        let mut selectors: Vec<u16> = instructions
+            .iter()
+            .enumerate()
+            .filter(|(pc, instruction)| {
+                plan.reachable(*pc) && instruction.op() == Op::WasmBranchTable
+            })
+            .map(|(_, instruction)| instruction.a())
+            .collect();
+        selectors.sort_unstable();
+        selectors.dedup();
         let mut emitter = Emitter {
             guarded,
             regions,
@@ -1772,11 +2087,19 @@ impl<H: Host> Analysis<'_, H> {
             context,
             base,
             length,
+            memory,
             trap_blocks: [None; TRAPS.len()],
             callees: vec![None; plans.len()],
             callout_signature: None,
             plans,
             call_conv,
+            instructions: &instructions,
+            selectors,
+            known: Vec::new(),
+            threads: Vec::new(),
+            pending: Vec::new(),
+            redirect: None,
+            threading: true,
         };
         // Registers start at i32 zero, as an activation's register file does.
         for register in 0..function.registers {
@@ -1786,7 +2109,11 @@ impl<H: Host> Analysis<'_, H> {
         let parameter_base = function.parameter_registers.expect("planned");
         for (offset, ty) in plan.params.iter().enumerate() {
             let kind = Kind::of(*ty).expect("planned");
-            emitter.write(parameter_base + offset as u16, kind, parameters[3 + offset]);
+            emitter.write(
+                parameter_base + offset as u16,
+                kind,
+                wasm_parameters[offset],
+            );
         }
         // Each activation checks the stack it may still use.
         let stack_pointer = emitter.builder.ins().get_stack_pointer(types::I64);
@@ -1800,12 +2127,8 @@ impl<H: Host> Analysis<'_, H> {
             .ins()
             .icmp(IntCC::UnsignedLessThan, stack_pointer, limit);
         emitter.trap_if(exhausted, crate::WasmTrap::CallStackExhausted);
+        emitter.known.clear();
         emitter.jump(0);
-        let instructions: Vec<WideInstruction> = function
-            .code
-            .iter()
-            .map(|packed| super::dispatch_fast::decoded_instruction(function, *packed))
-            .collect();
         // Every jump target starts a block, created before emission so a
         // backward jump finds its target's block already placed.
         for (pc, instruction) in instructions.iter().copied().enumerate() {
@@ -1837,6 +2160,7 @@ impl<H: Host> Analysis<'_, H> {
             }
             let is_leader = emitter.blocks[pc].is_some() || !open;
             if is_leader {
+                emitter.known.clear();
                 let block = emitter.block(pc);
                 if open {
                     emitter.builder.ins().jump(block, &[]);
@@ -1854,6 +2178,10 @@ impl<H: Host> Analysis<'_, H> {
         }
         if open {
             return None;
+        }
+        emitter.threading = false;
+        for (block, thread) in std::mem::take(&mut emitter.pending) {
+            emitter.emit_thread(function, block, &thread);
         }
         emitter.finish_traps();
         emitter.builder.seal_all_blocks();
@@ -1896,6 +2224,7 @@ impl<H: Host> Analysis<'_, H> {
         isa: &dyn cranelift_codegen::isa::TargetIsa,
         index: usize,
         plan: &Plan,
+        memory: MemoryArguments,
     ) -> Option<Vec<u8>> {
         let call_conv = isa.default_call_conv();
         let mut signature = Signature::new(call_conv);
@@ -1921,7 +2250,8 @@ impl<H: Host> Analysis<'_, H> {
             parameters[3],
             parameters[4],
         );
-        let mut call_args = vec![context, base, length];
+        let mut call_args = vec![context];
+        call_args.extend(memory.select(base, length));
         for (offset, ty) in plan.params.iter().enumerate() {
             let raw = builder.ins().load(
                 types::I64,
@@ -1934,8 +2264,12 @@ impl<H: Host> Analysis<'_, H> {
                 Kind::I64 => raw,
             });
         }
-        let target_signature =
-            builder.import_signature(internal_signature(&plan.params, plan.result, call_conv));
+        let target_signature = builder.import_signature(internal_signature(
+            memory,
+            &plan.params,
+            plan.result,
+            call_conv,
+        ));
         let table = builder
             .ins()
             .load(types::I64, MemFlagsData::trusted(), context, CONTEXT_TABLE);
@@ -1974,6 +2308,12 @@ impl<H: Host> Analysis<'_, H> {
 }
 
 /// The guard reservation of an unshared memory binding.
+/// A memory base an x86-64 addressing mode can carry as its signed 32-bit
+/// displacement.
+fn displacement_base(base: *mut u8) -> Option<i32> {
+    i32::try_from(base as usize).ok()
+}
+
 fn guarded_memory<H: Host>(vm: &Vm<H>, binding: Value) -> Option<(*mut u8, usize)> {
     let Some(Cell::WasmMemory { bytes, .. }) = vm.heap.get(binding) else {
         return None;
@@ -2300,6 +2640,12 @@ impl<H: Host> Vm<H> {
         if plans.iter().all(Option::is_none) {
             return None;
         }
+        let fixed_base = guarded
+            .then(|| {
+                let binding = self.heap.environment_slot(env, memory_slot? as usize)?;
+                displacement_base(guarded_memory(self, binding)?.0)
+            })
+            .flatten();
         let isa = target_isa()?;
         // The full plan of a callable function, derived again where needed.
         let plan = |index: usize| analysis.plan(index, &callable, &mut memory_slot.clone());
@@ -2343,12 +2689,14 @@ impl<H: Host> Vm<H> {
                 &plan(index)?,
                 &plans,
                 guarded,
+                fixed_base,
                 &globals,
             )?;
             let offset = place(&mut bytes, body);
             offsets[index] = Some(offset);
             calls.extend(function_calls.into_iter().map(|call| (offset, call)));
-            let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?)?;
+            let memory = MemoryArguments::of(fixed_base, guarded);
+            let entry = analysis.compile_entry(&*isa, index, plans[index].as_ref()?, memory)?;
             entries[index] = Some(place(&mut bytes, entry));
         }
         for (offset, call) in calls {
@@ -2382,6 +2730,7 @@ impl<H: Host> Vm<H> {
             functions,
             memory_slot,
             guarded,
+            fixed_base,
             globals,
         })
     }
@@ -2442,6 +2791,11 @@ impl<H: Host> Vm<H> {
                 let guard = guarded_memory(self, binding);
                 // Code compiled without bounds checks needs this memory's guard.
                 if compiled.guarded && guard.is_none() {
+                    return None;
+                }
+                if compiled.fixed_base.is_some_and(|fixed| {
+                    guard.map(|(base, _)| displacement_base(base)) != Some(Some(fixed))
+                }) {
                     return None;
                 }
                 (view.0 as u64, view.1 as u64, guard)

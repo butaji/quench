@@ -39,8 +39,13 @@ pub(crate) const HOST_PAGE: usize = 4096;
 
 /// The reservation a guarded memory32 needs: every index plus offset plus
 /// the widest scalar access, rounded up to a host page.
-pub(crate) const GUARDED_RESERVATION: usize =
-    (u32::MAX as usize + 1) * 2 + HOST_PAGE;
+pub(crate) const GUARDED_RESERVATION: usize = (u32::MAX as usize + 1) * 2 + HOST_PAGE;
+
+/// Where a guarded reservation is asked to start: low enough that its base
+/// fits a signed 32-bit displacement, so compiled code can address the
+/// memory as index plus constant. The kernel places the reservation
+/// elsewhere when the range is taken.
+const RESERVATION_HINT: usize = 1 << 30;
 
 impl LinearBytes {
     pub(crate) fn heap(bytes: Vec<u8>) -> Self {
@@ -58,7 +63,7 @@ impl LinearBytes {
         // SAFETY: an inaccessible, unbacked private reservation; checked.
         let base = unsafe {
             libc::mmap(
-                std::ptr::null_mut(),
+                RESERVATION_HINT as *mut libc::c_void,
                 GUARDED_RESERVATION,
                 libc::PROT_NONE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
@@ -148,7 +153,9 @@ impl std::ops::Deref for LinearBytes {
         match &self.repr {
             LinearRepr::Heap(bytes) => bytes,
             // SAFETY: the accessible prefix of the reservation.
-            LinearRepr::Reserved { base, len } => unsafe { std::slice::from_raw_parts(*base, *len) },
+            LinearRepr::Reserved { base, len } => unsafe {
+                std::slice::from_raw_parts(*base, *len)
+            },
         }
     }
 }
@@ -407,13 +414,23 @@ macro_rules! loads {
             pub(super) fn from_wasm(op: &wasmparser::Operator<'_>) -> Option<(Self, wasmparser::MemArg)> {
                 match op { $(wasmparser::Operator::$name { memarg } => Some((Self::$name, *memarg)),)+ _ => None }
             }
-            pub(crate) fn width(self) -> usize { match self { $(Self::$name => std::mem::size_of::<$word>(),)+ } }
+            pub(crate) const fn width(self) -> usize { match self { $(Self::$name => std::mem::size_of::<$word>(),)+ } }
             #[inline(always)]
             pub(crate) fn read(self, bytes: &[u8], address: u64) -> Result<WasmValue, WasmTrap> {
+                let range = checked_range(address, self.width(), bytes.len())?;
+                // SAFETY: the range is `width` bytes inside `bytes`.
+                Ok(unsafe { self.read_at(bytes.as_ptr().add(range.start)) })
+            }
+            /// The value at `at`, unchecked.
+            ///
+            /// # Safety
+            /// `width` bytes from `at` must be readable.
+            #[inline(always)]
+            pub(crate) unsafe fn read_at(self, at: *const u8) -> WasmValue {
                 match self { $(Self::$name => {
-                    let range = checked_range(address, std::mem::size_of::<$word>(), bytes.len())?;
-                    let $value = <$word>::from_le_bytes(bytes[range].try_into().expect("checked memory width"));
-                    Ok($result)
+                    // SAFETY: the caller keeps the word's bytes readable.
+                    let $value = <$word>::from_le_bytes(unsafe { at.cast::<[u8; std::mem::size_of::<$word>()]>().read() });
+                    $result
                 },)+ }
             }
         }
@@ -472,13 +489,24 @@ macro_rules! stores {
             pub(crate) fn value_type(self) -> WasmType {
                 match self { $(Self::$name => WasmType::$variant,)+ }
             }
+            pub(crate) const fn width(self) -> usize { match self { $(Self::$name => std::mem::size_of::<$word>(),)+ } }
             #[inline(always)]
             pub(crate) fn write(self, bytes: &mut [u8], address: u64, value: WasmValue) -> Result<(), WasmTrap> {
+                let range = checked_range(address, self.width(), bytes.len())?;
+                // SAFETY: the range is `width` bytes inside `bytes`.
+                unsafe { self.write_at(bytes.as_mut_ptr().add(range.start), value) };
+                Ok(())
+            }
+            /// Write `value` at `at`, unchecked.
+            ///
+            /// # Safety
+            /// `width` bytes from `at` must be writable.
+            #[inline(always)]
+            pub(crate) unsafe fn write_at(self, at: *mut u8, value: WasmValue) {
                 match self { $(Self::$name => {
                     let WasmValue::$variant(word) = value else { unreachable!("decoded store type") };
-                    let range = checked_range(address, std::mem::size_of::<$word>(), bytes.len())?;
-                    bytes[range].copy_from_slice(&(word as $word).to_le_bytes());
-                    Ok(())
+                    // SAFETY: the caller keeps the word's bytes writable.
+                    unsafe { at.cast::<[u8; std::mem::size_of::<$word>()]>().write((word as $word).to_le_bytes()) };
                 },)+ }
             }
         }
