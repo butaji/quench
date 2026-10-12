@@ -1,13 +1,43 @@
 //! Nonblocking child stdin owns each accepted byte until OS write completion.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
-use std::{collections::VecDeque, io::Write, process::ChildStdin};
+use std::collections::VecDeque;
+#[cfg(unix)]
+use std::fs::File as Pipe;
+#[cfg(not(unix))]
+use std::process::ChildStdin as Pipe;
 
 const COMPLETION_SUCCESS: i32 = 0;
+#[cfg(not(unix))]
+use std::io::Write;
+
+fn write_pipe(pipe: &mut Pipe, bytes: &[u8]) -> std::io::Result<usize> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        // Per-operation flags preserve a blocking endpoint when inherited by
+        // another child, without letting a parent write block the VM.
+        let result = unsafe {
+            libc::send(
+                pipe.as_raw_fd(),
+                bytes.as_ptr().cast(),
+                bytes.len(),
+                libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL,
+            )
+        };
+        if result < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(result as usize)
+        }
+    }
+    #[cfg(not(unix))]
+    pipe.write(bytes)
+}
 
 enum Phase {
-    Open(ChildStdin),
-    Ending(ChildStdin),
+    Open(Pipe),
+    Ending(Pipe),
     Closed,
 }
 struct Pending {
@@ -30,30 +60,27 @@ pub(crate) struct Progress {
 }
 
 impl Input {
-    pub(crate) fn new(pipe: Option<ChildStdin>) -> std::io::Result<Self> {
+    pub(crate) fn new(pipe: Option<Pipe>) -> Self {
         let phase = if let Some(pipe) = pipe {
-            #[cfg(unix)]
-            {
-                use std::os::fd::AsRawFd;
-                let fd = pipe.as_raw_fd();
-                let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-                if flags < 0
-                    || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
-                {
-                    return Err(std::io::Error::last_os_error());
-                }
-            }
             Phase::Open(pipe)
         } else {
             Phase::Closed
         };
-        Ok(Self {
+        Self {
             phase,
             pending: VecDeque::new(),
             final_callback: None,
-        })
+        }
     }
-    fn pipe(&mut self) -> Option<&mut ChildStdin> {
+    #[cfg(unix)]
+    pub(crate) fn descriptor(&self) -> Option<i32> {
+        use std::os::fd::AsRawFd;
+        match &self.phase {
+            Phase::Open(pipe) | Phase::Ending(pipe) => Some(pipe.as_raw_fd()),
+            Phase::Closed => None,
+        }
+    }
+    fn pipe(&mut self) -> Option<&mut Pipe> {
         match &mut self.phase {
             Phase::Open(pipe) | Phase::Ending(pipe) => Some(pipe),
             Phase::Closed => None,
@@ -70,7 +97,7 @@ impl Input {
         let mut offset = 0;
         if self.pending.is_empty() {
             while offset < bytes.len() {
-                match self.pipe().expect("open stdin").write(&bytes[offset..]) {
+                match write_pipe(self.pipe().expect("open stdin"), &bytes[offset..]) {
                     Ok(0) => return Err(std::io::Error::from_raw_os_error(libc::EPIPE)),
                     Ok(length) => offset += length,
                     Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -110,7 +137,7 @@ impl Input {
         while let Some(pending) = self.pending.front() {
             let bytes = &pending.bytes[pending.offset..];
             let written = match &mut self.phase {
-                Phase::Open(pipe) | Phase::Ending(pipe) => pipe.write(bytes),
+                Phase::Open(pipe) | Phase::Ending(pipe) => write_pipe(pipe, bytes),
                 Phase::Closed => Err(std::io::Error::from_raw_os_error(libc::EPIPE)),
             };
             match written {
