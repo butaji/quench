@@ -88,6 +88,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "childProcessPromiseExec" (1) => crate::modules::child_process_exec_shared_vm::promise_exec,
         method "childProcessPromiseExecSettled" (3) => crate::modules::child_process_exec_shared_vm::promise_settled,
         method "utilInspectShallowLabel" (1) => crate::modules::util_shared_vm::inspect_shallow_label,
+        method "utilInspectCustom" (4) => crate::modules::util_shared_vm::inspect_custom,
         method "utilInspectQuote" (1) => crate::modules::util_shared_vm::inspect_quote,
         method "styleText" (3) => crate::modules::util_style_shared_vm::style_text,
         method "utilColorAliasGet" (0) => crate::modules::util_style_shared_vm::alias_get,
@@ -149,13 +150,17 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netConnect" (3) => crate::modules::net_shared_vm::connect_operation,
         method "streamPipePlan" (3) => crate::modules::stream_pipe_shared_vm::plan,
         method "emitterInitialize" (2) => crate::modules::event_constructor_shared_vm::initialize,
-        method "emitterEventRemoved" (1) => crate::modules::event_constructor_shared_vm::event_removed,
+        method "emitterRemoveAllListeners" (3) => crate::modules::event_emitter_shared_vm::remove_all_listeners,
+        method "emitterRemoveListener" (3) => crate::modules::event_emitter_shared_vm::remove_listener,
+        method "emitterEmit" (3) => crate::modules::event_emitter_shared_vm::emit,
+        method "emitterEmitListeners" (4) => crate::modules::event_emitter_shared_vm::emit_listeners,
         method "emitterCaptureDefaultGet" (0) => crate::modules::event_constructor_shared_vm::default_get,
         method "emitterCaptureDefaultSet" (1) => crate::modules::event_constructor_shared_vm::default_set,
-        method "emitterCaptureResult" (4) => crate::modules::event_constructor_shared_vm::capture_result,
         method "emitterCaptureRejected" (1) => crate::modules::event_constructor_shared_vm::capture_rejected,
         method "emitterCaptureDeliver" (1) => crate::modules::event_constructor_shared_vm::capture_deliver,
-        method "emitterRegistered" (4) => crate::modules::event_limits_shared_vm::registered,
+        method "emitterAddListener" (4) => crate::modules::event_emitter_shared_vm::add_listener,
+        method "emitterOnce" (4) => crate::modules::event_emitter_shared_vm::once,
+        method "emitterOnceInvoke" (0) => crate::modules::event_emitter_shared_vm::once_invoke,
         method "eventsDefaultMaxGet" (0) => crate::modules::event_limits_shared_vm::default_get,
         method "eventsDefaultMaxSet" (1) => crate::modules::event_limits_shared_vm::default_set,
         method "emitterMaxGet" (1) => crate::modules::event_limits_shared_vm::emitter_get,
@@ -519,24 +524,17 @@ impl quench_runtime::Host for NodeHost {
             .borrow()
             .event_targets_api
             .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
-        let registered =
-            context.host_function_with_data(operation("emitterRegistered"), event_data)?;
         let initialize =
             context.host_function_with_data(operation("emitterInitialize"), event_data)?;
-        let capture =
-            context.host_function_with_data(operation("emitterCaptureResult"), event_data)?;
-        let removed =
-            context.host_function_with_data(operation("emitterEventRemoved"), event_data)?;
+        let dispatch =
+            context.host_function_with_data(operation("emitterEmitListeners"), event_data)?;
         let emitter_factory = context.evaluate_script_rooted(
             crate::polyfills::bootstrap::event_emitter::JS,
             "node:bootstrap/event-emitter.js",
         )?;
         let undefined = context.undefined();
-        let event_emitter = context.call_rooted(
-            emitter_factory,
-            undefined,
-            &[registered, initialize, capture, removed],
-        )?;
+        let event_emitter =
+            context.call_rooted(emitter_factory, undefined, &[initialize, dispatch])?;
         context.release_root(event_emitter);
         crate::modules::event_constructor_shared_vm::install(context)?;
         crate::modules::event_emitter_shared_vm::initialize(context)?;

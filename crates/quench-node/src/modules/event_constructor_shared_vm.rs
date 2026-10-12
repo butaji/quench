@@ -3,7 +3,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-fn get(
+pub(super) fn get(
     context: &mut NativeContext<'_, NodeHost>,
     object: RootId,
     name: &str,
@@ -11,7 +11,7 @@ fn get(
     let key = context.string_rooted(name);
     context.get_property_rooted(object, key)
 }
-fn set(
+pub(super) fn set(
     context: &mut NativeContext<'_, NodeHost>,
     data: RootId,
     object: RootId,
@@ -23,7 +23,7 @@ fn set(
     context.call_rooted(assign, undefined, &[object, key, value])?;
     Ok(())
 }
-fn named_set(
+pub(super) fn named_set(
     context: &mut NativeContext<'_, NodeHost>,
     data: RootId,
     object: RootId,
@@ -203,14 +203,13 @@ pub(crate) fn event_added(
     let next = context.numeric_update_rooted(count, false)?;
     named_set(context, data, target, "_eventsCount", next)
 }
-pub(crate) fn event_removed(
+pub(super) fn event_removed(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let target = args.first().copied().unwrap_or(undefined);
-    let data = context.host_function_data()?;
+    data: RootId,
+    target: RootId,
+    events: RootId,
+    event: RootId,
+) -> Result<(), RootedError> {
     let count = get(context, target, "_eventsCount")?;
     let one = context.number(1.0);
     let next = context.subtract_rooted(count, one)?;
@@ -218,28 +217,33 @@ pub(crate) fn event_removed(
     let key = get(context, data, "shapeKey")?;
     let shape = context.get_property_rooted(target, key)?;
     let zero = context.number(0.0);
-    if !context.truthy_rooted(shape)? && context.strict_equal_rooted(next, zero)? {
+    if context.truthy_rooted(shape)? {
+        let undefined = context.undefined();
+        set(context, data, events, event, undefined)?;
+    } else if context.strict_equal_rooted(next, zero)? {
         let events = context.null_object_rooted()?;
         named_set(context, data, target, "_events", events)?;
+    } else {
+        let delete = get(context, data, "delete")?;
+        let undefined = context.undefined();
+        context.call_rooted(delete, undefined, &[events, event])?;
     }
-    Ok(undefined)
+    Ok(())
 }
 
 /// Node observes thenables only while the emitter's private capture flag is set.
-pub(crate) fn capture_result(
+pub(super) fn capture_result(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
+    data: RootId,
+    target: RootId,
+    result: RootId,
+    event: RootId,
+    event_args: RootId,
 ) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
-    let target = args.first().copied().unwrap_or(undefined);
-    let result = args.get(1).copied().unwrap_or(undefined);
     if nullish(context, result) {
         return Ok(undefined);
     }
-    let event = args.get(2).copied().unwrap_or(undefined);
-    let event_args = args.get(3).copied().unwrap_or(undefined);
-    let data = context.host_function_data()?;
     let key = get(context, data, "captureKey")?;
     let enabled = context.get_property_rooted(target, key)?;
     if !context.truthy_rooted(enabled)? {

@@ -48,16 +48,19 @@ Process stdout writes flush the host's line buffer at each write boundary, makin
 bytes visible to another process before the writer exits or emits a newline.
 The embedding's configured text sink continues to receive writes directly.
 
-EventEmitter inspection methods are native: `eventNames()` preserves string and
+EventEmitter listener storage and inspection methods are native: `eventNames()` preserves string and
 symbol keys, `listeners()` unwraps once wrappers, `rawListeners()` copies the
 stored wrappers, and `listenerCount(type, listener)` filters by function identity.
 Counts do not call an overridden public `listeners()` method. Removal and error
 monitor bridges consume raw wrappers so inspection cannot disable once cleanup.
 Callable construction, constructor metadata, listener counters, and capture
 rejection policy are native. Thenable rejections use the shared next-tick queue
-and preserve the original error and public rejection hook. Mutation during
-emission, duplicate removal, and some event-map shape transitions remain
-incomplete.
+and preserve the original error and public rejection hook. Idle listener arrays mutate in place; active arrays copy before listener changes.
+Nested emission counters restore on throws, duplicate callbacks remove in reverse
+registration order, and bulk removal preserves notification order and its numeric
+update rule. Once state changes before public removal and delegates registration
+through public methods. Error/domain and stream-owner policy still uses the legacy
+bridge, and malformed public listener records remain incompletely qualified.
 
 
 Listener limits use one native default shared by EventEmitter's accessor and
@@ -86,3 +89,11 @@ latches its error outcome before guest handlers run, and automatic close
 delivery projects `hadError` from that outcome. Linux reset behavior is checked
 against an independent OS TCP peer. Connect/listen error projection and public
 Socket emit interception remain incomplete.
+
+Custom inspection dispatch is native and runs before depth cutoffs and function
+or Error formatting. It preserves receiver, remaining depth, original inspector
+identity, disabled-hook getters, and prototype filtering. The public util module
+shares a canonical inspector; internal users retain the original function when
+its public alias changes. Proxy unwrapping, multiline indentation, and general
+inspection formatting remain incomplete. Event constructor phase constants use
+Node's immutable enumerable descriptors.
