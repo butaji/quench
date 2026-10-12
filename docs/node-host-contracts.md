@@ -104,6 +104,19 @@ values. These options still use the same retained-directory launch owner.
 URL branding currently shares the existing URL adapter; this does not establish
 conformance when guests replace the global URL prototype.
 
+Synchronous child output uses intrinsic byte views with the captured Buffer
+prototype, independent of a replaced `Buffer.from`. The result owns one output
+array; stdout and stderr are projections of its entries. Encoding conversion
+calls the public Buffer `toString` hook and replaces those same entries.
+Successful launches omit `error`; failed launches have pid zero, null output
+and undefined stdout/stderr. Result property order matches the Node binding.
+
+Process stdout/stderr writes pass ArrayBufferView bytes directly to OS
+descriptors instead of converting through UTF-8. The existing embedding
+`NodeOutputSink` remains text-only and uses its prior lossy text projection.
+This does not establish complete Writable metadata, callbacks, string-encoding
+options, backpressure or stream-error handling.
+
 ## TLS material validation
 
 Secure-context CRL and PKCS12 checks use native OpenSSL parsers. CRLs use

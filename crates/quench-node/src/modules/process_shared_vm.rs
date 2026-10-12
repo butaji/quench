@@ -620,20 +620,36 @@ pub(crate) fn stream_write(
     let Some(chunk) = args.first().copied() else {
         return invalid_stream_chunk(context);
     };
-    let text = context.to_string(chunk)?;
+    let bytes = if let Some(text) = context.string_text(chunk)? {
+        text.into_bytes()
+    } else if context
+        .has_builtin_brand_rooted(chunk, quench_runtime::BuiltinBrand::ArrayBufferView)?
+    {
+        context
+            .view_bytes_rooted(chunk)
+            .ok_or_else(|| RootedError::host("process stream byte view unavailable"))?
+    } else {
+        return Err(super::util_shared_vm::argument_type_error_with_expected(
+            context,
+            chunk,
+            "chunk",
+            "of type string or an instance of Buffer, TypedArray, or DataView",
+        )?);
+    };
     if fd == STDERR_FD {
         std::io::stderr()
             .lock()
-            .write_all(text.as_bytes())
+            .write_all(&bytes)
             .map_err(|error| RootedError::host(error.to_string()))?;
     } else {
         let output = context.host_mut().shared_state().borrow().output.clone();
         if let Some(output) = output {
-            output(&text);
+            // Preserve the embedding API's existing text-only sink contract.
+            output(&String::from_utf8_lossy(&bytes));
         } else {
             let mut stdout = std::io::stdout().lock();
             stdout
-                .write_all(text.as_bytes())
+                .write_all(&bytes)
                 .and_then(|()| stdout.flush())
                 .map_err(|error| RootedError::host(error.to_string()))?;
         }

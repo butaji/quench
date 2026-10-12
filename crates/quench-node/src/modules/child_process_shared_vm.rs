@@ -219,8 +219,6 @@ const FACTORY: &str = quench_js_check::checked_js!(
       delete options.shell;
     }
     const result = spawnSync(file, actualArgs, options);
-    result.stdout = Buffer.from(result.stdout);
-    result.stderr = Buffer.from(result.stderr);
     return result;
   };
   const parseFileArguments = (args, options, callback) => {
@@ -264,9 +262,8 @@ const FACTORY: &str = quench_js_check::checked_js!(
   }
   const synchronousCommand = (command, args, options, useShell) => {
     const result = spawnSyncFunction(command, args, { ...(options || {}), shell: useShell });
-    const encoding = options?.encoding;
-    const stdout = encoding && encoding !== "buffer" ? result.stdout.toString(encoding) : result.stdout;
-    const stderr = encoding && encoding !== "buffer" ? result.stderr.toString(encoding) : result.stderr;
+    const stdout = result.stdout;
+    const stderr = result.stderr;
     if (result.error || result.status !== 0) {
       const error = result.error || new Error(`Command failed: ${command}`);
       error.status = result.status;
@@ -293,9 +290,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let global = context.global_root()?;
     let key = context.string_rooted("Buffer");
     let buffer = context.get_property_rooted(global, key)?;
-    let spawn_sync = context.host_function(crate::host::shared_vm::operation(
-        "childProcessSpawnSync",
-    ))?;
+    let prototype = property(context, buffer, "prototype")?;
+    let spawn_sync = context.host_function_with_data(
+        crate::host::shared_vm::operation("childProcessSpawnSync"),
+        prototype,
+    )?;
     let spawn = context.host_function(crate::host::shared_vm::operation("childProcessSpawn"))?;
     let register = context.host_function(crate::host::shared_vm::operation("childProcessRegister"))?;
     let write = context.host_function(crate::host::shared_vm::operation("childProcessWrite"))?;
@@ -1176,7 +1175,7 @@ pub(crate) fn spawn_sync(
                 13 => "EACCES",
                 _ => "UNKNOWN",
             });
-            make_result(context, None, None, None, &[], &[], Some((code, error.to_string())))?
+            make_result(context, None, None, None, &[], &[], Some((code, format!("spawnSync {command} {code}"))))?
         }
     };
     #[cfg(unix)]
@@ -1184,7 +1183,7 @@ pub(crate) fn spawn_sync(
         let error = property(context, output, "error")?;
         if !context
             .rooted_value(error)
-            .is_some_and(|value| value.is_null())
+            .is_some_and(|value| value.is_null() || value.is_undefined())
         {
             let code = property_string(context, error, "code")?.unwrap_or_default();
             let number = match code.as_str() {
@@ -1206,6 +1205,7 @@ pub(crate) fn spawn_sync(
             set(context, error, "spawnargs", spawnargs)?;
         }
     }
+    project_sync_output(context, output, options)?;
     Ok(output)
 }
 
@@ -1229,11 +1229,11 @@ fn make_result(
     error: Option<(&str, String)>,
 ) -> Result<RootId, RootedError> {
     let result = context.object_rooted()?;
-    let pid = match pid {
-        Some(pid) => context.number(pid as f64),
-        None => context.null(),
-    };
-    set(context, result, "pid", pid)?;
+    if let Some((code, message)) = error {
+        let value = context.error_rooted(&message)?;
+        set_string(context, value, "code", code)?;
+        set(context, result, "error", value)?;
+    }
     let status = match status {
         Some(status) => context.number(status as f64),
         None => context.null(),
@@ -1244,28 +1244,64 @@ fn make_result(
         None => context.null(),
     };
     set(context, result, "signal", signal)?;
-    let stdout = bytes_array(context, stdout)?;
-    let stderr = bytes_array(context, stderr)?;
+    let (stdout, stderr, output) = if pid.is_some() {
+        let stdout = sync_buffer(context, stdout)?;
+        let stderr = sync_buffer(context, stderr)?;
+        let null = context.null();
+        let output = context.array_rooted(&[null, stdout, stderr])?;
+        (stdout, stderr, output)
+    } else {
+        let undefined = context.undefined();
+        let null = context.null();
+        (undefined, undefined, null)
+    };
+    set(context, result, "output", output)?;
+    let pid = context.number(pid.unwrap_or(0) as f64);
+    set(context, result, "pid", pid)?;
     set(context, result, "stdout", stdout)?;
     set(context, result, "stderr", stderr)?;
-    let error_value = if let Some((code, message)) = error {
-        let value = context.error_rooted(&message)?;
-        set_string(context, value, "code", code)?;
-        set_string(context, value, "message", &message)?;
-        value
-    } else {
-        context.null()
-    };
-    set(context, result, "error", error_value)?;
     Ok(result)
 }
 
-fn bytes_array(context: &mut NativeContext<'_, NodeHost>, bytes: &[u8]) -> Result<RootId, RootedError> {
-    let values = bytes
-        .iter()
-        .map(|byte| context.number(f64::from(*byte)))
-        .collect::<Vec<_>>();
-    context.array_rooted(&values)
+fn sync_buffer(
+    context: &mut NativeContext<'_, NodeHost>,
+    bytes: &[u8],
+) -> Result<RootId, RootedError> {
+    let prototype = context.host_function_data()?;
+    let buffer = context.uint8_array_rooted(bytes)?;
+    context.set_prototype_rooted(buffer, prototype)?;
+    Ok(buffer)
+}
+
+fn project_sync_output(
+    context: &mut NativeContext<'_, NodeHost>,
+    result: RootId,
+    options: Option<RootId>,
+) -> Result<(), RootedError> {
+    let Some(options) = options else {
+        return Ok(());
+    };
+    let encoding = property(context, options, "encoding")?;
+    if !context.truthy_rooted(encoding)?
+        || context.string_text(encoding)?.as_deref() == Some("buffer")
+    {
+        return Ok(());
+    }
+    let output = property(context, result, "output")?;
+    if context
+        .rooted_value(output)
+        .is_some_and(|value| value.is_null())
+    {
+        return Ok(());
+    }
+    for (index, name) in [(1, "stdout"), (2, "stderr")] {
+        let buffer = property(context, result, name)?;
+        let to_string = property(context, buffer, "toString")?;
+        let text = context.call_rooted(to_string, buffer, &[encoding])?;
+        set(context, result, name, text)?;
+        set(context, output, &index.to_string(), text)?;
+    }
+    Ok(())
 }
 
 fn string_array(context: &mut NativeContext<'_, NodeHost>, array: RootId) -> Result<Vec<String>, RootedError> {

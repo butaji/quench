@@ -3734,3 +3734,72 @@ console.log(JSON.stringify(result));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn synchronous_child_outputs_preserve_buffer_identity_encoding_and_result_shape() {
+    const SOURCE: &str = r#"
+const cp=require('child_process'),assert=require('assert'),result=[];
+const source='process.stdout.write(Buffer.from("00ff4162","hex"));process.stderr.write("err")';
+for(const encoding of [undefined,'buffer','utf8','hex','base64','latin1']){
+ const child=cp.spawnSync(process.execPath,['-e',source],{encoding});
+ assert.strictEqual(child.status,0);assert.strictEqual(child.error,undefined);assert.strictEqual(Object.hasOwn(child,'error'),false);
+ assert.strictEqual(child.output[0],null);assert.strictEqual(child.output[1],child.stdout);assert.strictEqual(child.output[2],child.stderr);
+ result.push([encoding,Object.keys(child),Buffer.isBuffer(child.stdout),Buffer.isBuffer(child.stderr),child.stdout.toString(),child.stderr.toString()]);
+}
+const missing=cp.spawnSync('quench-oracle-command-does-not-exist');assert.strictEqual(missing.pid,0);assert.strictEqual(missing.output,null);assert.strictEqual(missing.stdout,undefined);assert.strictEqual(missing.stderr,undefined);result.push([Object.keys(missing),missing.error.code,missing.error.message]);
+const original=Buffer.from,marker={};Buffer.from=()=>{throw marker};try{const child=cp.spawnSync(process.execPath,['-e','process.stdout.write("safe")']);assert(Buffer.isBuffer(child.stdout));assert.strictEqual(child.stdout.toString(),'safe');}finally{Buffer.from=original;}
+const toString=Buffer.prototype.toString,trace=[];Buffer.prototype.toString=function(encoding){trace.push([encoding,this.length]);return Reflect.apply(toString,this,[encoding]);};
+try{const child=cp.spawnSync(process.execPath,['-e','process.stdout.write("a");process.stderr.write("b")'],{encoding:'hex'});assert.strictEqual(child.stdout,'61');assert.strictEqual(child.stderr,'62');}finally{Buffer.prototype.toString=toString;}
+result.push(trace);assert.strictEqual(cp.execFileSync(process.execPath,['-e','process.stdout.write("a")'],{encoding:'hex'}),'61');console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn process_output_streams_preserve_raw_view_bytes_and_reject_invalid_chunks() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),bytes=new Uint8Array([0,255,128,65]),result=[];
+for(const stream of [process.stdout,process.stderr]){
+ for(const value of [Buffer.from(bytes),bytes,new Uint16Array(bytes.buffer),new DataView(bytes.buffer)])assert.strictEqual(stream.write(value),true);
+ for(const value of [1,true,{},[]])try{stream.write(value);assert.fail('expected chunk error')}catch(error){result.push([error.name,error.code,error.message]);}
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+    assert_eq!(observations[0].stderr, observations[1].stderr);
+}
