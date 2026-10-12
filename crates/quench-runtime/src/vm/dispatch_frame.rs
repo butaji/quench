@@ -1166,6 +1166,8 @@ impl<H: Host> Vm<H> {
             .find(|handler| throwing_pc >= handler.start && throwing_pc < handler.end)
             .copied();
         let Some(handler) = handler else {
+            let mut error = error;
+            error.capture_source_location(program, function as u32, throwing_pc);
             return Err(error);
         };
         let with_depth = self.frames[frame].with_base + usize::from(handler.with_depth);

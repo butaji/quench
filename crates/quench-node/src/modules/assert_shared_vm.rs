@@ -1,13 +1,13 @@
 //! Shared-VM operations for the Node `assert` CommonJS builtin.
 
 use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError};
-use std::collections::HashSet;
+use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
 
 const MISSING_ASSERT_ARGS: &str = "The \"actual\" and \"expected\" arguments must be specified";
 const ASSERTION_FAILED: &str = "Expected values to be strictly equal";
 const ASSERTION_NOT_OK: &str = "The expression evaluated to a falsy value";
 const ASSERTION_NOT_UNEQUAL: &str = "Expected actual and expected to be strictly unequal";
+const ASSERTION_NOT_DEEP_UNEQUAL: &str = "Expected \"actual\" not to be strictly deep-equal to";
 const ASSERTION_DIFF: &str = "simple";
 
 pub(crate) fn module(
@@ -26,68 +26,185 @@ pub(crate) fn module(
         context.host_function(crate::host::shared_vm::operation("notStrictEqual"))?;
     let deep_strict_equal =
         context.host_function(crate::host::shared_vm::operation("deepStrictEqual"))?;
+    let not_deep_strict_equal =
+        context.host_function(crate::host::shared_vm::operation("notDeepStrictEqual"))?;
     let match_string = context.host_function(crate::host::shared_vm::operation("match"))?;
+    let does_not_match =
+        context.host_function(crate::host::shared_vm::operation("doesNotMatch"))?;
     let fail = context.host_function(crate::host::shared_vm::operation("fail"))?;
     let throws = context.host_function(crate::host::shared_vm::operation("throws"))?;
+    let does_not_throw =
+        context.host_function(crate::host::shared_vm::operation("doesNotThrow"))?;
     let inspect = get(context, util, "inspect")?;
     let if_error =
         context.host_function_with_data(crate::host::shared_vm::operation("ifError"), inspect)?;
-    let assertion_error = context.evaluate_script_rooted(
+    let initialize = context.host_function(crate::host::shared_vm::operation(
+        "assertionErrorInitialize",
+    ))?;
+    let assertion_factory = context.evaluate_script_rooted(
         quench_js_check::checked_js!(
-            r#"class AssertionError extends Error {
+            r#"(initialize) => class AssertionError extends Error {
   constructor(options = {}) {
     super(options.message);
-    this.generatedMessage = options.generatedMessage ?? !options.message;
-    Object.defineProperty(this, "name", {
-      value: "AssertionError [ERR_ASSERTION]",
-      writable: true,
-      configurable: true,
-    });
-    this.code = options.code ?? "ERR_ASSERTION";
-    this.actual = options.actual;
-    this.expected = options.expected;
-    this.operator = options.operator;
-    this.stack;
-    this.name = "AssertionError";
-    this.diff = options.diff ?? "simple";
+    initialize(this, options);
   }
-}
-AssertionError"#
+}"#
         ),
         "node:assert/AssertionError.js",
     )?;
-    let rejects = context.evaluate_script_rooted(
+    let undefined = context.undefined();
+    let assertion_error = context.call_rooted(assertion_factory, undefined, &[initialize])?;
+    let rejects_factory = context.evaluate_script_rooted(
         crate::modules::assert_rejects_source::ASSERT_REJECTS,
         "node:assert/rejects.js",
     )?;
+    let undefined = context.undefined();
+    let rejects = context.call_rooted(rejects_factory, undefined, &[assertion_error])?;
 
     set(context, assert, "ok", ok)?;
+    for name in ["equal", "notEqual", "deepEqual", "notDeepEqual"] {
+        let value = context.host_function(crate::host::shared_vm::operation(name))?;
+        set(context, assert, name, value)?;
+    }
     set(context, assert, "strictEqual", strict_equal)?;
     set(context, assert, "notStrictEqual", not_strict_equal)?;
     set(context, assert, "deepStrictEqual", deep_strict_equal)?;
+    set(context, assert, "notDeepStrictEqual", not_deep_strict_equal)?;
+    let partial =
+        context.host_function(crate::host::shared_vm::operation("partialDeepStrictEqual"))?;
+    set(context, assert, "partialDeepStrictEqual", partial)?;
     set(context, assert, "match", match_string)?;
+    set(context, assert, "doesNotMatch", does_not_match)?;
     set(context, assert, "fail", fail)?;
     set(context, assert, "strict", strict)?;
     set(context, assert, "throws", throws)?;
+    set(context, assert, "doesNotThrow", does_not_throw)?;
     set(context, assert, "ifError", if_error)?;
     set(context, assert, "rejects", rejects)?;
     set(context, assert, "AssertionError", assertion_error)?;
+    let assert_factory = context.evaluate_script_rooted(
+        r#"(assert, strict) => {
+  function Assert(options = {}) {
+    if (!new.target) {
+      const error = new TypeError('Class constructor Assert cannot be invoked without \'new\'');
+      error.code = 'ERR_CONSTRUCT_CALL_REQUIRED';
+      throw error;
+    }
+    if (options === null || typeof options !== 'object') {
+      const error = new TypeError('The "options" argument must be of type object');
+      error.code = 'ERR_INVALID_ARG_TYPE';
+      throw error;
+    }
+    const diff = options.diff === undefined ? 'simple' : options.diff;
+    if (diff !== 'simple' && diff !== 'full') {
+      const error = new TypeError(`The property 'options.diff' must be one of: 'simple', 'full'. Received '${diff}'`);
+      error.code = 'ERR_INVALID_ARG_VALUE';
+      throw error;
+    }
+    const selected = options.strict === false ? assert : strict;
+    const wrap = (fn) => function(...args) {
+      try { return fn(...args); }
+      catch (error) {
+        if (error && error.code === 'ERR_ASSERTION') error.diff = diff;
+        throw error;
+      }
+    };
+    for (const name of ['fail', 'ok', 'strictEqual', 'notStrictEqual',
+      'deepStrictEqual', 'notDeepStrictEqual', 'partialDeepStrictEqual',
+      'match', 'doesNotMatch', 'throws', 'doesNotThrow', 'ifError', 'rejects']) {
+      this[name] = wrap(selected[name]);
+    }
+    this.AssertionError = assert.AssertionError;
+    this.equal = options.strict === false ? wrap(assert.equal) : this.strictEqual;
+    this.notEqual = options.strict === false ? wrap(assert.notEqual) : this.notStrictEqual;
+    this.deepEqual = options.strict === false ? wrap(assert.deepEqual) : this.deepStrictEqual;
+    this.notDeepEqual = options.strict === false ? wrap(assert.notDeepEqual) : this.notDeepStrictEqual;
+  }
+  return Assert;
+}"#,
+        "node:assert/Assert.js",
+    )?;
+    let strict_module = get(context, assert, "strict")?;
+    let assert_constructor =
+        context.call_rooted(assert_factory, undefined, &[assert, strict_module])?;
+    set(context, assert, "Assert", assert_constructor)?;
     set(context, strict, "ok", ok)?;
     set(context, strict, "strictEqual", strict_equal)?;
     set(context, strict, "notStrictEqual", not_strict_equal)?;
     set(context, strict, "deepStrictEqual", deep_strict_equal)?;
+    set(context, strict, "partialDeepStrictEqual", partial)?;
+    set(context, strict, "notDeepStrictEqual", not_deep_strict_equal)?;
     set(context, strict, "match", match_string)?;
+    set(context, strict, "doesNotMatch", does_not_match)?;
     set(context, strict, "fail", fail)?;
     set(context, strict, "equal", strict_equal)?;
     set(context, strict, "strict", strict)?;
     set(context, strict, "throws", throws)?;
+    set(context, strict, "doesNotThrow", does_not_throw)?;
     set(context, strict, "ifError", if_error)?;
     set(context, strict, "rejects", rejects)?;
     set(context, strict, "AssertionError", assertion_error)?;
+    set(context, strict, "Assert", assert_constructor)?;
 
     let retained = context.retain(assert)?;
     context.host_mut().shared_state().borrow_mut().assert_module = Some(retained);
     Ok(assert)
+}
+
+/// Set host-owned assertion fields directly, without guest property-descriptor
+/// objects that can inherit polluted accessor fields from Object.prototype.
+pub(crate) fn initialize_assertion_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (error, options) = (args[0], args[1]);
+    let generated = get(context, options, "generatedMessage")?;
+    let generated = if nullish(context, generated) {
+        let message = get(context, options, "message")?;
+        let generated = !context.truthy_rooted(message)?;
+        context.boolean(generated)
+    } else {
+        generated
+    };
+    set(context, error, "generatedMessage", generated)?;
+    let key = context.string_rooted("name");
+    let name = context.string_rooted("AssertionError [ERR_ASSERTION]");
+    if !context.define_data_property_rooted(error, key, name, true, false, true)? {
+        return Err(RootedError::host("cannot define assertion error name"));
+    }
+    let code = assertion_option(context, options, "code", "ERR_ASSERTION")?;
+    set(context, error, "code", code)?;
+    for name in ["actual", "expected", "operator"] {
+        let value = get(context, options, name)?;
+        set(context, error, name, value)?;
+    }
+    let _ = get(context, error, "stack")?;
+    let name = context.string_rooted("AssertionError");
+    set(context, error, "name", name)?;
+    let diff = assertion_option(context, options, "diff", ASSERTION_DIFF)?;
+    set(context, error, "diff", diff)?;
+    Ok(context.undefined())
+}
+
+fn assertion_option(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: RootId,
+    name: &str,
+    fallback: &str,
+) -> Result<RootId, RootedError> {
+    let value = get(context, options, name)?;
+    Ok(if nullish(context, value) {
+        context.string_rooted(fallback)
+    } else {
+        value
+    })
+}
+
+fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
+    context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_undefined() || value.is_null())
 }
 
 pub(crate) fn ok(
@@ -98,6 +215,11 @@ pub(crate) fn ok(
     let actual = args.first().copied().unwrap_or_else(|| context.undefined());
     if context.truthy_rooted(actual)? {
         return Ok(context.undefined());
+    }
+    if let Some(message) = args.get(1).copied() {
+        if error_instance(context, message)? {
+            return Err(context.throw(message));
+        }
     }
     let expected = context.boolean(true);
     let (message, generated) = assertion_message(context, args.get(1).copied(), ASSERTION_NOT_OK)?;
@@ -142,8 +264,22 @@ pub(crate) fn not_strict_equal(
     if !context.same_value_rooted(actual, expected)? {
         return Ok(context.undefined());
     }
-    let (message, generated) =
+    let (mut message, generated) =
         assertion_message(context, args.get(2).copied(), ASSERTION_NOT_UNEQUAL)?;
+    if generated {
+        let value = match context.string_text(actual)? {
+            Some(value) => {
+                let quoted = format!("'{value}'");
+                if quoted.len() > 40 {
+                    format!("\n\n{quoted}")
+                } else {
+                    format!(" {quoted}")
+                }
+            }
+            None => format!(" {}", context.to_string(actual)?),
+        };
+        message = format!("Expected \"actual\" to be strictly unequal to:{value}");
+    }
     assertion_error(
         context,
         actual,
@@ -154,31 +290,153 @@ pub(crate) fn not_strict_equal(
     )
 }
 
-pub(crate) fn deep_strict_equal(
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ComparisonMode {
+    Loose,
+    Strict,
+    StrictWithoutPrototypes,
+    Partial,
+}
+
+pub(crate) fn equal(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
+) -> Result<RootId, RootedError> {
+    loose_equality(context, args, false)
+}
+
+pub(crate) fn not_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    loose_equality(context, args, true)
+}
+
+fn loose_equality(
+    context: &mut NativeContext<'_, NodeHost>,
+    args: &[RootId],
+    negate: bool,
 ) -> Result<RootId, RootedError> {
     if args.len() < 2 {
         return missing_assert_arguments(context);
     }
     let (actual, expected) = (args[0], args[1]);
-    if deep_equal(context, actual, expected, &mut HashSet::new())? {
+    if (context.same_value_rooted(actual, expected)? || context.equal_rooted(actual, expected)?)
+        != negate
+    {
         return Ok(context.undefined());
     }
-    let (message, generated) = assertion_message(
-        context,
-        args.get(2).copied(),
-        "Expected values to be strictly deep-equal",
-    )?;
+    let fallback = if negate {
+        "Expected values to be loosely unequal"
+    } else {
+        "Expected values to be loosely equal"
+    };
+    let (message, generated) = assertion_message(context, args.get(2).copied(), fallback)?;
     assertion_error(
         context,
         actual,
         expected,
-        "deepStrictEqual",
+        if negate { "!=" } else { "==" },
         &message,
         generated,
     )
+}
+
+pub(crate) fn deep_strict_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    deep_assertion(context, args, ComparisonMode::Strict, false)
+}
+
+pub(crate) fn not_deep_strict_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    deep_assertion(context, args, ComparisonMode::Strict, true)
+}
+
+pub(crate) fn partial_deep_strict_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    deep_assertion(context, args, ComparisonMode::Partial, false)
+}
+
+pub(crate) fn legacy_deep_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    deep_assertion(context, args, ComparisonMode::Loose, false)
+}
+
+pub(crate) fn legacy_not_deep_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    deep_assertion(context, args, ComparisonMode::Loose, true)
+}
+
+fn deep_assertion(
+    context: &mut NativeContext<'_, NodeHost>,
+    args: &[RootId],
+    mode: ComparisonMode,
+    negate: bool,
+) -> Result<RootId, RootedError> {
+    if args.len() < 2 {
+        return missing_assert_arguments(context);
+    }
+    let (actual, expected) = (args[0], args[1]);
+    if deep_equal(context, actual, expected, mode, &mut Vec::new())? != negate {
+        return Ok(context.undefined());
+    }
+    let (operator, fallback) = match (mode, negate) {
+        (ComparisonMode::Loose, false) => ("deepEqual", "Expected values to be loosely deep-equal"),
+        (ComparisonMode::Loose, true) => (
+            "notDeepEqual",
+            "Expected actual not to be loosely deep-equal to",
+        ),
+        (ComparisonMode::Partial, false) => (
+            "partialDeepStrictEqual",
+            "Expected values to be partially and strictly deep-equal",
+        ),
+        (_, false) => (
+            "deepStrictEqual",
+            "Expected values to be strictly deep-equal",
+        ),
+        (_, true) => ("notDeepStrictEqual", ASSERTION_NOT_DEEP_UNEQUAL),
+    };
+    let (message, generated) = assertion_message(context, args.get(2).copied(), fallback)?;
+    assertion_error(context, actual, expected, operator, &message, generated)
+}
+
+pub(crate) fn is_deep_strict_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let actual = args.first().copied().unwrap_or_else(|| context.undefined());
+    let expected = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let mode = if args
+        .get(2)
+        .copied()
+        .map(|root| context.truthy_rooted(root))
+        .transpose()?
+        .unwrap_or(false)
+    {
+        ComparisonMode::StrictWithoutPrototypes
+    } else {
+        ComparisonMode::Strict
+    };
+    let matches = deep_equal(context, actual, expected, mode, &mut Vec::new())?;
+    Ok(context.boolean(matches))
 }
 
 pub(crate) fn match_string(
@@ -190,8 +448,13 @@ pub(crate) fn match_string(
         return missing_assert_arguments(context);
     }
     let (actual, expected) = (args[0], args[1]);
+    if !is_regexp(context, expected)? {
+        return invalid_regexp(context, expected);
+    }
     if context.string_text(actual)?.is_none() {
         let error = context.type_error_rooted("The \"string\" argument must be of type string")?;
+        let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+        set(context, error, "code", code)?;
         return Err(context.throw(error));
     }
     let matched = regexp_match(context, expected, actual)?;
@@ -204,6 +467,49 @@ pub(crate) fn match_string(
                 "The input did not match the regular expression",
             )?;
             assertion_error(context, actual, expected, "match", &message, generated)
+        }
+        None => {
+            let error = context
+                .type_error_rooted("The \"regexp\" argument must be an instance of RegExp")?;
+            Err(context.throw(error))
+        }
+    }
+}
+
+pub(crate) fn does_not_match(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    if args.len() < 2 {
+        return missing_assert_arguments(context);
+    }
+    let (actual, expected) = (args[0], args[1]);
+    if !is_regexp(context, expected)? {
+        return invalid_regexp(context, expected);
+    }
+    if context.string_text(actual)?.is_none() {
+        let error = context.type_error_rooted("The \"string\" argument must be of type string")?;
+        let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+        set(context, error, "code", code)?;
+        return Err(context.throw(error));
+    }
+    match regexp_match(context, expected, actual)? {
+        Some(false) => Ok(context.undefined()),
+        Some(true) => {
+            let (message, generated) = assertion_message(
+                context,
+                args.get(2).copied(),
+                "The input was expected not to match the regular expression",
+            )?;
+            assertion_error(
+                context,
+                actual,
+                expected,
+                "doesNotMatch",
+                &message,
+                generated,
+            )
         }
         None => {
             let error = context
@@ -226,60 +532,434 @@ fn deep_equal(
     context: &mut NativeContext<'_, NodeHost>,
     actual: RootId,
     expected: RootId,
-    seen: &mut HashSet<(RootId, RootId)>,
+    mode: ComparisonMode,
+    seen: &mut Vec<(RootId, RootId)>,
 ) -> Result<bool, RootedError> {
     if context.same_value_rooted(actual, expected)? {
         return Ok(true);
     }
-    if is_primitive(context, actual) || is_primitive(context, expected) {
-        return Ok(false);
+    let actual_object = context.is_object_rooted(actual)?;
+    let expected_object = context.is_object_rooted(expected)?;
+    if !actual_object || !expected_object {
+        return if mode == ComparisonMode::Loose
+            && !actual_object
+            && !expected_object
+            && !context.is_callable_rooted(actual)?
+            && !context.is_callable_rooted(expected)?
+        {
+            context.equal_rooted(actual, expected)
+        } else {
+            Ok(false)
+        };
     }
-    if !seen.insert((actual, expected)) {
-        return Ok(true);
+    for (left, right) in seen.iter().copied() {
+        if context.same_value_rooted(actual, left)? && context.same_value_rooted(expected, right)? {
+            return Ok(true);
+        }
     }
-    if !same_prototype(context, actual, expected)?
-        || array_kind(context, actual)? != array_kind(context, expected)?
+    seen.push((actual, expected));
+    let array = context.is_array_rooted(actual)?;
+    if (mode == ComparisonMode::Strict && !same_prototype(context, actual, expected)?)
+        || array != context.is_array_rooted(expected)?
     {
         return Ok(false);
     }
-    let actual_keys = enumerable_key_names(context, actual)?;
-    let expected_keys = enumerable_key_names(context, expected)?;
-    if actual_keys != expected_keys {
+    if array {
+        let actual_length = get(context, actual, "length")?;
+        let expected_length = get(context, expected, "length")?;
+        if mode == ComparisonMode::Partial {
+            let actual_length = context
+                .rooted_value(actual_length)
+                .and_then(|value| value.as_number())
+                .unwrap_or(0.0) as usize;
+            let expected_length = context
+                .rooted_value(expected_length)
+                .and_then(|value| value.as_number())
+                .unwrap_or(0.0) as usize;
+            if actual_length < expected_length
+                || !partial_array_equal(
+                    context,
+                    actual,
+                    expected,
+                    actual_length,
+                    expected_length,
+                    mode,
+                    seen,
+                )?
+            {
+                return Ok(false);
+            }
+        } else if !context.same_value_rooted(actual_length, expected_length)? {
+            return Ok(false);
+        }
+    }
+    let actual_data = context.builtin_data_rooted(actual)?;
+    let expected_data = context.builtin_data_rooted(expected)?;
+    let indices = !matches!(actual_data, Some(BuiltinData::Bytes { .. }))
+        && !(array && mode == ComparisonMode::Partial);
+    if !builtin_equal(
+        context,
+        actual,
+        expected,
+        actual_data,
+        expected_data,
+        mode,
+        seen,
+    )? {
         return Ok(false);
     }
-    for key in actual_keys {
+    let (actual_keys, actual_symbols) =
+        enumerable_keys(context, actual, mode != ComparisonMode::Loose, indices)?;
+    let (expected_keys, expected_symbols) =
+        enumerable_keys(context, expected, mode != ComparisonMode::Loose, indices)?;
+    if mode != ComparisonMode::Partial && actual_symbols.len() != expected_symbols.len() {
+        return Ok(false);
+    }
+    if mode == ComparisonMode::Partial {
+        if expected_keys.iter().any(|key| !actual_keys.contains(key)) {
+            return Ok(false);
+        }
+    } else if actual_keys != expected_keys {
+        return Ok(false);
+    }
+    for key in expected_keys {
         let key = context.string_rooted(&key);
         let left = context.get_property_rooted(actual, key)?;
         let right = context.get_property_rooted(expected, key)?;
-        if !deep_equal(context, left, right, seen)? {
+        if !deep_equal(context, left, right, mode, seen)? {
+            return Ok(false);
+        }
+    }
+    for key in expected_symbols {
+        let mut present = false;
+        for expected_key in &actual_symbols {
+            if context.same_value_rooted(key, *expected_key)? {
+                present = true;
+                break;
+            }
+        }
+        if !present {
+            return Ok(false);
+        }
+        let left = context.get_property_rooted(actual, key)?;
+        let right = context.get_property_rooted(expected, key)?;
+        if !deep_equal(context, left, right, mode, seen)? {
             return Ok(false);
         }
     }
     Ok(true)
 }
 
-fn enumerable_key_names(
+fn partial_array_equal(
     context: &mut NativeContext<'_, NodeHost>,
-    value: RootId,
-) -> Result<Vec<String>, RootedError> {
-    let keys = object_keys(context, value)?;
-    let mut names = keys
-        .into_iter()
-        .map(|key| {
-            context
-                .string_text(key)?
-                .ok_or_else(|| RootedError::host("Object.keys returned a non-string key"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    names.sort();
-    Ok(names)
+    actual: RootId,
+    expected: RootId,
+    actual_length: usize,
+    expected_length: usize,
+    mode: ComparisonMode,
+    seen: &mut Vec<(RootId, RootId)>,
+) -> Result<bool, RootedError> {
+    let undefined = context.undefined();
+    let mut cursor = 0;
+    for index in 0..expected_length {
+        let key = context.string_rooted(&index.to_string());
+        let right = context.get_property_rooted(expected, key)?;
+        let descriptor = context.own_property_descriptor_rooted(expected, key)?;
+        if context.same_value_rooted(right, undefined)? && !context.truthy_rooted(descriptor)? {
+            return partial_sparse_array_equal(
+                context, actual, expected, cursor, index, mode, seen,
+            );
+        }
+        loop {
+            let key = context.string_rooted(&cursor.to_string());
+            let left = context.get_property_rooted(actual, key)?;
+            let descriptor = context.own_property_descriptor_rooted(actual, key)?;
+            if context.same_value_rooted(left, undefined)? && !context.truthy_rooted(descriptor)? {
+                return partial_sparse_array_equal(
+                    context, actual, expected, cursor, index, mode, seen,
+                );
+            }
+            let mut trial = seen.clone();
+            if deep_equal(context, left, right, mode, &mut trial)? {
+                *seen = trial;
+                break;
+            }
+            cursor += 1;
+            if cursor > actual_length - expected_length + index {
+                return Ok(false);
+            }
+        }
+        cursor += 1;
+    }
+    Ok(true)
 }
 
-fn is_primitive(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> bool {
-    context
-        .rooted_value(value)
-        .is_none_or(|value| !value.is_heap())
-        || context.string_text(value).ok().flatten().is_some()
+fn partial_sparse_array_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    actual: RootId,
+    expected: RootId,
+    start_actual: usize,
+    start_expected: usize,
+    mode: ComparisonMode,
+    seen: &mut Vec<(RootId, RootId)>,
+) -> Result<bool, RootedError> {
+    let actual_keys = context.enumerable_own_keys_rooted(actual, false, true)?;
+    let expected_keys = context.enumerable_own_keys_rooted(expected, false, true)?;
+    let actual_remaining = actual_keys.len() as isize - start_actual as isize;
+    let expected_remaining = expected_keys.len() as isize - start_expected as isize;
+    if actual_remaining < expected_remaining {
+        return Ok(false);
+    }
+    if expected_remaining <= 0 {
+        return Ok(true);
+    }
+    let mut cursor = start_actual;
+    for key in expected_keys.into_iter().skip(start_expected) {
+        let right = context.get_property_rooted(expected, key)?;
+        let mut matched = false;
+        while let Some(key) = actual_keys.get(cursor) {
+            cursor += 1;
+            let left = context.get_property_rooted(actual, *key)?;
+            let mut trial = seen.clone();
+            if deep_equal(context, left, right, mode, &mut trial)? {
+                *seen = trial;
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn builtin_equal(
+    context: &mut NativeContext<'_, NodeHost>,
+    actual: RootId,
+    expected: RootId,
+    left: Option<BuiltinData>,
+    right: Option<BuiltinData>,
+    mode: ComparisonMode,
+    seen: &mut Vec<(RootId, RootId)>,
+) -> Result<bool, RootedError> {
+    use BuiltinData::*;
+    match (left, right) {
+        (None, None) => {
+            let left = crate::modules::url_shared_vm::comparison_href(context, actual)?;
+            let right = crate::modules::url_shared_vm::comparison_href(context, expected)?;
+            match (left, right) {
+                (Some(left), Some(right)) => context.strict_equal_rooted(left, right),
+                (None, None) => Ok(true),
+                _ => Ok(false),
+            }
+        }
+        (Some(Primitive { brand: a, value: x }), Some(Primitive { brand: b, value: y })) => {
+            Ok(a == b && context.same_value_rooted(x, y)?)
+        }
+        (Some(Bytes { brand: a, bytes: x }), Some(Bytes { brand: b, bytes: y })) => {
+            if a != b {
+                return Ok(false);
+            }
+            if mode == ComparisonMode::Loose {
+                if let (Some(x), Some(y)) = (
+                    context.floating_view_values_rooted(actual)?,
+                    context.floating_view_values_rooted(expected)?,
+                ) {
+                    return Ok(x.len() == y.len() && x.iter().zip(y).all(|(a, b)| *a == b));
+                }
+            }
+            if mode == ComparisonMode::Partial && x.len() != y.len() {
+                let mut cursor = 0;
+                for byte in y {
+                    let Some(offset) = x[cursor..].iter().position(|candidate| *candidate == byte)
+                    else {
+                        return Ok(false);
+                    };
+                    cursor += offset + 1;
+                }
+                return Ok(true);
+            }
+            Ok(x == y)
+        }
+        (Some(RegExp), Some(RegExp)) => {
+            for key in ["source", "flags", "lastIndex"] {
+                let x = get(context, actual, key)?;
+                let y = get(context, expected, key)?;
+                if !context.strict_equal_rooted(x, y)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        (Some(Error), Some(Error)) => {
+            for key in ["message", "name", "cause", "errors"] {
+                let property = context.string_rooted(key);
+                let expected_descriptor =
+                    context.own_property_descriptor_rooted(expected, property)?;
+                if key == "cause" {
+                    let actual_descriptor =
+                        context.own_property_descriptor_rooted(actual, property)?;
+                    let actual_owns = context.truthy_rooted(actual_descriptor)?;
+                    let expected_owns = context.truthy_rooted(expected_descriptor)?;
+                    if actual_owns != expected_owns
+                        && (mode != ComparisonMode::Partial || expected_owns)
+                    {
+                        return Ok(false);
+                    }
+                }
+                if context.truthy_rooted(expected_descriptor)? {
+                    let enumerable = get(context, expected_descriptor, "enumerable")?;
+                    if context.truthy_rooted(enumerable)? {
+                        continue;
+                    }
+                }
+                let y = get(context, expected, key)?;
+                if mode == ComparisonMode::Partial {
+                    let undefined = context.undefined();
+                    if context.same_value_rooted(y, undefined)? {
+                        continue;
+                    }
+                    if key == "message" && context.string_text(y)?.as_deref() == Some("") {
+                        continue;
+                    }
+                }
+                let x = get(context, actual, key)?;
+                if !deep_equal(context, x, y, mode, seen)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        (Some(Map(x)), Some(Map(y))) => {
+            let (x, y) = if mode == ComparisonMode::Partial {
+                if y.len() > x.len() {
+                    return Ok(false);
+                }
+                (y, x)
+            } else {
+                if x.len() != y.len() {
+                    return Ok(false);
+                }
+                (x, y)
+            };
+            let mut used = vec![false; y.len()];
+            for (key, value) in x {
+                let mut matched = false;
+                for (index, (other_key, other_value)) in y.iter().copied().enumerate() {
+                    if used[index] {
+                        continue;
+                    }
+                    let mut trial = seen.clone();
+                    if deep_equal(
+                        context,
+                        if mode == ComparisonMode::Partial {
+                            other_key
+                        } else {
+                            key
+                        },
+                        if mode == ComparisonMode::Partial {
+                            key
+                        } else {
+                            other_key
+                        },
+                        mode,
+                        &mut trial,
+                    )? && deep_equal(
+                        context,
+                        if mode == ComparisonMode::Partial {
+                            other_value
+                        } else {
+                            value
+                        },
+                        if mode == ComparisonMode::Partial {
+                            value
+                        } else {
+                            other_value
+                        },
+                        mode,
+                        &mut trial,
+                    )? {
+                        *seen = trial;
+                        used[index] = true;
+                        matched = true;
+                        break;
+                    }
+                }
+                if !matched {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        (Some(Set(x)), Some(Set(y))) => {
+            let (x, y) = if mode == ComparisonMode::Partial {
+                if y.len() > x.len() {
+                    return Ok(false);
+                }
+                (y, x)
+            } else {
+                if x.len() != y.len() {
+                    return Ok(false);
+                }
+                (x, y)
+            };
+            let mut used = vec![false; y.len()];
+            for value in x {
+                let mut matched = false;
+                for (index, other) in y.iter().copied().enumerate() {
+                    if used[index] {
+                        continue;
+                    }
+                    let mut trial = seen.clone();
+                    if deep_equal(
+                        context,
+                        if mode == ComparisonMode::Partial {
+                            other
+                        } else {
+                            value
+                        },
+                        if mode == ComparisonMode::Partial {
+                            value
+                        } else {
+                            other
+                        },
+                        mode,
+                        &mut trial,
+                    )? {
+                        *seen = trial;
+                        used[index] = true;
+                        matched = true;
+                        break;
+                    }
+                }
+                if !matched {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
+fn enumerable_keys(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    symbols: bool,
+    indices: bool,
+) -> Result<(Vec<String>, Vec<RootId>), RootedError> {
+    let mut names = Vec::new();
+    let mut symbol_keys = Vec::new();
+    for key in context.enumerable_own_keys_rooted(value, symbols, indices)? {
+        if let Some(name) = context.string_text(key)? {
+            names.push(name);
+        } else if symbols {
+            symbol_keys.push(key);
+        }
+    }
+    names.sort();
+    Ok((names, symbol_keys))
 }
 
 fn same_prototype(
@@ -287,25 +967,9 @@ fn same_prototype(
     actual: RootId,
     expected: RootId,
 ) -> Result<bool, RootedError> {
-    let global = context.global_root()?;
-    let object = get(context, global, "Object")?;
-    let get_prototype = get(context, object, "getPrototypeOf")?;
-    let actual_prototype = context.call_rooted(get_prototype, object, &[actual])?;
-    let expected_prototype = context.call_rooted(get_prototype, object, &[expected])?;
-    context.same_value_rooted(actual_prototype, expected_prototype)
-}
-
-fn array_kind(
-    context: &mut NativeContext<'_, NodeHost>,
-    value: RootId,
-) -> Result<bool, RootedError> {
-    let global = context.global_root()?;
-    let array = get(context, global, "Array")?;
-    let is_array = get(context, array, "isArray")?;
-    let result = context.call_rooted(is_array, array, &[value])?;
-    Ok(context
-        .rooted_value(result)
-        .is_some_and(|value| value.as_bool() == Some(true)))
+    let actual = context.prototype_rooted(actual)?;
+    let expected = context.prototype_rooted(expected)?;
+    context.same_value_rooted(actual, expected)
 }
 
 pub(crate) fn throws(
@@ -339,7 +1003,33 @@ pub(crate) fn throws(
         return Ok(undefined);
     };
     if context.is_callable_rooted(expected)? {
-        let matched = context.call_rooted(expected, undefined, &[thrown])?;
+        let prototype = get(context, expected, "prototype")?;
+        let is_error_constructor = if context.is_object_rooted(prototype)? {
+            let global = context.global_root()?;
+            let object = get(context, global, "Object")?;
+            let object_prototype = get(context, object, "prototype")?;
+            let is_prototype_of = get(context, object_prototype, "isPrototypeOf")?;
+            let error_constructor = get(context, global, "Error")?;
+            let error_prototype = get(context, error_constructor, "prototype")?;
+            if context.same_value_rooted(prototype, error_prototype)? {
+                true
+            } else {
+                let inherits_error =
+                    context.call_rooted(is_prototype_of, error_prototype, &[prototype])?;
+                context.truthy_rooted(inherits_error)?
+            }
+        } else {
+            false
+        };
+        let matched = if is_error_constructor {
+            let global = context.global_root()?;
+            let object = get(context, global, "Object")?;
+            let object_prototype = get(context, object, "prototype")?;
+            let is_prototype_of = get(context, object_prototype, "isPrototypeOf")?;
+            context.call_rooted(is_prototype_of, prototype, &[thrown])?
+        } else {
+            context.call_rooted(expected, undefined, &[thrown])?
+        };
         if context.truthy_rooted(matched)? {
             return Ok(thrown);
         }
@@ -407,22 +1097,91 @@ pub(crate) fn throws(
     }
 }
 
+pub(crate) fn does_not_throw(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let Some(callback) = args.first().copied() else {
+        return invalid_assert_callback(context, "undefined");
+    };
+    if !context.is_callable_rooted(callback)? {
+        let received = context.to_string(callback)?;
+        return invalid_assert_callback(context, &received);
+    }
+    let undefined = context.undefined();
+    match context.call_rooted(callback, undefined, &[]) {
+        Ok(_) => Ok(undefined),
+        Err(error) => {
+            let Some(exception) = error.exception else {
+                return Err(error);
+            };
+            if let Some(expected) = args.get(1).copied() {
+                if !expected_error_matches(context, expected, exception)? {
+                    return Err(context.throw(exception));
+                }
+            }
+            let (message, generated) =
+                assertion_message(context, args.get(2).copied(), "Got unwanted exception.")?;
+            assertion_error(
+                context,
+                exception,
+                undefined,
+                "doesNotThrow",
+                &message,
+                generated,
+            )
+        }
+    }
+}
+
+fn expected_error_matches(
+    context: &mut NativeContext<'_, NodeHost>,
+    expected: RootId,
+    thrown: RootId,
+) -> Result<bool, RootedError> {
+    if context.is_callable_rooted(expected)? {
+        let prototype = get(context, expected, "prototype")?;
+        if context.is_object_rooted(prototype)? {
+            let global = context.global_root()?;
+            let error = get(context, global, "Error")?;
+            let error_prototype = get(context, error, "prototype")?;
+            let object = get(context, global, "Object")?;
+            let object_prototype = get(context, object, "prototype")?;
+            let is_prototype_of = get(context, object_prototype, "isPrototypeOf")?;
+            let inherits_error =
+                context.call_rooted(is_prototype_of, error_prototype, &[prototype])?;
+            let error_constructor = context.same_value_rooted(prototype, error_prototype)?
+                || context.truthy_rooted(inherits_error)?;
+            if error_constructor {
+                let matched = context.call_rooted(is_prototype_of, prototype, &[thrown])?;
+                return context.truthy_rooted(matched);
+            }
+        }
+        let undefined = context.undefined();
+        let result = context.call_rooted(expected, undefined, &[thrown])?;
+        return context.truthy_rooted(result);
+    }
+    if let Some(matches) = regexp_match(context, expected, thrown)? {
+        return Ok(matches);
+    }
+    if context.is_object_rooted(expected)? {
+        let keys = object_keys(context, expected)?;
+        if !keys.is_empty() {
+            return expected_matches_object(context, thrown, expected, &keys);
+        }
+    }
+    Ok(false)
+}
+
 fn regexp_match(
     context: &mut NativeContext<'_, NodeHost>,
     expected: RootId,
     thrown: RootId,
 ) -> Result<Option<bool>, RootedError> {
-    let global = context.global_root()?;
-    let object = get(context, global, "Object")?;
-    let object_prototype = get(context, object, "prototype")?;
-    let is_prototype_of = get(context, object_prototype, "isPrototypeOf")?;
-    let regexp = get(context, global, "RegExp")?;
-    let regexp_prototype = get(context, regexp, "prototype")?;
-    let inherits_regexp = context.call_rooted(is_prototype_of, regexp_prototype, &[expected])?;
-    if !context.truthy_rooted(inherits_regexp)? {
+    if !is_regexp(context, expected)? {
         return Ok(None);
     }
-
     let actual = context.to_string(thrown)?;
     let input = context.string_rooted(&actual);
     let test = get(context, expected, "test")?;
@@ -432,23 +1191,58 @@ fn regexp_match(
         .and_then(|value| value.as_bool()))
 }
 
+fn is_regexp(
+    context: &mut NativeContext<'_, NodeHost>,
+    expected: RootId,
+) -> Result<bool, RootedError> {
+    let global = context.global_root()?;
+    let object = get(context, global, "Object")?;
+    let object_prototype = get(context, object, "prototype")?;
+    let is_prototype_of = get(context, object_prototype, "isPrototypeOf")?;
+    let regexp = get(context, global, "RegExp")?;
+    let regexp_prototype = get(context, regexp, "prototype")?;
+    let inherits_regexp = context.call_rooted(is_prototype_of, regexp_prototype, &[expected])?;
+    context.truthy_rooted(inherits_regexp)
+}
+
+fn invalid_regexp(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<RootId, RootedError> {
+    let received = match context.string_text(value)? {
+        Some(value) => format!("type string ('{value}')"),
+        None => "an instance of Object".to_owned(),
+    };
+    let error = context.type_error_rooted(&format!(
+        "The \"regexp\" argument must be an instance of RegExp. Received {received}"
+    ))?;
+    let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+    set(context, error, "code", code)?;
+    Err(context.throw(error))
+}
+
 pub(crate) fn fail(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let message = match args.first().copied() {
+    if let Some(message) = args.first().copied() {
+        if error_instance(context, message)? {
+            return Err(context.throw(message));
+        }
+    }
+    let (message, generated) = match args.first().copied() {
         Some(message)
             if !context
                 .rooted_value(message)
                 .is_some_and(|value| value.is_undefined()) =>
         {
-            context.to_string(message)?
+            (context.to_string(message)?, false)
         }
-        _ => "Failed".to_owned(),
+        _ => ("Failed".to_owned(), true),
     };
     let undefined = context.undefined();
-    assertion_error(context, undefined, undefined, "fail", &message, false)
+    assertion_error(context, undefined, undefined, "fail", &message, generated)
 }
 
 pub(crate) fn if_error(
@@ -572,14 +1366,29 @@ fn expected_matches_object(
     expected: RootId,
     keys: &[RootId],
 ) -> Result<bool, RootedError> {
-    for key in keys {
-        let expected_value = context.get_property_rooted(expected, *key)?;
-        let actual_value = context.get_property_rooted(actual, *key)?;
-        let matches = match regexp_match(context, expected_value, actual_value)? {
-            Some(matches) => matches,
-            None => context.same_value_rooted(expected_value, actual_value)?,
-        };
-        if !matches {
+    if !context.is_object_rooted(actual)? || context.is_callable_rooted(actual)? {
+        return Ok(false);
+    }
+    for &key in keys {
+        let actual_value = context.get_property_rooted(actual, key)?;
+        if context.string_text(actual_value)?.is_some() {
+            let expected_value = context.get_property_rooted(expected, key)?;
+            if regexp_match(context, expected_value, actual_value)?.is_some_and(|matched| matched) {
+                continue;
+            }
+        }
+        if !context.has_property_rooted(actual, key)? {
+            return Ok(false);
+        }
+        let actual_value = context.get_property_rooted(actual, key)?;
+        let expected_value = context.get_property_rooted(expected, key)?;
+        if !deep_equal(
+            context,
+            actual_value,
+            expected_value,
+            ComparisonMode::Strict,
+            &mut Vec::new(),
+        )? {
             return Ok(false);
         }
     }
@@ -647,6 +1456,13 @@ fn assertion_message(
     match context.string_text(message)? {
         Some(message) => Ok((message, false)),
         None => {
+            if error_instance(context, message)? {
+                let key = context.string_rooted("message");
+                let text = context.get_property_rooted(message, key)?;
+                if let Some(text) = context.string_text(text)? {
+                    return Ok((text, false));
+                }
+            }
             let received = if let Some(number) = value.as_number() {
                 format!("type number ({number})")
             } else if let Some(boolean) = value.as_bool() {

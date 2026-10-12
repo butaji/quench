@@ -287,6 +287,13 @@ impl<H: Host> Vm<H> {
                     let value = self
                         .heap
                         .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                    if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
+                    {
+                        let url = self.host.import_meta_url(&source_name);
+                        let url = self.heap.alloc(Cell::String(url.into()));
+                        let url_atom = self.intern_atom("url");
+                        self.set_property(value, url_atom, url)?;
+                    }
                     self.programs.set_import_meta(program, value);
                     value
                 };
@@ -1883,17 +1890,7 @@ impl<H: Host> Vm<H> {
             Op::WasmThrowRef => return Err(self.wasm_throw_ref(self.read(f, i.register_a()))),
             Op::Throw => {
                 let value = self.read(f, i.register_a());
-                let message = if self.object_data(value).is_some() {
-                    let atom = self.intern_atom("message");
-                    match self.get_property(p, value, atom)? {
-                        value if matches!(self.heap.get(value), Some(Cell::String(_))) => {
-                            self.to_string(p, value)?
-                        }
-                        _ => self.to_string(p, value)?,
-                    }
-                } else {
-                    self.to_string(p, value)?
-                };
+                let message = self.detail_string(value);
                 return Err(JsError::thrown(value, message));
             }
         }

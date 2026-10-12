@@ -37,6 +37,38 @@ impl RootedError {
 }
 
 impl<H: Host> Runtime<H> {
+    /// Scope a native embedding frame in captured Error stacks. Native frames
+    /// carry no invented JavaScript filename or source position.
+    pub fn with_native_stack_frame<T>(
+        &mut self,
+        name: &str,
+        call: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        self.vm.embedding_push_native_stack_frame(name);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| call(self)));
+        self.vm.embedding_pop_native_stack_frame();
+        match result {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+
+    /// Format a retained exception after refreshing its value through its live
+    /// root. Guest hooks may run; exception reporting must hold this root.
+    pub fn format_rooted_error(
+        &mut self,
+        program: &crate::ResidualProgram,
+        error: &mut RootedError,
+    ) -> String {
+        if let Some(root) = error.exception {
+            match self.vm.embedding_value(root) {
+                Ok(value) => error.error.replace_thrown_value(value),
+                Err(_) => return error.error.to_string(),
+            }
+        }
+        self.vm.format_error(program, &error.error)
+    }
+
     /// Retain the current realm's global object. Requires initialized execution.
     pub fn global_root(&mut self) -> Result<RootId, JsError> {
         self.vm.global_root()

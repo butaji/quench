@@ -1,22 +1,58 @@
-//! Shared-VM utilities whose behavior is defined in guest-visible JavaScript.
+//! Shared-VM utilities and native builtin-brand predicates.
 
 use crate::host::NodeHost;
-use quench_runtime::{NativeContext, RootId, RootedError};
+use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
+
+const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
+    ("isDate", BuiltinBrand::Date),
+    ("isRegExp", BuiltinBrand::RegExp),
+    ("isNativeError", BuiltinBrand::NativeError),
+    ("isPromise", BuiltinBrand::Promise),
+    ("isMap", BuiltinBrand::Map),
+    ("isSet", BuiltinBrand::Set),
+    ("isWeakMap", BuiltinBrand::WeakMap),
+    ("isWeakSet", BuiltinBrand::WeakSet),
+    ("isProxy", BuiltinBrand::Proxy),
+    ("isArrayBuffer", BuiltinBrand::ArrayBuffer),
+    ("isSharedArrayBuffer", BuiltinBrand::SharedArrayBuffer),
+    ("isAnyArrayBuffer", BuiltinBrand::AnyArrayBuffer),
+    ("isDataView", BuiltinBrand::DataView),
+    ("isTypedArray", BuiltinBrand::TypedArray),
+    ("isArrayBufferView", BuiltinBrand::ArrayBufferView),
+    ("isArgumentsObject", BuiltinBrand::ArgumentsObject),
+    ("isAsyncFunction", BuiltinBrand::AsyncFunction),
+    ("isGeneratorFunction", BuiltinBrand::GeneratorFunction),
+    ("isGeneratorObject", BuiltinBrand::GeneratorObject),
+    ("isMapIterator", BuiltinBrand::MapIterator),
+    ("isSetIterator", BuiltinBrand::SetIterator),
+    (
+        "isModuleNamespaceObject",
+        BuiltinBrand::ModuleNamespaceObject,
+    ),
+    ("isBooleanObject", BuiltinBrand::BooleanObject),
+    ("isNumberObject", BuiltinBrand::NumberObject),
+    ("isStringObject", BuiltinBrand::StringObject),
+    ("isSymbolObject", BuiltinBrand::SymbolObject),
+    ("isBigIntObject", BuiltinBrand::BigIntObject),
+    ("isBoxedPrimitive", BuiltinBrand::BoxedPrimitive),
+    ("isUint8Array", BuiltinBrand::Uint8Array),
+    ("isUint8ClampedArray", BuiltinBrand::Uint8ClampedArray),
+    ("isUint16Array", BuiltinBrand::Uint16Array),
+    ("isUint32Array", BuiltinBrand::Uint32Array),
+    ("isInt8Array", BuiltinBrand::Int8Array),
+    ("isInt16Array", BuiltinBrand::Int16Array),
+    ("isInt32Array", BuiltinBrand::Int32Array),
+    ("isBigInt64Array", BuiltinBrand::BigInt64Array),
+    ("isBigUint64Array", BuiltinBrand::BigUint64Array),
+    ("isFloat16Array", BuiltinBrand::Float16Array),
+    ("isFloat32Array", BuiltinBrand::Float32Array),
+    ("isFloat64Array", BuiltinBrand::Float64Array),
+];
+
+pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 
 const UTIL: &str = quench_js_check::checked_js!(
-    r#"(() => {
-  const quote = (value) => {
-    const escaped = value
-      .replaceAll("\\", "\\\\")
-      .replaceAll("'", "\\'")
-      .replaceAll("\n", "\\n")
-      .replaceAll("\r", "\\r")
-      .replaceAll("\t", "\\t")
-      .replaceAll("\b", "\\b")
-      .replaceAll("\f", "\\f");
-    return `'${escaped}'`;
-  };
-
+    r#"((quote) => {
   const propertyName = (key) => /^[A-Za-z_$][\w$]*$/.test(key) ? key : quote(key);
 
   function inspect(value, options = {}) {
@@ -42,11 +78,26 @@ const UTIL: &str = quench_js_check::checked_js!(
         return current.name ? `[Function: ${current.name}]` : "[Function (anonymous)]";
       }
       if (current instanceof Error) {
+        if (current.name === "SystemError" && current.code === "ERR_SOCKET_BUFFER_SIZE" && current.info) {
+          const { code, message, errno, syscall } = current.info;
+          return `SystemError [ERR_SOCKET_BUFFER_SIZE]: ${current.message}\n` +
+            `  code: 'ERR_SOCKET_BUFFER_SIZE',\n` +
+            `  info: {\n` +
+            `    errno: ${errno},\n` +
+            `    code: '${code}',\n` +
+            `    message: '${message}',\n` +
+            `    syscall: '${syscall}'\n` +
+            `  },\n` +
+            `  errno: [Getter/Setter: ${current.errno}],\n` +
+            `  syscall: [Getter/Setter: '${current.syscall}']\n` +
+            `}`;
+        }
         if (typeof current.stack === "string") return current.stack;
         return `${current.name || "Error"}${current.message ? `: ${current.message}` : ""}`;
       }
-      if (depth > maxDepth) return Array.isArray(current) ? "[Array]" : "[Object]";
-
+      if (depth > maxDepth) {
+        return current?.constructor?.name === "BlockList" ? "[BlockList]" : Array.isArray(current) ? "[Array]" : "[Object]";
+      }
       const customInspect = current[inspect.custom];
       if (settings.customInspect !== false && typeof customInspect === "function") {
         const custom = Reflect.apply(customInspect, current, [depth, settings, inspect]);
@@ -102,6 +153,30 @@ const UTIL: &str = quench_js_check::checked_js!(
     };
 
     return render(value, 0);
+  }
+
+  function format(first, ...args) {
+    if (typeof first !== "string") {
+      return [first, ...args].map((value) => typeof value === "string" ? value : inspect(value)).join(" ");
+    }
+    let index = 0;
+    const output = first.replace(/%[sdifjoOc%]/g, (token) => {
+      if (token === "%%") return "%";
+      if (index >= args.length) return token;
+      const value = args[index++];
+      switch (token) {
+        case "%s": return String(value);
+        case "%d": return String(Number(value));
+        case "%i": return String(Number.parseInt(value, 10));
+        case "%f": return String(Number.parseFloat(value));
+        case "%j": try { return JSON.stringify(value); } catch { return "[Circular]"; }
+        case "%o":
+        case "%O": return typeof value === "string" ? value : inspect(value);
+        case "%c": return "";
+        default: return token;
+      }
+    });
+    return output + args.slice(index).map((value) => typeof value === "string" ? value : inspect(value)).map((value) => ` ${value}`).join("");
   }
 
   inspect.defaultOptions = {
@@ -267,10 +342,326 @@ const UTIL: &str = quench_js_check::checked_js!(
     return promisified;
   };
   promisify.custom = promisifyCustom;
-  return { inspect, getCallSites, inherits, debuglog, deprecate, promisify };
-})()"#
+  return {
+    format,
+    inspect,
+    getCallSites,
+    inherits,
+    debuglog,
+    deprecate,
+    promisify,
+    TextEncoder: globalThis.TextEncoder,
+    TextDecoder: globalThis.TextDecoder,
+  };
+})"#
 );
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    context.evaluate_script_rooted(UTIL, "node:util/shared.js")
+    let factory = context.evaluate_script_rooted(UTIL, "node:util/shared.js")?;
+    let quote = context.host_function(crate::host::shared_vm::operation("utilInspectQuote"))?;
+    let undefined = context.undefined();
+    let module = context.call_rooted(factory, undefined, &[quote])?;
+    let inspect_key = context.string_rooted("inspect");
+    let inspect = context.get_property_rooted(module, inspect_key)?;
+    super::util_style_shared_vm::install(context, module, inspect)?;
+    let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
+    let compare_key = context.string_rooted("isDeepStrictEqual");
+    context.set_property_rooted(module, compare_key, compare, module)?;
+    for name in ["stripVTControlCharacters", "parseEnv", "getSystemErrorName"] {
+        let function = context.host_function(crate::host::shared_vm::operation(name))?;
+        let key = context.string_rooted(name);
+        context.set_property_rooted(module, key, function, module)?;
+    }
+    let callbackify = crate::modules::util_callbackify_shared_vm::function(context)?;
+    let callbackify_key = context.string_rooted("callbackify");
+    context.set_property_rooted(module, callbackify_key, callbackify, module)?;
+    let types = context.object_rooted()?;
+    for (index, &(name, brand)) in TYPE_PREDICATES.iter().enumerate() {
+        let data = context.number(index as f64);
+        let predicate = context
+            .host_function_with_data(crate::host::shared_vm::operation("utilTypeCheck"), data)?;
+        let name_key = context.string_rooted("name");
+        let (function_name, length) = match brand {
+            BuiltinBrand::ArrayBufferView => ("isView", 1),
+            BuiltinBrand::Date
+            | BuiltinBrand::RegExp
+            | BuiltinBrand::NativeError
+            | BuiltinBrand::Promise
+            | BuiltinBrand::Map
+            | BuiltinBrand::Set
+            | BuiltinBrand::WeakMap
+            | BuiltinBrand::WeakSet
+            | BuiltinBrand::Proxy
+            | BuiltinBrand::ArrayBuffer
+            | BuiltinBrand::SharedArrayBuffer
+            | BuiltinBrand::AnyArrayBuffer
+            | BuiltinBrand::ArgumentsObject
+            | BuiltinBrand::AsyncFunction
+            | BuiltinBrand::GeneratorFunction
+            | BuiltinBrand::GeneratorObject
+            | BuiltinBrand::MapIterator
+            | BuiltinBrand::SetIterator
+            | BuiltinBrand::ModuleNamespaceObject
+            | BuiltinBrand::BooleanObject
+            | BuiltinBrand::NumberObject
+            | BuiltinBrand::StringObject
+            | BuiltinBrand::SymbolObject
+            | BuiltinBrand::BigIntObject
+            | BuiltinBrand::BoxedPrimitive => ("", 0),
+            _ => (name, 1),
+        };
+        let name_value = context.string_rooted(function_name);
+        context.define_data_property_rooted(predicate, name_key, name_value, false, false, true)?;
+        let length_key = context.string_rooted("length");
+        let length_value = context.number(f64::from(length));
+        context.define_data_property_rooted(
+            predicate,
+            length_key,
+            length_value,
+            false,
+            false,
+            true,
+        )?;
+        let key = context.string_rooted(name);
+        context.set_property_rooted(types, key, predicate, types)?;
+    }
+    let key = context.string_rooted("types");
+    context.set_property_rooted(module, key, types, module)?;
+    Ok(module)
+}
+
+pub(crate) fn type_check(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let index = context
+        .rooted_value(data)
+        .and_then(|value| value.as_number())
+        .ok_or_else(|| RootedError::host("missing util predicate brand"))? as usize;
+    let brand = TYPE_PREDICATES
+        .get(index)
+        .ok_or_else(|| RootedError::host("invalid util predicate brand"))?
+        .1;
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let matches = context.has_builtin_brand_rooted(value, brand)?;
+    Ok(context.boolean(matches))
+}
+
+pub(crate) fn strip_vt(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let Some(units) = context.string_code_units(value)? else {
+        return Err(argument_type_error(context, value, "str", "string")?);
+    };
+    if !crate::modules::util_strip::has_vt_controls(&units) {
+        return Ok(value);
+    }
+    let stripped = crate::modules::util_strip::strip_vt_control_units(&units);
+    if stripped == units {
+        return Ok(value);
+    }
+    Ok(context.string_units_rooted(&stripped))
+}
+
+pub(crate) fn parse_env(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let Some(text) = context.string_text(value)? else {
+        return Err(argument_type_error(context, value, "content", "string")?);
+    };
+    let result = context.null_object_rooted()?;
+    for (name, value) in crate::modules::util_env::parse_env_file(&text) {
+        let key = context.string_rooted(&name);
+        let value = context.string_rooted(&value);
+        context.define_data_property_rooted(result, key, value, true, true, true)?;
+    }
+    Ok(result)
+}
+
+/// Node inspect string literals: pick a delimiter, escape controls and lone
+/// surrogates, and preserve valid UTF-16 pairs without host-text conversion.
+pub(crate) fn inspect_quote(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let units = context
+        .string_code_units(value)?
+        .ok_or_else(|| RootedError::host("inspect quote requires string code units"))?;
+    let delimiter = if !units.contains(&(b'\'' as u16)) {
+        b'\''
+    } else if !units.contains(&(b'"' as u16)) {
+        b'"'
+    } else if !units.contains(&(b'`' as u16))
+        && !units
+            .windows(2)
+            .any(|pair| pair == [b'$' as u16, b'{' as u16])
+    {
+        b'`'
+    } else {
+        b'\''
+    };
+    let mut output = vec![u16::from(delimiter)];
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        let escape = match unit {
+            8 => Some("\\b".to_owned()),
+            9 => Some("\\t".to_owned()),
+            10 => Some("\\n".to_owned()),
+            12 => Some("\\f".to_owned()),
+            13 => Some("\\r".to_owned()),
+            92 => Some("\\\\".to_owned()),
+            _ if unit == u16::from(delimiter) && delimiter == b'\'' => Some("\\'".to_owned()),
+            0..=31 | 127..=159 => Some(format!("\\x{unit:02X}")),
+            0xd800..=0xdbff
+                if units
+                    .get(index + 1)
+                    .is_some_and(|unit| (0xdc00..=0xdfff).contains(unit)) =>
+            {
+                output.extend_from_slice(&units[index..index + 2]);
+                index += 2;
+                continue;
+            }
+            0xd800..=0xdfff => Some(format!("\\u{unit:04x}")),
+            _ => None,
+        };
+        if let Some(escape) = escape {
+            output.extend(escape.encode_utf16());
+        } else {
+            output.push(unit);
+        }
+        index += 1;
+    }
+    output.push(u16::from(delimiter));
+    Ok(context.string_units_rooted(&output))
+}
+
+/// Shared Node AbortSignal shape validation. HasProperty observes Proxy traps
+/// and inherited aborted properties; functions and null are rejected.
+pub(crate) fn validate_abort_signal(
+    context: &mut NativeContext<'_, NodeHost>,
+    signal: RootId,
+    name: &str,
+) -> Result<(), RootedError> {
+    if context
+        .rooted_value(signal)
+        .is_some_and(|value| value.is_undefined())
+    {
+        return Ok(());
+    }
+    let valid = context.is_object_rooted(signal)? && !context.is_callable_rooted(signal)?;
+    let key = context.string_rooted("aborted");
+    if !valid || !context.has_property_rooted(signal, key)? {
+        return Err(argument_type_error(context, signal, name, "AbortSignal")?);
+    }
+    Ok(())
+}
+
+pub(crate) fn argument_type_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    root: RootId,
+    name: &str,
+    expected: &str,
+) -> Result<RootedError, RootedError> {
+    let expected = if expected.chars().next().is_some_and(char::is_uppercase) {
+        format!("an instance of {expected}")
+    } else {
+        format!("of type {expected}")
+    };
+    argument_type_error_with_expected(context, root, name, &expected)
+}
+
+/// Already formatted union of accepted Node argument types.
+pub(crate) fn argument_type_error_with_expected(
+    context: &mut NativeContext<'_, NodeHost>,
+    root: RootId,
+    name: &str,
+    expected: &str,
+) -> Result<RootedError, RootedError> {
+    let value = context
+        .rooted_value(root)
+        .ok_or_else(|| RootedError::host("invalid argument root"))?;
+    let received = if value.is_undefined() {
+        "undefined".to_owned()
+    } else if value.is_null() {
+        "null".to_owned()
+    } else if value.as_bool().is_some() {
+        format!("type boolean ({})", context.to_string(root)?)
+    } else if value.as_number().is_some() {
+        format!("type number ({})", context.to_string(root)?)
+    } else if let Some(text) = context.string_text(root)? {
+        format!(
+            "type string ('{}')",
+            text.replace('\\', "\\\\").replace('\'', "\\'")
+        )
+    } else if context.is_symbol_rooted(root)? {
+        let global = context.global_root()?;
+        let key = context.string_rooted("String");
+        let string = context.get_property_rooted(global, key)?;
+        let undefined = context.undefined();
+        let text = context.call_rooted(string, undefined, &[root])?;
+        format!("type symbol ({})", context.to_string(text)?)
+    } else if context.is_callable_rooted(root)? {
+        let key = context.string_rooted("name");
+        let name = context.get_property_rooted(root, key)?;
+        format!("function {}", context.to_string(name)?)
+    } else if context.is_object_rooted(root)? {
+        let key = context.string_rooted("constructor");
+        let constructor = context.get_property_rooted(root, key)?;
+        let name = context.string_rooted("name");
+        if context.truthy_rooted(constructor)? {
+            let constructor = context.get_property_rooted(root, key)?;
+            if context.has_property_rooted(constructor, name)? {
+                let constructor = context.get_property_rooted(root, key)?;
+                let name = context.get_property_rooted(constructor, name)?;
+                format!("an instance of {}", context.to_string(name)?)
+            } else {
+                "an instance of Object".to_owned()
+            }
+        } else {
+            "an instance of Object".to_owned()
+        }
+    } else {
+        format!("type bigint ({}n)", context.to_string(root)?)
+    };
+    let label = if name.ends_with(" argument") {
+        name.to_owned()
+    } else if name.contains('.') {
+        format!("\"{name}\" property")
+    } else {
+        format!("\"{name}\" argument")
+    };
+    let error = context.type_error_rooted(&format!(
+        "The {label} must be {expected}. Received {received}"
+    ))?;
+    let key = context.string_rooted("code");
+    let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
+    context.set_property_rooted(error, key, code, error)?;
+    Ok(context.throw(error))
+}
+
+/// Numeric ERR_OUT_OF_RANGE input rendering, shared by native validators.
+pub(crate) fn range_error_received(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<String, RootedError> {
+    let text = context.to_string(value)?;
+    let Some(number) = context.rooted_value(value).and_then(|value| value.as_number()) else { return Ok(text); };
+    if number == 0.0 && number.is_sign_negative() { return Ok("-0".to_owned()); }
+    if number.fract() == 0.0 && number.abs() > f64::from(u32::MAX) + 1.0 {
+        let start = usize::from(text.starts_with('-'));
+        let mut result = String::with_capacity(text.len() + text.len() / 3);
+        for (index, character) in text.char_indices() {
+            if index > start && (text.len() - index) % 3 == 0 { result.push('_'); }
+            result.push(character);
+        }
+        Ok(result)
+    } else { Ok(text) }
 }

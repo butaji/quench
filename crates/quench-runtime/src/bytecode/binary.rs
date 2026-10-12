@@ -74,6 +74,14 @@ pub(super) fn write_program(
     out.u8(u8::from(program.specialized));
     out.u8(program.kind.binary_tag());
     out.string(&program.source_name);
+    write_optional_string(
+        &mut out,
+        program.source.as_ref().map(|source| source.text.as_ref()),
+    );
+    if let Some(source) = &program.source {
+        out.u32(source.line_offset);
+        out.u32(source.column_offset);
+    }
     out.u32(program.module_requests.len() as u32);
     for request in &program.module_requests {
         out.string(&request.source);
@@ -356,6 +364,14 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
     let kind = super::ProgramKind::from_binary_tag(input.u8()?)
         .ok_or_else(|| "invalid residual program kind".to_owned())?;
     let source_name = input.string()?;
+    let source = match read_optional_string(&mut input)? {
+        Some(text) => Some(super::ProgramSource {
+            text: std::sync::Arc::from(text),
+            line_offset: input.u32()?,
+            column_offset: input.u32()?,
+        }),
+        None => None,
+    };
     let module_requests = input.list(|input| {
         let source = input.string()?;
         let phase = ModuleRequestPhase::from_binary_tag(input.u8()?)
@@ -719,6 +735,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         module_imports,
         module_link_plan,
         source_name,
+        source,
         atoms,
         constants,
         functions,
