@@ -3616,3 +3616,43 @@ setImmediate(()=>{hook.disable();console.log(JSON.stringify(result))});
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn child_cwd_accepts_file_urls_and_bytes_and_rejects_invalid_paths_before_launch() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),cp=require('child_process'),url=require('url'),result=[];
+for(const cwd of [process.cwd(),url.pathToFileURL(process.cwd()),Buffer.from(process.cwd())]){
+ const child=cp.spawnSync(process.execPath,['-e','console.log(process.cwd())'],{cwd});
+ assert.strictEqual(child.status,0);assert.strictEqual(child.stdout.toString().trim(),process.cwd());assert.strictEqual(child.stderr.length,0);result.push('cwd');
+}
+const bytes=new Uint8Array(Buffer.from(process.cwd())),byteChild=cp.spawnSync(process.execPath,['-e','0'],{cwd:bytes});assert.strictEqual(byteChild.status,null);assert.strictEqual(byteChild.error.code,'ENOENT');
+const overridden=Buffer.from('unused');overridden.toString=()=>process.cwd();const overriddenChild=cp.spawnSync(process.execPath,['-e','0'],{cwd:overridden});assert.strictEqual(overriddenChild.status,0);result.push('coerced');
+for(const spawn of [cp.spawn,cp.spawnSync]){
+ for(const cwd of [1,true,{},[],()=>{}])assert.throws(()=>spawn(process.execPath,['-e','0'],{cwd}),{code:'ERR_INVALID_ARG_TYPE'});
+ assert.throws(()=>spawn(process.execPath,['-e','0'],{cwd:new URL('http://example.com/')}),{code:'ERR_INVALID_URL_SCHEME'});
+ assert.throws(()=>spawn(process.execPath,['-e','0'],{cwd:new URL('file://host/tmp')}),{code:'ERR_INVALID_FILE_URL_HOST'});
+ for(const cwd of ['bad\0path',Buffer.from([0])])assert.throws(()=>spawn(process.execPath,['-e','0'],{cwd}),{code:'ERR_INVALID_ARG_VALUE'});
+ result.push('validated');
+}
+const child=cp.spawn(process.execPath,['-e','0'],{cwd:url.pathToFileURL(process.cwd())});child.on('error',error=>{throw error});child.on('exit',code=>{assert.strictEqual(code,0);console.log(JSON.stringify(result))});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}

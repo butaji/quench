@@ -379,7 +379,7 @@ pub(crate) fn spawn_child(
     command.args(&arguments);
     let stdio = super::child_process_stdio_shared_vm::normalize(context, options)?;
     let cwd = options
-        .map(|root| property_string(context, root, "cwd"))
+        .map(|root| property_cwd(context, root))
         .transpose()?
         .flatten();
     if let Some(env) = options
@@ -1090,7 +1090,7 @@ pub(crate) fn spawn_sync(
             .is_some_and(|value| value.is_undefined() || value.is_null())
     });
     let cwd = options
-        .map(|root| property_string(context, root, "cwd"))
+        .map(|root| property_cwd(context, root))
         .transpose()?
         .flatten();
     let max_buffer = if let Some(options) = options {
@@ -1289,6 +1289,67 @@ fn child_cwd(
 ) -> std::io::Result<()> {
     let cwd = context.host_mut().shared_state().borrow().cwd.clone();
     cwd.configure_child_command(command, requested)
+}
+
+/// Node validates cwd as a filesystem path, including branded file URLs.
+fn property_cwd(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: RootId,
+) -> Result<Option<String>, RootedError> {
+    let value = property(context, options, "cwd")?;
+    if context
+        .rooted_value(value)
+        .is_some_and(|v| v.is_undefined() || v.is_null())
+    {
+        return Ok(None);
+    }
+    if let Some(path) = context.string_text(value)? {
+        reject_cwd_null(context, value, path.as_bytes().contains(&0))?;
+        return Ok(Some(path));
+    }
+    if super::url_shared_vm::url_argument_text(context, value)?.is_some() {
+        let undefined = context.undefined();
+        let converted = super::url_shared_vm::file_url_to_path(context, undefined, &[value])?;
+        let path = context
+            .string_text(converted)?
+            .ok_or_else(|| RootedError::host("file URL cwd is not a string"))?;
+        reject_cwd_null(context, converted, path.as_bytes().contains(&0))?;
+        return Ok(Some(path));
+    }
+    if context.has_builtin_brand_rooted(value, quench_runtime::BuiltinBrand::Uint8Array)? {
+        let bytes = context
+            .view_bytes_rooted(value)
+            .ok_or_else(|| RootedError::host("cwd byte view unavailable"))?;
+        reject_cwd_null(context, value, bytes.contains(&0))?;
+        // Node's child-process binding coerces a validated byte view to a
+        // string; Buffer's UTF-8 conversion and Uint8Array's join both apply.
+        let path = context.to_string(value)?;
+        return Ok(Some(path));
+    }
+    Err(super::util_shared_vm::argument_type_error_with_expected(
+        context,
+        value,
+        "options.cwd",
+        "a string or an instance of Buffer or URL",
+    )?)
+}
+
+fn reject_cwd_null(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    contains_null: bool,
+) -> Result<(), RootedError> {
+    if !contains_null {
+        return Ok(());
+    }
+    let inspect = super::util_shared_vm::internal_inspect(context)?;
+    let undefined = context.undefined();
+    let detail = context.call_rooted(inspect, undefined, &[value])?;
+    let detail = context.to_string(detail)?;
+    let error=context.type_error_rooted(&format!("The argument 'options.cwd' must be a string, Uint8Array, or URL without null bytes. Received {detail}"))?;
+    let code = context.string_rooted("ERR_INVALID_ARG_VALUE");
+    set(context, error, "code", code)?;
+    Err(context.throw(error))
 }
 
 fn property_string(context: &mut NativeContext<'_, NodeHost>, object: RootId, name: &str) -> Result<Option<String>, RootedError> {
