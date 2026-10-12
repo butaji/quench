@@ -3507,3 +3507,112 @@ console.log(JSON.stringify(result));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn async_resource_hooks_preserve_scope_identity_receiver_and_destroy_order() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),hooks=require('async_hooks'),result=[];
+const outerId=hooks.executionAsyncId(),outerTrigger=hooks.triggerAsyncId(),outerResource=hooks.executionAsyncResource();let id,resource,hook;
+const callbacks={init(value,type,trigger,current){if(type==='probe'){id=value;resource=current;result.push('init',this===hook,trigger,hooks.executionAsyncId()===outerId,hooks.executionAsyncResource()===outerResource)}},before(value){if(value===id)result.push('before',hooks.executionAsyncId()===id,hooks.triggerAsyncId(),hooks.executionAsyncResource()===resource)},after(value){if(value===id)result.push('after',hooks.executionAsyncId()===id)},destroy(value){if(value===id)result.push('destroy')}};
+hook=hooks.createHook(callbacks);callbacks.init=()=>{throw 'callback mutation must not replace copied slot'};hook.enable();
+const value=new hooks.AsyncResource('probe',{triggerAsyncId:7,requireManualDestroy:true});
+assert.strictEqual(value.triggerAsyncId(),7);assert.strictEqual(value.asyncId(),id);
+assert.strictEqual(hooks.executionAsyncId(),outerId);assert.strictEqual(hooks.triggerAsyncId(),outerTrigger);
+const marker={};assert.throws(()=>value.runInAsyncScope(function(){'use strict';result.push('call',this===undefined);throw marker}),error=>error===marker);
+assert.strictEqual(hooks.executionAsyncId(),outerId);assert.strictEqual(hooks.triggerAsyncId(),outerTrigger);
+assert.strictEqual(hooks.executionAsyncResource(),outerResource);assert.strictEqual(value.emitDestroy(),value);
+Promise.resolve().then(()=>result.push('promise'));
+setImmediate(()=>{result.push('immediate');hook.disable();console.log(JSON.stringify(result))});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn async_hooks_keep_active_snapshot_during_nested_subscription_changes() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),{createHook,AsyncResource}=require('async_hooks'),result=[];let first,second;
+second=createHook({init(id,type){if(['outer','nested','later'].includes(type))result.push('second',type)}});
+first=createHook({init(id,type){if(!['outer','nested','later'].includes(type))return;result.push('first',type);if(type==='outer'){first.disable();second.enable();new AsyncResource('nested')}}});
+first.enable();new AsyncResource('outer');new AsyncResource('later');second.disable();
+const reads=[],marker={};assert.throws(()=>createHook({get init(){reads.push('init');return 1},get before(){reads.push('before');throw marker}}),error=>error===marker);
+const sample=createHook({}),prototype=Object.getPrototypeOf(sample),symbol=Object.getOwnPropertySymbols(sample).find(key=>key.description==='init');let copied=0;
+Object.defineProperty(prototype,symbol,{configurable:true,set(value){copied++}});
+assert.throws(()=>createHook({promiseResolve(){},trackPromises:false}),{code:'ERR_INVALID_ARG_VALUE'});delete prototype[symbol];
+console.log(JSON.stringify([result,reads,copied]));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn emitter_async_resource_preserves_brands_hooks_and_scoped_dispatch() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),events=require('events'),hooks=require('async_hooks'),result=[];
+const E=events.EventEmitterAsyncResource;assert.strictEqual(E,events.EventEmitterAsyncResource);
+const descriptor=Object.getOwnPropertyDescriptor(events,'EventEmitterAsyncResource');
+result.push(E.name,E.length,descriptor.enumerable,descriptor.configurable,descriptor.get.name);
+let id,resource,owner;const outer=hooks.executionAsyncId();const hook=hooks.createHook({init(value,type,trigger,current){if(type==='Foo'){id=value;resource=current;result.push('init',trigger===outer);assert.throws(()=>current.eventEmitter,/Cannot read private member/)}},before(value){if(value===id)result.push('before')},after(value){if(value===id)result.push('after')},destroy(value){if(value===id)result.push('destroy')}}).enable();
+class Foo extends E {}owner=new Foo();assert.strictEqual(owner.asyncId,id);assert.strictEqual(owner.triggerAsyncId,outer);assert.strictEqual(owner.asyncResource,resource);assert.strictEqual(resource.eventEmitter,owner);
+owner.on('value',function(a,b){result.push('listener',this===owner,hooks.executionAsyncId()===id,hooks.executionAsyncResource()===resource,a,b)});
+assert.strictEqual(owner.emit('value',1,2),true);assert.strictEqual(hooks.executionAsyncId(),outer);assert.strictEqual(owner.emitDestroy(),undefined);
+assert.throws(()=>E.prototype.emit('value'),/Cannot read private member/);assert.throws(()=>E.prototype.emitDestroy(),/Cannot read private member/);
+for(const name of ['asyncId','triggerAsyncId','asyncResource'])assert.throws(()=>Reflect.get(E.prototype,name,{}),/Cannot read private member/);
+assert.throws(()=>new E(),{code:'ERR_INVALID_ARG_TYPE'});assert.throws(()=>new E({name:42}),{code:'ERR_INVALID_ARG_TYPE'});
+let reads=0;const named=new E({get name(){reads++;return 'Named'},triggerAsyncId:7});assert.strictEqual(named.triggerAsyncId,7);result.push(reads,named.asyncResource.eventEmitter===named);
+setImmediate(()=>{hook.disable();console.log(JSON.stringify(result))});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
