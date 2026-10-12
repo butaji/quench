@@ -1,14 +1,22 @@
 //! Canonical JavaScript source shared by console runtime adapters.
 
-pub(crate) const CONSOLE_CLASS: &str = r#"(class Console {
-  constructor(stdout, stderr) {
+pub(crate) const CONSOLE_CLASS: &str = r#"((initialize, write) => class Console {
+  constructor(stdout, stderr, ignoreErrors) {
     const options = stdout && typeof stdout === "object" &&
       (stdout.stdout || stdout.stderr) ? stdout : null;
     this._stdout = options ? options.stdout : stdout;
     this._stderr = options ? options.stderr : stderr;
     this._inspectOptions = options ? options.inspectOptions : undefined;
     if (!this._stdout) this._stdout = globalThis?.process?.stdout;
-    if (!this._stderr) this._stderr = globalThis?.process?.stderr;
+    if (!this._stderr) this._stderr = this._stdout;
+    initialize(this, options, ignoreErrors);
+    // Like Node, bind the public methods to this instance, read through it so subclass
+    // overrides win, keeping each method's name.
+    for (const key of Object.getOwnPropertyNames(Console.prototype)) {
+      if (key === "constructor" || key.startsWith("_")) continue;
+      this[key] = this[key].bind(this);
+      Object.defineProperty(this[key], "name", { value: key });
+    }
   }
   _format(output, args) {
     const util = (typeof require === "function"
@@ -27,7 +35,7 @@ pub(crate) const CONSOLE_CLASS: &str = r#"(class Console {
   }
   log(...args) {
     const output = this._stdout || process?.stdout;
-    if (output && typeof output.write === "function") output.write(`${this._format(output, args)}\n`);
+    write(this, true, this._format(output, args));
     if (!this._tickPending) {
       this._tickPending = true;
       const tick = globalThis?.process?.nextTick;
@@ -36,19 +44,14 @@ pub(crate) const CONSOLE_CLASS: &str = r#"(class Console {
   }
   info(...args) { this.log(...args); }
   dir(...args) { this.log(...args); }
-  time(label = "default") { if (typeof label === "symbol") throw new TypeError("Invalid console label"); this._times ||= new Map(); if (!this._times.has(label)) this._times.set(label, Date.now()); }
-  timeEnd(label = "default") { if (typeof label === "symbol") throw new TypeError("Invalid console label"); this._times?.delete(label); }
-  timeLog(label = "default", ...args) { this.log(...args); }
   warn(...args) {
     const output = this._stderr || process?.stderr;
-    if (output && typeof output.write === "function") output.write(`${this._format(output, args)}\n`);
+    write(this, false, this._format(output, args));
   }
   error(...args) { this.warn(...args); }
   trace(...args) { this.error(...args); }
   assert(condition, ...args) { if (!condition) this.error(...args); }
   clear() {}
-  count(label = "default") { this._counts ||= new Map(); this._counts.set(label, (this._counts.get(label) || 0) + 1); }
-  countReset(label = "default") { this._counts?.delete(label); }
   group() {}
   groupEnd() {}
   table(...args) { this.log(...args); }

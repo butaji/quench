@@ -13,6 +13,11 @@ struct ProgramEntry {
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
     module: bool,
+    /// Per-function lane views, derived from the residual on first lane entry.
+    lane_views: Vec<std::cell::OnceCell<super::dispatch_fast::LaneView>>,
+    /// The program's compiled functions, once the compiled mode first calls
+    /// one; `Some(None)` records that none compile.
+    compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -79,6 +84,11 @@ impl ProgramStore {
         let id = ProgramId::from_index(self.programs.len())?;
         let regexp_literals = vec![None; program.regexp_literal_sites.len()];
         let function_sources = vec![None; program.functions.len()];
+        let lane_views = program
+            .functions
+            .iter()
+            .map(|_| std::cell::OnceCell::new())
+            .collect();
         self.programs.push(ProgramEntry {
             residual: program,
             wasm_signatures: None,
@@ -90,6 +100,8 @@ impl ProgramStore {
             import_meta: None,
             module_imports: Vec::new(),
             module: false,
+            lane_views,
+            compiled: None,
         });
         Some(id)
     }
@@ -275,6 +287,10 @@ impl ProgramStore {
         self.programs.get(id.index())?.import_meta
     }
 
+    pub(crate) fn source_name(&self, id: ProgramId) -> Option<&str> {
+        Some(&self.programs.get(id.index())?.residual.source_name)
+    }
+
     pub(crate) fn set_import_meta(&mut self, id: ProgramId, value: Value) {
         if let Some(entry) = self.programs.get_mut(id.index())
             && entry.module
@@ -319,11 +335,61 @@ impl ProgramStore {
         if let Some(entry) = self.programs.get_mut(id.index()) {
             entry.const_arrays = vec![None; constants.len()];
             entry.constants = constants;
+            // Lane views carry constants, so they derive from the new set.
+            entry
+                .lane_views
+                .iter_mut()
+                .for_each(|view| *view = Default::default());
         }
     }
 
+    /// The lane view of `function`, derived by `derive` on first use from the
+    /// immutable residual and the program's constants.
+    pub(super) fn compiled(
+        &self,
+        id: ProgramId,
+    ) -> Option<Option<Rc<super::compiled::CompiledProgram>>> {
+        self.programs.get(id.index())?.compiled.clone()
+    }
+
+    pub(super) fn set_compiled(
+        &mut self,
+        id: ProgramId,
+        compiled: Option<Rc<super::compiled::CompiledProgram>>,
+    ) {
+        if let Some(entry) = self.programs.get_mut(id.index()) {
+            entry.compiled = Some(compiled);
+        }
+    }
+
+    /// A program's lane views by function, derived on first use.
+    pub(super) fn lane_views(
+        &self,
+        id: ProgramId,
+    ) -> Option<&[std::cell::OnceCell<super::dispatch_fast::LaneView>]> {
+        Some(&self.programs.get(id.index())?.lane_views)
+    }
+
+    pub(super) fn lane_view(
+        &self,
+        id: ProgramId,
+        function: u32,
+        derive: impl FnOnce(&crate::bytecode::Function, &[Value]) -> super::dispatch_fast::LaneView,
+    ) -> Option<*const super::dispatch_fast::LaneView> {
+        let entry = self.programs.get(id.index())?;
+        let code = entry.residual.functions.get(function as usize)?;
+        let view = entry.lane_views.get(function as usize)?;
+        Some(view.get_or_init(|| derive(code, &entry.constants)))
+    }
+
     pub(crate) fn constant(&self, id: ProgramId, index: usize) -> Option<Value> {
-        self.programs.get(id.index())?.constants.get(index).copied()
+        self.constants(id).get(index).copied()
+    }
+
+    pub(crate) fn constants(&self, id: ProgramId) -> &[Value] {
+        self.programs
+            .get(id.index())
+            .map_or(&[], |entry| entry.constants.as_slice())
     }
 
     pub(crate) fn const_array(

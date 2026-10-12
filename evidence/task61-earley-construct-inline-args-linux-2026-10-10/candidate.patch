@@ -1,0 +1,41 @@
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index cec309855..6e7645235 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -1834,7 +1834,7 @@ impl<H: Host> Vm<H> {
+             }
+             Op::Construct => {
+                 self.profile.call_source(4);
+-                let args = match i.construct_arguments() {
++                let (register_args, array_args) = match i.construct_arguments() {
+                     crate::bytecode::ConstructArguments::Array(register) => {
+                         let array = self.read(f, register);
+                         if !matches!(self.heap.get(array), Some(Cell::Array { .. })) {
+@@ -1842,15 +1842,22 @@ impl<H: Host> Vm<H> {
+                                 "super constructor arguments are not an array".into(),
+                             ));
+                         }
+-                        self.call_argument_list(p, array, false)?
++                        (None, Some(self.call_argument_list(p, array, false)?))
+                     }
+                     crate::bytecode::ConstructArguments::Registers(window) => {
+-                        let arguments = CallArguments::from_values(
+-                            (0..window.count).map(|x| self.read(f, window.base + x)),
+-                        );
+-                        arguments.as_slice().to_vec()
++                        (
++                            Some(CallArguments::from_values(
++                                (0..window.count).map(|x| self.read(f, window.base + x)),
++                            )),
++                            None,
++                        )
+                     }
+                 };
++                let args = register_args
++                    .as_ref()
++                    .map(CallArguments::as_slice)
++                    .or(array_args.as_deref())
++                    .unwrap_or_default();
+                 self.frames[f].pc = *pc;
+                 let callee = self.read(f, i.register_b());
+                 let v = if i.is_super_construct() {

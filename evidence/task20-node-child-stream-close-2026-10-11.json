@@ -1,0 +1,26 @@
+{
+  "scope": "Child output terminal lifecycle accepts guest stream close independently of pipe EOF",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "validation": {
+    "child_entry": {
+      "pass": 17,
+      "fail": 0,
+      "log": "work/child-stream-close-integration.log"
+    },
+    "execution_subset": {
+      "counts": {
+        "pass": 14,
+        "skip": 1,
+        "fail": 3
+      },
+      "total": 18,
+      "inventory_hash": "33b0084ac9056ec4",
+      "raw_results": "work/exec-stream-close-subset.json",
+      "timeout_secs": 10,
+      "jobs": 2
+    }
+  },
+  "gain": "14 execution passes, up from 11; both timeout cases and promisified shell abort case pass. No prior execution pass lost.",
+  "remaining": "Kill override and synchronous output limit fixtures fail. Complete parallel goal remains open.",
+  "performance_claim": false
+}

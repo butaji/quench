@@ -1,0 +1,71 @@
+{
+  "host": "Apple M4 arm64, macOS 26.5 (25F71), 10 logical CPUs",
+  "source_revision": "f9e7123e96d36fd894a7d947fcba3864d1f9ca7f",
+  "binary_sha256": "afde285b7f8dff56da12f44eb915034b0599d7aec95a2ff39d55ae18a8d7c4cf",
+  "inputs": {
+    "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+    "splay_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+  },
+  "work_runs": 300,
+  "measurements": {
+    "setup": {
+      "ps_rss_kib": 49088,
+      "ps_rss_mib": 47.9375,
+      "vmmap_physical_footprint_mib": 38.7,
+      "vmmap_physical_footprint_peak_mib": 38.7,
+      "default_malloc_zone_resident_mib": 37.5,
+      "malloc_large_virtual_mib": 512.0,
+      "malloc_large_resident_mib": 15.8,
+      "malloc_small_virtual_mib": 32.0,
+      "malloc_small_resident_mib": 21.2,
+      "malloc_tiny_virtual_mib": 4.0,
+      "malloc_tiny_resident_kib": 224
+    },
+    "after_300_runs": {
+      "ps_rss_kib": 85584,
+      "ps_rss_mib": 83.578125,
+      "vmmap_physical_footprint_mib": 74.3,
+      "vmmap_physical_footprint_peak_mib": 74.3,
+      "default_malloc_zone_resident_mib": 73.2,
+      "malloc_large_virtual_mib": 514.1,
+      "malloc_large_resident_mib": 33.1,
+      "malloc_small_virtual_mib": 48.0,
+      "malloc_small_resident_mib": 39.4,
+      "malloc_tiny_virtual_mib": 4.0,
+      "malloc_tiny_resident_kib": 208
+    },
+    "delta_after_300_runs": {
+      "ps_rss_kib": 36496,
+      "ps_rss_mib": 35.640625,
+      "vmmap_physical_footprint_mib": 35.6,
+      "default_malloc_zone_resident_mib": 35.7,
+      "malloc_large_resident_mib": 17.3,
+      "malloc_small_resident_mib": 18.2
+    },
+    "object_record_space_primary_range": {
+      "setup_virtual_mib": 512.0,
+      "setup_mapped_subrange_virtual_mib": 128.0,
+      "setup_reserved_subrange_virtual_mib": 384.0,
+      "setup_resident_mib": 15.8,
+      "after_300_runs_virtual_mib": 512.0,
+      "after_300_runs_mapped_subrange_virtual_mib": 128.0,
+      "after_300_runs_reserved_subrange_virtual_mib": 384.0,
+      "after_300_runs_resident_mib": 31.5,
+      "resident_growth_mib": 15.7
+    },
+    "additional_malloc_large_mapping_after_work": {
+      "virtual_kib": 2160,
+      "resident_kib": 1728
+    }
+  },
+  "interpretation": [
+    "ObjectRecordSpace reserves exactly 16,777,216 \u00d7 32 B = 512 MiB virtually. Source has one such allocation; vmmap shows one contiguous 512 MiB MALLOC_LARGE range at both stages, split into a 128 MiB mapped subrange and a 384 MiB reserved subrange. The matching size and unique source allocation strongly associate this range with ObjectRecordSpace, although vmmap does not label the Rust owner.",
+    "The 128 MiB mapped subrange resident size grows 15.8 \u2192 31.5 MiB (+15.7 MiB) from setup to after 300 runs. A separate 2,160 KiB MALLOC_LARGE allocation appears after work, of which 1,728 KiB is resident; together these explain the aggregate MALLOC_LARGE resident growth of +17.3 MiB.",
+    "MALLOC_SMALL residency grows another 18.2 MiB. These allocator-region totals locate where residency grows but do not separate live arrays, metadata, fragmentation, or unrelated allocations."
+  ],
+  "limits": [
+    "This is an uninstrumented OS mapping snapshot, not the profile-memory structural census.",
+    "The work sample is after the 300th run and before TearDown; it is current RSS at a stopped process, not a sampled intra-run peak.",
+    "The custom materialized input and ps/vmmap metrics are not interchangeable with the stock-harness qualification RSS."
+  ]
+}

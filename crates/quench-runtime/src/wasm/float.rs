@@ -1,7 +1,7 @@
 //! Float width projections share declarations while preserving IEEE bits.
 
-use super::numeric::{selectors, NumericResult};
 use super::WasmValue;
+use super::numeric::{NumericResult, selectors};
 
 macro_rules! binary_family {
     ($enum:ident, $float:ty, $bits:ty, $variant:ident,

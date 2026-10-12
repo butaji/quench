@@ -1,0 +1,173 @@
+{
+  "scope": "Lazy POSIX path resolution restores absolute resolution after cwd removal",
+  "source_commit": "cb810c2dbdc204c93f42c08f4ced1d14259cb33f",
+  "build_profile": "iteration",
+  "compiled_runner_metadata": "188d3ecf8; implementation includes subsequently committed cb810c2db",
+  "binary_sha256": {
+    "target/iteration/quench-node": "ce0c7e8486633faaea734f203d5bb059388049a8977b79bcb2ba4eea0d1d94a7",
+    "target/iteration/run-parallel": "168e4851e1a469edeadd072d50f8a9d41ffeb776b9d9f9a94043e2cdac077688"
+  },
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "node_oracles": {
+    "pass": 86,
+    "log_sha256": "adda9cd8326cdc44ec291ce7a7b5fcd6394a415099435db50ecd81c760bcf524"
+  },
+  "framework_core": {
+    "pass": 43,
+    "log_sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+  },
+  "scopes": {
+    "mkdir": {
+      "jobs": 4,
+      "timeout_secs": 30,
+      "inventory_hash": "2b07b75d4601eab0",
+      "results": [
+        {
+          "fixture": "test-fs-mkdir-mode-mask.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-fs-mkdir-recursive-eaccess.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-fs-mkdir-rmdir.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-fs-mkdir.js",
+          "status": "pass"
+        }
+      ],
+      "gained": [
+        "test-fs-mkdir.js"
+      ],
+      "lost": [],
+      "raw_sha256": "8cbf9eb5565a902f38677622ba34b68f4210c422ff4e1adc1729d53c2a374ba7"
+    },
+    "path": {
+      "jobs": 4,
+      "timeout_secs": 30,
+      "inventory_hash": "1811fa220c8a7fef",
+      "results": [
+        {
+          "fixture": "test-path-basename.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-dirname.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-extname.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-glob.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-isabsolute.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-join.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-makelong.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-normalize.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-parse-format.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-posix-exists.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-posix-relative-on-windows.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-relative.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-resolve.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-win32-exists.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path-win32-normalize-device-names.js",
+          "status": "skip"
+        },
+        {
+          "fixture": "test-path-zero-length-strings.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-path.js",
+          "status": "pass"
+        }
+      ],
+      "gained": [],
+      "lost": [],
+      "raw_sha256": "9866fdadd66eafe59249cc73384d899649cc1f1279ae6fb840bf914aa6176ac4"
+    }
+  },
+  "milestone_diagnostic": {
+    "suite": "stock V8-v7 Richards; exact base.js + richards.js + existing repository RUNNER",
+    "qualification": "One diagnostic round; iteration build, two engines only. No matched production or aggregate performance claim.",
+    "platform": "linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max": "17179869184",
+    "results": [
+      {
+        "engine": "quench-iteration",
+        "argv": [
+          "target/iteration/quench-node"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 2.6024264600000606,
+        "peak_rss_kib": 117692,
+        "stdout": "__quenchBenchResult: Richards: 166\n----\nScore: 166\n",
+        "stderr": ""
+      },
+      {
+        "engine": "node27-jitless",
+        "argv": [
+          "work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+          "--jitless"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 2.2020941150003637,
+        "peak_rss_kib": 70312,
+        "stdout": "__quenchBenchResult: Richards: 1908\n----\nScore: 1908\n",
+        "stderr": ""
+      }
+    ],
+    "source_commit": "cb810c2dbdc204c93f42c08f4ced1d14259cb33f",
+    "suite_commit": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "harness_sha256": "b501f150708fa94cc6973a0fe6e07004635150c6c7794bab660abbf1beed5ed0",
+    "binary_sha256": "ce0c7e8486633faaea734f203d5bb059388049a8977b79bcb2ba4eea0d1d94a7",
+    "isolation": "No builds or guest scope runs overlapped the stock diagnostic."
+  },
+  "qualification": [
+    "Restores test-fs-mkdir.js, lost in the preceding frozen complete sweep. Focused scopes do not establish a new full total.",
+    "POSIX resolution validates from right to left until absolute and preserves dynamic cwd getter/exception order, including the empty/dot retry for a relative replacement cwd. Win32 and other path operation behavior are unchanged.",
+    "Pending async-hook sources were saved separately and excluded from compilation and all retained checks. Shared runtime remains unchanged since the prior 550-pass runtime check.",
+    "One stock Richards diagnostic round, iteration profile, two engines only; no production or aggregate speed claim. All-case passing goal remains open."
+  ]
+}

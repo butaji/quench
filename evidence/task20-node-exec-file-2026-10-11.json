@@ -1,0 +1,63 @@
+{
+  "scope": "Native execFile callback/output lifecycle, stream encoding projection and shared system-error names",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "platform": "linux-x86_64",
+  "validation": {
+    "child_entry": {
+      "pass": 11,
+      "fail": 0,
+      "log": "work/exec-file-final-integration.log"
+    },
+    "system_error_oracle": {
+      "cases": 170,
+      "differences": 0
+    },
+    "exec_file_oracle": [
+      "default UTF-8 output",
+      "binary output",
+      "nonzero exit",
+      "missing executable",
+      "byte limit and truncation",
+      "timeout cleanup and signal fields",
+      "user stream encoding changes",
+      "AbortSignal validation and Proxy has trap identity",
+      "Readable encoding descriptor and borrowed getter"
+    ]
+  },
+  "subsets": {
+    "utilities": {
+      "counts": {
+        "fail": 19,
+        "pass": 11,
+        "skip": 1
+      },
+      "total": 31,
+      "inventory_hash": "9db1c1006acbd125",
+      "timeout_secs": 10,
+      "jobs": 2,
+      "raw_results": "work/util-exec-file.json"
+    },
+    "execution": {
+      "counts": {
+        "fail": 13,
+        "skip": 1,
+        "pass": 2,
+        "timeout": 2
+      },
+      "total": 18,
+      "inventory_hash": "33b0084ac9056ec4",
+      "timeout_secs": 10,
+      "jobs": 2,
+      "raw_results": "work/exec-file-qualified-subset.json"
+    }
+  },
+  "remaining": "Callbackify still fails CLI exception output. General execFile fixture still fails in AbortSignal/listener plumbing; synchronous maxBuffer fixtures and two execution timeouts remain. Signal normalization and throwing kill overrides need further qualification. This is an API milestone, not completion of the parallel goal.",
+  "performance_claim": false,
+  "execution_changes": [
+    {
+      "fixture": "test-child-process-execfile-maxbuf.js",
+      "before": "fail",
+      "after": "pass"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+diff --git a/crates/quench-runtime/src/heap.rs b/crates/quench-runtime/src/heap.rs
+index fadd24a66..7f3822ae9 100644
+--- a/crates/quench-runtime/src/heap.rs
++++ b/crates/quench-runtime/src/heap.rs
+@@ -50,7 +50,7 @@ const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
+ // occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x.
+ const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
+     numerator: 1,
+-    denominator: 1,
++    denominator: 4,
+ };
+ 
+ #[derive(Clone, Copy)]
+@@ -74,7 +74,7 @@ impl FullCollectionGrowthFactor {
+ // run earlier to sweep the young cells.
+ const FULL_COLLECTION_GROWTH: FullCollectionGrowthFactor = FullCollectionGrowthFactor {
+     numerator: 1,
+-    denominator: 1,
++    denominator: 4,
+ };
+ 
+ #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

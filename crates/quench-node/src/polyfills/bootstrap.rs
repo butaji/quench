@@ -28,6 +28,7 @@ abilities!(crate::polyfills::Phase::Bootstrap;
 /// Installed Node globals shared by file, eval and embedded entry points.
 pub fn entry_globals_source() -> String {
     [
+        globals_extra::web_api_source(),
         web_streams::JS,
         performance::JS,
         r#"

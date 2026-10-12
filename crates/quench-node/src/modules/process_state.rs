@@ -10,7 +10,7 @@ pub(crate) enum ProcessFact {
     Boolean(bool),
     Number(f64),
     String(&'static str),
-    EmptyArray,
+    StringArray(&'static [&'static str]),
 }
 
 pub(crate) fn config_variable_facts() -> &'static [(&'static str, ProcessFact)] {
@@ -18,7 +18,10 @@ pub(crate) fn config_variable_facts() -> &'static [(&'static str, ProcessFact)] 
         ("v8_enable_i18n_support", ProcessFact::Number(1.0)),
         ("node_module_version", ProcessFact::Number(127.0)),
         ("napi_build_version", ProcessFact::String("9")),
-        ("node_builtin_shareable_builtins", ProcessFact::EmptyArray),
+        (
+            "node_builtin_shareable_builtins",
+            ProcessFact::StringArray(&["deps/undici/undici.js"]),
+        ),
         ("node_use_lief", ProcessFact::Boolean(false)),
         ("node_use_amaro", ProcessFact::Boolean(false)),
         ("node_use_ffi", ProcessFact::Boolean(false)),
@@ -68,6 +71,7 @@ pub(crate) fn version_facts() -> &'static [(&'static str, &'static str)] {
         ("simdjson", "1.0.0"),
         ("simdutf", "5.2.4"),
         ("tz", "2024a"),
+        ("undici", "8.10.0"),
         ("unicode", "15.1"),
         ("uv", "1.48.0"),
         ("uvwasi", "1.0.0"),
@@ -128,7 +132,8 @@ pub(crate) fn change_directory_cwd(cwd: &ProcessCwd, destination: &str) -> Resul
             std::io::Error::from_raw_os_error(libc::ENOTDIR),
         ));
     }
-    cwd.set_path(requested);
+    cwd.set_path(requested)
+        .map_err(|error| chdir_error(&previous, destination, error))?;
     Ok(())
 }
 
@@ -203,23 +208,128 @@ impl UnhandledRejectionMode {
 /// Process and path consumers observe the same owner, so cwd changes remain
 /// visible without passing runtime values across the host boundary.
 #[derive(Clone)]
-pub struct ProcessCwd(Rc<RefCell<std::path::PathBuf>>);
+pub struct ProcessCwd(Rc<RefCell<WorkingDirectory>>);
+
+struct WorkingDirectory {
+    path: std::path::PathBuf,
+    observed_path: Option<std::path::PathBuf>,
+    #[cfg(target_os = "linux")]
+    directory: Option<std::sync::Arc<std::fs::File>>,
+}
+
+#[cfg(target_os = "linux")]
+fn open_directory(path: &std::path::Path) -> std::io::Result<std::sync::Arc<std::fs::File>> {
+    use std::os::unix::fs::OpenOptionsExt;
+    // O_PATH retains directory identity without requiring read permission.
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_PATH | libc::O_DIRECTORY)
+        .open(path)
+        .map(std::sync::Arc::new)
+}
 
 impl ProcessCwd {
-    pub fn new(path: std::path::PathBuf) -> Self {
-        Self(Rc::new(RefCell::new(path)))
+    pub fn from_current_directory() -> Self {
+        let path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
+        Self(Rc::new(RefCell::new(WorkingDirectory {
+            path,
+            observed_path: None,
+            // The inherited directory can remain valid after its pathname is removed.
+            #[cfg(target_os = "linux")]
+            directory: open_directory(std::path::Path::new(".")).ok(),
+        })))
     }
 
     pub fn path(&self) -> std::path::PathBuf {
-        self.0.borrow().clone()
+        self.current_path()
+            .unwrap_or_else(|_| self.0.borrow().path.clone())
     }
 
-    pub fn set_path(&self, path: std::path::PathBuf) {
-        *self.0.borrow_mut() = path;
+    /// Node caches successful process.cwd observations until process.chdir.
+    /// Relative filesystem and child operations continue to use directory identity.
+    pub(crate) fn query_path(&self) -> std::io::Result<std::path::PathBuf> {
+        if let Some(path) = self.0.borrow().observed_path.clone() {
+            return Ok(path);
+        }
+        let path = self.current_path()?;
+        self.0.borrow_mut().observed_path = Some(path.clone());
+        Ok(path)
+    }
+
+    pub(crate) fn current_path(&self) -> std::io::Result<std::path::PathBuf> {
+        let state = self.0.borrow();
+        #[cfg(target_os = "linux")]
+        if let Some(directory) = &state.directory {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::fs::MetadataExt;
+            if directory.metadata()?.nlink() == 0 {
+                return Err(std::io::Error::from_raw_os_error(libc::ENOENT));
+            }
+            // Resolve the live inode after a rename; a missing procfs preserves
+            // the cached path used on other platforms.
+            if let Ok(path) = std::fs::read_link(format!("/proc/self/fd/{}", directory.as_raw_fd()))
+            {
+                return Ok(path);
+            }
+        }
+        Ok(state.path.clone())
+    }
+
+    pub fn set_path(&self, path: std::path::PathBuf) -> std::io::Result<()> {
+        #[cfg(target_os = "linux")]
+        let directory = Some(open_directory(&path)?);
+        *self.0.borrow_mut() = WorkingDirectory {
+            path,
+            observed_path: None,
+            #[cfg(target_os = "linux")]
+            directory,
+        };
+        Ok(())
     }
 
     pub fn join(&self, path: impl AsRef<std::path::Path>) -> std::path::PathBuf {
-        self.0.borrow().join(path)
+        self.0.borrow().path.join(path)
+    }
+
+    /// Resolve relative child cwd against the retained directory at the OS boundary.
+    pub(crate) fn configure_child_command(
+        &self,
+        command: &mut std::process::Command,
+        requested: Option<&str>,
+    ) -> std::io::Result<()> {
+        let requested = requested.filter(|path| !path.is_empty());
+        if let Some(path) = requested.filter(|path| std::path::Path::new(path).is_absolute()) {
+            command.current_dir(path);
+            return Ok(());
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(directory) = self.0.borrow().directory.clone() {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::process::CommandExt;
+            let relative = requested.map(std::ffi::CString::new).transpose()
+                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "cwd contains a null byte"))?;
+            // Only async-signal-safe directory syscalls run between fork and exec.
+            // The captured CLOEXEC descriptor stays owned until command completion.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::fchdir(directory.as_raw_fd()) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if let Some(relative) = &relative {
+                        if libc::chdir(relative.as_ptr()) != 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                    }
+                    Ok(())
+                });
+            }
+            return Ok(());
+        }
+        command.current_dir(match requested {
+            Some(path) => self.join(path),
+            None => self.path(),
+        });
+        Ok(())
     }
 }
 
@@ -248,15 +358,27 @@ pub(crate) struct ProcessControl(Rc<ProcessControlCells>);
 struct ProcessControlCells {
     started: std::time::Instant,
     exit_code: Cell<Option<i32>>,
+    requested_exit_code: Cell<Option<i32>>,
+    exit_emitting: Cell<bool>,
     umask: Cell<u32>,
 }
 
 impl ProcessControl {
     pub(crate) fn new() -> Self {
+        #[cfg(unix)]
+        let umask = unsafe {
+            let current = libc::umask(0);
+            libc::umask(current);
+            current as u32
+        };
+        #[cfg(not(unix))]
+        let umask = INITIAL_UMASK;
         Self(Rc::new(ProcessControlCells {
             started: std::time::Instant::now(),
             exit_code: Cell::new(None),
-            umask: Cell::new(INITIAL_UMASK),
+            requested_exit_code: Cell::new(None),
+            exit_emitting: Cell::new(false),
+            umask: Cell::new(umask),
         }))
     }
 
@@ -272,14 +394,37 @@ impl ProcessControl {
         self.0.exit_code.set(code);
     }
 
+    pub(crate) fn request_exit(&self, code: i32) {
+        self.0.exit_code.set(Some(code));
+        self.0.requested_exit_code.set(Some(code));
+    }
+
+    pub(crate) fn requested_exit_code(&self) -> Option<i32> {
+        self.0.requested_exit_code.get()
+    }
+
+    pub(crate) fn exit_emitting(&self) -> bool {
+        self.0.exit_emitting.get()
+    }
+
+    pub(crate) fn begin_exit_emission(&self) {
+        self.0.exit_emitting.set(true);
+    }
+
     pub(crate) fn umask(&self) -> u32 {
         self.0.umask.get()
     }
 
     pub(crate) fn update_umask(&self, mask: u32) -> u32 {
-        self.0.umask.replace(mask & UMASK_BITS)
+        let mask = mask & UMASK_BITS;
+        #[cfg(unix)]
+        unsafe {
+            libc::umask(mask as libc::mode_t);
+        }
+        self.0.umask.replace(mask)
     }
 }
 
+#[cfg(not(unix))]
 const INITIAL_UMASK: u32 = 0o022;
 const UMASK_BITS: u32 = 0o777;

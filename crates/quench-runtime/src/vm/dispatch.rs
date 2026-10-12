@@ -63,12 +63,10 @@ impl<H: Host> Vm<H> {
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
-                let value = self
-                    .programs
-                    .constant(self.executing_program(f), i.constant_index())
-                    .ok_or_else(|| {
-                        JsError::validation("constant index is outside program".into())
-                    })?;
+                debug_assert_eq!(self.frames[f].program, self.active_program);
+                let value = self.active_constant(i.constant_index()).ok_or_else(|| {
+                    JsError::validation("constant index is outside program".into())
+                })?;
                 self.write(f, i.result_register(), value);
             }
             Op::CreateRegExpLiteral => {
@@ -289,6 +287,13 @@ impl<H: Host> Vm<H> {
                     let value = self
                         .heap
                         .alloc(Cell::Object(Self::empty_object(Value::NULL)));
+                    if let Some(source_name) = self.programs.source_name(program).map(str::to_owned)
+                    {
+                        let url = self.host.import_meta_url(&source_name);
+                        let url = self.heap.alloc(Cell::String(url.into()));
+                        let url_atom = self.intern_atom("url");
+                        self.set_property(value, url_atom, url)?;
+                    }
                     self.programs.set_import_meta(program, value);
                     value
                 };
@@ -725,8 +730,7 @@ impl<H: Host> Vm<H> {
                     i.atom_index(),
                     value,
                     i.cache_site_index(),
-                    p.functions[self.frames[f].function as usize].strict
-                        || i.op() == Op::SetFieldStrict,
+                    i.op() == Op::SetFieldStrict,
                 )?;
             }
             Op::DefinePropertyRecord => {
@@ -766,8 +770,7 @@ impl<H: Host> Vm<H> {
                     i.atom_index(),
                     self.read(f, i.register_a()),
                     i.cache_site_index(),
-                    p.functions[self.frames[f].function as usize].strict
-                        || i.op() == Op::SetThisFieldStrict,
+                    i.op() == Op::SetThisFieldStrict,
                 )?;
             }
             Op::SetIndex => {
@@ -829,637 +832,10 @@ impl<H: Host> Vm<H> {
                     self.write(f, i.result_register(), v);
                 }
             }
-            Op::WasmIndirectTarget => {
-                let table = self.read(f, i.register_b());
-                let index = self.wasm_table_index(table, self.read(f, i.register_c()))?;
-                let value =
-                    self.wasm_indirect_target(self.frames[f].program, table, index, i.imm())?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmGlobalGet => {
-                let value = self.wasm_global_load(self.read(f, i.register_b()))?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmGlobalSet => {
-                self.wasm_global_store(self.read(f, i.register_b()), self.read(f, i.register_a()))?;
-            }
-            Op::WasmRefFunc => {
-                let value = self.wasm_function_reference(p, i.imm(), self.frames[f].env)?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmRefIsNull => {
-                let value = self.read(f, i.register_b()).is_null();
-                self.write(f, i.result_register(), Value::integer(i32::from(value)));
-            }
-            Op::WasmRefAsNonNull => {
-                let value = self.read(f, i.register_b());
-                if value.is_null() {
-                    return Err(JsError::wasm_trap_error(
-                        crate::wasm::reference::NonNullCheck::from_tag(i.imm())
-                            .expect("validated non-null check")
-                            .trap(),
-                    ));
-                }
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmTableSize => {
-                let table = self.read(f, i.register_b());
-                let size = self.wasm_table_elements(table)?.len() as u64;
-                let value = self.encode_wasm_table_size(table, Some(size))?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmTableGet | Op::WasmTableSet => {
-                let table = self.read(f, i.register_b());
-                let index = self.wasm_table_index(table, self.read(f, i.register_c()))?;
-                if i.op() == Op::WasmTableGet {
-                    let value = self.wasm_table_get(table, index)?;
-                    self.write(f, i.result_register(), value);
-                } else {
-                    self.wasm_table_fill(table, index, self.read(f, i.register_a()), 1)?;
-                }
-            }
-            Op::WasmTableGrow => {
-                let table = self.read(f, i.register_b());
-                let (delta, _) = i.register_pair();
-                let delta = self.wasm_table_index(table, self.read(f, delta))?;
-                let size = self.wasm_table_grow(table, self.read(f, i.register_c()), delta)?;
-                let value = self.encode_wasm_table_size(table, size)?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmTableFill | Op::WasmTableCopy | Op::WasmTableInit => {
-                let table = self.read(f, i.register_a());
-                let source = self.read(f, i.register_b());
-                let (output, input) = i.register_pair();
-                let output = self.wasm_table_index(table, self.read(f, output))?;
-                let table_type = self.wasm_table_index_type(table)?;
-                let length_type = match i.op() {
-                    Op::WasmTableInit => crate::WasmType::I32,
-                    Op::WasmTableCopy => match (table_type, self.wasm_table_index_type(source)?) {
-                        (crate::WasmType::I64, crate::WasmType::I64) => crate::WasmType::I64,
-                        _ => crate::WasmType::I32,
-                    },
-                    _ => table_type,
-                };
-                let length = self.wasm_index_operand(self.read(f, i.register_c()), length_type)?;
-                match i.op() {
-                    Op::WasmTableFill => self.wasm_table_fill(table, output, source, length)?,
-                    Op::WasmTableInit => {
-                        let input =
-                            self.wasm_index_operand(self.read(f, input), crate::WasmType::I32)?;
-                        self.wasm_table_init(table, source, output, input, length)?;
-                    }
-                    _ => {
-                        let input = self.wasm_table_index(source, self.read(f, input))?;
-                        self.wasm_table_copy(table, source, output, input, length)?;
-                    }
-                }
-            }
-            Op::WasmMemoryInit | Op::WasmMemoryCopy | Op::WasmMemoryFill => {
-                let destination = self.read(f, i.register_a());
-                let source = self.read(f, i.register_b());
-                let (output, input) = i.register_pair();
-                let output = self.wasm_memory_index(destination, self.read(f, output))?;
-                let index_type = self.wasm_memory_index_type(destination)?;
-                let length_type = match i.op() {
-                    Op::WasmMemoryInit => crate::WasmType::I32,
-                    Op::WasmMemoryCopy => {
-                        match (index_type, self.wasm_memory_index_type(source)?) {
-                            (crate::WasmType::I64, crate::WasmType::I64) => crate::WasmType::I64,
-                            _ => crate::WasmType::I32,
-                        }
-                    }
-                    _ => index_type,
-                };
-                let length = self.wasm_index_operand(self.read(f, i.register_c()), length_type)?;
-                if i.op() == Op::WasmMemoryFill {
-                    self.wasm_memory_fill(
-                        destination,
-                        output,
-                        Self::wasm_u32_operand(source)?,
-                        length,
-                    )?;
-                } else {
-                    let input = if i.op() == Op::WasmMemoryInit {
-                        self.wasm_index_operand(self.read(f, input), crate::WasmType::I32)?
-                    } else {
-                        self.wasm_memory_index(source, self.read(f, input))?
-                    };
-                    let source = if i.op() == Op::WasmMemoryInit && source == Value::UNDEFINED {
-                        None
-                    } else {
-                        Some(source)
-                    };
-                    self.wasm_copy_bytes(destination, source, output, input, length)?;
-                }
-            }
-            Op::WasmMemoryAddress => {
-                let memory = self.read(f, i.register_c());
-                let address = self.wasm_memory_index(memory, self.read(f, i.register_b()))?;
-                let Constant::WasmBits64(offset) = p.constants[i.constant_index()] else {
-                    return Err(JsError::validation(
-                        "invalid Wasm memory offset constant".into(),
-                    ));
-                };
-                let effective = address
-                    .checked_add(offset)
-                    .ok_or_else(|| JsError::wasm_trap_error(crate::WasmTrap::OutOfBoundsMemory))?;
-                let value = self.encode_wasm_value(crate::WasmValue::I64(effective as i64));
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmAtomicFence => crate::wasm::atomic::fence(),
-            Op::WasmAtomicAccess => {
-                use crate::wasm::atomic::{AtomicInput, AtomicOperator};
-                let operator =
-                    AtomicOperator::from_tag(i.imm()).expect("validated atomic operator");
-                let window = i.register_window();
-                let input = |role: AtomicInput| self.read(f, window.base + role as u16);
-                let memory = input(AtomicInput::Memory);
-                let address = self.wasm_i64_operand(input(AtomicInput::Address))? as u64;
-                let value = if window.count > AtomicInput::Value as u16 {
-                    Some(self.decode_wasm_value(input(AtomicInput::Value), operator.value_type())?)
-                } else {
-                    None
-                };
-                let replacement = if window.count > AtomicInput::Auxiliary as u16 {
-                    Some(self.decode_wasm_value(
-                        input(AtomicInput::Auxiliary),
-                        operator.auxiliary_type(),
-                    )?)
-                } else {
-                    None
-                };
-                let Some(Cell::WasmMemory { bytes, ty }) = self.heap.get(memory) else {
-                    return Err(JsError::validation("invalid atomic memory binding".into()));
-                };
-                let result = operator
-                    .apply(bytes, address, value, replacement, ty.shared)
-                    .map_err(JsError::wasm_trap_error)?;
-                let result = result
-                    .map(|value| self.encode_wasm_value(value))
-                    .unwrap_or(Value::UNDEFINED);
-                self.write(f, i.result_register(), result);
-            }
-            Op::WasmMemoryLoad | Op::WasmMemoryStore => {
-                let memory = self.read(f, i.register_b());
-                let address = self.wasm_i64_operand(self.read(f, i.register_c()))? as u64;
-                if i.op() == Op::WasmMemoryLoad {
-                    let operator = crate::wasm::memory::MemoryLoad::from_tag(i.imm())
-                        .expect("validated memory load");
-                    let value = operator
-                        .read(&self.wasm_memory_bytes(memory)?, address)
-                        .map_err(JsError::wasm_trap_error)?;
-                    let value = self.encode_wasm_value(value);
-                    self.write(f, i.result_register(), value);
-                } else {
-                    let operator = crate::wasm::memory::MemoryStore::from_tag(i.imm())
-                        .expect("validated memory store");
-                    self.wasm_memory_store(
-                        memory,
-                        address,
-                        operator,
-                        self.read(f, i.register_a()),
-                    )?;
-                }
-            }
-            Op::WasmMemorySize | Op::WasmMemoryGrow => {
-                let memory = self.read(f, i.register_b());
-                let pages = if i.op() == Op::WasmMemoryGrow {
-                    let delta = self.wasm_memory_index(memory, self.read(f, i.register_c()))?;
-                    self.wasm_memory_grow(memory, delta)?
-                } else {
-                    Some(self.wasm_memory_pages(memory)?)
-                };
-                let index_type = self.wasm_memory_index_type(memory)?;
-                let value = self.encode_wasm_index_size(index_type, pages);
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmSimd => {
-                let (operator, lane) = crate::wasm::simd::SimdOperator::from_selector(i.imm())
-                    .expect("validated SIMD operator");
-                let left =
-                    self.decode_wasm_value(self.read(f, i.register_b()), operator.left_type())?;
-                let right = operator
-                    .right_type()
-                    .map(|ty| self.decode_wasm_value(self.read(f, i.register_c()), ty))
-                    .transpose()?;
-                let value = self.encode_wasm_value(operator.apply(left, right, lane));
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmSimdShuffle => {
-                let crate::WasmValue::V128(left) =
-                    self.decode_wasm_value(self.read(f, i.register_b()), crate::WasmType::V128)?
-                else {
-                    unreachable!()
-                };
-                let crate::WasmValue::V128(right) =
-                    self.decode_wasm_value(self.read(f, i.register_c()), crate::WasmType::V128)?
-                else {
-                    unreachable!()
-                };
-                let Constant::WasmV128(indices) = p.constants[i.constant_index()] else {
-                    unreachable!("validated shuffle indices")
-                };
-                let bits = crate::wasm::simd::shuffle(left, right, indices);
-                let value = self.encode_wasm_value(crate::WasmValue::V128(bits));
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmUnreachable => {
-                return Err(JsError::wasm_trap_error(crate::WasmTrap::Unreachable));
-            }
-            Op::WasmI32Binary => {
-                let (left, right) =
-                    Value::int_pair(self.read(f, i.register_b()), self.read(f, i.register_c()))
-                        .ok_or_else(|| JsError::validation("invalid Wasm i32 operands".into()))?;
-                let operator = crate::wasm::integer::I32BinaryOperator::from_tag(i.imm())
-                    .expect("validated Wasm binary operator");
-                let value = operator
-                    .apply(left, right)
-                    .map_err(JsError::wasm_trap_error)?;
-                let crate::WasmValue::I32(value) = value else {
-                    unreachable!("i32 operator result")
-                };
-                self.write(f, i.result_register(), Value::integer(value));
-            }
-            Op::WasmArrayGet | Op::WasmArrayGetS | Op::WasmArrayGetU | Op::WasmArraySet => {
-                let access =
-                    crate::wasm::gc::GcFieldAccess::from_op(i.op()).expect("array field opcode");
-                let write = i.op() == Op::WasmArraySet;
-                let reference = self.read(
-                    f,
-                    if write {
-                        i.register_a()
-                    } else {
-                        i.register_b()
-                    },
-                );
-                let index = self
-                    .read(
-                        f,
-                        if write {
-                            i.register_b()
-                        } else {
-                            i.register_c()
-                        },
-                    )
-                    .as_int()
-                    .ok_or_else(|| JsError::validation("invalid Wasm array index".into()))?
-                    as u32;
-                let value = if write {
-                    Some(self.read(f, i.register_c()))
-                } else {
-                    None
-                };
-                let result = self.wasm_gc_field(
-                    reference,
-                    super::wasm_gc::GcFieldIndex::Array(index),
-                    access,
-                    value,
-                )?;
-                if !write {
-                    self.write(f, i.result_register(), result);
-                }
-            }
-            Op::WasmArrayNewData | Op::WasmArrayNewElem => {
-                use crate::wasm::gc::{ArraySegmentInput, ArraySegmentKind};
-                let base = i.register_b();
-                let input =
-                    Self::wasm_u32_operand(self.read(f, base + ArraySegmentInput::Offset as u16))?;
-                let count =
-                    Self::wasm_u32_operand(self.read(f, base + ArraySegmentInput::Count as u16))?;
-                let source = self.read(f, base + ArraySegmentInput::Segment as u16);
-                let declarations = self
-                    .programs
-                    .wasm_signatures(self.frames[f].program)
-                    .ok_or_else(|| {
-                        JsError::validation("array constructor requires module declarations".into())
-                    })?
-                    .declarations
-                    .clone();
-                let value = self.wasm_array_segment_new(
-                    &declarations,
-                    i.imm(),
-                    ArraySegmentKind::from_op(i.op()).unwrap(),
-                    source,
-                    input,
-                    count,
-                )?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmArrayInitData | Op::WasmArrayInitElem => {
-                let reference = self.read(f, i.register_a());
-                let source = self.read(f, i.register_b());
-                let count = Self::wasm_u32_operand(self.read(f, i.register_c()))?;
-                let (output, input) = i.register_pair();
-                let output = Self::wasm_u32_operand(self.read(f, output))?;
-                let input = Self::wasm_u32_operand(self.read(f, input))?;
-                self.wasm_array_segment_init(
-                    reference,
-                    crate::wasm::gc::ArraySegmentKind::from_op(i.op()).unwrap(),
-                    source,
-                    output,
-                    input,
-                    count,
-                )?;
-            }
-            Op::WasmArrayFill | Op::WasmArrayCopy => {
-                let destination = self.read(f, i.register_a());
-                let source = self.read(f, i.register_b());
-                let count = Self::wasm_u32_operand(self.read(f, i.register_c()))?;
-                let (output, input) = i.register_pair();
-                let output = Self::wasm_u32_operand(self.read(f, output))?;
-                if i.op() == Op::WasmArrayFill {
-                    self.wasm_array_fill(destination, output, source, count)?;
-                } else {
-                    let input = Self::wasm_u32_operand(self.read(f, input))?;
-                    self.wasm_array_copy(destination, source, output, input, count)?;
-                }
-            }
-            Op::WasmArrayLen => {
-                let length = self.wasm_array_len(self.read(f, i.register_b()))?;
-                self.write(f, i.result_register(), Value::integer(length as i32));
-            }
-            Op::WasmArrayNew | Op::WasmArrayNewDefault | Op::WasmArrayNewFixed => {
-                let declarations = self
-                    .programs
-                    .wasm_signatures(self.frames[f].program)
-                    .ok_or_else(|| {
-                        JsError::validation("Wasm array requires registered declarations".into())
-                    })?
-                    .declarations
-                    .clone();
-                let initialization = if i.op() == Op::WasmArrayNewFixed {
-                    let mut values = Vec::new();
-                    values
-                        .try_reserve_exact(usize::from(i.register_window().count))
-                        .map_err(|_| JsError::wasm_trap_error(crate::WasmTrap::ArrayTooLarge))?;
-                    for offset in 0..i.register_window().count {
-                        values.push(self.read(f, i.register_b() + offset));
-                    }
-                    super::wasm_gc::ArrayInitialization::Fixed(values)
-                } else {
-                    let count_register = if i.op() == Op::WasmArrayNew {
-                        i.register_c()
-                    } else {
-                        i.register_b()
-                    };
-                    let count =
-                        self.read(f, count_register).as_int().ok_or_else(|| {
-                            JsError::validation("invalid Wasm array length".into())
-                        })? as u32;
-                    if i.op() == Op::WasmArrayNew {
-                        super::wasm_gc::ArrayInitialization::Repeated {
-                            count,
-                            value: self.read(f, i.register_b()),
-                        }
-                    } else {
-                        super::wasm_gc::ArrayInitialization::Default(count)
-                    }
-                };
-                let value = self.wasm_array_new(&declarations, i.imm(), initialization)?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmStructGet | Op::WasmStructGetS | Op::WasmStructGetU | Op::WasmStructSet => {
-                let access =
-                    crate::wasm::gc::GcFieldAccess::from_op(i.op()).expect("struct field opcode");
-                let write = i.op() == Op::WasmStructSet;
-                let reference = self.read(
-                    f,
-                    if write {
-                        i.register_a()
-                    } else {
-                        i.register_b()
-                    },
-                );
-                let value = if write {
-                    Some(self.read(f, i.register_b()))
-                } else {
-                    None
-                };
-                let result = self.wasm_gc_field(
-                    reference,
-                    super::wasm_gc::GcFieldIndex::Struct(i.imm()),
-                    access,
-                    value,
-                )?;
-                if !write {
-                    self.write(f, i.result_register(), result);
-                }
-            }
-            Op::WasmStructNew
-            | Op::WasmStructNewDefault
-            | Op::WasmStructNewDesc
-            | Op::WasmStructNewDefaultDesc
-            | Op::WasmRefGetDesc => {
-                let declarations = self
-                    .programs
-                    .wasm_signatures(self.frames[f].program)
-                    .ok_or_else(|| {
-                        JsError::validation("Wasm struct requires registered declarations".into())
-                    })?
-                    .declarations
-                    .clone();
-                if i.op() == Op::WasmRefGetDesc {
-                    let value = self.wasm_ref_get_desc(
-                        &declarations,
-                        i.imm(),
-                        self.read(f, i.register_b()),
-                    )?;
-                    self.write(f, i.result_register(), value);
-                } else {
-                    let mode = crate::wasm::gc::StructConstruction::from_op(i.op()).unwrap();
-                    let window =
-                        (!mode.defaulted() || mode.described()).then(|| i.register_window());
-                    let descriptor = if mode.described() {
-                        let window = window.unwrap();
-                        Some(self.read(f, window.base + window.count - 1))
-                    } else {
-                        None
-                    };
-                    let values = if mode.defaulted() {
-                        None
-                    } else {
-                        let window = window.unwrap();
-                        let count = window.count - u16::from(mode.described());
-                        let mut values = Vec::new();
-                        values.try_reserve_exact(usize::from(count)).map_err(|_| {
-                            JsError::validation("Wasm struct allocation failed".into())
-                        })?;
-                        values.extend((0..count).map(|offset| self.read(f, window.base + offset)));
-                        Some(values)
-                    };
-                    let value = self.wasm_struct_new(&declarations, i.imm(), values, descriptor)?;
-                    self.write(f, i.result_register(), value);
-                }
-            }
-            Op::WasmExternalConversion => {
-                let conversion = crate::wasm::reference::ExternalConversion::from_tag(i.imm())
-                    .expect("validated external conversion");
-                let input = self.read(f, i.register_b());
-                self.decode_wasm_value(input, conversion.input_type())?;
-                let value = self.wasm_external_conversion(conversion, input);
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmRefEq => {
-                let equal = self.read(f, i.register_b()) == self.read(f, i.register_c());
-                self.write(f, i.result_register(), Value::integer(i32::from(equal)));
-            }
-            Op::WasmDescriptorTest | Op::WasmDescriptorCast => {
-                let target = crate::wasm::reference::ReferenceTarget::from_tag(i.imm())
-                    .expect("validated reference target");
-                let owner = self
-                    .programs
-                    .wasm_signatures(self.frames[f].program)
-                    .ok_or_else(|| {
-                        JsError::validation(
-                            "descriptor cast requires registered declarations".into(),
-                        )
-                    })?
-                    .declarations
-                    .clone();
-                let reference = self.read(f, i.register_b());
-                let valid = self.wasm_descriptor_matches(
-                    &owner,
-                    target,
-                    reference,
-                    self.read(f, i.register_c()),
-                )?;
-                let result = if i.op() == Op::WasmDescriptorTest {
-                    Value::integer(i32::from(valid))
-                } else if valid {
-                    reference
-                } else {
-                    return Err(JsError::wasm_trap_error(
-                        crate::WasmTrap::DescriptorCastFailure,
-                    ));
-                };
-                self.write(f, i.result_register(), result);
-            }
-            Op::WasmRefTest | Op::WasmRefCast => {
-                let reference = self.read(f, i.register_b());
-                let target = crate::wasm::reference::ReferenceTarget::from_tag(i.imm())
-                    .and_then(|target| target.reference_type())
-                    .expect("validated reference target");
-                let pool = self
-                    .programs
-                    .wasm_signatures(self.frames[f].program)
-                    .ok_or_else(|| {
-                        JsError::validation(
-                            "reference cast requires registered module declarations".into(),
-                        )
-                    })?;
-                let ty = pool
-                    .declarations
-                    .callable_value_type(wasmparser::ValType::Ref(target))
-                    .ok_or_else(|| {
-                        JsError::validation("invalid reference cast declaration".into())
-                    })?;
-                let valid = self.wasm_reference_valid_in(reference, ty, Some(&pool.declarations));
-                let result = if i.op() == Op::WasmRefTest {
-                    Value::integer(i32::from(valid))
-                } else if valid {
-                    reference
-                } else {
-                    return Err(JsError::wasm_trap_error(crate::WasmTrap::CastFailure));
-                };
-                self.write(f, i.result_register(), result);
-            }
-            Op::WasmI31 => {
-                let operator = crate::wasm::i31::I31Operator::from_tag(i.imm())
-                    .expect("validated i31 operator");
-                let value =
-                    self.decode_wasm_value(self.read(f, i.register_b()), operator.input_type())?;
-                let value = operator.apply(value).map_err(JsError::wasm_trap_error)?;
-                let value = self.encode_wasm_value(value);
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmI32Unary => {
-                let value = self
-                    .read(f, i.register_b())
-                    .as_int()
-                    .ok_or_else(|| JsError::validation("invalid Wasm i32 operand".into()))?;
-                let operator = crate::wasm::integer::I32UnaryOperator::from_tag(i.imm())
-                    .expect("validated Wasm unary operator");
-                let crate::WasmValue::I32(value) = operator.apply(value) else {
-                    unreachable!("i32 operator result")
-                };
-                self.write(f, i.result_register(), Value::integer(value));
-            }
-            Op::WasmI64Binary => {
-                let left = self.wasm_i64_operand(self.read(f, i.register_b()))?;
-                let right = self.wasm_i64_operand(self.read(f, i.register_c()))?;
-                let operator = crate::wasm::integer::I64BinaryOperator::from_tag(i.imm())
-                    .expect("validated Wasm binary operator");
-                let value = operator
-                    .apply(left, right)
-                    .map_err(JsError::wasm_trap_error)?;
-                let value = self.encode_wasm_value(value);
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmI64Unary => {
-                let value = self.wasm_i64_operand(self.read(f, i.register_b()))?;
-                let operator = crate::wasm::integer::I64UnaryOperator::from_tag(i.imm())
-                    .expect("validated Wasm unary operator");
-                let value = self.encode_wasm_value(operator.apply(value));
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmScalarConvert => {
-                let operator = crate::wasm::conversion::ScalarConversionOperator::from_tag(i.imm())
-                    .expect("validated Wasm scalar conversion");
-                let value =
-                    self.decode_wasm_value(self.read(f, i.register_b()), operator.source_type())?;
-                let value = operator.apply(value).map_err(JsError::wasm_trap_error)?;
-                debug_assert_eq!(value.ty(), operator.result_type());
-                let value = self.encode_wasm_value(value);
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmF32Binary => {
-                let left = self.wasm_f32_operand(self.read(f, i.register_b()))?;
-                let right = self.wasm_f32_operand(self.read(f, i.register_c()))?;
-                let operator = crate::wasm::float::F32BinaryOperator::from_tag(i.imm())
-                    .expect("validated Wasm float operator");
-                let value = self.encode_wasm_value(operator.apply(left, right));
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmF32Unary => {
-                let left = self.wasm_f32_operand(self.read(f, i.register_b()))?;
-                let operator = crate::wasm::float::F32UnaryOperator::from_tag(i.imm())
-                    .expect("validated Wasm float operator");
-                let value = self.encode_wasm_value(operator.apply(left));
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmF64Binary => {
-                let left = self.wasm_f64_operand(self.read(f, i.register_b()))?;
-                let right = self.wasm_f64_operand(self.read(f, i.register_c()))?;
-                let operator = crate::wasm::float::F64BinaryOperator::from_tag(i.imm())
-                    .expect("validated Wasm float operator");
-                let value = self.encode_wasm_value(operator.apply(left, right));
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmF64Unary => {
-                let left = self.wasm_f64_operand(self.read(f, i.register_b()))?;
-                let operator = crate::wasm::float::F64UnaryOperator::from_tag(i.imm())
-                    .expect("validated Wasm float operator");
-                let value = self.encode_wasm_value(operator.apply(left));
-                self.write(f, i.result_register(), value);
-            }
             Op::IncDec => {
                 let input = self.read(f, i.register_b());
                 let is_decrement = i.boolean_flag().expect("validated boolean immediate");
-                let delta = if is_decrement { -1.0 } else { 1.0 };
-                let value = if matches!(self.heap.get(input), Some(Cell::BigInt(_))) {
-                    let one = self.heap.alloc(Cell::BigInt("1".into()));
-                    self.binary(p, if is_decrement { 9 } else { 8 }, input, one)?
-                } else if let Some(integer) = input.as_int() {
-                    let next = if is_decrement {
-                        integer.checked_sub(1)
-                    } else {
-                        integer.checked_add(1)
-                    };
-                    next.map(Value::integer)
-                        .unwrap_or_else(|| Value::number(f64::from(integer) + delta))
-                } else {
-                    Value::number(self.to_number(p, input)? + delta)
-                };
+                let value = self.numeric_update(p, input, is_decrement)?;
                 self.write(f, i.result_register(), value);
             }
             Op::Unary => {
@@ -1470,6 +846,9 @@ impl<H: Host> Vm<H> {
                 } else {
                     self.unary(p, operator, operand)?
                 };
+                if i.returns_from_frame() {
+                    return Ok(StepResult::Return(v));
+                }
                 self.write(f, i.result_register(), v);
             }
             Op::Delete => {
@@ -1537,7 +916,10 @@ impl<H: Host> Vm<H> {
                 };
                 let this = self.read(f, i.register_c());
                 let callee = self.read(f, i.register_b());
-                self.frames[f].pc = *pc;
+                let caller = &mut *self.frames[f];
+                caller.pc = *pc;
+                let caller_function = caller.function;
+                debug_assert_eq!(caller.program, self.active_program);
                 let direct_eval = i.direct_eval()
                     && matches!(
                         self.heap.get(callee),
@@ -1558,13 +940,10 @@ impl<H: Host> Vm<H> {
                 let parameter_eval = direct_eval && i.parameter_eval();
                 let previous_direct_eval = self.direct_eval;
                 let previous_parameter_eval = self.parameter_eval;
-                self.direct_eval = direct_eval;
-                self.parameter_eval = parameter_eval;
                 let previous_this = (direct_eval && !this.is_undefined())
                     .then(|| std::mem::replace(&mut self.frames[f].this, this));
-                let caller_function = &p.functions[self.frames[f].function as usize];
-                let terminal = i.returns_from_frame()
-                    || caller_function.returns_register_at(*pc, i.result_register());
+                // Compilation flags every call that falls into a return of its result.
+                let terminal = i.returns_from_frame();
                 if allow_inline_calls
                     && i.op() == Op::Call
                     && !direct_eval
@@ -1573,10 +952,9 @@ impl<H: Host> Vm<H> {
                     && !terminal
                     && p.kind != crate::bytecode::ProgramKind::Wasm
                     && f + 1 == self.frames.len()
-                    && self.frames[f].function != super::ROOT_FUNCTION_ID
+                    && caller_function != super::ROOT_FUNCTION_ID
                     && let Some((program_id, id, env)) = self.same_realm_user_target(callee)
                     && id != super::ROOT_FUNCTION_ID
-                    && program_id == self.frames[f].program
                     && program_id == self.active_program
                     && p.functions.get(id as usize).is_some_and(|function| {
                         !function.is_async
@@ -1587,29 +965,30 @@ impl<H: Host> Vm<H> {
                             && !function.parameter_eval_arguments_error
                     })
                 {
+                    // Neither eval mode is set before or by this call, so the frame push leaves
+                    // both untouched.
                     self.profile.call_target(1, usize::from(window.count));
                     // Collection happens only at back edges, tail calls and explicit host
                     // safepoints, none of which can run while a frame is pushed; afterwards the
                     // new frame itself roots the callee, receiver and arguments.
                     let arguments: *const [Value] = self.register_window(f, window);
                     // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-                    let result = self.push_general_user_frame(
+                    let call_guard = self.push_general_user_frame(
                         p,
                         id,
                         env,
                         this,
                         unsafe { &*arguments },
                         CallContext::user_function(id, callee),
-                    );
-                    self.direct_eval = previous_direct_eval;
-                    self.parameter_eval = previous_parameter_eval;
-                    let call_guard = result?;
+                    )?;
                     return Ok(StepResult::PushFrame {
                         destination: i.result_register(),
                         call_guard,
                         construct_this: None,
                     });
                 }
+                self.direct_eval = direct_eval;
+                self.parameter_eval = parameter_eval;
                 let arguments = spread_arguments
                     .unwrap_or_else(|| CallArguments::from_slice(self.register_window(f, window)));
                 let args = arguments.as_slice();
@@ -1725,6 +1104,32 @@ impl<H: Host> Vm<H> {
                 }
                 self.write(f, i.result_register(), value);
             }
+            Op::CallKnown
+                if allow_inline_calls
+                    && p.kind == crate::bytecode::ProgramKind::Wasm
+                    && !i.returns_from_frame() =>
+            {
+                self.profile.call_source(1);
+                if let Some(result) =
+                    self.call_compiled(f, u32::from(i.known_function_index()), i.call_window())
+                {
+                    let value = result?;
+                    self.write(f, i.result_register(), value);
+                    return Ok(StepResult::Continue);
+                }
+                self.frames[f].pc = *pc;
+                let call_guard = self.push_wasm_frame(
+                    p,
+                    f,
+                    u32::from(i.known_function_index()),
+                    i.call_window(),
+                )?;
+                return Ok(StepResult::PushFrame {
+                    destination: i.result_register(),
+                    call_guard,
+                    construct_this: None,
+                });
+            }
             Op::CallKnown => {
                 self.profile.call_source(1);
                 let window = i.call_window();
@@ -1734,9 +1139,7 @@ impl<H: Host> Vm<H> {
                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
                 self.profile.call_target(1, usize::from(window.count));
                 self.frames[f].pc = *pc;
-                let terminal = i.returns_from_frame()
-                    || p.functions[self.frames[f].function as usize]
-                        .returns_register_at(*pc, i.result_register());
+                let terminal = i.returns_from_frame();
                 if ((p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame())
                     || (p.kind != crate::bytecode::ProgramKind::Wasm
                         && terminal
@@ -1855,55 +1258,14 @@ impl<H: Host> Vm<H> {
                 self.write(f, i.result_register(), v);
             }
             Op::Return => return Ok(StepResult::Return(self.read(f, i.register_a()))),
-            Op::WasmExceptionNew => {
-                use crate::wasm::tag::ExceptionInput;
-                let window = i.register_window();
-                if window.count < ExceptionInput::MIN_COUNT {
-                    return Err(JsError::validation("missing Wasm exception tag".into()));
-                }
-                let tag = self.read(f, window.base + ExceptionInput::Tag as u16);
-                let payload = (ExceptionInput::Payload as u16..window.count)
-                    .map(|offset| self.read(f, window.base + offset))
-                    .collect();
-                let value = self.wasm_exception_new(tag, payload)?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmExceptionMatch => {
-                let matches = self.wasm_exception_matches(
-                    self.read(f, i.register_b()),
-                    self.read(f, i.register_c()),
-                )?;
-                self.write(f, i.result_register(), Value::integer(i32::from(matches)));
-            }
-            Op::WasmExceptionPayload => {
-                let value = self.wasm_exception_payload(self.read(f, i.register_b()), i.imm())?;
-                self.write(f, i.result_register(), value);
-            }
-            Op::WasmThrowRef => return Err(self.wasm_throw_ref(self.read(f, i.register_a()))),
             Op::Throw => {
                 let value = self.read(f, i.register_a());
-                let message = if self.object_data(value).is_some() {
-                    let atom = self.intern_atom("message");
-                    match self.get_property(p, value, atom)? {
-                        value if matches!(self.heap.get(value), Some(Cell::String(_))) => {
-                            self.to_string(p, value)?
-                        }
-                        _ => self.to_string(p, value)?,
-                    }
-                } else {
-                    self.to_string(p, value)?
-                };
+                let message = self.detail_string(value);
                 return Err(JsError::thrown(value, message));
             }
+            _ => return self.step_wasm(p, f, i, pc),
         }
         Ok(StepResult::Continue)
-    }
-    /// The program `frame` executes: dispatch keeps `active_program` on the running frame's
-    /// program, as the cache-layout lookups also assume.
-    #[inline(always)]
-    pub(super) fn executing_program(&self, frame: usize) -> ProgramId {
-        debug_assert_eq!(self.active_program, self.frames[frame].program);
-        self.active_program
     }
 
     #[inline(always)]
@@ -1919,10 +1281,13 @@ impl<H: Host> Vm<H> {
             Some(crate::bytecode::OperandKind::Register) => {
                 Ok(self.read(frame, operand.payload() as Register))
             }
-            Some(crate::bytecode::OperandKind::Constant) => self
-                .programs
-                .constant(self.executing_program(frame), operand.payload() as usize)
-                .ok_or_else(|| JsError::validation("constant operand is outside program".into())),
+            Some(crate::bytecode::OperandKind::Constant) => {
+                debug_assert_eq!(self.frames[frame].program, self.active_program);
+                self.active_constant(operand.payload() as usize)
+                    .ok_or_else(|| {
+                        JsError::validation("constant operand is outside program".into())
+                    })
+            }
             Some(crate::bytecode::OperandKind::Field) => {
                 self.resolve_field(p, frame, usize::from(operand.payload()))
             }

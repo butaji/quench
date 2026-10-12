@@ -1,4 +1,4 @@
-use super::{ArrayRecord, Cell, CellKind, Heap, Object};
+use super::{ArrayRecord, Cell, CellKind, FreeSlotBitmap, Heap, Object, Slot};
 use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use rustc_hash::FxHashMap;
@@ -38,6 +38,7 @@ pub(crate) struct HeapMemoryComposition {
     /// Subtotal already included in `array_record_reserved_bytes`.
     pub array_record_free_id_capacity_bytes: usize,
     pub legacy_cell_record_reserved_bytes: usize,
+    pub free_slot_metadata_bytes: usize,
     pub slot_size_bytes: usize,
     pub cell_size_bytes: usize,
     pub object_header_size_bytes: usize,
@@ -585,7 +586,7 @@ impl Heap {
             cell_counts,
             cell_variant_names: cell_variant_counts.keys().copied().collect(),
             cell_variant_counts: cell_variant_counts.values().copied().collect(),
-            slot_arena_reserved_bytes: self.slots.capacity() * size_of::<super::Slot>(),
+            slot_arena_reserved_bytes: self.slots.capacity() * size_of::<Slot>(),
             object_record_reserved_bytes: self.object_records.allocated_bytes(),
             object_record_free_id_capacity_bytes: self
                 .object_records
@@ -593,7 +594,9 @@ impl Heap {
             array_record_reserved_bytes: self.array_records.allocated_bytes(),
             array_record_free_id_capacity_bytes: self.array_records.free_id_vector_capacity_bytes(),
             legacy_cell_record_reserved_bytes: 0,
-            slot_size_bytes: size_of::<super::Slot>(),
+            free_slot_metadata_bytes: self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
+                + self.free_slabs.capacity() * size_of::<u32>(),
+            slot_size_bytes: size_of::<Slot>(),
             cell_size_bytes: size_of::<Cell>(),
             object_header_size_bytes: size_of::<Object>(),
             occupied_slots,
@@ -677,7 +680,8 @@ impl Heap {
         (
             self.slots.len() + self.object_records.high_water() + self.array_records.high_water(),
             self.slots.capacity() * size_of::<super::Slot>(),
-            self.free.capacity() * size_of::<u32>(),
+            self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
+                + self.free_slabs.capacity() * size_of::<u32>(),
             dynamic,
             property.0,
             property.1,

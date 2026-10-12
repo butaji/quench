@@ -54,6 +54,28 @@ const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] 
     BinaryOperator::BitwiseAnd,
 ];
 
+/// Binary operator immediates up to this one are equality and relational
+/// comparisons, in `integer_relation` order.
+const LAST_RELATIONAL_OPERATOR: u32 = 7;
+
+/// The integer fast path of an equality or relational operator.
+#[inline(always)]
+pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {
+    if op > LAST_RELATIONAL_OPERATOR {
+        return None;
+    }
+    let (a, b) = Value::int_pair(left, right)?;
+    Some(match op {
+        0 | 2 => a == b,
+        1 | 3 => a != b,
+        4 => a < b,
+        5 => a <= b,
+        6 => a > b,
+        7 => a >= b,
+        _ => unreachable!("relational operator range"),
+    })
+}
+
 #[inline(always)]
 fn numeric_binary_operator(immediate: u32) -> Option<BinaryOperator> {
     let index = immediate.checked_sub(FIRST_NUMERIC_BINARY_OPERATOR)? as usize;
@@ -115,13 +137,17 @@ pub(super) fn numeric_integer_multiply_result(left: i32, right: i32) -> Value {
 }
 
 #[inline(always)]
+fn numeric_integer_subtract_result(left: i32, right: i32) -> Value {
+    left.checked_sub(right)
+        .map(Value::integer)
+        .unwrap_or_else(|| Value::number(f64::from(left) - f64::from(right)))
+}
+
+#[inline(always)]
 fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Option<Value> {
     Some(match operator {
         BinaryOperator::Addition => numeric_integer_add_result(left, right),
-        BinaryOperator::Subtraction => left
-            .checked_sub(right)
-            .map(Value::integer)
-            .unwrap_or_else(|| Value::number(f64::from(left) - f64::from(right))),
+        BinaryOperator::Subtraction => numeric_integer_subtract_result(left, right),
         BinaryOperator::Multiplication => numeric_integer_multiply_result(left, right),
         BinaryOperator::Division => {
             if right == 0 || (left == 0 && right < 0) {
@@ -231,17 +257,17 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Option<Value> {
-        if !is_numeric_binary_operator(operator) {
-            return None;
-        }
+        const ADDITION: u32 = BinaryOperator::Addition as u32;
+        const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
+        const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
         let (left, right) = Value::int_pair(left, right)?;
-        if operator == BinaryOperator::Addition as u32 {
-            return Some(numeric_integer_add_result(left, right));
+        // The common operators match the immediate directly; the rest go through the table.
+        match operator {
+            ADDITION => Some(numeric_integer_add_result(left, right)),
+            SUBTRACTION => Some(numeric_integer_subtract_result(left, right)),
+            MULTIPLICATION => Some(numeric_integer_multiply_result(left, right)),
+            _ => numeric_integer_result(numeric_binary_operator(operator)?, left, right),
         }
-        if operator == BinaryOperator::Multiplication as u32 {
-            return Some(numeric_integer_multiply_result(left, right));
-        }
-        numeric_integer_result(numeric_binary_operator(operator)?, left, right)
     }
 
     pub(super) fn call_native(
@@ -1393,10 +1419,16 @@ impl<H: Host> Vm<H> {
         right: Value,
     ) -> Result<Value, JsError> {
         let Some(Cell::BigInt(left)) = self.heap.get(left) else {
-            return Err(self.type_error(p, "Cannot mix BigInt and other types".into()));
+            return Err(self.type_error(
+                p,
+                "Cannot mix BigInt and other types, use explicit conversions".into(),
+            ));
         };
         let Some(Cell::BigInt(right)) = self.heap.get(right) else {
-            return Err(self.type_error(p, "Cannot mix BigInt and other types".into()));
+            return Err(self.type_error(
+                p,
+                "Cannot mix BigInt and other types, use explicit conversions".into(),
+            ));
         };
         let result = match op {
             8 => crate::bigint::binary(left, right, |a, b| Ok(a + b)),
@@ -1511,31 +1543,76 @@ impl<H: Host> Vm<H> {
         left: Value,
         right: Value,
     ) -> Result<bool, JsError> {
-        if op <= LAST_COMPARISON_OPERATOR {
-            if let Some((a, b)) = Value::int_pair(left, right) {
-                self.record_binary_value_path(
-                    op,
-                    left,
-                    right,
-                    crate::profile::BinaryValuePath::IntegerFastPath,
-                );
-                return Ok(number_comparison(op, f64::from(a), f64::from(b)));
-            }
-            // Equality, strict equality and the relational operators agree with IEEE 754
-            // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
-            if let (Some(a), Some(b)) = (left.as_number(), right.as_number()) {
-                self.record_binary_value_path(
-                    op,
-                    left,
-                    right,
-                    crate::profile::BinaryValuePath::NumberFastPath,
-                );
-                return Ok(number_comparison(op, a, b));
-            }
+        if let Some(result) = self.number_comparison_truthy(op, left, right) {
+            return Ok(result);
         }
         let value = self.binary(p, op, left, right)?;
         Ok(self.truthy(value))
     }
+
+    /// `binary_truthy` for a comparison of two numbers, which runs no guest code; `None` for
+    /// any other operator or operand.
+    #[inline(always)]
+    pub(super) fn number_comparison_truthy(
+        &mut self,
+        op: u32,
+        left: Value,
+        right: Value,
+    ) -> Option<bool> {
+        if op > LAST_COMPARISON_OPERATOR {
+            return None;
+        }
+        if let Some((a, b)) = Value::int_pair(left, right) {
+            self.record_binary_value_path(
+                op,
+                left,
+                right,
+                crate::profile::BinaryValuePath::IntegerFastPath,
+            );
+            return Some(number_comparison(op, f64::from(a), f64::from(b)));
+        }
+        // Equality, strict equality and the relational operators agree with IEEE 754
+        // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
+        let (a, b) = (left.as_number()?, right.as_number()?);
+        self.record_binary_value_path(
+            op,
+            left,
+            right,
+            crate::profile::BinaryValuePath::NumberFastPath,
+        );
+        Some(number_comparison(op, a, b))
+    }
+
+    /// Shared numeric update after ToNumeric, used by bytecode and native hosts.
+    pub(super) fn numeric_update(
+        &mut self,
+        p: &ResidualProgram,
+        input: Value,
+        decrement: bool,
+    ) -> Result<Value, JsError> {
+        let delta = if decrement { -1.0 } else { 1.0 };
+        if matches!(self.heap.get(input), Some(Cell::BigInt(_))) {
+            let one = self.heap.alloc(Cell::BigInt("1".into()));
+            let operator = if decrement {
+                BinaryOperator::Subtraction
+            } else {
+                BinaryOperator::Addition
+            };
+            self.binary(p, operator as u32, input, one)
+        } else if let Some(integer) = input.as_int() {
+            let next = if decrement {
+                integer.checked_sub(1)
+            } else {
+                integer.checked_add(1)
+            };
+            Ok(next
+                .map(Value::integer)
+                .unwrap_or_else(|| Value::number(f64::from(integer) + delta)))
+        } else {
+            Ok(Value::number(self.to_number(p, input)? + delta))
+        }
+    }
+
     pub(super) fn numeric(
         &mut self,
         p: &ResidualProgram,

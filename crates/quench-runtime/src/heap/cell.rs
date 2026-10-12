@@ -978,17 +978,26 @@ struct ObjectOutOfLine {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) enum CallSiteLocation {
+    Source {
+        file_name: String,
+        line: u32,
+        column: u32,
+    },
+    Native,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CallSiteRecord {
-    pub(crate) file_name: String,
+    pub(crate) location: CallSiteLocation,
     pub(crate) function_name: Option<String>,
     pub(crate) this_value: Value,
-    pub(crate) line: u32,
-    pub(crate) column: u32,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum StackData {
     Captured(Vec<CallSiteRecord>),
+    Formatted(Value),
     CallSite(CallSiteRecord),
 }
 
@@ -1029,7 +1038,10 @@ impl StackData {
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     fn allocated_bytes(&self) -> usize {
         fn record_bytes(record: &CallSiteRecord) -> usize {
-            record.file_name.capacity() + record.function_name.as_ref().map_or(0, String::capacity)
+            (match &record.location {
+                CallSiteLocation::Source { file_name, .. } => file_name.capacity(),
+                CallSiteLocation::Native => 0,
+            }) + record.function_name.as_ref().map_or(0, String::capacity)
         }
         match self {
             Self::Captured(records) => {
@@ -1037,6 +1049,7 @@ impl StackData {
                     + records.iter().map(record_bytes).sum::<usize>()
             }
             Self::CallSite(record) => record_bytes(record),
+            Self::Formatted(_) => 0,
         }
     }
 }
@@ -1209,12 +1222,6 @@ impl Object {
         self.extras_mut().stack_data = Some(data);
     }
 
-    pub(crate) fn clear_stack_data(&mut self) {
-        if let Some(extras) = self.extras_mut_if_present() {
-            extras.stack_data = None;
-        }
-    }
-
     pub(crate) fn visit_stack_data_roots(&self, mut visit: impl FnMut(Value)) {
         match self.extras().and_then(|extras| extras.stack_data.as_ref()) {
             Some(StackData::Captured(records)) => {
@@ -1223,6 +1230,7 @@ impl Object {
                 }
             }
             Some(StackData::CallSite(record)) => visit(record.this_value),
+            Some(StackData::Formatted(value)) => visit(*value),
             None => {}
         }
     }
@@ -1635,7 +1643,7 @@ pub(crate) enum Cell {
     WasmElements(Vec<Value>),
     /// One memory identity owns its bytes and original optional maximum.
     WasmGlobal { value: Value, ty: crate::WasmType, declarations: crate::WasmTypes, mutable: bool },
-    WasmMemory { bytes: std::sync::Arc<crate::wasm::memory::MemoryStorage>, ty: Box<wasmparser::MemoryType> },
+    WasmMemory { bytes: std::rc::Rc<crate::wasm::memory::MemoryStorage>, ty: Box<wasmparser::MemoryType> },
     /// Typed references owned by a Wasm instance, traced like other heap edges.
     WasmTable {
         table64: bool,

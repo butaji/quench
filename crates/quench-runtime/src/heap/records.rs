@@ -217,6 +217,32 @@ impl<T> RecordSpace<T> {
             .is_some_and(|block| block.is_occupied(record_index) && block.is_marked(record_index))
     }
 
+    #[cfg(debug_assertions)]
+    pub(super) fn snapshot_marks(&self) -> Vec<u64> {
+        self.blocks
+            .iter()
+            .flat_map(|block| block.marked.iter().copied())
+            .collect()
+    }
+
+    #[cfg(debug_assertions)]
+    pub(super) fn clear_marks(&mut self) {
+        for block in &mut self.blocks {
+            block.marked.fill(0);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub(super) fn restore_marks(&mut self, marks: &[u64]) {
+        let expected_len = self.blocks.len() * (RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS);
+        assert_eq!(marks.len(), expected_len);
+        for (block, block_marks) in self.blocks.iter_mut().zip(marks.chunks_exact(
+            RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS,
+        )) {
+            block.marked.copy_from_slice(block_marks);
+        }
+    }
+
     pub(super) fn live_count(&self) -> usize {
         self.live
     }

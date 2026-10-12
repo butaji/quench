@@ -1,0 +1,30 @@
+{
+  "scope": "Matched unchanged Node abort subset, runtime receiver-preservation change; not full conformance or performance evidence.",
+  "before_source": "446c96e81",
+  "after_source": "446c96e81 plus receiver-preservation patch",
+  "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "node_oracle": "v24.19.0",
+  "runtime_regression": "Both generic and optimized execution preserve caller receiver (42) and captured derived this (true); all 7 subset integration tests pass.",
+  "before": {
+    "counts": {
+      "timeout": 2,
+      "fail": 64,
+      "skip": 4,
+      "pass": 7
+    },
+    "inventory_hash": "bb8ccb8656bc6f70",
+    "timeout_secs": 10,
+    "jobs": 2
+  },
+  "after": {
+    "counts": {
+      "timeout": 3,
+      "fail": 58,
+      "pass": 12,
+      "skip": 4
+    },
+    "inventory_hash": "bb8ccb8656bc6f70",
+    "timeout_secs": 10,
+    "jobs": 4
+  }
+}

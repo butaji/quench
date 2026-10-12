@@ -1,0 +1,59 @@
+{
+  "experiment": "EarleyBoyer Binary -> JumpFalse result-preserving fusion directional screen",
+  "node_oracle_match": true,
+  "rounds": 3,
+  "valid": true,
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "output_equal": true,
+      "baseline_score": 409.0,
+      "candidate_score": 408.0,
+      "score_delta": -1.0,
+      "baseline_rss_bytes": 42622976,
+      "candidate_rss_bytes": 42594304,
+      "rss_delta_bytes": -28672,
+      "baseline_wall_ns": 23147958437,
+      "candidate_wall_ns": 22882000052,
+      "valid": true
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "output_equal": true,
+      "baseline_score": 403.0,
+      "candidate_score": 411.0,
+      "score_delta": 8.0,
+      "baseline_rss_bytes": 42754048,
+      "candidate_rss_bytes": 42823680,
+      "rss_delta_bytes": 69632,
+      "baseline_wall_ns": 23290696419,
+      "candidate_wall_ns": 22595026590,
+      "valid": true
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "output_equal": true,
+      "baseline_score": 408.0,
+      "candidate_score": 405.0,
+      "score_delta": -3.0,
+      "baseline_rss_bytes": 42704896,
+      "candidate_rss_bytes": 42479616,
+      "rss_delta_bytes": -225280,
+      "baseline_wall_ns": 23088854944,
+      "candidate_wall_ns": 22834614032,
+      "valid": true
+    }
+  ]
+}

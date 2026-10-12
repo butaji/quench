@@ -1,0 +1,32 @@
+{
+  "scope": "Bounded Unix synchronous child stdout/stderr collection with combined maxBuffer",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "validation": {
+    "child_entry": {
+      "pass": 19,
+      "fail": 0,
+      "log": "work/sync-buffer-integration2.log"
+    },
+    "execution_subset": {
+      "counts": {
+        "pass": 17,
+        "skip": 1
+      },
+      "total": 18,
+      "inventory_hash": "33b0084ac9056ec4",
+      "raw_results": "work/exec-sync-buffer-subset.json",
+      "timeout_secs": 10,
+      "jobs": 2
+    },
+    "spawn_sync_limit": {
+      "counts": {
+        "pass": 1
+      },
+      "raw_results": "work/spawnsync-buffer-subset.json"
+    }
+  },
+  "gain": "All 17 applicable execution fixtures pass; 1 Windows-only skip. SpawnSync buffer fixture also passes.",
+  "collector": "Bounded 2-event channel, 64KiB read blocks; retain whole block crossing combined limit; SIGTERM on overflow; 0, null and Infinity unlimited; default shared one MiB.",
+  "remaining": "Custom synchronous killSignal, timeout/input handling and other platforms remain unqualified. Complete parallel goal remains open.",
+  "performance_claim": false
+}

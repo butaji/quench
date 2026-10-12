@@ -76,7 +76,10 @@ debug = 0
 debug-assertions = false
 overflow-checks = false
 incremental = false
-strip = "symbols"
+# The symbol table stays: a trained link order names symbols, whose crate
+# hashes follow the profile (crates/quench-wasm-test/build.rs). It is not
+# loaded at run time.
+strip = "debuginfo"
 panic = "abort"
 lto = "thin"
 codegen-units = 1
@@ -95,3 +98,4 @@ strip = "none"
 [patch.crates-io]
 oxc_parser = { path = "vendor/oxc-parser" }
 oxc_regular_expression = { path = "vendor/oxc-regular-expression" }
+cranelift-codegen = { path = "vendor/cranelift-codegen" }

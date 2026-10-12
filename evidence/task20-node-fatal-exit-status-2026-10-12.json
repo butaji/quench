@@ -1,0 +1,48 @@
+{
+  "scope": "Honor final guest exit status after fatal diagnostics and exit listeners",
+  "branch": "v2-cloud-node",
+  "parent_commit": "90cfd79000eb4d5e2119e8cf6bfa12bb4d49574f",
+  "validation": {
+    "node_oracle_tests": 78,
+    "oracle_log": "work/tracing-exit-status-oracles.log",
+    "framework_tests": 43,
+    "framework_log": "work/tracing-exit-status-framework.log",
+    "runtime_tests": {
+      "count": 550,
+      "qualification": "Shared runtime implementation unchanged from 90cfd7900; intrinsic JSON collection/identity and all runtime tests previously passed."
+    },
+    "beforeexit_scope": {
+      "results": [
+        {
+          "fixture": "test-process-beforeexit-throw-exit.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-process-beforeexit.js",
+          "status": "pass"
+        }
+      ],
+      "metadata": {
+        "inventory_hash": "203085e7541bcf43",
+        "jobs": 1,
+        "timeout_secs": 30,
+        "node_version": "v27.0.0-nightly20260819c79868f102",
+        "runtime_commit": "90cfd79000eb4d5e2119e8cf6bfa12bb4d49574f",
+        "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+        "platform": "linux-x86_64"
+      },
+      "raw_sha256": "175777852fe1bdf4332f005de9589d813954fcdb015b3d469452218fe0f23d0d"
+    }
+  },
+  "binary_sha256": {
+    "target/iteration/quench-node": "75cbf85f4c41de0de33da9110b20fa55a79b24d622477989053770b18612d8d3",
+    "target/iteration/run-parallel": "9a6f440337b34bdc09d2b255d43e5e3f7652d7c150cd29f1e9e10664b5079053"
+  },
+  "memory_events": "low 0\nhigh 0\nmax 4864178\noom 177\noom_kill 47\noom_group_kill 0\n",
+  "qualifications": [
+    "Both beforeExit fixtures pass. The fatal-error fixture lost at 90cfd7900 is restored; the normal repeated beforeExit fixture gains from frozen full f719ba393.",
+    "Fatal diagnostics remain on stderr; differential oracles establish final statuses 0 and 7. A read-only differential probe also confirms an error thrown by an exit handler can retain guest status 0.",
+    "Latest complete full remains 1293 PASS / 685 SKIP / 2633 FAIL / 116 TIMEOUT / 0 CRASH; scoped gains are not a full total.",
+    "Tracing category events, external category-byte backing aliases/writeback and subsequent file rotation remain qualified by task20-node-tracing-2026-10-12.json. No speed claim."
+  ]
+}

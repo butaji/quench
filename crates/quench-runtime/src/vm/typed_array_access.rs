@@ -1,11 +1,81 @@
 use super::*;
 
+const MAX_TYPED_ARRAY_ELEMENT_WIDTH: usize = std::mem::size_of::<u64>();
+
 pub(super) enum TypedArrayElement {
     BigInt(num_bigint::BigInt),
     Number(f64),
 }
 
 impl<H: Host> Vm<H> {
+    pub(crate) fn embedding_uint8_array(&mut self, bytes: &[u8]) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        let buffer = self.new_fixed_array_buffer(&program, bytes.len(), false)?;
+        let buffer_root = self.heap.root(buffer);
+        if let Some(Cell::ArrayBuffer { bytes: backing, .. }) = self.heap.get_mut(buffer) {
+            Rc::make_mut(backing).copy_from_slice(bytes);
+        } else {
+            unreachable!("fixed ArrayBuffer allocation");
+        }
+        let view = self.heap.alloc(Cell::TypedArray {
+            kind: TypedArrayKind::Uint8,
+            object: Box::new(Self::empty_object(
+                self.typed_array_proto(TypedArrayKind::Uint8),
+            )),
+            buffer: self.heap.root_value(buffer_root).unwrap(),
+            offset: 0,
+            length: bytes.len(),
+            length_tracking: false,
+        });
+        self.heap.release_root(buffer_root);
+        Ok(view)
+    }
+
+    pub(crate) fn embedding_view_bytes(&self, value: Value) -> Option<Vec<u8>> {
+        let (buffer, offset, byte_length) = match self.heap.get(value)? {
+            Cell::TypedArray {
+                buffer,
+                offset,
+                kind,
+                ..
+            } => (
+                *buffer,
+                *offset,
+                self.typed_array_length(value)?.checked_mul(kind.width())?,
+            ),
+            Cell::DataView {
+                buffer,
+                offset,
+                length,
+                length_tracking,
+                ..
+            } => {
+                let byte_length = if self.array_buffer_detached(*buffer) {
+                    0
+                } else if *length_tracking {
+                    match self.heap.get(*buffer) {
+                        Some(Cell::ArrayBuffer { bytes, .. }) => bytes.len().saturating_sub(*offset),
+                        _ => return None,
+                    }
+                } else if self.array_buffer_out_of_bounds(*buffer, *offset, *length) {
+                    0
+                } else {
+                    *length
+                };
+                (*buffer, *offset, byte_length)
+            }
+            _ => return None,
+        };
+        let Cell::ArrayBuffer { bytes, detached, .. } = self.heap.get(buffer)? else {
+            return None;
+        };
+        if *detached {
+            return Some(Vec::new());
+        }
+        let end = offset.checked_add(byte_length)?;
+        Some(bytes.get(offset..end)?.to_vec())
+    }
+
     pub(super) fn typed_array_get(&mut self, object: Value, index: usize) -> Option<Value> {
         let (buffer, offset, kind) = match self.heap.get(object) {
             Some(Cell::TypedArray {
@@ -246,22 +316,6 @@ impl<H: Host> Vm<H> {
             }) => (*buffer, *offset, *kind),
             _ => return false,
         };
-        let (bigint, number) = match value {
-            TypedArrayElement::BigInt(value) => (Some(value), None),
-            TypedArrayElement::Number(value) => (None, Some(*value)),
-        };
-        let bigint_bytes = bigint.map(|value| {
-            let fill = if value.sign() == num_bigint::Sign::Minus {
-                u8::MAX
-            } else {
-                0
-            };
-            let mut bytes = [fill; 8];
-            for (target, source) in bytes.iter_mut().zip(value.to_signed_bytes_le()) {
-                *target = source;
-            }
-            bytes
-        });
         if self.array_buffer_detached(buffer)
             || self
                 .typed_array_length(object)
@@ -272,35 +326,95 @@ impl<H: Host> Vm<H> {
         if self.array_buffer_out_of_bounds(buffer, offset, kind.width() * (index + 1)) {
             return true;
         }
+        let encoded = Self::typed_array_element_bytes(kind, value);
         if let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) {
             let bytes = Rc::make_mut(bytes);
             let start = offset + index * kind.width();
-            let value = number.unwrap_or(0.0);
-            match kind {
-                TypedArrayKind::Uint8 => bytes[start] = Self::uint8_from_value(value),
-                TypedArrayKind::Uint8Clamped => {
-                    bytes[start] = Self::uint8_clamped_from_value(value)
+            bytes[start..start + kind.width()].copy_from_slice(&encoded[..kind.width()]);
+        }
+        true
+    }
+
+    /// One element encoding serves indexed stores and validated bulk fills.
+    fn typed_array_element_bytes(
+        kind: TypedArrayKind,
+        value: &TypedArrayElement,
+    ) -> [u8; MAX_TYPED_ARRAY_ELEMENT_WIDTH] {
+        let mut bytes = [0; MAX_TYPED_ARRAY_ELEMENT_WIDTH];
+        let number = match value {
+            TypedArrayElement::Number(value) => *value,
+            _ => 0.0,
+        };
+        match kind {
+            TypedArrayKind::Uint8 | TypedArrayKind::Int8 => bytes[0] = Self::uint8_from_value(number),
+            TypedArrayKind::Uint8Clamped => bytes[0] = Self::uint8_clamped_from_value(number),
+            TypedArrayKind::Uint16 | TypedArrayKind::Int16 => bytes[..kind.width()].copy_from_slice(&Self::uint16_from_value(number).to_ne_bytes()),
+            TypedArrayKind::Uint32 | TypedArrayKind::Int32 => bytes[..kind.width()].copy_from_slice(&Self::uint32_from_value(number).to_ne_bytes()),
+            TypedArrayKind::Float16 => bytes[..kind.width()].copy_from_slice(&super::number::f64_to_half(number).to_ne_bytes()),
+            TypedArrayKind::Float32 => bytes[..kind.width()].copy_from_slice(&(number as f32).to_ne_bytes()),
+            TypedArrayKind::Float64 => bytes.copy_from_slice(&number.to_ne_bytes()),
+            TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
+                let TypedArrayElement::BigInt(value) = value else {
+                    unreachable!("BigInt content type was validated");
+                };
+                bytes.fill(if value.sign() == num_bigint::Sign::Minus {
+                    u8::MAX
+                } else {
+                    0
+                });
+                for (target, source) in bytes.iter_mut().zip(value.to_signed_bytes_le()) {
+                    *target = source;
                 }
-                TypedArrayKind::Uint16 => bytes[start..start + 2]
-                    .copy_from_slice(&Self::uint16_from_value(value).to_ne_bytes()),
-                TypedArrayKind::Uint32 => bytes[start..start + 4]
-                    .copy_from_slice(&Self::uint32_from_value(value).to_ne_bytes()),
-                TypedArrayKind::Int8 => bytes[start] = Self::uint8_from_value(value),
-                TypedArrayKind::Int16 => bytes[start..start + 2]
-                    .copy_from_slice(&Self::uint16_from_value(value).to_ne_bytes()),
-                TypedArrayKind::Int32 => bytes[start..start + 4]
-                    .copy_from_slice(&Self::uint32_from_value(value).to_ne_bytes()),
-                TypedArrayKind::Float16 => bytes[start..start + 2]
-                    .copy_from_slice(&super::number::f64_to_half(value).to_ne_bytes()),
-                TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
-                    bytes[start..start + 8].copy_from_slice(&bigint_bytes.unwrap())
-                }
-                TypedArrayKind::Float32 => {
-                    bytes[start..start + 4].copy_from_slice(&(value as f32).to_ne_bytes())
-                }
-                TypedArrayKind::Float64 => {
-                    bytes[start..start + 8].copy_from_slice(&value.to_ne_bytes())
-                }
+            }
+        }
+        bytes
+    }
+
+    /// Coercion and live-view checks precede this effect-free non-shared fast path.
+    pub(super) fn typed_array_fill_elements(
+        &mut self,
+        object: Value,
+        start: usize,
+        end: usize,
+        value: &TypedArrayElement,
+    ) -> bool {
+        if start >= end {
+            return true;
+        }
+        let (buffer, offset, kind) = match self.heap.get(object) {
+            Some(Cell::TypedArray {
+                buffer,
+                offset,
+                kind,
+                ..
+            }) => (*buffer, *offset, *kind),
+            _ => return false,
+        };
+        if self.array_buffer_detached(buffer)
+            || self
+                .typed_array_length(object)
+                .is_none_or(|length| end > length)
+            || self.array_buffer_out_of_bounds(buffer, offset, kind.width() * end)
+        {
+            return false;
+        }
+        let encoded = Self::typed_array_element_bytes(kind, value);
+        let Some(Cell::ArrayBuffer {
+            bytes,
+            shared: false,
+            ..
+        }) = self.heap.get_mut(buffer)
+        else {
+            return false;
+        };
+        let bytes =
+            &mut Rc::make_mut(bytes)[offset + start * kind.width()..offset + end * kind.width()];
+        let element = &encoded[..kind.width()];
+        if element.iter().all(|byte| *byte == element[0]) {
+            bytes.fill(element[0]);
+        } else {
+            for chunk in bytes.chunks_exact_mut(kind.width()) {
+                chunk.copy_from_slice(element);
             }
         }
         true

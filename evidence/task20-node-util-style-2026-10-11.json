@@ -1,0 +1,23 @@
+{
+  "scope": "Native util.styleText, ANSI color facts and alias descriptors; stdio emitter protocol",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "validation": {
+    "child_entry": {
+      "pass": 21,
+      "fail": 0,
+      "log": "work/util-style-integration2.log"
+    },
+    "style_fixtures": {
+      "counts": {
+        "pass": 1,
+        "skip": 1
+      },
+      "inventory_hash": "5a0d9f03cdaa1112",
+      "raw_results": "work/util-style-subset2.json"
+    }
+  },
+  "behavior": "UTF16-preserving named/hex styling, nested close replacement, aliases, fast named-style snapshot versus live arrays, cached-next iteration with abrupt close, shared VM relational comparison for stream color depth; native stdio inherits shared EventEmitter protocol.",
+  "gain": "Hex style fixture passes. Named-style fixture reaches upstream no-TTY skip (not counted as a pass).",
+  "remaining": "TTY implementation and color-env warning/depth behavior remain partial; complete parallel goal remains open.",
+  "performance_claim": false
+}

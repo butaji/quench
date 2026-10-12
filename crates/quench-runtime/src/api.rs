@@ -6,7 +6,10 @@ mod embedding;
 pub use embedding::RootedError;
 #[path = "api_native.rs"]
 mod native;
-pub use native::{HostFunction, HostFunctionId, NativeContext};
+pub use native::{
+    BuiltinBrand, BuiltinData, HostFunction, HostFunctionId, HostWeakRoot, NativeContext,
+    RootedIterator,
+};
 
 /// The syntax context used when compiling source. Script and Module use
 /// their OXC parse goals; contextual Eval requires an active guest activation.
@@ -75,6 +78,15 @@ impl<H: Host> Runtime<H> {
         Self { vm: Vm::new(host) }
     }
 
+    /// Choose how Wasm functions execute; see [`ExecutionMode`].
+    pub fn set_execution_mode(&mut self, mode: crate::ExecutionMode) {
+        self.vm.set_execution_mode(mode);
+    }
+
+    pub fn execution_mode(&self) -> crate::ExecutionMode {
+        self.vm.execution_mode()
+    }
+
     pub fn host_mut(&mut self) -> &mut H {
         &mut self.vm.host
     }
@@ -99,6 +111,11 @@ impl<H: Host> Runtime<H> {
     pub fn execute_deferred_jobs(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         program.validate().map_err(JsError::validation)?;
         self.vm.execute_deferred_jobs(program).map(drop)
+    }
+
+    /// Release WeakRef targets after the host completes a job and its microtasks.
+    pub fn clear_kept_objects(&mut self) {
+        self.vm.clear_kept_objects();
     }
 
     /// Drain VM jobs at a host-selected checkpoint, including module jobs.
@@ -331,6 +348,21 @@ impl<H: Host> Runtime<H> {
 
     pub fn root(&mut self, value: Value) -> RootId {
         self.vm.root(value)
+    }
+
+    /// A private weak reference is live only while its target remains reachable.
+    pub fn host_weak_root_is_live(&self, reference: HostWeakRoot) -> bool {
+        self.vm.embedding_host_weak_value(reference.0).is_some()
+    }
+
+    pub fn resolve_host_weak_root(&mut self, reference: HostWeakRoot) -> Option<RootId> {
+        self.vm
+            .embedding_host_weak_value(reference.0)
+            .map(|value| self.vm.root(value))
+    }
+
+    pub fn release_host_weak_root(&mut self, reference: HostWeakRoot) -> bool {
+        self.vm.release_root(reference.0)
     }
 
     pub fn update_root(&mut self, root: RootId, value: Value) -> bool {
@@ -3117,6 +3149,27 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
     }
 
     #[test]
+    fn regression_primitive_constructor_names_survive_prototype_alias_installation() {
+        assert_output_in_execution_modes(
+            r#"
+            var stringify = Function.prototype.toString;
+            for (var constructor of [Number, String]) {
+                print(constructor.name);
+                print(constructor.prototype.constructor === constructor);
+                var descriptor = Object.getOwnPropertyDescriptor(constructor, 'name');
+                print(!descriptor.writable && !descriptor.enumerable && descriptor.configurable);
+                var source = stringify.call(constructor);
+                Object.defineProperty(constructor, 'name', {get() { throw 'must not read name'; }});
+                print(stringify.call(constructor) === source);
+            }
+            "#,
+            &[
+                "Number", "true", "true", "true", "String", "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_native_function_source_uses_installed_names_without_guest_reads() {
         assert_output_in_execution_modes(
             r#"
@@ -4300,10 +4353,10 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             var error = new foreign.Error('foreign');
             print(Error.isError(error)); print(foreign.Error.isError(new Error('local')));
             print(Error.isError(new Proxy(error, {})));
-            var stack = Object.getOwnPropertyDescriptor(Error.prototype, 'stack').get;
+            var stack = Object.getOwnPropertyDescriptor(new Error(), 'stack').get;
             print(stack.call({'\0quench:error-brand':true}) === undefined);
             error['\0quench:error-brand'] = false;
-            $262.gc(); print(stack.call(error));
+            $262.gc(); print(stack.call(error).split('\n')[0]);
             Promise.any([]).catch(function(error) {
                 print(Error.isError(error)); print(Object.hasOwn(error, '\0quench:error-brand'));
                 error['\0quench:error-brand'] = false;
@@ -4334,74 +4387,50 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
     }
 
     #[test]
-    fn regression_error_stack_setter_uses_intrinsic_home_and_records() {
+    fn regression_error_stack_setter_uses_captured_records() {
         assert_output_in_execution_modes(
             r#"
-            var home = Error.prototype;
-            var setter = Object.getOwnPropertyDescriptor(home, 'stack').set;
+            print(Object.getOwnPropertyDescriptor(Error.prototype, 'stack') === undefined);
+            var target = new Error('original');
+            var setter = Object.getOwnPropertyDescriptor(target, 'stack').set;
             var reads = 0;
             Object.defineProperty(globalThis, 'Error', {get() {reads++; $262.gc(); throw 'replaced Error';}, configurable:true});
-            var poison = Object.create(null);
-            poison.get = function() {throw 'inherited descriptor getter';};
-            poison.configurable = true;
-            Object.defineProperty(Object.prototype, 'get', poison);
-            var target = {get inherited() {throw 'unused';}};
             print(setter.call(target, 'saved') === undefined);
+            $262.gc(); print(target.stack);
             var d = Object.getOwnPropertyDescriptor(target, 'stack');
-            print(d.value); print(d.writable); print(d.enumerable); print(d.configurable);
-            try {setter.call(home, 'invalid');} catch (error) {print(error instanceof TypeError);}
-            try {setter.call({}, 1);} catch (error) {print(error instanceof TypeError);}
-            print(reads);
-            delete Object.prototype.get;
+            print(typeof d.get); print(typeof d.set); print(d.enumerable); print(d.configurable);
+            setter.call(target, 1); print(target.stack); print(reads);
             "#,
-            &["true", "saved", "true", "true", "true", "true", "true", "0"],
+            &[
+                "true", "true", "saved", "function", "function", "false", "true", "1", "0",
+            ],
         );
     }
 
     #[test]
-    fn regression_error_stack_setter_shares_assignment_and_realm_identity() {
+    fn regression_error_stack_setter_ignores_uncaptured_receivers() {
         assert_output_in_execution_modes(
             r#"
-            var setter = Object.getOwnPropertyDescriptor(Error.prototype, 'stack').set;
-            var data = {};
-            Object.defineProperty(data, 'stack', {value:'old', writable:true, configurable:false});
-            var observed;
-            var accessor = {set stack(v) {$262.gc(); observed = v;}};
-            var emptyAccessor = {};
-            Object.defineProperty(emptyAccessor, 'stack', {get:undefined, set:undefined});
-            var poison = Object.create(null);
-            poison.get = function() {throw 'inherited descriptor getter';};
-            poison.configurable = true;
-            Object.defineProperty(Object.prototype, 'get', poison);
+            var setter = Object.getOwnPropertyDescriptor(new Error(), 'stack').set;
+            var data = {stack:'old'};
+            var observed = false;
+            var accessor = {set stack(v) {observed = true;}};
             setter.call(data, 'updated'); print(data.stack);
-            print(Object.getOwnPropertyDescriptor(data, 'stack').enumerable);
-            setter.call(accessor, 'accessor'); print(observed);
-            try {setter.call(emptyAccessor, 'invalid');} catch (error) {print(error instanceof TypeError);}
-            delete Object.prototype.get;
+            setter.call(accessor, 'ignored'); print(observed);
             var trace = [];
             var proxy = new Proxy({}, {
-                getOwnPropertyDescriptor(t,k) {$262.gc(); trace.push('get:' + k); return Reflect.getOwnPropertyDescriptor(t,k);},
-                defineProperty(t,k,d) {$262.gc(); trace.push('define:' + k + ':' + Object.keys(d)); return Reflect.defineProperty(t,k,d);}
+                getOwnPropertyDescriptor(t,k) {trace.push('get'); return Reflect.getOwnPropertyDescriptor(t,k);},
+                defineProperty(t,k,d) {trace.push('define'); return Reflect.defineProperty(t,k,d);}
             });
-            setter.call(proxy, 'fresh' + '-stack'); print(proxy.stack); print(trace.join(';'));
+            setter.call(proxy, 'ignored'); print(trace.length);
             var foreign = $262.createRealm().global;
-            var foreignHome = foreign.Error.prototype;
-            var foreignSetter = Object.getOwnPropertyDescriptor(foreignHome, 'stack').set;
+            var target = new foreign.Error('foreign');
+            var foreignSetter = Object.getOwnPropertyDescriptor(target, 'stack').set;
             Object.defineProperty(foreign, 'Error', {get() {$262.gc(); throw 'foreign Error';}, configurable:true});
-            try {foreignSetter.call(foreignHome, 'invalid');} catch (error) {print(error instanceof foreign.TypeError);}
-            var foreignTarget = new foreign.Object();
-            foreignSetter.call(foreignTarget, 'foreign'); print(foreignTarget.stack);
+            foreignSetter.call(target, 'saved'); $262.gc(); print(target.stack);
+            setter.call(target, 'shared'); print(target.stack);
             "#,
-            &[
-                "updated",
-                "false",
-                "accessor",
-                "true",
-                "fresh-stack",
-                "get:stack;define:stack:value,writable,enumerable,configurable",
-                "true",
-                "foreign",
-            ],
+            &["old", "false", "0", "saved", "shared"],
         );
     }
 
@@ -9571,13 +9600,20 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
             var replacements = ["", "x-foo", "de-u-co", "en-US"];
             for (var index = 0; index < replacements.length; index++) {
                 String.prototype[Symbol.split] = function() { return [replacements[index]]; };
-                var formatted = Intl.DateTimeFormat("de", {}).format(86400000);
+                var formatted = Intl.DateTimeFormat("de", { timeZone: "UTC" }).format(86400000);
                 print(formatted);
                 print(possibleAnswers.includes(formatted));
             }
             "#,
             &[
-                "1.1.1970", "true", "1.1.1970", "true", "1.1.1970", "true", "1.1.1970", "true",
+                "2.1.1970",
+                "true",
+                "2.1.1970",
+                "true",
+                "2.1.1970",
+                "true",
+                "2.1.1970",
+                "true",
             ],
         );
     }

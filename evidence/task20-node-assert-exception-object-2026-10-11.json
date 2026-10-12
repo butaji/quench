@@ -1,0 +1,23 @@
+{
+  "scope": "Exception validation object properties use shared strict comparison instead of recursive subset traversal",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "validation": {
+    "child_entry": {
+      "pass": 20,
+      "fail": 0,
+      "log": "work/assert-object-matcher-integration.log"
+    },
+    "assertions": {
+      "counts": {
+        "fail": 9,
+        "pass": 5
+      },
+      "total": 14,
+      "inventory_hash": "8ea2039d6ae15ebb",
+      "raw_results": "work/assert-object-matcher-subset.json"
+    }
+  },
+  "behavior": "Checks property presence, preserves Node getter/has ordering, allows RegExp match only against strings, and compares nested values/cycles with the same strict comparator as deepStrictEqual. Removes arbitrary recursion-depth cutoff and mismatched primitive traversal.",
+  "remaining": "No new full assertion fixture passes; detailed assertion diff formatting and other APIs remain incomplete.",
+  "performance_claim": false
+}
