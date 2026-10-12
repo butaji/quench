@@ -10,7 +10,15 @@ The local patch aligns the header of each small loop without calls to the
 target's `small_loop_alignment` (x64: one 64-byte cache line; other targets
 unchanged), so a hot inner loop's body sits in the fewest fetch windows
 instead of wherever the preceding code leaves it. Upstream Cranelift aligns
-only functions. `#![allow(warnings)]` keeps the workspace's `-D warnings`
+only functions.
+
+The patch also scopes the elaborator's loop stack to the dominator tree:
+upstream pops a loop when it enters a block outside it, so a loop exit
+visited before the loop's body (both children of the header) hid the loop
+from the body, and nothing was hoisted out of it (mandel's inner loop
+recomputed a loop-invariant three-operator chain each iteration). Each
+dominator-subtree exit now restores the loop stack its block was entered
+with. `#![allow(warnings)]` keeps the workspace's `-D warnings`
 from failing on upstream lints that a registry dependency's capped lints
 would hide. `QUENCH.patch` records these changes against the published
 0.134.3 crate source.
