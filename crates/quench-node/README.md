@@ -43,3 +43,7 @@ boolean `true`, matching Node's flag selection. Linux validation covers IPv4,
 IPv6, and another process binding the same address and port. FreeBSD selects its
 load-balancing socket option. General listen error projection, Solaris reuse-port
 support, and explicit backlog handling remain incomplete.
+
+Process stdout writes flush the host's line buffer at each write boundary, making
+bytes visible to another process before the writer exits or emits a newline.
+The embedding's configured text sink continues to receive writes directly.

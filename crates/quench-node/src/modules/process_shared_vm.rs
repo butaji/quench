@@ -623,9 +623,10 @@ pub(crate) fn stream_write(
         if let Some(output) = output {
             output(&text);
         } else {
-            std::io::stdout()
-                .lock()
+            let mut stdout = std::io::stdout().lock();
+            stdout
                 .write_all(text.as_bytes())
+                .and_then(|()| stdout.flush())
                 .map_err(|error| RootedError::host(error.to_string()))?;
         }
     }
