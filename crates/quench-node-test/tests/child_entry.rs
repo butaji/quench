@@ -2287,3 +2287,81 @@ setImmediate(()=>{console.log(JSON.stringify(result))});
         String::from_utf8_lossy(&observations[1].stdout)
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn tcp_peer_reset_preserves_os_errno_syscall_and_error_message() {
+    use std::io::Read;
+    use std::net::TcpListener;
+    use std::os::fd::AsRawFd;
+    use std::time::Instant;
+    let mut observations = Vec::new();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let (mut socket, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => std::thread::sleep(Duration::from_millis(1)),
+                    Err(error) => panic!("peer accept: {error}"),
+                }
+            };
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            socket.read_exact(&mut [0u8; 1]).unwrap();
+            let linger = libc::linger {
+                l_onoff: 1,
+                l_linger: 0,
+            };
+            // The live socket and linger value remain valid for this syscall.
+            let status = unsafe {
+                libc::setsockopt(
+                    socket.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_LINGER,
+                    std::ptr::from_ref(&linger).cast(),
+                    std::mem::size_of_val(&linger) as libc::socklen_t,
+                )
+            };
+            assert_eq!(status, 0, "{}", std::io::Error::last_os_error());
+            drop(socket);
+        });
+        let source = format!(
+            r#"
+const socket=require('net').createConnection({{host:'127.0.0.1',port:{port}}});const result=[];
+socket.on('connect',()=>{{result.push('connect');socket.write('x')}});
+socket.on('error',error=>result.push([error.name,error.message,error.code,error.errno,error.syscall]));
+socket.on('close',hadError=>{{result.push(['close',hadError]);console.log(JSON.stringify(result))}});
+"#
+        );
+        let mut command = Command::new(executable);
+        command.args(["-e", &source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        observations.push(
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                .unwrap(),
+        );
+        peer.join().unwrap();
+    }
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}

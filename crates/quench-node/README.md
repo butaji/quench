@@ -75,3 +75,11 @@ error listener protects synchronous writes; per-stream callbacks install a
 listener for asynchronous errors. Cleanup runs even after a write throws.
 RangeError with the engine's stack-overflow message propagates unchanged.
 Constructor validation, method binding, grouping and full formatting remain open.
+
+TCP read/write failures keep the original OS error until projection, deriving
+Node's code, errno, syscall and message from that authority. Interrupted reads
+retry; interrupted writes retry on the next transport poll. Socket destruction
+latches its error outcome before guest handlers run, and automatic close
+delivery projects `hadError` from that outcome. Linux reset behavior is checked
+against an independent OS TCP peer. Connect/listen error projection and public
+Socket emit interception remain incomplete.
