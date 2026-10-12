@@ -96,6 +96,14 @@ at an absolute prefix. Absolute resolutions do not read `process.cwd`; empty
 and dot-only resolutions retain Node's early cwd shortcut and retry behavior
 when a replaced cwd hook returns a relative path.
 
+Child-process cwd options accept strings, file URLs, Buffer and Uint8Array
+views. URL conversion and null-byte validation run before launch. Validated
+byte views then use public string coercion, matching the child binding: Buffer
+uses its string conversion, while an ordinary Uint8Array produces comma-separated
+values. These options still use the same retained-directory launch owner.
+URL branding currently shares the existing URL adapter; this does not establish
+conformance when guests replace the global URL prototype.
+
 ## Verification
 
 Use the selected pinned Node oracle on `PATH` and build both sibling entry
