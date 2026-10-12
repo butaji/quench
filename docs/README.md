@@ -540,6 +540,28 @@ profiles add only what earlier ones did not execute. With a compiled-mode
 profile first, the interpreter's functions interleave with the compiler's and
 fault-around makes the whole span resident (CoreMark `-no-jit`: 5.2 -> 6.1 MB).
 
+Qualification builds link the C runtime statically, position-dependent:
+
+```sh
+RUSTFLAGS="-D warnings -C llvm-args=-align-all-functions=6 \
+  -C target-feature=+crt-static -C relocation-model=static" \
+  CARGO_TARGET_DIR=target/static cargo build --profile production \
+  --target x86_64-unknown-linux-gnu -p quench-wasm-test --bin coremark --bin run
+```
+
+`RUSTFLAGS` replaces the workspace `build.rustflags`, so it repeats them; the
+explicit `--target` keeps build scripts and proc macros dynamic. Only the C
+runtime functions a run executes are then resident, laid out by the link
+order instead of faulting in shared-library windows. Static builds name
+symbols differently and use `link/x86_64-linux-static.order`, trained the same
+way on the static binary. Their start code would register `.eh_frame` with
+the unwinder, which reads the whole section at startup; `build.rs` resolves
+the registration hooks to null instead (production aborts on panic, and
+backtraces find frames through `PT_GNU_EH_FRAME`). CoreMark on the x86-64
+container: dynamic -no-jit 5.2 MB / -jit 7.6 MB, static 3.5 MB / 6.3 MB.
+A static position-independent build relocates its read-only pointers at
+startup and measured 9.1 MB.
+
 Measure peak RSS with a launcher whose own image is small (`vfork`, `exec`,
 `wait4`): a forked interpreter's pre-`exec` image counts toward the child's
 `ru_maxrss`.
