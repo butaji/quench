@@ -206,6 +206,22 @@ handle adapter implements ref/unref/hasRef; complete TCP/Pipe wrap methods and
 prototype metadata, fd adoption and socket reference behavior remain separate
 work.
 
+## Net option validation and coded error ownership
+
+Socket constructor object-mode rejection and connect endpoint validation run in
+Rust before transport effects. Missing endpoint arguments, invalid host types,
+NUL bytes and invalid lookup function types preserve Node error messages and
+original option getter/exception behavior. Numeric and local path overloads
+continue through the existing endpoint owner.
+
+Coded TypeError prototypes have one native owner, shared private brand, and
+separate direct/validator prototype presentations. The lazy prototype cache
+preserves observable identity across errors of the same presentation. The
+validator presentation inherits its coded prototype and supplies its own
+constructor getter. This does not establish complete Node stack-frame filtering.
+Custom lookup callback invocation, full option ordering and family attempt/race
+semantics remain separate work.
+
 ## Socket reference ownership
 
 `net.Socket` ref/unref methods preserve the public `_handle` getter and method

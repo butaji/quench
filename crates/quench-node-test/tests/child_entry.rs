@@ -4327,3 +4327,44 @@ console.log(JSON.stringify(result));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn net_option_validation_preserves_coded_prototypes_original_getters_and_messages() {
+    const SOURCE: &str = r#"
+const net=require('net'),assert=require('assert'),util=require('util'),result=[],prototypes=new Map(),brands=[];
+function capture(action){try{const socket=action();socket.on('error',()=>{});socket.destroy();result.push('ok')}catch(error){
+ assert(error instanceof TypeError);assert(util.types.isNativeError(error));const prototype=Object.getPrototypeOf(error);
+ const keys=Reflect.ownKeys(prototype).map(String),kind=error.code+keys.join(',');if(prototypes.has(kind))assert.strictEqual(prototypes.get(kind),prototype);else prototypes.set(kind,prototype);
+ let owner=prototype,symbol;while(owner&&!symbol){symbol=Object.getOwnPropertySymbols(owner).find(symbol=>symbol.description==='kIsNodeError');owner=Object.getPrototypeOf(owner)}assert.strictEqual(error[symbol],true);brands.push(symbol);result.push(keys);
+ result.push([error.name,error.code,error.message,error.toString(),Object.keys(error),prototype.constructor===TypeError]);
+}}
+for(const value of [undefined,null,false,true,{}, {port:undefined},{path:undefined},{path:null},{path:false},{port:null},{port:0,host:[]},{port:0,host:'a\0b'},{port:0,lookup:1},{port:0,lookup:null}])capture(()=>net.connect(value));
+for(const method of [()=>net.connect(),()=>new net.Socket().connect(),()=>new net.Socket().connect({})])capture(method);
+for(const key of ['objectMode','readableObjectMode','writableObjectMode'])for(const value of [true,1,'x',{},false])capture(()=>new net.Socket({[key]:value}));
+for(const key of ['objectMode','readableObjectMode','writableObjectMode'])capture(()=>net.connect({port:0,[key]:true}));
+assert(brands.every(symbol=>symbol===brands[0]));
+const trace=[];capture(()=>new net.Socket({get objectMode(){trace.push('object');return false},get readableObjectMode(){trace.push('readable');return 1},get writableObjectMode(){trace.push('writable');return 2}}));result.push(trace);
+const marker={};assert.throws(()=>new net.Socket({get objectMode(){throw marker}}),error=>error===marker);
+let lookupReads=0;capture(()=>net.connect({port:0,host:'localhost',get lookup(){lookupReads++;return lookupReads===1?function(){}:1}}));result.push(lookupReads);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
