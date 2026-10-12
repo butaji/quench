@@ -68,3 +68,10 @@ and schedules the original Error object. `process.emitWarning()` validates
 options natively and preserves supplied Error identity through delivery and
 `throwDeprecation`. Stack-constructor options and stderr formatting remain
 incomplete, as do EventTarget leak warnings and emitter capture-rejection policy.
+
+Console's write boundary handles errors natively. The instance's `_ignoreErrors`
+policy defaults to true and honors an explicit false value. An owned temporary
+error listener protects synchronous writes; per-stream callbacks install a
+listener for asynchronous errors. Cleanup runs even after a write throws.
+RangeError with the engine's stack-overflow message propagates unchanged.
+Constructor validation, method binding, grouping and full formatting remain open.
