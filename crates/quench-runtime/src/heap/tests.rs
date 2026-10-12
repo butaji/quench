@@ -25,7 +25,7 @@ fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     heap.collect([owner, sparse]);
 
     let child = heap.alloc(Cell::String("dense child".into()));
-    if let Some(Cell::Array { elements, .. }) = heap.get_mut(owner) {
+    if let Some((_, elements)) = heap.array_mut(owner) {
         Rc::make_mut(elements)[0] = child;
     }
     let sparse_child = heap.alloc(Cell::String("sparse child".into()));
@@ -39,7 +39,7 @@ fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     assert!(heap.get(sparse_child).is_some());
     assert!(heap.get(garbage).is_none());
 
-    if let Some(Cell::Array { elements, .. }) = heap.get_mut(owner) {
+    if let Some((_, elements)) = heap.array_mut(owner) {
         Rc::make_mut(elements)[0] = Value::UNDEFINED;
     }
     heap.collect([owner, sparse]);
@@ -63,13 +63,13 @@ fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
     let young = (0..128)
         .map(|_| heap.alloc(Cell::String("remembered young survivor".into())))
         .collect::<Vec<_>>();
-    if let Some(Cell::Array { elements, .. }) = heap.get_mut(root) {
+    if let Some((_, elements)) = heap.array_mut(root) {
         Rc::make_mut(elements).extend(young.iter().copied());
     }
     collect_minor(&mut heap, [root]);
     assert!(young.iter().all(|child| heap.get(*child).is_some()));
 
-    if let Some(Cell::Array { elements, .. }) = heap.get_mut(root) {
+    if let Some((_, elements)) = heap.array_mut(root) {
         Rc::make_mut(elements).clear();
     }
     heap.collect([root]);
@@ -374,6 +374,40 @@ fn weak_map_values_follow_ephemeron_key_reachability() {
 }
 
 #[test]
+fn weak_map_array_keys_follow_direct_record_liveness() {
+    let mut heap = Heap::new();
+    let weak_map = heap.alloc(Cell::WeakMap {
+        object: Box::new(plain_object()),
+        entries: Box::default(),
+    });
+    let key = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::new(Vec::new()),
+    });
+    let value = heap.alloc(Cell::String("value".into()));
+    assert!(key.direct_array_index().is_some());
+    if let Some(Cell::WeakMap { entries, .. }) = heap.get_mut(weak_map) {
+        entries.insert(key, value);
+    }
+
+    let map_root = heap.root(weak_map);
+    let key_root = heap.root(key);
+    heap.collect([]);
+    assert!(heap.is_live(key));
+    assert!(heap.is_live(value));
+
+    assert!(heap.release_root(key_root));
+    heap.collect([]);
+    assert!(!heap.is_live(key));
+    assert!(!heap.is_live(value));
+    assert!(matches!(
+        heap.get(weak_map),
+        Some(Cell::WeakMap { entries, .. }) if entries.iter().next().is_none()
+    ));
+    assert!(heap.release_root(map_root));
+}
+
+#[test]
 fn object_space_identity_does_not_alias_legacy_slot_identity() {
     let mut heap = Heap::new();
     let map = heap.alloc(Cell::WeakMap {
@@ -530,6 +564,76 @@ fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
     assert_eq!(reused.heap_index(), Some(slot));
     assert_eq!(heap.sparse_get(reused, index), None);
     assert_eq!(heap.sparse_length(reused), None);
+}
+
+#[test]
+fn direct_array_records_trace_values_and_release_shared_backing() {
+    let mut heap = Heap::new();
+    let object = heap.alloc(Cell::Object(plain_object()));
+    let first_child = heap.alloc(Cell::String("first".into()));
+    let second_child = heap.alloc(Cell::String("second".into()));
+    let shared = Rc::new(vec![first_child, Value::number(1.0)]);
+    let first = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::clone(&shared),
+    });
+    let second = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::clone(&shared),
+    });
+    drop(shared);
+
+    assert!(first.direct_array_index().is_some());
+    assert_eq!(object.direct_object_index(), Some(0));
+    assert_eq!(first.direct_array_index(), Some(0));
+    assert_ne!(object, first);
+    assert!(heap.array(object).is_none());
+    assert!(heap.object(object).is_some());
+    assert!(heap.object(first).is_some());
+    assert!(heap.get(first).is_none());
+    assert_eq!(Rc::strong_count(heap.array(first).unwrap().1), 2);
+    let first_root = heap.root(first);
+    {
+        let (_, elements) = heap.array_mut(first).unwrap();
+        Rc::make_mut(elements)[1] = second_child;
+    }
+    assert_eq!(heap.collect([]), Vec::new());
+    assert!(heap.is_live(first));
+    assert!(!heap.is_live(second));
+    assert!(heap.is_live(first_child));
+    assert!(heap.is_live(second_child));
+    let (_, elements) = heap.array(first).unwrap();
+    assert_eq!(elements[1], second_child);
+    assert_eq!(Rc::strong_count(elements), 1);
+    assert!(heap.release_root(first_root));
+    heap.collect([]);
+    assert!(!heap.is_live(first));
+    assert!(!heap.is_live(first_child));
+    assert!(!heap.is_live(second_child));
+}
+
+#[test]
+fn direct_array_records_trace_and_remove_sparse_elements() {
+    let mut heap = Heap::new();
+    let array = heap.alloc(Cell::Array {
+        object: plain_object(),
+        elements: Rc::new(Vec::new()),
+    });
+    let child = heap.alloc(Cell::String("sparse child".into()));
+    let index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
+    heap.sparse_set(array, index, child);
+    let array_root = heap.root(array);
+
+    heap.collect([]);
+    assert!(heap.is_live(array));
+    assert!(heap.is_live(child));
+    assert_eq!(heap.sparse_get(array, index), Some(child));
+
+    assert!(heap.release_root(array_root));
+    heap.collect([]);
+    assert!(!heap.is_live(array));
+    assert!(!heap.is_live(child));
+    assert_eq!(heap.sparse_get(array, index), None);
 }
 
 #[test]

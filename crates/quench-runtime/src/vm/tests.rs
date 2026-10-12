@@ -4406,10 +4406,11 @@ fn property_copy_roots_release_after_callback_completion() {
                 let operands = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let args = match vm.heap.get(operands) {
-                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
-                    _ => panic!("operands"),
-                };
+                let args = vm
+                    .heap
+                    .array(operands)
+                    .map(|(_, elements)| elements.as_ref().clone())
+                    .expect("operands");
                 let handles = args
                     .iter()
                     .map(|v| vm.heap.weak_handle(*v).unwrap())
@@ -4498,10 +4499,11 @@ fn descriptor_snapshot_and_assign_root_fresh_native_arguments() {
                 let operands = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let args = match vm.heap.get(operands) {
-                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
-                    _ => panic!("operands"),
-                };
+                let args = vm
+                    .heap
+                    .array(operands)
+                    .map(|(_, elements)| elements.as_ref().clone())
+                    .expect("operands");
                 let source_handle = vm.heap.weak_handle(args[1]).unwrap();
                 let later_handle = vm.heap.weak_handle(args[2]).unwrap();
                 let first_atom = vm.intern_atom("first");
@@ -4647,10 +4649,11 @@ fn for_in_roots_release_after_prototype_and_key_callbacks() {
                         None
                     }
                     Ok(result) => {
-                        let elements = match vm.heap.get(result) {
-                            Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
-                            _ => panic!("key snapshot"),
-                        };
+                        let elements = vm
+                            .heap
+                            .array(result)
+                            .map(|(_, elements)| elements.as_ref().clone())
+                            .expect("key snapshot");
                         let names = elements
                             .into_iter()
                             .map(|key| vm.to_string(&program, key).unwrap())
@@ -4777,10 +4780,11 @@ fn proxy_introspection_roots_release_after_nested_validation() {
                 let operands = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let args = match vm.heap.get(operands) {
-                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
-                    _ => panic!("operands"),
-                };
+                let args = vm
+                    .heap
+                    .array(operands)
+                    .map(|(_, elements)| elements.as_ref().clone())
+                    .expect("operands");
                 let handles = args
                     .iter()
                     .map(|value| vm.heap.weak_handle(*value).unwrap())
@@ -4924,10 +4928,11 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                 let operands = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let args = match vm.heap.get(operands) {
-                    Some(super::Cell::Array { elements, .. }) => elements.as_ref().clone(),
-                    _ => panic!("operands"),
-                };
+                let args = vm
+                    .heap
+                    .array(operands)
+                    .map(|(_, elements)| elements.as_ref().clone())
+                    .expect("operands");
                 let handles = args
                     .iter()
                     .map(|value| vm.heap.weak_handle(*value).unwrap())
@@ -5392,10 +5397,11 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                     let values = vm
                         .call_value(&program, factory, Value::UNDEFINED, &[])
                         .unwrap();
-                    let (proxy, raw) = match vm.heap.get(values) {
-                        Some(super::Cell::Array { elements, .. }) => (elements[0], elements[1]),
-                        _ => panic!("operands"),
-                    };
+                    let (proxy, raw) = vm
+                        .heap
+                        .array(values)
+                        .map(|(_, elements)| (elements[0], elements[1]))
+                        .expect("operands");
                     let key = if symbol {
                         vm.heap.alloc(super::Cell::Symbol(Some("entry".into())))
                     } else if phase == "coercion" {
@@ -5761,10 +5767,11 @@ fn coerced_binary_operands_restore_roots_after_each_completion() {
                     let values = vm
                         .call_value(&program, factory, Value::UNDEFINED, &[])
                         .unwrap();
-                    let (left, right) = match vm.heap.get(values) {
-                        Some(super::Cell::Array { elements, .. }) => (elements[0], elements[1]),
-                        _ => panic!("operands"),
-                    };
+                    let (left, right) = vm
+                        .heap
+                        .array(values)
+                        .map(|(_, elements)| (elements[0], elements[1]))
+                        .expect("operands");
                     let handles = [left, right].map(|value| vm.heap.weak_handle(value).unwrap());
                     let roots = vm.heap.root_count_for_test();
                     let calls = vm.active_call_roots.len();
@@ -5965,10 +5972,11 @@ fn instanceof_roots_fresh_inputs_across_lookup_and_traversal() {
                 let values = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let (value, constructor) = match vm.heap.get(values) {
-                    Some(super::Cell::Array { elements, .. }) => (elements[0], elements[1]),
-                    _ => panic!("operands"),
-                };
+                let (value, constructor) = vm
+                    .heap
+                    .array(values)
+                    .map(|(_, elements)| (elements[0], elements[1]))
+                    .expect("operands");
                 let handles = [value, constructor].map(|v| vm.heap.weak_handle(v).unwrap());
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
@@ -6038,12 +6046,11 @@ fn instanceof_roots_detached_prototype_and_restores_cursor_after_throw() {
                 let operands = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let values = match vm.heap.get(operands) {
-                    Some(super::Cell::Array { elements, .. }) => {
-                        [elements[0], elements[1], elements[2]]
-                    }
-                    _ => panic!("operands"),
-                };
+                let values = vm
+                    .heap
+                    .array(operands)
+                    .map(|(_, elements)| [elements[0], elements[1], elements[2]])
+                    .expect("operands");
                 let handles = values.map(|value| vm.heap.weak_handle(value).unwrap());
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
@@ -6380,13 +6387,14 @@ fn array_iterator_advance_roots_owner_and_applies_index_transition() {
                             let atom = vm.intern_atom("value");
                             let mut value = vm.own_property(result, atom).unwrap();
                             if native == Native::ArrayEntries {
-                                value = match vm.heap.get(value) {
-                                    Some(super::Cell::Array { elements, .. }) => {
+                                value = vm
+                                    .heap
+                                    .array(value)
+                                    .map(|(_, elements)| {
                                         assert_eq!(elements[0].as_number(), Some(0.0));
                                         elements[1]
-                                    }
-                                    _ => panic!("entry"),
-                                };
+                                    })
+                                    .expect("entry");
                             }
                             if native == Native::ArrayKeys {
                                 assert_eq!(value.as_number(), Some(0.0));

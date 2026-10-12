@@ -26,9 +26,7 @@ fn array_length_uint32(number: f64) -> u32 {
 
 impl<H: Host> Vm<H> {
     pub(super) fn own_array_length(&self, target: Value) -> Option<usize> {
-        let Cell::Array { object, elements } = self.heap.get(target)? else {
-            return None;
-        };
+        let (object, elements) = self.heap.array(target)?;
         (!object.is_arguments_object()).then(|| {
             self.heap
                 .sparse_length(target)
@@ -39,9 +37,13 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn has_own_array_index(&self, target: Value, index: usize) -> bool {
         self.array_descriptor(target, index).is_some()
-            || matches!(self.heap.get(target), Some(Cell::Array { elements, .. })
-                if elements.get(index).is_some_and(|value| !value.is_deleted())
-                    || self.heap.sparse_get(target, index).is_some_and(|value| !value.is_deleted()))
+            || self.heap.array(target).is_some_and(|(_, elements)| {
+                elements.get(index).is_some_and(|value| !value.is_deleted())
+                    || self
+                        .heap
+                        .sparse_get(target, index)
+                        .is_some_and(|value| !value.is_deleted())
+            })
     }
 
     pub(super) fn define_array_length(
@@ -54,7 +56,7 @@ impl<H: Host> Vm<H> {
         let descriptor =
             super::property_definition::RootedPropertyDescriptor::new(&mut self.heap, descriptor);
         let outcome = (|| {
-            if !matches!(self.heap.get(target), Some(Cell::Array { .. })) {
+            if !self.heap.array(target).is_some() {
                 return Err(self.type_error(p, "array receiver is not array".into()));
             }
             let descriptor_value = descriptor.resolve(&self.heap).value;
@@ -96,7 +98,7 @@ impl<H: Host> Vm<H> {
                     .max();
                 if let Some(blocked_index) = blocked_index {
                     let partial_len = blocked_index + 1;
-                    if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target) {
+                    if let Some((_, elements)) = self.heap.array_mut(target) {
                         Rc::make_mut(elements).truncate(partial_len);
                     }
                     self.heap.sparse_set_length(target, partial_len);
@@ -118,7 +120,7 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(false);
                 }
-                if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target) {
+                if let Some((_, elements)) = self.heap.array_mut(target) {
                     Rc::make_mut(elements).truncate(next_len);
                 }
                 for (atom, _, _) in &tail {
@@ -184,7 +186,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn array_present_indices(&self, target: Value) -> Vec<usize> {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(target) else {
+        let Some((_, elements)) = self.heap.array(target) else {
             return Vec::new();
         };
         let length = self.heap.sparse_length(target).unwrap_or(elements.len());
@@ -262,7 +264,7 @@ impl<H: Host> Vm<H> {
             .into_iter()
             .map(|index| self.intern_atom(&index.to_string()))
             .collect::<Vec<_>>();
-        if matches!(self.heap.get(target), Some(Cell::Array { .. }))
+        if self.heap.array(target).is_some()
             && !self
                 .object_data(target)
                 .is_some_and(Object::is_arguments_object)
@@ -273,7 +275,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn array_is_integrity_level(&self, target: Value, freeze: bool) -> bool {
-        if !matches!(self.heap.get(target), Some(Cell::Array { .. })) {
+        if !self.heap.array(target).is_some() {
             return true;
         }
         if self
@@ -307,30 +309,30 @@ impl<H: Host> Vm<H> {
         descriptor: PropertyDescriptorRecord,
     ) -> Result<bool, JsError> {
         let atom = self.intern_atom(&index.to_string());
-        let existing = match self.heap.get(target) {
-            Some(Cell::Array { elements, .. }) => elements
-                .get(index)
-                .copied()
-                .filter(|value| !value.is_deleted()),
-            _ => None,
-        }
-        .or_else(|| {
-            self.heap
-                .sparse_get(target, index)
-                .filter(|value| !value.is_deleted())
-        });
+        let existing = self
+            .heap
+            .array(target)
+            .and_then(|(_, elements)| {
+                elements
+                    .get(index)
+                    .copied()
+                    .filter(|value| !value.is_deleted())
+            })
+            .or_else(|| {
+                self.heap
+                    .sparse_get(target, index)
+                    .filter(|value| !value.is_deleted())
+            });
         let is_new = existing.is_none()
             && !self
                 .descriptors
                 .contains_key(&(target, PropertyKey::string(atom)));
-        let current_len = match self.heap.get(target) {
-            Some(Cell::Array { elements, .. }) => self
-                .heap
+        let current_len = self.heap.array(target).map_or(0, |(_, elements)| {
+            self.heap
                 .sparse_length(target)
                 .unwrap_or(0)
-                .max(elements.len()),
-            _ => 0,
-        };
+                .max(elements.len())
+        });
         if is_new
             && index >= current_len
             && self
@@ -375,14 +377,13 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn delete_array_index(&mut self, target: Value, index: usize) -> Value {
-        let present = match self.heap.get(target) {
-            Some(Cell::Array { elements, .. }) => elements
+        let present = self.heap.array(target).is_some_and(|(_, elements)| {
+            elements
                 .get(index)
                 .copied()
                 .filter(|value| !value.is_deleted())
-                .is_some(),
-            _ => false,
-        } || self.heap.sparse_get(target, index).is_some();
+                .is_some()
+        }) || self.heap.sparse_get(target, index).is_some();
         let key = self.lookup_array_index_atom(index).map(PropertyKey::string);
         let has_descriptor = key.is_some_and(|key| self.descriptors.contains_key(&(target, key)));
         if !present && !has_descriptor {
@@ -396,7 +397,7 @@ impl<H: Host> Vm<H> {
         }
         self.unmap_argument_index(target, index);
         if present {
-            if let Some(Cell::Array { elements, .. }) = self.heap.get_mut(target)
+            if let Some((_, elements)) = self.heap.array_mut(target)
                 && index < elements.len()
             {
                 Rc::make_mut(elements)[index] = Value::DELETED;

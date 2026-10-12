@@ -959,6 +959,13 @@ pub(crate) struct Object {
     payload: ObjectPayload,
 }
 
+/// Array identity and object semantics share one direct record; dense element
+/// storage remains copy-on-write and is traced by the heap collector.
+pub(crate) struct ArrayRecord {
+    pub(crate) object: Object,
+    pub(crate) elements: Rc<Vec<Value>>,
+}
+
 union ObjectPayload {
     inline_properties: ManuallyDrop<[Value; INLINE_PROPERTY_COUNT]>,
     out_of_line: ManuallyDrop<Box<ObjectOutOfLine>>,

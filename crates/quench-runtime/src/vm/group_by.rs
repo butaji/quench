@@ -137,7 +137,7 @@ impl<H: Host> Vm<H> {
             }),
         };
         if let Some(group) = group {
-            let Some(Cell::Array { elements, .. }) = self.heap.get_mut(group) else {
+            let Some((_, elements)) = self.heap.array_mut(group) else {
                 unreachable!("groupBy owns array groups")
             };
             Rc::make_mut(elements).push(value);

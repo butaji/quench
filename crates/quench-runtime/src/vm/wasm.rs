@@ -1363,8 +1363,10 @@ impl<H: Host> Vm<H> {
         };
         self.set_active_program(previous);
         #[cfg(feature = "profile-aggregate")]
-        if !self.profile.report_dispatch_census_if_enabled() {
-            self.profile.report(&self.heap, program);
+        if !self.profile.report_dispatch_census_if_enabled(id.raw())
+            && let Some(code) = self.programs.get(id)
+        {
+            self.profile.report(&self.heap, id.raw(), &code);
         }
         result
     }
@@ -1393,7 +1395,7 @@ impl<H: Host> Vm<H> {
                 .decode_wasm_value_in(result, *ty, declarations)
                 .map(|value| vec![value]),
             types => {
-                let Some(Cell::Array { elements, .. }) = self.heap.get(result) else {
+                let Some((_, elements)) = self.heap.array(result) else {
                     return Err(JsError::validation("invalid Wasm result bundle".into()));
                 };
                 if elements.len() != types.len() {
