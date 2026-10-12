@@ -245,6 +245,15 @@ impl SharedEventLoop {
         self.shared.immediates.remove(index)
     }
 
+    pub fn take_shared_native_immediate(&mut self) -> Option<SharedImmediate> {
+        let index = self
+            .shared
+            .immediates
+            .iter()
+            .position(|immediate| immediate.owner == SharedImmediateOwner::Host)?;
+        self.shared.immediates.remove(index)
+    }
+
     pub fn take_all_shared_immediates(&mut self) -> Vec<SharedImmediate> {
         std::mem::take(&mut self.shared.immediates)
             .into_iter()

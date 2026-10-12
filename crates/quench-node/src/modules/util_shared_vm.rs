@@ -52,7 +52,7 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
 pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 
 const UTIL: &str = quench_js_check::checked_js!(
-    r#"((quote, shallowLabel) => {
+    r#"((quote, shallowLabel, customHook) => {
   const propertyName = (key) => /^[A-Za-z_$][\w$]*$/.test(key) ? key : quote(key);
 
   function inspect(value, options = {}) {
@@ -74,6 +74,11 @@ const UTIL: &str = quench_js_check::checked_js!(
         return String(current);
       }
       if (typeof current === "symbol") return current.toString();
+      const custom = customHook(current, settings, settings.depth === null ? null : maxDepth - depth, inspect);
+      if (custom !== undefined) {
+        const value = custom[0];
+        return typeof value === "string" ? value : render(value, depth);
+      }
       if (typeof current === "function") {
         return current.name ? `[Function: ${current.name}]` : "[Function (anonymous)]";
       }
@@ -97,12 +102,6 @@ const UTIL: &str = quench_js_check::checked_js!(
       }
       if (depth > maxDepth) {
         return shallowLabel(current);
-      }
-      const customInspect = current[inspect.custom];
-      if (settings.customInspect !== false && typeof customInspect === "function") {
-        const custom = Reflect.apply(customInspect, current, [depth, settings, inspect]);
-        if (typeof custom === "string") return custom;
-        if (custom !== current) return render(custom, depth + 1);
       }
       if (seen.has(current)) return "[Circular]";
       seen.add(current);
@@ -356,7 +355,32 @@ const UTIL: &str = quench_js_check::checked_js!(
 })"#
 );
 
+/// The public module and original inspector share one canonical function identity.
+#[derive(Clone, Copy)]
+pub(crate) struct UtilIntrinsics {
+    pub(crate) module: RootId,
+    pub(crate) inspect: RootId,
+    pub(crate) argument_type_prototype: RootId,
+}
+
+pub(crate) fn internal_inspect(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
+    module(context)?;
+    context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .util_intrinsics
+        .map(|api| api.inspect)
+        .ok_or_else(|| RootedError::host("util intrinsics missing"))
+}
+
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let cached = context.host_mut().shared_state().borrow().util_intrinsics;
+    if let Some(api) = cached {
+        return Ok(api.module);
+    }
     let factory = context.evaluate_script_rooted(UTIL, "node:util/shared.js")?;
     let quote = context.host_function(crate::host::shared_vm::operation("utilInspectQuote"))?;
     let undefined = context.undefined();
@@ -368,7 +392,15 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         crate::host::shared_vm::operation("utilInspectShallowLabel"),
         instance,
     )?;
-    let module = context.call_rooted(factory, undefined, &[quote, shallow])?;
+    let custom_key = context.evaluate_script_rooted(
+        "Symbol.for('nodejs.util.inspect.custom')",
+        "node:util/custom-symbol.js",
+    )?;
+    let custom = context.host_function_with_data(
+        crate::host::shared_vm::operation("utilInspectCustom"),
+        custom_key,
+    )?;
+    let module = context.call_rooted(factory, undefined, &[quote, shallow, custom])?;
     let inspect_key = context.string_rooted("inspect");
     let inspect = context.get_property_rooted(module, inspect_key)?;
     super::util_style_shared_vm::install(context, module, inspect)?;
@@ -435,6 +467,19 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     }
     let key = context.string_rooted("types");
     context.set_property_rooted(module, key, types, module)?;
+    let argument_type_prototype = super::node_errors_shared_vm::argument_type_prototype(context)?;
+    let argument_type_prototype = context.retain(argument_type_prototype)?;
+    let module = context.retain(module)?;
+    let inspect = context.retain(inspect)?;
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .util_intrinsics = Some(UtilIntrinsics {
+        module,
+        inspect,
+        argument_type_prototype,
+    });
     Ok(module)
 }
 
@@ -652,9 +697,7 @@ pub(crate) fn argument_type_error_with_expected(
     let error = context.type_error_rooted(&format!(
         "The {label} must be {expected}. Received {received}"
     ))?;
-    let key = context.string_rooted("code");
-    let code = context.string_rooted("ERR_INVALID_ARG_TYPE");
-    context.set_property_rooted(error, key, code, error)?;
+    super::node_errors_shared_vm::decorate_argument_type(context, error)?;
     Ok(context.throw(error))
 }
 
@@ -709,4 +752,49 @@ pub(crate) fn inspect_shallow_label(
         current = context.prototype_rooted(current)?;
     }
     Ok(context.string_rooted("[Object: null prototype]"))
+}
+
+/// Custom inspect dispatch precedes ordinary formatting and the depth boundary.
+pub(crate) fn inspect_custom(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let object = args.first().copied().unwrap_or(undefined);
+    let settings = args.get(1).copied().unwrap_or(undefined);
+    let depth = args.get(2).copied().unwrap_or(undefined);
+    let inspect = args.get(3).copied().unwrap_or(undefined);
+    let enabled_key = context.string_rooted("customInspect");
+    let enabled = context.get_property_rooted(settings, enabled_key)?;
+    if !context.truthy_rooted(enabled)? {
+        return Ok(undefined);
+    }
+    let key = context.host_function_data()?;
+    let method = context.get_property_rooted(object, key)?;
+    if !context.is_callable_rooted(method)? || context.strict_equal_rooted(method, inspect)? {
+        return Ok(undefined);
+    }
+    let constructor_key = context.string_rooted("constructor");
+    let descriptor = context.own_property_descriptor_rooted(object, constructor_key)?;
+    if context.is_object_rooted(descriptor)? {
+        let value_key = context.string_rooted("value");
+        let constructor = context.get_property_rooted(descriptor, value_key)?;
+        if context
+            .rooted_value(constructor)
+            .is_some_and(|value| !value.is_null() && !value.is_undefined())
+        {
+            let prototype_key = context.string_rooted("prototype");
+            let prototype = context.get_property_rooted(constructor, prototype_key)?;
+            if context.strict_equal_rooted(prototype, object)? {
+                return Ok(undefined);
+            }
+        }
+    }
+    let result = context.call_rooted(method, object, &[depth, settings, inspect])?;
+    if context.strict_equal_rooted(result, object)? {
+        Ok(undefined)
+    } else {
+        context.array_rooted(&[result])
+    }
 }

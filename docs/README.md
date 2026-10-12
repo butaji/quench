@@ -6,6 +6,7 @@
 - [Pinned v2 design decisions](v2/architecture.md) (copied from `../v2` at the indexed reference commit; binding for the next core)
 - [Wasm boundary](spec.md)
 - [Test262 stages](STAGES.md) and [Node stages](../STAGES.md)
+- [Native Node host contracts](node-host-contracts.md)
 - [V8-v7 commands](v8_v7.md)
 - [Benchmark micros](../quench-bench/micros/README.md)
 

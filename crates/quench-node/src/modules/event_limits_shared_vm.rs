@@ -277,28 +277,25 @@ pub(crate) fn global_set(
 }
 
 /// Derive warning metadata after the bridge installs the new listener array.
-/// The warned bit follows the event's array when the bridge copies that array.
-pub(crate) fn registered(
+/// Warning state belongs to the canonical listener array.
+pub(super) fn registered(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
+    data: RootId,
+    target: RootId,
+    event: RootId,
+    previous: RootId,
+    current: RootId,
 ) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
-    let target = args.first().copied().unwrap_or(undefined);
-    let event = args.get(1).copied().unwrap_or(undefined);
-    let previous = args.get(2).copied().unwrap_or(undefined);
-    let current = args.get(3).copied().unwrap_or(undefined);
+    if context
+        .rooted_value(previous)
+        .is_some_and(|value| value.is_undefined())
+    {
+        super::event_constructor_shared_vm::event_added(context, data, target)?;
+    }
     if !context.is_array_rooted(current)? {
         return Ok(undefined);
     }
-    if context.is_array_rooted(previous)? {
-        let warned = get(context, previous, "warned")?;
-        if context.truthy_rooted(warned)? {
-            set(context, current, "warned", warned)?;
-            return Ok(undefined);
-        }
-    }
-    let data = context.host_function_data()?;
     let limit = emitter_max(context, data, target)?;
     let limit_value = context
         .rooted_value(limit)
@@ -312,10 +309,14 @@ pub(crate) fn registered(
     if !(limit_value > 0.0 && count_value > limit_value) {
         return Ok(undefined);
     }
+    let warned = get(context, current, "warned")?;
+    if context.truthy_rooted(warned)? {
+        return Ok(undefined);
+    }
     let yes = context.boolean(true);
     set(context, current, "warned", yes)?;
     let utility = super::util_shared_vm::module(context)?;
-    let inspect = get(context, utility, "inspect")?;
+    let inspect = super::util_shared_vm::internal_inspect(context)?;
     let options = context.null_object_rooted()?;
     let depth = context.number(-1.0);
     set(context, options, "depth", depth)?;
