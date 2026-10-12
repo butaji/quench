@@ -4047,3 +4047,44 @@ const child=cp.spawn('sleep',['5']);child.on('exit',(code,signal)=>{assert.stric
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[cfg(unix)]
+#[test]
+fn child_process_reference_state_and_public_handle_hooks_match_node_liveness() {
+    const SOURCE: &str = r#"
+const cp=require('child_process'),assert=require('assert'),result=[];
+for(const name of ['ref','unref']){
+ const method=cp.ChildProcess.prototype[name],descriptor=Object.getOwnPropertyDescriptor(cp.ChildProcess.prototype,name),trace=[];
+ result.push([method.name,method.length,Object.hasOwn(method,'prototype'),descriptor.enumerable]);
+ const handle={[name](){trace.push(this===handle)}};const receiver={get _handle(){trace.push('get');return handle}};
+ assert.strictEqual(method.call(receiver),undefined);assert.deepStrictEqual(trace,['get','get',true]);assert.strictEqual(method.call({}),undefined);
+ const marker={};assert.throws(()=>method.call({_handle:{[name](){throw marker}}}),error=>error===marker);
+}
+for(const mode of ['unref','ref']){
+ const source='const cp=require("child_process");const child=cp.spawn("sleep",["5"],{stdio:"ignore"});console.log(child.pid);child.unref();'+(mode==='ref'?'child.ref();':'');
+ const child=cp.spawnSync(process.execPath,['-e',source],{timeout:500,encoding:'utf8'});const pid=Number(child.stdout.trim());assert(pid>0);try{process.kill(pid,'SIGKILL')}catch(error){if(error.code!=='ESRCH')throw error;}
+ result.push([mode,child.status,child.signal,child.error?.code]);if(mode==='unref'){assert.strictEqual(child.status,0);assert.strictEqual(child.error,undefined)}else{assert.strictEqual(child.error.code,'ETIMEDOUT');}
+}
+const child=cp.spawn('sleep',['0.1'],{stdio:'ignore'}),handle=child._handle;assert.strictEqual(handle.hasRef(),true);assert.strictEqual(child.unref(),undefined);assert.strictEqual(handle.hasRef(),false);assert.strictEqual(child.ref(),undefined);assert.strictEqual(handle.hasRef(),true);
+child.on('exit',()=>{assert.strictEqual(child._handle,null);assert.strictEqual(handle.hasRef(),true);assert.strictEqual(child.ref(),undefined)});child.on('close',()=>{assert.strictEqual(handle.hasRef(),true);setTimeout(()=>{assert.strictEqual(handle.hasRef(),undefined);console.log(JSON.stringify(result))},10)});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}

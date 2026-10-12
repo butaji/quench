@@ -106,7 +106,17 @@ pub(crate) struct NetServer {
     pub(crate) listening_pending: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChildHandlePhase {
+    Open,
+    Closing,
+    Closed,
+}
+
 pub(crate) struct SharedChildProcess {
+    pub(crate) handle_phase: ChildHandlePhase,
+    pub(crate) referenced: bool,
+    pub(crate) close_dispatched: bool,
     pub(crate) child: Option<quench_runtime::RootId>,
     pub(crate) stdout: Option<quench_runtime::RootId>,
     pub(crate) stderr: Option<quench_runtime::RootId>,

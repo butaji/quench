@@ -16,7 +16,7 @@ use std::time::Duration;
 static NEXT_CHILD_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
 const FACTORY: &str = quench_js_check::checked_js!(
-    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan, requestRead, flushStdio, prepareOptions, validateFile, syncOptions, disposeNative, disposeKey) => {
+    r#"(spawnSync, spawnNative, register, write, end, Buffer, warnShellArgs, forkPlan, requestRead, flushStdio, prepareOptions, validateFile, syncOptions, disposeNative, disposeKey, referenceNative) => {
     const { EventEmitter } = globalThis.process.getBuiltinModule("events");
     class ChildProcess extends EventEmitter {
       constructor(file, args, started, options) {
@@ -56,6 +56,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
         else if (type === "stdoutEnd") this.stdout?.push(null);
         else if (type === "stderrEnd") this.stderr?.push(null);
         else if (type === "exit") {
+          this._handle = null;
           this.exitCode = value;
           this.signalCode = value2;
           if (this.__quenchTimeout !== undefined) clearTimeout(this.__quenchTimeout);
@@ -121,10 +122,11 @@ const FACTORY: &str = quench_js_check::checked_js!(
         }
       }
 
-      ref() { return this; }
-      unref() { return this; }
+
     }
   ChildProcess.prototype[disposeKey] = function() { disposeNative(this); };
+  ChildProcess.prototype.ref = function ref() { referenceNative(this, true); };
+  ChildProcess.prototype.unref = function unref() { referenceNative(this, false); };
   const spawn = (file, args, options) => {
     file = validateFile(file);
     if (args === undefined || args === null) {
@@ -291,6 +293,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .event_targets_api
         .ok_or_else(|| RootedError::host("child disposal symbol owner missing"))?;
     let dispose_key = property(context, operations, "disposeKey")?;
+    let reference =
+        context.host_function(crate::host::shared_vm::operation("childProcessReference"))?;
     let factory = context.evaluate_script_rooted(FACTORY, "node:child_process/shared.js")?;
     let undefined = context.undefined();
     let module = context.call_rooted(
@@ -312,6 +316,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             sync_options,
             dispose,
             dispose_key,
+            reference,
         ],
     )?;
     let key = context.string_rooted("spawn");
@@ -434,6 +439,9 @@ pub(crate) fn spawn_child(
                 .insert(
                     id,
                     SharedChildProcess {
+                        referenced: true,
+                        close_dispatched: false,
+                        handle_phase: crate::host::node_host::ChildHandlePhase::Open,
                         child: None,
                         stdout: None,
                         stderr: None,
@@ -596,6 +604,7 @@ pub(crate) fn register_child(
         .borrow_mut()
         .child_processes
         .insert(id, process);
+    install_process_handle(context, id, child)?;
     super::child_process_ipc_shared_vm::install(context, id, child)?;
     for (stream, is_stdout) in [(stdout, true), (stderr, false)] {
         if context
@@ -835,6 +844,9 @@ pub(crate) fn poll(
             let Some(process) = state.child_processes.get_mut(&id) else {
                 continue;
             };
+            if process.handle_phase == crate::host::node_host::ChildHandlePhase::Closing {
+                process.handle_phase = crate::host::node_host::ChildHandlePhase::Closed;
+            }
             let input_progress = process.stdin.progress();
             let mut events = Vec::new();
             loop {
@@ -859,13 +871,15 @@ pub(crate) fn poll(
             for event in &events {
                 match event {
                     ChildProcessEvent::Exit(code, signal) => {
+                        process.handle_phase = crate::host::node_host::ChildHandlePhase::Closing;
                         process.exit = Some((*code, signal.clone()));
                         exit = Some((*code, signal.clone()));
                     }
                     _ => {}
                 }
             }
-            let close = process.stdout_terminal
+            let close = !process.close_dispatched
+                && process.stdout_terminal
                 && process.stderr_terminal
                 && process.exit.is_some()
                 && process.ipc.as_ref().is_none_or(|channel| channel.closed())
@@ -914,7 +928,14 @@ pub(crate) fn poll(
             }
         }
         if let Some((code, signal)) = close {
+            if let Some(process) = shared_state.borrow_mut().child_processes.get_mut(&id) {
+                process.close_dispatched = true;
+            }
             dispatch_exit(runtime, program, child, "close", code, signal.as_deref())?;
+            progressed = true;
+        }
+        let finished = shared_state.borrow().child_processes.get(&id).is_some_and(|process| process.close_dispatched && process.handle_phase == crate::host::node_host::ChildHandlePhase::Closed);
+        if finished {
             let process = shared_state.borrow_mut().child_processes.remove(&id);
             if let Some(mut process) = process {
                 drop(process.ipc.take());
@@ -1025,12 +1046,14 @@ pub(crate) fn has_pending(
 ) -> bool {
     #[cfg(unix)]
     { shared_state.borrow().child_processes.values().any(|process|
-        process.exit.is_none() || process.stdin.has_pending()
+        (process.referenced && process.handle_phase == crate::host::node_host::ChildHandlePhase::Open)
+        || process.handle_phase == crate::host::node_host::ChildHandlePhase::Closing || process.stdin.has_pending()
+        || process.ipc.as_ref().is_some_and(super::child_process_ipc_shared_vm::IpcChannel::parent_has_work)
         || process.stdout_pipe.is_referenced() || process.stderr_pipe.is_referenced()
     ) }
     #[cfg(not(unix))]
     {
-        !shared_state.borrow().child_processes.is_empty()
+        shared_state.borrow().child_processes.values().any(|process| process.referenced && process.exit.is_none() || !process.stdout_terminal || !process.stderr_terminal || process.stdin.has_pending())
     }
 }
 
@@ -1582,4 +1605,119 @@ pub(crate) fn dispose_child(
         context.call_rooted(kill, child, &[])?;
     }
     Ok(undefined)
+}
+
+fn install_process_handle(
+    context: &mut NativeContext<'_, NodeHost>,
+    id: u64,
+    child: RootId,
+) -> Result<(), RootedError> {
+    let handle = context.object_rooted()?;
+    let id_root = context.number(id as f64);
+    for (name, reference) in [("ref", true), ("unref", false)] {
+        let reference = context.boolean(reference);
+        let data = context.array_rooted(&[id_root, handle, reference])?;
+        let method = context.host_function_with_data(
+            crate::host::shared_vm::operation("childProcessHandleReference"),
+            data,
+        )?;
+        let key = context.string_rooted("name");
+        let name_root = context.string_rooted(name);
+        context.define_data_property_rooted(method, key, name_root, false, false, true)?;
+        set(context, handle, name, method)?;
+    }
+    let data = context.array_rooted(&[id_root, handle])?;
+    let has_ref = context.host_function_with_data(
+        crate::host::shared_vm::operation("childProcessHandleHasRef"),
+        data,
+    )?;
+    let key = context.string_rooted("name");
+    let name = context.string_rooted("hasRef");
+    context.define_data_property_rooted(has_ref, key, name, false, false, true)?;
+    set(context, handle, "hasRef", has_ref)?;
+    let pid = property(context, child, "pid")?;
+    set(context, handle, "pid", pid)?;
+    set(context, child, "_handle", handle)
+}
+
+pub(crate) fn reference_child(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let child = args.first().copied().unwrap_or(undefined);
+    let handle = property(context, child, "_handle")?;
+    if context.truthy_rooted(handle)? {
+        // Node's guard and public method call perform two observable gets.
+        let handle = property(context, child, "_handle")?;
+        let reference = args.get(1).copied().unwrap_or(undefined);
+        let name = if context.truthy_rooted(reference)? {
+            "ref"
+        } else {
+            "unref"
+        };
+        let method = property(context, handle, name)?;
+        context.call_rooted(method, handle, &[])?;
+    }
+    Ok(undefined)
+}
+
+fn handle_owner(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+) -> Result<(u64, RootId), RootedError> {
+    let data = context.host_function_data()?;
+    let handle = property(context, data, "1")?;
+    if !context.strict_equal_rooted(receiver, handle)? {
+        let error = context.type_error_rooted("Illegal invocation")?;
+        return Err(context.throw(error));
+    }
+    let id = property(context, data, "0")?;
+    let id = context
+        .rooted_value(id)
+        .and_then(|value| value.as_number())
+        .ok_or_else(|| RootedError::host("child handle owner missing"))? as u64;
+    Ok((id, data))
+}
+
+pub(crate) fn reference_handle(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (id, data) = handle_owner(context, receiver)?;
+    let reference = property(context, data, "2")?;
+    let reference = context.truthy_rooted(reference)?;
+    if let Some(process) = context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .child_processes
+        .get_mut(&id)
+    {
+        if process.handle_phase != crate::host::node_host::ChildHandlePhase::Closed {
+            process.referenced = reference;
+        }
+    }
+    Ok(context.undefined())
+}
+pub(crate) fn handle_has_ref(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (id, _) = handle_owner(context, receiver)?;
+    let reference = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .child_processes
+        .get(&id)
+        .filter(|process| process.handle_phase != crate::host::node_host::ChildHandlePhase::Closed)
+        .map(|process| process.referenced);
+    Ok(match reference {
+        Some(reference) => context.boolean(reference),
+        None => context.undefined(),
+    })
 }
