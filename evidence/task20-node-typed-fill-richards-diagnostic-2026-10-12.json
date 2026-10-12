@@ -1,0 +1,43 @@
+{
+  "suite": "stock V8-v7 Richards; exact base.js + richards.js + existing repository RUNNER",
+  "qualification": "One diagnostic round; iteration build, two engines only. No matched production or aggregate performance claim.",
+  "platform": "linux-x86_64",
+  "cpu_max": "400000 100000",
+  "memory_max": "17179869184",
+  "results": [
+    {
+      "engine": "quench-iteration",
+      "argv": [
+        "target/iteration/quench-node"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_seconds": 2.402194973001315,
+      "peak_rss_kib": 117144,
+      "stdout": "__quenchBenchResult: Richards: 161\n----\nScore: 161\n",
+      "stderr": ""
+    },
+    {
+      "engine": "node27-jitless",
+      "argv": [
+        "work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+        "--jitless"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_seconds": 2.202352640000754,
+      "peak_rss_kib": 44072,
+      "stdout": "__quenchBenchResult: Richards: 1982\n----\nScore: 1982\n",
+      "stderr": ""
+    }
+  ],
+  "source_commit": "f719ba3934a3366cf624d0e67a5dc93318ab26f9",
+  "suite_commit": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+  "harness_sha256": "b501f150708fa94cc6973a0fe6e07004635150c6c7794bab660abbf1beed5ed0",
+  "build_profile": "iteration",
+  "binary_sha256": {
+    "target/iteration/quench-node": "e6fe2a97eb73a300cc452824e7ca79089f8218de7494273aa2df1b1725f00853",
+    "work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node": "ab33e5793484170822fe3931a978b3a5e802ccf6b13bf2101922a1b37323b2e7"
+  },
+  "isolation": "No compiler or guest scopes overlapped; stock validations unchanged."
+}

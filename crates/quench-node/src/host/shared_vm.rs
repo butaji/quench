@@ -88,6 +88,10 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "childProcessPromiseExec" (1) => crate::modules::child_process_exec_shared_vm::promise_exec,
         method "childProcessPromiseExecSettled" (3) => crate::modules::child_process_exec_shared_vm::promise_settled,
         method "utilInspectShallowLabel" (1) => crate::modules::util_shared_vm::inspect_shallow_label,
+        method "utilInspectCustom" (4) => crate::modules::util_shared_vm::inspect_custom,
+        method "nodeErrorConstructor" (0) => crate::modules::node_errors_shared_vm::constructor,
+        method "nodeErrorBrand" (0) => crate::modules::node_errors_shared_vm::brand,
+        method "nodeErrorToString" (1) => crate::modules::node_errors_shared_vm::to_string,
         method "utilInspectQuote" (1) => crate::modules::util_shared_vm::inspect_quote,
         method "styleText" (3) => crate::modules::util_style_shared_vm::style_text,
         method "utilColorAliasGet" (0) => crate::modules::util_style_shared_vm::alias_get,
@@ -148,7 +152,18 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netIsIPv6" (1) => crate::modules::net_shared_vm::is_ipv6,
         method "netConnect" (3) => crate::modules::net_shared_vm::connect_operation,
         method "streamPipePlan" (3) => crate::modules::stream_pipe_shared_vm::plan,
-        method "emitterRegistered" (4) => crate::modules::event_limits_shared_vm::registered,
+        method "emitterInitialize" (2) => crate::modules::event_constructor_shared_vm::initialize,
+        method "emitterRemoveAllListeners" (3) => crate::modules::event_emitter_shared_vm::remove_all_listeners,
+        method "emitterRemoveListener" (3) => crate::modules::event_emitter_shared_vm::remove_listener,
+        method "emitterEmit" (3) => crate::modules::event_emitter_shared_vm::emit,
+        method "emitterEmitListeners" (4) => crate::modules::event_emitter_shared_vm::emit_listeners,
+        method "emitterCaptureDefaultGet" (0) => crate::modules::event_constructor_shared_vm::default_get,
+        method "emitterCaptureDefaultSet" (1) => crate::modules::event_constructor_shared_vm::default_set,
+        method "emitterCaptureRejected" (1) => crate::modules::event_constructor_shared_vm::capture_rejected,
+        method "emitterCaptureDeliver" (1) => crate::modules::event_constructor_shared_vm::capture_deliver,
+        method "emitterAddListener" (4) => crate::modules::event_emitter_shared_vm::add_listener,
+        method "emitterOnce" (4) => crate::modules::event_emitter_shared_vm::once,
+        method "emitterOnceInvoke" (0) => crate::modules::event_emitter_shared_vm::once_invoke,
         method "eventsDefaultMaxGet" (0) => crate::modules::event_limits_shared_vm::default_get,
         method "eventsDefaultMaxSet" (1) => crate::modules::event_limits_shared_vm::default_set,
         method "emitterMaxGet" (1) => crate::modules::event_limits_shared_vm::emitter_get,
@@ -160,6 +175,16 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "emitterRawListeners" (2) => crate::modules::event_emitter_shared_vm::raw_listeners,
         method "emitterListenerCount" (3) => crate::modules::event_emitter_shared_vm::count,
         method "eventsListenerCount" (2) => crate::modules::events_shared_vm::listener_count,
+        method "eventsGetEventListeners" (2) => crate::modules::events_shared_vm::get_event_listeners,
+        method "abortAddEventListener" (6) => crate::modules::events_abort_shared_vm::abort_add_event_listener,
+        method "abortDispatchListeners" (4) => crate::modules::events_abort_shared_vm::abort_dispatch_listeners,
+        method "eventsAddAbortListener" (2) => crate::modules::events_abort_shared_vm::add_abort_listener,
+        method "abortListenerDispose" (0) => crate::modules::events_abort_shared_vm::abort_listener_dispose,
+        method "abortedListenerJob" (0) => crate::modules::events_abort_shared_vm::aborted_listener_job,
+        method "abortGetHandler" (1) => crate::modules::events_abort_shared_vm::abort_get_handler,
+        method "abortSetHandler" (4) => crate::modules::events_abort_shared_vm::abort_set_handler,
+        method "abortInvokeHandler" (2) => crate::modules::events_abort_shared_vm::abort_invoke_handler,
+        method "abortRemoveEventListener" (4) => crate::modules::events_abort_shared_vm::abort_remove_event_listener,
         method "streamPipeEnd" (0) => crate::modules::stream_pipe_shared_vm::end,
         method "streamPipeClose" (0) => crate::modules::stream_pipe_shared_vm::close,
         method "streamPipeShouldEnd" (2) => crate::modules::stream_shared_vm::pipe_should_end,
@@ -324,6 +349,23 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "consoleInitializeWrite" (3) => crate::modules::console_shared_vm::initialize_write,
         method "consoleWrite" (3) => crate::modules::console_shared_vm::write,
         method "consoleWriteError" (1) => crate::modules::console_shared_vm::write_error,
+        method "traceInitialize" (2) => crate::modules::trace_shared_vm::initialize,
+        method "traceInspect" (3) => crate::modules::trace_shared_vm::inspect,
+        method "traceInternal" (1) => crate::modules::trace_shared_vm::internal_binding,
+        method "traceRecord" (5) => crate::modules::trace_shared_vm::record,
+        method "traceCategoryBuffer" (1) => crate::modules::trace_shared_vm::category_buffer,
+        method "traceCategoryEnabled" (1) => crate::modules::trace_shared_vm::category_enabled,
+        method "traceCreate" (1) => crate::modules::trace_shared_vm::create,
+        method "traceEnable" (0) => crate::modules::trace_shared_vm::enable,
+        method "traceDisable" (0) => crate::modules::trace_shared_vm::disable,
+        method "traceCategories" (0) => crate::modules::trace_shared_vm::categories,
+        method "traceEnabled" (0) => crate::modules::trace_shared_vm::enabled,
+        method "traceGetEnabledCategories" (0) => crate::modules::trace_shared_vm::get_enabled_categories,
+        method "consoleTime" (2) => crate::modules::console_timing_shared_vm::time,
+        method "consoleTimeEnd" (2) => crate::modules::console_timing_shared_vm::time_end,
+        method "consoleTimeLog" (2) => crate::modules::console_timing_shared_vm::time_log,
+        method "consoleCount" (2) => crate::modules::console_timing_shared_vm::count,
+        method "consoleCountReset" (2) => crate::modules::console_timing_shared_vm::count_reset,
         method "consoleTrace" (0) => crate::modules::console_shared_vm::trace,
     ]
 }
@@ -500,6 +542,9 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        crate::modules::text_decoder_shared_vm::install_global(context)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_text_decoder");
         crate::modules::process_shared_vm::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_process");
@@ -512,15 +557,19 @@ impl quench_runtime::Host for NodeHost {
             .borrow()
             .event_targets_api
             .ok_or_else(|| RootedError::host("event listener configuration missing"))?;
-        let registered =
-            context.host_function_with_data(operation("emitterRegistered"), event_data)?;
+        let initialize =
+            context.host_function_with_data(operation("emitterInitialize"), event_data)?;
+        let dispatch =
+            context.host_function_with_data(operation("emitterEmitListeners"), event_data)?;
         let emitter_factory = context.evaluate_script_rooted(
             crate::polyfills::bootstrap::event_emitter::JS,
             "node:bootstrap/event-emitter.js",
         )?;
         let undefined = context.undefined();
-        let event_emitter = context.call_rooted(emitter_factory, undefined, &[registered])?;
+        let event_emitter =
+            context.call_rooted(emitter_factory, undefined, &[initialize, dispatch])?;
         context.release_root(event_emitter);
+        crate::modules::event_constructor_shared_vm::install(context)?;
         crate::modules::event_emitter_shared_vm::initialize(context)?;
         crate::modules::event_limits_shared_vm::initialize(context)?;
         // Native stdio writes still participate in the shared EventEmitter
@@ -540,9 +589,6 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::child_process_ipc_shared_vm::install_process(context, process, emitter)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_emitter_polyfill");
-        crate::modules::text_decoder_shared_vm::install_global(context)?;
-        #[cfg(feature = "profile-memory")]
-        context.profile_memory_checkpoint("node_text_decoder");
         let expose_gc = context
             .host_mut()
             .shared_state()

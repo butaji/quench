@@ -37,9 +37,6 @@ pub(crate) const CONSOLE_CLASS: &str = r#"((initialize, write) => class Console 
   }
   info(...args) { this.log(...args); }
   dir(...args) { this.log(...args); }
-  time(label = "default") { if (typeof label === "symbol") throw new TypeError("Invalid console label"); this._times ||= new Map(); if (!this._times.has(label)) this._times.set(label, Date.now()); }
-  timeEnd(label = "default") { if (typeof label === "symbol") throw new TypeError("Invalid console label"); this._times?.delete(label); }
-  timeLog(label = "default", ...args) { this.log(...args); }
   warn(...args) {
     const output = this._stderr || process?.stderr;
     write(this, false, this._format(output, args));
@@ -48,8 +45,6 @@ pub(crate) const CONSOLE_CLASS: &str = r#"((initialize, write) => class Console 
   trace(...args) { this.error(...args); }
   assert(condition, ...args) { if (!condition) this.error(...args); }
   clear() {}
-  count(label = "default") { this._counts ||= new Map(); this._counts.set(label, (this._counts.get(label) || 0) + 1); }
-  countReset(label = "default") { this._counts?.delete(label); }
   group() {}
   groupEnd() {}
   table(...args) { this.log(...args); }

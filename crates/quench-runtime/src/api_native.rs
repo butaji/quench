@@ -299,6 +299,22 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Apply ToNumeric and the shared ++/-- numeric update, preserving BigInt.
+    pub fn numeric_update_rooted(
+        &mut self,
+        value: RootId,
+        decrement: bool,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_numeric_update(value, decrement);
+        self.completion(result)
+    }
+
+    /// Apply ordinary subtraction, including guest conversion hooks and BigInt checks.
+    pub fn subtract_rooted(&mut self, left: RootId, right: RootId) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_subtract(left, right);
+        self.completion(result)
+    }
+
     /// Apply the shared greater-than operation, including string/BigInt
     /// comparison and ordinary guest primitive-conversion hooks.
     pub fn greater_than_rooted(
@@ -409,6 +425,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     pub fn parse_json_rooted(&mut self, source: &str) -> Result<RootId, RootedError> {
         let result = self.vm.parse_embedding_json(source);
+        self.completion(result)
+    }
+
+    /// Serialize through the intrinsic JSON operation, preserving toJSON,
+    /// property access, cycles, BigInt failures and original guest exceptions.
+    pub fn stringify_json_rooted(&mut self, value: RootId) -> Result<RootId, RootedError> {
+        let result = self.vm.stringify_embedding_json(value);
         self.completion(result)
     }
 

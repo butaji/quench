@@ -29,7 +29,10 @@ pub(crate) mod diagnostics_channel_shared_vm;
 pub(crate) mod domain_shared_vm;
 pub(crate) mod dns_shared_vm;
 pub(crate) mod events_shared_vm;
+pub(crate) mod events_abort_shared_vm;
+pub(crate) mod node_errors_shared_vm;
 pub(crate) mod event_limits_shared_vm;
+pub(crate) mod event_constructor_shared_vm;
 pub(crate) mod event_emitter_shared_vm;
 pub(crate) mod fetch_shared_vm;
 pub(crate) mod fs_error_codes;
@@ -85,3 +88,8 @@ pub(crate) mod zlib_constants;
 pub(crate) mod zlib_shared_vm;
 pub(crate) mod zlib_options_shared_vm;
 pub(crate) mod zlib_stream_shared_vm;
+
+pub(crate) mod trace_state;
+pub(crate) mod trace_shared_vm;
+
+pub(crate) mod console_timing_shared_vm;

@@ -3149,6 +3149,27 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
     }
 
     #[test]
+    fn regression_primitive_constructor_names_survive_prototype_alias_installation() {
+        assert_output_in_execution_modes(
+            r#"
+            var stringify = Function.prototype.toString;
+            for (var constructor of [Number, String]) {
+                print(constructor.name);
+                print(constructor.prototype.constructor === constructor);
+                var descriptor = Object.getOwnPropertyDescriptor(constructor, 'name');
+                print(!descriptor.writable && !descriptor.enumerable && descriptor.configurable);
+                var source = stringify.call(constructor);
+                Object.defineProperty(constructor, 'name', {get() { throw 'must not read name'; }});
+                print(stringify.call(constructor) === source);
+            }
+            "#,
+            &[
+                "Number", "true", "true", "true", "String", "true", "true", "true",
+            ],
+        );
+    }
+
+    #[test]
     fn regression_native_function_source_uses_installed_names_without_guest_reads() {
         assert_output_in_execution_modes(
             r#"
@@ -4332,10 +4353,10 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             var error = new foreign.Error('foreign');
             print(Error.isError(error)); print(foreign.Error.isError(new Error('local')));
             print(Error.isError(new Proxy(error, {})));
-            var stack = Object.getOwnPropertyDescriptor(Error.prototype, 'stack').get;
+            var stack = Object.getOwnPropertyDescriptor(new Error(), 'stack').get;
             print(stack.call({'\0quench:error-brand':true}) === undefined);
             error['\0quench:error-brand'] = false;
-            $262.gc(); print(stack.call(error));
+            $262.gc(); print(stack.call(error).split('\n')[0]);
             Promise.any([]).catch(function(error) {
                 print(Error.isError(error)); print(Object.hasOwn(error, '\0quench:error-brand'));
                 error['\0quench:error-brand'] = false;
@@ -4366,74 +4387,50 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
     }
 
     #[test]
-    fn regression_error_stack_setter_uses_intrinsic_home_and_records() {
+    fn regression_error_stack_setter_uses_captured_records() {
         assert_output_in_execution_modes(
             r#"
-            var home = Error.prototype;
-            var setter = Object.getOwnPropertyDescriptor(home, 'stack').set;
+            print(Object.getOwnPropertyDescriptor(Error.prototype, 'stack') === undefined);
+            var target = new Error('original');
+            var setter = Object.getOwnPropertyDescriptor(target, 'stack').set;
             var reads = 0;
             Object.defineProperty(globalThis, 'Error', {get() {reads++; $262.gc(); throw 'replaced Error';}, configurable:true});
-            var poison = Object.create(null);
-            poison.get = function() {throw 'inherited descriptor getter';};
-            poison.configurable = true;
-            Object.defineProperty(Object.prototype, 'get', poison);
-            var target = {get inherited() {throw 'unused';}};
             print(setter.call(target, 'saved') === undefined);
+            $262.gc(); print(target.stack);
             var d = Object.getOwnPropertyDescriptor(target, 'stack');
-            print(d.value); print(d.writable); print(d.enumerable); print(d.configurable);
-            try {setter.call(home, 'invalid');} catch (error) {print(error instanceof TypeError);}
-            try {setter.call({}, 1);} catch (error) {print(error instanceof TypeError);}
-            print(reads);
-            delete Object.prototype.get;
+            print(typeof d.get); print(typeof d.set); print(d.enumerable); print(d.configurable);
+            setter.call(target, 1); print(target.stack); print(reads);
             "#,
-            &["true", "saved", "true", "true", "true", "true", "true", "0"],
+            &[
+                "true", "true", "saved", "function", "function", "false", "true", "1", "0",
+            ],
         );
     }
 
     #[test]
-    fn regression_error_stack_setter_shares_assignment_and_realm_identity() {
+    fn regression_error_stack_setter_ignores_uncaptured_receivers() {
         assert_output_in_execution_modes(
             r#"
-            var setter = Object.getOwnPropertyDescriptor(Error.prototype, 'stack').set;
-            var data = {};
-            Object.defineProperty(data, 'stack', {value:'old', writable:true, configurable:false});
-            var observed;
-            var accessor = {set stack(v) {$262.gc(); observed = v;}};
-            var emptyAccessor = {};
-            Object.defineProperty(emptyAccessor, 'stack', {get:undefined, set:undefined});
-            var poison = Object.create(null);
-            poison.get = function() {throw 'inherited descriptor getter';};
-            poison.configurable = true;
-            Object.defineProperty(Object.prototype, 'get', poison);
+            var setter = Object.getOwnPropertyDescriptor(new Error(), 'stack').set;
+            var data = {stack:'old'};
+            var observed = false;
+            var accessor = {set stack(v) {observed = true;}};
             setter.call(data, 'updated'); print(data.stack);
-            print(Object.getOwnPropertyDescriptor(data, 'stack').enumerable);
-            setter.call(accessor, 'accessor'); print(observed);
-            try {setter.call(emptyAccessor, 'invalid');} catch (error) {print(error instanceof TypeError);}
-            delete Object.prototype.get;
+            setter.call(accessor, 'ignored'); print(observed);
             var trace = [];
             var proxy = new Proxy({}, {
-                getOwnPropertyDescriptor(t,k) {$262.gc(); trace.push('get:' + k); return Reflect.getOwnPropertyDescriptor(t,k);},
-                defineProperty(t,k,d) {$262.gc(); trace.push('define:' + k + ':' + Object.keys(d)); return Reflect.defineProperty(t,k,d);}
+                getOwnPropertyDescriptor(t,k) {trace.push('get'); return Reflect.getOwnPropertyDescriptor(t,k);},
+                defineProperty(t,k,d) {trace.push('define'); return Reflect.defineProperty(t,k,d);}
             });
-            setter.call(proxy, 'fresh' + '-stack'); print(proxy.stack); print(trace.join(';'));
+            setter.call(proxy, 'ignored'); print(trace.length);
             var foreign = $262.createRealm().global;
-            var foreignHome = foreign.Error.prototype;
-            var foreignSetter = Object.getOwnPropertyDescriptor(foreignHome, 'stack').set;
+            var target = new foreign.Error('foreign');
+            var foreignSetter = Object.getOwnPropertyDescriptor(target, 'stack').set;
             Object.defineProperty(foreign, 'Error', {get() {$262.gc(); throw 'foreign Error';}, configurable:true});
-            try {foreignSetter.call(foreignHome, 'invalid');} catch (error) {print(error instanceof foreign.TypeError);}
-            var foreignTarget = new foreign.Object();
-            foreignSetter.call(foreignTarget, 'foreign'); print(foreignTarget.stack);
+            foreignSetter.call(target, 'saved'); $262.gc(); print(target.stack);
+            setter.call(target, 'shared'); print(target.stack);
             "#,
-            &[
-                "updated",
-                "false",
-                "accessor",
-                "true",
-                "fresh-stack",
-                "get:stack;define:stack:value,writable,enumerable,configurable",
-                "true",
-                "foreign",
-            ],
+            &["old", "false", "0", "saved", "shared"],
         );
     }
 

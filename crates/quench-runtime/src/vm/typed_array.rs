@@ -500,8 +500,10 @@ impl<H: Host> Vm<H> {
             let this = self.heap.root_value(source).unwrap();
             self.typed_array_validate_current_write(p, this)?;
             let end = end.min(self.typed_array_length(this).unwrap_or_default());
-            for index in start..end {
-                self.typed_array_write_element(this, index, &value);
+            if !self.typed_array_fill_elements(this, start, end, &value) {
+                for index in start..end {
+                    self.typed_array_write_element(this, index, &value);
+                }
             }
             Ok(this)
         })();
