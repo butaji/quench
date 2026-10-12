@@ -150,7 +150,7 @@ impl FunctionCompiler<'_, '_> {
     fn with_statement(&mut self, item: &WithStatement<'_>) {
         self.clear_statement_completion();
         let object = self.expression(&item.object);
-        let enter = self.load_name("\0quench:with-enter");
+        let enter = self.load_name(crate::bytecode::WITH_ENTER_BINDING);
         let argument = self.reg();
         self.emit(Op::Move, argument, object, 0, 0);
         let ignored = self.reg();

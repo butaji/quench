@@ -674,7 +674,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_named(program, self.realm.globals, "eval", Native::Eval)?;
         self.global(
             program,
-            "\0quench:with-enter",
+            crate::bytecode::WITH_ENTER_BINDING,
             self.native_value(Native::WithEnter),
         )?;
         self.global(
