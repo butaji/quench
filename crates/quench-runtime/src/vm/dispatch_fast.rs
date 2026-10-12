@@ -186,6 +186,8 @@ impl MemoryView {
     unsafe fn read(self, load: MemoryLoad, address: u64) -> Option<crate::WasmValue> {
         // Addresses are at most 33 bits, so the signed comparison is exact.
         if (address as i64) > self.reach as i64 || load.width() > WIDEST_DIRECT_ACCESS {
+            // Off the hot path: the access falls through to its dispatch.
+            std::hint::cold_path();
             return None;
         }
         // SAFETY: the access ends at or before the memory's end.
@@ -199,6 +201,7 @@ impl MemoryView {
     unsafe fn write(self, store: MemoryStore, address: u64, value: crate::WasmValue) -> Option<()> {
         // Addresses are at most 33 bits, so the signed comparison is exact.
         if (address as i64) > self.reach as i64 || store.width() > WIDEST_DIRECT_ACCESS {
+            std::hint::cold_path();
             return None;
         }
         // SAFETY: the access ends at or before the memory's end.
@@ -1867,6 +1870,19 @@ lane_handler! {
     }
 }
 
+/// The scalar direct store `store` writes for slot value `value`: registers
+/// hold their static Wasm types, and a value whose bits need a box has none.
+#[inline(always)]
+fn stored_value(store: MemoryStore, value: Value) -> Option<crate::WasmValue> {
+    Some(match store.value_type() {
+        crate::WasmType::I32 => crate::WasmValue::I32(value.wasm_bits32() as i32),
+        crate::WasmType::F32 => crate::WasmValue::F32(value.as_int()? as u32),
+        crate::WasmType::I64 => crate::WasmValue::I64(value.bits64()? as i64),
+        crate::WasmType::F64 => crate::WasmValue::F64(value.bits64()?),
+        _ => return None,
+    })
+}
+
 lane_handler! {
     fn lane_store<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let store = const {
@@ -1875,21 +1891,8 @@ lane_handler! {
                 None => panic!("not a direct store"),
             }
         };
-        let value = match store.value_type() {
-            crate::WasmType::I32 => crate::WasmValue::I32(read_i32::<ACC, ACC_A>(r, i.a, view)),
-            crate::WasmType::F32 => match r.get(i.a).as_int() {
-                Some(bits) => crate::WasmValue::F32(bits as u32),
-                None => return exit(ip),
-            },
-            crate::WasmType::I64 => match r.get(i.a).bits64() {
-                Some(bits) => crate::WasmValue::I64(bits as i64),
-                None => return exit(ip),
-            },
-            crate::WasmType::F64 => match r.get(i.a).bits64() {
-                Some(bits) => crate::WasmValue::F64(bits),
-                None => return exit(ip),
-            },
-            _ => return exit(ip),
+        let Some(value) = stored_value(store, read::<ACC, ACC_A>(r, i.a, view)) else {
+            return exit(ip);
         };
         // SAFETY: as for `lane_load`.
         if unsafe { view.memory.write(store, lane_address::<ACC>(r, i, view), value) }
@@ -1899,6 +1902,58 @@ lane_handler! {
         }
         next!(cx, r, following(ip), view)
     }
+}
+
+lane_handler! {
+    /// A constant that the next record, direct store `OP`, writes to
+    /// memory: both records run here, the constant written to its register
+    /// as its own record writes it.
+    fn lane_constant_store<OP: u16>(cx, r, ip, i, view) {
+        let store = const {
+            match MemoryStore::from_direct_op(opcode(OP)) {
+                Some(store) => store,
+                None => panic!("not a direct store"),
+            }
+        };
+        let constant = i.constant();
+        r.set(i.a, constant);
+        let next = following(ip);
+        // SAFETY: the view fuses a constant only with a following store.
+        let access = unsafe { &*next };
+        let Some(value) = stored_value(store, constant) else {
+            return exit(next);
+        };
+        // SAFETY: as for `lane_load`.
+        if unsafe { view.memory.write(store, lane_address::<ACC_NONE>(r, access, view), value) }
+            .is_none()
+        {
+            return exit(next);
+        }
+        next!(cx, r, following(next), view)
+    }
+}
+
+/// The constant-store handler for direct store `op`.
+const fn constant_store_handler<H: Host>(op: Op) -> Option<Handler> {
+    macro_rules! stores {
+        ($($store:ident),+) => {
+            match op {
+                $(Op::$store => Some(lane_constant_store::<H, { Op::$store as u16 }> as Handler),)+
+                _ => None,
+            }
+        };
+    }
+    stores!(
+        WasmI32Store,
+        WasmI64Store,
+        WasmF32Store,
+        WasmF64Store,
+        WasmI32Store8,
+        WasmI32Store16,
+        WasmI64Store8,
+        WasmI64Store16,
+        WasmI64Store32
+    )
 }
 
 /// Continue in `frame` at `pc`: the record the frame's function resumes at.
@@ -2651,6 +2706,17 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             .position(|acc| variant(Op::WasmI32Add, acc, pc + 1));
         if let (Some(field), Some(left)) = (field, left) {
             records[pc].handler = ScaledIndex::<H>::HANDLERS[field][left] as *const ();
+        }
+    }
+    // A constant that the next record stores runs with that store as one
+    // record.
+    for pc in 0..records.len().saturating_sub(1) {
+        let next = decoded_instruction(function, function.code[pc + 1]);
+        if serves(records[pc].handler, Op::LoadConst, ACC_NONE)
+            && serves(records[pc + 1].handler, next.op(), ACC_A)
+            && let Some(fused) = constant_store_handler::<H>(next.op())
+        {
+            records[pc].handler = fused as *const ();
         }
     }
     // A load whose value the next record stores runs with that store as
