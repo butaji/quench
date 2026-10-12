@@ -133,6 +133,12 @@ fn execute_shared_on_worker(
         None => host,
     };
     let shared_state = host.shared_state();
+    {
+        let mut state = shared_state.borrow_mut();
+        let argv = state.process_argv.clone();
+        let exec_argv = state.exec_argv.clone();
+        state.trace.open_environment(argv.as_slice(), &exec_argv);
+    }
     let mut runtime = Runtime::new(host);
     let program = Engine::compile(ExecutionRequest {
         source: &source,
@@ -249,6 +255,15 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
             }
             "--experimental-vfs" | "--no-experimental-vfs" => {
                 exec_argv.push(args[index].clone());
+            }
+            "--trace-event-categories" | "--trace-event-file-pattern" => {
+                let option = args[index].clone();
+                index += 1;
+                let value = args
+                    .get(index)
+                    .cloned()
+                    .ok_or_else(|| format!("{option} requires an argument"))?;
+                exec_argv.extend([option, value]);
             }
             "-e" | "--eval" | "-pe" | "-ep" | "-p" | "--print" => {
                 let option = args[index].clone();

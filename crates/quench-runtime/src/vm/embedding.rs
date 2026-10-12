@@ -743,6 +743,12 @@ impl<H: Host> Vm<H> {
         self.json_parse(&program, &[source])
     }
 
+    pub(crate) fn stringify_embedding_json(&mut self, root: RootId) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        let value = self.embedding_value(root)?;
+        self.json_stringify(&program, &[value])
+    }
+
     pub(crate) fn create_embedding_array(&mut self, values: &[RootId]) -> Result<Value, JsError> {
         self.embedding_program()?;
         let elements = self.embedding_arguments(values)?;
