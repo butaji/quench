@@ -1028,24 +1028,20 @@ lane_handler! {
                 }
             }};
         }
+        // Registers hold their static Wasm types: an f32 slot an encoded
+        // i32, an f64 slot its bits in place or a box whose bits read as a
+        // NaN, which these operators treat as any other NaN.
         let value = if WIDE {
-            let (Some(left), Some(right)) = (left.bits64(), right.bits64()) else {
-                return exit(ip);
-            };
-            match apply!(f64::from_bits(left), f64::from_bits(right)) {
-                Outcome::Float(result) => {
-                    let Some(value) = Value::from_bits64(result.to_bits()) else {
-                        return exit(ip);
-                    };
-                    value
-                }
+            let left = f64::from_bits(left.float_bits64());
+            let right = f64::from_bits(right.float_bits64());
+            match apply!(left, right) {
+                Outcome::Float(result) => Value::from_float_bits64(result.to_bits()),
                 Outcome::Truth(truth) => view.integers.encode(i32::from(truth)),
             }
         } else {
-            let (Some(left), Some(right)) = (left.as_int(), right.as_int()) else {
-                return exit(ip);
-            };
-            match apply!(f32::from_bits(left as u32), f32::from_bits(right as u32)) {
+            let left = f32::from_bits(left.wasm_bits32());
+            let right = f32::from_bits(right.wasm_bits32());
+            match apply!(left, right) {
                 Outcome::Float(result) => view.integers.encode(result.to_bits() as i32),
                 Outcome::Truth(truth) => view.integers.encode(i32::from(truth)),
             }
