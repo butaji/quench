@@ -33,7 +33,7 @@ pub(super) struct PendingGeneralCall {
 /// stack. A Wasm call in the loop pushes a heap frame instead of recursing
 /// natively, so the native stack guard does not bound it; the guest call
 /// depth does.
-const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEPTH;
+pub(super) const WASM_ACTIVATION_LIMIT: usize = crate::stack::MAX_GUEST_CALL_DEPTH;
 
 impl GeneralCodeCursor {
     fn new(program_id: ProgramId, program: &ResidualProgram, function: u32) -> Self {
@@ -249,6 +249,38 @@ impl<H: Host> Vm<H> {
         frame.fixed_this = false;
         self.frames.push(frame);
         Ok(())
+    }
+
+    /// Activate a Wasm function whose registers already hold `registers`:
+    /// a lane activation becoming a frame. Its environment is the caller's.
+    pub(super) fn push_wasm_frame_with_registers(
+        &mut self,
+        p: &ResidualProgram,
+        caller: usize,
+        id: u32,
+        registers: &[Value],
+    ) {
+        debug_assert_eq!(p.functions[id as usize].locals, 0);
+        let program = self.active_program;
+        let with_base = self.with_stack.len();
+        let mut frame = self
+            .frame_pool
+            .pop()
+            .unwrap_or_else(|| Box::new(Frame::empty(program, with_base)));
+        frame.locals.clear();
+        frame.registers.clear();
+        frame.registers.extend_from_slice(registers);
+        frame.context = CallContext::Internal;
+        frame.function = id;
+        frame.program = program;
+        frame.pc = 0;
+        frame.binding_site_pc = None;
+        frame.env = self.frames[caller].env;
+        frame.this = Value::UNDEFINED;
+        frame.captured = false;
+        frame.with_base = with_base;
+        frame.fixed_this = false;
+        self.frames.push(frame);
     }
 
     fn empty_frame(&self) -> Box<Frame> {
