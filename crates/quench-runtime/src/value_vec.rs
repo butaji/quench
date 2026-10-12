@@ -5,7 +5,9 @@ const START_MASK: u32 = 0x3fff_ffff;
 const NON_EXTENSIBLE: u32 = 1 << 30;
 const FROZEN: u32 = 1 << 31;
 const DICTIONARY_STORAGE: u32 = 1 << 31;
-const SHAPE_MASK: u32 = !DICTIONARY_STORAGE;
+const OUT_OF_LINE_STORAGE: u32 = 1 << 30;
+const AUXILIARY_FLAGS: u32 = DICTIONARY_STORAGE | OUT_OF_LINE_STORAGE;
+const SHAPE_MASK: u32 = !AUXILIARY_FLAGS;
 const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
@@ -45,9 +47,27 @@ impl ValueVec {
         self.start() as u32 == INLINE_PROPERTY_START
     }
 
+    pub(crate) fn has_compact_range(self) -> bool {
+        !self.has_inline_property_storage()
+            && !self.is_dictionary()
+            && self.start() != EMPTY_START as usize
+    }
+
     pub(crate) fn set_auxiliary(&mut self, value: u32) {
         assert!(value <= SHAPE_MASK, "object shape table exhausted");
-        self.auxiliary = (self.auxiliary & DICTIONARY_STORAGE) | value;
+        self.auxiliary = (self.auxiliary & AUXILIARY_FLAGS) | value;
+    }
+
+    pub(crate) fn has_out_of_line_storage(self) -> bool {
+        self.auxiliary & OUT_OF_LINE_STORAGE != 0
+    }
+
+    pub(crate) fn set_out_of_line_storage(&mut self, value: bool) {
+        if value {
+            self.auxiliary |= OUT_OF_LINE_STORAGE;
+        } else {
+            self.auxiliary &= !OUT_OF_LINE_STORAGE;
+        }
     }
 
     fn is_dictionary(self) -> bool {
@@ -333,9 +353,7 @@ impl ValueArena {
     }
 
     pub(crate) fn has_compact_range(&self, vector: ValueVec) -> bool {
-        !vector.has_inline_property_storage()
-            && !vector.is_dictionary()
-            && vector.start() != EMPTY_START as usize
+        vector.has_compact_range()
     }
 
     pub(crate) fn compact_vector(&mut self, vector: &mut ValueVec, target: usize) -> usize {

@@ -51,8 +51,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
         self.with_call_roots([target, key], |vm| {
-            if let Some((target, handler)) = vm.proxy_parts(target)
-            {
+            if let Some((target, handler)) = vm.proxy_parts(target) {
                 if handler.is_null() {
                     return Err(vm.type_error(p, "cannot access a revoked proxy".into()));
                 }
@@ -85,7 +84,7 @@ impl<H: Host> Vm<H> {
                 let atom = vm.intern_js_atom(&key);
                 vm.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
                 if key.host_string() == "length"
-                    && matches!(vm.heap.get(target), Some(Cell::Array { .. }))
+                    && vm.heap.array(target).is_some()
                     && !vm
                         .object_data(target)
                         .is_some_and(Object::is_arguments_object)
@@ -114,7 +113,7 @@ impl<H: Host> Vm<H> {
                 }
                 if let Some(index) =
                     super::object_static::array_index(key.host_string()).map(|index| index as usize)
-                    && matches!(vm.heap.get(target), Some(Cell::Array { .. }))
+                    && vm.heap.array(target).is_some()
                 {
                     return Ok(vm.delete_array_index(target, index));
                 }
@@ -190,8 +189,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        if let Some((target, handler)) = self.proxy_parts(value)
-        {
+        if let Some((target, handler)) = self.proxy_parts(value) {
             if handler.is_null() {
                 return Err(self.type_error(p, "cannot access a revoked proxy".into()));
             }
@@ -438,8 +436,7 @@ impl<H: Host> Vm<H> {
         source: Value,
     ) -> Result<bool, JsError> {
         let _stack = self.enter_stack()?;
-        if let Some((target, handler)) = self.proxy_parts(source)
-        {
+        if let Some((target, handler)) = self.proxy_parts(source) {
             if handler.is_null() {
                 return Err(self.type_error(p, "cannot access a revoked proxy".into()));
             }
@@ -497,8 +494,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if let Some((target, handler)) = self.proxy_parts(source)
-        {
+        if let Some((target, handler)) = self.proxy_parts(source) {
             if handler.is_null() {
                 return Err(self.type_error(p, "cannot access a revoked proxy".into()));
             }

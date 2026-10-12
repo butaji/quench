@@ -72,24 +72,7 @@ impl<H: Host> Vm<H> {
             );
         }
         let function = &p.functions[id as usize];
-        let mut frame = self.frame_pool.pop().unwrap_or_else(|| Box::new(Frame {
-            context: CallContext::Internal,
-            original_arguments: vec![],
-            program: self.active_program,
-            function: 0,
-            pc: 0,
-            binding_site_pc: None,
-            env: Value::NULL,
-            this: Value::UNDEFINED,
-            locals: vec![],
-            dynamic_bindings: vec![],
-            captured: false,
-            registers: vec![],
-            active_iterators: vec![],
-            with_objects: Vec::new(),
-            with_base: self.with_stack.len(),
-            fixed_this: false,
-        }));
+        let mut frame = self.pooled_frame();
         frame
             .locals
             .resize(function.locals as usize, Value::UNDEFINED);
@@ -121,7 +104,7 @@ impl<H: Host> Vm<H> {
                 }
             }
         }
-        self.initialize_frame_invocation(&mut frame, function, context, args);
+        self.initialize_frame_invocation(&p.atoms, &mut frame, function, context, args);
         frame.function = id;
         frame.program = self.active_program;
         frame.pc = 0;
@@ -131,11 +114,10 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(&mut frame, false, Value::UNDEFINED, true);
         frame.captured = false;
         frame.with_base = self.with_stack.len();
-        let register_count = function.registers as usize;
-        frame.prepare_registers(register_count);
+        frame.prepare_registers(function.registers, function.initial_register);
         if function.parameter_end_pc != 0 {
             self.frames.push(frame);
-            let result = self.run_frame_general_until(
+            let result = self.run_frame_general_until::<true>(
                 p,
                 self.frames.len() - 1,
                 Some(function.parameter_end_pc as usize),
@@ -359,7 +341,7 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async generator return reaction without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+        let Some((_, elements)) = self.heap.array(environment) else {
             return Err(JsError("async generator return state is invalid".into()));
         };
         let [generator, promise] = elements.as_slice() else {
@@ -410,7 +392,7 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async generator return rejection without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+        let Some((_, elements)) = self.heap.array(environment) else {
             return Err(JsError("async generator return state is invalid".into()));
         };
         let [generator, promise] = elements.as_slice() else {
@@ -438,7 +420,7 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate return without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+        let Some((_, elements)) = self.heap.array(environment) else {
             return Err(JsError("async delegate return state is invalid".into()));
         };
         let [generator, iterator, destination] = elements.as_slice() else {
@@ -968,7 +950,7 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate reaction without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
+        let Some((_, elements)) = self.heap.array(env) else {
             return Err(JsError("async delegate reaction state is invalid".into()));
         };
         let [generator, destination, throwing, adapter, _async_from_sync] = elements.as_slice()
@@ -1046,7 +1028,7 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate rejection without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
+        let Some((_, elements)) = self.heap.array(env) else {
             return Err(JsError("async delegate rejection state is invalid".into()));
         };
         let generator = elements
@@ -1286,7 +1268,7 @@ impl<H: Host> Vm<H> {
             }
             frame.registers[register as usize] = args.first().copied().unwrap_or(Value::UNDEFINED);
         }
-        let previous_program = std::mem::replace(&mut self.active_program, frame.program);
+        let previous_program = self.replace_active_program(frame.program);
         let previous_global = self.switch_realm_global(realm);
         self.activate_frame(&mut frame);
         let frame = self.adopt_frame(frame);
@@ -1298,7 +1280,7 @@ impl<H: Host> Vm<H> {
         );
         let mut frame = self.frames.pop().expect("generator frame exists");
         self.deactivate_frame(&mut frame, &result);
-        self.active_program = previous_program;
+        self.set_active_program(previous_program);
         self.switch_realm_global(previous_global);
         let outcome = match result {
             Ok(outcome) => outcome,
@@ -1527,7 +1509,7 @@ impl<H: Host> Vm<H> {
                 }
                 frame.registers[register as usize] = value;
             }
-            let previous_program = std::mem::replace(&mut vm.active_program, frame.program);
+            let previous_program = vm.replace_active_program(frame.program);
             let previous_global = vm.switch_realm_global(realm);
             vm.activate_frame(&mut frame);
             let frame = vm.adopt_frame(frame);
@@ -1539,7 +1521,7 @@ impl<H: Host> Vm<H> {
             );
             let mut frame = vm.frames.pop().expect("async generator frame exists");
             vm.deactivate_frame(&mut frame, &result);
-            vm.active_program = previous_program;
+            vm.set_active_program(previous_program);
             vm.switch_realm_global(previous_global);
             match result {
                 Err(error) => {

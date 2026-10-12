@@ -76,25 +76,12 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let roots = context.host_mut().shared_state();
     let process_surface = context.evaluate_script_rooted(
         crate::polyfills::post_bootstrap::process_surface_00::JS,
         "node:bootstrap/process-surface.js",
     )?;
     context.release_root(process_surface);
-    let roots = context.host_mut().shared_state();
-    if let Some(root) = roots.borrow_mut().primordials_module.take() {
-        context.release_root(root);
-    }
-    if let Some(root) = roots.borrow_mut().assert_module.take() {
-        context.release_root(root);
-    }
-    if let Some(root) = roots.borrow_mut().path_module.take() {
-        context.release_root(root);
-    }
-    let previous = std::mem::take(&mut roots.borrow_mut().module_cache);
-    for root in previous.into_values() {
-        context.release_root(root);
-    }
     let buffer_module = cached_builtin(context, BuiltinModule::Buffer)?;
     crate::modules::buffer_shared_vm::install_global(context, buffer_module)?;
     crate::modules::url_shared_vm::install_global(context)?;

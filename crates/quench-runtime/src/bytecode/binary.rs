@@ -1,12 +1,14 @@
 use super::{
     AtomTable, BindingSite, Constant, DispatchClass, EvalBinding, EvalBindingDeclaration,
-    EvalBindingLocation, FieldBase, FieldSite, Function, Handler, Instr, LexicalBindingKind,
-    LocalRegister,
-    MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleLinkPlan,
-    ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase, ObjectSite, Op,
-    RegExpLiteralSite, SourcePosition, Superinstruction, WideInstruction,
+    EvalBindingLocation, FieldBase, FieldSite, Function, Handler, InitialRegister, Instr,
+    LexicalBindingKind, LocalRegister, MethodSite, ModuleImportBinding, ModuleImportName,
+    ModuleImportNameKind, ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest,
+    ModuleRequestPhase, ObjectSite, Op, RegExpLiteralSite, SourcePosition, Superinstruction,
+    WideInstruction,
 };
 
+/// Encodes a function without an `undefined` register.
+const NO_UNDEFINED_REGISTER: u16 = u16::MAX;
 const RESIDUAL_MAGIC: &[u8; 8] = &[
     b'Q',
     b'U',
@@ -18,6 +20,8 @@ const RESIDUAL_MAGIC: &[u8; 8] = &[
     super::ResidualProgram::FORMAT_VERSION,
 ];
 const RESIDUAL_MAGIC_TERMINATOR: u8 = 0;
+// Serialized absence of register parameters; no register file reaches it.
+const NO_PARAMETER_REGISTERS: u16 = u16::MAX;
 const WASM_BITS64_TAG: u8 = 8;
 const WASM_V128_TAG: u8 = 9;
 const EVAL_BINDING_LOCAL: u8 = 0;
@@ -266,6 +270,13 @@ pub(super) fn write_program(
         out.u16(function.registers);
         out.u8(function.dispatch as u8);
         out.u32(function.register_root_offset);
+        out.u16(function.undefined_register.unwrap_or(NO_UNDEFINED_REGISTER));
+        out.u16(
+            function
+                .parameter_registers
+                .unwrap_or(NO_PARAMETER_REGISTERS),
+        );
+        out.u8(function.initial_register as u8);
         out.u32(function.code.len() as u32);
         for instruction in &function.code {
             out.u8(instruction.op() as u8);
@@ -560,6 +571,14 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             _ => return Err("invalid residual dispatch class".into()),
         };
         let register_root_offset = input.u32()?;
+        let undefined_register =
+            Some(input.u16()?).filter(|register| *register != NO_UNDEFINED_REGISTER);
+        let parameter_registers = Some(input.u16()?).filter(|base| *base != NO_PARAMETER_REGISTERS);
+        let initial_register = match input.u8()? {
+            0 => InitialRegister::Undefined,
+            1 => InitialRegister::I32Zero,
+            _ => return Err("invalid residual initial register".into()),
+        };
         let code = input.list(|input| {
             let opcode = input.u8()?;
             let op = Op::from_index(usize::from(opcode))
@@ -663,8 +682,14 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             decoded: Default::default(),
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
+            plain_activation: Default::default(),
             handlers,
             register_root_offset,
+            undefined_register,
+            parameter_registers,
+            initial_register,
         })
     })?;
     let cache_sites = input.u16()?;

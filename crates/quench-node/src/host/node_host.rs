@@ -142,6 +142,21 @@ pub(crate) enum ChildProcessEvent {
 }
 
 impl SharedNodeState {
+    /// Forget cached guest handles before bootstrapping a replacement VM heap.
+    pub(crate) fn reset_cached_vm_roots(&mut self) {
+        self.module_cache.clear();
+        self.primordials_module = None;
+        self.event_targets_api = None;
+        self.process_module = None;
+        self.assert_module = None;
+        self.path_module = None;
+        self.url_constructor = None;
+        self.url_state = None;
+        self.url_search_params_constructor = None;
+        self.timer_handle_api = None;
+        self.net_socket_constructor = None;
+    }
+
     fn new(
         fs: crate::modules::fs_state::FsState,
         cwd: crate::modules::process_state::ProcessCwd,

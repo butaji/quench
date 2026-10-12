@@ -254,7 +254,12 @@ impl<H: Host> Vm<H> {
                 })
             ),
             B::ModuleNamespaceObject => {
-                matches!(cell, Some(Cell::Object(object)) if object.is_module_namespace())
+                (value.direct_object_index().is_some()
+                    && self
+                        .heap
+                        .object(value)
+                        .is_some_and(Object::is_module_namespace))
+                    || matches!(cell, Some(Cell::Object(object)) if object.is_module_namespace())
             }
             B::BooleanObject
             | B::NumberObject
@@ -262,7 +267,9 @@ impl<H: Host> Vm<H> {
             | B::SymbolObject
             | B::BigIntObject
             | B::BoxedPrimitive => {
-                if !matches!(cell, Some(Cell::Object(_))) {
+                if value.direct_object_index().is_none()
+                    && !matches!(cell, Some(Cell::Object(_)))
+                {
                     false
                 } else {
                     BOXED_MARKERS.iter().copied().any(|(candidate, marker)| {
@@ -301,6 +308,20 @@ impl<H: Host> Vm<H> {
         let value = self.embedding_value(root)?;
         if self.realm.promise.records.contains_key(&value) {
             return Ok(Some(D::Opaque));
+        }
+        if value.direct_object_index().is_some() {
+            for &(brand, marker) in BOXED_MARKERS {
+                if let Some(payload) = self
+                    .lookup_atom(marker)
+                    .and_then(|atom| self.own_property(value, atom))
+                {
+                    return Ok(Some(D::Primitive {
+                        brand,
+                        value: payload,
+                    }));
+                }
+            }
+            return Ok(None);
         }
         let data = match self.heap.get(value) {
             Some(Cell::Date { milliseconds, .. }) => D::Primitive {
@@ -472,6 +493,29 @@ impl<H: Host> Vm<H> {
             value = *target;
         }
 
+        if self
+            .heap
+            .object_record(value)
+            .is_some_and(Object::has_error_data)
+        {
+            let name = self
+                .own_data_string(value, "name")
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| "Error".into());
+            let message = self.own_data_string(value, "message").unwrap_or_default();
+            return if message.is_empty() {
+                name
+            } else {
+                format!("{name}: {message}")
+            };
+        }
+        if self.heap.object_record(value).is_some() {
+            return "#<Object>".into();
+        }
+        if self.heap.array(value).is_some() {
+            return "[object Array]".into();
+        }
+
         match self.heap.get(value) {
             Some(Cell::String(text)) => text.host_string().to_owned(),
             Some(Cell::BigInt(integer)) => {
@@ -483,19 +527,6 @@ impl<H: Host> Vm<H> {
             }
             Some(Cell::Symbol(description)) => Self::detail_symbol(description.as_deref()),
             Some(Cell::Error(message)) => format!("Error: {message}"),
-            Some(Cell::Object(object)) if object.has_error_data() => {
-                let name = self
-                    .own_data_string(value, "name")
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| "Error".into());
-                let message = self.own_data_string(value, "message").unwrap_or_default();
-                if message.is_empty() {
-                    name
-                } else {
-                    format!("{name}: {message}")
-                }
-            }
-            Some(Cell::Object(_)) => "#<Object>".into(),
             Some(Cell::Map { .. }) => "#<Map>".into(),
             Some(Cell::Set { .. }) => "#<Set>".into(),
             Some(cell) => format!("[object {}]", Self::diagnostic_class_name(cell)),

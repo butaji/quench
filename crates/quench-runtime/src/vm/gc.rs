@@ -1,6 +1,7 @@
 use super::module::ModuleRecord;
 use super::promise::PromiseState;
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // RayTrace's allocation trace shows about 40–43% of its shape table is
 // unreachable after each collection. Compact only once at least half the
@@ -57,6 +58,49 @@ fn append_shape_roots(shapes: &[Shape], shape: u32, roots: &mut Vec<Value>) {
                     .chain([attributes.getter, attributes.setter].into_iter().flatten())
             }),
     );
+}
+
+/// Parallel GC readers need only the immutable shape transition metadata.
+/// `Shape` also contains `Cell` and `OnceCell` caches, which this view never
+/// reads or mutates while workers are active.
+struct ParallelShapeTrace<'a> {
+    shapes: *const Shape,
+    shape_count: usize,
+    rooted_shapes: &'a [AtomicU64],
+    owned_roots: &'a FxHashMap<Value, Vec<Value>>,
+    _shape_borrow: std::marker::PhantomData<&'a [Shape]>,
+}
+
+// SAFETY: the shape vector is immutable for the duration of collection, and
+// `append_shape_roots` reads only `parent` and `transition`, never the
+// interior-mutable caches. All shared bitmap updates are atomic; owned roots
+// are read-only. The trace object cannot outlive the joined worker scope.
+unsafe impl Send for ParallelShapeTrace<'_> {}
+// SAFETY: same immutable-metadata contract as the Send implementation.
+unsafe impl Sync for ParallelShapeTrace<'_> {}
+
+impl ParallelShapeTrace<'_> {
+    fn append(&self, trace_kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>) {
+        let shape_index = shape as usize;
+        debug_assert!(shape_index < self.shape_count);
+        // SAFETY: construction holds an immutable borrow of the shape table;
+        // collection cannot compact or append shapes until all workers join.
+        let shapes = unsafe { std::slice::from_raw_parts(self.shapes, self.shape_count) };
+        let word = shape_index / u64::BITS as usize;
+        let mask = 1_u64 << (shape_index % u64::BITS as usize);
+        if trace_kind == GcTraceKind::VerifyFull {
+            if shapes[shape_index].may_have_gc_roots {
+                append_shape_roots(shapes, shape, roots);
+            }
+        } else if shapes[shape_index].may_have_gc_roots
+            && self.rooted_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0
+        {
+            append_shape_roots(shapes, shape, roots);
+        }
+        if let Some(edges) = self.owned_roots.get(&owner) {
+            roots.extend(edges.iter().copied());
+        }
+    }
 }
 
 fn append_compacted_shape(
@@ -139,7 +183,7 @@ impl<H: Host> Vm<H> {
     /// to validate root ownership and weak/finalization ordering without
     /// reaching into heap internals.
     pub(crate) fn collect_now(&mut self, program: &ResidualProgram) {
-        self.collect_slow(program);
+        self.collect_slow(program, true);
     }
 
     #[inline(always)]
@@ -147,12 +191,13 @@ impl<H: Host> Vm<H> {
         if !self.heap.should_collect() {
             return;
         }
-        self.collect_slow(program);
+        let full = self.heap.should_full_collect();
+        self.collect_slow(program, full);
     }
 
     #[cold]
     #[inline(never)]
-    pub(super) fn collect_slow(&mut self, _program: &ResidualProgram) {
+    pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
@@ -199,6 +244,15 @@ impl<H: Host> Vm<H> {
         {
             owned_roots.entry(owner).or_default().push(edge);
         }
+        let external_roots = if full {
+            Vec::new()
+        } else {
+            owned_roots
+                .iter()
+                .filter(|(owner, _)| self.heap.is_old(**owner))
+                .flat_map(|(_, edges)| edges.iter().copied())
+                .collect::<Vec<_>>()
+        };
         let roots = self
             .programs
             .roots()
@@ -272,7 +326,11 @@ impl<H: Host> Vm<H> {
                 },
             ))
             .chain(self.realm.intrinsics.regexp_intrinsics.iter().flat_map(
-                |(realm, intrinsics)| [*realm, intrinsics.constructor, intrinsics.prototype],
+                |(realm, intrinsics)| {
+                    [*realm, intrinsics.constructor, intrinsics.prototype]
+                        .into_iter()
+                        .chain(intrinsics.result_template.map(|template| template.anchor))
+                },
             ))
             .chain(
                 self.realm
@@ -473,6 +531,7 @@ impl<H: Host> Vm<H> {
                     .flat_map(|((global, _), template)| [*global, template.anchor]),
             )
             .chain(self.with_stack.iter().copied())
+            .chain(std::iter::once(self.instanceof_has_instance_holder))
             .chain(self.active_call_roots.iter().copied())
             .chain(
                 self.suspended
@@ -520,35 +579,37 @@ impl<H: Host> Vm<H> {
                                 .then_some(*value)
                         },
                     ))
-            }));
+            }))
+            .chain(external_roots);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
             self.report_memory_snapshot(&phase);
         }
         let shape_count = self.shapes.len();
-        let mut live_shape_bits = vec![0_u64; shape_count.div_ceil(u64::BITS as usize)];
-        let mut live_shapes = Vec::new();
-        let shapes = &mut self.shapes;
-        let finalization_jobs =
-            self.heap
-                .collect_with_object_roots(roots, |owner, shape, roots| {
-                    let shape_index = shape as usize;
-                    let word = shape_index / u64::BITS as usize;
-                    let mask = 1_u64 << (shape_index % u64::BITS as usize);
-                    if live_shape_bits[word] & mask == 0 {
-                        live_shape_bits[word] |= mask;
-                        live_shapes.push(shape);
-                        if shapes[shape_index].may_have_gc_roots {
-                            append_shape_roots(shapes, shape, roots);
-                        }
-                    }
-                    if !owned_roots.is_empty()
-                        && let Some(edges) = owned_roots.get(&owner)
-                    {
-                        roots.extend(edges.iter().copied());
-                    }
-                });
+        let shape_word_count = shape_count.div_ceil(u64::BITS as usize);
+        let rooted_shape_bits = (0..shape_word_count)
+            .map(|_| AtomicU64::new(0))
+            .collect::<Vec<_>>();
+        let shape_trace = ParallelShapeTrace {
+            shapes: self.shapes.as_ptr(),
+            shape_count,
+            rooted_shapes: &rooted_shape_bits,
+            owned_roots: &owned_roots,
+            _shape_borrow: std::marker::PhantomData,
+        };
+        let parallel_object_roots =
+            |trace_kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>| {
+                shape_trace.append(trace_kind, owner, shape, roots);
+            };
+        let (finalization_jobs, live_shapes) = self.heap.collect_with_object_roots(
+            roots,
+            |trace_kind, owner, shape, roots| {
+                shape_trace.append(trace_kind, owner, shape, roots);
+            },
+            Some(&parallel_object_roots),
+            full,
+        );
         // Heap weak fields are pruned during collection. Prune the VM-owned
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.
@@ -556,7 +617,7 @@ impl<H: Host> Vm<H> {
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.
-        if self.should_compact_live_shapes(&live_shapes) {
+        if full && self.should_compact_live_shapes(&live_shapes) {
             #[cfg(feature = "profile-aggregate")]
             self.snapshot_method_caches(0);
             self.compact_live_shapes(live_shapes);
@@ -568,7 +629,7 @@ impl<H: Host> Vm<H> {
             .promise
             .async_resume_jobs
             .iter()
-            .filter(|(owner, _)| self.heap.get(**owner).is_some())
+            .filter(|(owner, _)| self.heap.is_live(**owner))
             .map(|(_, job)| job.continuation)
             .collect();
         for id in attached_continuations.difference(&live_continuations) {
@@ -584,10 +645,10 @@ impl<H: Host> Vm<H> {
                 }),
         );
         self.descriptors
-            .retain(|(object, _), _| self.heap.get(*object).is_some());
+            .retain(|(object, _), _| self.heap.is_live(*object));
         let mut abandoned_job_contexts = Vec::new();
         self.realm.promise.records.retain(|promise, record| {
-            let live = self.heap.get(*promise).is_some();
+            let live = self.heap.is_live(*promise);
             if !live {
                 abandoned_job_contexts.extend(
                     record
@@ -599,14 +660,14 @@ impl<H: Host> Vm<H> {
             live
         });
         self.realm.promise.jobs.retain(|job, record| {
-            let live = self.heap.get(*job).is_some();
+            let live = self.heap.is_live(*job);
             if !live {
                 abandoned_job_contexts.extend(record.execution_context);
             }
             live
         });
         self.realm.promise.thenable_jobs.retain(|job, record| {
-            let live = self.heap.get(*job).is_some();
+            let live = self.heap.is_live(*job);
             if !live {
                 abandoned_job_contexts.extend(record.execution_context);
             }
@@ -618,27 +679,27 @@ impl<H: Host> Vm<H> {
         self.realm
             .promise
             .finally_handler_callbacks
-            .retain(|function, _| self.heap.get(*function).is_some());
+            .retain(|function, _| self.heap.is_live(*function));
         self.realm
             .promise
             .finally_continuation_callbacks
-            .retain(|function, _| self.heap.get(*function).is_some());
+            .retain(|function, _| self.heap.is_live(*function));
         self.realm
             .promise
             .aggregates
-            .retain(|aggregate, _| self.heap.get(*aggregate).is_some());
+            .retain(|aggregate, _| self.heap.is_live(*aggregate));
         self.realm
             .promise
             .aggregate_jobs
-            .retain(|job, _| self.heap.get(*job).is_some());
+            .retain(|job, _| self.heap.is_live(*job));
         self.realm
             .promise
             .reaction_capabilities
-            .retain(|promise, _| self.heap.get(*promise).is_some());
+            .retain(|promise, _| self.heap.is_live(*promise));
         self.realm
             .promise
             .async_resume_jobs
-            .retain(|job, _| self.heap.get(*job).is_some());
+            .retain(|job, _| self.heap.is_live(*job));
         #[cfg(feature = "profile-aggregate")]
         self.retain_live_gc_method_snapshots();
         if let Some(strings) = &mut self.dynamic_strings {

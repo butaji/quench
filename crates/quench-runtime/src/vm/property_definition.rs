@@ -146,7 +146,7 @@ impl<H: Host> Vm<H> {
                         TypedArrayIndexKey::NotCanonical => {}
                     }
                 }
-                if matches!(self.heap.get(object), Some(Cell::Array { .. })) {
+                if self.heap.array(object).is_some() {
                     if atom == self.length_atom
                         && !self
                             .object_data(object)
@@ -196,8 +196,7 @@ impl<H: Host> Vm<H> {
         record: &RootedPropertyDescriptor,
     ) -> Result<bool, JsError> {
         let proxy = self.heap.root_value(proxy).unwrap();
-        let Some((target, handler)) = self.proxy_parts(proxy)
-        else {
+        let Some((target, handler)) = self.proxy_parts(proxy) else {
             unreachable!("proxy definition dispatch")
         };
         if handler.is_null() {

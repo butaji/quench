@@ -2141,6 +2141,8 @@ impl<'a> Compiler<'a> {
             capture_profile::report(&functions);
         }
         for function in &mut functions {
+            rewrite::return_through_shared_returns(function);
+            rewrite::express_strict_sets(function);
             function.dispatch = if self.mode == SpecializationMode::Enabled {
                 Self::dispatch_class(&function.code, &function.wide)
             } else {
@@ -2484,7 +2486,7 @@ impl<'a> Compiler<'a> {
                 None
             } else {
                 let name = self.atoms[source_name as usize].to_string();
-                let binding = self.atom(&format!("{name}\0quench:self-binding:{id}"));
+                let binding = self.atom(&format!("{name}{}{id}", crate::bytecode::SELF_BINDING_MARKER));
                 locals.push(binding);
                 Some((source_name, binding))
             }
@@ -2698,6 +2700,7 @@ impl<'a> Compiler<'a> {
                 .collect()
         });
         let name_bindings = function.name_bindings();
+        let undefined_register = function.used_undefined_register();
         let result = BcFunction {
             parent,
             name: name.map(|value| function.owner.atom(value)),
@@ -2751,8 +2754,14 @@ impl<'a> Compiler<'a> {
             decoded: Default::default(),
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
+            plain_activation: Default::default(),
             handlers: function.handlers,
             register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
+            undefined_register,
+            parameter_registers: None,
+            initial_register: Default::default(),
         };
         self.functions[id as usize] = Some(result);
         id

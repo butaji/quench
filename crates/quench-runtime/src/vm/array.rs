@@ -22,8 +22,8 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn array_value_at(&self, array: Value, index: usize) -> Value {
-        let value = match self.heap.get(array) {
-            Some(Cell::Array { elements, .. }) => elements
+        let value = self.heap.array(array).and_then(|(_, elements)| {
+            elements
                 .get(index)
                 .copied()
                 .filter(|value| !value.is_deleted())
@@ -31,9 +31,8 @@ impl<H: Host> Vm<H> {
                     self.heap
                         .sparse_get(array, index)
                         .filter(|value| !value.is_deleted())
-                }),
-            _ => None,
-        };
+                })
+        });
         value.unwrap_or(Value::UNDEFINED)
     }
 
@@ -398,7 +397,7 @@ impl<H: Host> Vm<H> {
         length: usize,
     ) -> Result<(), JsError> {
         let atom = self.intern_atom("length");
-        if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+        if self.heap.array(object).is_some()
             && !self
                 .object_data(object)
                 .is_some_and(Object::is_arguments_object)
@@ -502,15 +501,10 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn is_array(&mut self, p: &ResidualProgram, value: Value) -> Result<bool, JsError> {
+        if let Some((object, _)) = self.heap.array(value) {
+            return Ok(!object.is_arguments_object());
+        }
         match self.heap.get(value) {
-            Some(Cell::Array { .. })
-                if self
-                    .object_data(value)
-                    .is_some_and(Object::is_arguments_object) =>
-            {
-                Ok(false)
-            }
-            Some(Cell::Array { .. }) => Ok(true),
             Some(Cell::Proxy { handler, .. }) if handler.is_null() => {
                 Err(self.type_error(p, "revoked proxy".into()))
             }

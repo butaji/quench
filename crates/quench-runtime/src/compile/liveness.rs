@@ -62,6 +62,10 @@ pub(super) fn live_out(function: &Function, live: &[u64], pc: usize, instruction
         ControlFlowLayout::ConditionalJump => {
             fallthrough | live[instruction.jump_target() as usize]
         }
+        ControlFlowLayout::BranchTable => {
+            crate::bytecode::branch_table_entries(pc, instruction.as_wide())
+                .fold(0, |mask, entry| mask | live[entry])
+        }
         ControlFlowLayout::Terminal => 0,
         ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
             if instruction.returns_from_frame() =>
@@ -322,8 +326,14 @@ mod tests {
             decoded: Default::default(),
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
+            plain_activation: Default::default(),
             handlers: vec![],
             register_root_offset: u32::MAX,
+            undefined_register: None,
+            parameter_registers: None,
+            initial_register: Default::default(),
         };
         let roots = analyze(&function, &[], &[], &[]).unwrap();
         assert_eq!(roots[3], bit(1));

@@ -76,6 +76,14 @@ pub(super) struct FinallyAbrupt {
     continue_edge: bool,
 }
 
+/// The function-wide `undefined` register, the receiver of plain calls. Reserved after the
+/// promoted locals; frame entry sets it once it is used.
+#[derive(Clone, Copy)]
+struct SharedUndefined {
+    register: Register,
+    used: bool,
+}
+
 pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) owner: &'a mut Compiler<'b>,
     pub(super) locals: Vec<Atom>,
@@ -88,6 +96,7 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) local_slots: Rc<FxHashMap<Atom, u16>>,
     local_registers: Vec<Option<Register>>,
     local_register_count: Register,
+    shared_undefined: SharedUndefined,
     function_scope: FxHashSet<Atom>,
     annex_b_collisions: FxHashSet<u32>,
     pub(super) scopes: Vec<Rc<FxHashMap<Atom, u16>>>,
@@ -167,7 +176,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             };
             *location = Some(register);
         }
-        let local_register_count = promoted_local_slots.len() as Register;
+        // The register after the promoted locals holds `undefined` for plain-call receivers.
+        let shared_undefined = promoted_local_slots.len() as Register;
+        let local_register_count = shared_undefined + 1;
         Self {
             owner,
             locals,
@@ -180,6 +191,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             local_slots,
             local_registers,
             local_register_count,
+            shared_undefined: SharedUndefined {
+                register: shared_undefined,
+                used: false,
+            },
             function_scope,
             annex_b_collisions,
             scopes,
@@ -214,6 +229,19 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             lexical_scopes: Vec::new(),
             disposal_scopes: vec![DisposalScope::default()],
         }
+    }
+
+    /// The function-wide register holding `undefined`, the receiver of plain calls.
+    pub(super) fn undefined_register(&mut self) -> Register {
+        self.shared_undefined.used = true;
+        self.shared_undefined.register
+    }
+
+    /// The `undefined` register frame entry must set, if any call uses it.
+    pub(super) fn used_undefined_register(&self) -> Option<Register> {
+        self.shared_undefined
+            .used
+            .then_some(self.shared_undefined.register)
     }
 
     pub(super) fn reg(&mut self) -> Register {

@@ -110,6 +110,7 @@ impl Compiler<'_> {
             }
         }
         let name_bindings = function.name_bindings();
+        let undefined_register = function.used_undefined_register();
         let result = BcFunction {
             parent,
             name: None,
@@ -161,8 +162,14 @@ impl Compiler<'_> {
             decoded: Default::default(),
             plain_locals: Default::default(),
             activation_bindings: Default::default(),
+            live_parameter_reflection: Default::default(),
+            static_name_scope: Default::default(),
+            plain_activation: Default::default(),
             handlers: function.handlers,
             register_root_offset: u32::MAX,
+            undefined_register,
+            parameter_registers: None,
+            initial_register: Default::default(),
         };
         self.functions[id as usize] = Some(result);
         id
