@@ -139,7 +139,6 @@ fn get(
 
 pub(crate) fn initialize_targets(
     context: &mut NativeContext<'_, NodeHost>,
-    abort_state: RootId,
 ) -> Result<(), RootedError> {
     let global = context.global_root()?;
     let symbol = get(context, global, "Symbol")?;
@@ -149,11 +148,44 @@ pub(crate) fn initialize_targets(
     let registry = get(context, symbol, "for")?;
     let description = context.string_rooted("nodejs.event_target");
     let brand_key = context.call_rooted(registry, symbol, &[description])?;
+    let description = context.string_rooted("events.maxEventTargetListeners");
+    let max_key = context.call_rooted(symbol, undefined, &[description])?;
+    let description = context.string_rooted("events.maxEventTargetListenersWarned");
+    let warned_key = context.call_rooted(symbol, undefined, &[description])?;
+    let data = context.null_object_rooted()?;
+    let maximum = context.number(super::event_limits_shared_vm::DEFAULT_MAX_LISTENERS);
+    set(context, data, "defaultMaxListeners", maximum)?;
+    set(context, data, "maxKey", max_key)?;
+    set(context, data, "warnedKey", warned_key)?;
+    let assign = context.evaluate_script_rooted(
+        "(object, key, value) => { 'use strict'; object[key] = value; }",
+        "node:events/assignment.js",
+    )?;
+    set(context, data, "assign", assign)?;
+    let string = get(context, global, "String")?;
+    set(context, data, "stringCtor", string)?;
+    let max_default = context.host_function_with_data(
+        crate::host::shared_vm::operation("eventsDefaultMaxGet"),
+        data,
+    )?;
+    let abort_factory = context.evaluate_script_rooted(
+        crate::polyfills::shared_vm::ABORT,
+        "node:bootstrap/shared-vm/abort.js",
+    )?;
+    let abort_max = context.number(super::event_limits_shared_vm::ABORT_SIGNAL_MAX_LISTENERS);
+    let abort_state =
+        context.call_rooted(abort_factory, undefined, &[max_key, warned_key, abort_max])?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_abort_polyfill");
     let factory = context.evaluate_script_rooted(
         crate::polyfills::shared_vm::EVENT_TARGET,
         "node:bootstrap/shared-vm/event-target.js",
     )?;
-    context.call_rooted(factory, undefined, &[records_key])?;
+    context.call_rooted(
+        factory,
+        undefined,
+        &[records_key, max_key, warned_key, max_default],
+    )?;
     let target = get(context, global, "EventTarget")?;
     let yes = context.boolean(true);
     context.define_data_property_rooted(target, brand_key, yes, true, true, true)?;
@@ -162,7 +194,6 @@ pub(crate) fn initialize_targets(
     let signal_prototype = get(context, signal, "prototype")?;
     let target_prototype = get(context, target, "prototype")?;
     context.set_prototype_rooted(signal_prototype, target_prototype)?;
-    let data = context.null_object_rooted()?;
     set(context, data, "recordsKey", records_key)?;
     set(context, data, "brandKey", brand_key)?;
     set(context, data, "abortState", abort_state)?;

@@ -2,7 +2,7 @@
 
 pub const ABORT: &str = quench_js_check::checked_js!(
     r#"
-(() => {
+((maxKey, warnedKey, maxDefault) => {
   const signalStates = new WeakMap();
   const controllerSignals = new WeakMap();
   const dependantSignals = Symbol("kDependantSignals");
@@ -128,6 +128,8 @@ pub const ABORT: &str = quench_js_check::checked_js!(
           code: "ERR_ILLEGAL_CONSTRUCTOR",
         });
       }
+      this[maxKey] = maxDefault;
+      this[warnedKey] = false;
       signalStates.set(this, {
         aborted: false,
         reason: undefined,
@@ -309,12 +311,12 @@ pub const ABORT: &str = quench_js_check::checked_js!(
     configurable: true,
   });
   return (signal) => signalStates.get(signal);
-})();
+})
 "#
 );
 
 pub const EVENT_TARGET: &str = quench_js_check::checked_js!(
-    r#"(recordsKey) => {
+    r#"(recordsKey, maxKey, warnedKey, maxDefault) => {
 if (globalThis.Event === undefined) Object.defineProperty(globalThis, "Event", {
   value: class Event {
   constructor(type, options = {}) {
@@ -350,6 +352,8 @@ if (globalThis.EventTarget === undefined) Object.defineProperty(globalThis, "Eve
   value: class EventTarget {
   constructor() {
     this[recordsKey] = Object.create(null);
+    this[maxKey] = maxDefault();
+    this[warnedKey] = false;
   }
   addEventListener(type, listener, options = undefined) {
     if (listener == null || typeof listener !== "function") return;
