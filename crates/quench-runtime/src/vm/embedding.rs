@@ -607,6 +607,36 @@ impl<H: Host> Vm<H> {
         self.to_string(&program, value)
     }
 
+    pub(crate) fn embedding_numeric_update(
+        &mut self,
+        root: RootId,
+        decrement: bool,
+    ) -> Result<Value, JsError> {
+        let value = self.embedding_value(root)?;
+        let program = self.embedding_program()?;
+        let numeric = self.to_numeric(&program, value)?;
+        self.with_call_roots(
+            [numeric].into_iter().filter(|value| value.is_heap()),
+            |vm| vm.numeric_update(&program, numeric, decrement),
+        )
+    }
+
+    pub(crate) fn embedding_subtract(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<Value, JsError> {
+        let left = self.embedding_value(left)?;
+        let right = self.embedding_value(right)?;
+        let program = self.embedding_program()?;
+        self.binary(
+            &program,
+            oxc_ast::ast::BinaryOperator::Subtraction as u32,
+            left,
+            right,
+        )
+    }
+
     pub(crate) fn embedding_greater_than(
         &mut self,
         left: RootId,
@@ -711,6 +741,12 @@ impl<H: Host> Vm<H> {
         let program = self.embedding_program()?;
         let source = self.heap.alloc(Cell::String(source.into()));
         self.json_parse(&program, &[source])
+    }
+
+    pub(crate) fn stringify_embedding_json(&mut self, root: RootId) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        let value = self.embedding_value(root)?;
+        self.json_stringify(&program, &[value])
     }
 
     pub(crate) fn create_embedding_array(&mut self, values: &[RootId]) -> Result<Value, JsError> {

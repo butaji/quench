@@ -2365,3 +2365,1109 @@ socket.on('close',hadError=>{{result.push(['close',hadError]);console.log(JSON.s
         String::from_utf8_lossy(&observations[1].stdout)
     );
 }
+
+#[test]
+fn emitter_callable_construction_matches_metadata_defaults_and_numeric_counters() {
+    const SOURCE: &str = r#"
+const EE=require('events'),result=[];
+function view(emitter){return Reflect.ownKeys(emitter).map(key=>[typeof key==='symbol'?String(key):key,typeof key==='symbol'?Symbol.keyFor(key)??null:null,typeof emitter[key]==='object'?'object':emitter[key]??'undefined'])}
+const emitter=new EE();result.push(EE.name,EE.length,emitter instanceof EE,view(emitter),Object.getPrototypeOf(emitter._events)===null);
+function Derived(){EE.call(this)}Object.setPrototypeOf(Derived.prototype,EE.prototype);
+const left=new Derived(),right=new Derived();left.on('x',()=>{});result.push(left instanceof EE,right.listenerCount('x'),left._eventsCount,right._eventsCount);
+const original=emitter._events;EE.init.call(emitter);result.push(emitter._events===original,view(emitter));
+const inherited=Object.create(emitter);EE.call(inherited);result.push(inherited._events!==emitter._events,inherited._eventsCount);
+EE.captureRejections=true;const overridden=new EE({captureRejections:false});const capture=Object.getOwnPropertySymbols(overridden).find(key=>String(key)==='Symbol(kCapture)');result.push(overridden[capture],Object.hasOwn(overridden,'captureRejections'));
+const descriptor=Object.getOwnPropertyDescriptor(EE,'captureRejections');result.push(descriptor.enumerable,descriptor.configurable,EE.captureRejections);
+EE.captureRejections=false;
+for(const captureRejections of [undefined,null,false,0,true,1,'x',{},0n,1n]){
+ try{const value=new EE({captureRejections});result.push([captureRejections===true?'true':'other',value[capture]])}catch(error){result.push([error.name,error.code,error.message])}
+}
+let reads=0;const options={get captureRejections(){reads++;return reads<3}};const counted=new EE(options);result.push(reads,counted[capture]);
+for(const value of [undefined,null,1,{},'x']){try{EE.captureRejections=value}catch(error){result.push([error.name,error.code,error.message])}}
+const counts=new EE();counts._eventsCount='7';counts.on('x',()=>{});result.push(counts._eventsCount,typeof counts._eventsCount);counts.removeAllListeners('x');result.push(counts._eventsCount);
+counts._eventsCount=7n;counts.on('big',()=>{});result.push(String(counts._eventsCount),typeof counts._eventsCount);
+const trace=[];counts._eventsCount={valueOf(){trace.push('valueOf');return 3}};counts.on('converted',()=>{});result.push(trace,counts._eventsCount);
+const marker={};counts._eventsCount={valueOf(){throw marker}};try{counts.on('throws',()=>{})}catch(error){result.push(error===marker,counts.listenerCount('throws'))}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn emitter_capture_rejections_preserves_thenable_identity_and_tick_order() {
+    const SOURCE: &str = r#"
+const EE=require('events'),result=[],marker={};
+const disabled=new EE();disabled.on('x',()=>({get then(){throw marker}}));result.push(['disabled',disabled.emit('x')]);
+const emitter=new EE({captureRejections:true});let gets=0;
+const thenable={get then(){gets++;return function(resolve,reject){result.push(['then',this===thenable,resolve===undefined,arguments.length]);reject(marker)}}};
+emitter[EE.captureRejectionSymbol]=function(error,type,...args){result.push(['rejection',this===emitter,error===marker,type,args])};
+emitter.on('event',()=>thenable);result.push('before');result.push(emitter.emit('event',1,'two'),'after',gets);
+const throws=new EE({captureRejections:true});throws.on('error',error=>result.push(['getter-error',error===marker]));throws.on('throws',()=>({get then(){throw marker}}));throws.emit('throws');
+const promiseEmitter=new EE({captureRejections:true});const first={},second={};
+promiseEmitter.on('event',()=>Promise.reject(first));promiseEmitter.on('error',error=>{result.push(['error',error===first]);return Promise.reject(second)});
+process.on('unhandledRejection',error=>result.push(['unhandled',error===second]));promiseEmitter.emit('event');
+setImmediate(()=>console.log(JSON.stringify(result)));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn primitive_constructor_names_descriptors_and_prototype_aliases_match_node() {
+    const SOURCE: &str = r#"
+const result=[];
+for(const constructor of [Number,String]){
+ const descriptor=Object.getOwnPropertyDescriptor(constructor,'name');
+ result.push([constructor.name,constructor.prototype.constructor===constructor,descriptor.value,descriptor.writable,descriptor.enumerable,descriptor.configurable]);
+}
+result.push((42).constructor.name,'value'.constructor.name,new Number(1).constructor.name,new String('x').constructor.name);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn util_custom_inspection_preserves_depth_receiver_and_hook_order() {
+    const SOURCE: &str = r#"
+const util=require('util'),inspect=util.inspect,key=Symbol.for('nodejs.util.inspect.custom'),result=[],calls=[];
+const object={};Object.defineProperty(object,key,{value:function(depth,options,fn){calls.push([this===object,depth,options.depth,options.customInspect,fn===inspect]);return 'custom'}});
+result.push(inspect(object,{depth:-1}),inspect({object},{depth:1}),inspect(object,{depth:null}));
+let reads=0;const disabled={};Object.defineProperty(disabled,key,{get(){reads++;throw new Error('getter')}});
+for(const customInspect of [false,0,null])result.push(inspect(disabled,{customInspect}));result.push(reads);
+const returned={};Object.defineProperty(returned,key,{value(){return {value:1}}});result.push(inspect(returned,{depth:0}));
+const self={value:1};Object.defineProperty(self,key,{value(){return this}});result.push(inspect(self));
+function customFunction(){}customFunction[key]=()=> 'function hook';result.push(inspect(customFunction));
+const error=new Error('unused');error[key]=()=> 'error hook';result.push(inspect(error));
+const marker={};const getter={};Object.defineProperty(getter,'constructor',{get(){throw marker}});Object.defineProperty(getter,key,{value(){return 'no constructor getter'}});result.push(inspect(getter));
+const prototype=Object.create(null);Object.defineProperty(prototype,'constructor',{value:{prototype}});let prototypeCalls=0;Object.defineProperty(prototype,key,{value(){prototypeCalls++;return 'unexpected'}});inspect(prototype);result.push(prototypeCalls);
+const throwing={};Object.defineProperty(throwing,key,{value(){throw marker}});try{inspect(throwing)}catch(error){result.push(error===marker)}
+const saved=inspect.custom;inspect.custom=Symbol('replacement');result.push(inspect(object));inspect.custom=saved;
+console.log(JSON.stringify({result,calls}));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn dom_event_phase_constants_match_node_descriptors() {
+    const SOURCE: &str = r#"
+const result=[];
+for(const name of ['NONE','CAPTURING_PHASE','AT_TARGET','BUBBLING_PHASE']){const d=Object.getOwnPropertyDescriptor(Event,name);result.push([name,d.value,d.writable,d.enumerable,d.configurable,Object.getOwnPropertyDescriptor(Event.prototype,name)===undefined]);}
+const event=new Event('phase');result.push(event.NONE,event.CAPTURING_PHASE,event.AT_TARGET,event.BUBBLING_PHASE);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn emitter_listener_store_tracks_nested_emission_and_copy_on_mutation() {
+    const SOURCE: &str = r#"
+const EE=require('events'),result=[];
+const idle=new EE();idle.setMaxListeners(0);const a=()=>{},b=()=>{},c=()=>{};idle.on('x',a).on('x',b);const list=idle._events.x;idle.on('x',c);result.push(idle._events.x===list,list.length);idle.removeListener('x',b);result.push(idle._events.x===list,list.length,list[0]===a,list[1]===c);
+const emitter=new EE();emitter.setMaxListeners(0);const calls=[];let old,key;
+function first(){calls.push('first');emitter.removeListener('x',second);const copy=emitter._events.x;emitter.on('x',last);result.push([old[key],copy!==old,copy===emitter._events.x,old.length,copy.length,copy.warned]);}
+function second(){calls.push('second')}function third(){calls.push('third')}function last(){calls.push('last')}
+emitter.on('x',first).on('x',second).on('x',third);old=emitter._events.x;old.warned=true;key=Object.getOwnPropertySymbols(old).find(s=>s.description==='events.emitting');result.push(typeof key);emitter.emit('x');result.push(calls,old[key],emitter._events.x[key]);
+const nested=new EE(),depths=[];let inside=false,nestedList,nestedKey;
+nested.on('x',()=>{depths.push(nestedList[nestedKey]);if(!inside){inside=true;nested.emit('x');depths.push(nestedList[nestedKey]);}}).on('x',()=>depths.push(nestedList[nestedKey]));nestedList=nested._events.x;nestedKey=Object.getOwnPropertySymbols(nestedList).find(s=>s.description==='events.emitting');nested.emit('x');result.push(depths,nestedList[nestedKey]);
+const throwing=new EE(),marker={};throwing.on('x',a).on('x',()=>{throw marker});const throwingList=throwing._events.x,throwingKey=Object.getOwnPropertySymbols(throwingList).find(s=>s.description==='events.emitting');try{throwing.emit('x')}catch(error){result.push(error===marker,throwingList[throwingKey]);}
+const duplicate=new EE();duplicate.on('x',a).on('x',b).on('x',a);duplicate.removeListener('x',a);result.push(duplicate.rawListeners('x').map(fn=>fn===a?'a':'b'));
+const once=new EE();once.once('x',a).once('x',a);const wrappers=once.rawListeners('x');once.removeListener('x',a);result.push(once.rawListeners('x')[0]===wrappers[0],once.listenerCount('x'));
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn emitter_removal_preserves_duplicate_notifications_and_numeric_rules() {
+    const SOURCE: &str = r#"
+const EE=require('events'),result=[],a=()=>{},b=()=>{};
+const notify=new EE();notify.on('x',a).on('x',a);const notifications=[];notify.on('removeListener',(type,listener)=>notifications.push([type,listener===a]));notify.removeAllListeners('x');result.push(notifications,notify._eventsCount);
+const order=new EE(),calls=[];function one(type){calls.push(['one',type])}function two(type){calls.push(['two',type])}order.on('x',a).on('removeListener',one).on('removeListener',two);order.removeAllListeners();result.push(calls,order._eventsCount,order.eventNames());
+const explicit=new EE();explicit.on('undefined',a).on('x',b);explicit.removeAllListeners(undefined);result.push(explicit.eventNames(),explicit._eventsCount);
+const numeric=new EE();numeric.on('x',a).on('y',b);numeric._eventsCount=2n;numeric.removeAllListeners('x');result.push(String(numeric._eventsCount),typeof numeric._eventsCount,numeric.listenerCount('x'));try{numeric.removeListener('y',b)}catch(error){result.push(error.name,numeric.listenerCount('y'));}
+const changed=new EE();let fired=0;changed.on('newListener',(type)=>{if(type==='newListener')fired++});changed.on('newListener',()=>{});result.push(fired);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn emitter_public_method_metadata_and_once_override_order_match_node() {
+    const SOURCE: &str = r#"
+const EE=require('events'),result=[],listener=()=>{};
+for(const name of ['addListener','on','prependListener','once','prependOnceListener','removeListener','off','removeAllListeners','emit','eventNames','listeners','rawListeners','listenerCount','getMaxListeners','setMaxListeners']){const d=Object.getOwnPropertyDescriptor(EE.prototype,name),fn=d.value;result.push([name,fn.name,fn.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(fn,'prototype')]);}
+result.push(EE.prototype.on===EE.prototype.addListener,EE.prototype.off===EE.prototype.removeListener,Object.keys(Reflect.construct(EE.prototype.emit,['x'])));
+const overridden=new EE(),calls=[];overridden.on=function(type,wrapper){calls.push([this===overridden,type,wrapper.name,wrapper.length,wrapper.listener===listener]);return 'ignored'};result.push(overridden.once('x',listener)===overridden);
+overridden.prependListener=function(type,wrapper){calls.push([this===overridden,type,wrapper.name,wrapper.length,wrapper.listener===listener]);return 'ignored'};result.push(overridden.prependOnceListener('y',listener)===overridden,calls);
+const once=new EE(),trace=[];function single(value){trace.push(['called',value])}once.once('x',single);const raw=once.rawListeners('x')[0];once.on('removeListener',(type)=>{if(type==='x'){trace.push('removed');raw('nested')}});once.emit('x','first');raw('again');result.push(trace,raw.listener===single,raw.name,raw.length);
+const poison=new EE(),marker={};let fired=0;poison.once('x',()=>fired++);const wrapped=poison.rawListeners('x')[0];poison.removeListener=()=>{throw marker};try{wrapped()}catch(error){result.push(error===marker)}poison.removeListener=EE.prototype.removeListener;wrapped();result.push(fired);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn internal_inspect_retains_canonical_identity_when_public_alias_changes() {
+    const SOURCE: &str = r#"
+const EE=require('events'),util=require('util'),original=util.inspect,result=[],calls=[];
+const emitter=new EE();emitter.setMaxListeners(1);emitter[Symbol.for('nodejs.util.inspect.custom')]=function(depth,options,fn){calls.push([this===emitter,depth,options.depth,fn===original]);return 'owned'};
+util.inspect=()=>{throw new Error('public inspector replaced')};
+process.emitWarning=warning=>result.push([warning.name,warning.message,warning.emitter===emitter,warning.type,warning.count]);emitter.on('x',()=>{}).on('x',()=>{});
+const errorValue={};errorValue[Symbol.for('nodejs.util.inspect.custom')]=function(depth,options,fn){calls.push([depth,fn===original]);return 'payload'};try{new EE().emit('error',errorValue)}catch(error){result.push([error.code,error.message,error.context===errorValue])}
+console.log(JSON.stringify({result,calls}));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn typed_array_fill_matches_node_bytes_coercion_and_live_view_ranges() {
+    const SOURCE: &str = r#"
+const result=[];
+for(const Ctor of [Uint8Array,Uint8ClampedArray,Int8Array,Uint16Array,Int16Array,Uint32Array,Int32Array,Float16Array,Float32Array,Float64Array])for(const value of [0,-0,1.5,257,-257,Infinity,NaN]){const whole=new Ctor(5),view=whole.subarray(1,4);const returned=view.fill(value,-2);result.push([Ctor.name,String(value),returned===view,Array.from(new Uint8Array(whole.buffer))]);}
+for(const Ctor of [BigInt64Array,BigUint64Array])for(const value of [0n,-1n,(2n**70n)+17n,-(2n**70n)-17n]){const whole=new Ctor(4),view=whole.subarray(1,3);view.fill(value);result.push([Ctor.name,String(value),Array.from(new Uint8Array(whole.buffer))]);}
+const trace=[],buffer=new ArrayBuffer(8,{maxByteLength:16}),tracking=new Uint8Array(buffer);tracking.fill({valueOf(){trace.push('value');return 7}},{valueOf(){trace.push('start');buffer.resize(3);return 1}},{valueOf(){trace.push('end');buffer.resize(6);return 5}});result.push(trace,Array.from(tracking));
+const fixedBuffer=new ArrayBuffer(8,{maxByteLength:16}),fixed=new Uint8Array(fixedBuffer,2,4);try{fixed.fill(9,{valueOf(){fixedBuffer.resize(3);return 0}})}catch(error){result.push(error.name,fixed.length)}
+const shared=new Uint16Array(new SharedArrayBuffer(8));shared.fill(0x4444,1,3);result.push(Array.from(shared));
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn util_text_codec_aliases_capture_initialized_global_constructors() {
+    const SOURCE: &str = r#"
+const util=require('util'),result=[],encoder=util.TextEncoder,decoder=util.TextDecoder;
+result.push(typeof encoder,typeof decoder,encoder===globalThis.TextEncoder,decoder===globalThis.TextDecoder,encoder.name,decoder.name);
+globalThis.TextEncoder=function replacedEncoder(){};globalThis.TextDecoder=function replacedDecoder(){};
+result.push(require('util')===util,util.TextEncoder===encoder,util.TextDecoder===decoder);
+const bytes=new encoder().encode('A€𤭢');result.push(Array.from(bytes),new decoder().decode(bytes));
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8_lossy(&observations[0].stdout),
+        String::from_utf8_lossy(&observations[1].stdout)
+    );
+}
+
+#[test]
+fn trace_categories_retain_enabled_objects_and_capture_array_policy() {
+    const SOURCE: &str = r#"
+const api=require('trace_events'),util=require('util'),result=[];
+for(const value of [undefined,null,1,'x',true,[],()=>{}])try{api.createTracing(value)}catch(e){result.push([e.name,e.code])}
+for(const categories of [undefined,null,'x',[1],[]])try{api.createTracing({categories})}catch(e){result.push([e.name,e.code])}
+const categories=['z','a','a'],tracing=api.createTracing({categories});
+result.push(tracing.constructor.name,tracing.enabled,tracing.categories,Reflect.ownKeys(tracing).length,api.getEnabledCategories());
+const direct=new tracing.constructor(['direct']);result.push(direct.categories,direct.enabled);direct.enable();result.push(api.getEnabledCategories());direct.disable();
+const proto=Object.getPrototypeOf(tracing);for(const name of ['enabled','categories']){const d=Object.getOwnPropertyDescriptor(proto,name);try{d.get.call({})}catch(e){result.push([e.name,e.message])}}
+
+tracing.enable();tracing.enable();result.push(tracing.enabled,api.getEnabledCategories());categories[0]='mutated';result.push(tracing.categories,api.getEnabledCategories(),util.inspect(tracing));
+tracing.disable();tracing.disable();result.push(tracing.enabled,api.getEnabledCategories());tracing.enable();result.push(api.getEnabledCategories());tracing.disable();
+let reads=0;const dynamic=api.createTracing({get categories(){reads++;return ['q']}});result.push(reads,dynamic.categories);
+let unreachable=api.createTracing({categories:['retained']});unreachable.enable();unreachable=undefined;gc();result.push(api.getEnabledCategories());
+const warnings=[];process.emitWarning=message=>warnings.push(message);const objects=[];for(let i=0;i<11;i++){const t=api.createTracing({categories:['x']});t.enable();objects.push(t)}result.push(warnings);for(const t of objects)t.disable();
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(executable);
+        command
+            .current_dir(directory.path())
+            .args(["--expose-gc", "--no-warnings", "-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert!(!observation.stdout.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn console_counters_and_timer_coercion_order_match_node() {
+    const SOURCE: &str = r#"
+const {Console}=require('console'),result=[],sink={write(){},on(){},removeListener(){}};
+const c=new Console(sink,sink);c.log=(...args)=>result.push(['log',...args]);process.emitWarning=message=>result.push(['warning',message]);
+c.count('x');c.count('x');c.countReset('x');c.countReset('x');c.count('x');c.count({toString(){return 'object'}});c.countReset({toString(){return 'object'}});
+try{c.count(Symbol('x'))}catch(e){result.push(['error',e.name])}
+process.hrtime=previous=>previous===undefined?[1,0]:[0,123000];
+c.time('a');c.time('a');c.timeLog('a','extra');c.timeEnd('a');c.timeLog('a');c.timeEnd('a');
+const trace=[],label={toString(){trace.push('label');return 'b'}};c.time(label);c.timeEnd(label);result.push(trace);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--no-warnings", "-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn tracing_writes_console_events_to_expanded_file_pattern() {
+    const SOURCE: &str = "console.count('x');console.count('x');console.countReset('x');console.time('a');setImmediate(()=>{console.timeLog('a');setImmediate(()=>console.timeEnd('a'))})";
+    let projections = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args([
+            "--trace-event-categories",
+            "node.console",
+            "--trace-event-file-pattern",
+            "${pid}-${rotation}.trace.json",
+            "-e",
+            SOURCE,
+        ]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let observation =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                .unwrap();
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        let paths: Vec<_> = std::fs::read_dir(directory.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(paths.len(), 1);
+        let document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&paths[0]).unwrap()).unwrap();
+        let events = document["traceEvents"].as_array().unwrap();
+        let pid = events[0]["pid"].as_u64().unwrap();
+        assert_eq!(
+            paths[0].file_name().unwrap().to_string_lossy(),
+            format!("{pid}-1.trace.json")
+        );
+        events
+            .iter()
+            .filter(|event| event["cat"] != "__metadata")
+            .map(|event| {
+                assert_eq!(event["pid"].as_u64(), Some(pid));
+                serde_json::json!([event["cat"], event["name"], event["ph"], event["args"]])
+            })
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(projections[0], projections[1]);
+}
+
+#[test]
+fn before_exit_restarts_referenced_work_and_precedes_exit() {
+    const SOURCE: &str = r#"
+const result=[];let visits=0;process.on('beforeExit',code=>{result.push(['beforeExit',code]);if(visits++===0)setImmediate(()=>result.push(['immediate']));});process.on('exit',code=>{result.push(['exit',code]);console.log(JSON.stringify(result))});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn child_launches_inherit_guest_cwd_and_resolve_relative_overrides() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("nested/other")).unwrap();
+    std::fs::write(
+        directory.path().join("child.cjs"),
+        "console.log(require('path').basename(process.cwd()))",
+    )
+    .unwrap();
+    const SOURCE: &str = r#"
+const cp=require('child_process'),path=require('path'),original=process.cwd(),child=path.join(original,'child.cjs'),result=[];process.chdir('nested');
+for(const [tag,options] of [['default',{}],['relative',{cwd:'other'}],['absolute',{cwd:original}]]){const r=cp.spawnSync(process.execPath,['-e',"console.log(require('path').basename(process.cwd()))"],options);result.push([tag,r.status,r.stdout.toString().trim(),!!r.error]);}
+let pending=3;for(const [tag,options] of [['async-default',{}],['async-relative',{cwd:'other'}],['fork-default',{silent:true,execArgv:[]}]]){const p=tag==='fork-default'?cp.fork(child,[],options):cp.spawn(process.execPath,['-e',"console.log(require('path').basename(process.cwd()))"],options);let text='';p.stdout.on('data',chunk=>text+=chunk);p.on('close',code=>{result.push([tag,code,text.trim()]);if(--pending===0)console.log(JSON.stringify(result.sort((a,b)=>a[0].localeCompare(b[0]))));});}
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn tracing_intrinsics_validate_in_order_and_serialize_with_original_json() {
+    const SOURCE: &str = r#"
+const {internalBinding}=require('internal/test/binding'),{trace,isTraceCategoryEnabled}=internalBinding('trace_events'),original=JSON.stringify,result=[],calls=[];
+for(const args of [[0,1,'x'],['bad','disabled',null],['bad','custom','x'],[98,'custom',1],[98,'custom','x','id'],[98,'custom','']])try{result.push(trace(...args))}catch(e){result.push([e.name,e.message])}
+try{isTraceCategoryEnabled({toString(){throw 'coercion'}})}catch(e){result.push([e.name,e.message])}
+JSON.stringify=()=>{throw 'public JSON'};
+const marker={};try{trace(98,'custom','throw',1,{toJSON(){throw marker}})}catch(e){result.push(e===marker)}
+result.push(trace(98,'disabled','ignored',null,{toJSON(){throw 'disabled data'}}));
+const data={toJSON(key){calls.push(['toJSON',key]);return {get value(){calls.push('value');return 7},list:[null,true,'text']}}};
+result.push(trace(98,'custom','payload',-1,data),trace(101,'custom','payload',-1),isTraceCategoryEnabled('custom'),isTraceCategoryEnabled('disabled'));
+console.log(original({result,calls}));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args([
+            "--no-warnings",
+            "--expose-internals",
+            "--trace-event-categories=custom",
+            "-e",
+            SOURCE,
+        ]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let observation =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                .unwrap();
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        let file: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(directory.path().join("node_trace.1.log")).unwrap(),
+        )
+        .unwrap();
+        let events = file["traceEvents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["cat"] != "__metadata")
+            .map(|e| serde_json::json!([e["ph"], e["cat"], e["name"], e["id"], e["args"]]))
+            .collect::<Vec<_>>();
+        (observation.stdout, events)
+    });
+    assert_eq!(observations[0], observations[1]);
+}
+
+#[test]
+fn trace_category_buffers_follow_activation_without_retaining_dead_views() {
+    const SOURCE: &str = r#"
+const {internalBinding}=require('internal/test/binding'),binding=internalBinding('trace_events'),api=require('trace_events'),result=[];
+const a=binding.getCategoryEnabledBuffer('custom'),b=binding.getCategoryEnabledBuffer('custom'),other=binding.getCategoryEnabledBuffer('other');result.push(a.constructor.name,a.length,a.byteLength,a.byteOffset,a.buffer.byteLength,a===b,a[0],b[0],other[0]);
+const first=api.createTracing({categories:['custom']}),second=api.createTracing({categories:['custom']});first.enable();result.push(a[0],b[0],other[0]);second.enable();first.disable();result.push(a[0],b[0]);second.disable();result.push(a[0],b[0]);
+for(let i=0;i<20;i++)binding.getCategoryEnabledBuffer('unreachable');gc();first.enable();result.push(a[0],b[0]);first.disable();
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args([
+            "--expose-gc",
+            "--expose-internals",
+            "--no-warnings",
+            "-e",
+            SOURCE,
+        ]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn environment_tracing_records_real_spans_and_matching_lifetime_ids() {
+    const SOURCE: &str = "setImmediate(()=>{});setTimeout(()=>{},1)";
+    let projections = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let directory = tempfile::tempdir().unwrap();
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args([
+            "--trace-event-categories=node.environment",
+            "-e",
+            SOURCE,
+        ]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let observation =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                .unwrap();
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        let file: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(directory.path().join("node_trace.1.log")).unwrap(),
+        )
+        .unwrap();
+        let events = file["traceEvents"].as_array().unwrap();
+        let lifetime: Vec<_> = events
+            .iter()
+            .filter(|e| e["name"] == "Environment")
+            .collect();
+        assert_eq!(lifetime.len(), 2);
+        assert_eq!(lifetime[0]["id"], lifetime[1]["id"]);
+        assert_eq!(lifetime[0]["ph"], "b");
+        assert_eq!(lifetime[1]["ph"], "e");
+        assert_eq!(
+            lifetime[0]["args"]["args"]["exec_args"],
+            serde_json::json!(["--trace-event-categories=node.environment", "-e", SOURCE])
+        );
+        let pid = lifetime[0]["pid"].as_u64().unwrap();
+        let mut projected = std::collections::BTreeSet::new();
+        for event in events.iter().filter(|e| e["cat"] != "__metadata") {
+            assert_eq!(event["pid"].as_u64(), Some(pid));
+            assert!(event["ts"].as_u64().is_some());
+            assert!(event["tts"].as_u64().is_some());
+            assert!(event["dur"].as_u64().is_some());
+            assert!(event["tdur"].as_u64().is_some());
+            projected.insert((
+                event["name"].as_str().unwrap().to_owned(),
+                event["ph"].as_str().unwrap().to_owned(),
+            ));
+        }
+        projected
+    });
+    assert_eq!(projections[0], projections[1]);
+}
+
+#[test]
+fn before_exit_routes_original_exceptions_before_restarting_work() {
+    const SOURCE: &str = r#"
+const marker={get stack(){throw 'handled stack read'}},result=[];let calls=0;
+process.on('beforeExit',()=>{result.push('before');if(calls++===0)throw marker});
+process.on('uncaughtException',error=>{result.push(error===marker);setImmediate(()=>result.push('immediate'))});
+process.on('exit',()=>console.log(JSON.stringify(result)));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn fatal_before_exit_errors_retain_diagnostics_and_final_exit_status() {
+    for status in [0, 7] {
+        let source = format!(
+            "process.on('exit',()=>{{process.exitCode={status}}});process.on('beforeExit',()=>{{throw new Error('before-exit-marker')}})"
+        );
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command.args(["-e", &source]);
+            if executable != "node" {
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            }
+            let observation =
+                quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                    .unwrap();
+            assert!(!observation.timed_out);
+            assert_eq!(
+                observation.exit_code,
+                Some(status),
+                "{}",
+                String::from_utf8_lossy(&observation.stderr)
+            );
+            assert!(observation.stdout.is_empty());
+            assert!(
+                String::from_utf8_lossy(&observation.stderr).contains("Error: before-exit-marker")
+            );
+        }
+    }
+}
+
+#[test]
+fn borrowed_emit_and_domain_errors_preserve_original_values() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),{EventEmitter}=require('events');
+const marker=new Error('borrowed');const bare=Object.create(null);
+try{EventEmitter.prototype.emit.call(bare,'error',marker);throw 'missing error'}catch(error){assert.strictEqual(error,marker)}
+assert.strictEqual(Object.hasOwn(bare,'_events'),false);
+assert.strictEqual(EventEmitter.prototype.emit.call({},'unused'),false);
+const domain=require('domain'),result=[];
+for(const value of [undefined,null,false,0,'',42,'fortytwo',true,marker]){
+ const emitter=new EventEmitter(),owner=domain.create();owner.add(emitter);
+ owner.on('error',error=>{
+  result.push(value?error===value:error instanceof Error);
+  if(!value)result.push(error.code,error.message);
+  if(error&&typeof error==='object')result.push(error.domain===owner,error.domainEmitter===emitter,error.domainThrown===false,Object.getOwnPropertyDescriptor(error,'domain').enumerable===false);
+ });emitter.emit('error',value);
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn static_event_listeners_project_records_and_delegate_public_hooks() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),{EventEmitter,getEventListeners}=require('events');
+function a(){}function b(){}
+for(const target of [new EventEmitter(),new EventTarget()]){
+ const add=target.on||target.addEventListener,remove=target.off||target.removeEventListener;
+ add.call(target,'x',a);add.call(target,'x',b);
+ const snapshot=getEventListeners(target,'x');assert.deepStrictEqual(snapshot,[a,b]);
+ snapshot.length=0;assert.deepStrictEqual(getEventListeners(target,'x'),[a,b]);
+ remove.call(target,'x',a);assert.deepStrictEqual(getEventListeners(target,'x'),[b]);
+ assert.deepStrictEqual(getEventListeners(target,'absent'),[]);
+}
+const calls=[],original={get listeners(){calls.push('get');return function(type){calls.push(this===original,type);return 42}}};
+assert.strictEqual(getEventListeners(original,'custom'),42);
+console.log(JSON.stringify([getEventListeners.name,getEventListeners.length,calls]));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn abort_listener_disposal_and_stopped_propagation_match_node() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),{addAbortListener,getEventListeners}=require('events');
+const result=[],controller=new AbortController(),signal=controller.signal;
+signal.addEventListener('abort',e=>{result.push('stop');e.stopImmediatePropagation()});
+signal.addEventListener('abort',()=>result.push('ordinary'));
+const disposable=addAbortListener(signal,e=>result.push('resist',e.target===signal));
+assert.strictEqual(Object.getPrototypeOf(disposable),null);
+assert.strictEqual(disposable[Symbol.dispose].length,0);
+const removed=addAbortListener(signal,()=>result.push('removed'));removed[Symbol.dispose]();removed[Symbol.dispose]();
+controller.abort();disposable[Symbol.dispose]();
+const already=addAbortListener(AbortSignal.abort(),function(){'use strict';result.push('queued',this===undefined,arguments.length)});
+already[Symbol.dispose]();result.push('sync');
+for(const bad of [undefined,null,{},1])assert.throws(()=>addAbortListener(bad,()=>{}),{code:'ERR_INVALID_ARG_TYPE'});
+for(const bad of [undefined,null,{}])assert.throws(()=>addAbortListener(new AbortController().signal,bad),{code:'ERR_INVALID_ARG_TYPE'});
+let options,removedCalls=0;const foreign={aborted:false,addEventListener(type,callback,value){options=value},removeEventListener(){removedCalls++}};
+const foreignDisposable=addAbortListener(foreign,()=>{});foreignDisposable[Symbol.dispose]();foreignDisposable[Symbol.dispose]();
+assert.strictEqual(Object.getPrototypeOf(options),null);assert(Object.isFrozen(options));assert.strictEqual(options.once,true);
+result.push(removedCalls,Object.getOwnPropertySymbols(options).length);
+queueMicrotask(()=>console.log(JSON.stringify(result)));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn abort_onabort_uses_the_ordered_handler_wrapper() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),{getEventListeners,listenerCount}=require('events'),result=[];
+const c=new AbortController(),s=c.signal;
+function first(){result.push('first')}function original(){result.push('old')}function replacement(){result.push('handler')}
+s.addEventListener('abort',first);s.onabort=original;
+const wrapper=getEventListeners(s,'abort')[1];
+assert.notStrictEqual(wrapper,original);assert.strictEqual(wrapper.name,'eventHandler');assert.strictEqual(wrapper.handler,original);
+s.addEventListener('abort',()=>result.push('last'));s.onabort=replacement;
+assert.strictEqual(s.onabort,replacement);assert.strictEqual(getEventListeners(s,'abort')[1],wrapper);
+assert.strictEqual(wrapper.handler,replacement);c.abort();
+const d=new AbortController();d.signal.onabort={handleEvent(){result.push('must not call')}};
+assert.strictEqual(typeof d.signal.onabort,'object');d.abort();
+const inactive=new AbortController().signal;
+for(const value of [null,original,null,{},replacement,replacement,null]){
+ inactive.onabort=value;result.push(listenerCount(inactive,'abort'),getEventListeners(inactive,'abort').length);
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn error_monitors_use_public_emit_and_capture_listener_mutations() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),{EventEmitter,errorMonitor}=require('events'),result=[];
+const emitter=new EventEmitter(),original=emitter.emit,marker=new Error('original');
+emitter.emit=function(type,...args){result.push(typeof type);return original.call(this,type,...args)};
+emitter.on(errorMonitor,error=>{assert.strictEqual(error,marker);result.push('monitor');emitter.on('error',error=>{assert.strictEqual(error,marker);result.push('handler')})});
+assert.strictEqual(emitter.emit('error',marker),true);
+let reads=0;const borrowed=Object.create(EventEmitter.prototype),records={error:error=>assert.strictEqual(error,marker)};
+Object.defineProperty(borrowed,'_events',{get(){reads++;return records}});
+assert.strictEqual(borrowed.emit('error',marker),true);assert.strictEqual(reads,1);
+const replaced=new EventEmitter();replaced.on(errorMonitor,()=>{replaced._events={error:()=>{throw 'wrong replacement handler'}}});
+assert.throws(()=>replaced.emit('error',marker),error=>error===marker);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn children_inherit_directory_identity_after_rename_and_unlink() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),fs=require('fs'),path=require('path'),cp=require('child_process');
+const parent=process.cwd(),preload=path.join(parent,'preload.cjs'),old=path.join(parent,'old'),renamed=path.join(parent,'renamed');
+fs.mkdirSync(old);process.chdir(old);fs.renameSync(old,renamed);
+assert.strictEqual(process.cwd(),renamed);
+const read='console.log(process.cwd())';
+let child=cp.spawnSync(process.execPath,['-e',read]);
+assert.strictEqual(child.status,0);assert.strictEqual(child.stdout.toString().trim(),renamed);assert.strictEqual(child.stderr.toString(),'');
+fs.rmdirSync(renamed);
+assert.strictEqual(process.cwd(),renamed);
+process.chdir(parent);const uncached=path.join(parent,'uncached');fs.mkdirSync(uncached);process.chdir(uncached);fs.rmdirSync(uncached);
+assert.throws(()=>process.cwd(),{code:'ENOENT',syscall:'uv_cwd',errno:-2});
+child=cp.spawnSync(process.execPath,['-e','0']);assert.strictEqual(child.status,0);assert.strictEqual(child.stderr.length,0);
+child=cp.spawnSync(process.execPath,['-r',preload,'-e','console.log(globalThis.fromPreload)']);
+assert.strictEqual(child.status,0);assert.strictEqual(child.stdout.toString(),'42\n');assert.strictEqual(child.stderr.toString(),'');
+child=cp.spawnSync(process.execPath,['-e',read],{cwd:'..'});
+assert.strictEqual(child.status,0);assert.strictEqual(child.stdout.toString().trim(),parent);
+const asyncChild=cp.spawn(process.execPath,['-e','0']);
+asyncChild.on('error',error=>{throw error});asyncChild.on('exit',(status,signal)=>{assert.strictEqual(status,0);assert.strictEqual(signal,null);console.log('directory-identity')});
+"#;
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("preload.cjs"),
+            "globalThis.fromPreload=42",
+        )
+        .unwrap();
+        let mut command = Command::new(executable);
+        command.current_dir(directory.path()).args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let observation =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5))
+                .unwrap();
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+        assert_eq!(observation.stdout, b"directory-identity\n");
+    }
+}
+
+#[test]
+fn coded_argument_errors_preserve_prototype_shape_and_constant_code_rendering() {
+    const SOURCE: &str = r#"
+const {getEventListeners}=require('events'),assert=require('assert');
+let first,second;try{getEventListeners('INVALID_EMITTER')}catch(error){first=error}try{getEventListeners(42)}catch(error){second=error}
+assert(first instanceof TypeError);assert.strictEqual(first.constructor,TypeError);
+const prototype=Object.getPrototypeOf(first),symbol=Object.getOwnPropertySymbols(prototype)[0];
+const result=[first.name,first.code,first.message,String(first),Reflect.ownKeys(first),
+ prototype===Object.getPrototypeOf(second),prototype===TypeError.prototype,
+ Reflect.ownKeys(prototype).map(key=>typeof key==='symbol'?key.description:key),
+ prototype[symbol],first.toString.name,first.toString.length,Object.hasOwn(first.toString,'prototype')];
+for(const name of ['code','message']){const d=Object.getOwnPropertyDescriptor(first,name);result.push([d.writable,d.enumerable,d.configurable])}
+first.code='changed';result.push(String(first));
+result.push(first.toString.call({name:'Custom',message:'marker',get code(){throw 'code must be captured'}}));
+const marker={};assert.throws(()=>first.toString.call({get name(){throw marker}}),error=>error===marker);
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}

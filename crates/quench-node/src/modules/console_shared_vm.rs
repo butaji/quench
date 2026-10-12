@@ -9,15 +9,23 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "node:console/Console.js",
     )?;
     let noop = context.host_function(crate::host::shared_vm::operation("consoleNoop"))?;
+    let initial_state = context.null_object_rooted()?;
+    let global = context.global_root()?;
+    let map = get(context, global, "Map")?;
+    for (name, value) in [("noop", noop), ("Map", map)] {
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(initial_state, key, value, true, true, true)?;
+    }
     let initialize = context.host_function_with_data(
         crate::host::shared_vm::operation("consoleInitializeWrite"),
-        noop,
+        initial_state,
     )?;
     let write =
         context.host_function_with_data(crate::host::shared_vm::operation("consoleWrite"), noop)?;
     let undefined = context.undefined();
     let constructor = context.call_rooted(factory, undefined, &[initialize, write])?;
     let prototype = get(context, constructor, "prototype")?;
+    super::console_timing_shared_vm::install(context, prototype)?;
     let trace = context.host_function(crate::host::shared_vm::operation("consoleTrace"))?;
     set(context, prototype, "trace", trace)?;
     let global = context.global_root()?;
@@ -122,7 +130,12 @@ pub(crate) fn initialize_write(
     let value = context.boolean(ignore);
     let key = context.string_rooted("_ignoreErrors");
     context.define_data_property_rooted(console, key, value, true, false, true)?;
-    let noop = context.host_function_data()?;
+    let initial_state = context.host_function_data()?;
+    let noop = get(context, initial_state, "noop")?;
+    let map = get(context, initial_state, "Map")?;
+    let times = context.construct_rooted(map, map, &[])?;
+    let key = context.string_rooted("_times");
+    context.define_data_property_rooted(console, key, times, true, true, true)?;
     for (stdout, name) in [
         (true, "_stdoutErrorHandler"),
         (false, "_stderrErrorHandler"),

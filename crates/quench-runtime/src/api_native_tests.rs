@@ -219,6 +219,7 @@ impl Host for TestHost {
             method "trap" (0) => typed_trap,
             method "construct" (2) => construct,
             method "compare" (2) => compare,
+            global "collectJSON" (0) => collect_json,
         ]
     }
 }
@@ -545,4 +546,51 @@ fn native_value_operations_reject_foreign_and_released_roots() {
             assert!(error.exception.is_none());
         }
     }
+}
+
+#[test]
+fn intrinsic_json_serialization_preserves_hooks_exceptions_and_scoped_roots() {
+    let (mut runtime, program, _) = initialized(
+        r#"
+var marker={tag:'original'},calls=[];
+var object={toJSON(key){calls.push(key);return {get value(){collectJSON();return 7}}}};
+var throwing={toJSON(){collectJSON();throw marker}};
+JSON.stringify=()=>{throw 'public alias'};
+"#,
+    );
+    let global = runtime.global_root().unwrap();
+    let object = property(&mut runtime, global, "object");
+    let throwing = property(&mut runtime, global, "throwing");
+    let marker = property(&mut runtime, global, "marker");
+    let serialized;
+    {
+        let mut context = NativeContext::new(&mut runtime.vm);
+        serialized = context.stringify_json_rooted(object).unwrap();
+        assert_eq!(
+            context.string_text(serialized).unwrap().as_deref(),
+            Some("{\"value\":7}")
+        );
+        let error = context.stringify_json_rooted(throwing).unwrap_err();
+        assert_eq!(
+            context.rooted_value(error.exception.unwrap()),
+            context.rooted_value(marker)
+        );
+        assert_eq!(error.error.thrown_value(), context.rooted_value(marker));
+        context.release_root(error.exception.unwrap());
+        let undefined = context.undefined();
+        let output = context.stringify_json_rooted(undefined).unwrap();
+        assert!(context.rooted_value(output).unwrap().is_undefined());
+    }
+    assert!(!runtime.root_is_live(serialized));
+    runtime.collect(&program).unwrap();
+    assert!(runtime.root_is_live(marker));
+}
+
+fn collect_json(
+    context: &mut NativeContext<'_, TestHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    context.collect()?;
+    Ok(context.undefined())
 }
