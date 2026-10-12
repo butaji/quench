@@ -1424,6 +1424,7 @@ dependencies = [
  "quench-regexp",
  "quench-stack",
  "quench-temporal",
+ "rayon",
  "rustc-hash",
  "smallvec",
  "unicode-normalization",
