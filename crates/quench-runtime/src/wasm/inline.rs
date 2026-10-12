@@ -7,6 +7,11 @@
 //! function label stood. Traps, memory and global accesses keep their meaning
 //! in the caller's instance; only the activation (and so the call depth that
 //! exhausts the stack) disappears.
+//!
+//! A function that calls may be copied only into its own call sites: a
+//! recursion unfolds by one level per round, the copy's own calls staying
+//! calls, so the recursion still runs and still exhausts the stack, only at
+//! a greater depth (the limit is the implementation's to choose).
 
 use wasmparser::{BlockType, Operator, ValType};
 
@@ -36,6 +41,8 @@ const INLINE_ROUNDS: usize = 2;
 /// A callee that can replace its call sites.
 #[derive(Clone)]
 pub(super) struct Leaf {
+    /// The body calls; it is copied only into its own call sites.
+    calls: bool,
     params: Vec<ValType>,
     result: Option<ValType>,
     /// Declared locals the body assigns before any read; they need no reset
@@ -53,15 +60,13 @@ fn numeric_value_type(ty: &WasmType) -> Option<ValType> {
     })
 }
 
-/// Operators a leaf must not contain: calls (which would make it a non-leaf)
-/// and exception handling, whose handler ranges stay per function.
+/// Operators that keep a body from being copied: tail calls, which would
+/// replace the caller's activation, and exception handling, whose handler
+/// ranges stay per function.
 fn disqualifies(operator: &Operator<'_>) -> bool {
     matches!(
         operator,
-        Operator::Call { .. }
-            | Operator::CallIndirect { .. }
-            | Operator::CallRef { .. }
-            | Operator::ReturnCall { .. }
+        Operator::ReturnCall { .. }
             | Operator::ReturnCallIndirect { .. }
             | Operator::ReturnCallRef { .. }
             | Operator::Try { .. }
@@ -100,6 +105,14 @@ fn leaves(
             }
             let params = u16::try_from(signature.params.len()).ok()?;
             Some(Leaf {
+                calls: operators.iter().any(|operator| {
+                    matches!(
+                        operator,
+                        Operator::Call { .. }
+                            | Operator::CallIndirect { .. }
+                            | Operator::CallRef { .. }
+                    )
+                }),
                 assigned_first: super::first_use_assigns(params, locals.len(), operators),
                 params: signature
                     .params
@@ -188,8 +201,10 @@ fn leaf_call<'l>(
         return None;
     };
     let callee = signatures.defined_index(*function_index)? as usize;
-    (callee != caller).then_some(())?;
-    Some((callee, leaves.get(callee)?.as_ref()?))
+    let leaf = leaves.get(callee)?.as_ref()?;
+    // A call-free body may enter any other function; a calling body only
+    // its own call sites.
+    ((callee == caller) == leaf.calls).then_some((callee, leaf))
 }
 
 /// Operators an inlined call to `leaf`, whose body is `body`, expands to:

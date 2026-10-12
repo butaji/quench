@@ -98,3 +98,4 @@ strip = "none"
 [patch.crates-io]
 oxc_parser = { path = "vendor/oxc-parser" }
 oxc_regular_expression = { path = "vendor/oxc-regular-expression" }
+cranelift-codegen = { path = "vendor/cranelift-codegen" }
