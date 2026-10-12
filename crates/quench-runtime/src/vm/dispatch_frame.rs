@@ -299,8 +299,10 @@ impl<H: Host> Vm<H> {
             frame.captured = true;
         }
         frame.with_base = self.with_stack.len();
-        self.with_stack
-            .extend(self.captured_with_objects_for_function(parent, function, p.kind));
+        if self.with_scope_entered {
+            self.with_stack
+                .extend(self.captured_with_objects_for_function(parent, function, p.kind));
+        }
         if id == super::ROOT_FUNCTION_ID {
             self.bind_module_imports(&mut frame)?;
         }

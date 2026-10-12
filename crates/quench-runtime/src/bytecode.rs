@@ -564,7 +564,7 @@ opcodes!(
     DefineArrayElement => WRITE_THROW; layout Scalar; meaning ArrayIndex, @ Register, @ fields(Register, Register, Unused),
     Binary => READ_THROW; layout Scalar; meaning BinaryOperator, @ NumericReturnable, @ fields(ResultRegister, Operand, Operand),
     IncDec => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Unused),
-    Unary => READ_THROW; layout Scalar; meaning UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
+    Unary => READ_THROW; layout Scalar; meaning UnaryOperator, @ Returnable, @ fields(ResultRegister, Register, Unused),
     Delete => READ_THROW; layout Scalar; meaning BooleanFlag, @ Register, @ fields(ResultRegister, Register, Register),
     CheckPrivate => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, Unused),
     PrivateIn => READ_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -907,8 +907,11 @@ impl Function {
 
     /// Whether the instruction at `pc` returns `register`. A call is in tail position only
     /// when the instruction after it returns that call's own result.
+    /// Whether the instruction at `pc` returns `register`. Only a wide predecessor can fall into
+    /// such a `Return` without carrying the return flag itself; see
+    /// `return_through_shared_returns`.
     pub(crate) fn returns_register_at(&self, pc: usize, register: Register) -> bool {
-        self.code.get(pc).is_some_and(|packed| {
+        !self.wide.is_empty() && self.code.get(pc).is_some_and(|packed| {
             let next = if packed.is_wide() {
                 self.wide[packed.wide_index()]
             } else {

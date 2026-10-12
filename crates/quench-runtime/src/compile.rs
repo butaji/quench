@@ -2141,6 +2141,7 @@ impl<'a> Compiler<'a> {
             capture_profile::report(&functions);
         }
         for function in &mut functions {
+            rewrite::return_through_shared_returns(function);
             function.dispatch = if self.mode == SpecializationMode::Enabled {
                 Self::dispatch_class(&function.code, &function.wide)
             } else {
