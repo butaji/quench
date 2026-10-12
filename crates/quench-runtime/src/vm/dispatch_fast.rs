@@ -1712,6 +1712,26 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// Two moves in a row (a parallel copy resolved in order): both
+    /// records run here, the second's value carried as its record carries
+    /// it. With `JUMP`, the unconditional jump after them runs here too, in
+    /// direction `BACKWARD`.
+    fn lane_move_pair<JUMP: bool, BACKWARD: bool>(cx, r, ip, i, view) {
+        r.set(i.a, r.get(i.b));
+        let next = following(ip);
+        // SAFETY: the view fuses a move only with a following move, and
+        // with `JUMP` a jump after it.
+        let second = unsafe { &*next };
+        let value = r.get(second.b);
+        if JUMP {
+            r.set(second.a, value);
+            return lane_jump(cx, r, following(next), BACKWARD, view, None);
+        }
+        produce!(cx, r, next, second.a, value, view)
+    }
+}
+
+lane_handler! {
     /// A move (`ADD` false) or an i32 add of a constant (`ADD` true) whose
     /// next record is an unconditional jump, as at a loop latch: both
     /// records run here, the result written as its own record writes it.
@@ -1973,6 +1993,88 @@ lane_handler! {
         }
         next!(cx, r, following(ip), view)
     }
+}
+
+lane_handler! {
+    /// An i32 load, with address field `ACC`, the i32 operator `OP` taking
+    /// the loaded value as its left (`LEFT`) or right operand, and the i32
+    /// store writing the operator's result (`mem[x] op= v`): three records
+    /// run here, each result written as its own record writes it. An access
+    /// the general path must run, or a trapping operator, exits at its
+    /// record.
+    fn lane_i32_update<OP: u16, LEFT: bool, ACC: u8>(cx, r, ip, i, view) {
+        let operator = const {
+            match I32BinaryOperator::from_register_op(opcode(OP)) {
+                Some(operator) => operator,
+                None => panic!("not an i32 register operator"),
+            }
+        };
+        // SAFETY: as for `lane_load`.
+        let Some(crate::WasmValue::I32(loaded)) = (unsafe {
+            view.memory.read(MemoryLoad::I32Load, lane_address::<ACC>(r, i, view))
+        }) else {
+            return exit(ip);
+        };
+        r.set(i.a, view.integers.encode(loaded));
+        let combine = following(ip);
+        // SAFETY: the view fuses a load only with a following operator and
+        // store.
+        let o = unsafe { &*combine };
+        let (left, right) = if LEFT { (loaded, r.i32(o.c)) } else { (r.i32(o.b), loaded) };
+        let Ok(result) = operator.evaluate(left, right) else {
+            return exit(combine);
+        };
+        r.set(o.a, view.integers.encode(result));
+        let store = following(combine);
+        // SAFETY: as above.
+        let access = unsafe { &*store };
+        // SAFETY: as for `lane_store`.
+        if unsafe {
+            view.memory.write(
+                MemoryStore::I32Store,
+                lane_address::<ACC_NONE>(r, access, view),
+                crate::WasmValue::I32(result),
+            )
+        }
+        .is_none()
+        {
+            return exit(store);
+        }
+        next!(cx, r, following(store), view)
+    }
+}
+
+/// The i32 update handler for register operator `op`, loaded value side
+/// `left` and load address field `acc`.
+fn i32_update_handler<H: Host>(op: Op, left: bool, acc: u8) -> Option<Handler> {
+    macro_rules! updates {
+        ($($op:ident),+) => {
+            match (op, left, acc) {
+                $(
+                    (Op::$op, false, ACC_NONE) => Some(lane_i32_update::<H, { Op::$op as u16 }, false, ACC_NONE> as Handler),
+                    (Op::$op, true, ACC_NONE) => Some(lane_i32_update::<H, { Op::$op as u16 }, true, ACC_NONE> as Handler),
+                    (Op::$op, false, ACC_C) => Some(lane_i32_update::<H, { Op::$op as u16 }, false, ACC_C> as Handler),
+                    (Op::$op, true, ACC_C) => Some(lane_i32_update::<H, { Op::$op as u16 }, true, ACC_C> as Handler),
+                )+
+                _ => None,
+            }
+        };
+    }
+    updates!(
+        WasmI32Add,
+        WasmI32Subtract,
+        WasmI32Multiply,
+        WasmI32And,
+        WasmI32Or,
+        WasmI32Xor,
+        WasmI32ShiftLeft,
+        WasmI32ShiftRightSigned,
+        WasmI32ShiftRightUnsigned,
+        WasmI32Equal,
+        WasmI32NotEqual,
+        WasmI32LessSigned,
+        WasmI32LessUnsigned
+    )
 }
 
 lane_handler! {
@@ -2784,6 +2886,29 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             records[pc].handler = ScaledIndex::<H>::HANDLERS[field][left] as *const ();
         }
     }
+    // An i32 load, the operator taking the loaded value and the store of
+    // its result run as one record.
+    for pc in 0..records.len().saturating_sub(2) {
+        let load = decoded_instruction(function, function.code[pc]);
+        let combine = decoded_instruction(function, function.code[pc + 1]);
+        let store = decoded_instruction(function, function.code[pc + 2]);
+        if load.op() != Op::WasmI32Load || store.op() != Op::WasmI32Store {
+            continue;
+        }
+        let field = [ACC_NONE, ACC_C]
+            .into_iter()
+            .find(|&acc| serves(records[pc].handler, Op::WasmI32Load, acc));
+        let left = [ACC_C, ACC_B]
+            .into_iter()
+            .position(|acc| serves(records[pc + 1].handler, combine.op(), acc));
+        if let (Some(field), Some(left)) = (field, left)
+            && store.a() == combine.a()
+            && serves(records[pc + 2].handler, Op::WasmI32Store, ACC_A)
+            && let Some(fused) = i32_update_handler::<H>(combine.op(), left == 1, field)
+        {
+            records[pc].handler = fused as *const ();
+        }
+    }
     // A constant that the next record stores runs with that store as one
     // record.
     for pc in 0..records.len().saturating_sub(1) {
@@ -2868,6 +2993,26 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             b: absorbed.b(),
             c,
         };
+    }
+    // Two plain moves in a row run as one record.
+    let mut pc = 0;
+    while pc + 1 < records.len() {
+        if serves(records[pc].handler, Op::Move, ACC_NONE)
+            && serves(records[pc + 1].handler, Op::Move, ACC_NONE)
+        {
+            // A jump after the pair joins it.
+            let jump = records
+                .get(pc + 2)
+                .and_then(|record| jump_direction(record.handler));
+            records[pc].handler = match jump {
+                None => lane_move_pair::<H, false, false> as Handler,
+                Some(false) => lane_move_pair::<H, true, false>,
+                Some(true) => lane_move_pair::<H, true, true>,
+            } as *const ();
+            pc += 2;
+        } else {
+            pc += 1;
+        }
     }
     // A plain move or add of a constant whose next record jumps runs with
     // that jump as one record.
