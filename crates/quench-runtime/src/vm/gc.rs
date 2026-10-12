@@ -472,6 +472,7 @@ impl<H: Host> Vm<H> {
                     .flat_map(|((global, _), template)| [*global, template.anchor]),
             )
             .chain(self.with_stack.iter().copied())
+            .chain(std::iter::once(self.instanceof_has_instance_holder))
             .chain(self.active_call_roots.iter().copied())
             .chain(
                 self.suspended
