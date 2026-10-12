@@ -83,6 +83,9 @@ pub(crate) struct Heap {
     properties: ValueArena,
     roots: RootTable,
     sparse_arrays: Option<Box<FxHashMap<u32, SparseElements>>>,
+    /// Live cells that hold weak references (`Cell::holds_weak_references`); collection prunes
+    /// weak entries only while some exist.
+    weak_holders: usize,
     #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
@@ -309,6 +312,7 @@ impl Heap {
         self.allocations += 1;
         self.total_allocations += 1;
         self.external_bytes += cell.external_bytes();
+        self.weak_holders += usize::from(cell.holds_weak_references());
         if let Some(index) = self.free.pop() {
             let slot = &mut self.slots.get_mut(index as usize).unwrap().cell;
             debug_assert!(slot.is_none(), "free-list slots hold no cell");
@@ -444,6 +448,7 @@ impl Heap {
         self.marks.clear();
         self.free.clear();
         self.external_bytes = 0;
+        self.weak_holders = 0;
         self.allocations = 0;
         self.threshold = MINIMUM_GC_ALLOCATION_HEADROOM;
         self.total_allocations = 0;
@@ -510,7 +515,11 @@ impl Heap {
             let mut ephemerons = weak::EphemeronWork::default();
             self.mark_work(&mut work, &mut object_roots, &mut ephemerons);
         }
-        let finalization_jobs = self.prune_weak_entries();
+        let finalization_jobs = if self.weak_holders == 0 {
+            Vec::new()
+        } else {
+            self.prune_weak_entries()
+        };
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             self.gc_profile.mark_nanos += mark_started.elapsed().as_nanos() as u64;
@@ -538,6 +547,7 @@ impl Heap {
                     }
                 } else if let Some(cell) = slot.cell.take() {
                     self.external_bytes = self.external_bytes.saturating_sub(cell.external_bytes());
+                    self.weak_holders -= usize::from(cell.holds_weak_references());
                     #[cfg(feature = "profile-memory")]
                     {
                         let object_slots = cell
@@ -553,6 +563,18 @@ impl Heap {
                     }
                     // Reused slots enter `free` only after their side-table entries are gone.
                     self.free.push(index as u32);
+                    // The commonest dead cells, plain objects and arrays without extras, own
+                    // nothing beyond an array's element backing.
+                    match cell {
+                        Cell::Object(object) if object.owns_no_allocation() => {
+                            std::mem::forget(object);
+                        }
+                        Cell::Array { object, elements } if object.owns_no_allocation() => {
+                            drop(elements);
+                            std::mem::forget(object);
+                        }
+                        cell => drop(cell),
+                    }
                     #[cfg(feature = "profile-aggregate")]
                     {
                         self.gc_profile.freed += 1;
@@ -594,6 +616,7 @@ impl Heap {
         object_roots: &mut impl FnMut(Value, u32, &mut Vec<Value>),
         ephemerons: &mut weak::EphemeronWork,
     ) {
+        let mut last_shared_elements: *const Vec<Value> = std::ptr::null();
         while let Some(value) = work.pop() {
             #[cfg(feature = "profile-aggregate")]
             {
@@ -602,9 +625,11 @@ impl Heap {
             let Some(index) = value.heap_index().map(|value| value as usize) else {
                 continue;
             };
-            let Some(slot) = self.slots.get_mut(index) else {
+            if index >= self.slots.len() {
                 continue;
-            };
+            }
+            // SAFETY: bounds-checked above.
+            let slot = unsafe { self.slots.get_unchecked_mut(index) };
             if Self::marked(&self.marks, index) || slot.cell.is_none() {
                 continue;
             }
@@ -615,8 +640,19 @@ impl Heap {
                 self.gc_profile.marked += 1;
                 self.gc_profile.marked_kinds[Self::cell_kind(cell) as usize] += 1;
             }
-            Self::children(value, cell, &self.properties, work, object_roots);
-            ephemerons.newly_marked(index as u32, cell, &self.marks, work);
+            Self::children(
+                value,
+                cell,
+                &self.properties,
+                &self.marks,
+                &mut last_shared_elements,
+                work,
+                object_roots,
+            );
+            // Ephemeron work exists only through a live WeakMap.
+            if self.weak_holders != 0 {
+                ephemerons.newly_marked(index as u32, cell, &self.marks, work);
+            }
             if let Some(arrays) = self.sparse_arrays.as_ref()
                 && matches!(cell, Cell::Array { .. })
                 && let Some(elements) = arrays.get(&(index as u32))
@@ -847,28 +883,42 @@ impl Heap {
                 .object_slots_changed(index as usize, slots);
         }
     }
+    /// Pushes the references `cell` traces. Its prototype, inline properties and array
+    /// elements, the bulk of a heap's edges, skip referents already marked, which would only
+    /// be popped and discarded. A copy-on-write element backing shared by many arrays is
+    /// traced by the first of them: `last_shared_elements` holds the latest such backing.
     fn children(
         owner: Value,
         cell: &Cell,
         properties: &ValueArena,
+        marks: &[u64],
+        last_shared_elements: &mut *const Vec<Value>,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(Value, u32, &mut Vec<Value>),
     ) {
+        // A reference beyond the mark bitmap names no slot and is dropped, as popping it would.
+        let unmarked_heap = |value: &Value| {
+            value.heap_index().is_some_and(|index| {
+                let index = index as usize;
+                marks
+                    .get(index / 64)
+                    .is_some_and(|word| word & (1 << (index % 64)) == 0)
+            })
+        };
         let mut object = |object: &Object| {
-            work.push(object.proto);
+            if unmarked_heap(&object.proto) {
+                work.push(object.proto);
+            }
             object_roots(owner, object.shape(), work);
-            work.extend(object.private_names().iter().map(|brand| brand.home));
+            if !object.owns_no_allocation() {
+                work.extend(object.private_names().iter().map(|brand| brand.home));
+                object.visit_stack_data_roots(|value| work.push(value));
+            }
             if let Some(values) = object.inline_properties() {
-                work.extend(
-                    values
-                        .iter()
-                        .copied()
-                        .filter(|value| value.is_heap() && !value.is_deleted()),
-                );
+                work.extend(values.iter().copied().filter(unmarked_heap));
             } else {
                 properties.append_heap_references(object.properties, work);
             }
-            object.visit_stack_data_roots(|value| work.push(value));
         };
         if let Some((value, buffer)) = cell.typed_array_backing() {
             object(value);
@@ -882,7 +932,15 @@ impl Heap {
                 elements,
             } => {
                 object(value);
-                work.extend(elements.iter().copied().filter(|value| value.is_heap()));
+                // Shared backings are immutable until copied, so one trace per cycle suffices.
+                let backing: *const Vec<Value> = &**elements;
+                if std::rc::Rc::strong_count(elements) > 1 {
+                    if *last_shared_elements == backing {
+                        return;
+                    }
+                    *last_shared_elements = backing;
+                }
+                work.extend(elements.iter().copied().filter(unmarked_heap));
             }
             Cell::ArrayBuffer { object: value, .. } => object(value),
             Cell::RegExp {
