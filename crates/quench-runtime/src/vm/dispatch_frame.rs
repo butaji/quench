@@ -181,6 +181,7 @@ impl<H: Host> Vm<H> {
     /// A known call stays within its instance, and a Wasm frame is never
     /// captured nor enters a `with` scope, so the callee's environment is
     /// the caller's: the instance environment.
+    #[inline(always)]
     pub(super) fn push_wasm_frame(
         &mut self,
         p: &ResidualProgram,
@@ -200,33 +201,32 @@ impl<H: Host> Vm<H> {
             .pop()
             .unwrap_or_else(|| Box::new(Frame::empty(program, with_base)));
         let caller = &self.frames[caller];
-        let parent = caller.env;
         let arguments_base = usize::from(arguments.base);
-        let local_arguments = usize::from(arguments.count.min(function.local_parameter_count()));
+        let arguments =
+            &caller.registers[arguments_base..arguments_base + usize::from(arguments.count)];
+        // Each slot is written once: parameters land where the function
+        // keeps them, every other local and register takes its default.
+        let local_arguments = &arguments[..arguments
+            .len()
+            .min(usize::from(function.local_parameter_count()))];
         frame.locals.clear();
-        frame
-            .locals
-            .extend_from_slice(&caller.registers[arguments_base..arguments_base + local_arguments]);
-        frame
-            .locals
-            .resize(usize::from(function.locals), Value::UNDEFINED);
+        if function.locals != 0 {
+            frame.locals.extend_from_slice(local_arguments);
+            frame
+                .locals
+                .resize(usize::from(function.locals), Value::UNDEFINED);
+        }
+        frame.prepare_wasm_registers(function, arguments);
         frame.context = CallContext::Internal;
         frame.function = id;
         frame.program = program;
         frame.pc = 0;
         frame.binding_site_pc = None;
-        frame.env = parent;
+        frame.env = caller.env;
         frame.this = Value::UNDEFINED;
         frame.captured = false;
         frame.with_base = with_base;
         frame.fixed_this = false;
-        frame.prepare_registers(function.registers, function.initial_register);
-        if let Some(base) = function.parameter_registers {
-            let base = usize::from(base);
-            let count = usize::from(arguments.count.min(function.params));
-            frame.registers[base..base + count]
-                .copy_from_slice(&caller.registers[arguments_base..arguments_base + count]);
-        }
         self.frames.push(frame);
         Ok(call_guard)
     }
@@ -881,6 +881,7 @@ impl<H: Host> Vm<H> {
     /// Return a Wasm frame the lane pushed to the pool. A Wasm activation
     /// touches only its locals and registers and runs no global lexical
     /// declarations, so only its register storage needs bounding.
+    #[inline(always)]
     pub(super) fn retire_wasm_frame(&mut self) {
         let mut frame = self.frames.pop().expect("pending frame is active");
         self.with_stack.truncate(frame.with_base);
