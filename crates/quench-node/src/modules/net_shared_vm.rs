@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 const FIRST_TRANSPORT_ID: u64 = 1;
 const TCP_READ_CHUNK: usize = 16 * 1024;
 const TCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, emitOperation) => {
   const invalidArgValue = (value, message) => {
     const error = new TypeError(message || `The argument 'options' is invalid. Received ${String(value)}`);
     error.code = 'ERR_INVALID_ARG_VALUE'; return error;
@@ -40,6 +40,8 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
         final(callback) { try { endOperation(this); callback(); } catch (error) { callback(error); } },
         destroy(error, callback) { try { destroyOperation(this, error); callback(error); } catch (failure) { callback(failure); } },
       });
+      const emitterEmit = this._emitter.emit;
+      this._emitter.emit = (event, ...args) => emitOperation(this, emitterEmit, event, ...args);
       this.allowHalfOpen = false;
       this._encoding = null;
       this._handle = options.handle || null;
@@ -421,7 +423,8 @@ pub(crate) enum TransportEvent {
     },
     Error {
         socket: u64,
-        message: String,
+        error: std::io::Error,
+        syscall: &'static str,
     },
 }
 
@@ -718,17 +721,23 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 Ok(0) => {
                     events.push(TransportEvent::Error {
                         socket: id,
-                        message: std::io::Error::from(std::io::ErrorKind::WriteZero).to_string(),
+                        error: std::io::Error::from(std::io::ErrorKind::WriteZero),
+                        syscall: "write",
                     });
                     terminal.push(id);
                     continue;
                 }
                 Ok(written) => socket.write_offset += written,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                    ) => {}
                 Err(error) => {
                     events.push(TransportEvent::Error {
                         socket: id,
-                        message: error.to_string(),
+                        error,
+                        syscall: "write",
                     });
                     terminal.push(id);
                     continue;
@@ -764,8 +773,9 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 }
                 Ok(count) => received.extend_from_slice(&buffer[..count]),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(error) => {
-                    failure = Some(error.to_string());
+                    failure = Some(error);
                     break;
                 }
             }
@@ -776,10 +786,11 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 bytes: received,
             });
         }
-        if let Some(message) = failure {
+        if let Some(error) = failure {
             events.push(TransportEvent::Error {
                 socket: id,
-                message,
+                error,
+                syscall: "read",
             });
             terminal.push(id);
         } else if ended {
@@ -852,8 +863,18 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let connect = context.host_function(crate::host::shared_vm::operation("netConnect"))?;
     let write = context.host_function(crate::host::shared_vm::operation("netSocketWrite"))?;
     let end = context.host_function(crate::host::shared_vm::operation("netSocketEnd"))?;
-    let destroy = context.host_function(crate::host::shared_vm::operation("netSocketDestroy"))?;
-    let encoding = context.host_function(crate::host::shared_vm::operation("netSocketSetEncoding"))?;
+    // Destruction latches its outcome before guest error handlers run.
+    let close_outcome = context.symbol_rooted(Some("kSocketCloseHadError"));
+    let destroy = context.host_function_with_data(
+        crate::host::shared_vm::operation("netSocketDestroy"),
+        close_outcome,
+    )?;
+    let emit = context.host_function_with_data(
+        crate::host::shared_vm::operation("netSocketEmit"),
+        close_outcome,
+    )?;
+    let encoding =
+        context.host_function(crate::host::shared_vm::operation("netSocketSetEncoding"))?;
     let listen = context.host_function(crate::host::shared_vm::operation("netServerListen"))?;
     let close = context.host_function(crate::host::shared_vm::operation("netServerClose"))?;
     let address = context.host_function(crate::host::shared_vm::operation("netServerAddress"))?;
@@ -875,7 +896,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         factory,
         undefined,
         &[
-            duplex, connect, write, end, destroy, encoding, listen, close, address, account,
+            duplex, connect, write, end, destroy, encoding, listen, close, address, account, emit,
         ],
     )?;
     for name in ["Socket", "Stream", "Server", "BlockList", "SocketAddress", "connect", "createConnection", "createServer"] {
@@ -1093,6 +1114,11 @@ pub(crate) fn destroy_operation(
         .first()
         .copied()
         .ok_or_else(|| RootedError::host("net.Socket.destroy requires a socket"))?;
+    let error = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let had_error = context.truthy_rooted(error)?;
+    let value = context.boolean(had_error);
+    let key = context.host_function_data()?;
+    context.define_data_property_rooted(socket, key, value, true, true, true)?;
     let id = match socket_id(context, socket) {
         Ok(id) => id,
         Err(_) => return Ok(socket),
@@ -1313,4 +1339,29 @@ pub(crate) fn set_timeout(
         .net_auto_select_family_attempt_timeout =
         crate::modules::net_config::normalize_auto_select_family_attempt_timeout(value as u64);
     Ok(context.undefined())
+}
+
+/// Adapt the generic stream completion to Socket's latched destruction outcome.
+pub(crate) fn emit_operation(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let undefined = context.undefined();
+    let socket = args.first().copied().unwrap_or(undefined);
+    let emit = args.get(1).copied().unwrap_or(undefined);
+    let event = args.get(2).copied().unwrap_or(undefined);
+    let key = context.string_rooted("_emitter");
+    let emitter = context.get_property_rooted(socket, key)?;
+    if args.len() == 3 && context.string_text(event)?.as_deref() == Some("close") {
+        let key = context.host_function_data()?;
+        let outcome = context.get_property_rooted(socket, key)?;
+        if context
+            .rooted_value(outcome)
+            .is_some_and(|value| value.as_bool().is_some())
+        {
+            return context.call_rooted(emit, emitter, &[event, outcome]);
+        }
+    }
+    context.call_rooted(emit, emitter, args.get(2..).unwrap_or_default())
 }
