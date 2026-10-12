@@ -399,6 +399,7 @@ impl<H: Host> Vm<H> {
         self.field_add_sets.clear();
         self.megamorphic_field_indices.fill(NO_MEGAMORPHIC_FIELD);
         self.megamorphic_fields.clear();
+        self.inherited_field_caches.clear();
         self.instanceof_constructor_layout = None;
     }
     fn invalidate_method_caches_for_key(&mut self, key: PropertyKey) {
@@ -930,6 +931,10 @@ impl<H: Host> Vm<H> {
         let Some(receiver) = self.shape_property_lookup(object, atom) else {
             return self.get_property(p, object, atom);
         };
+        if let Some(hit) = self.cached_inherited_field_value(site, receiver) {
+            self.profile.field_cache_hit(usize::from(hit.tier), hit.depth);
+            return Ok(hit.value);
+        }
         if self
             .property_attributes(object, PropertyKey::string(atom))
             .is_some_and(|attributes| attributes.accessor)
@@ -964,7 +969,88 @@ impl<H: Host> Vm<H> {
             );
             return Ok(value);
         }
+        if let Some((cache, value)) = self.inherited_field(receiver, atom) {
+            self.inherited_field_caches.insert(site, cache);
+            return Ok(value);
+        }
         self.get_property(p, object, atom)
+    }
+
+    /// An inherited data field cached by `inherited_field`: the receiver keeps its shape and
+    /// each prototype up to the holder still has its recorded shape. Consulted on the miss
+    /// path, so the inline cache tiers keep their shape.
+    #[inline(always)]
+    fn cached_inherited_field_value(&self, site: usize, receiver: &Object) -> Option<FieldCacheHit> {
+        let cache = self.inherited_field_caches.get(&site)?;
+        if cache.receiver != receiver.shape() {
+            return None;
+        }
+        let mut prototype = receiver.proto;
+        let mut holder = None;
+        for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
+            let Some(Cell::Object(data)) = self.heap.get(prototype) else {
+                return None;
+            };
+            if data.shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
+                return None;
+            }
+            prototype = data.proto;
+            holder = Some(data);
+        }
+        // SAFETY: the holder's shape was recorded together with this data slot.
+        let value = unsafe { self.heap.property_get_unchecked(holder?, usize::from(cache.slot)) };
+        Some(FieldCacheHit {
+            value,
+            tier: 0,
+            depth: u16::from(cache.depth),
+        })
+    }
+
+    /// A data field of `atom` held more than one prototype above `object`, which lacks it,
+    /// with every prototype on the way an ordinary non-dictionary object: the cache entry that
+    /// answers the load again, and the value.
+    #[cold]
+    #[inline(never)]
+    fn inherited_field(&self, object: &Object, atom: Atom) -> Option<(InheritedFieldCache, Value)> {
+        if self.shape_slot(object.shape(), atom).is_some() {
+            return None;
+        }
+        let mut cache = InheritedFieldCache {
+            receiver: object.shape(),
+            prototype_shapes: [NO_FIELD_HOLDER; INHERITED_FIELD_CACHE_MAX_DEPTH],
+            depth: 0,
+            slot: 0,
+        };
+        let mut prototype = object.proto;
+        for depth in 0..INHERITED_FIELD_CACHE_MAX_DEPTH {
+            let Some(Cell::Object(data)) = self.heap.get(prototype) else {
+                return None;
+            };
+            let shape = data.shape();
+            if data.is_module_namespace()
+                || data.is_arguments_object()
+                || self.shape_is_dictionary(shape)
+            {
+                return None;
+            }
+            cache.prototype_shapes[depth] = shape;
+            if let Some(slot) = self.shape_slot(shape, atom) {
+                // The immediate prototype is the regular field cache's holder tier.
+                if depth == 0
+                    || slot >= FIELD_CACHE_SLOT_CAPACITY
+                    || self
+                        .shape_attribute(shape, slot)
+                        .is_some_and(|attributes| attributes.accessor)
+                {
+                    return None;
+                }
+                cache.depth = (depth + 1) as u8;
+                cache.slot = slot as u16;
+                return Some((cache, self.heap.property_get(data, slot)?));
+            }
+            prototype = data.proto;
+        }
+        None
     }
 
     #[cold]

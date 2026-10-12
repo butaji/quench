@@ -352,6 +352,19 @@ struct FieldCache {
     slot: u16,
 }
 const NO_FIELD_HOLDER: u32 = u32::MAX;
+/// Prototypes an inherited field load may traverse to its holder. DeltaBlue's constraint
+/// methods sit three prototypes above their instances; deeper chains stay uncached.
+const INHERITED_FIELD_CACHE_MAX_DEPTH: usize = 4;
+/// A field load answered by a data property `depth` prototypes above a receiver of shape
+/// `receiver`: the chain still has exactly `prototype_shapes[..depth]`, the last of which
+/// holds the property at `slot`.
+#[derive(Clone, Copy)]
+struct InheritedFieldCache {
+    receiver: u32,
+    prototype_shapes: [u32; INHERITED_FIELD_CACHE_MAX_DEPTH],
+    depth: u8,
+    slot: u16,
+}
 const NO_FIELD_RECEIVER: u32 = u32::MAX;
 // DeltaBlue's measured inherited writes reach three prototypes; keep the
 // residual cache bounded while covering that common constructor shape.
@@ -817,6 +830,9 @@ pub(crate) struct Vm<H> {
     well_known_symbols: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
     field_caches: Vec<FieldCache>,
+    /// Field load sites whose data property was found beyond the immediate prototype, by
+    /// global site index; cleared with the field caches.
+    inherited_field_caches: FxHashMap<usize, InheritedFieldCache>,
     field_add_indices: Vec<u32>,
     field_add_sets: Vec<FieldAddCacheSet>,
     megamorphic_field_indices: Vec<u32>,
@@ -1419,6 +1435,7 @@ impl<H: Host> Vm<H> {
             regexp_flag_accessors,
         };
         self.field_caches = vec![EMPTY_CACHE; program.cache_sites as usize];
+        self.inherited_field_caches.clear();
         self.field_add_indices = vec![NO_FIELD_ADD_SET; program.cache_sites as usize];
         self.field_add_sets.clear();
         self.megamorphic_field_indices = vec![NO_MEGAMORPHIC_FIELD; program.cache_sites as usize];
