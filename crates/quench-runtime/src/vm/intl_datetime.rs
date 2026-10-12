@@ -651,7 +651,11 @@ impl<H: Host> Vm<H> {
                     ..
                 }) => (
                     DateTimeDefaults::TemporalZonedDateTime(ZONED_DATE_TIME_DEFAULTS),
-                    Some((**epoch_nanoseconds, time_zone.to_string(), calendar.to_string())),
+                    Some((
+                        **epoch_nanoseconds,
+                        time_zone.to_string(),
+                        calendar.to_string(),
+                    )),
                 ),
                 _ => return Err(self.type_error(p, "Invalid Temporal value".into())),
             }
@@ -1469,8 +1473,10 @@ impl<H: Host> Vm<H> {
             entries.push(entry);
         }
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(entries),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(entries),
+            ),
         }))
     }
 

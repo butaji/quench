@@ -587,8 +587,10 @@ impl<H: Host> Vm<H> {
                 .map(|part| vm.heap.alloc(Cell::String(part)))
                 .collect();
             Ok(vm.heap.alloc(Cell::Array {
-                object: Self::empty_object(vm.array_proto),
-                elements: Rc::new(values),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(vm.array_proto),
+                    Rc::new(values),
+                ),
             }))
         })
     }

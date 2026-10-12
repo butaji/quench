@@ -509,10 +509,15 @@ impl<H: Host> Vm<H> {
                     return self.property_descriptor_object(Value::UNDEFINED, attributes);
                 }
                 let value = match self.heap.get(target) {
-                    Some(Cell::Array { elements, .. }) => elements
-                        .get(index)
-                        .copied()
-                        .filter(|value| !value.is_deleted()),
+                    Some(Cell::Array {
+                        object: array_object,
+                    }) => {
+                        let elements = array_object.elements();
+                        elements
+                            .get(index)
+                            .copied()
+                            .filter(|value| !value.is_deleted())
+                    }
                     _ => None,
                 }
                 .or_else(|| {
@@ -563,8 +568,7 @@ impl<H: Host> Vm<H> {
         key: Value,
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        let Some((target, handler)) = self.proxy_parts(proxy)
-        else {
+        let Some((target, handler)) = self.proxy_parts(proxy) else {
             unreachable!("Proxy descriptor dispatch")
         };
         if handler.is_null() {

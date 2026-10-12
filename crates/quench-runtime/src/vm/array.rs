@@ -23,15 +23,20 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn array_value_at(&self, array: Value, index: usize) -> Value {
         let value = match self.heap.get(array) {
-            Some(Cell::Array { elements, .. }) => elements
-                .get(index)
-                .copied()
-                .filter(|value| !value.is_deleted())
-                .or_else(|| {
-                    self.heap
-                        .sparse_get(array, index)
-                        .filter(|value| !value.is_deleted())
-                }),
+            Some(Cell::Array {
+                object: array_object,
+            }) => {
+                let elements = array_object.elements();
+                elements
+                    .get(index)
+                    .copied()
+                    .filter(|value| !value.is_deleted())
+                    .or_else(|| {
+                        self.heap
+                            .sparse_get(array, index)
+                            .filter(|value| !value.is_deleted())
+                    })
+            }
             _ => None,
         };
         value.unwrap_or(Value::UNDEFINED)

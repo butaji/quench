@@ -207,9 +207,13 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<(Value, usize)>, JsError> {
         // The private state tuple owns [segmenter, input, boundaries]; public
         // Segments and cursors share it without retaining one another.
-        let Some(Cell::Array { elements, .. }) = self.heap.get(data) else {
+        let Some(Cell::Array {
+            object: array_object,
+        }) = self.heap.get(data)
+        else {
             return Err(self.type_error(p, "incompatible Segments receiver".into()));
         };
+        let elements = array_object.elements();
         let [segmenter, input, boundaries] = elements.as_slice() else {
             return Err(self.type_error(p, "incompatible Segments receiver".into()));
         };
@@ -220,9 +224,13 @@ impl<H: Host> Vm<H> {
         if index >= text.units().len() {
             return Ok(None);
         }
-        let Some(Cell::Array { elements, .. }) = self.heap.get(boundaries) else {
+        let Some(Cell::Array {
+            object: array_object,
+        }) = self.heap.get(boundaries)
+        else {
             return Ok(None);
         };
+        let elements = array_object.elements();
         let end = elements
             .partition_point(|boundary| boundary.as_number().unwrap_or(0.0) <= index as f64);
         let Some((start, end)) = end

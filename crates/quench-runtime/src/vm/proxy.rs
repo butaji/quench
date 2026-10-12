@@ -9,8 +9,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        let Some((target, handler)) = self.proxy_parts(proxy)
-        else {
+        let Some((target, handler)) = self.proxy_parts(proxy) else {
             return Err(JsError("proxy call target is invalid".into()));
         };
         if handler.is_null() {
@@ -31,8 +30,10 @@ impl<H: Host> Vm<H> {
                         return Err(vm.type_error(p, "proxy apply trap is not callable".into()));
                     }
                     let arguments = vm.heap.alloc(Cell::Array {
-                        object: Self::empty_object(vm.array_proto),
-                        elements: Rc::new(args.to_vec()),
+                        object: crate::heap::ArrayObject::new(
+                            Self::empty_object(vm.array_proto),
+                            Rc::new(args.to_vec()),
+                        ),
                     });
                     return vm.call_value(p, trap, handler, &[target, this, arguments]);
                 }
@@ -49,8 +50,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        let Some((target, handler)) = self.proxy_parts(proxy)
-        else {
+        let Some((target, handler)) = self.proxy_parts(proxy) else {
             return Err(JsError("proxy construct target is invalid".into()));
         };
         if handler.is_null() {
@@ -74,8 +74,10 @@ impl<H: Host> Vm<H> {
                         return Err(vm.type_error(p, "proxy construct trap is not callable".into()));
                     }
                     let arguments = vm.heap.alloc(Cell::Array {
-                        object: Self::empty_object(vm.array_proto),
-                        elements: Rc::new(args.to_vec()),
+                        object: crate::heap::ArrayObject::new(
+                            Self::empty_object(vm.array_proto),
+                            Rc::new(args.to_vec()),
+                        ),
                     });
                     let result =
                         vm.call_value(p, trap, handler, &[target, arguments, new_target])?;

@@ -62,7 +62,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         context: CallContext,
     ) -> Result<Value, JsError> {
-        self.profile.function(self.active_program.raw(), id as usize);
+        self.profile
+            .function(self.active_program.raw(), id as usize);
         let parameter_eval_arguments_error =
             p.functions[id as usize].parameter_eval_arguments_error;
         if parameter_eval_arguments_error {
@@ -83,8 +84,10 @@ impl<H: Host> Vm<H> {
         }
         if function.rest {
             frame.locals[fixed] = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(args.get(fixed..).unwrap_or_default().to_vec()),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(self.array_proto),
+                    Rc::new(args.get(fixed..).unwrap_or_default().to_vec()),
+                ),
             });
         }
         if let Some(slot) = function.self_binding_slot {
@@ -93,8 +96,10 @@ impl<H: Host> Vm<H> {
         if let Some(slot) = function.arguments_slot {
             let mapped = function.arguments_are_mapped();
             let arguments = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.object_proto),
-                elements: Rc::new(args.to_vec()),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(self.object_proto),
+                    Rc::new(args.to_vec()),
+                ),
             });
             frame.locals[usize::from(slot)] = arguments;
             self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
@@ -293,12 +298,14 @@ impl<H: Host> Vm<H> {
                     }
                 };
                 let environment = vm.heap.alloc(Cell::Array {
-                    object: Self::empty_object(vm.array_proto),
-                    elements: Rc::new(vec![
-                        generator,
-                        iterator,
-                        Value::number(f64::from(destination)),
-                    ]),
+                    object: crate::heap::ArrayObject::new(
+                        Self::empty_object(vm.array_proto),
+                        Rc::new(vec![
+                            generator,
+                            iterator,
+                            Value::number(f64::from(destination)),
+                        ]),
+                    ),
                 });
                 let start =
                     vm.native_with_env(Native::AsyncGeneratorDelegateReturnStart, environment);
@@ -324,8 +331,10 @@ impl<H: Host> Vm<H> {
                 }
             };
             let environment = vm.heap.alloc(Cell::Array {
-                object: Self::empty_object(vm.array_proto),
-                elements: Rc::new(vec![generator, promise]),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(vm.array_proto),
+                    Rc::new(vec![generator, promise]),
+                ),
             });
             let fulfilled = vm.native_with_env(Native::AsyncGeneratorReturnFulfilled, environment);
             let rejected = vm.native_with_env(Native::AsyncGeneratorReturnRejected, environment);
@@ -342,9 +351,13 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async generator return reaction without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+        let Some(Cell::Array {
+            object: array_object,
+        }) = self.heap.get(environment)
+        else {
             return Err(JsError("async generator return state is invalid".into()));
         };
+        let elements = array_object.elements();
         let [generator, promise] = elements.as_slice() else {
             return Err(JsError("async generator return state is malformed".into()));
         };
@@ -393,9 +406,13 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async generator return rejection without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+        let Some(Cell::Array {
+            object: array_object,
+        }) = self.heap.get(environment)
+        else {
             return Err(JsError("async generator return state is invalid".into()));
         };
+        let elements = array_object.elements();
         let [generator, promise] = elements.as_slice() else {
             return Err(JsError("async generator return state is malformed".into()));
         };
@@ -421,9 +438,13 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate return without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(environment) else {
+        let Some(Cell::Array {
+            object: array_object,
+        }) = self.heap.get(environment)
+        else {
             return Err(JsError("async delegate return state is invalid".into()));
         };
+        let elements = array_object.elements();
         let [generator, iterator, destination] = elements.as_slice() else {
             return Err(JsError("async delegate return state is malformed".into()));
         };
@@ -703,14 +724,16 @@ impl<H: Host> Vm<H> {
         }
         let unwrapped = self.async_from_sync_result(p, adapter, result, false)?;
         let env = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(vec![
-                generator,
-                Value::number(f64::from(destination)),
-                Value::FALSE,
-                Value::FALSE,
-                Value::TRUE,
-            ]),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(vec![
+                    generator,
+                    Value::number(f64::from(destination)),
+                    Value::FALSE,
+                    Value::FALSE,
+                    Value::TRUE,
+                ]),
+            ),
         });
         let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
         let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
@@ -903,18 +926,20 @@ impl<H: Host> Vm<H> {
             };
             let promise = self.promise_for_value(p, result)?;
             let env = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(vec![
-                    generator,
-                    Value::number(f64::from(destination)),
-                    Value::number(if throwing { 1.0 } else { 0.0 }),
-                    Value::number(if adapter { 1.0 } else { 0.0 }),
-                    if async_from_sync {
-                        Value::TRUE
-                    } else {
-                        Value::FALSE
-                    },
-                ]),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(self.array_proto),
+                    Rc::new(vec![
+                        generator,
+                        Value::number(f64::from(destination)),
+                        Value::number(if throwing { 1.0 } else { 0.0 }),
+                        Value::number(if adapter { 1.0 } else { 0.0 }),
+                        if async_from_sync {
+                            Value::TRUE
+                        } else {
+                            Value::FALSE
+                        },
+                    ]),
+                ),
             });
             let fulfilled = self.native_with_env(Native::AsyncGeneratorDelegateFulfilled, env);
             let rejected = self.native_with_env(Native::AsyncGeneratorDelegateRejected, env);
@@ -951,9 +976,13 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate reaction without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
+        let Some(Cell::Array {
+            object: array_object,
+        }) = self.heap.get(env)
+        else {
             return Err(JsError("async delegate reaction state is invalid".into()));
         };
+        let elements = array_object.elements();
         let [generator, destination, throwing, adapter, _async_from_sync] = elements.as_slice()
         else {
             return Err(JsError("async delegate reaction state is malformed".into()));
@@ -1029,9 +1058,13 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate rejection without state".into()))?;
-        let Some(Cell::Array { elements, .. }) = self.heap.get(env) else {
+        let Some(Cell::Array {
+            object: array_object,
+        }) = self.heap.get(env)
+        else {
             return Err(JsError("async delegate rejection state is invalid".into()));
         };
+        let elements = array_object.elements();
         let generator = elements
             .first()
             .copied()

@@ -36,9 +36,13 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn array_values(&self, this: Value) -> Result<Vec<Value>, JsError> {
-        let Some(Cell::Array { elements, .. }) = self.heap.get(this) else {
+        let Some(Cell::Array {
+            object: array_object,
+        }) = self.heap.get(this)
+        else {
             return Err(JsError("modern array method receiver is not array".into()));
         };
+        let elements = array_object.elements();
         let length = self.heap.sparse_length(this).unwrap_or(elements.len());
         Ok((0..length)
             .map(|index| self.array_value_at(this, index))
@@ -51,9 +55,13 @@ impl<H: Host> Vm<H> {
 
     /// Append an own data element to an unexposed dense array. No guest code runs.
     pub(super) fn append_fresh_array_element(&mut self, array: Value, value: Value) -> usize {
-        let Some(Cell::Array { elements, .. }) = self.heap.get_mut(array) else {
+        let Some(Cell::Array {
+            object: array_object,
+        }) = self.heap.get_mut(array)
+        else {
             unreachable!("fresh array owner remains an array");
         };
+        let elements = array_object.elements_mut();
         let elements = super::index::mutable_array_elements(elements);
         elements.push(value);
         elements.len()
@@ -65,8 +73,7 @@ impl<H: Host> Vm<H> {
         prototype: Value,
     ) -> Value {
         self.heap.alloc(Cell::Array {
-            object: Self::empty_object(prototype),
-            elements: Rc::new(values),
+            object: crate::heap::ArrayObject::new(Self::empty_object(prototype), Rc::new(values)),
         })
     }
 
@@ -188,8 +195,10 @@ impl<H: Host> Vm<H> {
         }
         let prototype = self.array_prototype_for_realm(self.realm.globals);
         let array = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(prototype),
-            elements: Rc::new(Vec::new()),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(prototype),
+                Rc::new(Vec::new()),
+            ),
         });
         self.heap.sparse_set_length(array, length);
         Ok(array)
