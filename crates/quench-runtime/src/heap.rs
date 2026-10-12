@@ -13,10 +13,10 @@ mod root;
 mod slots;
 mod weak;
 pub(crate) use cell::*;
-use records::{ObjectRecordSpace, RecordArena, RecordSweep};
+use records::{ObjectRecordSpace, RecordSweep};
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
-use slots::{SlotArena, SlotEntry};
+use slots::SlotArena;
 
 // Keep implicit holes in dense storage when their one-time allocation is
 // bounded. 256 KiB covers the measured 16,900-slot NavierStokes grids while
@@ -66,11 +66,24 @@ fn gc_allocation_headroom(live_cells: usize) -> usize {
         .max(MINIMUM_GC_ALLOCATION_HEADROOM)
 }
 
+pub(super) struct Slot {
+    cell: Option<Cell>,
+}
+
+impl Slot {
+    fn is_live(&self) -> bool {
+        self.cell.is_some()
+    }
+
+    fn clear(&mut self) -> Cell {
+        self.cell.take().expect("only live slots are cleared")
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Heap {
     slots: SlotArena,
     object_records: ObjectRecordSpace<Object>,
-    legacy_cells: RecordArena<Cell>,
     marks: Vec<u64>,
     free: Vec<u32>,
     external_bytes: usize,
@@ -293,7 +306,7 @@ impl Heap {
         self.roots.values().count()
     }
 
-    /// Slots that currently hold a cell.
+    /// Live legacy Cells and direct Object records.
     pub(crate) fn live_slots(&self) -> usize {
         self.slots.len() - self.free.len() + self.object_records.live_count()
     }
@@ -325,21 +338,20 @@ impl Heap {
         let slot_index = reused_index.unwrap_or_else(|| {
             u32::try_from(self.slots.len()).expect("heap exhausted its 32-bit Value index space")
         });
-        let entry = SlotEntry::cell(self.legacy_cells.insert(cell));
         if let Some(index) = self.free.pop() {
             debug_assert_eq!(Some(index), reused_index);
             let slot = self.slots.get_mut(index as usize).unwrap();
             debug_assert!(!slot.is_live(), "free-list slots hold no payload");
             // Collection clears heap weak owners before adding a dead slot here;
             // the VM clears its weak closure cache before control can allocate.
-            *slot = entry;
+            slot.cell = Some(cell);
             #[cfg(feature = "profile-memory")]
             self.profile_allocation(Value::heap(index));
             return Value::heap(index);
         }
         let index = self.slots.len();
         debug_assert_eq!(index as u32, slot_index);
-        self.slots.push(entry);
+        self.slots.push(Slot { cell: Some(cell) });
         if index / 64 == self.marks.len() {
             self.marks.push(0);
         }
@@ -437,7 +449,6 @@ impl Heap {
         let Self {
             object_records,
             slots,
-            legacy_cells,
             properties,
             ..
         } = self;
@@ -448,13 +459,9 @@ impl Heap {
             } else {
                 owner
                     .legacy_heap_index()
-                    .and_then(|index| slots.get(index as usize).copied())
-                    .and_then(|entry| {
-                        let record_id = entry.cell_record_id()?;
-                        // SAFETY: the owner Value came from the live-object
-                        // sweep and still names this Cell record.
-                        unsafe { legacy_cells.get_live_mut(record_id) }.object_mut()
-                    })
+                    .and_then(|index| slots.get_mut(index as usize))
+                    .and_then(|slot| slot.cell.as_mut())
+                    .and_then(Cell::object_mut)
             }
             .expect("property owner remains live during compaction");
             target += properties.compact_vector(&mut object.properties, target);
@@ -472,7 +479,6 @@ impl Heap {
     pub(crate) fn reset(&mut self) {
         self.slots.clear();
         self.object_records = ObjectRecordSpace::default();
-        self.legacy_cells = RecordArena::default();
         self.marks.clear();
         self.free.clear();
         self.external_bytes = 0;
@@ -582,18 +588,15 @@ impl Heap {
             self.gc_profile.freed += object_freed as u64;
         }
         for index in 0..self.slots.len() {
-            let entry = *self.slots.get(index).expect("slot index is in range");
-            if !entry.is_live() {
+            let slot = self.slots.get(index).expect("slot index is in range");
+            if !slot.is_live() {
                 continue;
             }
             if Self::marked(&self.marks, index) {
                 live += 1;
-                let property_vector = entry
-                    .cell_record_id()
-                    .map(|record_id| {
-                        // SAFETY: this branch only processes a live SlotEntry.
-                        unsafe { self.legacy_cells.get_live(record_id) }
-                    })
+                let property_vector = slot
+                    .cell
+                    .as_ref()
                     .and_then(Cell::object)
                     .map(|object| object.properties);
                 if let Some(property_vector) = property_vector
@@ -605,11 +608,7 @@ impl Heap {
                 continue;
             }
 
-            let record_id = entry
-                .cell_record_id()
-                .expect("every live legacy slot has a Cell locator");
-            // SAFETY: the current live SlotEntry still names this record.
-            let cell = unsafe { self.legacy_cells.get_live(record_id) };
+            let cell = slot.cell.as_ref().expect("live slot contains a Cell");
             self.external_bytes = self.external_bytes.saturating_sub(cell.external_bytes());
             #[cfg(feature = "profile-memory")]
             {
@@ -624,17 +623,12 @@ impl Heap {
             if let Some(arrays) = &mut self.sparse_arrays {
                 arrays.remove(&(index as u32));
             }
-            // The live-slot tag is the authority that permits direct record
-            // addressing, so clear it before releasing the backing Cell.
-            self.slots
+            let cell = self
+                .slots
                 .get_mut(index)
                 .expect("slot index is in range")
                 .clear();
-            drop(
-                self.legacy_cells
-                    .remove(record_id)
-                    .expect("legacy Cell locator is freed once"),
-            );
+            drop(cell);
             // Reused slots enter `free` only after their side-table entries and
             // backing Cell are gone.
             self.free.push(index as u32);
@@ -699,10 +693,10 @@ impl Heap {
                 let Some(index) = value.legacy_heap_index().map(|value| value as usize) else {
                     continue;
                 };
-                let Some(entry) = self.slots.get(index).copied() else {
+                let Some(slot) = self.slots.get(index) else {
                     continue;
                 };
-                if Self::marked(&self.marks, index) || !entry.is_live() {
+                if Self::marked(&self.marks, index) || !slot.is_live() {
                     continue;
                 }
                 Self::mark(&mut self.marks, index);
@@ -710,11 +704,7 @@ impl Heap {
                 {
                     self.gc_profile.marked += 1;
                 }
-                let record_id = entry
-                    .cell_record_id()
-                    .expect("live legacy slot has a Cell locator");
-                // SAFETY: entry was checked live immediately above.
-                let cell = unsafe { self.legacy_cells.get_live(record_id) };
+                let cell = slot.cell.as_ref().expect("live slot contains a Cell");
                 #[cfg(feature = "profile-aggregate")]
                 {
                     self.gc_profile.marked_kinds[Self::cell_kind(cell) as usize] += 1;
@@ -756,7 +746,7 @@ impl Heap {
         };
         self.slots
             .get(index)
-            .is_some_and(|entry| entry.is_live() && Self::marked(&self.marks, index))
+            .is_some_and(|slot| slot.is_live() && Self::marked(&self.marks, index))
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     pub(crate) const fn gc_profile(&self) -> GcProfile {
@@ -953,7 +943,6 @@ impl Heap {
         let Self {
             object_records,
             slots,
-            legacy_cells,
             properties,
             memory_profile,
             ..
@@ -966,15 +955,10 @@ impl Heap {
             let index = identity
                 .legacy_heap_index()
                 .expect("legacy allocation has a slot index") as usize;
-            let entry = *slots.get(index).expect("allocated legacy slot exists");
-            let cell = entry
-                .cell_record_id()
-                .map(|record_id| {
-                    // SAFETY: profile_allocation follows insertion of this Cell
-                    // and obtains its still-live SlotEntry.
-                    unsafe { legacy_cells.get_live(record_id) }
-                })
-                .expect("allocated slot points to its Cell");
+            let cell = slots
+                .get(index)
+                .and_then(|slot| slot.cell.as_ref())
+                .expect("allocated slot contains its Cell");
             let object_slots = cell
                 .object()
                 .map(|object| properties.len(object.properties));
