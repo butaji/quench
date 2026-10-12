@@ -1282,6 +1282,62 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// An i32 add of a constant whose sum the next record, direct load `OP`,
+    /// reads as its address: both records run here, the sum written as the
+    /// add writes it. A load the general path must run exits at its record.
+    fn lane_add_load<OP: u16>(cx, r, ip, i, view) {
+        let load = const {
+            match MemoryLoad::from_direct_op(opcode(OP)) {
+                Some(load) => load,
+                None => panic!("not a direct load"),
+            }
+        };
+        let sum = r.i32(i.b).wrapping_add(i.imm() as i32);
+        r.set(i.a, view.integers.encode(sum));
+        let next = following(ip);
+        // SAFETY: the view fuses an add only with a following load record.
+        let access = unsafe { &*next };
+        let address = u64::from(sum as u32) + u64::from(access.imm());
+        // SAFETY: as for `lane_load`.
+        let Ok(value) = load.read(unsafe { view.memory.bytes() }, address) else {
+            return exit(next);
+        };
+        let Some(value) = lane_encode(view, value) else {
+            return exit(next);
+        };
+        produce!(cx, r, next, access.a, value, view)
+    }
+}
+
+/// The fused add-and-load handler for direct load `op`.
+const fn add_load_handler<H: Host>(op: Op) -> Option<Handler> {
+    macro_rules! loads {
+        ($($load:ident),+) => {
+            match op {
+                $(Op::$load => Some(lane_add_load::<H, { Op::$load as u16 }> as Handler),)+
+                _ => None,
+            }
+        };
+    }
+    loads!(
+        WasmI32Load,
+        WasmI64Load,
+        WasmF32Load,
+        WasmF64Load,
+        WasmI32Load8S,
+        WasmI32Load8U,
+        WasmI32Load16S,
+        WasmI32Load16U,
+        WasmI64Load8S,
+        WasmI64Load8U,
+        WasmI64Load16S,
+        WasmI64Load16U,
+        WasmI64Load32S,
+        WasmI64Load32U
+    )
+}
+
+lane_handler! {
     fn lane_store<OP: u16, ACC: u8>(cx, r, ip, i, view) {
         let store = const {
             match MemoryStore::from_direct_op(opcode(OP)) {
@@ -1974,6 +2030,24 @@ fn derive_lane_view<H: Host>(function: &Function, constants: &[Value]) -> LaneVi
             records[pc].handler = lane_exit::<H> as Handler as *const ();
             exits[pc] = true;
             reads_accumulator[pc] = false;
+        }
+    }
+    // An add of a constant whose sum the next record loads from runs with
+    // that load as one record: the load reads the sum as its carried
+    // accumulator, so control reaches it only from the add.
+    for pc in 0..records.len().saturating_sub(1) {
+        let instruction = decoded_instruction(function, function.code[pc]);
+        let next = decoded_instruction(function, function.code[pc + 1]);
+        let plain_add = tables[0][usize::from(ACC_NONE)][Op::WasmI32AddImmediate as usize]
+            .is_some_and(|add| records[pc].handler == add.handler as *const ());
+        let carried_load = tables[0][usize::from(ACC_C)][next.op() as usize]
+            .is_some_and(|load| records[pc + 1].handler == load.handler as *const ());
+        if instruction.op() == Op::WasmI32AddImmediate
+            && plain_add
+            && carried_load
+            && let Some(fused) = add_load_handler::<H>(next.op())
+        {
+            records[pc].handler = fused as *const ();
         }
     }
     let mut entries = vec![false; records.len()].into_boxed_slice();
