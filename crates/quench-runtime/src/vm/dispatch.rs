@@ -953,13 +953,10 @@ impl<H: Host> Vm<H> {
                 let parameter_eval = direct_eval && i.parameter_eval();
                 let previous_direct_eval = self.direct_eval;
                 let previous_parameter_eval = self.parameter_eval;
-                self.direct_eval = direct_eval;
-                self.parameter_eval = parameter_eval;
                 let previous_this = (direct_eval && !this.is_undefined())
                     .then(|| std::mem::replace(&mut self.frames[f].this, this));
-                let caller_function = &p.functions[self.frames[f].function as usize];
-                let terminal = i.returns_from_frame()
-                    || caller_function.returns_register_at(*pc, i.result_register());
+                // Compilation flags every call that falls into a return of its result.
+                let terminal = i.returns_from_frame();
                 if allow_inline_calls
                     && i.op() == Op::Call
                     && !direct_eval
@@ -982,29 +979,30 @@ impl<H: Host> Vm<H> {
                             && !function.parameter_eval_arguments_error
                     })
                 {
+                    // Neither eval mode is set before or by this call, so the frame push leaves
+                    // both untouched.
                     self.profile.call_target(1, usize::from(window.count));
                     // Collection happens only at back edges, tail calls and explicit host
                     // safepoints, none of which can run while a frame is pushed; afterwards the
                     // new frame itself roots the callee, receiver and arguments.
                     let arguments: *const [Value] = self.register_window(f, window);
                     // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-                    let result = self.push_general_user_frame(
+                    let call_guard = self.push_general_user_frame(
                         p,
                         id,
                         env,
                         this,
                         unsafe { &*arguments },
                         CallContext::user_function(id, callee),
-                    );
-                    self.direct_eval = previous_direct_eval;
-                    self.parameter_eval = previous_parameter_eval;
-                    let call_guard = result?;
+                    )?;
                     return Ok(StepResult::PushFrame {
                         destination: i.result_register(),
                         call_guard,
                         construct_this: None,
                     });
                 }
+                self.direct_eval = direct_eval;
+                self.parameter_eval = parameter_eval;
                 let arguments = spread_arguments
                     .unwrap_or_else(|| CallArguments::from_slice(self.register_window(f, window)));
                 let args = arguments.as_slice();
@@ -1155,9 +1153,7 @@ impl<H: Host> Vm<H> {
                 let parent = self.capture_env(f, 0).unwrap_or(self.frames[f].env);
                 self.profile.call_target(1, usize::from(window.count));
                 self.frames[f].pc = *pc;
-                let terminal = i.returns_from_frame()
-                    || p.functions[self.frames[f].function as usize]
-                        .returns_register_at(*pc, i.result_register());
+                let terminal = i.returns_from_frame();
                 if ((p.kind == crate::bytecode::ProgramKind::Wasm && i.returns_from_frame())
                     || (p.kind != crate::bytecode::ProgramKind::Wasm
                         && terminal
