@@ -244,7 +244,6 @@ impl<H: Host> Vm<H> {
         object_proto: Value,
     ) -> Result<(), JsError> {
         let string = self.native_with_realm(Native::String, global, global);
-        self.set_builtin_function_name(string, "String")?;
         self.install_string_prototype(program, string, object_proto, global)?;
         self.set_builtin_value_named(global, "String", string)?;
         self.set_builtin_named_for_realm(
@@ -271,6 +270,7 @@ impl<H: Host> Vm<H> {
         object_proto: Value,
         realm: Value,
     ) -> Result<Value, JsError> {
+        self.set_builtin_function_name(constructor, "String")?;
         let empty = self.heap.alloc(Cell::String(JsString::from_str("")));
         let prototype = self
             .heap
