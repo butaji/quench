@@ -877,6 +877,11 @@ impl<H: Host> Vm<H> {
                         }
                         return Ok(array);
                     }
+                    if let Some(matcher) = vm.regexp_builtin_exec_matcher(splitter) {
+                        return vm.regexp_split_builtin(
+                            splitter, &matcher, &input, array, limit, unicode,
+                        );
+                    }
                     let last_index_atom = vm.intern_atom("lastIndex");
                     let length_atom = vm.intern_atom("length");
                     let mut p_index = 0usize;
@@ -934,6 +939,108 @@ impl<H: Host> Vm<H> {
                 })
             },
         )
+    }
+
+    /// The matcher of `regexp` when `RegExpExec(regexp, …)` resolves to the builtin exec:
+    /// a RegExp of this realm with the intrinsic prototype, no own `exec`, and the native
+    /// `exec` data property on that prototype. While no guest code runs, that resolution
+    /// cannot change.
+    fn regexp_builtin_exec_matcher(&self, regexp: Value) -> Option<Rc<quench_regexp::Regex>> {
+        let Some(Cell::RegExp { matcher, .. }) = self.heap.get(regexp) else {
+            return None;
+        };
+        let intrinsics = self
+            .realm
+            .intrinsics
+            .regexp_intrinsics
+            .get(&self.realm.globals)?;
+        let exec = self.lookup_atom("exec")?;
+        (self.object_data(regexp)?.proto == intrinsics.prototype
+            && self
+                .property_attributes(regexp, PropertyKey::string(exec))
+                .is_none()
+            && self.regexp_prototype_native_property(
+                intrinsics.prototype,
+                exec,
+                Native::RegExpExec,
+                false,
+            ))
+        .then(|| Rc::clone(matcher))
+    }
+
+    /// `RegExp.prototype[@@split]` steps 19–25 for a sticky `splitter` this call created,
+    /// whose exec is the builtin (`regexp_builtin_exec_matcher`). Each failing sticky exec
+    /// at `q` leaves no trace, and an unanchored search from `q` finds the first position
+    /// whose sticky exec succeeds, with that exec's match; so one search replaces the run
+    /// of per-position execs. Only the last successful exec's legacy static state is
+    /// observable, and `splitter` itself never escapes.
+    fn regexp_split_builtin(
+        &mut self,
+        splitter: Value,
+        matcher: &quench_regexp::Regex,
+        input: &JsString,
+        array: Value,
+        limit: usize,
+        unicode: bool,
+    ) -> Result<Value, JsError> {
+        let size = input.units().len();
+        let subject = self.regexp_subject(input);
+        let mut last_match = None;
+        let mut p_index = 0usize;
+        let mut q = 0usize;
+        while q < size {
+            let Some(matched) = matcher.find_in_subject(&subject, q).next() else {
+                break;
+            };
+            // The spec's loop only tries sticky execs below `size`.
+            if matched.range.start >= size {
+                break;
+            }
+            q = matched.range.start;
+            let end = matched.range.end.min(size);
+            let captures = matched.captures.clone();
+            last_match = Some(matched);
+            if end == p_index {
+                q = advance_string_index_units(input.units(), q, unicode);
+                continue;
+            }
+            let piece = self
+                .heap
+                .alloc(Cell::String(JsString::from_units(&input.units()[p_index..q])));
+            if self.append_fresh_array_element(array, piece) >= limit {
+                return self.finish_regexp_split_builtin(splitter, input, last_match, array);
+            }
+            p_index = end;
+            for capture in captures {
+                let value = capture.map_or(Value::UNDEFINED, |range| {
+                    self.heap
+                        .alloc(Cell::String(JsString::from_units(&input.units()[range])))
+                });
+                if self.append_fresh_array_element(array, value) >= limit {
+                    return self.finish_regexp_split_builtin(splitter, input, last_match, array);
+                }
+            }
+            q = p_index;
+        }
+        let tail = self
+            .heap
+            .alloc(Cell::String(JsString::from_units(&input.units()[p_index..])));
+        self.append_fresh_array_element(array, tail);
+        self.finish_regexp_split_builtin(splitter, input, last_match, array)
+    }
+
+    /// Leaves the legacy static state of the last successful exec in `regexp_split_builtin`.
+    fn finish_regexp_split_builtin(
+        &mut self,
+        splitter: Value,
+        input: &JsString,
+        last_match: Option<quench_regexp::Match>,
+        array: Value,
+    ) -> Result<Value, JsError> {
+        if let Some(matched) = last_match {
+            self.record_regexp_legacy_match(splitter, input.clone(), matched)?;
+        }
+        Ok(array)
     }
 
     fn regexp_species_constructor(
@@ -1777,31 +1884,42 @@ impl<H: Host> Vm<H> {
                 let indices_atom = vm.intern_atom("indices");
                 vm.set_property(result, indices_atom, indices)?;
             }
-            let owner = match vm.heap.get(this) {
-                Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
-                _ => return Err(JsError("RegExp instance unavailable after match".into())),
-            };
-            let intrinsic = vm.regexp_intrinsic_constructor();
-            if vm.same_value(owner.constructor(), intrinsic) {
-                let state = vm
-                    .realm
-                    .intrinsics
-                    .regexp_intrinsics
-                    .get_mut(&vm.realm.globals)
-                    .expect("active realm has RegExp intrinsics");
-                match owner {
-                    crate::heap::RegExpLegacyOwner::Enabled(_) => {
-                        state.legacy_input = Some(input.clone());
-                        state.legacy_match = LegacyRegExpMatch::Matched { input, matched };
-                    }
-                    crate::heap::RegExpLegacyOwner::Disabled(_) => {
-                        state.legacy_input = None;
-                        state.legacy_match = LegacyRegExpMatch::Invalid;
-                    }
-                }
-            }
+            vm.record_regexp_legacy_match(this, input, matched)?;
             Ok(result)
         })
+    }
+
+    /// The legacy `RegExp` static state a successful builtin exec of `this` leaves behind.
+    fn record_regexp_legacy_match(
+        &mut self,
+        this: Value,
+        input: JsString,
+        matched: quench_regexp::Match,
+    ) -> Result<(), JsError> {
+        let owner = match self.heap.get(this) {
+            Some(Cell::RegExp { meta, .. }) => meta.legacy_constructor,
+            _ => return Err(JsError("RegExp instance unavailable after match".into())),
+        };
+        let intrinsic = self.regexp_intrinsic_constructor();
+        if self.same_value(owner.constructor(), intrinsic) {
+            let state = self
+                .realm
+                .intrinsics
+                .regexp_intrinsics
+                .get_mut(&self.realm.globals)
+                .expect("active realm has RegExp intrinsics");
+            match owner {
+                crate::heap::RegExpLegacyOwner::Enabled(_) => {
+                    state.legacy_input = Some(input.clone());
+                    state.legacy_match = LegacyRegExpMatch::Matched { input, matched };
+                }
+                crate::heap::RegExpLegacyOwner::Disabled(_) => {
+                    state.legacy_input = None;
+                    state.legacy_match = LegacyRegExpMatch::Invalid;
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn regexp_groups_object(
