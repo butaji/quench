@@ -1311,16 +1311,19 @@ pub(crate) fn connect_operation(
         Some(host) => context.string_text(host)?.unwrap_or_else(|| "localhost".to_owned()),
         None => "localhost".to_owned(),
     };
+    let options = args.get(3).copied().unwrap_or_else(|| context.undefined());
     if parse_ip(&host).is_none() {
         let host_root = context.string_rooted(&host);
         let port_root = context.number(f64::from(port));
-        let options = args.get(3).copied().unwrap_or_else(|| context.undefined());
         return super::net_lookup_shared_vm::start(context, socket, host_root, port_root, options);
     }
     let shared = context.host_mut().shared_state();
-    let id = crate::modules::net_shared_vm::connect(&mut shared.borrow_mut().tcp, host, port)
+    let id = reserve_lookup(&mut shared.borrow_mut().tcp).map_err(RootedError::host)?;
+    register_socket(context, socket, id)?;
+    super::net_options_shared_vm::connect_family_options(context, options)?;
+    connect_resolved(&mut shared.borrow_mut().tcp, id, vec![host], port)
         .map_err(RootedError::host)?;
-    register_socket(context, socket, id)
+    Ok(socket)
 }
 
 /// Count bytes at stream admission, once. The stream's existing private
@@ -1660,33 +1663,9 @@ pub(crate) fn set_timeout(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let value = args.first().copied().and_then(|arg| {
-        context
-            .rooted_value(arg)
-            .and_then(|value| value.as_number())
-    });
-    let Some(value) =
-        value.filter(|value| value.is_finite() && value.fract() == 0.0 && *value > 0.0)
-    else {
-        let error = context.error_rooted("The \"ms\" argument must be a positive integer")?;
-        let name = context.string_rooted("name");
-        let range_error = context.string_rooted("RangeError");
-        if !context.set_property_rooted(error, name, range_error, error)? {
-            return Err(RootedError::host("cannot set net timeout error name"));
-        }
-        let code = context.string_rooted("code");
-        let code_value = context.string_rooted("ERR_OUT_OF_RANGE");
-        if !context.set_property_rooted(error, code, code_value, error)? {
-            return Err(RootedError::host("cannot set net timeout error code"));
-        }
-        return Err(context.throw(error));
-    };
-    context
-        .host_mut()
-        .shared_state()
-        .borrow_mut()
-        .net_auto_select_family_attempt_timeout =
-        crate::modules::net_config::normalize_auto_select_family_attempt_timeout(value as u64);
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let timeout = super::net_options_shared_vm::attempt_timeout(context, value, "value")?;
+    context.host_mut().shared_state().borrow_mut().net_auto_select_family_attempt_timeout = timeout;
     Ok(context.undefined())
 }
 
