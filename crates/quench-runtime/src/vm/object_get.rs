@@ -298,7 +298,7 @@ impl<H: Host> Vm<H> {
             let Some(data) = self.object_data(owner) else {
                 return Ok(Value::UNDEFINED);
             };
-            owner = data.proto;
+            owner = data.proto();
             if owner.is_null() {
                 return Ok(Value::UNDEFINED);
             }
@@ -473,9 +473,9 @@ impl<H: Host> Vm<H> {
                 return Ok(v);
             }
             match self.heap.get(object) {
-                Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,
-                Some(Cell::TypedArray { object: x, .. }) => object = x.proto,
-                Some(Cell::DataView { object: x, .. }) => object = x.proto,
+                Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto(),
+                Some(Cell::TypedArray { object: x, .. }) => object = x.proto(),
+                Some(Cell::DataView { object: x, .. }) => object = x.proto(),
                 Some(Cell::String(v)) => {
                     if let Ok(index) = self.atom_name(atom).parse::<usize>()
                         && let Some(unit) = v.units().get(index).copied()
@@ -520,21 +520,21 @@ impl<H: Host> Vm<H> {
                 | Some(Cell::TemporalPlainMonthDay { object: x, .. })
                 | Some(Cell::TemporalPlainYearMonth { object: x, .. })
                 | Some(Cell::TemporalZonedDateTime { object: x, .. })
-                | Some(Cell::TemporalInstant { object: x, .. }) => object = x.proto,
-                Some(Cell::Object(x)) => object = x.proto,
-                Some(Cell::Array { object: x }) => object = x.proto,
-                Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto,
-                Some(Cell::RegExp { object: x, .. }) => object = x.proto,
+                | Some(Cell::TemporalInstant { object: x, .. }) => object = x.proto(),
+                Some(Cell::Object(x)) => object = x.proto(),
+                Some(Cell::Array { object: x }) => object = x.proto(),
+                Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto(),
+                Some(Cell::RegExp { object: x, .. }) => object = x.proto(),
                 Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
-                    object = x.proto
+                    object = x.proto()
                 }
                 Some(Cell::WeakMap { object: x, .. }) | Some(Cell::WeakSet { object: x, .. }) => {
-                    object = x.proto
+                    object = x.proto()
                 }
-                Some(Cell::WeakRef { object: x, .. }) => object = x.proto,
-                Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto,
-                Some(Cell::Iterator { object: x, .. }) => object = x.proto,
-                Some(Cell::Function { object: x, .. }) => object = x.proto,
+                Some(Cell::WeakRef { object: x, .. }) => object = x.proto(),
+                Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto(),
+                Some(Cell::Iterator { object: x, .. }) => object = x.proto(),
+                Some(Cell::Function { object: x, .. }) => object = x.proto(),
                 _ => return Ok(Value::UNDEFINED),
             }
             if object.is_null() {

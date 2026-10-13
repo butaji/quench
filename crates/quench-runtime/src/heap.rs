@@ -12,6 +12,7 @@ mod parallel_mark;
 mod parallel_sweep;
 mod root;
 mod slots;
+mod thin_slice;
 mod weak;
 pub(crate) use cell::*;
 use parallel_mark::MarkBits;
@@ -337,6 +338,7 @@ impl Heap {
             return Value::heap(index);
         }
         let index = self.slots.len();
+        assert!(index < MAX_HEAP_CELLS, "heap cell limit reached");
         if weak {
             self.weak_holders.insert(index as u32);
         }
@@ -454,9 +456,9 @@ impl Heap {
                 .as_mut()
                 .and_then(Cell::object_mut)
                 .expect("property owner remains live during compaction");
-            target += self
-                .properties
-                .compact_vector(&mut object.properties, target);
+            let mut properties = object.properties();
+            target += self.properties.compact_vector(&mut properties, target);
+            object.set_properties(properties);
         }
         self.properties.finish_compaction(target);
         #[cfg(feature = "profile-memory")]
@@ -577,10 +579,10 @@ impl Heap {
                     if Self::marked(&self.marks, index) {
                         live += 1;
                         if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
-                            && self.properties.has_compact_range(object.properties)
+                            && self.properties.has_compact_range(object.properties())
                         {
                             property_owners
-                                .push(pack_offset_owner(object.properties.start_offset(), index));
+                                .push(pack_offset_owner(object.properties().start_offset(), index));
                         }
                     } else if let Some(cell) = slot.cell.take() {
                         Self::free_cell_parts(
@@ -723,11 +725,11 @@ impl Heap {
         {
             let object_slots = cell
                 .object()
-                .map(|object| properties.len(object.properties));
+                .map(|object| properties.len(object.properties()));
             memory_profile.freed(index, &cell, object_slots);
         }
         if let Some(object) = cell.object() {
-            properties.release(object.properties);
+            properties.release(object.properties());
         }
         if let Some(arrays) = sparse_arrays {
             arrays.remove(&(index as u32));
@@ -865,7 +867,7 @@ impl Heap {
     pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
         let value = match object.inline_properties() {
             Some(values) => values.get(slot).copied(),
-            None => self.properties.get(object.properties, slot),
+            None => self.properties.get(object.properties(), slot),
         }?;
         (!value.is_deleted()).then_some(value)
     }
@@ -877,7 +879,7 @@ impl Heap {
             unsafe { *values.get_unchecked(slot) }
         } else {
             // SAFETY: the caller proves that the property slot exists.
-            unsafe { self.properties.get_unchecked(object.properties, slot) }
+            unsafe { self.properties.get_unchecked(object.properties(), slot) }
         }
     }
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
@@ -887,7 +889,7 @@ impl Heap {
                 data.set_inline_property(slot, value);
                 return;
             }
-            data.properties
+            data.properties()
         };
         self.properties.set(vector, slot, value);
     }
@@ -905,7 +907,7 @@ impl Heap {
                 data.set_inline_property(slot, value);
                 return;
             }
-            data.properties
+            data.properties()
         };
         // SAFETY: the caller proves that the property slot exists.
         unsafe { self.properties.set_unchecked(vector, slot, value) };
@@ -933,9 +935,9 @@ impl Heap {
         let (vector, inline, slot) = {
             let data = self.get(object).unwrap().object().unwrap();
             (
-                data.properties,
+                data.properties(),
                 data.inline_properties().copied(),
-                self.properties.len(data.properties),
+                self.properties.len(data.properties()),
             )
         };
         if let Some(inline) = inline {
@@ -964,7 +966,7 @@ impl Heap {
         let mut vector = vector;
         self.properties.push(&mut vector, value);
         let data = self.get_mut(object).unwrap().object_mut().unwrap();
-        data.properties = vector;
+        data.set_properties(vector);
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(object, slot + 1);
     }
@@ -984,7 +986,7 @@ impl Heap {
         let cell = self.slots.get(index).unwrap().cell.as_ref().unwrap();
         let object_slots = cell
             .object()
-            .map(|object| self.properties.len(object.properties));
+            .map(|object| self.properties.len(object.properties()));
         self.memory_profile.allocated(index, cell, object_slots);
     }
 
@@ -1015,8 +1017,8 @@ impl Heap {
                 .is_some_and(|index| marks.unmarked(index as usize))
         };
         let mut object = |object: &Object| {
-            if unmarked_heap(&object.proto) {
-                work.push(object.proto);
+            if unmarked_heap(&object.proto()) {
+                work.push(object.proto());
             }
             object_roots(owner, object.shape(), work);
             if !object.owns_no_allocation() {
@@ -1026,7 +1028,7 @@ impl Heap {
             if let Some(values) = object.inline_properties() {
                 work.extend(values.iter().copied().filter(unmarked_heap));
             } else {
-                properties.append_heap_references(object.properties, work);
+                properties.append_heap_references(object.properties(), work);
             }
         };
         if let Some((value, buffer)) = cell.typed_array_backing() {
@@ -1181,13 +1183,10 @@ impl Heap {
                 work.extend([*target, *handler]);
             }
             Cell::Function {
-                object: value,
-                env,
-                realm,
-                ..
+                object: value, env, ..
             } => {
                 object(value);
-                work.extend([*env, *realm]);
+                work.extend([*env, value.realm]);
             }
             Cell::WasmGlobal { value, .. } => work.push(*value),
             Cell::BindingReference { environment, .. } => work.push(*environment),
@@ -1214,11 +1213,9 @@ impl Heap {
             }
             Cell::WasmElements(elements) => work.extend(elements.iter().copied()),
             Cell::WasmTable { elements, .. } => work.extend(elements.iter().copied()),
-            Cell::WasmGc {
-                fields, descriptor, ..
-            } => {
+            Cell::WasmGc { fields, .. } => {
                 work.extend(fields.iter().copied());
-                work.extend(descriptor.iter().copied());
+                work.extend(fields.descriptor);
             }
             Cell::WasmExtern(value) => work.push(*value),
             Cell::WasmException { tag, payload } => {
@@ -1325,19 +1322,15 @@ impl Heap {
                             * size_of::<crate::WasmType>()
                 }
                 Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
-                Cell::WasmTable { elements, .. }
-                | Cell::WasmGc {
-                    fields: elements, ..
-                } => elements.capacity() * size_of::<Value>(),
+                Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
+                Cell::WasmGc { fields, .. } => fields.capacity() * size_of::<Value>(),
                 Cell::TemporalPlainDate { calendar, .. }
                 | Cell::TemporalPlainDateTime { calendar, .. }
                 | Cell::TemporalPlainMonthDay { calendar, .. }
                 | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
                 Cell::TemporalZonedDateTime {
-                    time_zone,
-                    calendar,
-                    ..
-                } => time_zone.capacity() + calendar.capacity(),
+                    instant, calendar, ..
+                } => instant.time_zone.capacity() + calendar.capacity(),
                 Cell::RegExp { meta, .. } => meta.source.capacity() + meta.flags.capacity(),
                 Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
                 Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),

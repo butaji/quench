@@ -24,7 +24,10 @@ impl<H: Host> Vm<H> {
             })?;
             self.decode_wasm_value_in(value, ty, Some(declarations))?;
         }
-        Ok(self.heap.alloc(Cell::WasmException { tag, payload }))
+        Ok(self.heap.alloc(Cell::WasmException {
+            tag,
+            payload: Box::new(payload),
+        }))
     }
 
     pub(super) fn wasm_exception_matches(

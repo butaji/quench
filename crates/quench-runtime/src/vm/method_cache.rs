@@ -245,7 +245,7 @@ impl<H: Host> Vm<H> {
             {
                 return None;
             }
-            owner = current.proto;
+            owner = current.proto();
             if owner.is_null() {
                 return None;
             }
@@ -285,7 +285,7 @@ impl<H: Host> Vm<H> {
             if self.property_attributes(owner, key).is_some() {
                 return None;
             }
-            owner = data.proto;
+            owner = data.proto();
             if owner.is_null() {
                 return None;
             }
@@ -343,7 +343,7 @@ fn method_cache_shadowed_by(
         let Some(Cell::Object(data)) = heap.get(prototype) else {
             return false;
         };
-        prototype = data.proto;
+        prototype = data.proto();
     }
     false
 }
@@ -394,7 +394,7 @@ impl<H: Host> Vm<H> {
 
         let (shape, proto) = self
             .object_data(this)
-            .map(|object| (object.shape(), object.proto))
+            .map(|object| (object.shape(), object.proto()))
             .unwrap_or((u32::MAX - 1, Value::UNDEFINED));
 
         let specialized = self.specialized && p.specialized;

@@ -501,7 +501,10 @@ impl FunctionCompiler<'_, '_> {
             self.clone_lexical_environment();
         }
         let head = self.code.len() as u32;
-        let condition_end = item.test.as_ref().and_then(|test| self.loop_condition(test));
+        let condition_end = item
+            .test
+            .as_ref()
+            .and_then(|test| self.loop_condition(test));
         self.push_control(ControlKind::Loop, label);
         self.statement(&item.body);
         let control = self.controls.pop().unwrap();

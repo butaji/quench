@@ -424,7 +424,7 @@ impl<H: Host> Vm<H> {
         let object = self.json_object();
         let object_root = self.heap.root(object);
         if let Some(data) = self.object_data_mut(object) {
-            data.proto = Value::NULL;
+            data.set_proto(Value::NULL);
             data.set_raw_json();
         }
         let raw_atom = self.intern_atom("rawJSON");

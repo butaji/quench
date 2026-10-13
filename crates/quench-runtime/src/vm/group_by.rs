@@ -46,7 +46,7 @@ impl<H: Host> Vm<H> {
                             .copied()
                             .unwrap_or(self.map_proto),
                     )),
-                    entries: Vec::new(),
+                    entries: Box::default(),
                 },
             };
             let result = self.heap.alloc(result);

@@ -107,11 +107,11 @@ fn scope_slot_owners_survive_collection_and_release() {
 
 #[test]
 fn object_storage_keeps_two_values_inline_in_the_cell() {
-    // Object extras share the inline payload, so an object is its prototype, its property
-    // vector and two inline values.
+    // Object extras share the inline payload and the prototype index packs beside the shape,
+    // so an object is a header the size of a property vector plus two inline values.
     assert_eq!(
         size_of::<Object>(),
-        size_of::<Value>() + size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
+        size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
     );
     assert_eq!(size_of::<Cell>(), size_of::<Slot>());
 }
@@ -496,8 +496,10 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     let owner = heap.alloc(Cell::WasmGc {
         declarations: Box::new(declarations),
         ty: 0,
-        fields: Box::new(vec![external]),
-        descriptor: Some(descriptor),
+        fields: Box::new(crate::heap::WasmGcFields {
+            values: vec![external],
+            descriptor: Some(descriptor),
+        }),
     });
     let tag = heap.alloc(Cell::WasmTag {
         declarations: crate::WasmTypes::default(),
@@ -505,7 +507,7 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     });
     let exception = heap.alloc(Cell::WasmException {
         tag,
-        payload: vec![owner],
+        payload: Box::new(vec![owner]),
     });
     let root = heap.root(exception);
     heap.collect([]);

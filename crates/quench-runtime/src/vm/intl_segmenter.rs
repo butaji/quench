@@ -148,6 +148,7 @@ impl<H: Host> Vm<H> {
                             index: 0,
                             done: false,
                             ext: Box::new(crate::heap::IteratorExt {
+                                position_high: 0,
                                 next_method: None,
                                 helper: None,
                                 helper_running: false,
@@ -280,8 +281,9 @@ impl<H: Host> Vm<H> {
                     index,
                     done,
                     kind: IteratorKind::IntlSegments,
+                    ext,
                     ..
-                }) => (*source, *index, *done),
+                }) => (*source, ext.position(*index), *done),
                 _ => return Err(vm.type_error(p, "incompatible Segment Iterator receiver".into())),
             };
             if done {
@@ -289,8 +291,8 @@ impl<H: Host> Vm<H> {
             }
             match vm.segment_data(p, data, index)? {
                 Some((value, end)) => {
-                    if let Some(Cell::Iterator { index, .. }) = vm.heap.get_mut(iterator) {
-                        *index = end;
+                    if let Some(Cell::Iterator { index, ext, .. }) = vm.heap.get_mut(iterator) {
+                        ext.store_position(index, end);
                     }
                     vm.iterator_result(value, false)
                 }

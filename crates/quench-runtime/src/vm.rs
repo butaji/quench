@@ -247,13 +247,19 @@ impl Frame {
             // SAFETY: residual validation bounds each promoted register by the register count
             // the file was sized to.
             unsafe {
-                *self.registers.get_unchecked_mut(usize::from(entry.register)) =
+                *self
+                    .registers
+                    .get_unchecked_mut(usize::from(entry.register)) =
                     args.get(index).copied().unwrap_or(Value::UNDEFINED);
             }
         }
         for entry in variables {
             // SAFETY: as above.
-            unsafe { *self.registers.get_unchecked_mut(usize::from(entry.register)) = Value::UNDEFINED };
+            unsafe {
+                *self
+                    .registers
+                    .get_unchecked_mut(usize::from(entry.register)) = Value::UNDEFINED
+            };
         }
     }
 
@@ -277,7 +283,9 @@ impl Frame {
             // register counts, which frame setup sized these buffers to.
             unsafe {
                 *self.locals.get_unchecked_mut(usize::from(entry.local)) = Value::UNDEFINED;
-                *self.registers.get_unchecked_mut(usize::from(entry.register)) = initial;
+                *self
+                    .registers
+                    .get_unchecked_mut(usize::from(entry.register)) = initial;
             }
         }
     }
@@ -1423,9 +1431,8 @@ impl<H: Host> Vm<H> {
         }
         let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
         let new_target = self.intern_atom(NEW_TARGET_BINDING);
-        let regexp_flag_accessors = std::array::from_fn(|index| {
-            self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0)
-        });
+        let regexp_flag_accessors =
+            std::array::from_fn(|index| self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0));
         self.runtime_atoms = RuntimeAtoms {
             lexical_this,
             new_target,
@@ -1709,7 +1716,7 @@ impl<H: Host> Vm<H> {
                 })?;
                 let active_program = self.replace_active_program(program_id);
                 let realm = match self.heap.get(callee) {
-                    Some(Cell::Function { realm, .. }) => *realm,
+                    Some(Cell::Function { object, .. }) => object.realm,
                     _ => self.realm.globals,
                 };
                 let current_global = std::mem::replace(&mut self.realm.globals, realm);
@@ -1759,9 +1766,9 @@ impl<H: Host> Vm<H> {
             Some(Cell::Function {
                 kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
                 env,
-                realm,
+                object,
                 ..
-            }) => (*program_id, *id, *env, *realm),
+            }) => (*program_id, *id, *env, object.realm),
             _ => return Err(self.type_error(p, "constructor is not a user function".into())),
         };
         let program = self.programs.get(program_id).ok_or_else(|| {

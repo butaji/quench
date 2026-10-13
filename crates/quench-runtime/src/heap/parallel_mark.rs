@@ -5,8 +5,8 @@
 //! setting its mark bit atomically and traces it with the same `Heap::children` the
 //! single-threaded marker uses; surplus work moves between workers through a shared pool.
 use super::{Cell, FxHashMap, Heap, SlotArena, SparseElements, Value, ValueArena};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 /// Collections whose previous survivors reach this many cells mark in parallel; smaller heaps
 /// finish before helper threads would start.
@@ -121,8 +121,7 @@ impl Heap {
     /// Whether this collection should mark in parallel: its previous live set was large.
     /// Ephemerons are resolved afterwards by `mark_ephemerons` on the collecting thread.
     pub(super) fn parallel_marking(&self) -> bool {
-        self.last_survivors >= PARALLEL_MARK_MIN_LIVE_CELLS
-            && mark_threads() > 1
+        self.last_survivors >= PARALLEL_MARK_MIN_LIVE_CELLS && mark_threads() > 1
     }
 
     /// Marks everything reachable from `roots` with helper threads.
@@ -191,7 +190,10 @@ fn mark_worker<T: ObjectRootTracer>(
                 continue;
             }
             // SAFETY: bounds-checked above; slots are not resized during marking.
-            let Some(cell) = (unsafe { context.slots.get_unchecked(index) }).cell.as_ref() else {
+            let Some(cell) = (unsafe { context.slots.get_unchecked(index) })
+                .cell
+                .as_ref()
+            else {
                 continue;
             };
             let bit = 1 << (index % 64);

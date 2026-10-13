@@ -462,11 +462,8 @@ impl<H: Host> Vm<H> {
         {
             return Ok(**epoch_nanoseconds);
         }
-        if let Some(Cell::TemporalZonedDateTime {
-            epoch_nanoseconds, ..
-        }) = self.heap.get(value)
-        {
-            return Ok(**epoch_nanoseconds);
+        if let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(value) {
+            return Ok(instant.epoch_nanoseconds);
         }
         if value.is_null() || value.is_undefined() {
             return Err(self.type_error(p, "Invalid Instant input".into()));

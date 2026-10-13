@@ -645,15 +645,12 @@ impl<H: Host> Vm<H> {
                     (DateTimeDefaults::Temporal(PLAIN_YEAR_MONTH_DEFAULTS), None)
                 }
                 Some(Cell::TemporalZonedDateTime {
-                    epoch_nanoseconds,
-                    time_zone,
-                    calendar,
-                    ..
+                    instant, calendar, ..
                 }) => (
                     DateTimeDefaults::TemporalZonedDateTime(ZONED_DATE_TIME_DEFAULTS),
                     Some((
-                        **epoch_nanoseconds,
-                        time_zone.to_string(),
+                        instant.epoch_nanoseconds,
+                        instant.time_zone.to_string(),
                         calendar.to_string(),
                     )),
                 ),
@@ -1304,14 +1301,14 @@ impl<H: Host> Vm<H> {
 
     fn temporal_plain_time_fields(&self, value: Value) -> Option<DateTimeFields> {
         let object = self.object_data(value)?;
-        let mut prototype = object.proto;
+        let mut prototype = object.proto();
         let mut branded = false;
         while !prototype.is_null() {
             if prototype == self.temporal_plain_time_proto {
                 branded = true;
                 break;
             }
-            prototype = self.object_data(prototype)?.proto;
+            prototype = self.object_data(prototype)?.proto();
         }
         if !branded {
             return None;
@@ -1614,12 +1611,12 @@ fn temporal_date_time_fields(cell: Option<&Cell>) -> Option<DateTimeFields> {
             fields.calendar = Some(calendar.as_str().to_owned());
         }
         Cell::TemporalPlainDateTime {
-            date,
-            time,
+            date_time,
             calendar,
             ..
         } => {
-            (fields.year, fields.month, fields.day) = *date;
+            let crate::heap::IsoDateTimeFields { date, time } = **date_time;
+            (fields.year, fields.month, fields.day) = date;
             (
                 fields.hour,
                 fields.minute,

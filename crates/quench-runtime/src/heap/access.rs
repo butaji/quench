@@ -101,7 +101,7 @@ impl Heap {
                 }
             })
             .collect::<Option<Box<[_]>>>()
-            .map(EnvironmentSlots)
+            .map(|slots| EnvironmentSlots(slots.into()))
     }
 
     pub fn get(&self, value: Value) -> Option<&Cell> {
