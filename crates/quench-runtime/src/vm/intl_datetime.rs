@@ -1305,7 +1305,7 @@ impl<H: Host> Vm<H> {
 
     fn temporal_plain_time_fields(&self, value: Value) -> Option<DateTimeFields> {
         let object = self.object_data(value)?;
-        let mut prototype = self.prototype_for_data(&object);
+        let mut prototype = self.prototype_for_data(object);
         let mut branded = false;
         while !prototype.is_null() {
             if prototype == self.temporal_plain_time_proto {

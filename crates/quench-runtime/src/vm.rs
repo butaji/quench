@@ -12,7 +12,8 @@ use crate::bytecode::{
 use crate::heap::CellKind;
 use crate::heap::{
     CallSiteRecord, Cell, FunctionKind, Heap, IteratorConsumer, IteratorHelper, IteratorKind,
-    Native, Object, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
+    Native, Object, ObjectRef, ObjectRefMut, ProxyKind, RootId, StackData, TypedArrayKind,
+    WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;

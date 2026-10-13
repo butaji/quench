@@ -39,6 +39,13 @@ impl ValueVec {
         }
     }
 
+    pub(crate) const fn array_property_storage(shape: u32) -> Self {
+        Self {
+            start: EMPTY_START,
+            auxiliary: shape,
+        }
+    }
+
     pub(crate) const fn auxiliary(self) -> u32 {
         self.auxiliary & SHAPE_MASK
     }

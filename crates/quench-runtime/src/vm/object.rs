@@ -107,8 +107,11 @@ impl<H: Host> Vm<H> {
             .unwrap_or(Value::NULL)
     }
 
-    pub(super) fn prototype_for_data(&self, object: &Object) -> Value {
-        self.shapes[object.shape() as usize].prototype
+    pub(super) fn prototype_for_data<'a>(
+        &self,
+        object: impl Into<ObjectRef<'a>>,
+    ) -> Value {
+        self.shapes[object.into().shape() as usize].prototype
     }
 
     pub(super) fn set_object_prototype(&mut self, value: Value, prototype: Value) {
@@ -373,7 +376,7 @@ impl<H: Host> Vm<H> {
         self.shapes[shape as usize].dictionary_trigger.is_some()
     }
     pub(super) fn mark_object_dictionary(&mut self, object: Value, trigger: DictionaryTrigger) {
-        let Some(shape) = self.object_data(object).map(Object::shape) else {
+        let Some(shape) = self.object_data(object).map(ObjectRef::shape) else {
             return;
         };
         if self.shape_is_dictionary(shape) {
@@ -417,7 +420,7 @@ impl<H: Host> Vm<H> {
     ) {
         if let PropertyKey::String(atom) = key
             && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
-            && let Some(data) = self.object_data_mut(object)
+            && let Some(mut data) = self.object_data_mut(object)
         {
             data.mark_indexed_descriptors();
         }
@@ -651,10 +654,10 @@ impl<H: Host> Vm<H> {
             _ => None,
         }
     }
-    pub(super) fn object_data(&self, value: Value) -> Option<&Object> {
+    pub(super) fn object_data(&self, value: Value) -> Option<ObjectRef<'_>> {
         self.heap.object(value)
     }
-    pub(super) fn object_data_mut(&mut self, value: Value) -> Option<&mut Object> {
+    pub(super) fn object_data_mut(&mut self, value: Value) -> Option<ObjectRefMut<'_>> {
         self.heap.object_mut(value)
     }
     pub(super) fn is_object_like(&self, value: Value) -> bool {
@@ -668,18 +671,12 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
-        let direct_object = object.direct_object_index();
-        let (heap_reference, record_receiver) = if let Some(record_id) = direct_object {
-            (
-                Some(HeapReference::ObjectRecord(record_id)),
-                Some(self.heap.object_record_by_id(record_id)),
-            )
-        } else {
-            let heap_reference = object.heap_reference();
-            let record_receiver =
-                heap_reference.and_then(|reference| self.heap.record_object(reference));
-            (heap_reference, record_receiver)
-        };
+        if let Some(record_id) = object.direct_object_index() {
+            return self.get_direct_object_field_cached(p, object, atom, site, record_id);
+        }
+        let heap_reference = object.heap_reference();
+        let record_receiver =
+            heap_reference.and_then(|reference| self.heap.record_object(reference));
         if matches!(heap_reference, Some(HeapReference::ArrayRecord(_)))
             && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
         {
@@ -717,6 +714,45 @@ impl<H: Host> Vm<H> {
                 }
                 return self.get_field_polymorphic(p, object, atom, site, heap_reference);
             }
+        }
+        self.get_field_uncached(p, object, atom, site, heap_reference)
+    }
+
+    #[inline(always)]
+    fn get_direct_object_field_cached(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        site: u16,
+        record_id: u32,
+    ) -> Result<Value, JsError> {
+        let receiver = self.heap.object_record_by_id(record_id);
+        let heap_reference = Some(HeapReference::ObjectRecord(record_id));
+        if self.specialized && p.specialized && !receiver.is_module_namespace() {
+            let index = self.field_cache_index(site);
+            let shape = receiver.shape();
+            // SAFETY: the active program's layout reserves every compiler-emitted site.
+            let cache = unsafe { *self.field_caches.get_unchecked(index) };
+            let slot = if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
+                self.profile.field_cache_hit(0, 0);
+                Some(cache.slot)
+            } else {
+                let slot = self.inline_megamorphic_field_slot(index, shape);
+                if slot.is_some() {
+                    self.profile.field_cache_hit(2, 0);
+                }
+                slot
+            };
+            if let Some(slot) = slot {
+                // SAFETY: receiver shape and slot were recorded together for an own data
+                // property on the cache miss path.
+                return Ok(unsafe {
+                    self.heap
+                        .property_get_object_unchecked(receiver, slot as usize)
+                });
+            }
+            return self.get_field_polymorphic(p, object, atom, site, heap_reference);
         }
         self.get_field_uncached(p, object, atom, site, heap_reference)
     }
@@ -855,7 +891,12 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(always)]
-    fn cached_field_value(&self, site: usize, receiver: &Object) -> Option<FieldCacheHit> {
+    fn cached_field_value<'a>(
+        &self,
+        site: usize,
+        receiver: impl Into<ObjectRef<'a>>,
+    ) -> Option<FieldCacheHit> {
+        let receiver = receiver.into();
         let receiver_shape = receiver.shape();
         // SAFETY: the active program's layout reserves every compiler-emitted site.
         let cache = unsafe { *self.field_caches.get_unchecked(site) };
@@ -888,12 +929,13 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(always)]
-    fn cached_holder_field_value(
+    fn cached_holder_field_value<'a>(
         &self,
         site: usize,
-        receiver: &Object,
+        receiver: impl Into<ObjectRef<'a>>,
         atom: Atom,
     ) -> Option<FieldCacheHit> {
+        let receiver = receiver.into();
         let holder_value = self.prototype_for_data(receiver);
         let holder = self.shape_property_lookup(holder_value, atom)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
@@ -1165,7 +1207,7 @@ impl<H: Host> Vm<H> {
 
         if self
             .object_data(receiver)
-            .is_some_and(Object::is_module_namespace)
+            .is_some_and(ObjectRef::is_module_namespace)
         {
             let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
             let descriptor = self.object_get_own_property_descriptor(p, &[receiver, key])?;
@@ -1231,7 +1273,7 @@ impl<H: Host> Vm<H> {
         if new_property
             && !self
                 .object_data(receiver)
-                .is_some_and(Object::is_extensible)
+                .is_some_and(ObjectRef::is_extensible)
         {
             return Ok(false);
         }
@@ -1257,7 +1299,7 @@ impl<H: Host> Vm<H> {
         if atom == self.length_atom
             && !self
                 .object_data(receiver)
-                .is_some_and(Object::is_arguments_object)
+                .is_some_and(ObjectRef::is_arguments_object)
         {
             return self.set_array_length(p, receiver, value).map(Some);
         }
@@ -1398,17 +1440,19 @@ impl<H: Host> Vm<H> {
         if self.specialized
             && p.specialized
             && !self.is_private_name(atom)
-            && let Some(data) = self.heap.object_record(object)
-            && !data.is_module_namespace()
-            && !data.is_arguments_object()
+            && let Some(record_id) = object.direct_object_index()
         {
+            let data = self.heap.object_record_by_id(record_id);
+            if data.is_module_namespace() || data.is_arguments_object() {
+                return self.set_field_uncached(p, object, atom, value, site, strict);
+            }
             let site = self.field_cache_index(site);
             let (shape, proto, extensible) = (
                 data.shape(),
                 self.prototype_for_data(data),
                 data.is_extensible(),
             );
-            if self.try_cached_field_store(object, atom, shape, value, site)
+            if self.try_cached_object_field_store(record_id, atom, shape, value, site)
                 || (extensible
                     && self.field_cache_atom_eligible(atom)
                     && self.try_cached_field_add(object, atom, shape, proto, value, site))
@@ -1523,7 +1567,7 @@ impl<H: Host> Vm<H> {
             && self.heap.array(object).is_some()
             && !self
                 .object_data(object)
-                .is_some_and(Object::is_arguments_object)
+                .is_some_and(ObjectRef::is_arguments_object)
         {
             let succeeded = self.set_array_length(p, object, value)?;
             return if succeeded || !strict {
@@ -1546,7 +1590,7 @@ impl<H: Host> Vm<H> {
         self.check_property_write(object, atom, existing.is_some())?;
         let shape = self
             .object_data(object)
-            .map(Object::shape)
+            .map(ObjectRef::shape)
             .unwrap_or(u32::MAX);
         let add_prototype_guard =
             if existing.is_none() && shape != u32::MAX && self.field_cache_atom_eligible(atom) {
@@ -1699,27 +1743,58 @@ impl<H: Host> Vm<H> {
         value: Value,
         site: usize,
     ) -> bool {
-        let cache = self.field_caches[site];
-        let (cache, kind) = if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
-            (cache, 0)
-        } else if let Some(cache) = self.megamorphic_field_cache(site, shape, NO_FIELD_HOLDER) {
-            (cache, 2)
-        } else {
+        let Some((cache, kind)) = self.field_store_cache(shape, site) else {
             return false;
         };
         // Callable writes matter only to method caches, so atoms no cache names skip the probe.
         let invalidates_method = self.method_caches_may_name(atom)
-            && self.cached_store_is_callable(object, cache.slot as usize, value);
+            && self.callable_write(object, cache.slot as usize, value);
         // SAFETY: a matching immutable shape proves the cached slot layout.
         unsafe {
-            self.heap
-                .property_set_unchecked(object, cache.slot as usize, value);
+            self.heap.property_set_unchecked(object, cache.slot as usize, value);
         }
         if invalidates_method {
             self.invalidate_method_caches_for_atom(atom);
         }
         self.profile.field_cache_hit(kind, 0);
         true
+    }
+
+    #[inline(always)]
+    fn try_cached_object_field_store(
+        &mut self,
+        record_id: u32,
+        atom: Atom,
+        shape: u32,
+        value: Value,
+        site: usize,
+    ) -> bool {
+        let Some((cache, kind)) = self.field_store_cache(shape, site) else {
+            return false;
+        };
+        let invalidates_method = self.method_caches_may_name(atom)
+            && self.cached_store_is_callable(record_id, cache.slot as usize, value);
+        // SAFETY: a matching immutable shape proves the cached slot layout.
+        unsafe {
+            self.heap
+                .property_set_object_unchecked(record_id, cache.slot as usize, value);
+        }
+        if invalidates_method {
+            self.invalidate_method_caches_for_atom(atom);
+        }
+        self.profile.field_cache_hit(kind, 0);
+        true
+    }
+
+    #[inline(always)]
+    fn field_store_cache(&self, shape: u32, site: usize) -> Option<(FieldCache, usize)> {
+        let cache = self.field_caches[site];
+        if cache.receiver == shape && cache.holder == NO_FIELD_HOLDER {
+            Some((cache, 0))
+        } else {
+            self.megamorphic_field_cache(site, shape, NO_FIELD_HOLDER)
+                .map(|cache| (cache, 2))
+        }
     }
     pub(super) fn set_property_with_program(
         &mut self,
@@ -1845,15 +1920,13 @@ impl<H: Host> Vm<H> {
     /// `callable_write` for a slot a matching cached shape proved present: an ordinary
     /// object's old value is read in place rather than through `object_data`.
     #[inline(always)]
-    fn cached_store_is_callable(&self, object: Value, slot: usize, value: Value) -> bool {
+    fn cached_store_is_callable(&self, record_id: u32, slot: usize, value: Value) -> bool {
         if self.is_function(value) {
             return true;
         }
-        let Some(data) = self.heap.object_record(object) else {
-            return self.callable_write(object, slot, value);
-        };
+        let data = self.heap.object_record_by_id(record_id);
         // SAFETY: the matching cached shape proves the slot lies within the object's storage.
-        let old = unsafe { self.heap.property_get_unchecked(data, slot) };
+        let old = unsafe { self.heap.property_get_object_unchecked(data, slot) };
         self.is_function(old)
     }
     fn callable_write(&self, object: Value, slot: usize, value: Value) -> bool {
@@ -1966,7 +2039,7 @@ impl<H: Host> Vm<H> {
         next
     }
     pub(super) fn delete_shape_property(&mut self, object: Value, key: PropertyKey) {
-        let Some(shape) = self.object_data(object).map(Object::shape) else {
+        let Some(shape) = self.object_data(object).map(ObjectRef::shape) else {
             return;
         };
         let Some(slot) = self.property_shape_slot(shape, key) else {

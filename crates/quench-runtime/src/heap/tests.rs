@@ -7,6 +7,20 @@ fn plain_object() -> Object {
 }
 
 #[test]
+fn const_array_allocation_uses_direct_record_and_traces_elements() {
+    let mut heap = Heap::new();
+    let elements = Rc::new(vec![Value::number(1.0), Value::number(2.0)]);
+    let array = heap.alloc_const_array(0, Rc::clone(&elements));
+
+    assert!(array.direct_array_index().is_some());
+    assert!(Rc::ptr_eq(heap.array(array).unwrap().1, &elements));
+    heap.collect([array]);
+    assert!(heap.is_live(array));
+    heap.collect([]);
+    assert!(!heap.is_live(array));
+}
+
+#[test]
 fn gc_headroom_factors_scale_live_cells_without_overflow() {
     let live = 781_054usize;
     assert_eq!(
@@ -467,7 +481,7 @@ fn out_of_line_private_brand_keeps_its_home_alive() {
     let mut heap = Heap::new();
     let home = heap.alloc(Cell::Object(plain_object()));
     let instance = heap.alloc(Cell::Object(plain_object()));
-    heap.object_record_mut(instance)
+    heap.object_mut(instance)
         .unwrap()
         .add_private_name(PrivateBrand { home, name: 0 });
 

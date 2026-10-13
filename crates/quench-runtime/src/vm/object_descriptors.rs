@@ -528,7 +528,7 @@ impl<H: Host> Vm<H> {
             }
             let value = if self
                 .object_data(target)
-                .is_some_and(Object::is_module_namespace)
+                .is_some_and(ObjectRef::is_module_namespace)
             {
                 self.module_namespace_value(p, target, atom)?
             } else {
@@ -542,7 +542,7 @@ impl<H: Host> Vm<H> {
                 .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
             let writable = self
                 .object_data(target)
-                .is_some_and(Object::is_module_namespace)
+                .is_some_and(ObjectRef::is_module_namespace)
                 || attributes.writable;
             self.property_descriptor_object(
                 value,

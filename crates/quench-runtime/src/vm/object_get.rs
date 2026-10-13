@@ -434,7 +434,7 @@ impl<H: Host> Vm<H> {
             }
             if self
                 .object_data(object)
-                .is_some_and(Object::is_module_namespace)
+                .is_some_and(ObjectRef::is_module_namespace)
             {
                 return Ok(self
                     .module_namespace_value(p, object, atom)?

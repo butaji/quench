@@ -15,6 +15,15 @@ macro_rules! with_binding_site_pc {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn alloc_const_array_with_prototype(
+        &mut self,
+        prototype: Value,
+        elements: Rc<Vec<Value>>,
+    ) -> Value {
+        let shape = self.root_shape_for_prototype(prototype);
+        self.heap.alloc_const_array(shape, elements)
+    }
+
     pub(super) fn module_import_value(
         &self,
         program: ProgramId,
@@ -399,10 +408,8 @@ impl<H: Host> Vm<H> {
                     .ok_or_else(|| {
                         JsError::validation("constant array is outside program".into())
                     })?;
-                let v = self.heap.alloc(Cell::Array {
-                    object: self.shapes.empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                    elements,
-                });
+                let prototype = self.array_prototype_for_realm(self.realm.globals);
+                let v = self.alloc_const_array_with_prototype(prototype, elements);
                 self.write(f, i.result_register(), v);
             }
             Op::GetField => {
@@ -479,7 +486,7 @@ impl<H: Host> Vm<H> {
                 let atom = i.atom_index();
                 let brand = PrivateBrand { home, name: atom };
                 if object != home {
-                    let extensible = self.object_data(object).is_some_and(Object::is_extensible);
+                    let extensible = self.object_data(object).is_some_and(ObjectRef::is_extensible);
                     let already_branded = self
                         .object_data(object)
                         .is_some_and(|object| object.has_private_name(brand));
@@ -496,7 +503,7 @@ impl<H: Host> Vm<H> {
                         ));
                     }
                 }
-                if let Some(object) = self.object_data_mut(object) {
+                if let Some(mut object) = self.object_data_mut(object) {
                     object.add_private_name(brand);
                 }
             }

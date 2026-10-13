@@ -1,7 +1,7 @@
 use super::root::WeakHandle;
 use crate::bytecode::Atom;
 use crate::value::Value;
-use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueVec};
+use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueArena, ValueVec};
 use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
 use rustc_hash::FxHashMap;
@@ -28,6 +28,7 @@ mod cell_layout_tests {
     #[test]
     fn cells_stay_compact() {
         assert_eq!(std::mem::size_of::<Option<Cell>>(), MAX_CELL_BYTES);
+        assert_eq!(std::mem::size_of::<ArrayRecord>(), 2 * CELL_TAG_WORD_BYTES);
     }
 }
 
@@ -958,10 +959,10 @@ pub(crate) struct Object {
     payload: ObjectPayload,
 }
 
-/// Array identity and object semantics share one direct record; dense element
-/// storage remains copy-on-write and is traced by the heap collector.
+/// Arrays use the shared object-property metadata plus their COW element handle.
+/// Named properties are arena-backed; dense elements remain at a fixed offset.
 pub(crate) struct ArrayRecord {
-    pub(crate) object: Object,
+    pub(crate) properties: ValueVec,
     pub(crate) elements: Rc<Vec<Value>>,
 }
 
@@ -992,7 +993,7 @@ pub(crate) enum StackData {
 }
 
 #[derive(Clone, Debug, Default)]
-struct ObjectExtras {
+pub(crate) struct ObjectExtras {
     arguments_map: Option<Vec<u16>>,
     arguments_object: bool,
     raw_json: bool,
@@ -1006,8 +1007,19 @@ struct ObjectExtras {
     indexed_descriptors: bool,
 }
 impl ObjectExtras {
+    pub(crate) fn append_gc_roots(&self, work: &mut Vec<Value>) {
+        work.extend(self.private_names.iter().map(|brand| brand.home));
+        match self.stack_data.as_ref() {
+            Some(StackData::Captured(records)) => {
+                work.extend(records.iter().map(|record| record.this_value));
+            }
+            Some(StackData::CallSite(record)) => work.push(record.this_value),
+            None => {}
+        }
+    }
+
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
-    fn allocated_bytes(&self) -> usize {
+    pub(crate) fn allocated_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + self
                 .arguments_map
@@ -1087,6 +1099,46 @@ impl Object {
         }
     }
 
+    pub(crate) fn into_array_parts(
+        self,
+        properties: &mut ValueArena,
+    ) -> (ValueVec, Option<ObjectExtras>) {
+        let shape = self.shape();
+        let length = properties.len(self.properties);
+        let vector = if let Some(inline) = self.inline_properties() {
+            if length == 0 {
+                ValueVec::array_property_storage(shape)
+            } else {
+                properties.with_values(shape, &inline[..length])
+            }
+        } else {
+            self.properties
+        };
+        let extras = self.extras().cloned();
+        let mut vector = vector;
+        vector.set_out_of_line_storage(extras.is_some());
+        (vector, extras)
+    }
+
+    pub(crate) fn from_array_parts(
+        mut properties: ValueVec,
+        extras: Option<ObjectExtras>,
+    ) -> Self {
+        properties.set_out_of_line_storage(extras.is_some());
+        let payload = match extras {
+            Some(extras) => ObjectPayload {
+                out_of_line: ManuallyDrop::new(Box::new(ObjectOutOfLine {
+                    inline_properties: [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+                    extras,
+                })),
+            },
+            None => ObjectPayload {
+                inline_properties: ManuallyDrop::new([Value::UNDEFINED; INLINE_PROPERTY_COUNT]),
+            },
+        };
+        Self { properties, payload }
+    }
+
     pub(crate) fn inline_properties(&self) -> Option<&[Value; INLINE_PROPERTY_COUNT]> {
         if !self.properties.has_inline_property_storage() {
             return None;
@@ -1160,7 +1212,7 @@ impl Object {
         unsafe { (&mut *self.payload.out_of_line).as_mut() }
     }
 
-    fn extras(&self) -> Option<&ObjectExtras> {
+    pub(crate) fn extras(&self) -> Option<&ObjectExtras> {
         self.properties
             .has_out_of_line_storage()
             .then(|| &self.out_of_line().extras)
@@ -1197,32 +1249,6 @@ impl Object {
         self.extras().is_some_and(|extras| extras.error_data)
     }
 
-    pub(crate) fn stack_data(&self) -> Option<&StackData> {
-        self.extras()?.stack_data.as_ref()
-    }
-
-    pub(crate) fn set_stack_data(&mut self, data: StackData) {
-        self.extras_mut().stack_data = Some(data);
-    }
-
-    pub(crate) fn clear_stack_data(&mut self) {
-        if let Some(extras) = self.extras_mut_if_present() {
-            extras.stack_data = None;
-        }
-    }
-
-    pub(crate) fn visit_stack_data_roots(&self, mut visit: impl FnMut(Value)) {
-        match self.extras().and_then(|extras| extras.stack_data.as_ref()) {
-            Some(StackData::Captured(records)) => {
-                for record in records {
-                    visit(record.this_value);
-                }
-            }
-            Some(StackData::CallSite(record)) => visit(record.this_value),
-            None => {}
-        }
-    }
-
     pub(crate) fn shape(&self) -> u32 {
         self.properties.auxiliary()
     }
@@ -1241,71 +1267,26 @@ impl Object {
     pub(crate) fn set_frozen(&mut self, value: bool) {
         self.properties.set_frozen(value);
     }
-    pub(crate) fn arguments_map(&self) -> Option<&[u16]> {
-        self.extras()?.arguments_map.as_deref()
-    }
     pub(crate) fn arguments_map_mut(&mut self) -> Option<&mut Vec<u16>> {
         self.extras_mut_if_present()?.arguments_map.as_mut()
     }
-    pub(crate) fn mapped_argument_slot(&self, index: usize) -> Option<usize> {
-        self.arguments_map()?
-            .get(index)
-            .copied()
-            .filter(|slot| *slot != u16::MAX)
-            .map(usize::from)
-    }
-    pub(crate) fn set_arguments_map(&mut self, mapping: Vec<u16>) {
-        self.extras_mut().arguments_map = Some(mapping);
-    }
+    #[cfg(test)]
     pub(crate) fn set_arguments_object(&mut self) {
         self.extras_mut().arguments_object = true;
     }
     pub(crate) fn is_arguments_object(&self) -> bool {
         self.extras().is_some_and(|extras| extras.arguments_object)
     }
-    pub(crate) fn has_indexed_descriptors(&self) -> bool {
-        self.extras()
-            .is_some_and(|extras| extras.indexed_descriptors)
-    }
-    pub(crate) fn mark_indexed_descriptors(&mut self) {
-        self.extras_mut().indexed_descriptors = true;
-    }
-    pub(crate) fn is_raw_json(&self) -> bool {
-        self.extras().is_some_and(|extras| extras.raw_json)
-    }
-    pub(crate) fn set_raw_json(&mut self) {
-        self.extras_mut().raw_json = true;
-    }
 
     pub(crate) fn is_module_namespace(&self) -> bool {
         self.extras().is_some_and(|extras| extras.module_namespace)
     }
+    #[cfg(test)]
     pub(crate) fn set_module_namespace(&mut self) {
         self.extras_mut().module_namespace = true;
     }
     pub(crate) fn module_bindings(&self) -> &[(Atom, ProgramId, u16)] {
         self.extras().map_or(&[], |extras| &extras.module_bindings)
-    }
-    pub(crate) fn set_module_bindings(&mut self, bindings: Vec<(Atom, ProgramId, u16)>) {
-        self.extras_mut().module_bindings = bindings;
-    }
-    pub(crate) fn deferred_module(&self) -> Option<&crate::ModuleSource> {
-        self.extras()?.deferred_module.as_ref()
-    }
-    pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
-        self.extras_mut().deferred_module = module;
-    }
-    pub(crate) fn private_names(&self) -> &[PrivateBrand] {
-        self.extras().map_or(&[], |extras| &extras.private_names)
-    }
-    pub(crate) fn has_private_name(&self, brand: PrivateBrand) -> bool {
-        self.private_names().contains(&brand)
-    }
-    pub(crate) fn add_private_name(&mut self, brand: PrivateBrand) {
-        let names = &mut self.extras_mut().private_names;
-        if !names.contains(&brand) {
-            names.push(brand);
-        }
     }
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     pub(crate) fn allocated_extra_bytes(&self) -> usize {
@@ -1314,11 +1295,341 @@ impl Object {
         })
     }
 
-    pub(crate) fn module_binding(&self, atom: Atom) -> Option<(ProgramId, u16)> {
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ObjectRef<'a> {
+    Object(&'a Object),
+    Array(&'a ValueVec, Option<&'a ObjectExtras>),
+}
+
+impl<'a> From<&'a Object> for ObjectRef<'a> {
+    fn from(object: &'a Object) -> Self {
+        Self::Object(object)
+    }
+}
+
+impl<'a> From<&'a Box<Object>> for ObjectRef<'a> {
+    fn from(object: &'a Box<Object>) -> Self {
+        Self::Object(object)
+    }
+}
+
+impl<'a> ObjectRef<'a> {
+    pub(crate) fn as_object(self) -> Option<&'a Object> {
+        match self {
+            Self::Object(object) => Some(object),
+            Self::Array(_, _) => None,
+        }
+    }
+
+    pub(crate) fn properties(self) -> ValueVec {
+        match self {
+            Self::Object(object) => object.properties,
+            Self::Array(properties, _) => *properties,
+        }
+    }
+
+    pub(crate) fn inline_properties(self) -> Option<&'a [Value; INLINE_PROPERTY_COUNT]> {
+        match self {
+            Self::Object(object) => object.inline_properties(),
+            Self::Array(_, _) => None,
+        }
+    }
+
+    pub(crate) fn extras(self) -> Option<&'a ObjectExtras> {
+        match self {
+            Self::Object(object) => object.extras(),
+            Self::Array(_, extras) => extras,
+        }
+    }
+
+    pub(crate) fn shape(self) -> u32 {
+        match self {
+            Self::Object(object) => object.shape(),
+            Self::Array(properties, _) => properties.auxiliary(),
+        }
+    }
+
+    pub(crate) fn is_extensible(self) -> bool {
+        match self {
+            Self::Object(object) => object.is_extensible(),
+            Self::Array(properties, _) => properties.is_extensible(),
+        }
+    }
+
+    pub(crate) fn is_frozen(self) -> bool {
+        match self {
+            Self::Object(object) => object.is_frozen(),
+            Self::Array(properties, _) => properties.is_frozen(),
+        }
+    }
+
+    pub(crate) fn stack_data(self) -> Option<&'a StackData> {
+        self.extras()?.stack_data.as_ref()
+    }
+
+    pub(crate) fn arguments_map(self) -> Option<&'a [u16]> {
+        self.extras()?.arguments_map.as_deref()
+    }
+
+    pub(crate) fn mapped_argument_slot(self, index: usize) -> Option<usize> {
+        self.arguments_map()?
+            .get(index)
+            .copied()
+            .filter(|slot| *slot != u16::MAX)
+            .map(usize::from)
+    }
+
+    pub(crate) fn is_arguments_object(self) -> bool {
+        self.extras().is_some_and(|extras| extras.arguments_object)
+    }
+
+    pub(crate) fn has_indexed_descriptors(self) -> bool {
+        self.extras().is_some_and(|extras| extras.indexed_descriptors)
+    }
+
+    pub(crate) fn is_raw_json(self) -> bool {
+        self.extras().is_some_and(|extras| extras.raw_json)
+    }
+
+    pub(crate) fn is_module_namespace(self) -> bool {
+        self.extras().is_some_and(|extras| extras.module_namespace)
+    }
+
+    pub(crate) fn module_bindings(self) -> &'a [(Atom, ProgramId, u16)] {
+        self.extras().map_or(&[], |extras| &extras.module_bindings)
+    }
+
+    pub(crate) fn deferred_module(self) -> Option<&'a crate::ModuleSource> {
+        self.extras()?.deferred_module.as_ref()
+    }
+
+    pub(crate) fn private_names(self) -> &'a [PrivateBrand] {
+        self.extras().map_or(&[], |extras| &extras.private_names)
+    }
+
+    pub(crate) fn has_private_name(self, brand: PrivateBrand) -> bool {
+        self.private_names().contains(&brand)
+    }
+
+    pub(crate) fn module_binding(self, atom: Atom) -> Option<(ProgramId, u16)> {
         self.module_bindings()
             .iter()
             .find_map(|(name, program, slot)| (*name == atom).then_some((*program, *slot)))
     }
+
+    #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
+    pub(crate) fn allocated_extra_bytes(self) -> usize {
+        match self {
+            Self::Object(object) => object.allocated_extra_bytes(),
+            Self::Array(_, extras) => extras.map_or(0, ObjectExtras::allocated_bytes),
+        }
+    }
+}
+
+pub(crate) enum ObjectRefMut<'a> {
+    Object(&'a mut Object),
+    Array(&'a mut ValueVec, u32, &'a mut FxHashMap<u32, ObjectExtras>),
+}
+
+impl<'a> ObjectRefMut<'a> {
+    fn as_ref(&self) -> ObjectRef<'_> {
+        match self {
+            Self::Object(object) => ObjectRef::Object(object),
+            Self::Array(properties, id, extras) => ObjectRef::Array(
+                &**properties,
+                properties
+                    .has_out_of_line_storage()
+                    .then(|| extras.get(id))
+                    .flatten(),
+            ),
+        }
+    }
+
+    pub(crate) fn properties(&self) -> ValueVec {
+        match self {
+            Self::Object(object) => object.properties,
+            Self::Array(properties, _, _) => **properties,
+        }
+    }
+
+    pub(crate) fn set_properties(&mut self, mut properties: ValueVec) {
+        match self {
+            Self::Object(object) => object.properties = properties,
+            Self::Array(current, _, _) => {
+                properties.set_out_of_line_storage((**current).has_out_of_line_storage());
+                **current = properties;
+            }
+        }
+    }
+
+    pub(crate) fn inline_properties(&self) -> Option<[Value; INLINE_PROPERTY_COUNT]> {
+        match self {
+            Self::Object(object) => object.inline_properties().copied(),
+            Self::Array(_, _, _) => None,
+        }
+    }
+
+    pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
+        match self {
+            Self::Object(object) => object.set_inline_property(slot, value),
+            Self::Array(_, _, _) => unreachable!("array named properties are arena-backed"),
+        }
+    }
+
+    pub(crate) fn set_shape(&mut self, shape: u32) {
+        match self {
+            Self::Object(object) => object.set_shape(shape),
+            Self::Array(properties, _, _) => properties.set_auxiliary(shape),
+        }
+    }
+
+    pub(crate) fn set_extensible(&mut self, value: bool) {
+        match self {
+            Self::Object(object) => object.set_extensible(value),
+            Self::Array(properties, _, _) => properties.set_extensible(value),
+        }
+    }
+
+    pub(crate) fn set_frozen(&mut self, value: bool) {
+        match self {
+            Self::Object(object) => object.set_frozen(value),
+            Self::Array(properties, _, _) => properties.set_frozen(value),
+        }
+    }
+
+    pub(crate) fn is_frozen(&self) -> bool {
+        self.as_ref().is_frozen()
+    }
+
+    pub(crate) fn has_indexed_descriptors(&self) -> bool {
+        self.as_ref().has_indexed_descriptors()
+    }
+
+    pub(crate) fn mapped_argument_slot(&self, index: usize) -> Option<usize> {
+        self.as_ref().mapped_argument_slot(index)
+    }
+
+    fn extras_mut(&mut self) -> &mut ObjectExtras {
+        match self {
+            Self::Object(object) => object.extras_mut(),
+            Self::Array(properties, id, extras) => {
+                properties.set_out_of_line_storage(true);
+                extras.entry(*id).or_default()
+            }
+        }
+    }
+
+    fn extras_mut_if_present(&mut self) -> Option<&mut ObjectExtras> {
+        match self {
+            Self::Object(object) => object.extras_mut_if_present(),
+            Self::Array(properties, id, extras) => {
+                if properties.has_out_of_line_storage() {
+                    extras.get_mut(id)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub(crate) fn set_stack_data(&mut self, data: StackData) {
+        self.extras_mut().stack_data = Some(data);
+    }
+
+    pub(crate) fn clear_stack_data(&mut self) {
+        if let Some(extras) = self.extras_mut_if_present() {
+            extras.stack_data = None;
+        }
+    }
+
+    pub(crate) fn arguments_map_mut(self) -> Option<&'a mut Vec<u16>> {
+        match self {
+            Self::Object(object) => object.arguments_map_mut(),
+            Self::Array(properties, id, extras) => {
+                if properties.has_out_of_line_storage() {
+                    extras.get_mut(&id)?.arguments_map.as_mut()
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub(crate) fn set_arguments_map(&mut self, mapping: Vec<u16>) {
+        self.extras_mut().arguments_map = Some(mapping);
+    }
+
+    pub(crate) fn set_arguments_object(&mut self) {
+        self.extras_mut().arguments_object = true;
+    }
+
+    pub(crate) fn mark_indexed_descriptors(&mut self) {
+        self.extras_mut().indexed_descriptors = true;
+    }
+
+    pub(crate) fn set_raw_json(&mut self) {
+        self.extras_mut().raw_json = true;
+    }
+
+    pub(crate) fn set_module_namespace(&mut self) {
+        self.extras_mut().module_namespace = true;
+    }
+
+    pub(crate) fn set_module_bindings(&mut self, bindings: Vec<(Atom, ProgramId, u16)>) {
+        self.extras_mut().module_bindings = bindings;
+    }
+
+    pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
+        self.extras_mut().deferred_module = module;
+    }
+
+    pub(crate) fn add_private_name(&mut self, brand: PrivateBrand) {
+        let names = &mut self.extras_mut().private_names;
+        if !names.contains(&brand) {
+            names.push(brand);
+        }
+    }
+
+    pub(crate) fn replace_property_storage(
+        &mut self,
+        mut properties: ValueVec,
+        inline_properties: [Value; INLINE_PROPERTY_COUNT],
+    ) -> ValueVec {
+        match self {
+            Self::Object(object) => object.replace_property_storage(properties, inline_properties),
+            Self::Array(array_properties, _, _) => {
+                debug_assert!(!properties.has_inline_property_storage());
+                let previous = **array_properties;
+                properties.preserve_integrity_from(previous);
+                properties.set_out_of_line_storage(previous.has_out_of_line_storage());
+                **array_properties = properties;
+                previous
+            }
+        }
+    }
+
+    pub(crate) fn copy_property_storage_from(&mut self, source: ObjectRef<'_>) {
+        match self {
+            Self::Object(object) => match source {
+                ObjectRef::Object(source) => object.copy_property_storage_from(source),
+                ObjectRef::Array(source, _) => {
+                    let out_of_line = object.properties.has_out_of_line_storage();
+                    object.properties = *source;
+                    object.properties.set_out_of_line_storage(out_of_line);
+                    object.set_inline_words([Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+                }
+            },
+            Self::Array(array_properties, _, _) => {
+                debug_assert!(source.inline_properties().is_none());
+                let extended = array_properties.has_out_of_line_storage();
+                **array_properties = source.properties();
+                (**array_properties).set_out_of_line_storage(extended);
+            }
+        }
+    }
+
 }
 
 const _: () = assert!(std::mem::size_of::<Object>() == 3 * std::mem::size_of::<Value>());

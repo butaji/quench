@@ -423,7 +423,7 @@ impl<H: Host> Vm<H> {
         }
         let object = self.json_object();
         let object_root = self.heap.root(object);
-        if let Some(data) = self.object_data_mut(object) {
+        if let Some(mut data) = self.object_data_mut(object) {
             data.set_raw_json();
         }
         self.set_object_prototype(object, Value::NULL);
@@ -453,7 +453,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn json_is_raw_json(&self, args: &[Value]) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let is_raw = self.object_data(value).is_some_and(Object::is_raw_json);
+        let is_raw = self.object_data(value).is_some_and(ObjectRef::is_raw_json);
         Ok(if is_raw { Value::TRUE } else { Value::FALSE })
     }
 
@@ -975,7 +975,7 @@ impl<H: Host> Vm<H> {
     }
 
     fn json_raw_text(&self, value: Value) -> Option<String> {
-        if !self.object_data(value).is_some_and(Object::is_raw_json) {
+        if !self.object_data(value).is_some_and(ObjectRef::is_raw_json) {
             return None;
         }
         let raw = self.lookup_atom("rawJSON")?;

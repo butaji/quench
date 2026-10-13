@@ -1,4 +1,4 @@
-use super::{ArrayRecord, Cell, CellKind, Heap, Object};
+use super::{ArrayRecord, Cell, CellKind, Heap, Object, ObjectRef};
 use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use rustc_hash::FxHashMap;
@@ -157,11 +157,12 @@ impl MemoryProfile {
         identity: Value,
         array: &ArrayRecord,
         object_slots: usize,
+        extras_bytes: usize,
     ) {
         self.allocated_record(
             identity,
             CellKind::Array as usize,
-            array.object.allocated_extra_bytes() + array.elements.capacity() * size_of::<Value>(),
+            extras_bytes + array.elements.capacity() * size_of::<Value>(),
             "array",
             Some(object_slots),
         );
@@ -366,7 +367,7 @@ impl MemoryProfile {
                 allocated: self.object_allocated_slots[index],
                 peak: self.object_peak_slots[index],
                 death: None,
-                checkpoint: Some(heap.properties.len(object.properties) as u32),
+                checkpoint: Some(heap.properties.len(object.properties()) as u32),
             };
             *rows.entry(lifetime).or_default() += 1;
         });
@@ -470,10 +471,13 @@ impl Heap {
                     .profile_variant_name()
             };
             *cell_variant_counts.entry(variant_name).or_insert(0usize) += 1;
-            let object = object_record.or_else(|| self.object(identity));
+            let object = object_record
+                .map(ObjectRef::Object)
+                .or_else(|| self.object(identity));
             if let Some(object) = object {
                 object_headers += 1;
-                let property_width = self.properties.len(object.properties);
+                let vector = object.properties();
+                let property_width = self.properties.len(vector);
                 object_property_counts_by_width.resize(
                     object_property_counts_by_width
                         .len()
@@ -489,8 +493,8 @@ impl Heap {
                 } else {
                     embedded_object_headers += 1;
                 }
-                if !object.properties.has_inline_property_storage() {
-                    let (used, capacity) = self.properties.vector_stats(object.properties);
+                if !vector.has_inline_property_storage() {
+                    let (used, capacity) = self.properties.vector_stats(vector);
                     live_property_used_values += used;
                     live_property_capacity_values += capacity;
                     live_property_used_values_by_width.resize(
@@ -514,7 +518,8 @@ impl Heap {
             } else if let Some((object, elements)) = self.array(identity)
                 && direct_array
             {
-                object.allocated_extra_bytes() + elements.capacity() * size_of::<Value>()
+                object.allocated_extra_bytes()
+                    + elements.capacity() * size_of::<Value>()
             } else {
                 cell.map_or(0, Self::cell_payload_bytes)
             };
@@ -643,7 +648,10 @@ impl Heap {
             } else if let Some(array_id) = identity.direct_array_index() {
                 // SAFETY: profile walks only live values.
                 let array = unsafe { self.array_records.get_live(array_id) };
-                bytes[CellKind::Array as usize] += array.object.allocated_extra_bytes()
+                bytes[CellKind::Array as usize] += self
+                    .array_extras
+                    .get(&array_id)
+                    .map_or(0, super::ObjectExtras::allocated_bytes)
                     + array.elements.capacity() * size_of::<Value>();
             } else if let Some(cell) = self.get(identity) {
                 bytes[Self::cell_kind(cell) as usize] += Self::cell_payload_bytes(cell);
@@ -657,6 +665,7 @@ impl Heap {
             + self.object_records.allocated_bytes()
             + self.array_records.allocated_bytes()
             + self.live_value_payload_bytes()
+            + self.array_extras.capacity() * size_of::<(u32, super::ObjectExtras)>()
             + self
                 .sparse_arrays
                 .iter()
@@ -683,7 +692,7 @@ impl Heap {
             let Some(object) = self.object(identity) else {
                 return;
             };
-            let vector = self.properties.vector_stats(object.properties);
+            let vector = self.properties.vector_stats(object.properties());
             stats.0 += vector.0;
             stats.1 += vector.1;
         });
@@ -698,7 +707,9 @@ impl Heap {
                     if let Some(array_id) = identity.direct_array_index() {
                         // SAFETY: profile walks only live values.
                         let array = unsafe { self.array_records.get_live(array_id) };
-                        array.object.allocated_extra_bytes()
+                        self.array_extras
+                            .get(&array_id)
+                            .map_or(0, super::ObjectExtras::allocated_bytes)
                             + array.elements.capacity() * size_of::<Value>()
                     } else {
                         self.get(identity).map_or(0, cell_bytes)

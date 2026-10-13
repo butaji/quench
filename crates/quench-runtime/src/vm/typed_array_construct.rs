@@ -429,7 +429,7 @@ impl<H: Host> Vm<H> {
         let length = self.array_like_length(p, object)?;
         let object = self.heap.root_value(source).unwrap();
         if length > 1
-            && let Some(shape) = self.object_data(object).map(Object::shape)
+            && let Some(shape) = self.object_data(object).map(ObjectRef::shape)
         {
             // Prepare the derived lookup for repeated array-like element reads.
             // Getters still run normally; mutations select a new immutable shape.

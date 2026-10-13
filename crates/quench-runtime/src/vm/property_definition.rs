@@ -150,7 +150,7 @@ impl<H: Host> Vm<H> {
                     if atom == self.length_atom
                         && !self
                             .object_data(object)
-                            .is_some_and(Object::is_arguments_object)
+                            .is_some_and(ObjectRef::is_arguments_object)
                     {
                         return self.define_array_length(p, object, descriptor.resolve(&self.heap));
                     }
@@ -166,7 +166,7 @@ impl<H: Host> Vm<H> {
                 let object = self.heap.root_value(target).unwrap();
                 if self
                     .object_data(object)
-                    .is_some_and(Object::is_module_namespace)
+                    .is_some_and(ObjectRef::is_module_namespace)
                 {
                     let Some(current) = self.module_namespace_value(p, object, atom)? else {
                         return Ok(false);

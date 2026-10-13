@@ -85,6 +85,7 @@ pub(crate) struct Heap {
     slots: SlotArena,
     object_records: ObjectRecordSpace,
     array_records: ArrayRecordSpace,
+    array_extras: FxHashMap<u32, ObjectExtras>,
     marks: Vec<u64>,
     free: Vec<u32>,
     external_bytes: usize,
@@ -328,9 +329,7 @@ impl Heap {
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
-        self.allocations += 1;
-        self.total_allocations += 1;
-        self.external_bytes += cell.external_bytes();
+        self.note_allocation(cell.external_bytes());
         let cell = match cell {
             Cell::Object(object) => match self.object_records.try_insert(object) {
                 Ok(record_id) => {
@@ -341,23 +340,70 @@ impl Heap {
                 }
                 Err(object) => Cell::Object(object),
             },
-            Cell::Array { object, elements } => match self
-                .array_records
-                .try_insert(ArrayRecord { object, elements })
-            {
-                Ok(record_id) => {
-                    let value = Value::direct_array(record_id);
-                    #[cfg(feature = "profile-memory")]
-                    self.profile_allocation(value);
-                    return value;
+            Cell::Array { object, elements } => {
+                let (properties, extras) = object.into_array_parts(&mut self.properties);
+                match self.array_records.try_insert(ArrayRecord {
+                    properties,
+                    elements,
+                }) {
+                    Ok(record_id) => {
+                        if let Some(extras) = extras {
+                            self.array_extras.insert(record_id, extras);
+                        }
+                        let value = Value::direct_array(record_id);
+                        #[cfg(feature = "profile-memory")]
+                        self.profile_allocation(value);
+                        return value;
+                    }
+                    Err(array) => Cell::Array {
+                        object: Object::from_array_parts(array.properties, extras),
+                        elements: array.elements,
+                    },
                 }
-                Err(array) => Cell::Array {
-                    object: array.object,
-                    elements: array.elements,
-                },
-            },
+            }
             cell => cell,
         };
+        self.alloc_legacy_cell(cell)
+    }
+
+    pub(crate) fn alloc_const_array(&mut self, shape: u32, elements: Rc<Vec<Value>>) -> Value {
+        self.properties.ensure_empty_shape(shape);
+        #[cfg(feature = "profile-aggregate")]
+        {
+            let kind = CellKind::Array as usize;
+            let bytes = elements.capacity() * size_of::<Value>();
+            self.gc_profile.allocated_kinds[kind] += 1;
+            self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
+            self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
+        }
+        self.note_allocation(0);
+
+        let array = ArrayRecord {
+            properties: ValueVec::array_property_storage(shape),
+            elements,
+        };
+        match self.array_records.try_insert(array) {
+            Ok(record_id) => {
+                let value = Value::direct_array(record_id);
+                #[cfg(feature = "profile-memory")]
+                self.profile_allocation(value);
+                value
+            }
+            Err(array) => self.alloc_legacy_cell(Cell::Array {
+                object: Object::from_array_parts(array.properties, None),
+                elements: array.elements,
+            }),
+        }
+    }
+
+    #[inline(always)]
+    fn note_allocation(&mut self, external_bytes: usize) {
+        self.allocations += 1;
+        self.total_allocations += 1;
+        self.external_bytes += external_bytes;
+    }
+
+    fn alloc_legacy_cell(&mut self, cell: Cell) -> Value {
         let reused_index = self.free.last().copied();
         let slot_index = reused_index.unwrap_or_else(|| {
             u32::try_from(self.slots.len()).expect("heap exhausted its 32-bit Value index space")
@@ -411,10 +457,10 @@ impl Heap {
         values: &[Value],
     ) {
         let (properties, inline_properties) = self.initial_object_storage(shape, values);
-        let previous = {
-            let object = self.object_mut(owner).expect("property owner is an object");
-            object.replace_property_storage(properties, inline_properties)
-        };
+        let previous = self
+            .object_mut(owner)
+            .expect("property owner is an object")
+            .replace_property_storage(properties, inline_properties);
         self.properties.release(previous);
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(owner, values.len());
@@ -446,8 +492,8 @@ impl Heap {
             object.set_shape(mapping[old_shape]);
         });
         self.array_records.for_each_live_mut(|_, array| {
-            let old_shape = array.object.shape() as usize;
-            array.object.set_shape(mapping[old_shape]);
+            let old_shape = array.properties.auxiliary() as usize;
+            array.properties.set_auxiliary(mapping[old_shape]);
         });
         for index in 0..self.slots.len() {
             let Some(object) = self.object_at_index_mut(index) else {
@@ -479,21 +525,22 @@ impl Heap {
             ..
         } = self;
         for (_, owner) in objects {
-            let object = if let Some(record_id) = owner.direct_object_index() {
+            let vector = if let Some(record_id) = owner.direct_object_index() {
                 // SAFETY: direct owners were collected from live object records.
-                Some(unsafe { object_records.get_live_mut(record_id) })
+                Some(&mut unsafe { object_records.get_live_mut(record_id) }.properties)
             } else if let Some(record_id) = owner.direct_array_index() {
                 // SAFETY: array owners were collected from live array records.
-                Some(&mut unsafe { array_records.get_live_mut(record_id) }.object)
+                Some(&mut unsafe { array_records.get_live_mut(record_id) }.properties)
             } else {
                 owner
                     .legacy_heap_index()
                     .and_then(|index| slots.get_mut(index as usize))
                     .and_then(|slot| slot.cell.as_mut())
                     .and_then(Cell::object_mut)
+                    .map(|object| &mut object.properties)
             }
             .expect("property owner remains live during compaction");
-            target += properties.compact_vector(&mut object.properties, target);
+            target += properties.compact_vector(vector, target);
         }
         properties.finish_compaction(target);
         #[cfg(feature = "profile-memory")]
@@ -509,6 +556,7 @@ impl Heap {
         self.slots.clear();
         self.object_records = ObjectRecordSpace::default();
         self.array_records = ArrayRecordSpace::default();
+        self.array_extras.clear();
         self.marks.clear();
         self.free.clear();
         self.external_bytes = 0;
@@ -622,23 +670,27 @@ impl Heap {
         let mut dead_array_ids = Vec::new();
         let (array_live, array_freed) = self.array_records.sweep(|record| match record {
             RecordSweep::Keep(record_id, array) => {
-                let vector = array.object.properties;
+                let vector = array.properties;
                 if properties.has_compact_range(vector) {
                     property_owners.push((vector.start_offset(), Value::direct_array(record_id)));
                 }
             }
             RecordSweep::Dead(_record_id, array) => {
                 #[cfg(feature = "profile-memory")]
-                let slots = properties.len(array.object.properties);
-                properties.release(array.object.properties);
+                let slots = properties.len(array.properties);
+                properties.release(array.properties);
                 #[cfg(feature = "profile-memory")]
-                memory_profile.freed_array(Value::direct_array(_record_id), slots, &array);
+                memory_profile.freed_array(
+                    Value::direct_array(_record_id),
+                    slots,
+                    &array,
+                );
                 dead_array_ids.push(_record_id);
             }
         });
         let clear_sparse_arrays = if let Some(sparse_arrays) = &mut self.sparse_arrays {
-            for record_id in dead_array_ids {
-                sparse_arrays.remove(&Value::direct_array(record_id));
+            for record_id in &dead_array_ids {
+                sparse_arrays.remove(&Value::direct_array(*record_id));
             }
             sparse_arrays.is_empty()
         } else {
@@ -646,6 +698,9 @@ impl Heap {
         };
         if clear_sparse_arrays {
             self.sparse_arrays = None;
+        }
+        for record_id in &dead_array_ids {
+            self.array_extras.remove(record_id);
         }
         live += array_live;
         #[cfg(feature = "profile-aggregate")]
@@ -767,7 +822,12 @@ impl Heap {
                 }
                 // SAFETY: a direct Array Value names an initialized record.
                 let array = unsafe { self.array_records.get_live(record_id) };
-                Self::array_children(value, array, &self.properties, work, object_roots);
+                let extras = array
+                    .properties
+                    .has_out_of_line_storage()
+                    .then(|| self.array_extras.get(&record_id))
+                    .flatten();
+                Self::array_children(value, array, extras, &self.properties, work, object_roots);
                 if let Some(arrays) = self.sparse_arrays.as_ref()
                     && let Some(elements) = arrays.get(&value)
                 {
@@ -910,15 +970,40 @@ impl Heap {
             }
         }
     }
-    pub(crate) fn property_get(&self, object: &Object, slot: usize) -> Option<Value> {
+    pub(crate) fn property_get<'a>(
+        &self,
+        object: impl Into<ObjectRef<'a>>,
+        slot: usize,
+    ) -> Option<Value> {
+        let object = object.into();
         let value = match object.inline_properties() {
             Some(values) => values.get(slot).copied(),
-            None => self.properties.get(object.properties, slot),
+            None => self.properties.get(object.properties(), slot),
         }?;
         (!value.is_deleted()).then_some(value)
     }
     #[inline(always)]
-    pub(crate) unsafe fn property_get_unchecked(&self, object: &Object, slot: usize) -> Value {
+    pub(crate) unsafe fn property_get_unchecked<'a>(
+        &self,
+        object: impl Into<ObjectRef<'a>>,
+        slot: usize,
+    ) -> Value {
+        let object = object.into();
+        if let Some(values) = object.inline_properties() {
+            debug_assert!(slot < INLINE_PROPERTY_COUNT);
+            // SAFETY: the caller proves that the property slot exists.
+            unsafe { *values.get_unchecked(slot) }
+        } else {
+            // SAFETY: the caller proves that the property slot exists.
+            unsafe { self.properties.get_unchecked(object.properties(), slot) }
+        }
+    }
+    #[inline(always)]
+    pub(crate) unsafe fn property_get_object_unchecked(
+        &self,
+        object: &Object,
+        slot: usize,
+    ) -> Value {
         if let Some(values) = object.inline_properties() {
             debug_assert!(slot < INLINE_PROPERTY_COUNT);
             // SAFETY: the caller proves that the property slot exists.
@@ -928,14 +1013,36 @@ impl Heap {
             unsafe { self.properties.get_unchecked(object.properties, slot) }
         }
     }
+    #[inline(always)]
+    pub(crate) unsafe fn property_set_object_unchecked(
+        &mut self,
+        record_id: u32,
+        slot: usize,
+        value: Value,
+    ) {
+        let Self {
+            object_records,
+            properties,
+            ..
+        } = self;
+        // SAFETY: the caller's matching object-shape cache proves this record is live.
+        let object = unsafe { object_records.get_live_mut(record_id) };
+        if object.inline_properties().is_some() {
+            debug_assert!(slot < INLINE_PROPERTY_COUNT);
+            object.set_inline_property(slot, value);
+        } else {
+            // SAFETY: the caller proves that the property slot exists.
+            unsafe { properties.set_unchecked(object.properties, slot, value) };
+        }
+    }
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         let vector = {
-            let data = self.object_mut(object).unwrap();
+            let mut data = self.object_mut(object).unwrap();
             if data.inline_properties().is_some() {
                 data.set_inline_property(slot, value);
                 return;
             }
-            data.properties
+            data.properties()
         };
         self.properties.set(vector, slot, value);
     }
@@ -947,13 +1054,13 @@ impl Heap {
         value: Value,
     ) {
         let vector = {
-            let data = self.object_mut(object).unwrap();
+            let mut data = self.object_mut(object).unwrap();
             if data.inline_properties().is_some() {
                 debug_assert!(slot < INLINE_PROPERTY_COUNT);
                 data.set_inline_property(slot, value);
                 return;
             }
-            data.properties
+            data.properties()
         };
         // SAFETY: the caller proves that the property slot exists.
         unsafe { self.properties.set_unchecked(vector, slot, value) };
@@ -962,7 +1069,7 @@ impl Heap {
     /// length, and moves the object to `shape`, whose storage length is `slot + 1`.
     #[inline(always)]
     pub(crate) fn property_add(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
-        let data = self.object_mut(object).unwrap();
+        let mut data = self.object_mut(object).unwrap();
         if slot < INLINE_PROPERTY_COUNT && data.inline_properties().is_some() {
             data.set_inline_property(slot, value);
             data.set_shape(shape);
@@ -976,10 +1083,12 @@ impl Heap {
     pub(crate) fn property_push(&mut self, object: Value, value: Value) {
         let (vector, inline, slot) = {
             let data = self.object(object).unwrap();
+            let inline: Option<[Value; INLINE_PROPERTY_COUNT]> =
+                data.inline_properties().copied();
             (
-                data.properties,
-                data.inline_properties().copied(),
-                self.properties.len(data.properties),
+                data.properties(),
+                inline,
+                self.properties.len(data.properties()),
             )
         };
         if let Some(inline) = inline {
@@ -994,17 +1103,17 @@ impl Heap {
             debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
             let mut vector = self.properties.with_values(vector.auxiliary(), &inline);
             self.properties.push(&mut vector, value);
-            self.object_mut(object)
-                .unwrap()
-                .replace_property_storage(vector, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
+            self.object_mut(object).unwrap().replace_property_storage(
+                vector,
+                [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+            );
             #[cfg(feature = "profile-memory")]
             self.note_object_slots(object, slot + 1);
             return;
         }
         let mut vector = vector;
         self.properties.push(&mut vector, value);
-        let data = self.object_mut(object).unwrap();
-        data.properties = vector;
+        self.object_mut(object).unwrap().set_properties(vector);
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(object, slot + 1);
     }
@@ -1024,6 +1133,7 @@ impl Heap {
         let Self {
             object_records,
             array_records,
+            array_extras,
             slots,
             properties,
             memory_profile,
@@ -1039,7 +1149,10 @@ impl Heap {
             memory_profile.allocated_array(
                 identity,
                 array,
-                properties.len(array.object.properties),
+                properties.len(array.properties),
+                array_extras
+                    .get(&record_id)
+                    .map_or(0, ObjectExtras::allocated_bytes),
             );
         } else {
             let index = identity
@@ -1284,11 +1397,21 @@ impl Heap {
     fn array_children(
         owner: Value,
         array: &ArrayRecord,
+        extras: Option<&ObjectExtras>,
         properties: &ValueArena,
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(Value, u32, &mut Vec<Value>),
     ) {
-        Self::object_children(owner, &array.object, properties, work, object_roots);
+        Self::object_storage_children(
+            owner,
+            array.properties.auxiliary(),
+            array.properties,
+            None,
+            extras,
+            properties,
+            work,
+            object_roots,
+        );
         work.extend(
             array
                 .elements
@@ -1305,9 +1428,33 @@ impl Heap {
         work: &mut Vec<Value>,
         object_roots: &mut impl FnMut(Value, u32, &mut Vec<Value>),
     ) {
-        object_roots(owner, object.shape(), work);
-        work.extend(object.private_names().iter().map(|brand| brand.home));
-        if let Some(values) = object.inline_properties() {
+        Self::object_storage_children(
+            owner,
+            object.shape(),
+            object.properties,
+            object.inline_properties(),
+            object.extras(),
+            properties,
+            work,
+            object_roots,
+        );
+    }
+
+    fn object_storage_children(
+        owner: Value,
+        shape: u32,
+        vector: ValueVec,
+        inline: Option<&[Value; INLINE_PROPERTY_COUNT]>,
+        extras: Option<&ObjectExtras>,
+        properties: &ValueArena,
+        work: &mut Vec<Value>,
+        object_roots: &mut impl FnMut(Value, u32, &mut Vec<Value>),
+    ) {
+        object_roots(owner, shape, work);
+        if let Some(extras) = extras {
+            extras.append_gc_roots(work);
+        }
+        if let Some(values) = inline {
             work.extend(
                 values
                     .iter()
@@ -1315,9 +1462,8 @@ impl Heap {
                     .filter(|value| value.is_heap() && !value.is_deleted()),
             );
         } else {
-            properties.append_heap_references(object.properties, work);
+            properties.append_heap_references(vector, work);
         }
-        object.visit_stack_data_roots(|value| work.push(value));
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {

@@ -679,7 +679,11 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn ordered_shape(&self, data: &Object) -> Vec<(Atom, usize)> {
+    pub(super) fn ordered_shape<'a>(
+        &self,
+        data: impl Into<ObjectRef<'a>>,
+    ) -> Vec<(Atom, usize)> {
+        let data = data.into();
         let mut entries = self
             .shape_entries(data.shape())
             .iter()
@@ -751,7 +755,7 @@ impl<H: Host> Vm<H> {
         let current_record = (!is_new).then(|| {
             PropertyDescriptorRecord::from_attributes(existing.unwrap_or(Value::UNDEFINED), current)
         });
-        let extensible = self.object_data(target).is_some_and(Object::is_extensible);
+        let extensible = self.object_data(target).is_some_and(ObjectRef::is_extensible);
         if !descriptor.compatible_with(current_record, extensible, |a, b| self.same_value(a, b)) {
             return Ok(false);
         }
