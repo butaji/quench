@@ -68,7 +68,7 @@ fn put(
     Ok(())
 }
 
-fn create(
+pub(crate) fn create(
     context: &mut NativeContext<'_, NodeHost>,
     stack: &openssl::error::ErrorStack,
     decorate: bool,
