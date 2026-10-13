@@ -823,6 +823,9 @@ pub(crate) struct Vm<H> {
     atom_text: AtomTable,
     atoms: FxHashMap<u64, Atom>,
     atom_collisions: FxHashMap<u64, Vec<Atom>>,
+    /// The atoms that spell canonical array indices, by index: index-keyed lookups find
+    /// them without formatting and hashing the decimal text.
+    array_index_atoms: FxHashMap<u32, Atom>,
     dynamic_atoms: Vec<JsString>,
     // The last string matched by a RegExp, prepared once for repeated matching.
     regexp_subject: Option<Rc<quench_regexp::Subject>>,
@@ -1416,6 +1419,7 @@ impl<H: Host> Vm<H> {
         self.atom_text = program.atoms.clone();
         self.atoms.clear();
         self.atom_collisions.clear();
+        self.array_index_atoms.clear();
         self.dynamic_atoms.clear();
         self.atom_classes.clear();
         self.regexp_subject = None;
@@ -1428,7 +1432,7 @@ impl<H: Host> Vm<H> {
         self.string_concats = None;
         let atom_text = self.atom_text.clone();
         for (id, name) in atom_text.iter().enumerate() {
-            self.index_atom(Self::atom_hash_str(name), id as Atom);
+            self.index_atom(Self::atom_hash_str(name), id as Atom, name);
         }
         let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
         let new_target = self.intern_atom(NEW_TARGET_BINDING);

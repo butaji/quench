@@ -68,33 +68,25 @@ fn scalar_constants_preserve_signed_zero_bits() {
 }
 
 #[test]
-fn register_promotion_admits_only_statement_level_writes() {
+fn register_promotion_admits_statement_level_and_nested_writes() {
+    // A nested write keeps the binding in its register too: reads an enclosing operation
+    // holds across it take a copy (`clobbered_locals`).
     for body in [
         "value = 2;",
         "value += 2;",
         "value++;",
         "value = other = 2;",
-    ] {
-        let source = format!("function update(value) {{ var other; {body} return value; }}");
-        let program = Engine::specialize(&source, "statement-write.js").unwrap();
-        assert_eq!(
-            program.functions[1].local_registers.len(),
-            2,
-            "a statement-level write keeps the parameter in a register: {body}"
-        );
-        program.validate().unwrap();
-    }
-    for body in [
         "for (value of [2]) {}",
         "({ field: value } = { field: 2 });",
         "other = (value = 2);",
         "other = value++;",
     ] {
         let source = format!("function update(value) {{ var other; {body} return value; }}");
-        let program = Engine::specialize(&source, "nested-write.js").unwrap();
-        assert!(
-            program.functions[1].local_registers.len() < 2,
-            "a nested write keeps the parameter in its local slot: {body}"
+        let program = Engine::specialize(&source, "write.js").unwrap();
+        assert_eq!(
+            program.functions[1].local_registers.len(),
+            2,
+            "the parameter stays in a register: {body}"
         );
         program.validate().unwrap();
     }

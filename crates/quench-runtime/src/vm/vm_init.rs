@@ -85,6 +85,7 @@ impl<H: Host> Vm<H> {
             atom_text: AtomTable::default(),
             atoms: FxHashMap::default(),
             atom_collisions: FxHashMap::default(),
+            array_index_atoms: FxHashMap::default(),
             dynamic_atoms: vec![],
             regexp_subject: None,
             regexp_matchers: Default::default(),

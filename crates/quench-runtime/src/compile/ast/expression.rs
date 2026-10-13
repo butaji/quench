@@ -12,6 +12,9 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn expression_at_current_position(&mut self, expression: &Expression<'_>) -> Register {
+        // Only a direct read or update of a local consumes the last-operand mark; every
+        // nested operand starts unmarked.
+        let last_operand = std::mem::take(&mut self.last_operand);
         match expression {
             Expression::NumericLiteral(value) => self.literal(Constant::Number(value.value)),
             Expression::StringLiteral(value) => self.string_literal(value),
@@ -21,7 +24,10 @@ impl FunctionCompiler<'_, '_> {
             Expression::TaggedTemplateExpression(value) => self.tagged_template(value),
             Expression::BooleanLiteral(value) => self.literal(Constant::Boolean(value.value)),
             Expression::NullLiteral(_) => self.literal(Constant::Null),
-            Expression::Identifier(value) => self.load_name(value.name.as_str()),
+            Expression::Identifier(value) => {
+                self.last_operand = last_operand;
+                self.load_name(value.name.as_str())
+            }
             Expression::ThisExpression(_) => self.load_this_value(),
             Expression::NewTarget(_) => self.load_name(crate::bytecode::NEW_TARGET_BINDING),
             Expression::ImportMeta(_) => {
@@ -49,7 +55,10 @@ impl FunctionCompiler<'_, '_> {
             Expression::ComputedMemberExpression(value) => self.computed_member(value),
             Expression::ChainExpression(value) => self.chain_expression(&value.expression),
             Expression::AssignmentExpression(value) => self.assignment(value),
-            Expression::UpdateExpression(value) => self.update(value, true),
+            Expression::UpdateExpression(value) => {
+                self.last_operand = last_operand;
+                self.update(value, true)
+            }
             Expression::BinaryExpression(value) => self.binary(value),
             Expression::PrivateInExpression(value) => {
                 let atom = self.owner.private_name_atom(value.left.span);
@@ -231,6 +240,7 @@ impl FunctionCompiler<'_, '_> {
     /// Loads a reference that resolves statically to a promoted register, a frame local or a
     /// closure capture; `None` leaves it to by-name resolution.
     pub(super) fn static_atom_reference(&mut self, atom: Atom) -> Option<Register> {
+        let last_operand = std::mem::take(&mut self.last_operand);
         let atom = self.parameter_binding_atom(atom);
         let compiler_binding = self.is_compiler_binding(atom);
         let lexical = if self.dynamic_eval
@@ -246,7 +256,12 @@ impl FunctionCompiler<'_, '_> {
             && let Some(slot) = self.local_slots.get(&atom).copied()
         {
             if let Some(register) = self.local_register(atom) {
-                return Some(register);
+                if last_operand || !self.local_is_clobbered(atom) {
+                    return Some(register);
+                }
+                let copy = self.reg();
+                self.emit(Op::Move, copy, register, 0, 0);
+                return Some(copy);
             }
             let dst = self.reg();
             self.emit(Op::LoadLocal, dst, 0, 0, u32::from(slot));
@@ -586,7 +601,7 @@ impl FunctionCompiler<'_, '_> {
             );
             return dst;
         }
-        let key = self.expression(key);
+        let key = self.last_operand(key);
         let dst = self.reg();
         self.emit(Op::GetIndex, dst, object, key, 0);
         dst
@@ -625,12 +640,23 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn update(&mut self, value: &UpdateExpression<'_>, result_used: bool) -> Register {
+        let last_operand = std::mem::take(&mut self.last_operand);
         let reference = self.prepare_assignment_reference(&value.argument);
         if let AssignmentReference::Abrupt(result) = reference {
             return result;
         }
         let reference = self.canonicalize_assignment_reference(reference, true);
+        // The old value feeds the increment at once.
+        self.last_operand = true;
         let old = self.load_assignment_reference(reference);
+        self.last_operand = false;
+        // A prefix update of a promoted local whose value its consumer takes at once, or
+        // whose value is unused, increments the register in place.
+        if value.prefix && (last_operand || !result_used) && self.is_promoted_register(old) {
+            self.emit(Op::IncDec, old, old, 0, u32::from(value.operator as u8));
+            self.store_assignment_reference(reference, old);
+            return old;
+        }
         // A postfix update whose value is used yields the old value after ToNumeric.
         let numeric_old = if value.prefix || !result_used {
             old
@@ -668,7 +694,7 @@ impl FunctionCompiler<'_, '_> {
         {
             operand
         } else {
-            Operand::register(self.expression(&value.right))
+            Operand::register(self.last_operand(&value.right))
         };
         self.emit_binary(value.operator as u32, left, right)
     }
@@ -701,7 +727,7 @@ impl FunctionCompiler<'_, '_> {
                 {
                     operand
                 } else {
-                    Operand::register(self.expression(&binary.right))
+                    Operand::register(self.last_operand(&binary.right))
                 };
             return self.emit(
                 Op::JumpBinaryFalse,
