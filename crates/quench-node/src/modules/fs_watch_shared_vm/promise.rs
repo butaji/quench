@@ -5,6 +5,7 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 
 const DEFAULT_MAX_QUEUE: f64 = 2048.0;
 const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
+#[cfg(target_os = "linux")]
 const FACTORY: &str = quench_js_check::checked_js!(
     r#"(next, finish, PromiseConstructor, push, shift, ErrorConstructor) => {
  'use strict';
@@ -14,6 +15,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
  };
 }"#
 );
+#[cfg(target_os = "linux")]
 pub(super) fn install(
     context: &mut NativeContext<'_, NodeHost>,
     parent: RootId,
