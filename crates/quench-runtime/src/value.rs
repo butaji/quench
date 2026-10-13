@@ -9,6 +9,17 @@ const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
 const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
+/// The tag occupies the bits above the 48-bit payload.
+const TAG_SHIFT: u32 = PAYLOAD_MASK.count_ones();
+/// The tags are consecutive, from `TAG_UNDEFINED` through `TAG_DELETED`.
+const TAG_COUNT: u64 = ((TAG_DELETED - TAG_UNDEFINED) >> TAG_SHIFT) + 1;
+const _: () = assert!(TAG_MASK == !PAYLOAD_MASK);
+const _: () = assert!(
+    (TAG_NULL - TAG_UNDEFINED) >> TAG_SHIFT == 1
+        && (TAG_BOOL - TAG_UNDEFINED) >> TAG_SHIFT == 2
+        && (TAG_HEAP - TAG_UNDEFINED) >> TAG_SHIFT == 3
+        && (TAG_INT - TAG_UNDEFINED) >> TAG_SHIFT == 4
+);
 
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy)]
@@ -69,12 +80,21 @@ impl Value {
         Self(TAG_HEAP | u64::from(index))
     }
 
+    /// The Number this value holds. Doubles are tested first: arithmetic that reaches this
+    /// conversion has already handled the integer pair.
+    #[inline(always)]
     pub fn as_number(self) -> Option<f64> {
-        if let Some(value) = self.as_int() {
-            Some(value as f64)
+        if !self.is_tagged() {
+            Some(f64::from_bits(self.0))
         } else {
-            (!self.is_tagged()).then(|| f64::from_bits(self.0))
+            self.as_int().map(f64::from)
         }
+    }
+
+    /// Both operands as Numbers.
+    #[inline(always)]
+    pub(crate) fn number_pair(left: Self, right: Self) -> Option<(f64, f64)> {
+        Some((left.as_number()?, right.as_number()?))
     }
 
     pub fn as_bool(self) -> Option<bool> {
@@ -102,11 +122,9 @@ impl Value {
         self.0 == TAG_DELETED
     }
 
+    #[inline(always)]
     fn is_tagged(self) -> bool {
-        matches!(
-            self.0 & TAG_MASK,
-            TAG_UNDEFINED | TAG_NULL | TAG_BOOL | TAG_HEAP | TAG_INT | TAG_DELETED
-        )
+        (self.0 >> TAG_SHIFT).wrapping_sub(TAG_UNDEFINED >> TAG_SHIFT) < TAG_COUNT
     }
 
     #[cfg(feature = "profile-aggregate")]

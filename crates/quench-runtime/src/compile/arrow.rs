@@ -72,6 +72,7 @@ impl Compiler<'_> {
             parameter_local_count,
             with_depth,
             &[],
+            &[],
         );
         function.strict = strict;
         function.super_static = super_static;
