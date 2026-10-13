@@ -95,6 +95,9 @@ pub(crate) struct Heap {
     /// Slots of the live cells that hold weak references (`Cell::holds_weak_references`):
     /// collection resolves ephemerons and prunes weak entries through these alone.
     weak_holders: FxHashSet<u32>,
+    /// Arena owners the current collection has marked, keyed by `pack_offset_owner`: marking
+    /// already reads each live cell, so the sweep need not revisit survivors to find them.
+    marked_property_owners: Vec<u64>,
     #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
     gc_profile: GcProfile,
     #[cfg(feature = "profile-memory")]
@@ -542,7 +545,10 @@ impl Heap {
             self.gc_profile.max_worklist = self.gc_profile.max_worklist.max(work.len() as u64);
         }
         let mut tracer_locals = if self.parallel_marking() {
-            self.mark_parallel(work, tracer)
+            let (locals, owners) = self.mark_parallel(work, tracer);
+            self.marked_property_owners
+                .extend(owners.into_iter().flatten());
+            locals
         } else {
             let mut local = tracer.local();
             self.mark_work(
@@ -568,22 +574,16 @@ impl Heap {
             self.gc_profile.sweep_slots += self.slots.len() as u64;
         }
         // Live arena owners, keyed for the offset-ordered compaction below.
-        let mut property_owners = Vec::new();
+        let property_owners = std::mem::take(&mut self.marked_property_owners);
         let mut dropped_ranges = false;
         if self.parallel_marking() && !cfg!(feature = "profile-memory") {
-            (live, property_owners, dropped_ranges) = self.sweep_parallel();
+            (live, dropped_ranges) = self.sweep_parallel();
         } else {
             for (base, slab) in self.slots.slabs_mut() {
                 for (offset, slot) in slab.iter_mut().enumerate() {
                     let index = base + offset;
                     if Self::marked(&self.marks, index) {
                         live += 1;
-                        if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
-                            && self.properties.has_compact_range(object.properties())
-                        {
-                            property_owners
-                                .push(pack_offset_owner(object.properties().start_offset(), index));
-                        }
                     } else if let Some(cell) = slot.cell.take() {
                         Self::free_cell_parts(
                             &mut self.properties,
@@ -658,6 +658,8 @@ impl Heap {
             }
             Self::mark(&mut self.marks, index);
             let cell = slot.cell.as_ref().unwrap();
+            self.marked_property_owners
+                .extend(property_owner_key(&self.properties, index, cell));
             #[cfg(feature = "profile-aggregate")]
             {
                 self.gc_profile.marked += 1;
@@ -1371,6 +1373,15 @@ mod tests;
 const OFFSET_RADIX_BITS: u32 = 16;
 /// An owner key keeps the arena offset in the high half and the slot index in the low half.
 const OWNER_KEY_HALF_BITS: u32 = u32::BITS;
+
+/// The compaction key of the cell in slot `index` when its properties occupy an arena range.
+#[inline(always)]
+fn property_owner_key(properties: &ValueArena, index: usize, cell: &Cell) -> Option<u64> {
+    let vector = cell.object()?.properties();
+    properties
+        .has_compact_range(vector)
+        .then(|| pack_offset_owner(vector.start_offset(), index))
+}
 
 fn pack_offset_owner(offset: usize, owner: usize) -> u64 {
     debug_assert!(offset <= u32::MAX as usize && owner <= u32::MAX as usize);

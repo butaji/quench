@@ -1,7 +1,8 @@
 //! Sweeping spread over helper threads after a parallel mark.
 //!
-//! Each worker owns a disjoint run of slabs. It counts survivors, records arena-backed
-//! survivors for compaction, and frees dead plain objects and arrays whose property storage is
+//! Each worker owns a disjoint run of slabs. It counts survivors from the mark bitmap and
+//! visits only occupied, unmarked slots (marking already recorded the arena owners compaction
+//! needs, so survivors are not read again). It frees dead plain objects and arrays whose property storage is
 //! inline or empty and which have no sparse elements: such a cell touches no shared table. An
 //! array's element backing is dropped by the worker when the array is its only owner; a shared
 //! backing's references are counted and released by the collecting thread, so no reference
@@ -9,7 +10,8 @@
 //! whose words their disjoint slab runs never share. Every other dead cell is reported back and
 //! freed on the collecting thread.
 use super::parallel_mark::mark_threads;
-use super::{Cell, FxHashMap, Heap, Slot, SparseElements, Value, ValueArena, pack_offset_owner};
+use super::slots::SLOTS_PER_SLAB;
+use super::{Cell, FxHashMap, Heap, Slot, SparseElements, Value, ValueArena};
 use std::rc::Rc;
 
 /// One worker's results: survivors, arena owners, the slots it freed and the dead cells it left
@@ -17,13 +19,15 @@ use std::rc::Rc;
 #[derive(Default)]
 struct SweepShare {
     live: usize,
-    property_owners: Vec<u64>,
     freed: usize,
     deferred: Vec<u32>,
     /// A freed object's arena storage was dropped without release.
     dropped_ranges: bool,
     /// References to shared element backings held by freed arrays, by backing.
     shared_backings: FxHashMap<*const Vec<Value>, usize>,
+    /// The latest shared backing and its references not yet in `shared_backings`: dead
+    /// arrays from one literal share a backing, so most releases count here.
+    last_backing: Option<(*const Vec<Value>, usize)>,
 }
 
 // SAFETY: a share's backing pointers are strong references handed to the collecting thread,
@@ -50,9 +54,9 @@ struct SweepContext<'a> {
 unsafe impl Sync for SweepContext<'_> {}
 
 impl Heap {
-    /// Sweeps in parallel; returns survivors and arena owners. Each dead cell the workers left
-    /// in place is then freed by `free_cell`.
-    pub(super) fn sweep_parallel(&mut self) -> (usize, Vec<u64>, bool) {
+    /// Sweeps in parallel; returns survivors and whether freed objects dropped arena ranges.
+    /// Each dead cell the workers left in place is then freed by `free_cell`.
+    pub(super) fn sweep_parallel(&mut self) -> (usize, bool) {
         let workers = mark_threads();
         self.free.cover(self.slots.len());
         let slabs: Vec<_> = self.slots.slabs_mut().collect();
@@ -80,13 +84,12 @@ impl Heap {
                 .collect()
         });
         let mut live = 0;
-        let mut property_owners = Vec::new();
         let mut deferred = Vec::new();
         let mut dropped_ranges = false;
-        for share in shares {
+        for mut share in shares {
+            share.flush_backing();
             dropped_ranges |= share.dropped_ranges;
             live += share.live;
-            property_owners.extend(share.property_owners);
             self.free.add_inserted(share.freed);
             deferred.extend(share.deferred);
             for (backing, references) in share.shared_backings {
@@ -105,81 +108,101 @@ impl Heap {
                 .unwrap();
             self.free_cell(index as usize, cell);
         }
-        (live, property_owners, dropped_ranges)
+        (live, dropped_ranges)
     }
 }
 
 impl SweepShare {
-    fn free(&mut self, context: &SweepContext<'_>, index: usize) {
-        context.free[index / u64::BITS as usize].fetch_or(
-            1 << (index % u64::BITS as usize),
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        self.freed += 1;
+    /// Counts one reference to the shared element backing `backing` for release.
+    fn release_backing(&mut self, backing: *const Vec<Value>) {
+        match &mut self.last_backing {
+            Some((last, references)) if *last == backing => *references += 1,
+            _ => {
+                self.flush_backing();
+                self.last_backing = Some((backing, 1));
+            }
+        }
+    }
+
+    fn flush_backing(&mut self) {
+        if let Some((backing, references)) = self.last_backing.take() {
+            *self.shared_backings.entry(backing).or_default() += references;
+        }
     }
 }
 
 fn sweep_run(context: &SweepContext<'_>, run: SlabRun<'_>) -> SweepShare {
+    const WORD_BITS: usize = u64::BITS as usize;
+    const _: () = assert!(SLOTS_PER_SLAB % WORD_BITS == 0);
     let mut share = SweepShare::default();
     for (base, slab) in run.0 {
-        for (offset, slot) in slab.iter_mut().enumerate() {
-            let index = base + offset;
-            if Heap::marked(context.marks, index) {
-                share.live += 1;
-                if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
-                    && context.properties.has_compact_range(object.properties())
-                {
-                    share
-                        .property_owners
-                        .push(pack_offset_owner(object.properties().start_offset(), index));
-                }
-                continue;
-            }
-            match &slot.cell {
-                None => {}
-                // A dead object's arena range is discarded by the compaction that follows the
-                // sweep, which keeps only live owners; only dictionary storage needs a release.
-                Some(Cell::Object(object))
-                    if object.owns_no_allocation() && !object.properties().is_dictionary() =>
-                {
-                    share.dropped_ranges |=
-                        !context.properties.release_is_noop(object.properties());
-                    std::mem::forget(slot.cell.take());
-                    share.free(context, index);
-                }
-                Some(Cell::String(text)) if text.is_uniquely_owned() => {
-                    // No other value shares the buffers, so freeing them here is thread-local.
-                    drop(slot.cell.take());
-                    share.free(context, index);
-                }
-                Some(Cell::Array { object })
-                    if object.owns_no_allocation()
-                        && !object.properties().is_dictionary()
-                        && context
-                            .sparse_arrays
-                            .is_none_or(|arrays| !arrays.contains_key(&(index as u32))) =>
-                {
-                    share.dropped_ranges |=
-                        !context.properties.release_is_noop(object.properties());
-                    let elements = object.elements();
-                    let unique = Rc::strong_count(elements) == 1 && Rc::weak_count(elements) == 0;
-                    let Some(Cell::Array { object }) = slot.cell.take() else {
-                        unreachable!("matched an array above");
-                    };
-                    let (object, elements) = object.into_parts();
-                    std::mem::forget(object);
-                    if unique {
-                        // No other cell holds this backing, so no other thread touches it.
-                        drop(elements);
-                    } else {
-                        *share
-                            .shared_backings
-                            .entry(Rc::into_raw(elements))
-                            .or_default() += 1;
+        for (word_offset, slots) in slab.chunks_mut(WORD_BITS).enumerate() {
+            let word = base / WORD_BITS + word_offset;
+            let marks = context.marks[word];
+            share.live += marks.count_ones() as usize;
+            let present = u64::MAX >> (WORD_BITS - slots.len());
+            // Only this worker writes this run's free words, so it reads and replaces them whole.
+            let free = context.free[word].load(std::sync::atomic::Ordering::Relaxed);
+            let mut dead = present & !marks & !free;
+            // Slots this word frees, published with one store once the word is done.
+            let mut freed: u64 = 0;
+            while dead != 0 {
+                let bit = dead.trailing_zeros() as usize;
+                dead &= dead - 1;
+                let index = word * WORD_BITS + bit;
+                let slot = &mut slots[bit];
+                debug_assert!(
+                    slot.cell.is_some(),
+                    "a slot without a free bit holds a cell"
+                );
+                match &slot.cell {
+                    None => {}
+                    // A dead object's arena range is discarded by the compaction that follows the
+                    // sweep, which keeps only live owners; only dictionary storage needs a release.
+                    Some(Cell::Object(object))
+                        if object.owns_no_allocation() && !object.properties().is_dictionary() =>
+                    {
+                        share.dropped_ranges |=
+                            !context.properties.release_is_noop(object.properties());
+                        std::mem::forget(slot.cell.take());
+                        freed |= 1 << bit;
                     }
-                    share.free(context, index);
+                    Some(Cell::String(text)) if text.is_uniquely_owned() => {
+                        // No other value shares the buffers, so freeing them here is thread-local.
+                        drop(slot.cell.take());
+                        freed |= 1 << bit;
+                    }
+                    Some(Cell::Array { object })
+                        if object.owns_no_allocation()
+                            && !object.properties().is_dictionary()
+                            && context
+                                .sparse_arrays
+                                .is_none_or(|arrays| !arrays.contains_key(&(index as u32))) =>
+                    {
+                        share.dropped_ranges |=
+                            !context.properties.release_is_noop(object.properties());
+                        let elements = object.elements();
+                        let unique =
+                            Rc::strong_count(elements) == 1 && Rc::weak_count(elements) == 0;
+                        let Some(Cell::Array { object }) = slot.cell.take() else {
+                            unreachable!("matched an array above");
+                        };
+                        let (object, elements) = object.into_parts();
+                        std::mem::forget(object);
+                        if unique {
+                            // No other cell holds this backing, so no other thread touches it.
+                            drop(elements);
+                        } else {
+                            share.release_backing(Rc::into_raw(elements));
+                        }
+                        freed |= 1 << bit;
+                    }
+                    Some(_) => share.deferred.push(index as u32),
                 }
-                Some(_) => share.deferred.push(index as u32),
+            }
+            if freed != 0 {
+                context.free[word].store(free | freed, std::sync::atomic::Ordering::Relaxed);
+                share.freed += freed.count_ones() as usize;
             }
         }
     }
