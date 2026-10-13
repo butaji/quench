@@ -1109,6 +1109,45 @@ impl<H: Host> Vm<H> {
                         continue;
                     }
                 }
+                // A cached own-data store writes a slot in place: it neither allocates nor throws.
+                Op::SetField | Op::SetFieldStrict => {
+                    if self.cached_field_store_hit(
+                        p,
+                        self.read(frame, ins.register_b()),
+                        ins.atom_index(),
+                        self.read(frame, ins.register_a()),
+                        ins.cache_site_index(),
+                    ) {
+                        continue;
+                    }
+                }
+                // Number arithmetic on register or constant operands runs no guest code,
+                // allocates nothing and cannot throw.
+                Op::Binary | Op::NumericAdd | Op::NumericMultiply
+                    if !ins.returns_from_frame()
+                        && let (Some(left), Some(right)) = (
+                            self.inert_operand(frame, ins.operand_b()),
+                            self.inert_operand(frame, ins.operand_c()),
+                        )
+                        && let Some(value) =
+                            self.number_binary(ins.binary_operator(), left, right) =>
+                {
+                    self.profile.binary(
+                        ins.binary_operator() as usize,
+                        ins.operand_b().0,
+                        ins.operand_c().0,
+                    );
+                    if let Some(local) = ins.numeric_local_target() {
+                        self.frames[frame].locals[usize::from(local)] = value;
+                        self.profile.virtual_opcode(
+                            self.frames[frame].program.raw(),
+                            Op::StoreLocalPlain as usize,
+                        );
+                    } else {
+                        self.write(frame, ins.result_register(), value);
+                    }
+                    continue;
+                }
                 // A field cache hit reads a data slot: it neither allocates nor throws.
                 Op::GetField
                     if ins.result_flags() == 0
