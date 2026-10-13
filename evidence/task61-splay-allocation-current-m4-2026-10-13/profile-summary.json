@@ -1,0 +1,446 @@
+{
+  "kind": "splay-allocation-profile-summary",
+  "platform": "Apple M4 arm64 macOS 26.5",
+  "source_revision": "16347ed0e0acb51a9010796e2f97abdda90477ec",
+  "runtime_change_revision": "5501981f5",
+  "profile_binary_sha256": "9db1e8c1a3355aa8c1be66e4616882fc2c829899810b8d8c17785090fbb4f72a",
+  "input_sha256": "ac9c33765fb2968c78c1f116563913f575451d84826ea8a7bdf79a791bb3f345",
+  "profile_run_calls": 300,
+  "checkpoint": {
+    "phase": "gc_16_after",
+    "collection": 16,
+    "occupied_slots": 781977,
+    "cell_counts": [
+      {
+        "kind": "array",
+        "count": 256048
+      },
+      {
+        "kind": "environment",
+        "count": 178
+      },
+      {
+        "kind": "function",
+        "count": 1510
+      },
+      {
+        "kind": "iterator",
+        "count": 16
+      },
+      {
+        "kind": "object",
+        "count": 512272
+      },
+      {
+        "kind": "string",
+        "count": 11911
+      },
+      {
+        "kind": "symbol",
+        "count": 38
+      },
+      {
+        "kind": "weak_map",
+        "count": 4
+      }
+    ],
+    "object_record_reserved_bytes": 27082752,
+    "array_record_reserved_bytes": 17072128,
+    "slot_arena_reserved_bytes": 1556480,
+    "property_arena_values_bytes": 2209328,
+    "live_property_used_values": 37330,
+    "live_property_capacity_values": 39028,
+    "accounted_runtime_bytes": 51327119,
+    "property_header_widths": [
+      {
+        "width": 0,
+        "count": 256103
+      },
+      {
+        "width": 1,
+        "count": 342
+      },
+      {
+        "width": 2,
+        "count": 504096
+      },
+      {
+        "width": 3,
+        "count": 1091
+      },
+      {
+        "width": 4,
+        "count": 8100
+      },
+      {
+        "width": 5,
+        "count": 36
+      },
+      {
+        "width": 6,
+        "count": 17
+      },
+      {
+        "width": 7,
+        "count": 9
+      },
+      {
+        "width": 8,
+        "count": 5
+      },
+      {
+        "width": 9,
+        "count": 5
+      },
+      {
+        "width": 10,
+        "count": 4
+      },
+      {
+        "width": 11,
+        "count": 1
+      },
+      {
+        "width": 12,
+        "count": 3
+      },
+      {
+        "width": 13,
+        "count": 2
+      },
+      {
+        "width": 14,
+        "count": 5
+      },
+      {
+        "width": 15,
+        "count": 5
+      },
+      {
+        "width": 16,
+        "count": 1
+      },
+      {
+        "width": 17,
+        "count": 1
+      },
+      {
+        "width": 18,
+        "count": 1
+      },
+      {
+        "width": 19,
+        "count": 2
+      },
+      {
+        "width": 20,
+        "count": 1
+      },
+      {
+        "width": 21,
+        "count": 1
+      },
+      {
+        "width": 22,
+        "count": 1
+      },
+      {
+        "width": 23,
+        "count": 1
+      },
+      {
+        "width": 24,
+        "count": 2
+      },
+      {
+        "width": 25,
+        "count": 2
+      },
+      {
+        "width": 26,
+        "count": 1
+      },
+      {
+        "width": 27,
+        "count": 2
+      },
+      {
+        "width": 33,
+        "count": 1
+      },
+      {
+        "width": 37,
+        "count": 1
+      },
+      {
+        "width": 38,
+        "count": 1
+      },
+      {
+        "width": 40,
+        "count": 1
+      },
+      {
+        "width": 43,
+        "count": 1
+      },
+      {
+        "width": 46,
+        "count": 1
+      },
+      {
+        "width": 49,
+        "count": 1
+      },
+      {
+        "width": 50,
+        "count": 1
+      },
+      {
+        "width": 54,
+        "count": 1
+      },
+      {
+        "width": 226,
+        "count": 1
+      }
+    ]
+  },
+  "observed_object_lifetimes": {
+    "by_peak_width": [
+      {
+        "peak_slots": 0,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 1,
+        "live_count": 53,
+        "freed_count": 25
+      },
+      {
+        "peak_slots": 2,
+        "live_count": 833769,
+        "freed_count": 1182418
+      },
+      {
+        "peak_slots": 3,
+        "live_count": 45,
+        "freed_count": 11
+      },
+      {
+        "peak_slots": 4,
+        "live_count": 39408,
+        "freed_count": 128962
+      },
+      {
+        "peak_slots": 5,
+        "live_count": 14,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 6,
+        "live_count": 5,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 7,
+        "live_count": 5,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 8,
+        "live_count": 3,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 9,
+        "live_count": 4,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 10,
+        "live_count": 3,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 12,
+        "live_count": 2,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 13,
+        "live_count": 2,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 14,
+        "live_count": 5,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 15,
+        "live_count": 4,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 16,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 17,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 19,
+        "live_count": 2,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 20,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 21,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 24,
+        "live_count": 2,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 25,
+        "live_count": 2,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 26,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 27,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 33,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 37,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 38,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 40,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 46,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 49,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 50,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 54,
+        "live_count": 1,
+        "freed_count": 0
+      },
+      {
+        "peak_slots": 226,
+        "live_count": 1,
+        "freed_count": 0
+      }
+    ],
+    "peak_over_inline_width": 168494,
+    "top_sites": [
+      {
+        "program": 0,
+        "function": 38,
+        "pc": 10,
+        "peak_over_2": 135970,
+        "live_over_2": 26159,
+        "freed_over_2": 109811
+      },
+      {
+        "program": 0,
+        "function": 31,
+        "pc": 24,
+        "peak_over_2": 31999,
+        "live_over_2": 13234,
+        "freed_over_2": 18765
+      },
+      {
+        "program": null,
+        "function": null,
+        "pc": null,
+        "peak_over_2": 88,
+        "live_over_2": 74,
+        "freed_over_2": 14
+      },
+      {
+        "program": 3,
+        "function": 0,
+        "pc": 179,
+        "peak_over_2": 52,
+        "live_over_2": 0,
+        "freed_over_2": 52
+      },
+      {
+        "program": 3,
+        "function": 0,
+        "pc": 185,
+        "peak_over_2": 52,
+        "live_over_2": 0,
+        "freed_over_2": 52
+      },
+      {
+        "program": 10,
+        "function": 126,
+        "pc": 25,
+        "peak_over_2": 36,
+        "live_over_2": 0,
+        "freed_over_2": 36
+      },
+      {
+        "program": 8,
+        "function": 2,
+        "pc": 70,
+        "peak_over_2": 33,
+        "live_over_2": 0,
+        "freed_over_2": 33
+      },
+      {
+        "program": 11,
+        "function": 0,
+        "pc": 300,
+        "peak_over_2": 24,
+        "live_over_2": 0,
+        "freed_over_2": 24
+      }
+    ]
+  },
+  "timing_claim": false
+}
