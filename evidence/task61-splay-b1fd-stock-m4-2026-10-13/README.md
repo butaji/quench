@@ -18,14 +18,14 @@ the pinned parent binary `01c22fa3…` with candidate `b1fd4907b`, binary
 
 Wall and cycles are statistically flat; instructions are lower.
 
-## Stock attempt
+## Stock attempts
 
-The 11-round stock attempt is excluded. It is valid and output-equal, but the
-host load rose during the run and the engine scores fell together. The raw
-medians are retained only to identify the excluded attempt: Quench 5,586 /
-103,661,568 B, Node 9,632, Bun 6,487 / 66,453,504 B, and QuickJS 6,226.
-These are not qualification distances. No official M4 score or RSS result
-changes.
+Both 11-round stock attempts are excluded: although each produced valid,
+output-equal samples, host interference and a cross-engine score collapse
+occurred during the runs. The raw reports are retained as
+`stock-attempt-excluded-11.json` and
+`stock-attempt-excluded-11-retry.json`; no distances are derived from them.
+No official M4 score or RSS result changes.
 
 The official M4 Splay row remains 1.648× Score / 1.781× max RSS on runtime
 `17077748a`. A clean stock retake on the current source is still required.
@@ -42,6 +42,6 @@ target/pinned/101aa4b65250b8bdcc41095d10f2c5eeba22d151e25413c299fe9c15da8af964/q
   --out fixed-work-parent-comparison-11.json
 ```
 
-The report files are `fixed-work-parent-comparison-11.json` and
-`stock-attempt-excluded-11.json`. Their SHA-256 values are recorded in the
-commit that adds this directory.
+The report files are `fixed-work-parent-comparison-11.json` and the two
+excluded stock reports. Their SHA-256 values are recorded in the commit that
+adds this directory.
