@@ -3,6 +3,26 @@ use super::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
+/// The Server constructor accepts nullish defaults, objects, and a listener function.
+pub(crate) fn server_options(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let options = args.first().copied().unwrap_or_else(|| context.undefined());
+    if context
+        .rooted_value(options)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+        || context.is_object_rooted(options)?
+        || context.is_callable_rooted(options)?
+    {
+        return Ok(options);
+    }
+    Err(super::util_shared_vm::argument_type_error(
+        context, options, "options", "object",
+    )?)
+}
+
 pub(crate) fn socket_options(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
