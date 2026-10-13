@@ -2577,9 +2577,6 @@ impl<'a> Compiler<'a> {
                         && !lexical_atoms.contains(&atom)
                         && atom != arguments_atom
                         && self_binding_slot != Some(slot)
-                        && !register_local_facts
-                            .nested_written_names
-                            .contains(self.atoms[atom as usize].as_ref())
                         && !self.atoms[atom as usize].starts_with('\0'))
                     .then_some(slot)
                 })
@@ -2588,6 +2585,15 @@ impl<'a> Compiler<'a> {
             Vec::new()
         };
         promoted_local_slots.sort_unstable();
+        let clobbered_local_slots = promoted_local_slots
+            .iter()
+            .copied()
+            .filter(|&slot| {
+                register_local_facts
+                    .nested_written_names
+                    .contains(self.atoms[locals[usize::from(slot)] as usize].as_ref())
+            })
+            .collect::<Vec<_>>();
         let mut function = FunctionCompiler::new(
             self,
             locals,
@@ -2602,6 +2608,7 @@ impl<'a> Compiler<'a> {
             parameter_local_count,
             options.with_depth,
             &promoted_local_slots,
+            &clobbered_local_slots,
         );
         if let Some((name, binding)) = name_binding {
             function.push_function_name_binding(name, binding);
