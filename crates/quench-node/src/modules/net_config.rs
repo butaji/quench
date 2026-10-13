@@ -5,7 +5,7 @@ pub(crate) const ANY_FAMILY: u8 = 0;
 pub(crate) const IPV4_FAMILY: u8 = 4;
 pub(crate) const IPV6_FAMILY: u8 = 6;
 
-pub(crate) const DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT: u64 = 2500;
+pub(crate) const DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT: u64 = 500;
 const MIN_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT: u64 = 10;
 
 pub(crate) fn normalize_auto_select_family_attempt_timeout(timeout_ms: u64) -> u64 {
@@ -15,10 +15,9 @@ pub(crate) fn normalize_auto_select_family_attempt_timeout(timeout_ms: u64) -> u
 pub(crate) fn auto_select_family_attempt_timeout_from_exec_argv(
     exec_argv: &[String],
 ) -> Option<u64> {
-    exec_argv.iter().find_map(|argument| {
+    exec_argv.iter().rev().find_map(|argument| {
         let value = argument.strip_prefix("--network-family-autoselection-attempt-timeout=")?;
-        let timeout_ms = value.parse::<u64>().ok()?;
-        Some(normalize_auto_select_family_attempt_timeout(timeout_ms))
+        value.parse::<u64>().ok()
     })
 }
 
