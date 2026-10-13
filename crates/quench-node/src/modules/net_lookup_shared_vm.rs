@@ -60,35 +60,7 @@ pub(super) fn start(
     } else {
         undefined
     };
-    let auto = if has_options {
-        get(context, options, "autoSelectFamily")?
-    } else {
-        undefined
-    };
-    let auto = if context
-        .rooted_value(auto)
-        .is_some_and(|value| value.is_null() || value.is_undefined())
-    {
-        context
-            .host_mut()
-            .shared_state()
-            .borrow()
-            .net_auto_select_family
-    } else if let Some(value) = context.rooted_value(auto).and_then(|value| value.as_bool()) {
-        value
-    } else {
-        let error = super::util_shared_vm::argument_type_error(
-            context,
-            auto,
-            "options.autoSelectFamily",
-            "boolean",
-        )?;
-        return Err(super::net_options_shared_vm::validator_error(
-            context,
-            error,
-            "ERR_INVALID_ARG_TYPE",
-        )?);
-    };
+    let auto = super::net_options_shared_vm::connect_family_options(context, options)?;
     let all = !is_ip_family(family_number) && !context.truthy_rooted(local_address)? && auto;
     let dns_options = context.object_rooted()?;
     set(context, dns_options, "family", family)?;
