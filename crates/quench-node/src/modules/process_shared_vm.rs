@@ -1958,6 +1958,9 @@ fn drain_checkpoint(
             continue;
         }
         let can_run_timers = has_referenced_shared_work(&shared_state);
+        if can_run_timers && super::fs_stat_watch_shared_vm::poll(runtime, program)? {
+            continue;
+        }
         let due = if can_run_timers {
             shared_state
                 .borrow_mut()
@@ -2101,6 +2104,7 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
         || crate::modules::http_shared_vm::has_work(shared_state)
         || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
+        || super::fs_stat_watch_shared_vm::has_work(&shared_state.borrow().fs_stat_watch)
         || shared_state.borrow().scheduler.has_refed_shared_timers()
         || shared_state
             .borrow()
@@ -2348,6 +2352,7 @@ fn drain_shared_jobs(
             runtime.clear_kept_objects();
             crate::modules::zlib_stream_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
+            super::fs_stat_watch_shared_vm::prune(runtime);
             return Ok(());
         }
         dispatch_promise_rejection_batch(runtime, program, unhandled)?;
@@ -2846,6 +2851,7 @@ fn cleanup_environment(
     let _span = crate::modules::trace_state::EnvironmentSpan::enter(state, "RunCleanup");
     crate::modules::http_shared_vm::cleanup(runtime, state);
     super::fs_watch_shared_vm::cleanup(runtime);
+    super::fs_stat_watch_shared_vm::cleanup(runtime);
 }
 
 fn emit_exit(

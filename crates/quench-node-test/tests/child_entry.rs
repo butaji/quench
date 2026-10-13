@@ -1473,6 +1473,95 @@ fn compare_node_stream_source(source: &str) {
 }
 
 #[test]
+fn native_stat_watch_cache_stop_order_and_reference_counts_match_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-statwatch-ref-')),file=path.join(dir,'watched');fs.writeFileSync(file,'data');
+const a=()=>assert.fail('unchanged file'),b=()=>assert.fail('unchanged file');
+const watcher=fs.watchFile(file,{interval:5},a);assert.strictEqual(fs.watchFile(path.join(dir,'.','watched'),{interval:'ignored'},b),watcher);
+assert.strictEqual(watcher.unref(),watcher);assert.strictEqual(watcher.unref(),watcher);assert.strictEqual(watcher.ref(),watcher);assert.strictEqual(watcher.ref(),watcher);assert.strictEqual(watcher.ref(),watcher);
+fs.unwatchFile(file,()=>{});assert.strictEqual(watcher.listenerCount('change'),2);fs.unwatchFile(file,a);assert.strictEqual(watcher.listenerCount('change'),1);
+const result=[];let synchronous=true;watcher.once('stop',()=>{assert(!synchronous);result.push('stop');});watcher.stop();assert.strictEqual(watcher._handle,null);watcher.stop();assert.strictEqual(fs.watchFile(file,b),watcher);fs.unwatchFile(file);synchronous=false;
+process.nextTick(()=>{assert.deepStrictEqual(result,['stop']);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));});
+"#);
+}
+
+#[test]
+fn native_stat_watch_missing_creation_stats_match_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-statwatch-stats-')),file=path.join(dir,'watched');
+const options=Object.freeze({interval:0});let phase=0;const result=[];
+const watcher=fs.watchFile(file,options,(current,previous)=>{
+ if(phase++===0){assert.strictEqual(current.ino,0);assert.strictEqual(previous.ino,0);assert.strictEqual(current.atime.getTime(),0);assert.strictEqual(current.isFile(),false);assert(current instanceof fs.Stats);result.push(['missing',Object.keys(current).filter(x=>!x.endsWith('time')),Object.getOwnPropertySymbols(current).map(String)]);fs.writeFileSync(file,'abc');}
+ else {assert(current.ino>0);assert.strictEqual(previous.ino,0);assert.strictEqual(current.size,3);assert(current.isFile());assert(!current.isDirectory());result.push(['created',current.size,current.isFile()]);fs.unwatchFile(file);}
+});watcher.on('stop',()=>{result.push('stop');fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));});
+"#);
+}
+
+#[test]
+fn native_stat_watch_initial_request_survives_unreference_like_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs');
+fs.watchFile('quench-statwatch-initial-missing',{interval:1,persistent:false},()=>console.log('initial'));
+console.log('ready');
+"#);
+}
+
+#[test]
+fn native_stat_watch_stats_constructor_projection_matches_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),assert=require('assert');process.noDeprecation=true;
+console.log(fs.Stats.name,fs.Stats.length,fs.Stats.prototype.constructor.name,Object.getPrototypeOf(fs.Stats).name);
+const events=[];const sec={valueOf(){events.push('seconds');return 1;}};const ns={valueOf(){events.push('nanoseconds');return 234567890;}};
+const stats=new fs.Stats(1,32768,1,2,3,0,4096,4,5,6,sec,ns,0,0,0,0,0,0);
+assert(stats instanceof fs.Stats);assert.strictEqual(stats.isFile(),true);assert.strictEqual(stats.isDirectory(),false);assert.strictEqual(stats.atimeMs,1234.56789);assert.strictEqual(stats.atime.getTime(),1235);assert(Object.hasOwn(stats,'atime'));
+stats._checkModeProperty=function(value){assert.strictEqual(this,stats);return 'override:'+value;};assert.strictEqual(stats.isFile(),'override:32768');
+console.log(JSON.stringify([events,Object.keys(stats),Object.getOwnPropertySymbols(stats).map(String)]));
+"#);
+}
+
+#[test]
+fn native_stat_watch_bigint_timestamps_and_original_callback_error_match_node() {
+    const SOURCE: &str = r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-statwatch-bigint-')),file=path.join(dir,'watched'),result=[];let phase=0;const marker={original:true};
+const watcher=fs.watchFile(file,{interval:1,bigint:true},(current,previous)=>{
+ global.gc();assert.strictEqual(typeof current.ino,'bigint');assert.strictEqual(typeof previous.ino,'bigint');
+ for(const key of ['atime','mtime','ctime','birthtime'])assert.strictEqual(current[key+'Ns']/1000000n,current[key+'Ms']);
+ if(phase++===0){assert.strictEqual(current.ino,0n);assert.strictEqual(current.atime.getTime(),0);result.push('missing');fs.writeFileSync(file,'abc');fs.utimesSync(file,1.234567,1.234567);}
+ else {assert(current.ino>0n);assert.strictEqual(current.size,3n);assert(current.isFile());assert(current.ctimeNs>9007199254740991n);assert.strictEqual(current.atime.getTime(),1234);result.push('created');fs.unwatchFile(file);throw marker;}
+});
+process.once('uncaughtException',error=>{assert.strictEqual(error,marker);result.push('original');});
+watcher.once('stop',()=>{global.gc();fs.rmSync(dir,{recursive:true,force:true});result.push('stop');console.log(JSON.stringify(result));});global.gc();
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--expose-gc", "-e", SOURCE]);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn native_stat_watch_validation_option_getters_and_stop_removal_match_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),assert=require('assert'),path=require('path'),os=require('os');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-statwatch-validation-')),file=path.join(dir,'watched');fs.writeFileSync(file,'data');const result=[];
+for(const value of [undefined,null,false,1,'bad',{},()=>{}]){try{fs.watchFile(file,value);result.push(['accepted',typeof value]);if(typeof value==='function')fs.unwatchFile(file);}catch(error){result.push([typeof value,error.name,error.code,error.message]);}}
+for(const value of [-1,1.5,NaN,Infinity,4294967296,'1',null,undefined]){try{fs.watchFile(file,{interval:value},()=>{});assert.fail('expected interval error');}catch(error){result.push(['interval',String(value),error.name,error.code,error.message]);}}
+const getters=[],symbol=Symbol('option');const options=Object.create({interval:1});Object.defineProperties(options,{interval:{enumerable:true,get(){getters.push('interval');return 0;}},persistent:{enumerable:true,get(){getters.push('persistent');return false;}},[symbol]:{enumerable:true,get(){getters.push('symbol');return 1;}}});
+const watcher=fs.watchFile(file,options,()=>assert.fail('unchanged'));result.push(getters);const never=()=>assert.fail('removed stop listener');watcher.once('stop',never);watcher.stop();watcher.removeListener('stop',never);fs.unwatchFile(file);process.nextTick(()=>{fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));});
+"#);
+}
+
+#[test]
 fn zlib_crc32_and_bounded_sync_inputs_match_node_errors_and_bytes() {
     let source = r#"
 const z=require('zlib');
