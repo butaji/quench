@@ -795,13 +795,40 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `WasmJumpI32Zero` and `WasmJumpI32NonZero`.
-    fn lane_jump_i32_zero<WHEN_ZERO: bool, BACKWARD: bool, ACC: u8>(cx, r, ip, i, view) {
+    /// `WasmJumpI32Zero` and `WasmJumpI32NonZero`. With `CARRY`, the taken
+    /// jump carries register `c` (a field the instruction leaves unused) as
+    /// the accumulator, for a target that reads it there.
+    fn lane_jump_i32_zero<WHEN_ZERO: bool, BACKWARD: bool, ACC: u8, CARRY: bool>(cx, r, ip, i, view) {
         if (read_i32::<ACC, ACC_A>(r, i.a, view) == 0) == WHEN_ZERO {
+            let view = if CARRY { Carried { acc: r.get(i.c), ..view } } else { view };
             return lane_jump(cx, r, ip, BACKWARD, view, None);
         }
         next!(cx, r, following(ip), view)
     }
+}
+
+/// The zero-test jumps, indexed by whether they jump on zero, direction and
+/// accumulator position; `CARRY` as in `lane_jump_i32_zero`.
+struct ZeroJumps<H, const CARRY: bool>(std::marker::PhantomData<H>);
+
+impl<H: Host, const CARRY: bool> ZeroJumps<H, CARRY> {
+    const HANDLERS: [[[Handler; ACC_POSITIONS]; 2]; 2] = {
+        macro_rules! positions {
+            ($zero:literal, $backward:literal) => {
+                [
+                    lane_jump_i32_zero::<H, $zero, $backward, ACC_NONE, CARRY>,
+                    lane_jump_i32_zero::<H, $zero, $backward, ACC_A, CARRY>,
+                    lane_jump_i32_zero::<H, $zero, $backward, ACC_B, CARRY>,
+                    lane_jump_i32_zero::<H, $zero, $backward, ACC_C, CARRY>,
+                    lane_jump_i32_zero::<H, $zero, $backward, ACC_PAIR, CARRY>,
+                ]
+            };
+        }
+        [
+            [positions!(false, false), positions!(false, true)],
+            [positions!(true, false), positions!(true, true)],
+        ]
+    };
 }
 
 lane_handler! {
@@ -1643,8 +1670,11 @@ lane_handler! {
                 None => panic!("not a direct load"),
             }
         };
+        // With `ADD` and `ACC_C`, the accumulator holds the register both
+        // the add and the load read.
         let ip = if ADD {
-            r.set(i.a, view.integers.encode(r.i32(i.b).wrapping_add(i.imm() as i32)));
+            let base = read_i32::<ACC, ACC_C>(r, i.b, view);
+            r.set(i.a, view.integers.encode(base.wrapping_add(i.imm() as i32)));
             following(ip)
         } else {
             ip
@@ -1725,6 +1755,7 @@ lane_handler! {
         let value = r.get(second.b);
         if JUMP {
             r.set(second.a, value);
+            let view = Carried { acc: value, ..view };
             return lane_jump(cx, r, following(next), BACKWARD, view, None);
         }
         produce!(cx, r, next, second.a, value, view)
@@ -1742,9 +1773,14 @@ lane_handler! {
             r.get(i.b)
         };
         r.set(i.a, value);
-        lane_jump(cx, r, following(ip), BACKWARD, view, None)
+        lane_jump(cx, r, following(ip), BACKWARD, Carried { acc: value, ..view }, None)
     }
 }
+
+/// The most records before a record that one fused record can run through:
+/// an f64 load, arithmetic and store (`FloatPairs::UPDATES`) start two
+/// records ahead of the last they run.
+const FUSION_REACH: usize = 2;
 
 /// The handlers fusing a move or an add of a constant with a jump, indexed
 /// by whether the instruction adds and by the jump's direction.
@@ -1883,6 +1919,7 @@ fn load_table_handler<H: Host>(op: Op, acc: u8, add: bool) -> Option<Handler> {
                     (Op::$load, ACC_NONE, false) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_NONE, false> as Handler),
                     (Op::$load, ACC_C, false) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_C, false> as Handler),
                     (Op::$load, ACC_NONE, true) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_NONE, true> as Handler),
+                    (Op::$load, ACC_C, true) => Some(lane_load_table::<H, { Op::$load as u16 }, ACC_C, true> as Handler),
                 )+
                 _ => None,
             }
@@ -2497,8 +2534,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
         Op::JumpFalse => Some(lane_jump_false::<H, BACKWARD>),
         Op::WasmBranchTable => Some(lane_branch_table::<H, BACKWARD>),
-        Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC>),
-        Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC>),
+        Op::WasmJumpI32Zero => Some(lane_jump_i32_zero::<H, true, BACKWARD, ACC, false>),
+        Op::WasmJumpI32NonZero => Some(lane_jump_i32_zero::<H, false, BACKWARD, ACC, false>),
         Op::WasmInstanceBinding => Some(lane_instance_binding::<H, false>),
         Op::WasmGlobalGet => Some(lane_global_get::<H>),
         Op::WasmGlobalSet => Some(lane_global_set::<H>),
@@ -2734,6 +2771,9 @@ fn derive_lane_view<H: Host>(
     // the accumulator.
     let mut exits = Vec::with_capacity(function.code.len());
     let mut reads_accumulator = Vec::with_capacity(function.code.len());
+    // Per instruction: the register its selected record carries as the
+    // accumulator to the record after it.
+    let mut produced = Vec::with_capacity(function.code.len());
     let mut records: Box<[LaneInstruction]> = function
         .code
         .iter()
@@ -2801,6 +2841,7 @@ fn derive_lane_view<H: Host>(
             producer = selected
                 .filter(|selected| selected.produces)
                 .map(|_| instruction.a());
+            produced.push(producer);
             exits.push(selected.is_none());
             reads_accumulator.push(selected.is_some() && acc != ACC_NONE);
             LaneInstruction {
@@ -2813,6 +2854,9 @@ fn derive_lane_view<H: Host>(
             }
         })
         .collect();
+    // Each record's handler before any fusion: a record still holding it
+    // runs only its own instruction.
+    let selected: Vec<*const ()> = records.iter().map(|record| record.handler).collect();
     // Whether a record's handler serves `op` with accumulator field `acc`.
     let serves = |handler: *const (), op: Op, acc: u8| {
         tables[0][usize::from(acc)][op as usize]
@@ -3142,6 +3186,146 @@ fn derive_lane_view<H: Host>(
                 pc += span;
             }
             None => pc += 1,
+        }
+    }
+    // A dispatch head (an add of a constant fused with the load and table
+    // after it) reads the register both take from the accumulator when every
+    // edge into it carries that register there, as an interpreter's latches
+    // carry its program counter.
+    let unfused = |records: &[LaneInstruction], from: usize, to: usize| {
+        (from..=to).all(|pc| records[pc].handler == selected[pc])
+    };
+    // The register the record at `pc` carries as the accumulator when it
+    // falls through, if it runs only itself and nothing fused runs into it.
+    let carried_through = |records: &[LaneInstruction], pc: usize| {
+        unfused(records, pc.saturating_sub(FUSION_REACH), pc)
+            .then_some(produced[pc])
+            .flatten()
+    };
+    // The register an edge into `target` carries, per edge; `None` when an
+    // edge carries none (or one this analysis does not follow).
+    // The carrying variant of the zero-test jump `handler`, if it is one.
+    let carrying_zero_jump = |handler: *const ()| {
+        let plain = ZeroJumps::<H, false>::HANDLERS
+            .as_flattened()
+            .as_flattened();
+        let carrying = ZeroJumps::<H, true>::HANDLERS.as_flattened().as_flattened();
+        plain
+            .iter()
+            .position(|&plain| handler == plain as *const ())
+            .map(|index| carrying[index])
+    };
+    let edges_carry = |records: &[LaneInstruction], target: usize| -> Option<u16> {
+        let mut carried: Option<u16> = None;
+        let mut agree = |register: Option<u16>| match (register, carried) {
+            (None, _) => false,
+            (Some(register), None) => {
+                carried = Some(register);
+                true
+            }
+            (Some(register), Some(known)) => register == known,
+        };
+        if target > 0 && !exits[target - 1] {
+            use crate::bytecode::ControlFlowLayout as Flow;
+            match decoded_instruction(function, function.code[target - 1])
+                .op()
+                .control_flow_layout()
+            {
+                Flow::Fallthrough => {
+                    if !agree(carried_through(records, target - 1)) {
+                        return None;
+                    }
+                }
+                Flow::Jump | Flow::BranchTable | Flow::Terminal => {}
+                // A call's return or a branch not taken carries no register.
+                Flow::Call | Flow::ConditionalJump => return None,
+            }
+        }
+        for (pc, packed) in function.code.iter().enumerate() {
+            let instruction = decoded_instruction(function, *packed);
+            if instruction.op().immediate_role() != ImmediateRole::JumpTarget {
+                continue;
+            }
+            let jump = instruction.imm() as usize;
+            let through = JumpFusions::<H>::THROUGH
+                .iter()
+                .flatten()
+                .any(|&handler| records[pc].handler == handler as *const ());
+            if through {
+                // The record runs its target and lands after it.
+                if jump + 1 == target
+                    && !agree(Some(decoded_instruction(function, function.code[jump]).a()))
+                {
+                    return None;
+                }
+                continue;
+            }
+            if jump != target {
+                continue;
+            }
+            // A zero-test jump can carry any register (`ZeroJumps`).
+            if carrying_zero_jump(records[pc].handler).is_some() {
+                continue;
+            }
+            if instruction.op() != Op::Jump || entry_jumps[pc] || jump_targets[pc] || pc == 0 {
+                return None;
+            }
+            let then = JumpFusions::<H>::THEN
+                .iter()
+                .flatten()
+                .any(|&handler| records[pc - 1].handler == handler as *const ());
+            let pair = pc >= 2
+                && [true, false].into_iter().any(|backward| {
+                    records[pc - 2].handler
+                        == if backward {
+                            lane_move_pair::<H, true, true> as Handler
+                        } else {
+                            lane_move_pair::<H, true, false> as Handler
+                        } as *const ()
+                });
+            // Entering a pair's second move runs that move's own record.
+            if pair && !then && jump_targets[pc - 1] && carried_through(records, pc - 1).is_none() {
+                return None;
+            }
+            let register = if then || pair {
+                Some(decoded_instruction(function, function.code[pc - 1]).a())
+            } else if jump_direction(records[pc].handler).is_some() {
+                carried_through(records, pc - 1)
+            } else {
+                None
+            };
+            if !agree(register) {
+                return None;
+            }
+        }
+        carried
+    };
+    for pc in 0..records.len().saturating_sub(1) {
+        let add = decoded_instruction(function, function.code[pc]);
+        let load = decoded_instruction(function, function.code[pc + 1]);
+        let Some(head) = load_table_handler::<H>(load.op(), ACC_NONE, true) else {
+            continue;
+        };
+        if records[pc].handler != head as *const ()
+            || load.c() != add.b()
+            || add.a() == add.b()
+            || edges_carry(&records, pc) != Some(add.b())
+        {
+            continue;
+        }
+        if let Some(carried) = load_table_handler::<H>(load.op(), ACC_C, true) {
+            records[pc].handler = carried as *const ();
+            reads_accumulator[pc] = true;
+            for (jump, packed) in function.code.iter().enumerate() {
+                let instruction = decoded_instruction(function, *packed);
+                if instruction.op().immediate_role() == ImmediateRole::JumpTarget
+                    && instruction.imm() as usize == pc
+                    && let Some(carrying) = carrying_zero_jump(records[jump].handler)
+                {
+                    records[jump].handler = carrying as *const ();
+                    records[jump].c = add.b();
+                }
+            }
         }
     }
     let mut entries = vec![false; records.len()].into_boxed_slice();
