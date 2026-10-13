@@ -4,7 +4,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(encode, decode, canonicalEncoding) => {
+    r#"(encode, decode, canonicalEncoding, encodeView) => {
   const codedTypeError = (message, code) => {
     const error = new TypeError(message);
     error.code = code;
@@ -113,7 +113,7 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
   class Buffer extends Uint8Array {
     static from(value, encoding, length) {
       if (typeof value === "string") {
-        return makeBuffer(encode(value, normalizeEncoding(encoding || "utf8")));
+        return makeBuffer(encodeView(value, normalizeEncoding(encoding || "utf8")));
       }
       if (value?.type === "Buffer" && Array.isArray(value.data)) {
         return new Buffer(value.data);
@@ -648,12 +648,13 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(BUFFER_FACTORY, "node:buffer/shared.js")?;
     let encode = context.host_function(crate::host::shared_vm::operation("bufferEncode"))?;
+    let encode_view = context.host_function(crate::host::shared_vm::operation("bufferEncodeView"))?;
     let decode = context.host_function(crate::host::shared_vm::operation("bufferDecode"))?;
     let canonical_encoding =
         context.host_function(crate::host::shared_vm::operation("bufferCanonicalEncoding"))?;
     let undefined = context.undefined();
     let constructor =
-        context.call_rooted(factory, undefined, &[encode, decode, canonical_encoding])?;
+        context.call_rooted(factory, undefined, &[encode, decode, canonical_encoding, encode_view])?;
 
     let module = context.object_rooted()?;
     let buffer = get(context, constructor, "Buffer")?;
@@ -701,6 +702,24 @@ pub(crate) fn encode(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
+    let bytes = encode_arguments(context, args)?;
+    number_array(context, &bytes)
+}
+
+/// The Buffer constructor consumes intrinsic typed bytes without guest iteration.
+pub(crate) fn encode_view(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let bytes = encode_arguments(context, args)?;
+    context.uint8_array_rooted(&bytes)
+}
+
+fn encode_arguments(
+    context: &mut NativeContext<'_, NodeHost>,
+    args: &[RootId],
+) -> Result<Vec<u8>, RootedError> {
     let Some(input) = args.first().copied() else {
         return Err(type_error(
             context,
@@ -708,8 +727,7 @@ pub(crate) fn encode(
             "ERR_INVALID_ARG_TYPE",
         )?);
     };
-    let bytes = encode_bytes(context, input, args.get(1).copied())?;
-    number_array(context, &bytes)
+    encode_bytes(context, input, args.get(1).copied())
 }
 
 pub(crate) fn encode_bytes(
