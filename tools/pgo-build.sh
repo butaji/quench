@@ -43,6 +43,15 @@ run_limited() {
     fi
 }
 
+# Link OpenSSL statically where its archives exist: a shared libcrypto/libssl is loaded and
+# relocated at every start (~1 MB of startup RSS on x86_64 Linux) although only TLS uses it,
+# while statically linked code costs memory only once it runs. Other hosts keep their link.
+openssl_libdir="$(pkg-config --variable=libdir openssl 2>/dev/null || true)"
+if [[ -n "$openssl_libdir" && -f "$openssl_libdir/libcrypto.a" && -f "$openssl_libdir/libssl.a" ]]; then
+    export OPENSSL_STATIC=1 OPENSSL_NO_PKG_CONFIG=1 OPENSSL_LIB_DIR="$openssl_libdir"
+    export OPENSSL_INCLUDE_DIR="$(pkg-config --variable=includedir openssl)"
+fi
+
 cd "$root_dir"
 rm -rf "$data_dir"
 mkdir -p "$data_dir"
