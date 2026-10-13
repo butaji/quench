@@ -2077,6 +2077,18 @@ pub(crate) fn deliver_connection(
         as u64;
     let result = context.call_rooted(callback, receiver, &args[2..]);
     let shared = context.host_mut().shared_state();
-    release_delivery(&mut shared.borrow_mut().tcp, socket);
+    {
+        let mut state = shared.borrow_mut();
+        if let Some(endpoint) = state.net_sockets.get_mut(&socket) {
+            endpoint.connection_event_pending = false;
+        }
+        release_delivery(&mut state.tcp, socket);
+    }
     result
+}
+
+pub(crate) fn listener_resource_active(transport: &Transport, id: u64) -> bool {
+    transport.listeners.get(&id).is_some_and(|listener| {
+        listener.referenced && matches!(listener.state, ListenerState::Open(_))
+    })
 }
