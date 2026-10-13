@@ -23,7 +23,7 @@ const CALLABLE_FACADE: &str = quench_js_check::checked_js!(
 })"#
 );
 
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation) => {
   const listeners = (socket) => socket._listeners;
   class Socket extends Duplex {
     constructor(options = {}) {
@@ -165,6 +165,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
     this._handle = null; this._unref = false;
     this.listening = false;
     if (typeof options === 'function') listener = options;
+    serverOptionsOperation(options);
     if (typeof listener === 'function') this.on('connection', listener);
   }
   Server.prototype.on = function(event, callback) { const list = this._listeners.get(event) || []; list.push(callback); this._listeners.set(event, list); return this; };
@@ -1183,6 +1184,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.host_function(crate::host::shared_vm::operation("netSocketUnrefTimeout"))?;
     let socket_options =
         context.host_function(crate::host::shared_vm::operation("netSocketOptions"))?;
+    let server_options = context.host_function(crate::host::shared_vm::operation("netServerOptions"))?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
@@ -1204,6 +1206,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             socket_reference,
             unref_timeout,
             socket_options,
+            server_options,
         ],
     )?;
     for name in ["Socket", "Stream", "Server", "BlockList", "SocketAddress", "connect", "createConnection", "createServer"] {
