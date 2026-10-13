@@ -410,8 +410,7 @@ sources are resolved in Rust at creation and run through captured intrinsic
 RegExp operations; RegExp instances retain their original lastIndex behavior.
 
 Mounted virtual paths retain their existing VFS routing. On other hosts this
-checkpoint preserves the prior fallback. Recursive watching,
-async-iterator watching, advanced glob semantics, and complete
+checkpoint preserves the prior fallback. Advanced glob semantics and complete
 handle-wrap/proxy/error details remain separate work. The internal test uv
 binding projects errno constants from the same platform table as
 util.getSystemErrorName.
@@ -444,4 +443,33 @@ BigIntStats identity. The tested contract includes constructor reflection,
 original coercion/callback exceptions, GC, stop ordering, missing/created/deleted
 files, and reference lifecycle. Complete internal handle and Symbol mutation
 behavior, Temporal fields, all ordinary stat prototypes and bigint decorators,
-recursive watches, and async iterator watches remain separate work.
+nonrecursive promise watches and complete iterator queue policy remain separate work.
+
+## Native recursive watch composition
+
+On Linux, recursive watches compose the canonical public per-path `fs.watch`,
+`statSync`, and `readdirSync` operations. Original overrides and exceptions remain
+observable. One private class-data Map owns each path's stats, child watcher,
+and symbolic-link classification. Callback cycles stay in the VM heap and remain
+visible to its collector; the existing native child watchers own kernel lifetime.
+Directory discovery, deletion, subtree removal, and relative names follow that
+ownership. Ignored paths are filtered before child subscriptions are created.
+Globstar directory prefixes may match zero path segments through the shared Rust
+glob compiler.
+
+The recursive class has its own public method contract: `close` emits synchronously
+and repeated closure is inert. The pinned Node implementation's `ref` and `unref`
+leave ordinary stat records unchanged and return undefined. Its async iterator
+uses the native Promise and event operations, returns the tested null-prototype
+results, and preserves abort causes. Recursive `fs.promises.watch` forwards through
+the shared async-generator protocol to that iterator. Nonrecursive promise watches,
+queue/overflow policy, complete abort propagation flags, and all private handle and
+reflection details remain open.
+
+The internal event binding exports the same event constructor as the public native
+watcher. Internal URL conversion has its own cached namespace, preserves ordinary
+input identity, and uses the URL state WeakMap as its brand authority. It does not
+add the private helper to the public URL namespace. Callback `fs.rm` shares the
+existing remove operation and recursive/force option policy, snapshots those
+options once, and delivers completion through the canonical next-tick queue;
+complete retry and option/error policy remains separate work.

@@ -296,7 +296,7 @@ pub(super) fn require(
             return get(context, util, "types");
         }
         Some(BuiltinModule::InternalUrl) => {
-            return cached_builtin(context, BuiltinModule::Url);
+            return cached_builtin(context, BuiltinModule::InternalUrl);
         }
         Some(BuiltinModule::InternalVfsFd) => {
             return context.evaluate_script_rooted(
@@ -654,7 +654,7 @@ impl BuiltinModule {
             | Self::Path
             | Self::PathPosix
             | Self::PathWin32 => None,
-            Self::InternalUrl => None,
+            Self::InternalUrl => Some("internal/url"),
             Self::InternalVfsFd => None,
             Self::InternalUndici => None,
             Self::InternalDgram
@@ -869,7 +869,17 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
     match builtin {
         BuiltinModule::Internal(_) => context.object_rooted(),
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
-        BuiltinModule::InternalUrl => cached_builtin(context, BuiltinModule::Url),
+        BuiltinModule::InternalUrl => {
+            let public = cached_builtin(context, BuiltinModule::Url)?;
+            let internal = context.object_rooted()?;
+            for key in context.enumerable_own_keys_rooted(public, true, true)? {
+                let value = context.get_property_rooted(public, key)?;
+                context.define_data_property_rooted(internal, key, value, true, true, true)?;
+            }
+            let convert = context.host_function(crate::host::shared_vm::operation("toPathIfFileURL"))?;
+            set(context, internal, "toPathIfFileURL", convert)?;
+            Ok(internal)
+        },
         BuiltinModule::UtilTypes => {
             let util = cached_builtin(context, BuiltinModule::Util)?;
             get(context, util, "types")
@@ -1301,6 +1311,7 @@ const getLinkedBinding = () => ({});
                 } else if in_node_internal {
                     r#"const internalBinding = (name) => {
   switch (String(name)) {
+    case "fs_event_wrap": return require("internal/test/binding").internalBinding(name);
     case "util": return Object.assign({}, require("util"), {
       privateSymbols: {
         arrow_message_private_symbol: Symbol.for("nodejs.util.inspect.custom"),
