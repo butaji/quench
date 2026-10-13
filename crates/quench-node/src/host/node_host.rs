@@ -52,9 +52,12 @@ pub(crate) struct SharedNodeState {
     pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
     pub(crate) fs: crate::modules::fs_state::FsState,
     pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
+    pub(crate) crypto_engines: crate::modules::crypto_engine_shared_vm::State,
+    pub(crate) tls_contexts: crate::modules::tls_shared_vm::contexts::State,
     pub(crate) fs_stats: crate::modules::fs_shared_vm::stat::types::State,
     pub(crate) fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State,
     pub(crate) cwd: crate::modules::process_state::ProcessCwd,
+    pub(crate) buffer_prototype: Option<quench_runtime::RootId>,
     pub(crate) module_cache: std::collections::HashMap<String, quench_runtime::RootId>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
@@ -92,8 +95,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) net_socket_close_completed: Option<quench_runtime::RootId>,
     pub(crate) net_servers: std::collections::HashMap<u64, NetServer>,
     pub(crate) child_process_shell_args_warning_emitted: bool,
-    pub(crate) child_processes:
-        std::collections::HashMap<u64, SharedChildProcess>,
+    pub(crate) child_processes: std::collections::HashMap<u64, SharedChildProcess>,
     pub(crate) net_socket_constructor: Option<quench_runtime::RootId>,
 }
 
@@ -152,6 +154,7 @@ impl SharedNodeState {
     /// Forget cached guest handles before bootstrapping a replacement VM heap.
     pub(crate) fn reset_cached_vm_roots(&mut self) {
         self.module_cache.clear();
+        self.buffer_prototype = None;
         self.primordials_module = None;
         self.event_targets_api = None;
         self.process_module = None;
@@ -163,6 +166,8 @@ impl SharedNodeState {
         self.timer_handle_api = None;
         self.net_socket_constructor = None;
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
+        self.crypto_engines = crate::modules::crypto_engine_shared_vm::State::default();
+        self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
         self.fs_stats = crate::modules::fs_shared_vm::stat::types::State::default();
         self.fs_stat_watch = crate::modules::fs_stat_watch_shared_vm::State::default();
     }
@@ -181,9 +186,12 @@ impl SharedNodeState {
             scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
             fs,
             fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
+            crypto_engines: crate::modules::crypto_engine_shared_vm::State::default(),
+            tls_contexts: crate::modules::tls_shared_vm::contexts::State::default(),
             fs_stats: crate::modules::fs_shared_vm::stat::types::State::default(),
             fs_stat_watch: crate::modules::fs_stat_watch_shared_vm::State::default(),
             cwd,
+            buffer_prototype: None,
             module_cache: std::collections::HashMap::new(),
             primordials_module: None,
             event_targets_api: None,

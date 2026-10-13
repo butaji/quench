@@ -5391,3 +5391,131 @@ globalThis.gc();fs.writeFileSync(file,'after');
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn native_tls_context_versions_constructors_and_weak_gc_match_node() {
+    const SOURCE: &str = r#"
+const tls=require('tls'),assert=require('assert');
+console.log(JSON.stringify([tls.SecureContext.name,tls.SecureContext.length,tls.createSecureContext.name,tls.createSecureContext.length]));
+for(const options of [undefined,{minVersion:'TLSv1',maxVersion:'TLSv1.2'},{minVersion:'TLSv1.3',maxVersion:'TLSv1.3'},{secureProtocol:'TLS_method'},{secureProtocol:'SSLv23_method'},{secureProtocol:'TLSv1_1_client_method'}]){
+ const context=tls.createSecureContext(options);assert(context instanceof tls.SecureContext);assert(!(context.context instanceof tls.SecureContext));global.gc();console.log(JSON.stringify([Object.keys(context),context.context.constructor.name,context.context.getMinProto(),context.context.getMaxProto(),context.context.getCertificate()]));
+}
+const plain=tls.SecureContext(),plainMinimum=plain.context.getMinProto();assert(plain instanceof tls.SecureContext);const receiver=Object.create(tls.SecureContext.prototype);assert.strictEqual(tls.SecureContext.call(receiver),undefined);console.log(receiver.context.getMinProto(),receiver.context.getMaxProto());
+const before=tls.DEFAULT_MIN_VERSION;tls.DEFAULT_MIN_VERSION='TLSv1.1';console.log(tls.createSecureContext().context.getMinProto());tls.DEFAULT_MIN_VERSION=before;
+for(let i=0;i<100;i++)tls.createSecureContext();global.gc();console.log('contexts-survive-gc');
+process.on('exit',()=>{assert.strictEqual(plain.context.getMinProto(),plainMinimum);assert.strictEqual(tls.createSecureContext().context.getCertificate(),null);console.log('exit-contexts-survive');});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--expose-gc", "-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(
+            observation.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+
+#[test]
+fn native_tls_context_protocol_options_errors_match_node() {
+    compare_node_stream_source(
+        r#"
+const tls=require('tls');const forms=[{},1,[],{secureProtocol:'TLS_method\0suffix'},{ciphers:'DEFAULT\0suffix'},{ecdhCurve:'auto\0suffix'},{sigalgs:'bad'},{minVersion:'bad'},{maxVersion:'bad'},{secureProtocol:'bad'},{secureProtocol:'SSLv2_method'},{secureProtocol:'SSLv3_client_method'},{secureProtocol:'TLS_method',minVersion:'TLSv1.2'},{secureOptions:1.5},{secureOptions:Infinity},{secureOptions:'4'},{honorCipherOrder:true,secureOptions:'4'},{sessionTimeout:-1},{sessionTimeout:1.5},{sessionTimeout:'2'},{sigalgs:''},{sigalgs:1},{ecdhCurve:1},{ca:1},{cert:1},{key:1},{key:['bad'],passphrase:1},{certificateCompression:'zlib'},{certificateCompression:['bad']},{certificateCompression:['zlib','brotli','zstd','zlib']},{ticketKeys:1},{ticketKeys:Buffer.alloc(47)}];
+for(const options of forms)try{const context=tls.createSecureContext(options);console.log(JSON.stringify(['ok',context.context.getMinProto(),context.context.getMaxProto()]));}catch(e){console.log(JSON.stringify([e.name,e.code,e.message,Object.keys(e),e.constructor.name]));}
+"#,
+    );
+}
+
+
+#[test]
+fn native_tls_context_option_getter_and_native_method_hook_order_match_node() {
+    compare_node_stream_source(
+        r#"
+const tls=require('tls'),assert=require('assert'),log=[];const options={};
+for(const name of ['honorCipherOrder','minVersion','maxVersion','secureProtocol','secureOptions','allowPartialTrustChain','ca','cert','certificateCompression','ciphers','clientCertEngine','crl','dhparam','ecdhCurve','key','passphrase','pfx','privateKeyIdentifier','privateKeyEngine','sessionIdContext','sessionTimeout','sigalgs','ticketKeys'])Object.defineProperty(options,name,{get(){log.push(name);return undefined;}});
+tls.createSecureContext(options);console.log(JSON.stringify(log));
+const proto=Object.getPrototypeOf(tls.createSecureContext().context),originals={};for(const name of ['setCiphers','setCipherSuites','addRootCerts','setECDHCurve']){originals[name]=proto[name];proto[name]=function(...args){log.push(name);return originals[name].apply(this,args);};}log.length=0;tls.createSecureContext();console.log(JSON.stringify(log));for(const name of Object.keys(originals))proto[name]=originals[name];
+const marker={};assert.throws(()=>tls.createSecureContext({get ca(){throw marker}}),e=>e===marker);console.log('original-getter-error');
+"#,
+    );
+}
+
+
+#[test]
+fn native_tls_context_retains_real_certificate_material_and_view_offsets_match_node() {
+    let cert = include_str!("../../../tests/node/test/fixtures/keys/agent1-cert.pem");
+    let key = include_str!("../../../tests/node/test/fixtures/keys/agent1-key.pem");
+    let source = format!(
+        r#"
+const assert=require('assert'),tls=require('tls'),OriginalBuffer=Buffer,originalFrom=Buffer.from;
+const cert={},key={};
+OriginalBuffer.from=()=>{{throw new Error('public Buffer.from used')}};
+globalThis.Buffer=()=>{{throw new Error('public Buffer used')}};
+const held=tls.createSecureContext({{cert,key}});
+const expected=held.context.getCertificate();
+assert(OriginalBuffer.isBuffer(expected));
+globalThis.Buffer=OriginalBuffer;OriginalBuffer.from=originalFrom;
+process.on('exit',()=>{{assert.deepStrictEqual(held.context.getCertificate(),expected);console.log('exit-certificate-retained');}});
+function view(text){{const bytes=Buffer.from(text);const prefix=Buffer.from('prefix');const padded=Buffer.concat([prefix,bytes,Buffer.from('suffix')]);return new DataView(padded.buffer,padded.byteOffset+prefix.length,bytes.length);}}
+for(const options of [{{cert,key}},{{cert:[cert],key:[key]}},{{cert:view(cert),key:view(key)}},{{ca:cert,cert,key}}]){{const ctx=tls.createSecureContext(options);assert.deepStrictEqual(ctx.context.getCertificate(),expected);console.log(ctx.context.getCertificate().length);}}
+const ctx=tls.createSecureContext();assert.strictEqual(ctx.context.getCertificate(),null);ctx.context.setCert(cert);assert.deepStrictEqual(ctx.context.getCertificate(),expected);console.log('retained-native-certificate');
+"#,
+        serde_json::to_string(cert).unwrap(),
+        serde_json::to_string(key).unwrap()
+    );
+    compare_node_stream_source(&source);
+}
+
+
+#[test]
+fn native_tls_context_engine_errors_and_shared_crypto_warning_match_node() {
+    compare_node_stream_source(
+        r#"
+const tls=require('tls'),crypto=require('crypto'),warnings=[];
+process.emitWarning=function(...args){warnings.push(args);};
+for(const action of [()=>tls.createSecureContext({clientCertEngine:'quench_missing_engine'}),()=>tls.createSecureContext({privateKeyIdentifier:'key',privateKeyEngine:'quench_missing_engine'}),()=>crypto.setEngine('quench_missing_engine'),()=>crypto.setEngine('quench_missing_engine',false),()=>crypto.setEngine(1),()=>crypto.setEngine('quench_missing_engine','1'),()=>tls.createSecureContext({clientCertEngine:1}),()=>tls.createSecureContext({privateKeyIdentifier:1,privateKeyEngine:'x'}),()=>tls.createSecureContext({privateKeyIdentifier:'x',privateKeyEngine:1})])try{action();console.log('ok');}catch(e){console.log(JSON.stringify([e.name,e.code,e.message,Object.keys(e),e.opensslErrorStack]));}
+console.log(JSON.stringify(warnings));
+"#,
+    );
+}
+
+#[test]
+fn native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),warnings=[];process.emitWarning=function(...args){warnings.push(args);};
+const {internalBinding}=require('internal/test/binding'),binding=internalBinding('crypto');assert.strictEqual(binding,internalBinding('crypto'));
+const Native=binding.SecureContext;let creations=0;
+binding.SecureContext=function(){creations++;const context=new Native();context.setClientCertEngine=undefined;context.setEngineKey=undefined;return context;};
+const tls=require('tls');
+for(const options of [{clientCertEngine:'x'},{privateKeyIdentifier:'key',privateKeyEngine:'x'}])try{tls.createSecureContext(options);}catch(e){console.log(JSON.stringify([e.name,e.code,e.message,Object.keys(e)]));}
+binding.SecureContext=function(){throw new Error('late constructor read')};
+console.log(tls.createSecureContext().context.getMinProto(),creations);console.log(JSON.stringify(warnings));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--no-warnings", "--expose-internals", "-e", SOURCE]);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(),"{}",String::from_utf8_lossy(&observation.stderr));
+    }
+    assert_eq!(observations[0].stdout,observations[1].stdout);
+}

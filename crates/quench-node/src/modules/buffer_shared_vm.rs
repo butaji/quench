@@ -658,6 +658,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 
     let module = context.object_rooted()?;
     let buffer = get(context, constructor, "Buffer")?;
+    let shared = context.host_mut().shared_state();
+    let capture_prototype = shared.borrow().buffer_prototype.is_none();
+    if capture_prototype {
+        let prototype = get(context, buffer, "prototype")?;
+        let prototype = context.retain(prototype)?;
+        shared.borrow_mut().buffer_prototype = Some(prototype);
+    }
     set(context, module, "Buffer", buffer)?;
     let slow_buffer = get(context, constructor, "SlowBuffer")?;
     set(context, module, "SlowBuffer", slow_buffer)?;
@@ -896,5 +903,32 @@ fn set(
         Err(RootedError::host(format!(
             "cannot install shared Buffer property {name}"
         )))
+    }
+}
+
+/// Create native Buffer results without calling mutable public constructors.
+pub(crate) fn from_bytes(
+    context: &mut NativeContext<'_, NodeHost>,
+    bytes: &[u8],
+) -> Result<RootId, RootedError> {
+    let shared = context.host_mut().shared_state();
+    let prototype = shared
+        .borrow()
+        .buffer_prototype
+        .ok_or_else(|| RootedError::host("Buffer intrinsic prototype is not initialized"))?;
+    let value = context.uint8_array_rooted(bytes)?;
+    if !context.set_prototype_rooted(value, prototype)? {
+        return Err(RootedError::host(
+            "New Buffer view rejected its intrinsic prototype",
+        ));
+    }
+    Ok(value)
+}
+
+pub(crate) fn cleanup(runtime: &mut quench_runtime::Runtime<NodeHost>) {
+    let shared = runtime.host_mut().shared_state();
+    let prototype = shared.borrow_mut().buffer_prototype.take();
+    if let Some(prototype) = prototype {
+        runtime.release_root(prototype);
     }
 }

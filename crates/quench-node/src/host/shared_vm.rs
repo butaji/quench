@@ -346,7 +346,15 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsReaddirSync" (1) => crate::modules::fs_shared_vm::stat::read_dir_sync,
         method "fsReadlinkSync" (1) => crate::modules::fs_shared_vm::stat::read_link_sync,
         method "fsRealpathSync" (1) => crate::modules::fs_shared_vm::stat::realpath_sync,
-        method "tlsValidateContext" (1) => crate::modules::tls_shared_vm::validate_context,
+        method "tlsContextOuterInit" (0) => crate::modules::tls_shared_vm::facade::initialize,
+        method "tlsContextCreate" (1) => crate::modules::tls_shared_vm::facade::create,
+        method "tlsContextConfigure" (0) => crate::modules::tls_shared_vm::configuration::method,
+        method "tlsContextRegister" (0) => crate::modules::tls_shared_vm::contexts::register,
+        method "tlsContextInit" (0) => crate::modules::tls_shared_vm::contexts::initialize,
+        method "tlsContextSetOptions" (0) => crate::modules::tls_shared_vm::contexts::set_options,
+        method "tlsContextGetMinProto" (0) => crate::modules::tls_shared_vm::contexts::minimum,
+        method "tlsContextGetMaxProto" (0) => crate::modules::tls_shared_vm::contexts::maximum,
+        method "cryptoSetEngine" (2) => crate::modules::crypto_engine_shared_vm::set_engine,
         method "cryptoHash" (3) => crate::modules::crypto_shared_vm::hash,
         method "cryptoHmac" (3) => crate::modules::crypto_shared_vm::hmac,
         method "cryptoSign" (6) => crate::modules::crypto_shared_vm::sign,
@@ -530,9 +538,9 @@ impl quench_runtime::Host for NodeHost {
         };
         let resolution = match resolver.resolve(&base, &resolution_specifier) {
             Ok(resolution) => resolution,
-            Err(oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_)) => {
-                return Ok(None)
-            }
+            Err(
+                oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_),
+            ) => return Ok(None),
             Err(error) => return Err(error.to_string()),
         };
         let path = resolution.full_path();
@@ -569,7 +577,9 @@ impl quench_runtime::Host for NodeHost {
                     source.push_str("export { ");
                     source.push_str(&local);
                     source.push_str(" as ");
-                    source.push_str(&serde_json::to_string(&export).map_err(|error| error.to_string())?);
+                    source.push_str(
+                        &serde_json::to_string(&export).map_err(|error| error.to_string())?,
+                    );
                     source.push_str(" };\n");
                 }
                 source
