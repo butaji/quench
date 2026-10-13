@@ -7,6 +7,7 @@ use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 pub(crate) struct State {
     pub(crate) api: Option<RootId>,
     pub(crate) ciphers: Option<Vec<String>>,
+    pub(crate) transport_errors: std::collections::VecDeque<(u64, openssl::error::ErrorStack)>,
     entries: Vec<Entry>,
 }
 struct Entry {
@@ -82,6 +83,7 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
     for entry in entries {
         runtime.release_host_weak_root(entry.identity);
     }
+    shared.borrow_mut().tls_contexts.transport_errors.clear();
     let api = shared.borrow_mut().tls_contexts.api.take();
     if let Some(api) = api {
         runtime.release_root(api);

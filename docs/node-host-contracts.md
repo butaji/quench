@@ -363,13 +363,35 @@ errors retain the original certificate identity, reason, and hostname.
 Malformed quoted SANs use the realm's intrinsic SyntaxError. Node comparisons
 cover values, errors, getter order, boxed names, and custom SAN method hooks.
 
-This foundation does not provide TLS/HTTPS sockets, handshakes, connection
-verification callbacks or session resumption. Ticket-key callbacks, certificate
-compression, complete public root discovery, CLI/provider trust policy,
-permission-model integration, hostile method-return values and UTF-16 edge cases,
-and remaining native methods/option details are open work. The pinned fixture
-group and Node comparisons establish only the implemented behaviors; they do
-not establish complete TLS compatibility or a production performance claim.
+Native TLS client/server streams now use OpenSSL inside the canonical TCP/Unix
+owner. Raw stream ownership moves once into SslStream. The transport preserves
+one write queue, offset, completion list, reference bit, and close lifecycle.
+Original connection callbacks finish before any stream IO. Handshake completion
+waits for authorization before application IO; client verification invokes the
+original hostname callback after native chain verification.
+
+SSL writes retain their retry extent while queued data appends. Readiness returns
+to the event loop; native SSL errors keep their typed payload and shared error
+projection. TLS close_notify becomes readable EOF. Duplex data/end/finish owns
+destruction so coalesced payload and EOF drain before close. HTTP endpoints keep
+their explicit EOF policy. Temporary native SSL error stacks are consumed by
+queued guest callbacks and cleared at cleanup.
+
+Independent Node peers verify encryption in both directions, exact binary data,
+class/protocol state, trusted CA/hostname success, untrusted-chain rejection,
+and hostname-mismatch fields. Peer names, RSA key data, fingerprints, validity,
+and DER come from actual X509 material. API qualification uses its established
+default library-root environment; exporting a configured root exposes an
+existing 300 ms child-startup/signal timing failure in both the prior published
+binary and this source. Those failed observations remain retained. Fixture runs
+continue using the pinned configured library root and unchanged 30 s deadline.
+
+This stream foundation remains incomplete: HTTPS integration, direct TLSSocket
+lifecycle details, original handle query forwarding, handshake timeout policy,
+ALPN/SNI callbacks, sessions/ticket keys/PSK, EC and complete legacy certificate
+metadata/chains, trust CLI/environment/permission policy, and remaining option,
+reflection, error, hostile-method-return and UTF-16 details are open. Focused
+TLS/TCP gains do not establish a new full-suite total or a performance claim.
 
 ## Verification
 
