@@ -387,16 +387,8 @@ fn object_property_storage_migration_preserves_writes_and_gc_roots() {
         .and_then(Cell::object_mut)
         .unwrap()
         .set_extensible(false);
-    heap.property_push(object, first);
-    heap.get_mut(object)
-        .and_then(Cell::object_mut)
-        .unwrap()
-        .set_shape(1);
-    heap.property_push(object, replaced);
-    heap.get_mut(object)
-        .and_then(Cell::object_mut)
-        .unwrap()
-        .set_shape(2);
+    heap.property_add(object, first, 1);
+    heap.property_add(object, replaced, 2);
     assert!(
         heap.get(object)
             .unwrap()
@@ -406,11 +398,7 @@ fn object_property_storage_migration_preserves_writes_and_gc_roots() {
             .is_some()
     );
     heap.property_set(object, 1, replacement);
-    heap.property_push(object, third);
-    heap.get_mut(object)
-        .and_then(Cell::object_mut)
-        .unwrap()
-        .set_shape(3);
+    heap.property_add(object, third, 3);
 
     heap.collect([object]);
     let data = heap.get(object).unwrap().object().unwrap();
