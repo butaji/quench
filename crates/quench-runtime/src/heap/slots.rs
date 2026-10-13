@@ -8,6 +8,9 @@ pub(super) const SLOTS_PER_SLAB: usize = 2_048;
 /// pages are neither resident nor committed. Other targets keep slabs behind a table.
 #[cfg(unix)]
 pub(super) struct SlotArena {
+    /// The reservation's first slot, dangling while there is none: the one load a slot
+    /// access needs.
+    base: *mut Slot,
     reservation: Option<reservation::Reservation>,
     len: usize,
 }
@@ -92,6 +95,7 @@ mod reservation {
 impl Default for SlotArena {
     fn default() -> Self {
         Self {
+            base: std::ptr::NonNull::dangling().as_ptr(),
             reservation: None,
             len: 0,
         }
@@ -111,19 +115,18 @@ impl SlotArena {
         Self::default()
     }
 
+    #[inline(always)]
     fn base(&self) -> *mut Slot {
-        self.reservation
-            .as_ref()
-            .map_or(std::ptr::NonNull::dangling().as_ptr(), |reservation| {
-                reservation.base.as_ptr()
-            })
+        self.base
     }
 
     pub(super) fn push(&mut self, slot: Slot) {
         if self.len == self.capacity() {
-            self.reservation
-                .get_or_insert_with(|| reservation::Reservation::new(super::MAX_HEAP_CELLS))
-                .extend();
+            let reservation = self
+                .reservation
+                .get_or_insert_with(|| reservation::Reservation::new(super::MAX_HEAP_CELLS));
+            reservation.extend();
+            self.base = reservation.base.as_ptr();
         }
         // SAFETY: `extend` made the slot at `len` accessible; it holds no initialized value.
         unsafe { self.base().add(self.len).write(slot) };
@@ -188,6 +191,7 @@ impl SlotArena {
         unsafe { std::ptr::drop_in_place(occupied) };
         // Unmapping returns the slots' pages; a later push reserves afresh.
         self.reservation = None;
+        self.base = std::ptr::NonNull::dangling().as_ptr();
     }
 
     pub(super) const fn len(&self) -> usize {
