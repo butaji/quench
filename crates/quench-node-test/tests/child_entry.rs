@@ -1522,6 +1522,122 @@ console.log(JSON.stringify([events,Object.keys(stats),Object.getOwnPropertySymbo
 }
 
 #[test]
+fn native_recursive_watch_class_close_and_per_path_hooks_match_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-hooks-')),sub=path.join(dir,'sub'),file=path.join(sub,'file');fs.mkdirSync(sub);fs.writeFileSync(file,'before');
+const original=fs.watch,hooks=[];
+fs.watch=function(filename,options,listener){hooks.push(path.relative(dir,filename));return Reflect.apply(original,this,[filename,options,listener]);};
+const watcher=original(dir,{recursive:true});fs.watch=original;
+const result=[['paths',hooks],['meta',watcher.constructor.name,Object.keys(watcher),Object.getOwnPropertySymbols(Object.getPrototypeOf(watcher)).map(String),['close','ref','unref'].map(k=>[watcher[k].name,watcher[k].length,Object.hasOwn(watcher[k],'prototype')])]];
+assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);
+let synchronous=true,closed=0;watcher.on('close',()=>{assert(synchronous);closed++;result.push('close');});
+watcher.close();synchronous=false;watcher.close();assert.strictEqual(closed,1);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));
+"#);
+}
+
+#[test]
+fn native_recursive_watch_discovery_changes_and_ignore_match_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-events-')),sub=path.join(dir,'sub'),file=path.join(sub,'visible');fs.mkdirSync(sub);fs.writeFileSync(file,'before');
+const watcher=fs.watch(dir,{recursive:true,ignore:['*.log',/\.tmp$/]});const result=[];let stage=0;
+watcher.on('change',(kind,name)=>{assert(!name.endsWith('.log'));assert(!name.endsWith('.tmp'));if(stage===0&&name==='sub/visible'){assert.strictEqual(kind,'change');stage++;result.push([kind,name]);fs.mkdirSync(path.join(dir,'new'));fs.writeFileSync(path.join(dir,'new','added'),'new');}
+else if(stage===1&&name==='new/added'){assert.strictEqual(kind,'rename');stage++;result.push([kind,name]);watcher.close();}});
+watcher.once('close',()=>{assert.strictEqual(stage,2);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));});
+fs.writeFileSync(path.join(sub,'ignored.log'),'log');fs.writeFileSync(path.join(sub,'ignored.tmp'),'tmp');fs.writeFileSync(file,'after');
+"#);
+}
+
+#[test]
+fn native_recursive_watch_validation_matches_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-options-')),result=[];
+for(const options of [{recursive:'1'},{recursive:1},{recursive:true,persistent:1},{recursive:true,throwIfNoEntry:'1'}]){
+try{fs.watch(dir,options).close();assert.fail('expected error');}catch(error){result.push([error.name,error.code,error.message]);}}
+const watcher=fs.watch(dir,{recursive:true,persistent:false,encoding:'buffer'});assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);watcher.close();
+fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));
+"#);
+}
+
+#[test]
+fn native_recursive_watch_globstar_root_and_nested_paths_match_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+for(const file of ['node_modules','node_modules/package.json','a/node_modules','a/node_modules/package.json','src/app.js'])console.log(file,path.matchesGlob(file,'**/node_modules'),path.matchesGlob(file,'**/node_modules/**'));
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-glob-'));fs.mkdirSync(path.join(dir,'node_modules'));fs.mkdirSync(path.join(dir,'src'));
+const watcher=fs.watch(dir,{recursive:true,ignore:['**/node_modules/**','**/node_modules']});watcher.on('change',(kind,name)=>{assert(!name.includes('node_modules'));if(name==='src/app.js'){assert.strictEqual(kind,'rename');watcher.close();}});
+watcher.once('close',()=>{fs.rmSync(dir,{recursive:true,force:true});console.log('globstar');});fs.writeFileSync(path.join(dir,'node_modules','package.json'),'{}');fs.writeFileSync(path.join(dir,'src','app.js'),'code');
+"#);
+}
+
+#[test]
+fn native_recursive_watch_callback_rm_is_async_and_preserves_errors_like_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-rm-callback-')),file=path.join(dir,'file');fs.writeFileSync(file,'data');let synchronous=true;
+fs.rm(file,error=>{assert(!synchronous);assert.strictEqual(error,null);assert(!fs.existsSync(file));fs.rm(file,(error)=>{assert.strictEqual(error.code,'ENOENT');fs.rm(file,{force:true},(error)=>{assert.strictEqual(error,null);fs.rmSync(dir,{recursive:true,force:true});console.log('callback-rm');});});});synchronous=false;
+"#);
+}
+
+#[test]
+fn native_recursive_watch_promises_forward_iterator_and_abort_cause_like_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),fsp=require('fs/promises'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-promises-')),result=[];
+(async()=>{const ac=new AbortController(),marker={original:true};const aborted=fsp.watch(dir,{recursive:true,signal:ac.signal});const pending=aborted.next();ac.abort(marker);await assert.rejects(pending,error=>error.code==='ABORT_ERR'&&error.cause===marker);result.push('abort');
+const pre=fsp.watch(dir,{recursive:true,signal:AbortSignal.abort(marker)});await assert.rejects(pre.next(),error=>error.code==='ABORT_ERR'&&error.cause===marker);result.push('preabort');
+const watcher=fsp.watch(dir,{recursive:true});const next=watcher.next();process.nextTick(()=>fs.writeFileSync(path.join(dir,'file'),'data'));const value=await next;assert.strictEqual(value.done,false);assert.strictEqual(value.value.eventType,'rename');assert.strictEqual(value.value.filename,'file');assert.strictEqual((await watcher.return()).done,true);assert.strictEqual((await watcher.next()).done,true);fs.rmSync(dir,{recursive:true,force:true});result.push('event');console.log(JSON.stringify(result));})();
+"#);
+}
+
+#[test]
+fn native_recursive_watch_internal_url_conversion_preserves_brands_and_identity() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),url=require('url'),internal=require('internal/url');
+assert.strictEqual(require('internal/url'),internal);assert.strictEqual(internal.URL,url.URL);assert.strictEqual(internal.fileURLToPath,url.fileURLToPath);assert.strictEqual(Object.hasOwn(url,'toPathIfFileURL'),false);
+for(const value of ['.',undefined,null,Buffer.from('path'),{href:'file:///tmp/path'}])assert.strictEqual(internal.toPathIfFileURL(value),value);
+assert.strictEqual(internal.toPathIfFileURL(new URL('file:///tmp/a%20b')),'/tmp/a b');
+try{internal.toPathIfFileURL(new URL('https://example.com/'));assert.fail('expected error');}catch(error){console.log(error.code);}
+console.log('internal-url');
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--expose-internals", "-e", SOURCE]);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn native_recursive_watch_iterator_and_gc_match_node() {
+    const SOURCE: &str = r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-iterator-')),file=path.join(dir,'file');fs.writeFileSync(file,'before');
+(async()=>{const watcher=fs.watch(dir,{recursive:true});const iterator=watcher[Symbol.asyncIterator]();assert.strictEqual(iterator[Symbol.asyncIterator](),iterator);const pending=iterator.next();global.gc();fs.writeFileSync(file,'after');const value=await pending;assert.strictEqual(Object.getPrototypeOf(value),null);assert.strictEqual(value.value.eventType,'change');assert.strictEqual(value.value.filename,'file');assert.strictEqual(Object.hasOwn(value,'done'),false);const done=iterator.return();assert.strictEqual(done.done,true);assert.strictEqual(Object.getPrototypeOf(done),null);assert.strictEqual(iterator.next().done,true);global.gc();fs.rmSync(dir,{recursive:true,force:true});console.log('iterator-gc');})();
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--expose-gc", "-e", SOURCE]);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
 fn native_stat_watch_bigint_timestamps_and_original_callback_error_match_node() {
     const SOURCE: &str = r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');

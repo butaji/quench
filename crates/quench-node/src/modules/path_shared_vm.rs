@@ -114,11 +114,9 @@ impl Method {
 
     fn path_count(self, available: usize) -> usize {
         match self {
-            Self::Basename
-            | Self::Dirname
-            | Self::Extname
-            | Self::Normalize
-            | Self::IsAbsolute => available.min(1),
+            Self::Basename | Self::Dirname | Self::Extname | Self::Normalize | Self::IsAbsolute => {
+                available.min(1)
+            }
             Self::ToNamespacedPath => available.min(1),
             Self::Parse => available.min(1),
             Self::Format => 0,
@@ -297,11 +295,10 @@ fn apply(
             return Ok(argument);
         }
         let cwd = process_cwd(context)?;
-        let resolved = crate::modules::path_algorithms::win32::resolve_strings(
-            &[path],
-            &cwd,
-            |device| process_drive_cwd(context, device, &cwd).unwrap_or_else(|_| cwd.clone()),
-        );
+        let resolved =
+            crate::modules::path_algorithms::win32::resolve_strings(&[path], &cwd, |device| {
+                process_drive_cwd(context, device, &cwd).unwrap_or_else(|_| cwd.clone())
+            });
         let result =
             crate::modules::path_algorithms::win32_normalize::to_namespaced_path(&resolved);
         return Ok(context.string_rooted(&result));
@@ -482,7 +479,11 @@ fn apply(
         }
         (
             _,
-            Method::IsAbsolute | Method::ToNamespacedPath | Method::Parse | Method::Format | Method::MatchesGlob,
+            Method::IsAbsolute
+            | Method::ToNamespacedPath
+            | Method::Parse
+            | Method::Format
+            | Method::MatchesGlob,
         ) => {
             unreachable!("handled before string path dispatch")
         }
@@ -508,8 +509,14 @@ pub(super) fn glob_regex_source(pattern: &str) -> String {
         match chars[index] {
             '*' => {
                 if chars.get(index + 1) == Some(&'*') {
-                    regex.push_str(".*");
-                    index += 1;
+                    let segment_start = index == 0 || chars[index - 1] == '/';
+                    if segment_start && chars.get(index + 2) == Some(&'/') {
+                        regex.push_str("(?:[^/]+/)*");
+                        index += 2;
+                    } else {
+                        regex.push_str(".*");
+                        index += 1;
+                    }
                 } else {
                     regex.push_str("[^/]*");
                 }
@@ -528,7 +535,11 @@ pub(super) fn glob_regex_source(pattern: &str) -> String {
                         regex.push('\\');
                     }
                     for ch in &chars[start..end] {
-                        if *ch == '\\' { regex.push_str("\\\\"); } else { regex.push(*ch); }
+                        if *ch == '\\' {
+                            regex.push_str("\\\\");
+                        } else {
+                            regex.push(*ch);
+                        }
                     }
                     regex.push(']');
                     index = end;
@@ -537,7 +548,9 @@ pub(super) fn glob_regex_source(pattern: &str) -> String {
                 }
             }
             ch => {
-                if ".+()|{}^$\\".contains(ch) { regex.push('\\'); }
+                if ".+()|{}^$\\".contains(ch) {
+                    regex.push('\\');
+                }
                 regex.push(ch);
             }
         }
@@ -624,7 +637,11 @@ fn format_operation_result(
     let dir = context.get_property_rooted(object, key)?;
     let key = context.string_rooted("root");
     let root = context.get_property_rooted(object, key)?;
-    let directory = if context.truthy_rooted(dir)? { dir } else { root };
+    let directory = if context.truthy_rooted(dir)? {
+        dir
+    } else {
+        root
+    };
 
     let key = context.string_rooted("base");
     let base = context.get_property_rooted(object, key)?;
