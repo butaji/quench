@@ -30,6 +30,10 @@ use slots::SlotArena;
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
+/// The share of the property arena its free buckets must hold before a collection compacts
+/// it. Released ranges are reused by vectors of their size class, so a smaller share would
+/// move every live vector to reclaim storage the next allocations reuse anyway.
+const PROPERTY_ARENA_COMPACTION_SHARE: (usize, usize) = (1, 2);
 
 #[derive(Clone, Copy)]
 struct GcHeadroomFactor {
@@ -321,7 +325,9 @@ impl Heap {
             if weak {
                 self.weak_holders.insert(index);
             }
-            let slot = &mut self.slots.get_mut(index as usize).unwrap().cell;
+            debug_assert!((index as usize) < self.slots.len());
+            // SAFETY: free bits cover only slots below the arena length (`FreeSlots`).
+            let slot = unsafe { &mut self.slots.get_unchecked_mut(index as usize).cell };
             debug_assert!(slot.is_none(), "free-list slots hold no cell");
             // Collection clears heap weak owners before adding a dead slot here;
             // the VM clears its weak closure cache before control can allocate.
@@ -431,10 +437,13 @@ impl Heap {
     }
     /// Slide every live arena range down over released ones, in offset order.
     /// `objects` holds each live arena owner packed with its range offset.
-    /// Packs live arena vectors to the front. `dropped_ranges` reports dead arena storage the
-    /// sweep discarded without releasing it, which only this compaction reclaims.
-    fn compact_property_arena(&mut self, mut objects: Vec<u64>, dropped_ranges: bool) {
-        if !dropped_ranges && !self.properties.has_released_ranges() {
+    /// Packs live arena vectors to the front once released ranges hold
+    /// `PROPERTY_ARENA_COMPACTION_SHARE` of the arena; until then new vectors reuse them.
+    fn compact_property_arena(&mut self, mut objects: Vec<u64>) {
+        if !self
+            .properties
+            .released_share_reaches(PROPERTY_ARENA_COMPACTION_SHARE)
+        {
             return;
         }
         #[cfg(feature = "profile-memory")]
@@ -567,9 +576,8 @@ impl Heap {
         }
         // Live arena owners, keyed for the offset-ordered compaction below.
         let property_owners = std::mem::take(&mut self.marked_property_owners);
-        let mut dropped_ranges = false;
         if self.parallel_marking() && !cfg!(feature = "profile-memory") {
-            (live, dropped_ranges) = self.sweep_parallel();
+            live = self.sweep_parallel();
         } else {
             for (base, slab) in self.slots.slabs_mut() {
                 for (offset, slot) in slab.iter_mut().enumerate() {
@@ -596,7 +604,7 @@ impl Heap {
                 }
             }
         }
-        self.compact_property_arena(property_owners, dropped_ranges);
+        self.compact_property_arena(property_owners);
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;
