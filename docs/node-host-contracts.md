@@ -277,9 +277,30 @@ keeping an otherwise unreferenced transport alive.
 
 Oracle checks cover public hooks and exceptions, method metadata, unref before
 and after connecting, accepted-socket unref, and ref restoration. The handle
-adapter supports ref/unref/hasRef. Socket close callback timing and closed-handle
-queries still differ from Node, and complete TCP/Pipe wrap methods, prototypes,
-fd adoption and kernel keepalive/nodelay option hooks remain separate work.
+adapter supports ref/unref/hasRef. Complete TCP/Pipe wrap methods, prototypes, fd adoption and kernel
+keepalive/nodelay option hooks remain separate work.
+
+## Stream and socket close completion
+
+The native stream adapter owns `emitClose` option interpretation and close
+emission policy; the existing guest stream state machine forwards to that
+operation. Readable/Writable/Duplex destruction still emits its original error
+when close emission is disabled and completes the closed/closeEmitted views.
+
+Sockets disable generic stream close emission. Their OS endpoint closes when
+requested; the named transport close phases retain the captured handle query
+until completion. The guest socket root transfers to the close-completion
+projection and then into its scheduled callback, with no additional wrapper-map
+liveness reference. Completion releases native reference metadata before the
+public close callback, so a captured socket handle reports false. Public manual
+close events do not drive this transition. An unconnected socket completes its
+stream callback before queuing the no-argument close event.
+
+Oracle checks cover ticks before physical close, captured reference release,
+ref after close, original error/close arguments, manual close events, unconnected
+sockets and emitClose false for all three stream kinds. Full handle-wrap methods,
+prototype/brand behavior and complete generic destruction/property ordering
+remain separate work.
 
 ## TLS material validation
 
