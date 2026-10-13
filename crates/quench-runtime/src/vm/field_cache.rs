@@ -18,15 +18,19 @@ impl<H: Host> Vm<H> {
         cell: &'a Cell,
         atom: Atom,
     ) -> Option<&'a Object> {
-        if !self.field_cache_atom_eligible(atom) {
+        let class = self.atom_class(atom);
+        if class.contains(AtomClass::PRIVATE) {
             return None;
         }
         let object = cell.object()?;
         if object.is_module_namespace() || self.shape_is_dictionary(object.shape()) {
             return None;
         }
-        let class = self.atom_class(atom);
         match cell {
+            // Only exotic receivers answer `length`, `size` and the buffer views' fields
+            // outside their shape; an ordinary object stores them like any other property.
+            Cell::Object(_) => {}
+            _ if class.contains(AtomClass::VIRTUAL_FIELD) => return None,
             Cell::Proxy { .. } => return None,
             Cell::Array { .. } if class.contains(AtomClass::ARRAY_INDEX) => return None,
             Cell::TypedArray { .. } if class.contains(AtomClass::TYPED_ARRAY_INDEX) => {
