@@ -36,6 +36,10 @@ operator's block anyway, and counting where its first copy landed pinned a
 loop-invariant float chain inside a loop (mandel recomputed each row's
 imaginary coordinate per pixel). Integer operators keep the upstream rule,
 since hoisting their chains measured slower through register pressure.
+A scalar `bitcast` of an integer constant folds to the float constant with
+those bits, which rematerializes at each use instead of staying live (a
+register's float view of an integer zero had been spilled and reloaded per
+pixel in mandel).
 `#![allow(warnings)]` keeps the workspace's `-D warnings`
 from failing on upstream lints that a registry dependency's capped lints
 would hide. `QUENCH.patch` records these changes against the published
