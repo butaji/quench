@@ -48,4 +48,6 @@ The second 11-round stock retake is `stock-splay-direct-object-candidate-11-retr
 
 The third retake, `stock-splay-direct-object-candidate-11-retry-2.json` (SHA-256 `e2d5e94289ed84696d47efcf1a3df682d441e7646ff2f2de2b48c6aacd3188f1`), is also excluded: Deno/Bun workers entered the snapshots from round 5, with one-minute load reaching 5.09 on 10 CPUs. All samples are valid and outputs match, but the medians are contaminated. A clean 11-round Splay retake remains pending.
 
+The fourth retake, `stock-splay-direct-object-candidate-11-retry-3.json` (SHA-256 `31eb7109a7f254a727f0f9c9164664dca6474d103bc5bf5ebc96e78d7c6e715c`), is excluded for the same reason: Bun worker processes entered snapshots at round 3, and one-minute load peaked at 5.20 on 10 CPUs. The full report is valid and output-equal, but no medians from it are used for a distance. A clean 11-round Splay retake remains pending.
+
 The candidate remains isolated. The Linear scoreboard still records the last clean M4 trunk distance, 1.648× Score and 1.781× RSS. A clean 11-round stock Splay retake on this candidate and its Linux own-host row are still required; no other V8-v7 fixture has been started.
