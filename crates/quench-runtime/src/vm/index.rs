@@ -255,21 +255,56 @@ impl<H: Host> Vm<H> {
         self.set_index_slow(p, object, key, value, strict)
     }
 
+    /// The present dense element `base[key]` for a non-negative integer key: a data property.
+    #[inline(always)]
+    pub(super) fn dense_array_element(&self, base: Value, key: Value) -> Option<Value> {
+        let index = usize::try_from(key.as_int()?).ok()?;
+        let Some(Cell::Array { object }) = self.heap.get(base) else {
+            return None;
+        };
+        object
+            .elements()
+            .get(index)
+            .copied()
+            .filter(|value| !value.is_deleted())
+    }
+
+    /// The index `key` names when storing to it replaces a present dense element of a plain
+    /// array, the case `set_index_mode` completes with `replace_dense_element`.
+    #[inline(always)]
+    pub(super) fn replaceable_dense_index(&self, object: Value, key: Value) -> Option<usize> {
+        let index = usize::try_from(key.as_int()?).ok()?;
+        let Some(Cell::Array { object: data }) = self.heap.get(object) else {
+            return None;
+        };
+        (!data.has_indexed_descriptors()
+            && !data.is_frozen()
+            && data
+                .elements()
+                .get(index)
+                .is_some_and(|value| !value.is_deleted()))
+        .then_some(index)
+    }
+
     /// Overwrites a present dense array element after every guard has passed.
     #[inline(always)]
-    fn replace_dense_element(&mut self, object: Value, index: usize, value: Value) {
+    pub(super) fn replace_dense_element(&mut self, object: Value, index: usize, value: Value) {
         let Some(Cell::Array {
             object: array_object,
         }) = self.heap.get_mut(object)
         else {
             unreachable!("dense element replacement requires an array")
         };
+        // Only a mapped arguments object mirrors its elements into parameter bindings.
+        let mapped = array_object.arguments_map().is_some();
         let elements = array_object.elements_mut();
         #[cfg(feature = "profile-aggregate")]
         self.profile
             .array_write_ownership(Rc::strong_count(elements) != 1);
         mutable_array_elements(elements)[index] = value;
-        self.sync_mapped_argument(object, index, value);
+        if mapped {
+            self.sync_mapped_argument(object, index, value);
+        }
         #[cfg(feature = "profile-aggregate")]
         self.profile.index_set(0);
     }
