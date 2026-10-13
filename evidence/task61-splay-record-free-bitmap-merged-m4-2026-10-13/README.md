@@ -221,3 +221,31 @@ binary SHA-256 is
 `4eafb40ab6ab97569f48fe733f0b4b297bc2e37d0333bdf8153c61255c85fe4d`, and the
 stock runner SHA-256 is
 `bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109`.
+
+## Splay record-space residency attribution
+
+Using the same pinned candidate binary and corpus, `capture_vmmap_d437.py`
+stopped the process after `Setup()` and after 300 `run()` calls. The host was
+M4 arm64 macOS with 10 logical CPUs; load immediately before capture was
+7.16 / 9.15 / 8.95. These are process snapshots, not stock-harness RSS or
+timing results.
+
+| Stage | `ps` RSS | Default malloc-zone resident | `MALLOC_LARGE` resident | `MALLOC_SMALL` resident |
+| -- | --: | --: | --: | --: |
+| Setup, K=0 | 76,896 KiB | 62.1 MiB | 25.6 MiB | 35.8 MiB |
+| After 300 runs | 114,368 KiB | 95.8 MiB | 53.6 MiB | 39.5 MiB |
+| Change | +37,472 KiB | +33.7 MiB | +28.0 MiB | +3.7 MiB |
+
+The two record spaces explain the large mappings: ObjectRecordSpace reserves
+512 MiB (`16,777,216 × 32 B`) and ArrayRecordSpace reserves 640 MiB
+(`16,777,216 × 40 B`). At K=300, `vmmap` shows matching 128 MiB mapped portions
+with 31.6 MiB and 19.0 MiB resident, respectively; their setup residents are
+15.8 MiB and 9.8 MiB. This is a strong address/size match to the record spaces,
+not an allocator-owner label emitted by `vmmap`. The process RSS increase is
+concentrated in those record mappings; `MALLOC_SMALL` rises by only 3.7 MiB.
+This points the next Splay memory step at the per-record layout. It does not
+claim that reducing record width will save an equal amount in stock RSS.
+
+The work snapshot is taken after the last run and can miss a transient peak.
+Raw map, summary, process and source files are in `vmmap-d437/`; metadata
+records both source hashes and the pinned executable SHA.
