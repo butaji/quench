@@ -23,6 +23,10 @@ struct PendingGeneralCall {
     destination: Register,
     /// Set for an in-loop `new`; see `StepResult::PushFrame`.
     construct_this: Option<Value>,
+    /// The call falls into a return of its result: the caller completes with the callee's
+    /// value instead of storing it. Sloppy callers keep their frame (it stays visible to
+    /// legacy `caller` reflection), so this chains returns rather than replacing frames.
+    returns: bool,
     call_guard: crate::stack::GuestCallGuard,
 }
 
@@ -1096,7 +1100,9 @@ impl<H: Host> Vm<H> {
                     if let (Some(left), Some(right)) = (
                         self.inert_operand(frame, ins.operand_b()),
                         self.inert_operand(frame, ins.operand_c()),
-                    ) && let Some(truthy) = self.number_comparison_truthy(operator, left, right)
+                    ) && let Some(truthy) = self
+                        .number_comparison_truthy(operator, left, right)
+                        .or_else(|| self.identity_equality(operator, left, right))
                     {
                         self.profile.binary(
                             operator as usize,
@@ -1146,6 +1152,24 @@ impl<H: Host> Vm<H> {
                     } else {
                         self.write(frame, ins.result_register(), value);
                     }
+                    continue;
+                }
+                // Equality decided without conversion runs no guest code either.
+                Op::Binary
+                    if !ins.returns_from_frame()
+                        && ins.numeric_local_target().is_none()
+                        && let (Some(left), Some(right)) = (
+                            self.inert_operand(frame, ins.operand_b()),
+                            self.inert_operand(frame, ins.operand_c()),
+                        )
+                        && let Some(equal) =
+                            self.identity_equality(ins.binary_operator(), left, right) =>
+                {
+                    self.write(
+                        frame,
+                        ins.result_register(),
+                        if equal { Value::TRUE } else { Value::FALSE },
+                    );
                     continue;
                 }
                 // A field cache hit reads a data slot: it neither allocates nor throws.
@@ -1207,7 +1231,7 @@ impl<H: Host> Vm<H> {
                 _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
             };
             match step {
-                Ok(StepResult::Return(value)) => {
+                Ok(StepResult::Return(mut value)) => loop {
                     if let Some(pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
                         let completed_frame = self.frames.pop().unwrap();
@@ -1220,20 +1244,23 @@ impl<H: Host> Vm<H> {
                         self.active_registers = self.frames[frame].registers.as_mut_ptr();
                         // [[Construct]] of an ordinary constructor yields its returned object,
                         // otherwise the receiver it allocated.
-                        let value = match pending.construct_this {
+                        value = match pending.construct_this {
                             Some(this) if !self.is_object_like(value) => this,
                             _ => value,
                         };
-                        self.write(frame, pending.destination, value);
                         pc = self.frames[frame].pc;
                         cursor = pending.caller_cursor;
                         published_pc = &mut self.frames[frame].pc;
                         drop(pending.call_guard);
-                    } else {
-                        self.frames[frame].pc = pc;
-                        return Ok(FrameOutcome::Complete(value));
+                        if pending.returns {
+                            continue;
+                        }
+                        self.write(frame, pending.destination, value);
+                        break;
                     }
-                }
+                    self.frames[frame].pc = pc;
+                    return Ok(FrameOutcome::Complete(value));
+                },
                 Ok(StepResult::Continue) => {}
                 Ok(StepResult::PushFrame {
                     destination,
@@ -1246,6 +1273,7 @@ impl<H: Host> Vm<H> {
                         call_pc: instruction_pc as u32,
                         destination,
                         construct_this,
+                        returns: ins.returns_from_frame(),
                         call_guard,
                     });
                     frame += 1;
