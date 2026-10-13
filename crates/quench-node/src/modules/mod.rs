@@ -44,6 +44,7 @@ pub(crate) mod fs_ops;
 pub(crate) mod fs_path;
 pub(crate) mod fs_shared_vm;
 pub(crate) mod fs_state;
+pub(crate) mod fs_watch_shared_vm;
 pub(crate) mod http_protocol;
 pub(crate) mod http_shared_vm;
 pub(crate) mod net_config;

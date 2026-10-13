@@ -2355,8 +2355,9 @@ for (const __quenchVfsAsyncMethod of "access truncate chmod chown lchown utimes 
 )) {
   __quenchVfsWrapAsyncFs(__quenchVfsAsyncMethod);
 }
-if (typeof globalThis.__nodeFs?.watch !== "function") {
-  globalThis.__nodeFs.watch = function (path, options, listener) {
+const __quenchVfsOriginalWatch = globalThis.__nodeFs?.watch;
+if (globalThis.__nodeFs) {
+  globalThis.__nodeFs.watch = function watch(path, options, listener) {
     if (typeof options === "function") {
       listener = options;
       options = {};
@@ -2365,6 +2366,7 @@ if (typeof globalThis.__nodeFs?.watch !== "function") {
       .reverse()
       .find((item) => item.shouldHandle(path));
     if (!vfs) {
+      if (typeof __quenchVfsOriginalWatch === "function") return __quenchVfsOriginalWatch.call(this, path, options, listener);
       const error = new Error("The watch operation is unavailable outside a mounted VFS");
       error.code = "ENOSYS";
       throw error;
