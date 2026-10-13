@@ -4462,3 +4462,47 @@ console.log(JSON.stringify(result));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn tcp_connect_failures_preserve_os_fields_property_order_and_intrinsic_error() {
+    const SOURCE: &str = r#"
+const net=require('net'),assert=require('assert'),OriginalError=Error;
+const port=Number(process.argv[1]),host=process.argv[2],result=[];
+globalThis.Error=function(){throw new OriginalError('poisoned Error constructor')};
+const socket=net.connect({host,port,autoSelectFamily:false});
+socket.on('connect',()=>{throw new OriginalError('unexpected connection')});
+socket.on('error',error=>{
+ assert(error instanceof OriginalError);assert.strictEqual(error.code,'ECONNREFUSED');assert.strictEqual(error.address,host);assert.strictEqual(error.port,port);assert.strictEqual(error.syscall,'connect');
+ console.log(JSON.stringify([error.name,error.code,error.errno,error.syscall,error.address,error.port,error.message,error.toString(),Object.keys(error),Object.getPrototypeOf(error).constructor===OriginalError]));
+});
+"#;
+    for host in ["127.0.0.1", "::1"] {
+        let listener = match std::net::TcpListener::bind((host, 0)) {
+            Ok(listener) => listener,
+            Err(_) if host == "::1" => continue,
+            Err(error) => panic!("cannot reserve oracle port: {error}"),
+        };
+        let port = listener.local_addr().unwrap().port().to_string();
+        drop(listener);
+        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command = Command::new(executable);
+            command.args(["-e", SOURCE, &port, host]);
+            if executable != "node" {
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            }
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
+                .unwrap()
+        });
+        for observation in &observations {
+            assert!(!observation.timed_out);
+            assert_eq!(
+                observation.exit_code,
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&observation.stderr)
+            );
+            assert!(observation.stderr.is_empty());
+        }
+        assert_eq!(observations[0].stdout, observations[1].stdout);
+    }
+}

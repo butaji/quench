@@ -1,4 +1,5 @@
 use crate::host::NodeHost;
+use super::net_connect_error::TcpConnectFailure;
 use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
@@ -475,7 +476,7 @@ impl Listener {
 }
 
 enum ConnectFailure {
-    Tcp(String),
+    Tcp(TcpConnectFailure),
     #[cfg(unix)]
     Local {
         error: std::io::Error,
@@ -526,7 +527,7 @@ pub(crate) enum TransportEvent {
     },
     ConnectError {
         socket: u64,
-        message: String,
+        failure: TcpConnectFailure,
     },
     #[cfg(unix)]
     LocalConnectError {
@@ -663,7 +664,7 @@ pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Res
                     stream
                         .set_nonblocking(true)
                         .map(|()| stream)
-                        .map_err(|error| error.to_string())
+                        .map_err(TcpConnectFailure::Setup)
                 });
             let _ = sender.send(result.map_err(ConnectFailure::Tcp));
         })
@@ -710,7 +711,7 @@ pub(super) fn connect_resolved(
     std::thread::Builder::new()
         .name(format!("quench-node-tcp-{id}"))
         .spawn(move || {
-            let mut result = Err("resolved socket has no destinations".to_owned());
+            let mut result = Err(TcpConnectFailure::EmptyDestinations);
             for address in addresses {
                 result = connect_with_timeout(&address, port);
                 if result.is_ok() {
@@ -723,7 +724,7 @@ pub(super) fn connect_resolved(
                     stream
                         .set_nonblocking(true)
                         .map(|()| stream)
-                        .map_err(|error| error.to_string())
+                        .map_err(TcpConnectFailure::Setup)
                 })
                 .map_err(ConnectFailure::Tcp);
             let _ = sender.send(result);
@@ -866,9 +867,7 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
             Err(TryRecvError::Empty) => {
                 continue;
             }
-            Err(TryRecvError::Disconnected) => Err(ConnectFailure::Tcp(
-                "socket connect worker stopped".to_owned(),
-            )),
+            Err(TryRecvError::Disconnected) => Err(ConnectFailure::Tcp(TcpConnectFailure::WorkerStopped)),
         };
         let connection = transport
             .connecting
@@ -892,9 +891,9 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
                 );
                 events.push(TransportEvent::Connected { socket: id });
             }
-            Err(ConnectFailure::Tcp(message)) => {
+            Err(ConnectFailure::Tcp(failure)) => {
                 transport.closing_sockets.insert(id, ClosingSocket {referenced,phase:SocketClosePhase::Requested});
-                events.push(TransportEvent::ConnectError {socket:id,message});
+                events.push(TransportEvent::ConnectError {socket:id,failure});
             },
             #[cfg(unix)]
             Err(ConnectFailure::Local { error, path }) => {
@@ -1058,28 +1057,27 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
     events
 }
 
-fn connect_with_timeout(host: &str, port: u16) -> Result<TcpStream, String> {
+fn connect_with_timeout(host: &str, port: u16) -> Result<TcpStream, TcpConnectFailure> {
     let addresses = (host, port)
         .to_socket_addrs()
-        .map_err(|_| format!("getaddrinfo ENOTFOUND {host}"))?
-        .collect::<Vec<_>>();
+        .map_err(|error| TcpConnectFailure::Resolve {
+            error,
+            hostname: host.to_owned(),
+        })?;
     let mut last_error = None;
     for address in addresses {
         match TcpStream::connect_timeout(&address, TCP_CONNECT_TIMEOUT) {
             Ok(stream) => return Ok(stream),
-            Err(error) => {
-                let code = match error.kind() {
-                    std::io::ErrorKind::ConnectionRefused => "ECONNREFUSED",
-                    std::io::ErrorKind::TimedOut => "ETIMEDOUT",
-                    std::io::ErrorKind::AddrNotAvailable => "EADDRNOTAVAIL",
-                    std::io::ErrorKind::PermissionDenied => "EACCES",
-                    _ => "ENETUNREACH",
-                };
-                last_error = Some(format!("connect {code} {address} ({error})"));
-            }
+            Err(error) => last_error = Some(TcpConnectFailure::Connect { error, address }),
         }
     }
-    Err(last_error.unwrap_or_else(|| format!("getaddrinfo ENOTFOUND {host}")))
+    Err(last_error.unwrap_or_else(|| TcpConnectFailure::Resolve {
+        error: std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "resolver returned no addresses",
+        ),
+        hostname: host.to_owned(),
+    }))
 }
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
