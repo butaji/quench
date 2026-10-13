@@ -1,4 +1,4 @@
-//! Node's coded TypeError prototypes and shared private brand.
+//! Node's coded error prototypes and shared private brand.
 
 use super::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
@@ -7,10 +7,15 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 const INVALID_ARGUMENT_TYPE: &str = "ERR_INVALID_ARG_TYPE";
 pub(crate) struct NodeErrorApi {
     brand: RootId,
-    type_prototypes: std::collections::HashMap<(&'static str, TypeErrorPrototype), RootId>,
+    prototypes: std::collections::HashMap<(&'static str, ErrorClass, ErrorPresentation), RootId>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum TypeErrorPrototype {
+enum ErrorClass {
+    TypeError,
+    RangeError,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ErrorPresentation {
     Direct,
     HiddenStackFrames,
 }
@@ -28,16 +33,17 @@ const PROTOTYPE: &str = quench_js_check::checked_js!(
     }.prototype"#
 );
 
-fn type_error_prototype(
+fn coded_error_prototype(
     context: &mut NativeContext<'_, NodeHost>,
     code: &'static str,
+    class: ErrorClass,
 ) -> Result<RootId, RootedError> {
     let state = context.host_mut().shared_state();
     if let Some(prototype) = state
         .borrow()
         .node_error_api
         .as_ref()
-        .and_then(|api| api.type_prototypes.get(&(code, TypeErrorPrototype::Direct)))
+        .and_then(|api| api.prototypes.get(&(code, class, ErrorPresentation::Direct)))
         .copied()
     {
         return Ok(prototype);
@@ -47,7 +53,7 @@ fn type_error_prototype(
         let brand = context.retain(brand)?;
         state.borrow_mut().node_error_api = Some(NodeErrorApi {
             brand,
-            type_prototypes: std::collections::HashMap::new(),
+            prototypes: std::collections::HashMap::new(),
         });
     }
     let key = state
@@ -56,7 +62,10 @@ fn type_error_prototype(
         .as_ref()
         .expect("initialized error API")
         .brand;
-    let base_error = context.type_error_rooted("")?;
+    let base_error = match class {
+        ErrorClass::TypeError => context.type_error_rooted("")?,
+        ErrorClass::RangeError => context.range_error_rooted("")?,
+    };
     let base_prototype = context.prototype_rooted(base_error)?;
     let base = get(context, base_prototype, "constructor")?;
     let constructor = context.host_function_with_data(
@@ -80,8 +89,8 @@ fn type_error_prototype(
         .node_error_api
         .as_mut()
         .expect("initialized error API")
-        .type_prototypes
-        .insert((code, TypeErrorPrototype::Direct), prototype);
+        .prototypes
+        .insert((code, class, ErrorPresentation::Direct), prototype);
     Ok(prototype)
 }
 
@@ -91,14 +100,18 @@ pub(super) fn hide_type_error(
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
-    let base = type_error_prototype(context, code)?;
+    let base = coded_error_prototype(context, code, ErrorClass::TypeError)?;
     let state = context.host_mut().shared_state();
-    let key = (code, TypeErrorPrototype::HiddenStackFrames);
+    let key = (
+        code,
+        ErrorClass::TypeError,
+        ErrorPresentation::HiddenStackFrames,
+    );
     let cached = state
         .borrow()
         .node_error_api
         .as_ref()
-        .and_then(|api| api.type_prototypes.get(&key))
+        .and_then(|api| api.prototypes.get(&key))
         .copied();
     let prototype = if let Some(prototype) = cached {
         prototype
@@ -121,7 +134,7 @@ pub(super) fn hide_type_error(
             .node_error_api
             .as_mut()
             .expect("initialized error API")
-            .type_prototypes
+            .prototypes
             .insert(key, prototype);
         prototype
     };
@@ -141,8 +154,25 @@ pub(super) fn decorate_type_error(
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
+    decorate_coded_error(context, error, code, ErrorClass::TypeError)
+}
+
+pub(super) fn decorate_range_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+) -> Result<(), RootedError> {
+    decorate_coded_error(context, error, code, ErrorClass::RangeError)
+}
+
+fn decorate_coded_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+    class: ErrorClass,
+) -> Result<(), RootedError> {
     super::util_shared_vm::module(context)?;
-    let prototype = type_error_prototype(context, code)?;
+    let prototype = coded_error_prototype(context, code, class)?;
     context.set_prototype_rooted(error, prototype)?;
     // Node's variadic error constructor installs its code field before message.
     let message_key = context.string_rooted("message");
