@@ -425,6 +425,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "nodeTest" (2) => crate::modules::test_shared_vm::run,
         method "isBuiltin" (1) => crate::modules::module_shared_vm::is_builtin,
         method "createRequire" (1) => crate::modules::module_shared_vm::create_require,
+        method "moduleNodePaths" (1) => crate::modules::module_shared_vm::node_module_paths,
         method "findPackageJSON" (1) => crate::modules::module_shared_vm::find_package_json,
         method "pathToFileURL" (2) => crate::modules::url_shared_vm::path_to_file_url,
         method "fileURLToPath" (1) => crate::modules::url_shared_vm::file_url_to_path,
