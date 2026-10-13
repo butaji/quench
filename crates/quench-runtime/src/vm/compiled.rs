@@ -960,6 +960,10 @@ enum ThreadEnd {
     Case(usize),
     /// The successor the constant decided a branch to.
     Exit(usize),
+    /// The table at the path's end, run for real: a jump that knows no
+    /// selector gets its own copy of the dispatch (`dispatch_path`), so each
+    /// case's back edge predicts its own successor.
+    Dispatch,
 }
 
 /// A copy of the instructions from a jump target to a branch table, for a
@@ -1099,6 +1103,34 @@ fn thread_path(
         path,
         end,
     })
+}
+
+/// The straight-line copy from jump target `start` to the branch table it
+/// reaches, within the threading budget; the table is the path's last
+/// instruction.
+fn dispatch_path(instructions: &[WideInstruction], plan: &Plan, start: usize) -> Option<Thread> {
+    let mut path = Vec::new();
+    let mut pc = start;
+    loop {
+        if path.len() == THREAD_BUDGET || !plan.reachable(pc) {
+            return None;
+        }
+        let instruction = *instructions.get(pc)?;
+        path.push(pc);
+        pc = match instruction.op().control_flow_layout() {
+            ControlFlowLayout::Fallthrough => pc + 1,
+            ControlFlowLayout::Jump => instruction.jump_target() as usize,
+            ControlFlowLayout::BranchTable => {
+                return Some(Thread {
+                    selector: instruction.a(),
+                    value: 0,
+                    path,
+                    end: ThreadEnd::Dispatch,
+                });
+            }
+            _ => return None,
+        };
+    }
 }
 
 struct Emitter<'a, 'b, H: Host> {
@@ -1705,7 +1737,14 @@ impl<H: Host> Emitter<'_, '_, H> {
     }
 
     fn jump(&mut self, target: usize) {
-        let block = self.edge(target);
+        let mut block = self.edge(target);
+        if self.threading
+            && Some(block) == self.blocks[target]
+            && let Some(thread) = dispatch_path(self.instructions, self.plan, target)
+        {
+            block = self.builder.create_block();
+            self.pending.push((block, thread));
+        }
         self.builder.ins().jump(block, &[]);
     }
 
@@ -1765,6 +1804,10 @@ impl<H: Host> Emitter<'_, '_, H> {
         for (index, &pc) in thread.path.iter().enumerate() {
             let instruction = self.instructions[pc];
             match instruction.op().control_flow_layout() {
+                // A dispatch copy ends in its table, run for real.
+                ControlFlowLayout::BranchTable if matches!(thread.end, ThreadEnd::Dispatch) => {
+                    self.instruction(function, pc, instruction);
+                }
                 // The path continues at the jump's target, or the table's
                 // case: nothing to emit.
                 ControlFlowLayout::Jump | ControlFlowLayout::BranchTable => {}
@@ -1784,7 +1827,9 @@ impl<H: Host> Emitter<'_, '_, H> {
                 }
             }
         }
-        let (ThreadEnd::Case(target) | ThreadEnd::Exit(target)) = thread.end;
+        let (ThreadEnd::Case(target) | ThreadEnd::Exit(target)) = thread.end else {
+            return;
+        };
         let target = self.block(target);
         self.builder.ins().jump(target, &[]);
     }
