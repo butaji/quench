@@ -108,6 +108,112 @@ impl<H: Host> Vm<H> {
         }))
     }
 
+    /// `f.call(this, ...args)` and `f.apply(this, list)` of the intrinsic natives invoke `f`
+    /// with no observable step of their own, so when `try_inline_user_call` declines a call
+    /// whose callee is one of them and `f` is a user function, `f` is pushed directly. It
+    /// applies `try_inline_user_call`'s conditions to the call and to `f`; it stays out of
+    /// line so ordinary user calls keep their code.
+    #[inline(never)]
+    pub(super) fn try_inline_call_apply(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: WideInstruction,
+        pc: usize,
+    ) -> Option<Result<StepResult, JsError>> {
+        if i.op() != Op::Call
+            || self.direct_eval
+            || self.parameter_eval
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || f + 1 != self.frames.len()
+            || self.frames[f].function == super::ROOT_FUNCTION_ID
+            || (i.returns_from_frame() && p.functions[self.frames[f].function as usize].strict)
+        {
+            return None;
+        }
+        let callee = self.read(f, i.register_b());
+        let target = self.read(f, i.register_c());
+        let window: *const [Value] = self.register_window(f, i.call_window());
+        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+        let window = unsafe { &*window };
+        let this = window.first().copied().unwrap_or(Value::UNDEFINED);
+        let apply_arguments;
+        let arguments = match self.heap.get(callee) {
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::FunctionCall),
+                ..
+            }) => window.get(1..).unwrap_or_default(),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::FunctionApply),
+                ..
+            }) => {
+                apply_arguments =
+                    self.dense_apply_arguments(window.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                apply_arguments.as_slice()
+            }
+            _ => return None,
+        };
+        let (program_id, id, env) = self.same_realm_user_target(target)?;
+        if id == super::ROOT_FUNCTION_ID
+            || program_id != self.active_program
+            || !p.functions.get(id as usize).is_some_and(|function| {
+                !function.is_async
+                    && !function.is_generator
+                    && !function.is_class_constructor
+                    && !function.derived_constructor
+                    && !function.class_field_initializer
+                    && !function.parameter_eval_arguments_error
+            })
+        {
+            return None;
+        }
+        self.profile.call_source(0);
+        self.frames[f].pc = pc;
+        self.profile.call_target(1, arguments.len());
+        let call_guard = self.push_general_user_frame(
+            p,
+            id,
+            env,
+            this,
+            arguments,
+            CallContext::user_function(id, target),
+        );
+        Some(call_guard.map(|call_guard| StepResult::PushFrame {
+            destination: i.result_register(),
+            call_guard,
+            construct_this: None,
+        }))
+    }
+
+    /// CreateListFromArrayLike for `apply` when it reduces to a copy: null or undefined, a
+    /// plain array without holes, or an arguments object whose data `length` covers a
+    /// hole-free prefix, neither carrying indexed descriptors or sparse elements. `None`
+    /// leaves the list to the generic algorithm, whose reads may run guest code.
+    fn dense_apply_arguments(&self, list: Value) -> Option<Vec<Value>> {
+        if list.is_null() || list.is_undefined() {
+            return Some(Vec::new());
+        }
+        let Some(Cell::Array { object }) = self.heap.get(list) else {
+            return None;
+        };
+        if object.has_indexed_descriptors() || self.heap.sparse_length(list).is_some() {
+            return None;
+        }
+        let elements = object.elements();
+        let length = if object.is_arguments_object() {
+            let attributes =
+                self.property_attributes(list, PropertyKey::string(self.length_atom))?;
+            if attributes.accessor {
+                return None;
+            }
+            usize::try_from(self.own_property(list, self.length_atom)?.as_int()?).ok()?
+        } else {
+            elements.len()
+        };
+        let values = elements.get(..length)?;
+        (!values.iter().any(|value| value.is_deleted())).then(|| values.to_vec())
+    }
+
     #[inline(always)]
     pub(super) fn step(
         &mut self,
@@ -1716,6 +1822,14 @@ impl<H: Host> Vm<H> {
                     frame.this = Value::UNDEFINED;
                     frame.fixed_this = false;
                     frame.captured = false;
+                }
+                if allow_inline_calls
+                    && !direct_eval
+                    && let Some(result) = self.try_inline_call_apply(p, f, i, *pc)
+                {
+                    self.direct_eval = previous_direct_eval;
+                    self.parameter_eval = previous_parameter_eval;
+                    return result;
                 }
                 let called = if discarded_wasm_frame {
                     self.call_value(p, callee, this, args)
