@@ -1,0 +1,136 @@
+{
+  "candidate_branch": "task61-splay-array-proto-m4",
+  "candidate_source_revision": "31e0b77a2d899186e9ff08e35c3daefa077496ec",
+  "included_runtime_commits": [
+    "6186d6a513cad7146eca63b6dcd3536c6835aa17",
+    "a44c421de",
+    "496b8045d"
+  ],
+  "candidate_production_binary_sha256": "188a715128b64a1dfc409174069a0b5bf3695aca159c760ddc5b9f303529b94c",
+  "fixed_work_runner_sha256": "bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109",
+  "comparison_parent_binary_sha256": "f7efc3e788cde3467efdf80f62c528a1889ee8c2729dd254bb35d7a9cac5cbe4",
+  "m4_host": {
+    "uname": "Darwin mini.local 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:26 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T8132 arm64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28) (Homebrew)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.2",
+    "model": "Mac16,10",
+    "memory_bytes": 17179869184,
+    "memory_limit_bytes": null,
+    "cpu_quota": null,
+    "logical_cpus": 10,
+    "process_metrics_backend": "macOS /usr/bin/time -l"
+  },
+  "correctness": {
+    "runtime_unit_tests": "556 passed, 0 failed",
+    "test262_stages_31_32": "3302 passed, 0 failed",
+    "test262_stages_60_63": "4604 passed, 0 failed",
+    "wasm": "67124 passed, 0 failed",
+    "cargo_check_deny_warnings": "passed"
+  },
+  "splay_fixed_work_ab": {
+    "wall_ns": {
+      "clean_pairs": 11,
+      "median_delta_percent": -1.251567427662592,
+      "paired_bootstrap_95_percentile_interval_percent": [
+        -1.9013332568671437,
+        -0.7623112993735082
+      ]
+    },
+    "cycles": {
+      "clean_pairs": 11,
+      "median_delta_percent": -1.4618592818416376,
+      "paired_bootstrap_95_percentile_interval_percent": [
+        -1.9462466270477208,
+        -0.618018489983585
+      ]
+    },
+    "instructions": {
+      "clean_pairs": 11,
+      "median_delta_percent": -1.0218710963225575,
+      "paired_bootstrap_95_percentile_interval_percent": [
+        -1.0308535307505307,
+        -1.0059771229195325
+      ]
+    },
+    "peak_rss_bytes": {
+      "clean_pairs": 11,
+      "median_delta_percent": -3.4752389226759384,
+      "paired_bootstrap_95_percentile_interval_percent": [
+        -3.624131944444442,
+        -3.2644178454842243
+      ]
+    }
+  },
+  "splay_fixed_work_aa": {
+    "wall_ns": {
+      "clean_pairs": 11,
+      "median_delta_percent": 0.025146172631984598,
+      "paired_bootstrap_95_percentile_interval_percent": [
+        -0.9141560058340881,
+        0.6477497222002082
+      ]
+    },
+    "cycles": {
+      "clean_pairs": 11,
+      "median_delta_percent": -0.2803386926106377,
+      "paired_bootstrap_95_percentile_interval_percent": [
+        -0.5821661110420262,
+        0.6189509916286084
+      ]
+    },
+    "instructions": {
+      "clean_pairs": 11,
+      "median_delta_percent": 0.011392029887269395,
+      "paired_bootstrap_95_percentile_interval_percent": [
+        -0.010556631282265805,
+        0.0193408995640576
+      ]
+    },
+    "peak_rss_bytes": {
+      "clean_pairs": 11,
+      "median_delta_percent": 0.13034977188790542,
+      "paired_bootstrap_95_percentile_interval_percent": [
+        -0.04343105320303575,
+        0.23913043478260843
+      ]
+    }
+  },
+  "all_eight_guard": {
+    "non_splay_point_screen_passes": false,
+    "all_eight_aa_11_clean": true,
+    "all_eight_ab_11_clean": true,
+    "caps_after_aa_upper_95_allowance": {
+      "wall_percent": 2,
+      "rss_percent": 1
+    },
+    "splay_wall_gain_resolved": true,
+    "splay_rss_gain_resolved": true,
+    "decision": "M4 guard fails: Richards wall loss after its A/A upper-95% allowance is 2.303% against a 2.000% cap. Splay wall and RSS gains are resolved, but this candidate is not mergeable until the guard is fixed. The stock diagnostic is Deno-contended and Linux has not measured this candidate."
+  },
+  "stock_splay_diagnostic": {
+    "valid_rounds": 11,
+    "output_equal": true,
+    "qualification_ready": false,
+    "quench_score": 9516.0,
+    "quench_max_rss_bytes": 73089024,
+    "score_bar_engine": "node",
+    "score_bar": 14937.0,
+    "score_distance": 1.569672131147541,
+    "rss_bar_engine": "bun",
+    "rss_bar_bytes": 63635456,
+    "rss_distance": 1.1485581874356334,
+    "contamination": "Host snapshots show Deno at 153% CPU during round 0 while Quench ran and repeated Deno activity in later rounds; do not use this as a clean stock distance."
+  },
+  "report_sha256": {
+    "all-eight-aa-11.json": "5904cc7765dfa48a8013176a4d6a59b4ac30292a241db397887d27ba3740b5f3",
+    "all-eight-ab-11.json": "03ca28c21609ccdf794d9de3e57f61f7974ee891f28116e84e3d8ce70c71c951",
+    "regexp-ab-topup-11.json": "6e546377af34845acfd2e72bfdb2ef54f2e5788bc784428220f2c7923a2badef",
+    "richards-ab-topup-11.json": "fd576721abc665d88103254dcb444fbc79ea7be425aac8fb6b04a9dc9288af39",
+    "splay-aa-11.json": "1555236c3a15d3a505bec5f3f8876f8c6dfe108a56583cd9f1b6f2fefb2d5e94",
+    "splay-ab-11.json": "ae97e638d4a46e2463547e3f3122d169b79db5f524e12d4b67fcb24ad04796b0",
+    "test262-31-32.json": "df86b0af347f316f231962486ba6bd7d0cb0423e51fefedd640d3256e87f4119",
+    "test262-60-63.json": "826363a1ccb299170f07a50b8a939272b0878035afa32881c1bb38b2b6804547",
+    "wasm-full.json": "596365fde5acd303835153a9784166fb231bed9e5232f4ed51e164a79124b93c",
+    "stock-splay-11.json": "adfa995669fb8b7f5a72d18fc3bb3596b31055c79ca16de2cc7665961f198c91"
+  },
+  "decision": "Not retained: the Splay fixed-work improvement is clear, but the all-eight A/A-adjusted wall screen fails Richards (2.303% > 2.000%). Stock diagnostic was contaminated; candidate does not establish the M4 stock win. No Linux result for this candidate."
+}
