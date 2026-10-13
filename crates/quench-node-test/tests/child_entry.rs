@@ -4506,3 +4506,88 @@ socket.on('error',error=>{
         assert_eq!(observations[0].stdout, observations[1].stdout);
     }
 }
+
+#[test]
+fn net_socket_close_completion_follows_ticks_and_releases_captured_handle_reference() {
+    const SOURCE: &str = r#"
+const net=require('net'),assert=require('assert'),result=[];
+(async()=>{
+for(const hadError of [false,true])await new Promise((resolve,reject)=>{
+ const server=net.createServer(peer=>peer.resume());server.on('error',reject);
+ server.listen(0,'127.0.0.1',()=>{
+  const socket=net.connect(server.address().port,'127.0.0.1');socket.on('error',()=>{});
+  socket.once('connect',()=>{
+   const handle=socket._handle,trace=[['open',handle.hasRef()]];let manual=true;
+   socket.on('close',error=>{
+    if(manual){assert.strictEqual(handle.hasRef(),true);trace.push(['manual',error]);return}
+    try{trace.push(['close',handle.hasRef(),error]);assert.strictEqual(handle.hasRef(),false);handle.ref();assert.strictEqual(handle.hasRef(),false);result.push([hadError,trace]);server.close(resolve)}catch(error){reject(error)}
+   });
+   socket.emit('close',false);manual=false;
+   socket.destroy(hadError?new Error('socket failure'):undefined);
+   trace.push(['destroy',handle.hasRef(),socket._handle===null]);
+   process.nextTick(()=>trace.push(['tick',handle.hasRef()]));
+  });
+ });
+});
+for(const hadError of [false,true])await new Promise(resolve=>{
+ const socket=new net.Socket(),trace=[];socket.on('error',()=>trace.push('error'));
+ socket.on('close',error=>{trace.push(['close',error]);result.push(['nohandle',hadError,trace]);resolve()});
+ socket.destroy(hadError?new Error('unconnected failure'):undefined);trace.push('returned');
+});
+console.log(JSON.stringify(result));
+})().catch(error=>{console.error(error);process.exitCode=1});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn stream_emit_close_option_suppresses_only_close_and_preserves_destroy_errors() {
+    const SOURCE: &str = r#"
+const stream=require('stream'),assert=require('assert'),result=[];
+(async()=>{
+for(const name of ['Readable','Writable','Duplex'])for(const emitClose of [true,false])await new Promise((resolve,reject)=>{
+ const marker=new Error('destroy marker'),trace=[],value=new stream[name]({emitClose,read(){},write(chunk,encoding,callback){callback()}});
+ value.on('error',error=>{assert.strictEqual(error,marker);trace.push('error')});value.on('close',()=>trace.push('close'));
+ value.destroy(marker);trace.push('returned');setImmediate(()=>setImmediate(()=>{try{assert.deepStrictEqual(trace,emitClose?['returned','error','close']:['returned','error']);result.push([name,emitClose,trace,value.closed,value._readableState?.closeEmitted,value._writableState?.closeEmitted]);resolve()}catch(error){reject(error)}}));
+});
+console.log(JSON.stringify(result));
+})().catch(error=>{console.error(error);process.exitCode=1});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}

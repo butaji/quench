@@ -23,20 +23,18 @@ const CALLABLE_FACADE: &str = quench_js_check::checked_js!(
 })"#
 );
 
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, emitOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation) => {
   const listeners = (socket) => socket._listeners;
   class Socket extends Duplex {
     constructor(options = {}) {
       options = socketOptionsOperation(options, false);
       super({
-        ...options, autoDestroy: true, allowHalfOpen: true,
+        ...options, autoDestroy: true, allowHalfOpen: true, emitClose: false,
         read() {},
         write(chunk, encoding, callback) { try { writeOperation(this, chunk, callback); } catch (error) { callback(error); } },
         final(callback) { try { endOperation(this); callback(); } catch (error) { callback(error); } },
-        destroy(error, callback) { try { destroyOperation(this, error); callback(error); } catch (failure) { callback(failure); } },
+        destroy(error, callback) { try { destroyOperation(this, error, callback); } catch (failure) { callback(failure); } },
       });
-      const emitterEmit = this._emitter.emit;
-      this._emitter.emit = (event, ...args) => emitOperation(this, emitterEmit, event, ...args);
       this.allowHalfOpen = false;
       this._encoding = null;
       this._handle = options.handle || null;
@@ -545,6 +543,9 @@ pub(crate) enum TransportEvent {
     Closed {
         socket: u64,
     },
+    CloseCompleted {
+        socket: u64,
+    },
     Error {
         socket: u64,
         error: std::io::Error,
@@ -814,11 +815,12 @@ pub(crate) fn poll(transport: &mut Transport) -> Vec<TransportEvent> {
         ListenerState::CloseRequested => { listener.state = ListenerState::Closing; true },
         ListenerState::Open(_) => true,
     });
-    transport.closing_sockets.retain(|_, socket| match socket.phase {
-        SocketClosePhase::Closing => false,
+    let mut events = Vec::new();
+    transport.closing_sockets.retain(|id, socket| match socket.phase {
+        SocketClosePhase::Closing => { events.push(TransportEvent::CloseCompleted {socket:*id}); false },
         SocketClosePhase::Requested => { socket.phase = SocketClosePhase::Closing; true },
     });
-    let mut events = poll_connects(transport);
+    events.extend(poll_connects(transport));
     events.extend(poll_accepts(transport));
     events.extend(poll_sockets(transport));
     events
@@ -1144,10 +1146,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         crate::host::shared_vm::operation("netSocketDestroy"),
         close_outcome,
     )?;
-    let emit = context.host_function_with_data(
-        crate::host::shared_vm::operation("netSocketEmit"),
+    let close_completed = context.host_function_with_data(
+        crate::host::shared_vm::operation("netSocketCloseCompleted"),
         close_outcome,
     )?;
+    let close_completed = context.retain(close_completed)?;
+    context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .net_socket_close_completed = Some(close_completed);
     let encoding =
         context.host_function(crate::host::shared_vm::operation("netSocketSetEncoding"))?;
     let listen = context.host_function(crate::host::shared_vm::operation("netServerListen"))?;
@@ -1191,7 +1199,6 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             close,
             address,
             account,
-            emit,
             endpoint,
             reference,
             socket_reference,
@@ -1428,9 +1435,30 @@ pub(crate) fn destroy_operation(
     let value = context.boolean(had_error);
     let key = context.host_function_data()?;
     context.define_data_property_rooted(socket, key, value, true, true, true)?;
+    let callback = args
+        .get(2)
+        .copied()
+        .ok_or_else(|| RootedError::host("socket destroy callback missing"))?;
     let id = match socket_id(context, socket) {
         Ok(id) => id,
-        Err(_) => return Ok(socket),
+        Err(_) => {
+            let undefined = context.undefined();
+            context.call_rooted(callback, undefined, &[error])?;
+            let callback = context
+                .host_mut()
+                .shared_state()
+                .borrow()
+                .net_socket_close_completed
+                .ok_or_else(|| RootedError::host("socket close callback missing"))?;
+            let physical = context.boolean(false);
+            super::shared_event_loop::queue_next_tick(
+                context,
+                callback,
+                undefined,
+                &[socket, physical],
+            )?;
+            return Ok(socket);
+        },
     };
     context.host_mut().net_pending_writes.retain(|(socket, _)| *socket != id);
     context.host_mut().net_pending_ends.retain(|socket| *socket != id);
@@ -1444,6 +1472,8 @@ pub(crate) fn destroy_operation(
     let key = context.string_rooted("_handle");
     let null = context.null();
     context.set_property_rooted(socket, key, null, socket)?;
+    let undefined = context.undefined();
+    context.call_rooted(callback, undefined, &[error])?;
     Ok(socket)
 }
 
@@ -1661,29 +1691,6 @@ pub(crate) fn set_timeout(
 }
 
 /// Adapt the generic stream completion to Socket's latched destruction outcome.
-pub(crate) fn emit_operation(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let undefined = context.undefined();
-    let socket = args.first().copied().unwrap_or(undefined);
-    let emit = args.get(1).copied().unwrap_or(undefined);
-    let event = args.get(2).copied().unwrap_or(undefined);
-    let key = context.string_rooted("_emitter");
-    let emitter = context.get_property_rooted(socket, key)?;
-    if args.len() == 3 && context.string_text(event)?.as_deref() == Some("close") {
-        let key = context.host_function_data()?;
-        let outcome = context.get_property_rooted(socket, key)?;
-        if context
-            .rooted_value(outcome)
-            .is_some_and(|value| value.as_bool().is_some())
-        {
-            return context.call_rooted(emit, emitter, &[event, outcome]);
-        }
-    }
-    context.call_rooted(emit, emitter, args.get(2..).unwrap_or_default())
-}
 
 #[cfg(unix)]
 fn listen_local(
@@ -1934,4 +1941,23 @@ pub(crate) fn socket_has_ref(transport: &Transport, id: u64) -> Option<bool> {
     transport.connecting.get(&id).map(|socket|socket.referenced)
         .or_else(||transport.sockets.get(&id).map(|socket|socket.referenced))
         .or_else(||transport.closing_sockets.get(&id).map(|socket|socket.referenced))
+}
+
+pub(crate) fn close_completed(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = args[0];
+    let key = context.host_function_data()?;
+    let outcome = context.get_property_rooted(socket, key)?;
+    let emit = super::event_constructor_shared_vm::get(context, socket, "emit")?;
+    let event = context.string_rooted("close");
+    let physical = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    if context.truthy_rooted(physical)? {
+        context.call_rooted(emit, socket, &[event, outcome])?;
+    } else {
+        context.call_rooted(emit, socket, &[event])?;
+    }
+    Ok(context.undefined())
 }
