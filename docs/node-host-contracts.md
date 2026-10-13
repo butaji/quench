@@ -240,12 +240,29 @@ original string-coercion exceptions/counts and scoped IPv6 syntax.
 
 The current DNS adapter resolves synchronously and queues an immediate callback;
 its resolver flags and failure fields remain incomplete. Native TCP attempts
-remain sequential worker operations with the existing timeout and lossy error
-presentation. Exact family staggering, attempt events, aggregate errors and
+remain sequential worker operations with the existing timeout. Exact family
+staggering, attempt events, aggregate errors and
 physical cancellation of an already started worker remain separate work. This
 checkpoint covers ordinary callback errors, invalid array/IP/family results,
 preconnect bytes, callback metadata and inactive-lookup process liveness; it
 does not establish complete formatter/proxy, option or TCP/Pipe wrap behavior.
+
+## TCP connect error ownership
+
+TCP connect failures retain their OS error and concrete destination through the
+worker channel and transport poll. The guest error projects actual errno into
+Node code/syscall/address/port fields and the IPv4/IPv6 message, preserving the
+observable field order. No error code is reconstructed from localized text.
+The runtime's intrinsic Error owner supplies these host errors, including when
+the guest replaces the global Error constructor.
+
+Oracle checks reserve external ports, compare real IPv4/IPv6 ECONNREFUSED
+fields/messages/prototypes with Node, and poison the global constructor. The
+portable standard-library resolver still lacks complete getaddrinfo failure
+codes; its existing ENOTFOUND classification remains separate from OS connect
+errno. Logical timeout errors without a supplied OS errno do not invent one.
+Family aggregation/staggering and complete local-address/connect options remain
+separate work.
 
 ## Socket reference ownership
 
