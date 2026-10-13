@@ -19,7 +19,15 @@ visited before the loop's body (both children of the header) hid the loop
 from the body, and nothing was hoisted out of it (mandel's inner loop
 recomputed a loop-invariant three-operator chain each iteration). Each
 dominator-subtree exit now restores the loop stack its block was entered
-with. `#![allow(warnings)]` keeps the workspace's `-D warnings`
+with.
+
+The elaborator also orders the operands of a binary instruction by
+height (the longest chain of pure operations producing each): when the
+second operand's chain is longer by `CRITICAL_LEAD` operations or more, its
+instructions are placed first. Upstream places operands in argument order,
+so a recurrence's critical chain could follow off-path work that competes
+for the same execution ports (SHA-256's round: Σ1(e) rotates queued behind
+Σ0(a) rotates on x64's two rotate ports). `#![allow(warnings)]` keeps the workspace's `-D warnings`
 from failing on upstream lints that a registry dependency's capped lints
 would hide. `QUENCH.patch` records these changes against the published
 0.134.3 crate source.
