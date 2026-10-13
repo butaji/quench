@@ -1169,7 +1169,7 @@ mod tests {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
-            plain_activation: Default::default(),
+            call_plan: Default::default(),
             handlers: vec![],
             register_root_offset: root,
             undefined_register: None,

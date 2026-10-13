@@ -653,7 +653,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
-            plain_activation: Default::default(),
+            call_plan: Default::default(),
             handlers,
             register_root_offset,
             undefined_register,
