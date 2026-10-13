@@ -25,6 +25,12 @@ openssl = "0.10"
 openssl-sys = "0.9"
 foreign-types = "0.3"
 oxc_resolver = "2"
+oxc_allocator = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_ast_visit = { workspace = true }
+oxc_parser = { workspace = true }
+oxc_span = { workspace = true }
+quench-stack = { path = "../quench-stack" }
 url = "2"
 brotli = "7"
 encoding_rs = "0.8"
