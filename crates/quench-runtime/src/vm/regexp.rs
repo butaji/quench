@@ -78,6 +78,18 @@ enum RegExpConstructorInput {
     },
 }
 
+/// Receiver and `RegExp.prototype` shapes verified by `regexp_replace_fast_matcher` to leave
+/// exec, flags and every flag accessor builtin. Shapes are immutable and every key or
+/// attribute change, accessor functions included, moves an object to a new shape, so the proof
+/// holds while both shapes match; only the data property `exec`, at `exec_slot` of the
+/// prototype, is reread.
+#[derive(Clone, Copy)]
+pub(super) struct RegExpBuiltinLayout {
+    receiver: u32,
+    prototype: u32,
+    exec_slot: u32,
+}
+
 /// The replace value of a fast `RegExp.prototype[@@replace]`: a template already converted
 /// to a string, or a callable invoked per match.
 #[derive(Clone, Copy)]
@@ -550,10 +562,10 @@ impl<H: Host> Vm<H> {
     }
 
     fn regexp_replace_fast_matcher(
-        &self,
+        &mut self,
         receiver: Value,
     ) -> Option<(Rc<quench_regexp::Regex>, String)> {
-        let Some(Cell::RegExp { matcher, meta, .. }) = self.heap.get(receiver) else {
+        let Some(Cell::RegExp { meta, .. }) = self.heap.get(receiver) else {
             return None;
         };
         let flags = &meta.flags;
@@ -563,18 +575,60 @@ impl<H: Host> Vm<H> {
         if !global && flags.contains('y') {
             return None;
         }
-        let intrinsics = self
+        let prototype = self
             .realm
             .intrinsics
             .regexp_intrinsics
-            .get(&self.realm.globals)?;
-        if self.object_data(receiver)?.proto != intrinsics.prototype {
+            .get(&self.realm.globals)?
+            .prototype;
+        let receiver_data = self.object_data(receiver)?;
+        if receiver_data.proto() != prototype {
             return None;
         }
+        let receiver_shape = receiver_data.shape();
+        let prototype_data = self.object_data(prototype)?;
+        let prototype_shape = prototype_data.shape();
+        let exec_slot = match self.regexp_builtin_layout {
+            Some(layout)
+                if layout.receiver == receiver_shape && layout.prototype == prototype_shape =>
+            {
+                layout.exec_slot as usize
+            }
+            _ => {
+                let exec_slot = self.verify_regexp_builtin_layout(receiver, prototype)?;
+                self.regexp_builtin_layout = Some(RegExpBuiltinLayout {
+                    receiver: receiver_shape,
+                    prototype: prototype_shape,
+                    exec_slot: exec_slot as u32,
+                });
+                exec_slot
+            }
+        };
+        let exec = self
+            .heap
+            .property_get(self.object_data(prototype)?, exec_slot)?;
+        if !self.is_native_function(exec, Native::RegExpExec) {
+            return None;
+        }
+        if !global {
+            let slot = self.regexp_last_index_slot(receiver)?;
+            self.heap
+                .property_get(self.object_data(receiver)?, slot)?
+                .as_number()?;
+        }
+        let Some(Cell::RegExp { matcher, meta, .. }) = self.heap.get(receiver) else {
+            return None;
+        };
+        Some((Rc::clone(matcher), meta.flags.clone()))
+    }
+
+    /// Checks the shape-determined half of `regexp_replace_fast_matcher`'s proof and returns
+    /// the slot of `RegExp.prototype.exec`.
+    #[cold]
+    fn verify_regexp_builtin_layout(&mut self, receiver: Value, prototype: Value) -> Option<usize> {
         let RuntimeAtoms {
             regexp_exec: exec,
             regexp_flags: flags_atom,
-            last_index,
             regexp_flag_accessors,
             ..
         } = self.runtime_atoms;
@@ -584,17 +638,10 @@ impl<H: Host> Vm<H> {
             || self
                 .property_attributes(receiver, PropertyKey::string(flags_atom))
                 .is_some()
-            || !self
-                .property_attributes(receiver, PropertyKey::string(last_index))
-                .is_some_and(|attributes| attributes.writable && !attributes.accessor)
+            || self.regexp_last_index_slot(receiver).is_none()
+            || !self.regexp_prototype_native_property(prototype, exec, Native::RegExpExec, false)
             || !self.regexp_prototype_native_property(
-                intrinsics.prototype,
-                exec,
-                Native::RegExpExec,
-                false,
-            )
-            || !self.regexp_prototype_native_property(
-                intrinsics.prototype,
+                prototype,
                 flags_atom,
                 Native::RegExpFlags,
                 true,
@@ -606,19 +653,65 @@ impl<H: Host> Vm<H> {
             if self
                 .property_attributes(receiver, PropertyKey::string(atom))
                 .is_some()
-                || !self.regexp_prototype_native_property(intrinsics.prototype, atom, *native, true)
+                || !self.regexp_prototype_native_property(prototype, atom, *native, true)
             {
                 return None;
             }
         }
-        if !global
-            && !self
-                .own_property(receiver, last_index)
-                .is_some_and(|value| value.as_number().is_some())
+        self.object_property_slot(prototype, PropertyKey::string(exec))
+            .map(|(_, slot)| slot)
+    }
+
+    /// The slot of `receiver`'s own writable data `lastIndex`, proven once per receiver shape.
+    fn regexp_last_index_slot(&mut self, receiver: Value) -> Option<usize> {
+        let shape = self.object_data(receiver)?.shape();
+        if let Some((cached, slot)) = self.regexp_last_index_layout
+            && cached == shape
         {
+            return Some(slot as usize);
+        }
+        let key = PropertyKey::string(self.runtime_atoms.last_index);
+        let (_, slot) = self.object_property_slot(receiver, key)?;
+        let attributes = self.property_attributes(receiver, key)?;
+        if !attributes.writable || attributes.accessor {
             return None;
         }
-        Some((Rc::clone(matcher), flags.clone()))
+        self.regexp_last_index_layout = Some((shape, slot as u32));
+        Some(slot)
+    }
+
+    /// `Get(R, "lastIndex")`, read from its slot when it is an own writable data property.
+    fn regexp_last_index(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+    ) -> Result<Value, JsError> {
+        if let Some(slot) = self.regexp_last_index_slot(receiver)
+            && let Some(value) = self
+                .object_data(receiver)
+                .and_then(|object| self.heap.property_get(object, slot))
+        {
+            return Ok(value);
+        }
+        self.get_property(p, receiver, self.runtime_atoms.last_index)
+    }
+
+    /// `Set(R, "lastIndex", value, true)`, stored in its slot when it is an own writable data
+    /// property no method cache can observe.
+    fn store_regexp_last_index(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        value: Value,
+    ) -> Result<(), JsError> {
+        let last_index = self.runtime_atoms.last_index;
+        if !self.method_caches_may_name(last_index)
+            && let Some(slot) = self.regexp_last_index_slot(receiver)
+        {
+            self.heap.property_set(receiver, slot, value);
+            return Ok(());
+        }
+        self.set_property_with_program_mode(p, receiver, last_index, value, true)
     }
 
     fn regexp_prototype_native_property(
@@ -646,6 +739,10 @@ impl<H: Host> Vm<H> {
             };
             value
         };
+        self.is_native_function(value, expected)
+    }
+
+    fn is_native_function(&self, value: Value, expected: Native) -> bool {
         matches!(
             self.heap.get(value),
             Some(Cell::Function {
@@ -699,11 +796,10 @@ impl<H: Host> Vm<H> {
         matcher: &quench_regexp::Regex,
         flags: &str,
     ) -> Result<Value, JsError> {
-        let last_index = self.runtime_atoms.last_index;
         let subject = self.regexp_subject(input);
         let mut matches = Vec::new();
         if flags.contains('g') {
-            self.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
+            self.store_regexp_last_index(p, receiver, Value::number(0.0))?;
             let sticky = flags.contains('y');
             let unicode = flags.contains('u') || flags.contains('v');
             let mut search_start = 0;
@@ -718,7 +814,7 @@ impl<H: Host> Vm<H> {
                 };
                 matches.push(found);
             }
-            self.set_property_with_program_mode(p, receiver, last_index, Value::number(0.0), true)?;
+            self.store_regexp_last_index(p, receiver, Value::number(0.0))?;
         } else if let Some(found) = matcher.find_in_subject(&subject, 0).next() {
             matches.push(found);
         }
@@ -1038,7 +1134,7 @@ impl<H: Host> Vm<H> {
             .regexp_intrinsics
             .get(&self.realm.globals)?;
         let exec = self.runtime_atoms.regexp_exec;
-        (self.object_data(regexp)?.proto == intrinsics.prototype
+        (self.object_data(regexp)?.proto() == intrinsics.prototype
             && self
                 .property_attributes(regexp, PropertyKey::string(exec))
                 .is_none()
@@ -1087,9 +1183,9 @@ impl<H: Host> Vm<H> {
                 q = advance_string_index_units(input.units(), q, unicode);
                 continue;
             }
-            let piece = self
-                .heap
-                .alloc(Cell::String(JsString::from_units(&input.units()[p_index..q])));
+            let piece = self.heap.alloc(Cell::String(JsString::from_units(
+                &input.units()[p_index..q],
+            )));
             if self.append_fresh_array_element(array, piece) >= limit {
                 return self.finish_regexp_split_builtin(splitter, input, last_match, array);
             }
@@ -1105,9 +1201,9 @@ impl<H: Host> Vm<H> {
             }
             q = p_index;
         }
-        let tail = self
-            .heap
-            .alloc(Cell::String(JsString::from_units(&input.units()[p_index..])));
+        let tail = self.heap.alloc(Cell::String(JsString::from_units(
+            &input.units()[p_index..],
+        )));
         self.append_fresh_array_element(array, tail);
         self.finish_regexp_split_builtin(splitter, input, last_match, array)
     }
@@ -1219,6 +1315,7 @@ impl<H: Host> Vm<H> {
                         index: 0,
                         done: false,
                         ext: Box::new(crate::heap::IteratorExt {
+                            position_high: 0,
                             next_method: None,
                             helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
                                 input,
@@ -1305,7 +1402,7 @@ impl<H: Host> Vm<H> {
                     loop {
                         let result = vm.regexp_exec_value(p, receiver, input_value)?;
                         if result.is_null() {
-                            let Some((_, elements)) = vm.heap.array(array) else {
+                            let Some(elements) = vm.heap.array_elements(array) else {
                                 unreachable!("match owns its fresh result array");
                             };
                             return Ok(if elements.is_empty() {
@@ -1891,8 +1988,7 @@ impl<H: Host> Vm<H> {
             }
             let input =
                 vm.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-            let last_index_atom = vm.intern_atom("lastIndex");
-            let last_index = vm.get_property(p, this, last_index_atom)?;
+            let last_index = vm.regexp_last_index(p, this)?;
             let last_index = vm.regexp_to_length_value(p, last_index)?;
             let (regex, flags) = match vm.heap.get(this) {
                 Some(Cell::RegExp { matcher, meta, .. }) => {
@@ -1908,13 +2004,7 @@ impl<H: Host> Vm<H> {
             let sticky = flags.contains('y');
             let start = if stateful { last_index } else { 0 };
             if stateful && start > input.units().len() {
-                vm.set_property_with_program_mode(
-                    p,
-                    this,
-                    last_index_atom,
-                    Value::number(0.0),
-                    true,
-                )?;
+                vm.store_regexp_last_index(p, this, Value::number(0.0))?;
                 return Ok(Value::NULL);
             }
             let subject = vm.regexp_subject(&input);
@@ -1922,24 +2012,12 @@ impl<H: Host> Vm<H> {
             let matched = matched.filter(|matched| !sticky || matched.range.start == start);
             let Some(matched) = matched else {
                 if stateful {
-                    vm.set_property_with_program_mode(
-                        p,
-                        this,
-                        last_index_atom,
-                        Value::number(0.0),
-                        true,
-                    )?;
+                    vm.store_regexp_last_index(p, this, Value::number(0.0))?;
                 }
                 return Ok(Value::NULL);
             };
             if stateful {
-                vm.set_property_with_program_mode(
-                    p,
-                    this,
-                    last_index_atom,
-                    Value::number(matched.range.end as f64),
-                    true,
-                )?;
+                vm.store_regexp_last_index(p, this, Value::number(matched.range.end as f64))?;
             }
             let values = std::iter::once(Some(matched.range.clone()))
                 .chain(matched.captures.iter().cloned())
@@ -1951,8 +2029,10 @@ impl<H: Host> Vm<H> {
                 })
                 .collect::<Vec<_>>();
             let result = vm.heap.alloc(Cell::Array {
-                object: Self::empty_object(vm.array_proto),
-                elements: Rc::new(values),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(vm.array_proto),
+                    Rc::new(values),
+                ),
             });
             let named = regexp_named_capture_ranges(&matched);
             let groups = vm.regexp_groups_object(&named, input.units())?;
@@ -2008,7 +2088,11 @@ impl<H: Host> Vm<H> {
             self.set_property(result, atom, value)?;
         }
         let slots = atoms.map(|atom| self.object_property_slot(result, PropertyKey::string(atom)));
-        let [Some((shape, index_slot)), Some((_, input_slot)), Some((_, groups_slot))] = slots
+        let [
+            Some((shape, index_slot)),
+            Some((_, input_slot)),
+            Some((_, groups_slot)),
+        ] = slots
         else {
             return Ok(());
         };
@@ -2018,7 +2102,7 @@ impl<H: Host> Vm<H> {
         let proto = self
             .object_data(result)
             .expect("RegExp result is an array")
-            .proto;
+            .proto();
         let anchor = self.heap.alloc_object_with_properties(
             proto,
             shape,
@@ -2103,8 +2187,10 @@ impl<H: Host> Vm<H> {
             .map(|range| self.regexp_index_pair(range))
             .collect::<Vec<_>>();
         let indices = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(entries),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(entries),
+            ),
         });
         let groups = if !named.is_empty() {
             let groups = self
@@ -2133,8 +2219,10 @@ impl<H: Host> Vm<H> {
             Value::number(range.end as f64),
         ];
         self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(pair.into()),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(pair.into()),
+            ),
         })
     }
 

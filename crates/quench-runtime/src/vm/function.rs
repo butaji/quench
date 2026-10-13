@@ -65,13 +65,13 @@ impl<H: Host> Vm<H> {
                         kind:
                             FunctionKind::User(program_id, id)
                             | FunctionKind::NumericUser(program_id, id),
-                        realm,
+                        object,
                         ..
                     }) = self.heap.get(caller)
                     else {
                         return Value::NULL;
                     };
-                    let visible = *realm == self.realm.globals
+                    let visible = object.realm == self.realm.globals
                         && self.programs.get(*program_id).is_some_and(|program| {
                             program.functions.get(*id as usize).is_some_and(|metadata| {
                                 !metadata.strict && !metadata.is_async && !metadata.is_generator
@@ -113,8 +113,10 @@ impl<H: Host> Vm<H> {
                 .collect::<Vec<_>>(),
         );
         let arguments = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.realm_object_prototype(self.realm.globals)),
-            elements: args.clone(),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.realm_object_prototype(self.realm.globals)),
+                args.clone(),
+            ),
         });
         self.with_call_roots([arguments], |vm| {
             vm.initialize_arguments_object(arguments, Some(function), &args, expose_callee)?;
@@ -142,8 +144,10 @@ impl<H: Host> Vm<H> {
             args.first().copied().unwrap_or(Value::UNDEFINED),
         )?;
         let bound_args = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(args.get(1..).unwrap_or_default().to_vec()),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(args.get(1..).unwrap_or_default().to_vec()),
+            ),
         });
         self.set_property(env, args_atom, bound_args)?;
         let function = self.native_with_env(Native::FunctionBoundCall, env);
@@ -178,7 +182,7 @@ impl<H: Host> Vm<H> {
             .expect("bound function root remains live");
         self.object_data_mut(function)
             .expect("bound function has object storage")
-            .proto = prototype;
+            .set_proto(prototype);
         let target = self
             .heap
             .root_value(target_root)
@@ -263,8 +267,8 @@ impl<H: Host> Vm<H> {
             .own_property(env, args_atom)
             .and_then(|value| {
                 self.heap
-                    .array(value)
-                    .map(|(_, elements)| elements.as_ref().clone())
+                    .array_elements(value)
+                    .map(|elements| elements.as_ref().clone())
             })
             .unwrap_or_default();
         let mut combined = bound_args;

@@ -247,7 +247,7 @@ impl<H: Host> Vm<H> {
         let value = self.box_object_or_type_error(p, value)?;
         Ok(self
             .object_data(value)
-            .map(|object| object.proto)
+            .map(|object| object.proto())
             .unwrap_or(Value::NULL))
     }
 
@@ -344,7 +344,7 @@ impl<H: Host> Vm<H> {
         let data = self
             .object_data(target)
             .expect("SetPrototypeOf target is an object");
-        if self.same_value(data.proto, proto) {
+        if self.same_value(data.proto(), proto) {
             return Ok(true);
         }
         if target == self.object_proto || !data.is_extensible() {
@@ -360,12 +360,12 @@ impl<H: Host> Vm<H> {
             }
             cursor = self
                 .object_data(cursor)
-                .map(|object| object.proto)
+                .map(|object| object.proto())
                 .unwrap_or(Value::NULL);
         }
         self.object_data_mut(target)
             .expect("object validated")
-            .proto = proto;
+            .set_proto(proto);
         self.mark_object_dictionary(target, DictionaryTrigger::PrototypeUse);
         self.invalidate_field_caches();
         self.invalidate_method_caches();

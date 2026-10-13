@@ -298,7 +298,7 @@ impl<H: Host> Vm<H> {
             let Some(data) = self.object_data(owner) else {
                 return Ok(Value::UNDEFINED);
             };
-            owner = data.proto;
+            owner = data.proto();
             if owner.is_null() {
                 return Ok(Value::UNDEFINED);
             }
@@ -442,7 +442,7 @@ impl<H: Host> Vm<H> {
             }
             if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
                 && let Some(index) = super::object_static::array_index(self.atom_name(atom))
-                && let Some((_, elements)) = self.heap.array(object)
+                && let Some(elements) = self.heap.array_elements(object)
             {
                 let value = elements
                     .get(index as usize)
@@ -470,18 +470,18 @@ impl<H: Host> Vm<H> {
                 return Ok(v);
             }
             if let Some(data) = self.heap.object_record(object) {
-                object = data.proto;
+                object = data.proto();
             } else if object.direct_array_index().is_some() {
                 object = self
                     .heap
                     .object(object)
                     .expect("live direct array retains its object header")
-                    .proto;
+                    .proto();
             } else {
                 match self.heap.get(object) {
-                    Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto,
-                    Some(Cell::TypedArray { object: x, .. }) => object = x.proto,
-                    Some(Cell::DataView { object: x, .. }) => object = x.proto,
+                    Some(Cell::ArrayBuffer { object: x, .. }) => object = x.proto(),
+                    Some(Cell::TypedArray { object: x, .. }) => object = x.proto(),
+                    Some(Cell::DataView { object: x, .. }) => object = x.proto(),
                     Some(Cell::String(v)) => {
                         if let Ok(index) = self.atom_name(atom).parse::<usize>()
                             && let Some(unit) = v.units().get(index).copied()
@@ -530,19 +530,19 @@ impl<H: Host> Vm<H> {
                     | Some(Cell::TemporalPlainMonthDay { object: x, .. })
                     | Some(Cell::TemporalPlainYearMonth { object: x, .. })
                     | Some(Cell::TemporalZonedDateTime { object: x, .. })
-                    | Some(Cell::TemporalInstant { object: x, .. }) => object = x.proto,
-                    Some(Cell::Array { object: x, .. }) => object = x.proto,
-                    Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto,
-                    Some(Cell::RegExp { object: x, .. }) => object = x.proto,
+                    | Some(Cell::TemporalInstant { object: x, .. }) => object = x.proto(),
+                    Some(Cell::Array { object: x, .. }) => object = x.proto(),
+                    Some(Cell::ShadowRealm { object: x, .. }) => object = x.proto(),
+                    Some(Cell::RegExp { object: x, .. }) => object = x.proto(),
                     Some(Cell::Map { object: x, .. }) | Some(Cell::Set { object: x, .. }) => {
-                        object = x.proto
+                        object = x.proto()
                     }
                     Some(Cell::WeakMap { object: x, .. })
-                    | Some(Cell::WeakSet { object: x, .. }) => object = x.proto,
-                    Some(Cell::WeakRef { object: x, .. }) => object = x.proto,
-                    Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto,
-                    Some(Cell::Iterator { object: x, .. }) => object = x.proto,
-                    Some(Cell::Function { object: x, .. }) => object = x.proto,
+                    | Some(Cell::WeakSet { object: x, .. }) => object = x.proto(),
+                    Some(Cell::WeakRef { object: x, .. }) => object = x.proto(),
+                    Some(Cell::FinalizationRegistry { object: x, .. }) => object = x.proto(),
+                    Some(Cell::Iterator { object: x, .. }) => object = x.proto(),
+                    Some(Cell::Function { object: x, .. }) => object = x.proto(),
                     _ => return Ok(Value::UNDEFINED),
                 }
             }

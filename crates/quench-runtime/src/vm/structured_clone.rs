@@ -156,8 +156,10 @@ impl<H: Host> Vm<H> {
             let source_root = graph.root(self, source);
             let prototype = self.array_prototype_for_realm(self.realm.globals);
             let target = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(prototype),
-                elements: Rc::new(Vec::new()),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(prototype),
+                    Rc::new(Vec::new()),
+                ),
             });
             let target_root = graph.root(self, target);
             graph.remember(source, target_root);

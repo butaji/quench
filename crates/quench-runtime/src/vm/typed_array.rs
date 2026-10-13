@@ -27,12 +27,13 @@ impl<H: Host> Vm<H> {
         let typed_array = self.native_value(Native::TypedArray);
         self.uint8_array_proto = self.object();
         self.typed_array_proto = self.object();
+        let (typed_array_proto, function_proto) = (self.typed_array_proto, self.function_proto);
         self.object_data_mut(self.uint8_array_proto)
             .expect("Uint8Array prototype")
-            .proto = self.typed_array_proto;
+            .set_proto(typed_array_proto);
         self.object_data_mut(typed_array)
             .expect("TypedArray constructor")
-            .proto = self.function_proto;
+            .set_proto(function_proto);
         self.set_named(program, typed_array, "prototype", self.typed_array_proto)?;
         self.set_builtin_value_named(self.typed_array_proto, "constructor", typed_array)?;
         let typed_name = self.heap.alloc(Cell::String("TypedArray".into()));
@@ -54,7 +55,7 @@ impl<H: Host> Vm<H> {
         }
         self.object_data_mut(uint8_array)
             .expect("Uint8Array constructor")
-            .proto = typed_array;
+            .set_proto(typed_array);
         self.set_named(program, uint8_array, "prototype", self.uint8_array_proto)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
@@ -316,10 +317,10 @@ impl<H: Host> Vm<H> {
                     let (buffer, offset, width) = match self.heap.get(this) {
                         Some(Cell::TypedArray {
                             buffer,
-                            offset,
+                            object,
                             kind,
                             ..
-                        }) => (*buffer, *offset, kind.width()),
+                        }) => (*buffer, object.offset, kind.width()),
                         _ => unreachable!("typed array receiver was validated"),
                     };
                     let Some(Cell::ArrayBuffer { bytes, .. }) = self.heap.get_mut(buffer) else {
@@ -635,7 +636,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let Some(Cell::TypedArray {
             buffer,
-            offset,
+            object,
             length_tracking,
             kind,
             ..
@@ -643,7 +644,8 @@ impl<H: Host> Vm<H> {
         else {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         };
-        let (buffer, offset, length_tracking, kind) = (*buffer, *offset, *length_tracking, *kind);
+        let (buffer, offset, length_tracking, kind) =
+            (*buffer, object.offset, *length_tracking, *kind);
         let length = self.typed_array_length(this).unwrap_or_default();
         let begin = self.typed_array_relative_index(p, args.first(), length)?;
         let end_arg = args.get(1).filter(|value| !value.is_undefined());
@@ -910,7 +912,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let Some(Cell::TypedArray {
             buffer,
-            offset,
+            object,
             length,
             length_tracking,
             kind,
@@ -920,7 +922,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "typed array receiver is invalid".into()));
         };
         let (buffer, offset, length, length_tracking, kind) =
-            (*buffer, *offset, *length, *length_tracking, *kind);
+            (*buffer, object.offset, *length, *length_tracking, *kind);
         let (buffer_length, detached) = match self.heap.get(buffer) {
             Some(Cell::ArrayBuffer {
                 bytes, detached, ..

@@ -424,7 +424,7 @@ impl<H: Host> Vm<H> {
         let object = self.json_object();
         let object_root = self.heap.root(object);
         if let Some(data) = self.object_data_mut(object) {
-            data.proto = Value::NULL;
+            data.set_proto(Value::NULL);
             data.set_raw_json();
         }
         let raw_atom = self.intern_atom("rawJSON");
@@ -509,8 +509,10 @@ impl<H: Host> Vm<H> {
                     .map(|value| self.parse_json_value(value))
                     .collect::<Result<Vec<_>, _>>()?;
                 self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                    elements: Rc::new(values),
+                    object: crate::heap::ArrayObject::new(
+                        Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                        Rc::new(values),
+                    ),
                 })
             }
             JsonValue::Object(values) => {
@@ -1072,16 +1074,16 @@ impl<H: Host> Vm<H> {
             keys_root = Some(keys_handle);
             let length = self
                 .heap
-                .array(keys)
-                .map(|(_, elements)| elements.len())
+                .array_elements(keys)
+                .map(|elements| elements.len())
                 .expect("OwnPropertyKeys projects an array");
             let mut names = Vec::new();
             for index in 0..length {
                 let keys = self.heap.root_value(keys_handle).unwrap();
                 let key = self
                     .heap
-                    .array(keys)
-                    .map(|(_, elements)| elements[index])
+                    .array_elements(keys)
+                    .map(|elements| elements[index])
                     .expect("rooted own-key projection");
                 if !matches!(self.heap.get(key), Some(Cell::String(_))) {
                     continue;

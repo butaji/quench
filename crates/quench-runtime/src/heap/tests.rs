@@ -15,17 +15,15 @@ fn collect_minor(heap: &mut Heap, roots: impl IntoIterator<Item = Value>) -> Vec
 fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     let mut heap = Heap::new();
     let owner = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::new(vec![Value::UNDEFINED]),
+        object: ArrayObject::new(plain_object(), Rc::new(vec![Value::UNDEFINED])),
     });
     let sparse = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::new(Vec::new()),
+        object: ArrayObject::new(plain_object(), Rc::new(Vec::new())),
     });
     heap.collect([owner, sparse]);
 
     let child = heap.alloc(Cell::String("dense child".into()));
-    if let Some((_, elements)) = heap.array_mut(owner) {
+    if let Some(elements) = heap.array_elements_mut(owner) {
         Rc::make_mut(elements)[0] = child;
     }
     let sparse_child = heap.alloc(Cell::String("sparse child".into()));
@@ -39,7 +37,7 @@ fn minor_collection_traces_remembered_object_and_sparse_array_edges() {
     assert!(heap.get(sparse_child).is_some());
     assert!(heap.get(garbage).is_none());
 
-    if let Some((_, elements)) = heap.array_mut(owner) {
+    if let Some(elements) = heap.array_elements_mut(owner) {
         Rc::make_mut(elements)[0] = Value::UNDEFINED;
     }
     heap.collect([owner, sparse]);
@@ -53,8 +51,7 @@ fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
         .map(|_| heap.alloc(Cell::String("parallel survivor".into())))
         .collect::<Vec<_>>();
     let root = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::new(children.clone()),
+        object: ArrayObject::new(plain_object(), Rc::new(children.clone())),
     });
 
     heap.collect([root]);
@@ -63,13 +60,13 @@ fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
     let young = (0..128)
         .map(|_| heap.alloc(Cell::String("remembered young survivor".into())))
         .collect::<Vec<_>>();
-    if let Some((_, elements)) = heap.array_mut(root) {
+    if let Some(elements) = heap.array_elements_mut(root) {
         Rc::make_mut(elements).extend(young.iter().copied());
     }
     collect_minor(&mut heap, [root]);
     assert!(young.iter().all(|child| heap.get(*child).is_some()));
 
-    if let Some((_, elements)) = heap.array_mut(root) {
+    if let Some(elements) = heap.array_elements_mut(root) {
         Rc::make_mut(elements).clear();
     }
     heap.collect([root]);
@@ -84,8 +81,7 @@ fn parallel_sweep_releases_shared_array_payloads() {
     let arrays = (0..PARALLEL_MARK_MINIMUM_SLOTS)
         .map(|_| {
             heap.alloc(Cell::Array {
-                object: plain_object(),
-                elements: elements.clone(),
+                object: ArrayObject::new(plain_object(), elements.clone()),
             })
         })
         .collect::<Vec<_>>();
@@ -262,9 +258,11 @@ fn scope_slot_owners_survive_collection_and_release() {
 
 #[test]
 fn ordinary_object_payloads_live_in_compact_records() {
+    // The prototype reference packs beside the shape and integrity bits, so a record is a
+    // header the size of a property vector plus two inline values.
     assert_eq!(
         size_of::<Object>(),
-        size_of::<Value>() + size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
+        size_of::<ValueVec>() + size_of::<[Value; INLINE_PROPERTY_COUNT]>()
     );
     assert_eq!(size_of::<Slot>(), size_of::<Option<Cell>>());
 }
@@ -381,8 +379,7 @@ fn weak_map_array_keys_follow_direct_record_liveness() {
         entries: Box::default(),
     });
     let key = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::new(Vec::new()),
+        object: ArrayObject::new(plain_object(), Rc::new(Vec::new())),
     });
     let value = heap.alloc(Cell::String("value".into()));
     assert!(key.direct_array_index().is_some());
@@ -547,8 +544,7 @@ fn finalization_registry_clears_dead_tokens_before_slot_reuse() {
 fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
     let mut heap = Heap::new();
     let array = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::new(Vec::new()),
+        object: ArrayObject::new(plain_object(), Rc::new(Vec::new())),
     });
     let slot = array.heap_index().unwrap();
     let index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
@@ -558,8 +554,7 @@ fn sparse_array_metadata_is_removed_before_a_slot_is_reused() {
     heap.collect([]);
 
     let reused = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::new(Vec::new()),
+        object: ArrayObject::new(plain_object(), Rc::new(Vec::new())),
     });
     assert_eq!(reused.heap_index(), Some(slot));
     assert_eq!(heap.sparse_get(reused, index), None);
@@ -574,12 +569,10 @@ fn direct_array_records_trace_values_and_release_shared_backing() {
     let second_child = heap.alloc(Cell::String("second".into()));
     let shared = Rc::new(vec![first_child, Value::number(1.0)]);
     let first = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::clone(&shared),
+        object: ArrayObject::new(plain_object(), Rc::clone(&shared)),
     });
     let second = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::clone(&shared),
+        object: ArrayObject::new(plain_object(), Rc::clone(&shared)),
     });
     drop(shared);
 
@@ -591,10 +584,10 @@ fn direct_array_records_trace_values_and_release_shared_backing() {
     assert!(heap.object(object).is_some());
     assert!(heap.object(first).is_some());
     assert!(heap.get(first).is_none());
-    assert_eq!(Rc::strong_count(heap.array(first).unwrap().1), 2);
+    assert_eq!(Rc::strong_count(heap.array_elements(first).unwrap()), 2);
     let first_root = heap.root(first);
     {
-        let (_, elements) = heap.array_mut(first).unwrap();
+        let elements = heap.array_elements_mut(first).unwrap();
         Rc::make_mut(elements)[1] = second_child;
     }
     assert_eq!(heap.collect([]), Vec::new());
@@ -602,7 +595,7 @@ fn direct_array_records_trace_values_and_release_shared_backing() {
     assert!(!heap.is_live(second));
     assert!(heap.is_live(first_child));
     assert!(heap.is_live(second_child));
-    let (_, elements) = heap.array(first).unwrap();
+    let elements = heap.array_elements(first).unwrap();
     assert_eq!(elements[1], second_child);
     assert_eq!(Rc::strong_count(elements), 1);
     assert!(heap.release_root(first_root));
@@ -616,8 +609,7 @@ fn direct_array_records_trace_values_and_release_shared_backing() {
 fn direct_array_records_trace_and_remove_sparse_elements() {
     let mut heap = Heap::new();
     let array = heap.alloc(Cell::Array {
-        object: plain_object(),
-        elements: Rc::new(Vec::new()),
+        object: ArrayObject::new(plain_object(), Rc::new(Vec::new())),
     });
     let child = heap.alloc(Cell::String("sparse child".into()));
     let index = MAX_DENSE_ARRAY_HOLE_LENGTH + 1;
@@ -690,14 +682,11 @@ fn object_property_storage_migration_preserves_writes_and_gc_roots() {
     heap.object_record_mut(object)
         .unwrap()
         .set_extensible(false);
-    heap.property_push(object, first);
-    heap.object_record_mut(object).unwrap().set_shape(1);
-    heap.property_push(object, replaced);
-    heap.object_record_mut(object).unwrap().set_shape(2);
+    heap.property_add(object, first, 1);
+    heap.property_add(object, replaced, 2);
     assert!(heap.object(object).unwrap().inline_properties().is_some());
     heap.property_set(object, 1, replacement);
-    heap.property_push(object, third);
-    heap.object_record_mut(object).unwrap().set_shape(3);
+    heap.property_add(object, third, 3);
 
     heap.collect([object]);
     let data = heap.object(object).unwrap();
@@ -777,8 +766,10 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     let owner = heap.alloc(Cell::WasmGc {
         declarations: Box::new(declarations),
         ty: 0,
-        fields: Box::new(vec![external]),
-        descriptor: Some(descriptor),
+        fields: Box::new(WasmGcFields {
+            values: vec![external],
+            descriptor: Some(descriptor),
+        }),
     });
     let tag = heap.alloc(Cell::WasmTag {
         declarations: crate::WasmTypes::default(),
@@ -786,7 +777,7 @@ fn wasm_scalar_and_gc_fields_follow_the_shared_strong_root_lifecycle() {
     });
     let exception = heap.alloc(Cell::WasmException {
         tag,
-        payload: vec![owner],
+        payload: Box::new(vec![owner]),
     });
     let root = heap.root(exception);
     heap.collect([]);
