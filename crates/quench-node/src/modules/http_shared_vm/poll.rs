@@ -81,7 +81,7 @@ pub(crate) fn poll(
             set_bool(runtime, writable, "errorEmitted", true)?;
             runtime.release_root(writable);
             let error = if was_connected {
-                let error = net_socket_error(runtime, "write ECANCELED")?;
+                let error = net_socket_error_with_code(runtime, "write ECANCELED", "ECANCELED")?;
                 set_text(runtime, error, "syscall", "write")?;
                 #[cfg(unix)]
                 set_number(runtime, error, "errno", -f64::from(libc::ECANCELED))?;
@@ -231,7 +231,8 @@ pub(crate) fn poll(
                     progressed = true;
                 }
             }
-            net_shared_vm::TransportEvent::ConnectError { socket, message } => {
+            net_shared_vm::TransportEvent::ConnectError { socket, failure } => {
+                let message = failure.message();
                 let client = shared_state.borrow_mut().http.clients.remove(&socket);
                 if let Some(client) = client {
                     fail_client_exchange(runtime, program, client, &message)?;
@@ -242,7 +243,7 @@ pub(crate) fn poll(
                         .get(&socket)
                         .map(|net_socket| net_socket.root);
                     if let Some(net_root) = net_root {
-                        let error = net_socket_error(runtime, &message)?;
+                        let error = tcp_connect_error(runtime, &failure)?;
                         queue_net_method(runtime, shared_state, net_root, "destroy", &[error])?;
                         runtime.release_root(error);
                     }
@@ -1065,9 +1066,30 @@ fn queue_write_callback(
     );
 }
 
-fn net_socket_error(runtime: &mut Runtime<NodeHost>, message: &str) -> Result<RootId, String> {
-    let code = message.split_whitespace().nth(1).unwrap_or("ECONNRESET");
-    net_socket_error_with_code(runtime, message, code)
+fn net_error(runtime: &mut Runtime<NodeHost>, message: &str) -> Result<RootId, String> {
+    runtime
+        .error_rooted(message)
+        .map_err(|error| error.to_string())
+}
+
+fn tcp_connect_error(
+    runtime: &mut Runtime<NodeHost>,
+    failure: &crate::modules::net_connect_error::TcpConnectFailure,
+) -> Result<RootId, String> {
+    let error = net_error(runtime, &failure.message())?;
+    if let Some(errno) = failure.errno() {
+        set_number(runtime, error, "errno", errno)?;
+    }
+    set_text(runtime, error, "code", &failure.code())?;
+    set_text(runtime, error, "syscall", failure.syscall())?;
+    if let Some(address) = failure.address() {
+        set_text(runtime, error, "address", &address.ip().to_string())?;
+        set_number(runtime, error, "port", f64::from(address.port()))?;
+    }
+    if let Some(hostname) = failure.hostname() {
+        set_text(runtime, error, "hostname", hostname)?;
+    }
+    Ok(error)
 }
 
 fn net_socket_error_with_code(
@@ -1075,19 +1097,7 @@ fn net_socket_error_with_code(
     message: &str,
     code: &str,
 ) -> Result<RootId, String> {
-    let global = runtime.global_root().map_err(|error| error.to_string())?;
-    let key = runtime.string_rooted("Error");
-    let constructor = runtime
-        .get_property_rooted(global, key)
-        .map_err(|error| error.to_string())?;
-    runtime.release_root(key);
-    runtime.release_root(global);
-    let message_root = runtime.string_rooted(message);
-    let error = runtime
-        .construct_rooted(constructor, constructor, &[message_root])
-        .map_err(|error| error.to_string())?;
-    runtime.release_root(constructor);
-    runtime.release_root(message_root);
+    let error = net_error(runtime, message)?;
     set_text(runtime, error, "code", code)?;
     Ok(error)
 }
