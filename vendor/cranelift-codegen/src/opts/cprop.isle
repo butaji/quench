@@ -352,6 +352,17 @@
 (decl f64_from_sint (i64) Ieee64)
 (extern constructor f64_from_sint f64_from_sint)
 
+;; Quench: a scalar bitcast of an integer constant is the float constant with
+;; those bits, which rematerializes where it is used instead of staying live.
+(rule (simplify (bitcast $F32 _ (iconst_u $I32 n)))
+      (f32const $F32 (f32_from_bits n)))
+(rule (simplify (bitcast $F64 _ (iconst_u $I64 n)))
+      (f64const $F64 (f64_from_bits n)))
+(decl f32_from_bits (u64) Ieee32)
+(extern constructor f32_from_bits f32_from_bits)
+(decl f64_from_bits (u64) Ieee64)
+(extern constructor f64_from_bits f64_from_bits)
+
 ;; Constant fold bswap of a constant.
 (rule (simplify (bswap $I16 (iconst ty (u64_from_imm64 n))))
       (subsume (iconst $I16 (imm64 (u64_bswap16 n)))))

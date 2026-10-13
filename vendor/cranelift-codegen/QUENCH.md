@@ -27,7 +27,20 @@ second operand's chain is longer by `CRITICAL_LEAD` operations or more, its
 instructions are placed first. Upstream places operands in argument order,
 so a recurrence's critical chain could follow off-path work that competes
 for the same execution ports (SHA-256's round: Σ1(e) rotates queued behind
-Σ0(a) rotates on x64's two rotate ports). `#![allow(warnings)]` keeps the workspace's `-D warnings`
+Σ0(a) rotates on x64's two rotate ports).
+
+For an operator with a float result, a rematerialized constant argument
+(or a clone of one made for another dominator subtree) no longer bounds the
+loop level the operator is hoisted to: the constant is copied into the
+operator's block anyway, and counting where its first copy landed pinned a
+loop-invariant float chain inside a loop (mandel recomputed each row's
+imaginary coordinate per pixel). Integer operators keep the upstream rule,
+since hoisting their chains measured slower through register pressure.
+A scalar `bitcast` of an integer constant folds to the float constant with
+those bits, which rematerializes at each use instead of staying live (a
+register's float view of an integer zero had been spilled and reloaded per
+pixel in mandel).
+`#![allow(warnings)]` keeps the workspace's `-D warnings`
 from failing on upstream lints that a registry dependency's capped lints
 would hide. `QUENCH.patch` records these changes against the published
 0.134.3 crate source.
