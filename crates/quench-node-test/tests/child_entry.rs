@@ -4676,3 +4676,99 @@ fn net_family_attempt_timeout_cli_preserves_value_and_last_override() {
         assert_eq!(observations[0].stdout, observations[1].stdout);
     }
 }
+#[test]
+fn buffer_string_encoding_uses_intrinsic_bytes_without_guest_iterator_hooks() {
+    const SOURCE: &str = r#"
+const {Buffer}=require('buffer'),assert=require('assert'),result=[];
+const originalArrayIterator=Array.prototype[Symbol.iterator],originalTypedIterator=Uint8Array.prototype[Symbol.iterator],OriginalUint8Array=Uint8Array;
+let arrayCalls=0,typedCalls=0,constructorCalls=0;
+const poisonArray=function(){arrayCalls++;throw new Error('array iterator consulted')};
+const poisonTyped=function(){typedCalls++;throw new Error('typed iterator consulted')};
+const poisonConstructor=function(){constructorCalls++;throw new Error('global Uint8Array consulted')};
+const inputs=[['007f80ff','hex'],['007f80ffx','hex'],['a','hex'],['hé🙂\ud800','utf8'],['\x00\x7f\x80\xff','latin1'],['AH+A/w==','base64']];
+for(let i=0;i<inputs.length;i++) {
+ let buffer;
+ try {
+  Array.prototype[Symbol.iterator]=poisonArray;
+  OriginalUint8Array.prototype[Symbol.iterator]=poisonTyped;
+  globalThis.Uint8Array=poisonConstructor;
+  buffer=Buffer.from(inputs[i][0],inputs[i][1]);
+ } finally {
+  Array.prototype[Symbol.iterator]=originalArrayIterator;
+  OriginalUint8Array.prototype[Symbol.iterator]=originalTypedIterator;
+  globalThis.Uint8Array=OriginalUint8Array;
+ }
+ assert(Buffer.isBuffer(buffer));assert.strictEqual(Object.getPrototypeOf(buffer),Buffer.prototype);
+ if(typeof globalThis.gc==='function') globalThis.gc();
+ const copy=Buffer.from(inputs[i][0],inputs[i][1]);
+ if(buffer.length){const byte=copy[0];buffer[0]^=255;assert.strictEqual(copy[0],byte);buffer[0]^=255;}
+ result.push([inputs[i][1],buffer.toString('hex'),buffer.length]);
+}
+assert.strictEqual(arrayCalls,0);assert.strictEqual(typedCalls,0);assert.strictEqual(constructorCalls,0);
+console.log(JSON.stringify([result,arrayCalls,typedCalls,constructorCalls]));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--expose-gc", "-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+#[test]
+fn buffer_private_encoding_does_not_consult_typed_length_or_subarray_hooks() {
+    const SOURCE: &str = r#"
+const {Buffer}=require('buffer'),assert=require('assert'),result=[];
+const originalLength=Object.getOwnPropertyDescriptor(Uint8Array.prototype,'length'),originalSubarray=Uint8Array.prototype.subarray,marker={};
+let length,encoded;
+try {
+ Object.defineProperty(Uint8Array.prototype,'length',{configurable:true,get(){throw marker}});
+ encoded=Buffer.from('hé','utf8');
+ length=Buffer.byteLength('hé','utf8');
+} finally {
+ if(originalLength)Object.defineProperty(Uint8Array.prototype,'length',originalLength);else delete Uint8Array.prototype.length;
+}
+assert.strictEqual(length,3);result.push(length,encoded.toString('hex'));
+const target=Buffer.alloc(8);
+let written;
+try {
+ Uint8Array.prototype.subarray=function(){throw marker};
+ written=target.write('abc');
+} finally {
+ Uint8Array.prototype.subarray=originalSubarray;
+}
+assert.strictEqual(written,3);result.push(written,target.toString('hex'));
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
