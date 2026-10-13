@@ -7,6 +7,35 @@ use std::path::{Component, Path, PathBuf};
 
 const URL_CONSTRUCTOR_SOURCE: &str = "(class Url {})";
 
+/// Pinned Node URL-like recognition; observable properties are intentional.
+pub(crate) fn is_url_like(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<bool, RootedError> {
+    if context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        return Ok(false);
+    }
+    for name in ["href", "protocol"] {
+        let property = get(context, value, name)?;
+        if !context.truthy_rooted(property)? {
+            return Ok(false);
+        }
+    }
+    for name in ["auth", "path"] {
+        let property = get(context, value, name)?;
+        if !context
+            .rooted_value(property)
+            .is_some_and(|value| value.is_undefined())
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn to_path_if_file_url(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -382,30 +411,27 @@ pub(crate) fn path_to_file_url(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let path = args
-        .first()
-        .copied()
-        .map(|root| context.string_text(root))
-        .transpose()?
-        .flatten()
-        .ok_or_else(|| invalid_path_argument(context))?;
-    let path = crate::modules::fs_path::resolve_fixture_path(path);
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
     let windows = windows_option(context, args)?;
-    let href = if windows {
-        windows_path_to_url(&path)
+    let namespace = super::path_shared_vm::module(context)?;
+    let flavor = get(context, namespace, if windows { "win32" } else { "posix" })?;
+    let resolve = get(context, flavor, "resolve")?;
+    let resolved = context.call_rooted(resolve, flavor, &[input])?;
+    let resolved = context.to_string(resolved)?;
+    let original = context
+        .string_text(input)?
+        .ok_or_else(|| invalid_path_argument(context))?;
+    let trailing_separator = original.ends_with('/') || (windows && original.ends_with('\\'));
+    let mut href = if windows {
+        windows_path_to_url(&resolved)
     } else {
-        let path = PathBuf::from(path);
-        let absolute = if path.is_absolute() {
-            path
-        } else {
-            std::env::current_dir()
-                .map_err(|error| RootedError::host(error.to_string()))?
-                .join(path)
-        };
-        url::Url::from_file_path(normalize_path(&absolute)).ok()
+        url::Url::from_file_path(&resolved).ok()
     }
     .ok_or_else(|| invalid_path_argument(context))?
     .to_string();
+    if trailing_separator && !href.ends_with('/') {
+        href.push('/');
+    }
     let href = context.string_rooted(&href);
     let constructor = url_constructor(context)?;
     context.construct_rooted(constructor, constructor, &[href])

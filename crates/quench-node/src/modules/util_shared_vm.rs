@@ -622,7 +622,10 @@ pub(crate) fn argument_type_error(
     name: &str,
     expected: &str,
 ) -> Result<RootedError, RootedError> {
-    let expected = if expected.chars().next().is_some_and(char::is_uppercase) {
+    // Node treats the validator's "Object" token as the object primitive type.
+    let expected = if expected == "Object" {
+        "of type object".to_owned()
+    } else if expected.chars().next().is_some_and(char::is_uppercase) {
         format!("an instance of {expected}")
     } else {
         format!("of type {expected}")
@@ -649,6 +652,41 @@ pub(crate) fn argument_type_error_with_expected(
         "The {label} must be {expected}. Received {received}"
     ))?;
     super::node_errors_shared_vm::decorate_argument_type(context, error)?;
+    Ok(context.throw(error))
+}
+
+/// Node's value error inspects the original input and caps UTF-16 presentation.
+pub(crate) fn argument_value_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    name: &str,
+    reason: &str,
+) -> Result<RootedError, RootedError> {
+    const MAX_INSPECTED_VALUE_UNITS: usize = 128;
+    let inspect = internal_inspect(context)?;
+    let undefined = context.undefined();
+    let inspected = context.call_rooted(inspect, undefined, &[value])?;
+    let mut detail = context
+        .string_code_units(inspected)?
+        .ok_or_else(|| RootedError::host("inspect returned a non-string"))?;
+    if detail.len() > MAX_INSPECTED_VALUE_UNITS {
+        detail.truncate(MAX_INSPECTED_VALUE_UNITS);
+        detail.extend("...".encode_utf16());
+    }
+    let kind = if name.contains('.') {
+        "property"
+    } else {
+        "argument"
+    };
+    let mut units = format!("The {kind} '{name}' {reason}. Received ")
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    units.extend(detail);
+    let message = context.string_units_rooted(&units);
+    let error = context.type_error_rooted("")?;
+    let key = context.string_rooted("message");
+    context.set_property_rooted(error, key, message, error)?;
+    super::node_errors_shared_vm::decorate_type_error(context, error, "ERR_INVALID_ARG_VALUE")?;
     Ok(context.throw(error))
 }
 

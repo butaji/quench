@@ -1,145 +1,108 @@
-//! Initial TLS builtin surface for modules that load TLS paths but do not open a TLS socket.
+//! Native TLS configuration, discovery, and certificate name authorization.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
+pub(crate) mod configuration;
+pub(crate) mod contexts;
+pub(crate) mod discovery;
+pub(crate) mod identity;
+pub(crate) mod socket;
+pub(crate) mod certificate;
+pub(crate) mod server;
+pub(crate) mod facade;
+
+// Node's default TLS policy, from src/node_constants.h DEFAULT_CIPHER_LIST_CORE.
+const DEFAULT_CIPHER_LIST: &str = concat!(
+    "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:",
+    "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:",
+    "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:",
+    "DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA256:",
+    "ECDHE-RSA-AES256-SHA384:DHE-RSA-AES256-SHA384:ECDHE-RSA-AES256-SHA256:",
+    "DHE-RSA-AES256-SHA256:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA"
+);
+
 const TLS_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(validateContextNative) => {
-      const secureContexts = new WeakSet();
-      const cipherNames = Object.freeze([
-        "aes128-gcm-sha256", "aes256-gcm-sha384", "aes256-sha",
-        "ecdhe-ecdsa-aes128-gcm-sha256", "ecdhe-rsa-aes128-gcm-sha256",
-        "tls_aes_128_ccm_8_sha256", "tls_aes_128_ccm_sha256",
-        "tls_aes_128_gcm_sha256", "tls_aes_256_gcm_sha384",
-      ].sort());
-      class SecureContext {
-        setOptions() {
-          if (!secureContexts.has(this)) throw new TypeError("Illegal invocation");
-        }
-      }
-      function createSecureContext(options) {
-        validateContextNative(options);
-        const context = new SecureContext();
-        secureContexts.add(context);
-        return { context };
-      }
+    r#"(contextApi, cipherOperation, identityOperation, connectOperation, constructOperation, infoOperation, startOperation, serverCreateOperation, serverConstructOperation, serverContextOperation) => {
+      function Server(options, listener) { return serverConstructOperation(this,new.target,options,listener); }
+      Server.prototype.setSecureContext=function setSecureContext(options){return serverContextOperation(this,options);};
+      function TLSSocket(socket, opts) { return constructOperation(this, new.target, socket, {...opts}); }
+      TLSSocket.prototype.getProtocol=function getProtocol(){return infoOperation(this,'protocol');};
+      TLSSocket.prototype.getPeerCertificate=function getPeerCertificate(detailed){return infoOperation(this,'peerCertificate',detailed);};
+      TLSSocket.prototype.isSessionReused=function isSessionReused(){return infoOperation(this,'sessionReused');};
+      TLSSocket.prototype._start=function(){return startOperation(this);};
+      'use strict';
       return {
-      getCiphers() { return cipherNames.slice(); },
-      SecureContext,
-      createSecureContext,
-      connect() {
-        const error = new Error('TLS sockets are not implemented');
-        error.code = 'ERR_METHOD_NOT_IMPLEMENTED';
-        throw error;
-      },
+      getCiphers: (0, () => cipherOperation()),
+      checkServerIdentity: function checkServerIdentity(hostname, cert) { return identityOperation(hostname, cert); },
+      SecureContext: contextApi.SecureContext,
+      createSecureContext: contextApi.createSecureContext,
+      TLSSocket,Server,
+      createServer:function createServer(options,listener){return serverCreateOperation(options,listener);},
+      connect: function connect(...args) { return connectOperation(...args); },
     };
     }"#
 );
 
-pub(crate) fn module(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<RootId, RootedError> {
+pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(TLS_FACTORY, "node:tls/shared.js")?;
     let undefined = context.undefined();
-    let validate =
-        context.host_function(crate::host::shared_vm::operation("tlsValidateContext"))?;
-    context.call_rooted(factory, undefined, &[validate])
+    let api = facade::install(context)?;
+    let patterns = context.evaluate_script_rooted(quench_js_check::checked_js!("({trailingDot:()=>/[.]$/,upperCase:()=>/[A-Z]/g})"), "node:tls/identity-patterns.js")?;
+    let patterns_key = context.string_rooted("identityPatterns");
+    context.define_data_property_rooted(api, patterns_key, patterns, false, false, false)?;
+    let lower = context.host_function(crate::host::shared_vm::operation("tlsLowercaseName"))?;
+    let lower_factory = context.evaluate_script_rooted(quench_js_check::checked_js!("(lower)=>function toLowerCase(c){return lower(c);}"), "node:tls/lowercase-facade.js")?;
+    let lower_callback = context.call_rooted(lower_factory, undefined, &[lower])?;
+    let lower_key = context.string_rooted("identityLowercase");
+    context.define_data_property_rooted(api, lower_key, lower_callback, false, false, false)?;
+    let net = crate::host::shared_vm::commonjs::net_module(context)?;
+    let net_key = context.string_rooted("identityNet");
+    context.define_data_property_rooted(api, net_key, net, false, false, false)?;
+    let binding = facade::binding(context)?;
+    let key = context.string_rooted("SecureContext");
+    let constructor = context.get_property_rooted(binding, key)?;
+    let key = context.string_rooted("contextConstructor");
+    context.define_data_property_rooted(api, key, constructor, true, true, true)?;
+    let ciphers = context.host_function(crate::host::shared_vm::operation("tlsGetCiphers"))?;
+    let identity = context.host_function(crate::host::shared_vm::operation("tlsCheckServerIdentity"))?;
+    let connect=context.host_function(crate::host::shared_vm::operation("tlsSocketConnect"))?;
+    let construct=context.host_function(crate::host::shared_vm::operation("tlsSocketConstruct"))?;
+    let info=context.host_function(crate::host::shared_vm::operation("tlsSocketInfo"))?;
+    let start=context.host_function(crate::host::shared_vm::operation("tlsSocketStart"))?;
+    let create_server=context.host_function(crate::host::shared_vm::operation("tlsServerCreate"))?;
+    let construct_server=context.host_function(crate::host::shared_vm::operation("tlsServerConstruct"))?;
+    let server_context=context.host_function(crate::host::shared_vm::operation("tlsServerSetContext"))?;
+    let module = context.call_rooted(factory, undefined, &[api,ciphers,identity,connect,construct,info,start,create_server,construct_server,server_context])?;
+    let tls_key=context.string_rooted("TLSSocket");let tls=context.get_property_rooted(module,tls_key)?;
+    let socket_key=context.string_rooted("Socket");let base=context.get_property_rooted(net,socket_key)?;
+    let key=context.string_rooted("prototype");let tls_proto=context.get_property_rooted(tls,key)?;
+    let base_proto=context.get_property_rooted(base,key)?;
+    context.set_prototype_rooted(tls_proto,base_proto)?;context.set_prototype_rooted(tls,base)?;
+    let key=context.string_rooted("socketConstructor");context.define_data_property_rooted(api,key,tls,false,false,false)?;
+    let server_key=context.string_rooted("Server");let server=context.get_property_rooted(module,server_key)?;let base_server=context.get_property_rooted(net,server_key)?;
+    let key=context.string_rooted("prototype");let server_proto=context.get_property_rooted(server,key)?;let base_proto=context.get_property_rooted(base_server,key)?;
+    context.set_prototype_rooted(server_proto,base_proto)?;context.set_prototype_rooted(server,base_server)?;
+    let key=context.string_rooted("serverConstructor");context.define_data_property_rooted(api,key,server,false,false,false)?;
+    for (name, text) in [
+        ("DEFAULT_MIN_VERSION", "TLSv1.2"),
+        ("DEFAULT_MAX_VERSION", "TLSv1.3"),
+        ("DEFAULT_ECDH_CURVE", "auto"),
+        ("DEFAULT_CIPHERS", DEFAULT_CIPHER_LIST),
+    ] {
+        let key = context.string_rooted(name);
+        let value = context.string_rooted(text);
+        context.set_property_rooted(module, key, value, module)?;
+    }
+    let key = context.string_rooted("module");
+    context.set_property_rooted(api, key, module, api)?;
+    Ok(module)
 }
 
-/// Validate material through the cryptographic parser, never through input identity.
-/// Socket handshakes and retained SSL_CTX configuration remain separate work.
-pub(crate) fn validate_context(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    use super::event_constructor_shared_vm::get;
-    let undefined = context.undefined();
-    let options = args.first().copied().unwrap_or(undefined);
-    if !context.truthy_rooted(options)? {
-        return Ok(undefined);
-    }
-    if !context.is_object_rooted(options)? || context.is_array_rooted(options)? {
-        return Err(super::util_shared_vm::argument_type_error(
-            context, options, "options", "object",
-        )?);
-    }
-    let crl = get(context, options, "crl")?;
-    let passphrase = get(context, options, "passphrase")?;
-    let pfx = get(context, options, "pfx")?;
-    if !nullish(context, crl) {
-        if context.is_array_rooted(crl)? {
-            let iterator = context.iterator_rooted(crl)?;
-            while let Some(value) = context.iterator_step_rooted(&iterator)? {
-                if let Err(error) = validate_crl(context, value) {
-                    if let Err(close) = context.iterator_close_rooted(&iterator) {
-                        if let Some(exception) = close.exception {
-                            context.release_root(exception);
-                        }
-                    }
-                    return Err(error);
-                }
-            }
-        } else {
-            validate_crl(context, crl)?;
-        }
-    }
-    if !nullish(context, pfx) {
-        if context.is_array_rooted(pfx)? {
-            // Node uses primordial Array.prototype.forEach: length is captured,
-            // holes are skipped, and each value is read immediately before use.
-            let length = get(context, pfx, "length")?;
-            let length = context
-                .rooted_value(length)
-                .and_then(|value| value.as_number())
-                .unwrap_or(0.0) as usize;
-            for index in 0..length {
-                let key = context.string_rooted(&index.to_string());
-                if !context.has_property_rooted(pfx, key)? {
-                    continue;
-                }
-                let value = context.get_property_rooted(pfx, key)?;
-                let raw = get(context, value, "buf")?;
-                let raw = if context.truthy_rooted(raw)? {
-                    raw
-                } else {
-                    value
-                };
-                let pass = get(context, value, "passphrase")?;
-                let pass = if context.truthy_rooted(pass)? {
-                    pass
-                } else {
-                    passphrase
-                };
-                validate_pfx(context, raw, pass)?;
-            }
-        } else {
-            validate_pfx(context, pfx, passphrase)?;
-        }
-    }
-    Ok(undefined)
-}
-
-fn nullish(context: &NativeContext<'_, NodeHost>, value: RootId) -> bool {
-    context
-        .rooted_value(value)
-        .is_some_and(|value| value.is_null() || value.is_undefined())
-}
-
-fn validate_crl(
-    context: &mut NativeContext<'_, NodeHost>,
-    value: RootId,
-) -> Result<(), RootedError> {
-    let bytes = material_bytes(context, value, "options.crl")?;
-    openssl::x509::X509Crl::from_pem(&bytes)
-        .map_err(|_| operation_error(context, "Failed to parse CRL"))?;
-    Ok(())
-}
-
-fn validate_pfx(
+fn parsed_pfx(
     context: &mut NativeContext<'_, NodeHost>,
     raw: RootId,
     pass: RootId,
-) -> Result<(), RootedError> {
+) -> Result<openssl::pkcs12::ParsedPkcs12_2, RootedError> {
     let bytes = pfx_bytes(context, raw)?;
     let pass = if context.truthy_rooted(pass)? {
         let bytes = if let Some(text) = context.string_text(pass)? {
@@ -175,7 +138,7 @@ fn validate_pfx(
             "Unable to load certificate from PFX data",
         ));
     }
-    Ok(())
+    Ok(parsed)
 }
 
 fn material_bytes(
@@ -209,7 +172,7 @@ fn pfx_bytes(
         .ok_or_else(|| operation_error(context, "Unable to load PFX certificate"))
 }
 
-fn operation_error(context: &mut NativeContext<'_, NodeHost>, message: &str) -> RootedError {
+pub(crate) fn operation_error(context: &mut NativeContext<'_, NodeHost>, message: &str) -> RootedError {
     match context.error_rooted(message) {
         Ok(error) => {
             let key = context.string_rooted("code");

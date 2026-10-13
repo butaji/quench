@@ -1671,6 +1671,52 @@ const other=new AbortController();other.signal.addEventListener('abort',event=>e
 }
 
 #[test]
+fn module_path_to_file_url_uses_guest_cwd_and_original_resolver_hooks() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert'),{pathToFileURL}=require('url');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-file-url-cwd-')),before=process.cwd();
+fs.mkdirSync(path.join(dir,'test'),{recursive:true});fs.mkdirSync(path.join(dir,'tests/node/test'),{recursive:true});fs.writeFileSync(path.join(dir,'test/target'),'ordinary');fs.writeFileSync(path.join(dir,'tests/node/test/target'),'other');process.chdir(dir);
+assert.strictEqual(pathToFileURL('./test/target').pathname,dir+'/test/target');assert.strictEqual(pathToFileURL('./test/').pathname,dir+'/test/');
+const resolve=path.posix.resolve,marker={};path.posix.resolve=function(value){assert.strictEqual(this,path.posix);assert.strictEqual(value,'input/');return '/hook/dir';};assert.strictEqual(pathToFileURL('input/').href,'file:///hook/dir/');path.posix.resolve=()=>{throw marker};assert.throws(()=>pathToFileURL('input'),e=>e===marker);path.posix.resolve=resolve;
+assert.throws(()=>pathToFileURL('input',{get windows(){throw marker}}),e=>e===marker);process.chdir(before);fs.rmSync(dir,{recursive:true,force:true});console.log('cwd-and-resolver');
+"#);
+}
+
+#[test]
+fn module_node_search_paths_share_resolution_and_preserve_public_hooks() {
+    compare_node_stream_source(r#"
+const Module=require('module'),path=require('path'),assert=require('assert');
+for(const input of ['/','/node_modules','/a/node_modules/b/node_modules/c','/a/foo_node_modules','/a/../b/./c','','.','..'])console.log(JSON.stringify([input,Module._nodeModulePaths(input)]));
+console.log(JSON.stringify([Module._nodeModulePaths.name,Module._nodeModulePaths.length,Object.getOwnPropertyDescriptor(Module._nodeModulePaths,'name')]));
+console.log(JSON.stringify(Reflect.ownKeys(Module._nodeModulePaths).map(String)));
+console.log(JSON.stringify(new Module._nodeModulePaths('/construct/node_modules/child')));
+for(const value of [undefined,null,1,{},Symbol('x')])try{Module._nodeModulePaths(value)}catch(e){console.log(JSON.stringify([e.name,e.code,e.message]));}
+const original=path.resolve,marker={};path.resolve=function(...args){assert.strictEqual(this,path);console.log('resolve-hook',args.length);return '/hook/node_modules/child';};console.log(JSON.stringify(Module._nodeModulePaths(marker)));path.resolve=()=>{throw marker};assert.throws(()=>Module._nodeModulePaths('/absolute'),e=>e===marker);path.resolve=original;
+"#);
+}
+
+#[test]
+fn module_create_require_url_shapes_errors_and_directory_base_match_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const {createRequire}=require('module'),{pathToFileURL}=require('url');
+console.log(JSON.stringify([Reflect.ownKeys(createRequire).map(String),Object.getOwnPropertyDescriptor(createRequire,'prototype').writable]));
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-create-require-'));
+fs.mkdirSync(path.join(dir,'新建文件夹'));fs.writeFileSync(path.join(dir,'新建文件夹','dependency.cjs'),'module.exports=42');
+const file=path.join(dir,'新建文件夹','あ.js'),url=pathToFileURL(file),directory=path.dirname(file)+path.sep;
+for(const value of [file,url,url.href,pathToFileURL(directory),directory]){const req=createRequire(value);assert.strictEqual(req('./dependency.cjs'),42);assert.strictEqual(req.resolve('./dependency.cjs'),path.join(directory,'dependency.cjs'));}
+for(const value of [undefined,null,1,{},'../','https://example.org/x','file://remote/x','file:///a%2Fb','😀'.repeat(100)]){
+ try{createRequire(value);assert.fail('accepted invalid value')}catch(e){console.log(JSON.stringify([e.name,e.code,e.message,Object.keys(e),Object.getOwnPropertyDescriptor(e,'message'),e.constructor.name,Reflect.ownKeys(Object.getPrototypeOf(e)).map(String)]));}
+}
+const log=[],candidate={get href(){log.push('href');return 'file:///irrelevant'},get protocol(){log.push('protocol');return 'file:'},get auth(){log.push('auth')},get path(){log.push('path')},toString(){log.push('toString');return pathToFileURL(directory).href}};
+assert.strictEqual(createRequire(candidate)('./dependency.cjs'),42);console.log(JSON.stringify(log));
+const marker={};const originalURL=global.URL;global.URL=function(){throw marker};assert.strictEqual(createRequire(url)('./dependency.cjs'),42);global.URL=originalURL;assert.strictEqual((new createRequire(url))('./dependency.cjs'),42);assert.throws(()=>createRequire({get href(){throw marker}}),e=>e===marker);
+const coercion={href:'x',protocol:'file:',toString(){throw marker}};assert.throws(()=>createRequire(coercion),e=>e.code==='ERR_INVALID_ARG_VALUE'&&e!==marker);
+console.log('url-and-directory');fs.rmSync(dir,{recursive:true,force:true});
+"#);
+}
+
+#[test]
 fn commonjs_namespace_static_prefix_uses_syntax_and_matches_node() {
     compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
@@ -5344,4 +5390,257 @@ globalThis.gc();fs.writeFileSync(file,'after');
         assert!(observation.stderr.is_empty());
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn native_tls_context_versions_constructors_and_weak_gc_match_node() {
+    const SOURCE: &str = r#"
+const tls=require('tls'),assert=require('assert');
+console.log(JSON.stringify([tls.SecureContext.name,tls.SecureContext.length,tls.createSecureContext.name,tls.createSecureContext.length]));
+for(const options of [undefined,{minVersion:'TLSv1',maxVersion:'TLSv1.2'},{minVersion:'TLSv1.3',maxVersion:'TLSv1.3'},{secureProtocol:'TLS_method'},{secureProtocol:'SSLv23_method'},{secureProtocol:'TLSv1_1_client_method'}]){
+ const context=tls.createSecureContext(options);assert(context instanceof tls.SecureContext);assert(!(context.context instanceof tls.SecureContext));global.gc();console.log(JSON.stringify([Object.keys(context),context.context.constructor.name,context.context.getMinProto(),context.context.getMaxProto(),context.context.getCertificate()]));
+}
+const plain=tls.SecureContext(),plainMinimum=plain.context.getMinProto();assert(plain instanceof tls.SecureContext);const receiver=Object.create(tls.SecureContext.prototype);assert.strictEqual(tls.SecureContext.call(receiver),undefined);console.log(receiver.context.getMinProto(),receiver.context.getMaxProto());
+const before=tls.DEFAULT_MIN_VERSION;tls.DEFAULT_MIN_VERSION='TLSv1.1';console.log(tls.createSecureContext().context.getMinProto());tls.DEFAULT_MIN_VERSION=before;
+for(let i=0;i<100;i++)tls.createSecureContext();global.gc();console.log('contexts-survive-gc');
+process.on('exit',()=>{assert.strictEqual(plain.context.getMinProto(),plainMinimum);assert.strictEqual(tls.createSecureContext().context.getCertificate(),null);console.log('exit-contexts-survive');});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--expose-gc", "-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(
+            observation.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+
+#[test]
+fn native_tls_context_protocol_options_errors_match_node() {
+    compare_node_stream_source(
+        r#"
+const tls=require('tls');const forms=[{},1,[],{secureProtocol:'TLS_method\0suffix'},{ciphers:'DEFAULT\0suffix'},{ecdhCurve:'auto\0suffix'},{sigalgs:'bad'},{minVersion:'bad'},{maxVersion:'bad'},{secureProtocol:'bad'},{secureProtocol:'SSLv2_method'},{secureProtocol:'SSLv3_client_method'},{secureProtocol:'TLS_method',minVersion:'TLSv1.2'},{secureOptions:1.5},{secureOptions:Infinity},{secureOptions:'4'},{honorCipherOrder:true,secureOptions:'4'},{sessionTimeout:-1},{sessionTimeout:1.5},{sessionTimeout:'2'},{sigalgs:''},{sigalgs:1},{ecdhCurve:1},{ca:1},{cert:1},{key:1},{key:['bad'],passphrase:1},{certificateCompression:'zlib'},{certificateCompression:['bad']},{certificateCompression:['zlib','brotli','zstd','zlib']},{ticketKeys:1},{ticketKeys:Buffer.alloc(47)}];
+for(const options of forms)try{const context=tls.createSecureContext(options);console.log(JSON.stringify(['ok',context.context.getMinProto(),context.context.getMaxProto()]));}catch(e){console.log(JSON.stringify([e.name,e.code,e.message,Object.keys(e),e.constructor.name]));}
+"#,
+    );
+}
+
+
+#[test]
+fn native_tls_context_option_getter_and_native_method_hook_order_match_node() {
+    compare_node_stream_source(
+        r#"
+const tls=require('tls'),assert=require('assert'),log=[];const options={};
+for(const name of ['honorCipherOrder','minVersion','maxVersion','secureProtocol','secureOptions','allowPartialTrustChain','ca','cert','certificateCompression','ciphers','clientCertEngine','crl','dhparam','ecdhCurve','key','passphrase','pfx','privateKeyIdentifier','privateKeyEngine','sessionIdContext','sessionTimeout','sigalgs','ticketKeys'])Object.defineProperty(options,name,{get(){log.push(name);return undefined;}});
+tls.createSecureContext(options);console.log(JSON.stringify(log));
+const proto=Object.getPrototypeOf(tls.createSecureContext().context),originals={};for(const name of ['setCiphers','setCipherSuites','addRootCerts','setECDHCurve']){originals[name]=proto[name];proto[name]=function(...args){log.push(name);return originals[name].apply(this,args);};}log.length=0;tls.createSecureContext();console.log(JSON.stringify(log));for(const name of Object.keys(originals))proto[name]=originals[name];
+const marker={};assert.throws(()=>tls.createSecureContext({get ca(){throw marker}}),e=>e===marker);console.log('original-getter-error');
+"#,
+    );
+}
+
+
+#[test]
+fn native_tls_context_retains_real_certificate_material_and_view_offsets_match_node() {
+    let cert = include_str!("../../../tests/node/test/fixtures/keys/agent1-cert.pem");
+    let key = include_str!("../../../tests/node/test/fixtures/keys/agent1-key.pem");
+    let source = format!(
+        r#"
+const assert=require('assert'),tls=require('tls'),OriginalBuffer=Buffer,originalFrom=Buffer.from;
+const cert={},key={};
+OriginalBuffer.from=()=>{{throw new Error('public Buffer.from used')}};
+globalThis.Buffer=()=>{{throw new Error('public Buffer used')}};
+const held=tls.createSecureContext({{cert,key}});
+const expected=held.context.getCertificate();
+assert(OriginalBuffer.isBuffer(expected));
+globalThis.Buffer=OriginalBuffer;OriginalBuffer.from=originalFrom;
+process.on('exit',()=>{{assert.deepStrictEqual(held.context.getCertificate(),expected);console.log('exit-certificate-retained');}});
+function view(text){{const bytes=Buffer.from(text);const prefix=Buffer.from('prefix');const padded=Buffer.concat([prefix,bytes,Buffer.from('suffix')]);return new DataView(padded.buffer,padded.byteOffset+prefix.length,bytes.length);}}
+for(const options of [{{cert,key}},{{cert:[cert],key:[key]}},{{cert:view(cert),key:view(key)}},{{ca:cert,cert,key}}]){{const ctx=tls.createSecureContext(options);assert.deepStrictEqual(ctx.context.getCertificate(),expected);console.log(ctx.context.getCertificate().length);}}
+const ctx=tls.createSecureContext();assert.strictEqual(ctx.context.getCertificate(),null);ctx.context.setCert(cert);assert.deepStrictEqual(ctx.context.getCertificate(),expected);console.log('retained-native-certificate');
+"#,
+        serde_json::to_string(cert).unwrap(),
+        serde_json::to_string(key).unwrap()
+    );
+    compare_node_stream_source(&source);
+}
+
+
+#[test]
+fn native_tls_context_engine_errors_and_shared_crypto_warning_match_node() {
+    compare_node_stream_source(
+        r#"
+const tls=require('tls'),crypto=require('crypto'),warnings=[];
+process.emitWarning=function(...args){warnings.push(args);};
+for(const action of [()=>tls.createSecureContext({clientCertEngine:'quench_missing_engine'}),()=>tls.createSecureContext({privateKeyIdentifier:'key',privateKeyEngine:'quench_missing_engine'}),()=>crypto.setEngine('quench_missing_engine'),()=>crypto.setEngine('quench_missing_engine',false),()=>crypto.setEngine(1),()=>crypto.setEngine('quench_missing_engine','1'),()=>tls.createSecureContext({clientCertEngine:1}),()=>tls.createSecureContext({privateKeyIdentifier:1,privateKeyEngine:'x'}),()=>tls.createSecureContext({privateKeyIdentifier:'x',privateKeyEngine:1})])try{action();console.log('ok');}catch(e){console.log(JSON.stringify([e.name,e.code,e.message,Object.keys(e),e.opensslErrorStack]));}
+console.log(JSON.stringify(warnings));
+"#,
+    );
+}
+
+#[test]
+fn native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),warnings=[];process.emitWarning=function(...args){warnings.push(args);};
+const {internalBinding}=require('internal/test/binding'),binding=internalBinding('crypto');assert.strictEqual(binding,internalBinding('crypto'));
+const Native=binding.SecureContext;let creations=0;
+binding.SecureContext=function(){creations++;const context=new Native();context.setClientCertEngine=undefined;context.setEngineKey=undefined;return context;};
+const tls=require('tls');
+for(const options of [{clientCertEngine:'x'},{privateKeyIdentifier:'key',privateKeyEngine:'x'}])try{tls.createSecureContext(options);}catch(e){console.log(JSON.stringify([e.name,e.code,e.message,Object.keys(e)]));}
+binding.SecureContext=function(){throw new Error('late constructor read')};
+console.log(tls.createSecureContext().context.getMinProto(),creations);console.log(JSON.stringify(warnings));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--no-warnings", "--expose-internals", "-e", SOURCE]);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(),"{}",String::from_utf8_lossy(&observation.stderr));
+    }
+    assert_eq!(observations[0].stdout,observations[1].stdout);
+}
+
+#[test]
+fn native_tls_cipher_discovery_and_cached_copy_contract_match_node() {
+    compare_node_stream_source(r#"
+const tls=require('tls');const first=tls.getCiphers();console.log(JSON.stringify(first));
+console.log(JSON.stringify([tls.getCiphers.name,tls.getCiphers.length,Object.hasOwn(tls.getCiphers,'prototype'),Object.getOwnPropertyDescriptor(tls,'getCiphers')]));
+first.length=0;first.push('guest mutation');const next=tls.getCiphers();console.log(JSON.stringify([first===next,next.length,next.includes('guest mutation'),next.every(x=>x===x.toLowerCase())]));
+try{Reflect.construct(tls.getCiphers,[]);}catch(e){console.log(e.name);}
+globalThis.Array=function(){throw new Error('public Array used')};console.log(tls.getCiphers().length);
+"#);
+}
+
+#[test]
+fn native_tls_hostname_authorization_values_errors_and_getter_order_match_node() {
+    compare_node_stream_source(r#"
+const tls=require('tls');
+for(const [host,cert] of [
+['a.example.com',{subject:{CN:'*.example.com'}}],['a.b.example.com',{subject:{CN:'*.example.com'}}],
+['bücher.example.com',{subject:{CN:'xn--bcher-kva.example.com'}}],['a.com',{subject:{CN:'a.com'},subjectaltname:'DNS:b.com'}],
+['127.0.0.1',{subjectaltname:'IP Address:127.0.0.1'}],['::1',{subjectaltname:'IP Address:0:0:0:0:0:0:0:1'}],
+['a,com',{subjectaltname:'DNS:"a,com"'}],['a.com',{subjectaltname:'DNS:"unterminated'}],
+[false,{subject:{CN:['a.com','b.com']}}],['a.com',{}]
+])try{const e=tls.checkServerIdentity(host,cert);console.log(e?JSON.stringify([e.name,e.code,e.message,e.reason,e.host,e.cert===cert,Object.keys(e)]):'valid');}catch(e){console.log(JSON.stringify(['throw',e.name,e.code,e.message,Object.keys(e)]));}
+const log=[];const host={valueOf(){log.push('host.valueOf');return 'a.com'},toString(){throw new Error('wrong string hint')}};
+const cert={get subject(){log.push('subject');return {get CN(){log.push('CN');return 'a.com'}}},get subjectaltname(){log.push('alt');return ''}};
+console.log(tls.checkServerIdentity(host,cert),JSON.stringify(log));
+console.log(tls.checkServerIdentity.name,tls.checkServerIdentity.length,Object.hasOwn(tls.checkServerIdentity,'prototype'));
+const hooks=[];const alt={includes(v){hooks.push(['includes',v]);return false},split(v){hooks.push(['split',v]);return {forEach(cb){hooks.push('forEach');cb('DNS:a.com')}}},toString(){throw new Error('unused alt coercion')}};
+console.log(tls.checkServerIdentity('a.com',{subjectaltname:alt}),JSON.stringify(hooks));
+console.log(tls.checkServerIdentity('A.COM',{subject:{CN:new String('a.com')}}));
+try{tls.checkServerIdentity('a.com',{subject:{CN:123}})}catch(e){console.log('numeric CN',e.name)}
+const originalReplace=String.prototype.replace,patterns=[],callbacks=[];
+String.prototype.replace=function(pattern,replacer){patterns.push(pattern);if(typeof replacer==='function')callbacks.push(replacer);return originalReplace.call(this,pattern,replacer)};
+try{for(let i=0;i<2;i++)tls.checkServerIdentity('A.COM',{subject:{CN:'a.com'}})}finally{String.prototype.replace=originalReplace}
+console.log(JSON.stringify([patterns.length,new Set(patterns).size,callbacks.every(c=>c===callbacks[0]),callbacks.map(c=>[c.name,c.length,Object.hasOwn(c,'prototype')])])) ;
+"#);
+}
+
+#[test]
+fn native_net_delivery_gates_preserve_connection_before_bytes_and_write_completion() {
+    compare_node_stream_source(r#"
+const net=require('net');const log=[];let connected=false,accepted=false,writeAfterConnect=false,readAfterAccept=false;
+const server=net.createServer(socket=>{accepted=true;socket.on('data',chunk=>{readAfterAccept=accepted;socket.end(chunk)});});
+server.listen(0,'127.0.0.1',()=>{const socket=net.connect(server.address().port,'127.0.0.1');let text='';socket.on('connect',()=>{connected=true});socket.write('queued-before-connect',()=>{writeAfterConnect=connected});socket.on('data',chunk=>text+=chunk);socket.on('close',()=>server.close(()=>console.log(JSON.stringify([text,writeAfterConnect,readAfterAccept]))));});
+"#);
+}
+
+#[test]
+fn native_tls_client_exchanges_encrypted_bytes_with_independent_node_peer() {
+    use std::io::{BufRead, BufReader};
+    struct Peer(std::process::Child);
+    impl Drop for Peer {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
+    let fixtures=std::env::var("QUENCH_NODE_LIBRARY_ROOT").unwrap_or_else(|_|format!("{}/../../tests/node",env!("CARGO_MANIFEST_DIR")));
+    let mut peer=Peer(Command::new("node").args(["-e",r#"
+const tls=require('tls'),fs=require('fs'),path=require('path');const root=process.env.QUENCH_TLS_PEER_ROOT;
+const server=tls.createServer({key:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-key.pem')),cert:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-cert.pem'))},socket=>{socket.on('error',()=>{});socket.on('data',chunk=>socket.write(chunk));socket.on('end',()=>socket.end());});
+server.on('tlsClientError',()=>{});server.listen(0,'127.0.0.1',()=>console.log(server.address().port));setTimeout(()=>process.exit(0),30000);
+"#]).env("QUENCH_TLS_PEER_ROOT",&fixtures).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap());
+    let mut line=String::new();BufReader::new(peer.0.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    let port:u16=line.trim().parse().expect("independent TLS peer did not start");
+    let source=format!(r#"
+const tls=require('tls'),net=require('net');const socket=tls.connect({{port:{port},host:'127.0.0.1',rejectUnauthorized:false}});let result=[];
+socket.once('secureConnect',()=>{{console.log(JSON.stringify([socket instanceof tls.TLSSocket,socket instanceof net.Socket,socket.encrypted,socket.secureConnecting,socket.authorized,socket.authorizationError,socket.getProtocol()]));socket.end(Buffer.from([0,1,2,127,128,255,10,13]));}});
+socket.on('data',chunk=>result.push(chunk));socket.on('end',()=>console.log(JSON.stringify(Array.from(Buffer.concat(result)))));
+socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.code,error.message]));process.exitCode=1}});
+"#);
+    let trusted=format!(r#"
+const tls=require('tls'),fs=require('fs');const ca=fs.readFileSync(process.env.QUENCH_TLS_PEER_ROOT+'/test/fixtures/keys/ca1-cert.pem');
+const socket=tls.connect({{port:{port},host:'127.0.0.1',servername:'agent1',ca}});let text='';
+socket.on('secureConnect',()=>{{const cert=socket.getPeerCertificate();console.log(JSON.stringify([socket.authorized,socket.authorizationError,cert.subject.CN,cert.issuer.CN,Buffer.isBuffer(cert.raw),cert.bits,cert.exponent]));socket.end('trusted-peer');}});
+socket.on('data',chunk=>text+=chunk);socket.on('end',()=>console.log(text));socket.on('error',e=>{{console.log(JSON.stringify([e.name,e.code,e.message]));process.exitCode=1}});
+"#);
+    let rejected=format!(r#"
+const tls=require('tls');const socket=tls.connect({{port:{port},host:'127.0.0.1'}});
+socket.on('secureConnect',()=>{{console.log('unexpected secure');socket.end()}});socket.on('error',e=>console.log(JSON.stringify([e.name,e.code,e.message])));socket.on('close',()=>console.log('closed'));
+"#);
+    let mismatch=format!(r#"
+const tls=require('tls'),fs=require('fs');const socket=tls.connect({{port:{port},host:'127.0.0.1',servername:'wrong.invalid',ca:fs.readFileSync(process.env.QUENCH_TLS_PEER_ROOT+'/test/fixtures/keys/ca1-cert.pem')}});
+socket.on('secureConnect',()=>{{console.log('unexpected secure');socket.end()}});socket.on('error',e=>console.log(JSON.stringify([e.name,e.code,e.message,e.reason,e.host,e.cert?.subject.CN])));socket.on('close',()=>console.log('closed'));
+"#);
+    for source in [source,trusted,rejected,mismatch] {
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
+        let mut command=Command::new(executable);command.args(["-e",&source]).env("QUENCH_TLS_PEER_ROOT",&fixtures);
+        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(10)).unwrap()
+    });
+    assert!(!observations[0].timed_out,"Node TLS oracle timed out");
+    assert!(!observations[1].timed_out,"native TLS client timed out: {}",String::from_utf8_lossy(&observations[1].stderr));
+    assert_eq!(observations[0].exit_code,Some(0),"Node TLS oracle: {}",String::from_utf8_lossy(&observations[0].stderr));
+    assert_eq!(observations[1].exit_code,Some(0),"native TLS client: {}",String::from_utf8_lossy(&observations[1].stderr));
+    assert_eq!(String::from_utf8_lossy(&observations[1].stdout),String::from_utf8_lossy(&observations[0].stdout),"case: {source}");
+    }
+}
+
+#[test]
+fn native_tls_server_accepts_encrypted_bytes_from_independent_node_client() {
+    use std::io::{BufRead,BufReader,Read};
+    struct Peer(std::process::Child);
+    impl Drop for Peer {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
+    let fixtures=std::env::var("QUENCH_NODE_LIBRARY_ROOT").unwrap_or_else(|_|format!("{}/../../tests/node",env!("CARGO_MANIFEST_DIR")));
+    let server_source=r#"
+const tls=require('tls'),net=require('net'),fs=require('fs'),path=require('path');const root=process.env.QUENCH_TLS_PEER_ROOT;
+const server=tls.createServer({key:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-key.pem')),cert:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-cert.pem'))},socket=>{console.log(JSON.stringify([socket instanceof tls.TLSSocket,socket instanceof net.Socket,socket.encrypted,socket.secureConnecting,socket.getProtocol()]));socket.on('data',chunk=>socket.end(chunk));socket.on('close',()=>server.close());socket.on('error',()=>{});});
+server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
+"#;
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
+        let mut command=Command::new(executable);command.args(["-e",server_source]).env("QUENCH_TLS_PEER_ROOT",&fixtures).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
+        let mut peer=Peer(command.spawn().unwrap());let mut stdout=BufReader::new(peer.0.stdout.take().unwrap());let mut line=String::new();stdout.read_line(&mut line).unwrap();
+        let port:u16=line.trim().parse().expect("TLS server did not start");
+        let source=format!(r#"
+const tls=require('tls'),fs=require('fs');const socket=tls.connect({{port:{port},host:'127.0.0.1',servername:'agent1',ca:fs.readFileSync(process.env.QUENCH_TLS_PEER_ROOT+'/test/fixtures/keys/ca1-cert.pem')}});let chunks=[];
+socket.on('secureConnect',()=>socket.end(Buffer.from([0,22,23,127,254,255])));socket.on('data',chunk=>chunks.push(chunk));socket.on('end',()=>console.log(JSON.stringify([socket.authorized,Array.from(Buffer.concat(chunks))])));socket.on('error',e=>{{console.log(e.code,e.message);process.exitCode=1}});
+"#);
+        let mut client=Command::new("node");client.args(["-e",&source]).env("QUENCH_TLS_PEER_ROOT",&fixtures);
+        let result=quench_node_test::case_process::observe_command(client,Duration::from_secs(10)).unwrap();
+        assert!(!result.timed_out,"external client timed out");assert_eq!(result.exit_code,Some(0),"client stderr: {}",String::from_utf8_lossy(&result.stderr));
+        let deadline=std::time::Instant::now()+Duration::from_secs(5);
+        let status=loop{if let Some(status)=peer.0.try_wait().unwrap(){break status;}if std::time::Instant::now()>=deadline{let _=peer.0.kill();let _=peer.0.wait();panic!("TLS server did not close after peer EOF");}std::thread::sleep(Duration::from_millis(10));};
+        let mut rest=String::new();stdout.read_to_string(&mut rest).unwrap();
+        assert!(status.success(),"TLS server failed");
+        (result.stdout,rest)
+    });
+    assert_eq!(observations[1],observations[0]);
 }

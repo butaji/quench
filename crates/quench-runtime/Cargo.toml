@@ -50,3 +50,6 @@ unicode-normalization = "0.1"
 unicode-segmentation = "1.13"
 
 [dev-dependencies]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

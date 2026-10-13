@@ -8,6 +8,8 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 
+pub(crate) mod encrypted;
+
 const FIRST_TRANSPORT_ID: u64 = 1;
 const TCP_READ_CHUNK: usize = 16 * 1024;
 const TCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -366,12 +368,12 @@ pub(crate) struct Transport {
     closing_sockets: HashMap<u64, ClosingSocket>,
 }
 
-enum SocketStream {
+pub(crate) enum RawStream {
     Tcp(TcpStream),
     #[cfg(unix)]
     Local(UnixStream),
 }
-impl SocketStream {
+impl RawStream {
     fn set_nonblocking(&self, enabled: bool) -> std::io::Result<()> {
         match self {
             Self::Tcp(stream) => stream.set_nonblocking(enabled),
@@ -387,7 +389,7 @@ impl SocketStream {
         }
     }
 }
-impl Read for SocketStream {
+impl Read for RawStream {
     fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
         match self {
             Self::Tcp(stream) => stream.read(bytes),
@@ -396,7 +398,7 @@ impl Read for SocketStream {
         }
     }
 }
-impl Write for SocketStream {
+impl Write for RawStream {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         match self {
             Self::Tcp(stream) => stream.write(bytes),
@@ -409,6 +411,43 @@ impl Write for SocketStream {
             Self::Tcp(stream) => stream.flush(),
             #[cfg(unix)]
             Self::Local(stream) => stream.flush(),
+        }
+    }
+}
+
+enum SocketStream {
+    Plain(RawStream),
+    Encrypted(encrypted::EncryptedStream),
+}
+impl SocketStream {
+    fn raw(&self) -> &RawStream {
+        match self {
+            Self::Plain(raw) => raw,
+            Self::Encrypted(tls) => tls.raw(),
+        }
+    }
+    fn set_nonblocking(&self, enabled: bool) -> std::io::Result<()> {
+        self.raw().set_nonblocking(enabled)
+    }
+    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Plain(raw) => raw.read(bytes),
+            Self::Encrypted(tls) => tls.read(bytes),
+        }
+    }
+    fn write(&mut self, bytes: &[u8], offset: usize) -> std::io::Result<usize> {
+        match self {
+            Self::Plain(raw) => raw.write(&bytes[offset..]),
+            Self::Encrypted(tls) => tls.write(bytes, offset),
+        }
+    }
+    fn shutdown_write(&mut self) -> std::io::Result<bool> {
+        match self {
+            Self::Plain(raw) => {
+                let _ = raw.shutdown(std::net::Shutdown::Write);
+                Ok(true)
+            }
+            Self::Encrypted(tls) => tls.shutdown_write(),
         }
     }
 }
@@ -427,11 +466,11 @@ impl ListenerSocket {
         match self {
             Self::Tcp(listener) => listener
                 .accept()
-                .map(|(stream, remote)| (SocketStream::Tcp(stream), Some(remote))),
+                .map(|(stream, remote)| (SocketStream::Plain(RawStream::Tcp(stream)), Some(remote))),
             #[cfg(unix)]
             Self::Local { listener, .. } => listener
                 .accept()
-                .map(|(stream, _)| (SocketStream::Local(stream), None)),
+                .map(|(stream, _)| (SocketStream::Plain(RawStream::Local(stream)), None)),
         }
     }
 }
@@ -501,8 +540,11 @@ enum SocketClosePhase {
     Closing,
 }
 
+enum DeliveryPhase { Pending, Delivered }
+
 struct SharedSocket {
     stream: SocketStream,
+    delivery: DeliveryPhase,
     referenced: bool,
     pending_write: Vec<u8>,
     write_offset: usize,
@@ -521,6 +563,7 @@ pub(crate) enum TransportEvent {
     Connected {
         socket: u64,
     },
+    Secure { socket: u64 },
     WriteComplete {
         socket: u64,
     },
@@ -539,9 +582,6 @@ pub(crate) enum TransportEvent {
         bytes: Vec<u8>,
     },
     End {
-        socket: u64,
-    },
-    Closed {
         socket: u64,
     },
     CloseCompleted {
@@ -661,7 +701,7 @@ pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Res
         .name(format!("quench-node-tcp-{id}"))
         .spawn(move || {
             let result = connect_with_timeout(&host, port)
-                .map(SocketStream::Tcp)
+                .map(|stream| SocketStream::Plain(RawStream::Tcp(stream)))
                 .and_then(|stream| {
                     stream
                         .set_nonblocking(true)
@@ -721,7 +761,7 @@ pub(super) fn connect_resolved(
                 }
             }
             let result = result
-                .map(SocketStream::Tcp)
+                .map(|stream| SocketStream::Plain(RawStream::Tcp(stream)))
                 .and_then(|stream| {
                     stream
                         .set_nonblocking(true)
@@ -883,6 +923,7 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
                     id,
                     SharedSocket {
                         stream,
+                        delivery: DeliveryPhase::Pending,
                         referenced,
                         pending_write: Vec::new(),
                         completions: VecDeque::new(),
@@ -939,6 +980,7 @@ fn poll_accepts(transport: &mut Transport) -> Vec<TransportEvent> {
             socket,
             SharedSocket {
                 stream,
+                delivery: DeliveryPhase::Pending,
                 referenced: true,
                 pending_write: Vec::new(),
                 completions: VecDeque::new(),
@@ -966,10 +1008,22 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
         let Some(socket) = transport.sockets.get_mut(&id) else {
             continue;
         };
+        if matches!(socket.delivery, DeliveryPhase::Pending) { continue; }
+        if let SocketStream::Encrypted(tls) = &mut socket.stream {
+            match tls.handshake() {
+                Ok(true) => events.push(TransportEvent::Secure { socket: id }),
+                Ok(false) => {},
+                Err(error) => {
+                    events.push(TransportEvent::Error { socket: id, error: encrypted::io_error(error), syscall: "read" });
+                    terminal.push(id); continue;
+                }
+            }
+            if !tls.ready() { continue; }
+        }
         if socket.write_offset < socket.pending_write.len() {
             match socket
                 .stream
-                .write(&socket.pending_write[socket.write_offset..])
+                .write(&socket.pending_write, socket.write_offset)
             {
                 Ok(0) => {
                     events.push(TransportEvent::Error {
@@ -1010,9 +1064,14 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
             socket.write_offset = 0;
         }
         if socket.end_after_write && socket.pending_write.is_empty() {
-            let _ = socket.stream.shutdown(std::net::Shutdown::Write);
-            socket.end_after_write = false;
-            socket.write_ended = true;
+            match socket.stream.shutdown_write() {
+                Ok(true) => { socket.end_after_write = false; socket.write_ended = true; }
+                Ok(false) => {},
+                Err(error) => {
+                    events.push(TransportEvent::Error { socket: id, error, syscall: "write" });
+                    terminal.push(id); continue;
+                }
+            }
         }
         let mut received = Vec::new();
         let mut ended = false;
@@ -1049,10 +1108,9 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
         } else if ended {
             events.push(TransportEvent::End { socket: id });
         }
-        if socket.read_ended && socket.write_ended {
-            events.push(TransportEvent::Closed { socket: id });
-            terminal.push(id);
-        }
+        // Guest Duplex EOF/finish owns destruction after queued bytes drain.
+        // Closing here can destroy a readable before its queued data/end jobs.
+        // HTTP endpoints close explicitly in their EOF projection.
     }
     for id in terminal {
         close_socket(transport, id);
@@ -1708,7 +1766,7 @@ fn connect_local(
                 .and_then(|path| connect_local_address(&path, &display))
                 .and_then(|stream| {
                     stream.set_nonblocking(true)?;
-                    Ok(SocketStream::Local(stream))
+                    Ok(SocketStream::Plain(RawStream::Local(stream)))
                 });
             let _ = sender.send(result.map_err(|error| ConnectFailure::Local {
                 error,
@@ -1858,10 +1916,10 @@ fn validate_local_path(path: &std::path::Path) -> std::io::Result<()> {
 #[cfg(unix)]
 fn bind_local_address(
     path: &std::path::Path,
-    display: &str,
+    _display: &str,
 ) -> std::io::Result<(UnixListener, Option<std::path::PathBuf>)> {
     #[cfg(target_os = "linux")]
-    if let Some(name) = display.strip_prefix('\0') {
+    if let Some(name) = _display.strip_prefix('\0') {
         use std::os::linux::net::SocketAddrExt;
         let address = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes())
             .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
@@ -1871,9 +1929,9 @@ fn bind_local_address(
     UnixListener::bind(path).map(|listener| (listener, Some(path.to_owned())))
 }
 #[cfg(unix)]
-fn connect_local_address(path: &std::path::Path, display: &str) -> std::io::Result<UnixStream> {
+fn connect_local_address(path: &std::path::Path, _display: &str) -> std::io::Result<UnixStream> {
     #[cfg(target_os = "linux")]
-    if let Some(name) = display.strip_prefix('\0') {
+    if let Some(name) = _display.strip_prefix('\0') {
         use std::os::linux::net::SocketAddrExt;
         let address = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes())
             .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
@@ -1942,4 +2000,83 @@ pub(crate) fn close_completed(
         context.call_rooted(emit, socket, &[event])?;
     }
     Ok(context.undefined())
+}
+
+pub(crate) enum EncryptError {
+    OpenSsl(openssl::error::ErrorStack),
+    NotConnected,
+    AlreadyEncrypted,
+}
+pub(crate) fn encrypt(
+    transport: &mut Transport,
+    id: u64,
+    ssl: openssl::ssl::Ssl,
+    role: encrypted::Role,
+) -> Result<(), EncryptError> {
+    let Some(mut socket) = transport.sockets.remove(&id) else {
+        return Err(EncryptError::NotConnected);
+    };
+    let raw = match socket.stream {
+        SocketStream::Plain(raw) => raw,
+        encrypted @ SocketStream::Encrypted(_) => {
+            socket.stream = encrypted;
+            transport.sockets.insert(id, socket);
+            return Err(EncryptError::AlreadyEncrypted);
+        }
+    };
+    let referenced = socket.referenced;
+    match encrypted::EncryptedStream::new(ssl, raw, role) {
+        Ok(tls) => {
+            socket.stream = SocketStream::Encrypted(tls);
+            transport.sockets.insert(id, socket);
+            Ok(())
+        }
+        Err(error) => {
+            transport.closing_sockets.insert(
+                id,
+                ClosingSocket {
+                    referenced,
+                    phase: SocketClosePhase::Requested,
+                },
+            );
+            Err(EncryptError::OpenSsl(error))
+        }
+    }
+}
+pub(crate) fn authorize(transport: &mut Transport, id: u64) {
+    if let Some(SharedSocket {
+        stream: SocketStream::Encrypted(tls),
+        ..
+    }) = transport.sockets.get_mut(&id)
+    {
+        tls.authorize();
+    }
+}
+pub(crate) fn tls_info(transport: &Transport, id: u64) -> Option<&openssl::ssl::SslRef> {
+    match &transport.sockets.get(&id)?.stream {
+        SocketStream::Encrypted(tls) => Some(tls.ssl()),
+        _ => None,
+    }
+}
+
+pub(crate) fn release_delivery(transport: &mut Transport, id: u64) {
+    if let Some(socket) = transport.sockets.get_mut(&id) {
+        socket.delivery = DeliveryPhase::Delivered;
+    }
+}
+pub(crate) fn deliver_connection(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let callback = args[0];
+    let socket = context
+        .rooted_value(args[1])
+        .and_then(|value| value.as_number())
+        .ok_or_else(|| RootedError::host("queued socket owner is unavailable"))?
+        as u64;
+    let result = context.call_rooted(callback, receiver, &args[2..]);
+    let shared = context.host_mut().shared_state();
+    release_delivery(&mut shared.borrow_mut().tcp, socket);
+    result
 }

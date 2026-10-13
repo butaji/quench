@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "title": "Task 61 prototype-in-shape correctness candidate",
+  "created_date": "2026-10-10",
+  "task": "61",
+  "fixture_focus": "Splay",
+  "candidate": {
+    "base_revision": "348a1b0790bb774e1c9c7e53cab6acfb2532beee",
+    "worktree": "/private/tmp/quench-task61-compact-slot",
+    "branch": "task61-splay-compact-slot",
+    "working_tree_dirty": false,
+    "runtime_diff_sha256": "91d07e2535a44fc376a4e65263f083cd75600cea6d4c1c5e34b50cd4b76637ff",
+    "change": "Store ordinary-object prototypes on root/transition shapes; rebase shape on prototype mutation; trace the live shape's prototype edge and prune dead root-cache keys. The follow-up correctness audit also derives immutable Object.prototype identities from the per-realm intrinsic registry."
+  },
+  "result": {
+    "correctness": "passed_with_one_known_baseline_failure",
+    "performance_decision": "pending",
+    "retained": false,
+    "splay_score_or_cycles": null,
+    "splay_max_rss_bytes": null,
+    "all_eight_guard": null,
+    "note": "No production timing was run. The M4 host remained contended; at 2026-10-10 07:59 local, load averages were 2.45/9.77/12.01. This structural candidate requires clean cycle and RSS gates before a keep decision."
+  },
+  "checks": [
+    {
+      "name": "quench-runtime library tests",
+      "command": "cargo test -p quench-runtime --lib",
+      "result": "546 passed, 0 failed"
+    },
+    {
+      "name": "Test262 Object, Promise, Proxy, Reflect",
+      "command": "TEST262_DIR=/Users/admin/Code/GitHub/quench-v2/tests/test262 TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 cargo run --profile iteration -p quench-test262 --bin run-stages -- 60 63",
+      "result": "4604 passed, 0 failed"
+    },
+    {
+      "name": "Test262 Array and ArrayBuffer",
+      "command": "TEST262_DIR=/Users/admin/Code/GitHub/quench-v2/tests/test262 TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 cargo run --profile iteration -p quench-test262 --bin run-stages -- 31 32",
+      "result": "3302 passed, 0 failed"
+    },
+    {
+      "name": "Test262 object-literal __proto__ cases",
+      "command": "TEST262_DIR=/Users/admin/Code/GitHub/quench-v2/tests/test262 TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 cargo run --profile iteration -p quench-test262 --bin run-stages -- 10 10 --filter language/expressions/object/__proto__",
+      "result": "9 passed, 0 failed; includes duplicate __proto__ early errors"
+    },
+    {
+      "name": "Test262 class null-prototype cases",
+      "command": "TEST262_DIR=/Users/admin/Code/GitHub/quench-v2/tests/test262 TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 cargo run --profile iteration -p quench-test262 --bin run-stages -- 26 26 --filter class-definition-null-proto",
+      "result": "5 passed, 0 failed"
+    },
+    {
+      "name": "Test262 Function",
+      "command": "TEST262_DIR=/Users/admin/Code/GitHub/quench-v2/tests/test262 TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 cargo run --profile iteration -p quench-test262 --bin run-stages -- 48 48",
+      "result": "508 passed, 1 failed; sole failure is built-ins/Function/call-bind-this-realm-value.js, the byte-identical baseline failure recorded in task61-closure-prototype-skip-2026-10-09.json"
+    },
+    {
+      "name": "Node util.inherits oracle fixture",
+      "command": "target/iteration/run-parallel --one /Users/admin/Code/GitHub/quench-v2/tests/node/test/parallel/test-util-inherits.js",
+      "result": "PASS"
+    },
+    {
+      "name": "Immutable Object.prototype behavior in primary and ShadowRealm realms",
+      "command": "CARGO_TARGET_DIR=target/iteration cargo test -p quench-runtime --lib immutable_object_prototypes_are_protected_in_every_realm",
+      "result": "1 passed; same-prototype mutation succeeds, different-prototype Reflect mutation returns false in both realms, and Object.setPrototypeOf throws in the primary realm"
+    },
+    {
+      "name": "Node oracle for primary and vm-context Object.prototype",
+      "command": "node -e with node:vm context and Reflect.setPrototypeOf",
+      "result": "primary=true,false; foreign=true,false"
+    },
+    {
+      "name": "diff whitespace validation",
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "layout_status": {
+    "prototype_authority": "shape table",
+    "prototype_root_map_is_gc_root": false,
+    "object_array_payload_target_bytes": 24,
+    "current_object_payload_target_reached": false,
+    "notes": "This change only removes the per-object prototype word. Object still contains ValueVec, two inline values, and ObjectExtras storage. Compact Cell payloads and the final 24-byte Object/Array layouts remain open."
+  }
+}

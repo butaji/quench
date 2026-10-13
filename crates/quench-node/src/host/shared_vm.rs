@@ -178,6 +178,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netIsIP" (1) => crate::modules::net_shared_vm::is_ip,
         method "netIsIPv4" (1) => crate::modules::net_shared_vm::is_ipv4,
         method "netIsIPv6" (1) => crate::modules::net_shared_vm::is_ipv6,
+        method "netDeliverConnection" (0) => crate::modules::net_shared_vm::deliver_connection,
         method "netSocketReference" (2) => crate::modules::net_reference_shared_vm::reference_socket,
         method "netSocketUnrefTimeout" (1) => crate::modules::net_reference_shared_vm::unref_timeout,
         method "netSocketInstallHandle" (2) => crate::modules::net_reference_shared_vm::install_socket,
@@ -346,7 +347,33 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "fsReaddirSync" (1) => crate::modules::fs_shared_vm::stat::read_dir_sync,
         method "fsReadlinkSync" (1) => crate::modules::fs_shared_vm::stat::read_link_sync,
         method "fsRealpathSync" (1) => crate::modules::fs_shared_vm::stat::realpath_sync,
-        method "tlsValidateContext" (1) => crate::modules::tls_shared_vm::validate_context,
+        method "tlsContextOuterInit" (0) => crate::modules::tls_shared_vm::facade::initialize,
+        method "tlsServerCreate" (2) => crate::modules::tls_shared_vm::server::create,
+        method "tlsServerConstruct" (4) => crate::modules::tls_shared_vm::server::construct,
+        method "tlsServerSetContext" (2) => crate::modules::tls_shared_vm::server::set_context_operation,
+        method "tlsServerConnection" (1) => crate::modules::tls_shared_vm::server::connection,
+        method "tlsServerSocketError" (1) => crate::modules::tls_shared_vm::server::socket_error,
+        method "tlsSocketTransportError" (1) => crate::modules::tls_shared_vm::socket::transport_error,
+        method "tlsSocketConnect" (0) => crate::modules::tls_shared_vm::socket::connect,
+        method "tlsSocketConstruct" (4) => crate::modules::tls_shared_vm::socket::construct,
+        method "tlsSocketStart" (0) => crate::modules::tls_shared_vm::socket::start,
+        method "tlsSocketSecure" (0) => crate::modules::tls_shared_vm::socket::secure,
+        method "tlsSocketUpgrade" (3) => crate::modules::tls_shared_vm::socket::upgrade,
+        method "tlsSocketAuthorize" (1) => crate::modules::tls_shared_vm::socket::authorize,
+        method "tlsSocketInfo" (2) => crate::modules::tls_shared_vm::socket::info,
+        method "tlsMatchName" (1) => crate::modules::tls_shared_vm::identity::match_name,
+        method "tlsLowercaseName" (1) => crate::modules::tls_shared_vm::identity::lowercase_name,
+        method "tlsCollectAltName" (1) => crate::modules::tls_shared_vm::identity::collect_alt_name,
+        method "tlsCheckServerIdentity" (2) => crate::modules::tls_shared_vm::identity::check_server_identity,
+        method "tlsGetCiphers" (0) => crate::modules::tls_shared_vm::discovery::ciphers,
+        method "tlsContextCreate" (1) => crate::modules::tls_shared_vm::facade::create,
+        method "tlsContextConfigure" (0) => crate::modules::tls_shared_vm::configuration::method,
+        method "tlsContextRegister" (0) => crate::modules::tls_shared_vm::contexts::register,
+        method "tlsContextInit" (0) => crate::modules::tls_shared_vm::contexts::initialize,
+        method "tlsContextSetOptions" (0) => crate::modules::tls_shared_vm::contexts::set_options,
+        method "tlsContextGetMinProto" (0) => crate::modules::tls_shared_vm::contexts::minimum,
+        method "tlsContextGetMaxProto" (0) => crate::modules::tls_shared_vm::contexts::maximum,
+        method "cryptoSetEngine" (2) => crate::modules::crypto_engine_shared_vm::set_engine,
         method "cryptoHash" (3) => crate::modules::crypto_shared_vm::hash,
         method "cryptoHmac" (3) => crate::modules::crypto_shared_vm::hmac,
         method "cryptoSign" (6) => crate::modules::crypto_shared_vm::sign,
@@ -425,6 +452,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "nodeTest" (2) => crate::modules::test_shared_vm::run,
         method "isBuiltin" (1) => crate::modules::module_shared_vm::is_builtin,
         method "createRequire" (1) => crate::modules::module_shared_vm::create_require,
+        method "moduleNodePaths" (1) => crate::modules::module_shared_vm::node_module_paths,
         method "findPackageJSON" (1) => crate::modules::module_shared_vm::find_package_json,
         method "pathToFileURL" (2) => crate::modules::url_shared_vm::path_to_file_url,
         method "fileURLToPath" (1) => crate::modules::url_shared_vm::file_url_to_path,
@@ -529,9 +557,9 @@ impl quench_runtime::Host for NodeHost {
         };
         let resolution = match resolver.resolve(&base, &resolution_specifier) {
             Ok(resolution) => resolution,
-            Err(oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_)) => {
-                return Ok(None)
-            }
+            Err(
+                oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_),
+            ) => return Ok(None),
             Err(error) => return Err(error.to_string()),
         };
         let path = resolution.full_path();
@@ -568,7 +596,9 @@ impl quench_runtime::Host for NodeHost {
                     source.push_str("export { ");
                     source.push_str(&local);
                     source.push_str(" as ");
-                    source.push_str(&serde_json::to_string(&export).map_err(|error| error.to_string())?);
+                    source.push_str(
+                        &serde_json::to_string(&export).map_err(|error| error.to_string())?,
+                    );
                     source.push_str(" };\n");
                 }
                 source

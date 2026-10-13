@@ -1160,7 +1160,7 @@ impl<H: Host> Vm<H> {
         callee: Value,
     ) -> Result<Value, JsError> {
         let realm = match self.heap.get(callee) {
-            Some(Cell::Function { realm, .. }) => *realm,
+            Some(Cell::Function { object, .. }) => object.realm,
             _ => self.realm.globals,
         };
         let previous_global = self.switch_realm_global(realm);
@@ -1196,10 +1196,12 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn native_with_realm(&mut self, kind: Native, env: Value, realm: Value) -> Value {
         let function = self.heap.alloc(Cell::Function {
-            object: Box::new(Self::empty_object(self.realm_function_prototype(realm))),
+            object: Box::new(crate::heap::FunctionObject {
+                object: Self::empty_object(self.realm_function_prototype(realm)),
+                realm: realm,
+            }),
             kind: FunctionKind::Native(kind),
             env,
-            realm,
         });
         let promise_resolver = !env.is_null()
             && matches!(
@@ -2116,9 +2118,11 @@ impl<H: Host> Vm<H> {
                 });
                 let value = self.heap.alloc(Cell::TypedArray {
                     kind,
-                    object: Box::new(Self::empty_object(self.typed_array_proto(kind))),
+                    object: Box::new(crate::heap::BufferViewObject {
+                        object: Self::empty_object(self.typed_array_proto(kind)),
+                        offset: 0,
+                    }),
                     buffer,
-                    offset: 0,
                     length,
                     length_tracking: false,
                 });
@@ -2400,7 +2404,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "evaluated module namespace is invalid".into()));
         };
         if let Some(target) = self.object_data_mut(target) {
-            target.proto = source.proto;
+            target.set_proto(source.proto());
             target.copy_property_storage_from(&source);
             if source.is_module_namespace() {
                 target.set_module_namespace();
@@ -4463,7 +4467,7 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "dynamic import attributes must be an object".into()));
         }
         let keys = self.object_own_keys(p, attributes)?;
-        let Some((_, elements)) = self.heap.array(keys) else {
+        let Some(elements) = self.heap.array_elements(keys) else {
             return Err(JsError(
                 "dynamic import own keys result is not an array".into(),
             ));
@@ -4517,6 +4521,7 @@ impl<H: Host> Vm<H> {
         if let Some(object) = self.object_data_mut(namespace) {
             object.set_module_namespace();
         }
+        self.mark_object_dictionary(namespace, DictionaryTrigger::ModuleNamespace);
         for (name, value) in exports {
             let atom = self.intern_atom(&name);
             self.set_property(namespace, atom, value)?;

@@ -880,10 +880,12 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
         self.function_proto = self.heap.alloc(Cell::Function {
-            object: Box::new(Self::empty_object(self.object_proto)),
+            object: Box::new(crate::heap::FunctionObject {
+                object: Self::empty_object(self.object_proto),
+                realm: self.realm.globals,
+            }),
             kind: FunctionKind::Native(Native::FunctionPrototype),
             env: Value::NULL,
-            realm: self.realm.globals,
         });
         for (native, prototype) in [
             (Native::Object, self.object_proto),
@@ -894,7 +896,10 @@ impl<H: Host> Vm<H> {
                 .builtin_prototypes
                 .insert((self.realm.globals, native), prototype);
         }
-        self.object_data_mut(self.realm.globals).unwrap().proto = self.object_proto;
+        let object_proto = self.object_proto;
+        self.object_data_mut(self.realm.globals)
+            .unwrap()
+            .set_proto(object_proto);
     }
     fn install_console(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let console = self.object();

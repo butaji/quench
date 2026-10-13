@@ -1,4 +1,4 @@
-use super::{ArrayRecord, Object};
+use super::{ArrayObject, Object};
 use std::alloc::Layout;
 use std::alloc::{alloc, dealloc};
 use std::mem::MaybeUninit;
@@ -9,11 +9,11 @@ use std::ptr::NonNull;
 pub(super) type RecordId = u32;
 
 pub(super) type ObjectRecordSpace = RecordSpace<Object>;
-pub(super) type ArrayRecordSpace = RecordSpace<ArrayRecord>;
+pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject>;
 
 const RECORDS_PER_BLOCK: usize = 1_024;
 const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
-const RECORD_SPACE_CAPACITY: usize = 1 << 24;
+pub(super) const RECORD_SPACE_CAPACITY: usize = 1 << 24;
 
 const _: () = assert!(RECORDS_PER_BLOCK.is_power_of_two());
 const _: () = assert!(RECORD_SPACE_CAPACITY.is_power_of_two());
@@ -28,7 +28,7 @@ pub(super) struct RecordSpace<T> {
     reservation_failed: bool,
     blocks: Vec<RecordBlock>,
     next_id: u32,
-    free: Vec<u32>,
+    free_cursor: RecordId,
     live: usize,
 }
 
@@ -40,7 +40,7 @@ impl<T> Default for RecordSpace<T> {
             reservation_failed: false,
             blocks: Vec::new(),
             next_id: 0,
-            free: Vec::new(),
+            free_cursor: 0,
             live: 0,
         }
     }
@@ -116,7 +116,9 @@ impl<T> RecordSpace<T> {
         if !self.ensure_reserved() {
             return Err(value);
         }
-        let reused = self.free.last().copied();
+        let reused = (self.free_cursor != 0)
+            .then(|| self.highest_free_before(self.free_cursor))
+            .flatten();
         let id = reused.unwrap_or(self.next_id);
         if id as usize >= RECORD_SPACE_CAPACITY {
             return Err(value);
@@ -135,9 +137,10 @@ impl<T> RecordSpace<T> {
                 .add(id as usize)
                 .write(MaybeUninit::new(value));
         };
-        if reused.is_some() {
-            self.free.pop();
+        if let Some(reused_id) = reused {
+            self.free_cursor = reused_id;
         } else {
+            self.free_cursor = 0;
             self.next_id += 1;
         }
         self.live += 1;
@@ -197,7 +200,7 @@ impl<T> RecordSpace<T> {
         self.blocks[block_index].release(record_index);
         self.blocks[block_index].marked[record_index / OCCUPANCY_WORD_BITS] &=
             !(1_u64 << (record_index % OCCUPANCY_WORD_BITS));
-        self.free.push(id);
+        self.free_cursor = self.next_id;
         self.live -= 1;
         // SAFETY: release cleared the bit and this id was initialized exactly once.
         unsafe { self.base.as_ptr().add(id as usize).read().assume_init() }
@@ -281,7 +284,6 @@ impl<T> RecordSpace<T> {
                     let record_index = word_index * OCCUPANCY_WORD_BITS + bit;
                     let id = (block_index * RECORDS_PER_BLOCK + record_index) as RecordId;
                     block.occupied[word_index] &= !(1_u64 << bit);
-                    self.free.push(id);
                     // SAFETY: the occupied bit proves initialization and its
                     // removal transfers this record to the drop callback.
                     let value = unsafe { self.base.as_ptr().add(id as usize).read().assume_init() };
@@ -293,6 +295,11 @@ impl<T> RecordSpace<T> {
             }
         }
         self.live = live_count;
+        self.free_cursor = if live_count < self.next_id as usize {
+            self.next_id
+        } else {
+            0
+        };
         (live_count, freed_count)
     }
 
@@ -351,16 +358,45 @@ impl<T> RecordSpace<T> {
         (id / RECORDS_PER_BLOCK, id % RECORDS_PER_BLOCK)
     }
 
+    fn highest_free_before(&self, mut end: RecordId) -> Option<RecordId> {
+        while end != 0 {
+            let candidate = end - 1;
+            let (block_index, record_index) = Self::split_id(candidate);
+            let word_index = record_index / OCCUPANCY_WORD_BITS;
+            let bit_count = record_index % OCCUPANCY_WORD_BITS + 1;
+            let valid_bits = u64::MAX >> (OCCUPANCY_WORD_BITS - bit_count);
+            let occupied = self
+                .blocks
+                .get(block_index)
+                .expect("every allocated ID belongs to an initialized record block")
+                .occupied[word_index];
+            let free_bits = !occupied & valid_bits;
+            if free_bits != 0 {
+                let bit = OCCUPANCY_WORD_BITS - 1 - free_bits.leading_zeros() as usize;
+                return Some(
+                    (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS + bit)
+                        as RecordId,
+                );
+            }
+            end = (block_index * RECORDS_PER_BLOCK + word_index * OCCUPANCY_WORD_BITS) as RecordId;
+        }
+        None
+    }
+
     #[cfg(feature = "profile-memory")]
     pub(super) fn allocated_bytes(&self) -> usize {
         self.blocks.len() * RECORDS_PER_BLOCK * size_of::<T>()
             + self.blocks.capacity() * size_of::<RecordBlock>()
-            + self.free.capacity() * size_of::<RecordId>()
     }
 
     #[cfg(feature = "profile-memory")]
-    pub(super) fn free_id_vector_capacity_bytes(&self) -> usize {
-        self.free.capacity() * size_of::<RecordId>()
+    pub(super) fn reusable_ids(&self) -> usize {
+        self.next_id as usize - self.live
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn allocation_scan_cursor(&self) -> usize {
+        self.free_cursor as usize
     }
 }
 
@@ -451,5 +487,36 @@ mod tests {
         assert!(arena.is_live(live));
         assert!(!arena.is_live(dead));
         assert_eq!(arena.try_insert(String::from("reused")).unwrap(), dead);
+    }
+
+    #[test]
+    fn bitmap_reuse_preserves_descending_free_id_order_across_sweeps() {
+        use super::RecordSweep;
+
+        let mut arena = RecordSpace::default();
+        let ids: Vec<_> = (0..6)
+            .map(|value| arena.try_insert(value).unwrap())
+            .collect();
+        for &live in &[ids[1], ids[4]] {
+            assert!(arena.mark(live));
+        }
+
+        let mut dead_ids = Vec::new();
+        let (live_count, freed_count) = arena.sweep(|record| match record {
+            RecordSweep::Keep(_, _) => {}
+            RecordSweep::Dead(id, _) => dead_ids.push(id),
+        });
+        assert_eq!((live_count, freed_count), (2, 4));
+        assert_eq!(dead_ids, [ids[0], ids[2], ids[3], ids[5]]);
+
+        assert_eq!(arena.try_insert(10).unwrap(), ids[5]);
+        for &live in &[ids[1], ids[4], ids[5]] {
+            assert!(arena.mark(live));
+        }
+        assert_eq!(arena.sweep(|_| {}), (3, 0));
+        assert_eq!(arena.try_insert(11).unwrap(), ids[3]);
+        assert_eq!(arena.try_insert(12).unwrap(), ids[2]);
+        assert_eq!(arena.try_insert(13).unwrap(), ids[0]);
+        assert_eq!(arena.try_insert(14).unwrap(), 6);
     }
 }

@@ -586,7 +586,8 @@ fn argument_string(
         (_, 1) => "paths[1]",
         _ => "path",
     };
-    Err(path_type_error(context, name, "an instance of Object")?)
+    let received = super::util_shared_vm::argument_type_description(context, argument)?;
+    Err(path_type_error(context, name, &received)?)
 }
 
 fn path_type_error(

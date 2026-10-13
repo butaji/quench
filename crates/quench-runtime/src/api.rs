@@ -4636,6 +4636,24 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
     }
 
     #[test]
+    fn regression_array_shift_guards_preserve_order_and_copy_on_write() {
+        assert_output_in_execution_modes(r#"
+            var dense=[{value:1},undefined,3], first=dense[0];
+            print(dense.shift()===first);print(dense.length);print(0 in dense);print(dense[1]);
+            function make(){return [1,2,3];}var a=make(),b=make();a.shift();print(JSON.stringify(b));
+            var sparse=[,2,3], inherited=Object.create(Array.prototype);
+            Object.defineProperty(inherited,'0',{get(){print('inherited-get');return 7;},set(value){print('inherited-set:'+value);},configurable:true});
+            Object.setPrototypeOf(sparse,inherited);print(sparse.shift());print(JSON.stringify(sparse));
+            var accessor=[1,2,3];Object.defineProperty(accessor,'1',{get(){print('own-get');return 8;},set(value){print('own-set:'+value);},configurable:true});print(accessor.shift());
+            var readonly=[1,2,3];Object.defineProperty(readonly,'length',{writable:false});try{readonly.shift()}catch(e){print(e instanceof TypeError);}print(readonly.length);print(readonly[0]);print(readonly[1]);print(2 in readonly);
+            var sealed=Object.seal([1,2,3]);try{sealed.shift()}catch(e){print(e instanceof TypeError);}print(JSON.stringify(sealed));
+            var frozen=Object.freeze([1,2]);try{frozen.shift()}catch(e){print(e instanceof TypeError);}print(JSON.stringify(frozen));
+            print(Array.prototype.shift.call({0:'a',1:'b',length:2}));
+            print((function(x,y){var result=Array.prototype.shift.call(arguments);return result+':'+x+':'+y+':'+arguments.length;})(1,2));
+        "#, &["true","2","true","3","[1,2,3]","inherited-get","inherited-set:2","7","inherited-get","[7,3]","own-get","own-set:3","1","true","3","2","3","false","true","[2,3,3]","true","[1,2]","a","1:2:2:1"]);
+    }
+
+    #[test]
     fn regression_namespace_keys_sort_utf16_names_without_array_index_priority() {
         const DEPENDENCY: &str = "const value=1; export {value as z,value as '2',value as '10',value as a,value as '\\u{1F600}',value as '\\uE000'};";
         const SOURCE: &str = r#"

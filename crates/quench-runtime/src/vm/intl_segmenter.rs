@@ -148,6 +148,7 @@ impl<H: Host> Vm<H> {
                             index: 0,
                             done: false,
                             ext: Box::new(crate::heap::IteratorExt {
+                                position_high: 0,
                                 next_method: None,
                                 helper: None,
                                 helper_running: false,
@@ -207,7 +208,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Option<(Value, usize)>, JsError> {
         // The private state tuple owns [segmenter, input, boundaries]; public
         // Segments and cursors share it without retaining one another.
-        let Some((_, elements)) = self.heap.array(data) else {
+        let Some(elements) = self.heap.array_elements(data) else {
             return Err(self.type_error(p, "incompatible Segments receiver".into()));
         };
         let [segmenter, input, boundaries] = elements.as_slice() else {
@@ -220,7 +221,7 @@ impl<H: Host> Vm<H> {
         if index >= text.units().len() {
             return Ok(None);
         }
-        let Some((_, elements)) = self.heap.array(boundaries) else {
+        let Some(elements) = self.heap.array_elements(boundaries) else {
             return Ok(None);
         };
         let end = elements
@@ -272,8 +273,9 @@ impl<H: Host> Vm<H> {
                     index,
                     done,
                     kind: IteratorKind::IntlSegments,
+                    ext,
                     ..
-                }) => (*source, *index, *done),
+                }) => (*source, ext.position(*index), *done),
                 _ => return Err(vm.type_error(p, "incompatible Segment Iterator receiver".into())),
             };
             if done {
@@ -281,8 +283,8 @@ impl<H: Host> Vm<H> {
             }
             match vm.segment_data(p, data, index)? {
                 Some((value, end)) => {
-                    if let Some(Cell::Iterator { index, .. }) = vm.heap.get_mut(iterator) {
-                        *index = end;
+                    if let Some(Cell::Iterator { index, ext, .. }) = vm.heap.get_mut(iterator) {
+                        ext.store_position(index, end);
                     }
                     vm.iterator_result(value, false)
                 }

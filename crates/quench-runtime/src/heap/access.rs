@@ -1,4 +1,5 @@
-use super::{Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, IteratorKind, Object};
+use super::{ArrayObject, Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, IteratorKind, Object};
+use crate::value_vec::ValueArena;
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
 
@@ -10,6 +11,7 @@ impl Heap {
                 kind,
                 index: cursor,
                 done,
+                ext,
                 ..
             }) = slot.cell.as_mut()
             else {
@@ -17,8 +19,9 @@ impl Heap {
             };
             let tracks_map = matches!(kind, IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries);
             let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
-            if *source == collection && !*done && ((map && tracks_map) || (!map && tracks_set)) && *cursor > index {
-                *cursor -= 1;
+            if *source == collection && !*done && ((map && tracks_map) || (!map && tracks_set)) && ext.position(*cursor) > index {
+                let position = ext.position(*cursor) - 1;
+                ext.store_position(cursor, position);
             }
         }
     }
@@ -141,7 +144,7 @@ impl Heap {
                 }
             })
             .collect::<Option<Box<[_]>>>()
-            .map(EnvironmentSlots)
+            .map(|slots| EnvironmentSlots(slots.into()))
     }
 
     pub fn get(&self, value: Value) -> Option<&Cell> {
@@ -180,8 +183,8 @@ impl Heap {
             return Some(unsafe { self.object_records.get_live(record_id) });
         }
         if let Some(record_id) = value.direct_array_index() {
-            // SAFETY: a direct-array Value names an initialized ArrayRecord.
-            return Some(&unsafe { self.array_records.get_live(record_id) }.object);
+            // SAFETY: a direct-array Value names an initialized array record.
+            return Some(unsafe { self.array_records.get_live(record_id) });
         }
         self.get(value)?.object()
     }
@@ -193,35 +196,89 @@ impl Heap {
         }
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
-            return Some(&mut unsafe { self.array_records.get_live_mut(record_id) }.object);
+            return Some(unsafe { self.array_records.get_live_mut(record_id) });
         }
         self.get_mut(value)?.object_mut()
     }
 
-    pub(crate) fn array(&self, value: Value) -> Option<(&Object, &std::rc::Rc<Vec<Value>>)> {
+    /// `object_mut` with the property arena, borrowed apart so a caller can grow an owner's
+    /// storage in one lookup. A legacy owner passes the generational write barrier first.
+    pub(crate) fn object_and_arena_mut(
+        &mut self,
+        value: Value,
+    ) -> Option<(&mut Object, &mut ValueArena)> {
+        let reference = value.heap_reference()?;
+        if let HeapReference::LegacySlot(index) = reference {
+            self.remember(index as usize);
+        }
+        let Self {
+            object_records,
+            array_records,
+            slots,
+            properties,
+            ..
+        } = self;
+        let object: &mut Object = match reference {
+            // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
+            HeapReference::ObjectRecord(record_id) => unsafe {
+                object_records.get_live_mut(record_id)
+            },
+            // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
+            HeapReference::ArrayRecord(record_id) => unsafe {
+                array_records.get_live_mut(record_id)
+            },
+            HeapReference::LegacySlot(index) => slots
+                .get_mut(index as usize)?
+                .cell
+                .as_mut()?
+                .object_mut()?,
+        };
+        Some((object, properties))
+    }
+
+    pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records, retired after weak pruning.
-            let array = unsafe { self.array_records.get_live(record_id) };
-            return Some((&array.object, &array.elements));
+            return Some(unsafe { self.array_records.get_live(record_id) });
         }
         match self.get(value)? {
-            Cell::Array { object, elements } => Some((object, elements)),
+            Cell::Array { object } => Some(object),
             _ => None,
         }
     }
 
-    pub(crate) fn array_mut(
+    /// An array's dense element backing, whether it lives in a record or a slot.
+    pub(crate) fn array_elements(&self, value: Value) -> Option<&std::rc::Rc<Vec<Value>>> {
+        self.array(value).map(ArrayObject::elements)
+    }
+
+    pub(crate) fn array_elements_mut(
         &mut self,
         value: Value,
-    ) -> Option<(&mut Object, &mut std::rc::Rc<Vec<Value>>)> {
+    ) -> Option<&mut std::rc::Rc<Vec<Value>>> {
+        self.array_mut(value).map(ArrayObject::elements_mut)
+    }
+
+    pub(crate) fn array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
         if let Some(record_id) = value.direct_array_index() {
             // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
-            let array = unsafe { self.array_records.get_live_mut(record_id) };
-            return Some((&mut array.object, &mut array.elements));
+            return Some(unsafe { self.array_records.get_live_mut(record_id) });
         }
         match self.get_mut(value)? {
-            Cell::Array { object, elements } => Some((object, elements)),
+            Cell::Array { object } => Some(object),
             _ => None,
+        }
+    }
+
+    /// An ordinary object (`Cell::Object`), whether it lives in the object record space or a
+    /// legacy slot.
+    pub(crate) fn ordinary_object(&self, value: Value) -> Option<&Object> {
+        match self.object_record(value) {
+            Some(object) => Some(object),
+            None => match self.get(value)? {
+                Cell::Object(object) => Some(object),
+                _ => None,
+            },
         }
     }
 
@@ -235,7 +292,7 @@ impl Heap {
             HeapReference::ObjectRecord(record_id) => Some(self.object_record_by_id(record_id)),
             HeapReference::ArrayRecord(record_id) => {
                 // SAFETY: the tagged Value identifies an initialized live array record.
-                Some(&unsafe { self.array_records.get_live(record_id) }.object)
+                Some(unsafe { self.array_records.get_live(record_id) })
             }
             HeapReference::LegacySlot(_) => None,
         }

@@ -347,6 +347,12 @@ pub(super) fn require(
             );
         }
         Some(BuiltinModule::InternalTestBinding) => {
+            let shared = context.host_mut().shared_state();
+            let process = shared.borrow().process_module.ok_or_else(|| RootedError::host("Process warning owner is not initialized"))?;
+            let warning = get(context, process, "emitWarning")?;
+            let message = context.string_rooted("These APIs are for internal testing only. Do not use them.");
+            let kind = context.string_rooted("internal/test/binding");
+            context.call_rooted(warning, process, &[message, kind])?;
             let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
             context.release_root(dgram);
             let binding =
@@ -861,6 +867,10 @@ pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedErr
     cached_builtin(context, BuiltinModule::Util)
 }
 
+pub(crate) fn net_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Net)
+}
+
 pub(crate) fn dns_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Dns)
 }
@@ -1153,10 +1163,8 @@ fn module_record(
     set(context, module, "loaded", loaded)?;
     let children = context.array_rooted(&[])?;
     set(context, module, "children", children)?;
-    let paths = directory
-        .ancestors()
-        .filter(|path| path.file_name().is_none_or(|name| name != "node_modules"))
-        .map(|path| context.string_rooted(&path.join("node_modules").to_string_lossy()))
+    let paths = crate::modules::module_shared_vm::node_search_paths(directory)
+        .map(|path| context.string_rooted(&path.to_string_lossy()))
         .collect::<Vec<_>>();
     let paths = context.array_rooted(&paths)?;
     set(context, module, "paths", paths)?;
@@ -1311,7 +1319,7 @@ const getLinkedBinding = () => ({});
                 } else if in_node_internal {
                     r#"const internalBinding = (name) => {
   switch (String(name)) {
-    case "fs_event_wrap": return require("internal/test/binding").internalBinding(name);
+    case "fs_event_wrap": return __nativeInternalBinding(name);
     case "util": return Object.assign({}, require("util"), {
       privateSymbols: {
         arrow_message_private_symbol: Symbol.for("nodejs.util.inspect.custom"),
@@ -1405,7 +1413,9 @@ const getLinkedBinding = () => ({});
                 } else {
                     ""
                 };
-                let prefix = format!("{WRAPPER_PREFIX}{internal_binding}");
+                let prefix = if in_node_internal {
+                    format!("(function (exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding) {{ {internal_binding}")
+                } else { format!("{WRAPPER_PREFIX}{internal_binding}") };
                 let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
                 let line_offset = u32::try_from(
                     prefix.bytes().filter(|byte| *byte == b'\n').count(),
@@ -1430,11 +1440,11 @@ const getLinkedBinding = () => ({});
                     line_offset,
                     column_offset,
                 )?;
-                context.call_rooted(
-                    wrapper,
-                    exports,
-                    &[exports, require, module, name, directory, primordials],
-                )?;
+                let mut arguments = vec![exports, require, module, name, directory, primordials];
+                if in_node_internal {
+                    arguments.push(context.host_function(crate::host::shared_vm::operation("traceInternal"))?);
+                }
+                context.call_rooted(wrapper, exports, &arguments)?;
                 if let Some(root) = primordial_seed {
                     context.release_root(root);
                 }

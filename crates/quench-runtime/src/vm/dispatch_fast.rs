@@ -2237,6 +2237,7 @@ impl<H: Host> Vm<H> {
                 call_pc: call_pc as u32,
                 destination,
                 construct_this: None,
+                returns: false,
                 // The lane admitted the activation under WASM_ACTIVATION_LIMIT; as a frame it
                 // also counts against the guest-call budget while that budget lasts.
                 call_guard: crate::stack::GuestCallGuard::enter().ok(),
@@ -2381,6 +2382,7 @@ fn lane_call_frame<H: Host>(ip: Ip) -> Ip {
         call_pc: call_pc as u32,
         destination: i.a,
         construct_this: None,
+        returns: false,
         call_guard: Some(call_guard),
     });
     lane_enter_frame(cx, caller + 1, 0)

@@ -43,6 +43,179 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// Starts a plain `Call` of a same-realm, same-program user function as an activation of
+    /// the running dispatch loop, or returns `None` to leave the instruction to `step`. Such a
+    /// call involves no direct eval (its callee is not the eval intrinsic) and neither eval mode
+    /// is set before it, so the frame push leaves both untouched.
+    #[inline(always)]
+    pub(super) fn try_inline_user_call(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: WideInstruction,
+        pc: usize,
+    ) -> Option<Result<StepResult, JsError>> {
+        // A sloppy call that falls into a return of its result is pushed like any other; its
+        // caller then returns the callee's completion (see `PendingGeneralCall::returns`).
+        // Strict ones keep the proper tail call `step` performs. Wasm programs also run in
+        // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
+        // exhaustion accounting, so they are never inlined as user calls.
+        if i.op() != Op::Call
+            || self.direct_eval
+            || self.parameter_eval
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || f + 1 != self.frames.len()
+            || self.frames[f].function == super::ROOT_FUNCTION_ID
+            || (i.returns_from_frame() && p.functions[self.frames[f].function as usize].strict)
+        {
+            return None;
+        }
+        let callee = self.read(f, i.register_b());
+        let (program_id, id, env) = self.same_realm_user_target(callee)?;
+        if id == super::ROOT_FUNCTION_ID
+            || program_id != self.active_program
+            || !p.functions.get(id as usize).is_some_and(|function| {
+                !function.is_async
+                    && !function.is_generator
+                    && !function.is_class_constructor
+                    && !function.derived_constructor
+                    && !function.class_field_initializer
+                    && !function.parameter_eval_arguments_error
+            })
+        {
+            return None;
+        }
+        self.profile.call_source(0);
+        let window = i.call_window();
+        let this = self.read(f, i.register_c());
+        self.frames[f].pc = pc;
+        self.profile.call_target(1, usize::from(window.count));
+        // Collection happens only at back edges, tail calls and explicit host safepoints, none
+        // of which can run while a frame is pushed; afterwards the new frame itself roots the
+        // callee, receiver and arguments.
+        let arguments: *const [Value] = self.register_window(f, window);
+        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+        let call_guard = self.push_general_user_frame(
+            p,
+            id,
+            env,
+            this,
+            unsafe { &*arguments },
+            CallContext::user_function(id, callee),
+        );
+        Some(call_guard.map(|call_guard| StepResult::PushFrame {
+            destination: i.result_register(),
+            call_guard,
+            construct_this: None,
+        }))
+    }
+
+    /// `f.call(this, ...args)` and `f.apply(this, list)` of the intrinsic natives invoke `f`
+    /// with no observable step of their own, so when `try_inline_user_call` declines a call
+    /// whose callee is one of them and `f` is a user function, `f` is pushed directly. It
+    /// applies `try_inline_user_call`'s conditions to the call and to `f`; it stays out of
+    /// line so ordinary user calls keep their code.
+    #[inline(never)]
+    pub(super) fn try_inline_call_apply(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: WideInstruction,
+        pc: usize,
+    ) -> Option<Result<StepResult, JsError>> {
+        if i.op() != Op::Call
+            || self.direct_eval
+            || self.parameter_eval
+            || p.kind == crate::bytecode::ProgramKind::Wasm
+            || f + 1 != self.frames.len()
+            || self.frames[f].function == super::ROOT_FUNCTION_ID
+            || (i.returns_from_frame() && p.functions[self.frames[f].function as usize].strict)
+        {
+            return None;
+        }
+        let callee = self.read(f, i.register_b());
+        let target = self.read(f, i.register_c());
+        let window: *const [Value] = self.register_window(f, i.call_window());
+        // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
+        let window = unsafe { &*window };
+        let this = window.first().copied().unwrap_or(Value::UNDEFINED);
+        let apply_arguments;
+        let arguments = match self.heap.get(callee) {
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::FunctionCall),
+                ..
+            }) => window.get(1..).unwrap_or_default(),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::FunctionApply),
+                ..
+            }) => {
+                apply_arguments =
+                    self.dense_apply_arguments(window.get(1).copied().unwrap_or(Value::UNDEFINED))?;
+                apply_arguments.as_slice()
+            }
+            _ => return None,
+        };
+        let (program_id, id, env) = self.same_realm_user_target(target)?;
+        if id == super::ROOT_FUNCTION_ID
+            || program_id != self.active_program
+            || !p.functions.get(id as usize).is_some_and(|function| {
+                !function.is_async
+                    && !function.is_generator
+                    && !function.is_class_constructor
+                    && !function.derived_constructor
+                    && !function.class_field_initializer
+                    && !function.parameter_eval_arguments_error
+            })
+        {
+            return None;
+        }
+        self.profile.call_source(0);
+        self.frames[f].pc = pc;
+        self.profile.call_target(1, arguments.len());
+        let call_guard = self.push_general_user_frame(
+            p,
+            id,
+            env,
+            this,
+            arguments,
+            CallContext::user_function(id, target),
+        );
+        Some(call_guard.map(|call_guard| StepResult::PushFrame {
+            destination: i.result_register(),
+            call_guard,
+            construct_this: None,
+        }))
+    }
+
+    /// CreateListFromArrayLike for `apply` when it reduces to a copy: null or undefined, a
+    /// plain array without holes, or an arguments object whose data `length` covers a
+    /// hole-free prefix, neither carrying indexed descriptors or sparse elements. `None`
+    /// leaves the list to the generic algorithm, whose reads may run guest code.
+    fn dense_apply_arguments(&self, list: Value) -> Option<Vec<Value>> {
+        if list.is_null() || list.is_undefined() {
+            return Some(Vec::new());
+        }
+        let Some(object) = self.heap.array(list) else {
+            return None;
+        };
+        if object.has_indexed_descriptors() || self.heap.sparse_length(list).is_some() {
+            return None;
+        }
+        let elements = object.elements();
+        let length = if object.is_arguments_object() {
+            let attributes =
+                self.property_attributes(list, PropertyKey::string(self.length_atom))?;
+            if attributes.accessor {
+                return None;
+            }
+            usize::try_from(self.own_property(list, self.length_atom)?.as_int()?).ok()?
+        } else {
+            elements.len()
+        };
+        let values = elements.get(..length)?;
+        (!values.iter().any(|value| value.is_deleted())).then(|| values.to_vec())
+    }
+
     #[inline(always)]
     pub(super) fn step(
         &mut self,
@@ -393,8 +566,10 @@ impl<H: Host> Vm<H> {
             }
             Op::MakeArray => {
                 let v = self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                    elements: Rc::new(vec![Value::DELETED; i.array_length()]),
+                    object: crate::heap::ArrayObject::new(
+                        Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                        Rc::new(vec![Value::DELETED; i.array_length()]),
+                    ),
                 });
                 self.write(f, i.result_register(), v);
             }
@@ -408,8 +583,10 @@ impl<H: Host> Vm<H> {
                         JsError::validation("constant array is outside program".into())
                     })?;
                 let v = self.heap.alloc(Cell::Array {
-                    object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                    elements,
+                    object: crate::heap::ArrayObject::new(
+                        Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                        elements,
+                    ),
                 });
                 self.write(f, i.result_register(), v);
             }
@@ -835,7 +1012,17 @@ impl<H: Host> Vm<H> {
             Op::IncDec => {
                 let input = self.read(f, i.register_b());
                 let is_decrement = i.boolean_flag().expect("validated boolean immediate");
-                let value = self.numeric_update(p, input, is_decrement)?;
+                // ToNumeric, then Number::add or BigInt::add of one (ECMA-262 13.4).
+                let value = match number_increment(input, is_decrement) {
+                    Some(value) => value,
+                    None => {
+                        let numeric = self.to_numeric(p, input)?;
+                        match number_increment(numeric, is_decrement) {
+                            Some(value) => value,
+                            None => self.numeric_update(p, numeric, is_decrement)?,
+                        }
+                    }
+                };
                 self.write(f, i.result_register(), value);
             }
             Op::Unary => {
@@ -918,16 +1105,15 @@ impl<H: Host> Vm<H> {
                 let callee = self.read(f, i.register_b());
                 let caller = &mut *self.frames[f];
                 caller.pc = *pc;
-                let caller_function = caller.function;
                 debug_assert_eq!(caller.program, self.active_program);
                 let direct_eval = i.direct_eval()
                     && matches!(
                         self.heap.get(callee),
                         Some(Cell::Function {
                             kind: FunctionKind::Native(Native::Eval),
-                            realm,
+                            object,
                             ..
-                        }) if *realm == self.realm.globals
+                        }) if object.realm == self.realm.globals
                     );
                 let previous_binding_site_pc = if direct_eval {
                     Some(std::mem::replace(
@@ -942,51 +1128,9 @@ impl<H: Host> Vm<H> {
                 let previous_parameter_eval = self.parameter_eval;
                 let previous_this = (direct_eval && !this.is_undefined())
                     .then(|| std::mem::replace(&mut self.frames[f].this, this));
+                // The dispatch loop offers every plain call to `try_inline_user_call` first.
                 // Compilation flags every call that falls into a return of its result.
                 let terminal = i.returns_from_frame();
-                if allow_inline_calls
-                    && i.op() == Op::Call
-                    && !direct_eval
-                    && !previous_direct_eval
-                    && !previous_parameter_eval
-                    && !terminal
-                    && p.kind != crate::bytecode::ProgramKind::Wasm
-                    && f + 1 == self.frames.len()
-                    && caller_function != super::ROOT_FUNCTION_ID
-                    && let Some((program_id, id, env)) = self.same_realm_user_target(callee)
-                    && id != super::ROOT_FUNCTION_ID
-                    && program_id == self.active_program
-                    && p.functions.get(id as usize).is_some_and(|function| {
-                        !function.is_async
-                            && !function.is_generator
-                            && !function.is_class_constructor
-                            && !function.derived_constructor
-                            && !function.class_field_initializer
-                            && !function.parameter_eval_arguments_error
-                    })
-                {
-                    // Neither eval mode is set before or by this call, so the frame push leaves
-                    // both untouched.
-                    self.profile.call_target(1, usize::from(window.count));
-                    // Collection happens only at back edges, tail calls and explicit host
-                    // safepoints, none of which can run while a frame is pushed; afterwards the
-                    // new frame itself roots the callee, receiver and arguments.
-                    let arguments: *const [Value] = self.register_window(f, window);
-                    // SAFETY: see `push_general_user_frame`; the window outlives callee setup.
-                    let call_guard = self.push_general_user_frame(
-                        p,
-                        id,
-                        env,
-                        this,
-                        unsafe { &*arguments },
-                        CallContext::user_function(id, callee),
-                    )?;
-                    return Ok(StepResult::PushFrame {
-                        destination: i.result_register(),
-                        call_guard,
-                        construct_this: None,
-                    });
-                }
                 self.direct_eval = direct_eval;
                 self.parameter_eval = parameter_eval;
                 let arguments = spread_arguments
@@ -1001,7 +1145,7 @@ impl<H: Host> Vm<H> {
                         JsError::validation("missing Wasm tail-call program".into())
                     })?;
                     let realm = match self.heap.get(callee) {
-                        Some(Cell::Function { realm, .. }) => *realm,
+                        Some(Cell::Function { object, .. }) => object.realm,
                         _ => self.realm.globals,
                     };
                     let result = self.with_call_roots(
@@ -1073,6 +1217,14 @@ impl<H: Host> Vm<H> {
                     frame.this = Value::UNDEFINED;
                     frame.fixed_this = false;
                     frame.captured = false;
+                }
+                if allow_inline_calls
+                    && !direct_eval
+                    && let Some(result) = self.try_inline_call_apply(p, f, i, *pc)
+                {
+                    self.direct_eval = previous_direct_eval;
+                    self.parameter_eval = previous_parameter_eval;
+                    return result;
                 }
                 let called = if discarded_wasm_frame {
                     self.call_value(p, callee, this, args)
@@ -1203,9 +1355,10 @@ impl<H: Host> Vm<H> {
             }
             Op::Construct => {
                 self.profile.call_source(4);
+                // A construction whose result is returned is pushed too; its caller returns
+                // the constructed value (see `PendingGeneralCall::returns`).
                 if allow_inline_calls
                     && !i.is_super_construct()
-                    && !i.returns_from_frame()
                     && let crate::bytecode::ConstructArguments::Registers(window) =
                         i.construct_arguments()
                 {
@@ -1317,4 +1470,29 @@ impl<H: Host> Vm<H> {
             None => Ok(value),
         }
     }
+}
+
+/// The `++`/`--` step: one, negated for a decrement.
+fn increment_delta(is_decrement: bool) -> f64 {
+    if is_decrement { -1.0 } else { 1.0 }
+}
+
+/// `++`/`--` of a Number operand, staying an integer while the result fits; `None` for any
+/// other operand, whose conversion may run guest code or allocate.
+#[inline(always)]
+pub(super) fn number_increment(input: Value, is_decrement: bool) -> Option<Value> {
+    if let Some(integer) = input.as_int() {
+        let next = if is_decrement {
+            integer.checked_sub(1)
+        } else {
+            integer.checked_add(1)
+        };
+        return Some(next.map_or_else(
+            || Value::number(f64::from(integer) + increment_delta(is_decrement)),
+            Value::integer,
+        ));
+    }
+    input
+        .as_number()
+        .map(|number| Value::number(number + increment_delta(is_decrement)))
 }

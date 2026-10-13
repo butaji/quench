@@ -310,21 +310,88 @@ sockets and emitClose false for all three stream kinds. Full handle-wrap methods
 prototype/brand behavior and complete generic destruction/property ordering
 remain separate work.
 
-## TLS material validation
+## Native TLS configurations
 
-Secure-context CRL and PKCS12 checks use native OpenSSL parsers. CRLs use
-the PEM parser; arrays follow the guest iterator protocol and close on a
-validation error. PKCS12 uses the BIO decoder and native password bytes,
-including zero termination, so malformed input and incorrect passwords come
-from the same parsing operations as Node. PFX arrays capture length, skip
-holes and read each entry immediately before validation. Missing private keys
-and certificates produce the corresponding coded operation errors. Parser
-failures drain the OpenSSL error stack and expose the first reason.
+`SecureContext` owns a real OpenSSL `SSL_CTX` builder. Its VM inner object has a
+weak host identity and explicit Allocated/Initialized phases. Unreachable
+identities release native configurations at job checkpoints. Contexts add no
+referenced event-loop work. Synchronous exit listeners retain access to held
+contexts; native entries and private builtin roots are released after those
+listeners, including error exits. OpenSSL SSL objects retain their own context
+references when transport support is added.
 
-This checkpoint validates material; the existing SecureContext object remains
-a compatibility shell. It does not retain an SSL_CTX, configure trust stores
-or establish TLS socket/handshake support. Provider-dependent unsupported
-archives and the complete secure-context option surface need further work.
+Rust implements protocol selection, version/options validation, configuration
+snapshots and native setters. Checked JavaScript functions/classes forward
+calls and preserve callable construction and method metadata. TLS captures the
+canonical private crypto-binding constructor when its module loads, preserving
+earlier replacements and ignoring later replacements as Node does. Engine
+method availability and repeated getter effects follow the actual inner object.
+Original public
+method/property hooks retain their ordering and exceptions. Native crypto
+string arguments use Node's UTF-8 C-string prefix, including embedded nul
+handling; the existing rooted VM bitwise operation owns integer coercion.
+
+Certificates, keys, CA roots, CRLs and PKCS12 material are retained by the native
+configuration rather than discarded after validation. Bundled public trust
+roots come from the pinned Node product source; their provenance and license
+sit beside the PEM data. CRL arrays use the original iterator and close on
+errors. CA/certificate/PFX arrays capture length and skip holes; key arrays read
+length on each iteration. PKCS12 uses the BIO decoder and password bytes with
+C-string termination. Native certificate outputs use intrinsic typed bytes
+and the original Buffer prototype, independently of public Buffer aliases.
+
+Crypto and TLS share one native engine loader and DEP0183 warning owner.
+The loader uses OpenSSL's structural/functional references and dynamic loading
+fallback. TLS private-key engine ownership follows the SSL_CTX's final native
+reference through typed ex-data. Client engines are retained by SSL_CTX.
+Public engine methods follow the linked library's actual build capability.
+Crypto setters share OpenSSL's decorated errors; engine searches retain Node's
+plain error plus reversed remaining error stack. PKCS12 retains its distinct
+reason-only parser presentation.
+
+Cipher discovery enumerates the linked OpenSSL provider's SSL cipher stack and
+Node's named TLS 1.3 suites. The logical process caches lowercase, deduplicated,
+sorted names, and each call returns a fresh intrinsic array. Public function
+shape and the complete list are compared with the pinned Node oracle.
+
+Certificate hostname authorization shares one Rust matcher. It applies DNS SAN
+precedence, common-name fallback, IP canonicalization, IDNA normalization,
+restricted wildcards, and quoted SAN parsing through the shared JSON parser.
+Original certificate getters precede hostname coercion with the default
+primitive hint. Public string/array methods and net.isIP remain observable;
+errors retain the original certificate identity, reason, and hostname.
+Malformed quoted SANs use the realm's intrinsic SyntaxError. Node comparisons
+cover values, errors, getter order, boxed names, and custom SAN method hooks.
+
+Native TLS client/server streams now use OpenSSL inside the canonical TCP/Unix
+owner. Raw stream ownership moves once into SslStream. The transport preserves
+one write queue, offset, completion list, reference bit, and close lifecycle.
+Original connection callbacks finish before any stream IO. Handshake completion
+waits for authorization before application IO; client verification invokes the
+original hostname callback after native chain verification.
+
+SSL writes retain their retry extent while queued data appends. Readiness returns
+to the event loop; native SSL errors keep their typed payload and shared error
+projection. TLS close_notify becomes readable EOF. Duplex data/end/finish owns
+destruction so coalesced payload and EOF drain before close. HTTP endpoints keep
+their explicit EOF policy. Temporary native SSL error stacks are consumed by
+queued guest callbacks and cleared at cleanup.
+
+Independent Node peers verify encryption in both directions, exact binary data,
+class/protocol state, trusted CA/hostname success, untrusted-chain rejection,
+and hostname-mismatch fields. Peer names, RSA key data, fingerprints, validity,
+and DER come from actual X509 material. API qualification uses its established
+default library-root environment; exporting a configured root exposes an
+existing 300 ms child-startup/signal timing failure in both the prior published
+binary and this source. Those failed observations remain retained. Fixture runs
+continue using the pinned configured library root and unchanged 30 s deadline.
+
+This stream foundation remains incomplete: HTTPS integration, direct TLSSocket
+lifecycle details, original handle query forwarding, handshake timeout policy,
+ALPN/SNI callbacks, sessions/ticket keys/PSK, EC and complete legacy certificate
+metadata/chains, trust CLI/environment/permission policy, and remaining option,
+reflection, error, hostile-method-return and UTF-16 details are open. Focused
+TLS/TCP gains do not establish a new full-suite total or a performance claim.
 
 ## Verification
 
@@ -500,3 +567,11 @@ alias and supports quoted export names. Full reexport/defineProperty detection a
 file-URL dynamic import resolution remain separate work. Module namespace key
 projection belongs to the shared runtime: string names sort by UTF-16 units,
 without ordinary array-index priority; symbols follow the string names.
+
+### Module URL inputs and search paths
+
+The Rust `createRequire` adapter follows the pinned Node URL-like property checks in order (`href`, `protocol`, `auth`, `path`), then ordinary string coercion and the canonical file-URL conversion operation. Recognition getter errors escape unchanged; conversion errors become `ERR_INVALID_ARG_VALUE` for the original input. That error projection uses the captured internal inspector and caps the inspected value at 128 UTF-16 code units. A trailing directory separator adds the Node proxy filename before creating the ordinary CJS require record.
+
+The `_nodeModulePaths` operation calls the existing public path resolver, preserving its receiver, argument, overrides and errors. Ancestor `node_modules` directories have one Rust projection shared with ordinary CJS module records. Thin checked function facades preserve ordinary constructor calls and function metadata while Rust owns their policy. Three Node comparisons cover these inputs, original hooks, constructor calls, error presentation and cwd behavior. URL query metadata, full Module construction/resolution hooks and global lookup paths remain open.
+
+`pathToFileURL` uses the same public POSIX or Win32 resolver as Node, including guest cwd and original resolver hooks, and restores an original trailing separator. Its former fixture-relative remapping is removed. Shared path argument errors derive their received-value description from the existing Node utility.

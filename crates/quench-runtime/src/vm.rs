@@ -308,12 +308,7 @@ impl Frame {
     #[inline(always)]
     fn reset_locals_undefined(&mut self, count: usize) {
         self.locals.clear();
-        self.locals.reserve(count);
-        for slot in &mut self.locals.spare_capacity_mut()[..count] {
-            slot.write(Value::UNDEFINED);
-        }
-        // SAFETY: the loop initialized the first `count` slots, which `reserve` provided.
-        unsafe { self.locals.set_len(count) };
+        self.locals.resize(count, Value::UNDEFINED);
     }
 
     /// `initialize_promoted_registers` for a plain activation, whose locals already start
@@ -324,18 +319,24 @@ impl Frame {
         let (parameters, variables) = function
             .local_registers
             .split_at(usize::from(function.params));
-        for (index, entry) in parameters.iter().enumerate() {
-            debug_assert_eq!(usize::from(entry.local), index);
-            // SAFETY: residual validation bounds each promoted register by the register count
-            // the file was sized to.
+        let supplied = parameters.len().min(args.len());
+        let registers = self.registers.as_mut_ptr();
+        for index in 0..supplied {
+            // SAFETY: `index` is below both lengths; residual validation bounds each promoted
+            // register by the register count the file was sized to.
             unsafe {
-                *self.registers.get_unchecked_mut(usize::from(entry.register)) =
-                    args.get(index).copied().unwrap_or(Value::UNDEFINED);
+                let entry = parameters.get_unchecked(index);
+                debug_assert_eq!(usize::from(entry.local), index);
+                *registers.add(usize::from(entry.register)) = *args.get_unchecked(index);
             }
         }
-        for entry in variables {
+        for entry in parameters[supplied..].iter().chain(variables) {
             // SAFETY: as above.
-            unsafe { *self.registers.get_unchecked_mut(usize::from(entry.register)) = Value::UNDEFINED };
+            unsafe {
+                *self
+                    .registers
+                    .get_unchecked_mut(usize::from(entry.register)) = Value::UNDEFINED
+            };
         }
     }
 
@@ -659,10 +660,14 @@ pub(crate) enum DictionaryTrigger {
     PropertyCount,
     DeletionPattern,
     PrototypeUse,
+    /// A module namespace starts in dictionary mode, so no ordinary object shares its shape
+    /// and a field cache hit, which only records non-dictionary shapes, proves an ordinary
+    /// receiver.
+    ModuleNamespace,
 }
 impl DictionaryTrigger {
     #[cfg(feature = "profile-aggregate")]
-    pub(crate) const COUNT: usize = 3;
+    pub(crate) const COUNT: usize = 4;
 
     #[cfg(feature = "profile-aggregate")]
     pub(crate) const fn index(self) -> usize {
@@ -670,6 +675,7 @@ impl DictionaryTrigger {
             Self::PropertyCount => 0,
             Self::DeletionPattern => 1,
             Self::PrototypeUse => 2,
+            Self::ModuleNamespace => 3,
         }
     }
 }
@@ -895,9 +901,6 @@ pub(crate) struct Vm<H> {
     /// the only source of with objects, so until it runs no environment
     /// carries any.
     with_scope_entered: bool,
-    /// An installed program declares global lexical bindings, which its running root frame
-    /// holds before they reach the realm's map. Cleared only by a reset for a new main program.
-    script_lexicals_seen: bool,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
@@ -942,6 +945,11 @@ pub(crate) struct Vm<H> {
     /// data `prototype` at the paired slot; derived from shapes, so field-cache invalidation
     /// clears it.
     instanceof_constructor_layout: Option<(u32, usize)>,
+    /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
+    /// slot; derived from shapes, so field-cache invalidation clears it.
+    regexp_last_index_layout: Option<(u32, u32)>,
+    /// Derived from shapes, so field-cache invalidation clears it.
+    regexp_builtin_layout: Option<regexp::RegExpBuiltinLayout>,
     /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
     /// non-writable, non-configurable data property, which it then holds for its lifetime;
     /// rooted so the identity stays meaningful. `Value::NULL` when none.
@@ -1448,7 +1456,7 @@ impl<H: Host> Vm<H> {
             + heap.sparse_array_sidecar_bytes
             + vm_metadata_bytes;
         eprintln!(
-            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_free_id_capacity_bytes\":{},\"array_record_reserved_bytes\":{},\"array_record_free_id_capacity_bytes\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
+            "{{\"kind\":\"quench-memory-composition\",\"phase\":\"{phase}\",\"collection\":{},\"cell_kind_names\":{:?},\"cell_counts\":{:?},\"cell_variant_names\":{:?},\"cell_variant_counts\":{:?},\"occupied_slots\":{},\"complete_slot_slabs\":{},\"fully_free_slot_slabs\":{},\"partial_slot_slabs\":{},\"fully_empty_slot_pages\":{fully_empty_slot_pages},\"slot_arena_reserved_bytes\":{},\"object_record_reserved_bytes\":{},\"object_record_reusable_ids\":{},\"object_record_allocation_scan_cursor\":{},\"array_record_reserved_bytes\":{},\"array_record_reusable_ids\":{},\"array_record_allocation_scan_cursor\":{},\"legacy_cell_record_reserved_bytes\":{},\"free_slot_metadata_bytes\":{},\"object_headers\":{},\"embedded_object_headers\":{},\"boxed_object_headers\":{},\"boxed_object_header_bytes\":{},\"object_property_counts_by_width\":{:?},\"inline_property_attribution_bytes_overlapping_slots\":{},\"object_header_size_bytes\":{},\"cell_size_bytes\":{},\"slot_size_bytes\":{},\"property_arena_values_bytes\":{},\"property_arena_metadata_bytes\":{},\"property_arena_used_values\":{},\"property_arena_capacity_values\":{},\"live_property_used_values\":{},\"live_property_capacity_values\":{},\"live_property_used_values_by_width\":{:?},\"live_property_capacity_values_by_width\":{:?},\"dense_array_elements_bytes\":{},\"dense_array_headers_bytes\":{},\"dense_array_backing_count\":{},\"sparse_array_sidecar_bytes\":{},\"string_buffers_bytes\":{},\"string_buffer_count\":{},\"other_cell_payload_bytes\":{},\"cell_payload_total_bytes\":{},\"shape_table_bytes\":{},\"shape_lookup_bytes\":{},\"transition_table_bytes\":{},\"descriptor_side_table_bytes\":{},\"cache_side_table_bytes\":{},\"atom_side_table_bytes\":{},\"frame_bytes\":{},\"profile_instrumentation_bytes\":{},\"accounted_runtime_bytes\":{},\"accounted_with_profile_bytes\":{}}}",
             self.heap.collection_count(),
             CellKind::NAMES,
             heap.cell_counts,
@@ -1460,9 +1468,11 @@ impl<H: Host> Vm<H> {
             partial_slot_slabs,
             heap.slot_arena_reserved_bytes,
             heap.object_record_reserved_bytes,
-            heap.object_record_free_id_capacity_bytes,
+            heap.object_record_reusable_ids,
+            heap.object_record_allocation_scan_cursor,
             heap.array_record_reserved_bytes,
-            heap.array_record_free_id_capacity_bytes,
+            heap.array_record_reusable_ids,
+            heap.array_record_allocation_scan_cursor,
             heap.legacy_cell_record_reserved_bytes,
             heap.free_slot_metadata_bytes,
             heap.object_headers,
@@ -1550,9 +1560,8 @@ impl<H: Host> Vm<H> {
         }
         let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
         let new_target = self.intern_atom(NEW_TARGET_BINDING);
-        let regexp_flag_accessors = std::array::from_fn(|index| {
-            self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0)
-        });
+        let regexp_flag_accessors =
+            std::array::from_fn(|index| self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0));
         self.runtime_atoms = RuntimeAtoms {
             lexical_this,
             new_target,
@@ -1579,10 +1588,10 @@ impl<H: Host> Vm<H> {
         self.descriptors.clear();
         self.function_values.clear();
         self.programs.reset(program.clone());
-        self.script_lexicals_seen = false;
         self.instanceof_constructor_layout = None;
+        self.regexp_last_index_layout = None;
+        self.regexp_builtin_layout = None;
         self.instanceof_has_instance_holder = Value::NULL;
-        self.observe_program_declarations(program);
         self.program_cache_layouts.clear();
         self.program_cache_layouts
             .push(ProgramCacheLayout::default());
@@ -1637,7 +1646,6 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_module_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.intern_program_atoms(&program);
-        self.observe_program_declarations(&program);
         let id = self.programs.insert_module(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
@@ -1646,18 +1654,11 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_dynamic_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.intern_program_atoms(&program);
-        self.observe_program_declarations(&program);
         let id = self.programs.insert(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);
         Some(id)
-    }
-    fn observe_program_declarations(&mut self, program: &ResidualProgram) {
-        self.script_lexicals_seen |= program
-            .functions
-            .first()
-            .is_some_and(|root| !root.global_lexical_atoms.is_empty());
     }
     /// Primes every looping function of an installed `program` to expand on first entry.
     fn prime_loop_decoding(program: &ResidualProgram) {
@@ -1836,7 +1837,7 @@ impl<H: Host> Vm<H> {
                 })?;
                 let active_program = self.replace_active_program(program_id);
                 let realm = match self.heap.get(callee) {
-                    Some(Cell::Function { realm, .. }) => *realm,
+                    Some(Cell::Function { object, .. }) => object.realm,
                     _ => self.realm.globals,
                 };
                 let current_global = std::mem::replace(&mut self.realm.globals, realm);
@@ -1886,9 +1887,9 @@ impl<H: Host> Vm<H> {
             Some(Cell::Function {
                 kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
                 env,
-                realm,
+                object,
                 ..
-            }) => (*program_id, *id, *env, *realm),
+            }) => (*program_id, *id, *env, object.realm),
             _ => return Err(self.type_error(p, "constructor is not a user function".into())),
         };
         let program = self.programs.get(program_id).ok_or_else(|| {

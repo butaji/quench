@@ -90,10 +90,7 @@ fn register_window_in_bounds(base: u16, count: u32, registers: u16) -> bool {
         .is_some_and(|end| end <= u32::from(registers))
 }
 
-fn promoted_local_layout_is_valid(
-    function: &super::Function,
-    atoms: &super::AtomTable,
-) -> bool {
+fn promoted_local_layout_is_valid(function: &super::Function, atoms: &super::AtomTable) -> bool {
     let promoted = &function.local_registers;
     if promoted.is_empty() {
         return true;
@@ -141,13 +138,16 @@ fn promoted_local_layout_is_valid(
             entry.local < function.locals
                 && entry.register == index as u16
                 && entry.register < function.registers
-                && function.local_atoms.get(usize::from(entry.local)).is_some_and(|atom| {
-                    !function.lexical_atoms.contains(atom)
-                        && usize::try_from(*atom).is_ok_and(|atom| atom < atoms.len())
-                        && &atoms[*atom as usize] != "arguments"
-                        && !atoms[*atom as usize].starts_with('\0')
-                        && entry.local != function.self_binding_slot.unwrap_or(u16::MAX)
-                })
+                && function
+                    .local_atoms
+                    .get(usize::from(entry.local))
+                    .is_some_and(|atom| {
+                        !function.lexical_atoms.contains(atom)
+                            && usize::try_from(*atom).is_ok_and(|atom| atom < atoms.len())
+                            && &atoms[*atom as usize] != "arguments"
+                            && !atoms[*atom as usize].starts_with('\0')
+                            && entry.local != function.self_binding_slot.unwrap_or(u16::MAX)
+                    })
                 && function
                     .selective_capture_slots
                     .as_ref()
@@ -657,7 +657,9 @@ impl ResidualProgram {
                 .undefined_register
                 .is_some_and(|register| register >= function.registers)
             {
-                return Err(format!("function {index} undefined register is out of bounds"));
+                return Err(format!(
+                    "function {index} undefined register is out of bounds"
+                ));
             }
             if function.register_root_offset != u32::MAX {
                 let root_end = function
