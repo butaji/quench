@@ -374,3 +374,46 @@ fn f64_memory_updates_match_model_in_both_modes() {
         }
     }
 }
+
+/// Addresses formed by an i32 add wrap modulo 2^32 (a biased index such
+/// as `-4 + 8` reaches byte 4), an index whose static offset carries it
+/// past 2^32 traps, and so does a wrapped sum past the memory: the same in
+/// both execution modes.
+#[test]
+fn wrapping_addresses_match_wasm_semantics_in_both_modes() {
+    const WRAPS: &str = r#"(module
+      (memory 1)
+      (data (i32.const 0) "\00\01\02\03\04\05\06\07\08\09")
+      (func (export "sum") (param $x i32) (param $c i32) (result i32)
+        (i32.load8_u (i32.add (local.get $x) (local.get $c))))
+      (func (export "biased") (param $x i32) (result i32)
+        (i32.load8_u (i32.add (local.get $x) (i32.const 8))))
+      (func (export "offset") (param $x i32) (result i32)
+        (i32.load8_u offset=4 (local.get $x)))
+      (func (export "store") (param $x i32) (result i32)
+        (i32.store8 (i32.add (local.get $x) (i32.const 9)) (i32.const 42))
+        (i32.load8_u (i32.const 5))))"#;
+    use quench_runtime::WasmValue::I32;
+    let engine = crate::Engine::new().compile_wat(WRAPS).unwrap();
+    for mode in [
+        quench_runtime::ExecutionMode::Interpreted,
+        quench_runtime::ExecutionMode::Compiled,
+    ] {
+        let module = engine.lower_shared_module_for(mode).unwrap();
+        let mut runtime = Runtime::new(TestHost);
+        runtime.set_execution_mode(mode);
+        let instance = runtime.instantiate_wasm_module(&module).unwrap();
+        let mut call = |index: u32, args: &[quench_runtime::WasmValue]| {
+            runtime
+                .invoke_wasm(&instance, index, args)
+                .map_err(|error| error.wasm_trap())
+        };
+        assert_eq!(call(0, &[I32(-4), I32(8)]), Ok(Some(I32(4))), "{mode:?}");
+        assert_eq!(call(0, &[I32(-1), I32(-1)]), Err(Some(WasmTrap::OutOfBoundsMemory)), "{mode:?}");
+        assert_eq!(call(1, &[I32(-4)]), Ok(Some(I32(4))), "{mode:?}");
+        assert_eq!(call(1, &[I32(-9)]), Err(Some(WasmTrap::OutOfBoundsMemory)), "{mode:?}");
+        assert_eq!(call(2, &[I32(3)]), Ok(Some(I32(7))), "{mode:?}");
+        assert_eq!(call(2, &[I32(-2)]), Err(Some(WasmTrap::OutOfBoundsMemory)), "{mode:?}");
+        assert_eq!(call(3, &[I32(-4)]), Ok(Some(I32(42))), "{mode:?}");
+    }
+}

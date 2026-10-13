@@ -307,14 +307,17 @@ impl<H: Host> Vm<H> {
             // An unshared memory32 lives in a guarded reservation in both
             // modes: its pages commit as they are first touched, and growth
             // never copies. Compiled code also relies on the guard in place
-            // of bounds checks. The guard covers exactly the bytes past the
-            // memory's length only when every length is a whole number of
-            // host pages.
+            // of bounds checks, and on the memory repeating above 2^32 to
+            // form i32 sums in 64 bits; the interpreter forms no addresses
+            // that way, so its memory stays private anonymous pages. The
+            // guard covers exactly the bytes past the memory's length only
+            // when every length is a whole number of host pages.
+            let wraps = self.execution_mode == super::ExecutionMode::Compiled;
             let guarded = (!memory.ty.shared
                 && !memory.ty.memory64
                 && (memory.ty.page_size() as usize)
                     .is_multiple_of(crate::wasm::memory::HOST_PAGE))
-                .then(|| crate::wasm::memory::LinearBytes::reserved(length))
+                .then(|| crate::wasm::memory::LinearBytes::reserved(length, wraps))
                 .flatten();
             let bytes = match guarded {
                 Some(bytes) => bytes,
