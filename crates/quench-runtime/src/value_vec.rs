@@ -5,9 +5,7 @@ const START_MASK: u32 = 0x3fff_ffff;
 const NON_EXTENSIBLE: u32 = 1 << 30;
 const FROZEN: u32 = 1 << 31;
 const DICTIONARY_STORAGE: u32 = 1 << 31;
-const OUT_OF_LINE_STORAGE: u32 = 1 << 30;
-const AUXILIARY_FLAGS: u32 = DICTIONARY_STORAGE | OUT_OF_LINE_STORAGE;
-const SHAPE_MASK: u32 = !AUXILIARY_FLAGS;
+const SHAPE_MASK: u32 = !DICTIONARY_STORAGE;
 const EMPTY_START: u32 = START_MASK;
 const INLINE_PROPERTY_START: u32 = EMPTY_START - 1;
 const MAX_ARENA_START: usize = INLINE_PROPERTY_START as usize;
@@ -24,7 +22,22 @@ pub(crate) struct ValueVec {
     auxiliary: u32,
 }
 
+/// `ValueVec::start` bits that hold the storage position: an arena offset, a dictionary id,
+/// or one of the empty and inline markers.
+pub(crate) const VALUE_VEC_START_BITS: u32 = START_MASK;
+/// `ValueVec::start` bits that hold the object's integrity level.
+pub(crate) const VALUE_VEC_INTEGRITY_BITS: u32 = NON_EXTENSIBLE | FROZEN;
+
 impl ValueVec {
+    /// The two words, for an owner that stores them apart.
+    pub(crate) const fn into_parts(self) -> (u32, u32) {
+        (self.start, self.auxiliary)
+    }
+
+    pub(crate) const fn from_parts(start: u32, auxiliary: u32) -> Self {
+        Self { start, auxiliary }
+    }
+
     pub(crate) const fn new() -> Self {
         Self {
             start: EMPTY_START,
@@ -55,22 +68,10 @@ impl ValueVec {
 
     pub(crate) fn set_auxiliary(&mut self, value: u32) {
         assert!(value <= SHAPE_MASK, "object shape table exhausted");
-        self.auxiliary = (self.auxiliary & AUXILIARY_FLAGS) | value;
+        self.auxiliary = (self.auxiliary & DICTIONARY_STORAGE) | value;
     }
 
-    pub(crate) fn has_out_of_line_storage(self) -> bool {
-        self.auxiliary & OUT_OF_LINE_STORAGE != 0
-    }
-
-    pub(crate) fn set_out_of_line_storage(&mut self, value: bool) {
-        if value {
-            self.auxiliary |= OUT_OF_LINE_STORAGE;
-        } else {
-            self.auxiliary &= !OUT_OF_LINE_STORAGE;
-        }
-    }
-
-    fn is_dictionary(self) -> bool {
+    pub(crate) fn is_dictionary(self) -> bool {
         self.auxiliary & DICTIONARY_STORAGE != 0
     }
 

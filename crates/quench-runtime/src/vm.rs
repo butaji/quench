@@ -329,13 +329,19 @@ impl Frame {
             // SAFETY: residual validation bounds each promoted register by the register count
             // the file was sized to.
             unsafe {
-                *self.registers.get_unchecked_mut(usize::from(entry.register)) =
+                *self
+                    .registers
+                    .get_unchecked_mut(usize::from(entry.register)) =
                     args.get(index).copied().unwrap_or(Value::UNDEFINED);
             }
         }
         for entry in variables {
             // SAFETY: as above.
-            unsafe { *self.registers.get_unchecked_mut(usize::from(entry.register)) = Value::UNDEFINED };
+            unsafe {
+                *self
+                    .registers
+                    .get_unchecked_mut(usize::from(entry.register)) = Value::UNDEFINED
+            };
         }
     }
 
@@ -895,9 +901,6 @@ pub(crate) struct Vm<H> {
     /// the only source of with objects, so until it runs no environment
     /// carries any.
     with_scope_entered: bool,
-    /// An installed program declares global lexical bindings, which its running root frame
-    /// holds before they reach the realm's map. Cleared only by a reset for a new main program.
-    script_lexicals_seen: bool,
     suspended: Vec<SuspendedEntry>,
     suspended_free: Vec<u32>,
     test262_agent: Test262AgentState,
@@ -942,6 +945,11 @@ pub(crate) struct Vm<H> {
     /// data `prototype` at the paired slot; derived from shapes, so field-cache invalidation
     /// clears it.
     instanceof_constructor_layout: Option<(u32, usize)>,
+    /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
+    /// slot; derived from shapes, so field-cache invalidation clears it.
+    regexp_last_index_layout: Option<(u32, u32)>,
+    /// Derived from shapes, so field-cache invalidation clears it.
+    regexp_builtin_layout: Option<regexp::RegExpBuiltinLayout>,
     /// An object verified to hold the native `Function.prototype[@@hasInstance]` as a
     /// non-writable, non-configurable data property, which it then holds for its lifetime;
     /// rooted so the identity stays meaningful. `Value::NULL` when none.
@@ -1552,9 +1560,8 @@ impl<H: Host> Vm<H> {
         }
         let lexical_this = self.intern_atom(LEXICAL_THIS_BINDING);
         let new_target = self.intern_atom(NEW_TARGET_BINDING);
-        let regexp_flag_accessors = std::array::from_fn(|index| {
-            self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0)
-        });
+        let regexp_flag_accessors =
+            std::array::from_fn(|index| self.intern_atom(regexp::REGEXP_FLAG_ACCESSORS[index].0));
         self.runtime_atoms = RuntimeAtoms {
             lexical_this,
             new_target,
@@ -1581,10 +1588,10 @@ impl<H: Host> Vm<H> {
         self.descriptors.clear();
         self.function_values.clear();
         self.programs.reset(program.clone());
-        self.script_lexicals_seen = false;
         self.instanceof_constructor_layout = None;
+        self.regexp_last_index_layout = None;
+        self.regexp_builtin_layout = None;
         self.instanceof_has_instance_holder = Value::NULL;
-        self.observe_program_declarations(program);
         self.program_cache_layouts.clear();
         self.program_cache_layouts
             .push(ProgramCacheLayout::default());
@@ -1639,7 +1646,6 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_module_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.intern_program_atoms(&program);
-        self.observe_program_declarations(&program);
         let id = self.programs.insert_module(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
@@ -1648,18 +1654,11 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_dynamic_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.intern_program_atoms(&program);
-        self.observe_program_declarations(&program);
         let id = self.programs.insert(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);
         Some(id)
-    }
-    fn observe_program_declarations(&mut self, program: &ResidualProgram) {
-        self.script_lexicals_seen |= program
-            .functions
-            .first()
-            .is_some_and(|root| !root.global_lexical_atoms.is_empty());
     }
     /// Primes every looping function of an installed `program` to expand on first entry.
     fn prime_loop_decoding(program: &ResidualProgram) {
@@ -1838,7 +1837,7 @@ impl<H: Host> Vm<H> {
                 })?;
                 let active_program = self.replace_active_program(program_id);
                 let realm = match self.heap.get(callee) {
-                    Some(Cell::Function { realm, .. }) => *realm,
+                    Some(Cell::Function { object, .. }) => object.realm,
                     _ => self.realm.globals,
                 };
                 let current_global = std::mem::replace(&mut self.realm.globals, realm);
@@ -1888,9 +1887,9 @@ impl<H: Host> Vm<H> {
             Some(Cell::Function {
                 kind: FunctionKind::User(program_id, id) | FunctionKind::NumericUser(program_id, id),
                 env,
-                realm,
+                object,
                 ..
-            }) => (*program_id, *id, *env, *realm),
+            }) => (*program_id, *id, *env, object.realm),
             _ => return Err(self.type_error(p, "constructor is not a user function".into())),
         };
         let program = self.programs.get(program_id).ok_or_else(|| {

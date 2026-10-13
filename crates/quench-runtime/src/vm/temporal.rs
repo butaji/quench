@@ -591,7 +591,7 @@ impl<H: Host> Vm<H> {
             fields: Box::new(fields),
         });
         if let Some(Cell::TemporalDuration { object, .. }) = self.heap.get_mut(value) {
-            object.proto = prototype;
+            object.set_proto(prototype);
         }
         Ok(value)
     }
@@ -637,8 +637,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(self.object_proto)),
-            epoch_nanoseconds: Box::new(relative.epoch_nanoseconds),
-            time_zone: Box::new(relative.time_zone.to_string()),
+            instant: Box::new(crate::heap::ZonedInstant {
+                epoch_nanoseconds: relative.epoch_nanoseconds,
+                time_zone: relative.time_zone.to_string(),
+            }),
             calendar: Box::new(relative.calendar.to_string()),
         });
         let mut fields = [Value::number(0.0); 10];
@@ -682,8 +684,10 @@ impl<H: Host> Vm<H> {
         {
             let receiver = self.heap.alloc(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                epoch_nanoseconds: Box::new(zoned.epoch_nanoseconds),
-                time_zone: Box::new(zoned.time_zone.to_string()),
+                instant: Box::new(crate::heap::ZonedInstant {
+                    epoch_nanoseconds: zoned.epoch_nanoseconds,
+                    time_zone: zoned.time_zone.to_string(),
+                }),
                 calendar: Box::new(zoned.calendar.to_string()),
             });
             let result = self.temporal_zoned_date_time_arithmetic(
@@ -692,13 +696,10 @@ impl<H: Host> Vm<H> {
                 receiver,
                 &[date_duration],
             )?;
-            let Some(Cell::TemporalZonedDateTime {
-                epoch_nanoseconds, ..
-            }) = self.heap.get(result)
-            else {
+            let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(result) else {
                 return Err(self.range_error(p, "Invalid relativeTo".into()));
             };
-            **epoch_nanoseconds
+            instant.epoch_nanoseconds
         } else {
             zoned.epoch_nanoseconds
         };
@@ -892,13 +893,10 @@ impl<H: Host> Vm<H> {
             let (year, month, day, _) = self.temporal_plain_date_slots(p, date)?;
             let zoned = match self.heap.get(value) {
                 Some(Cell::TemporalZonedDateTime {
-                    epoch_nanoseconds,
-                    time_zone,
-                    calendar,
-                    ..
+                    instant, calendar, ..
                 }) => Some(super::temporal_zoned_date_time::ZonedDateTimeRecord {
-                    epoch_nanoseconds: **epoch_nanoseconds,
-                    time_zone: time_zone.to_string(),
+                    epoch_nanoseconds: instant.epoch_nanoseconds,
+                    time_zone: instant.time_zone.to_string(),
                     calendar: calendar.to_string(),
                 }),
                 _ => None,
@@ -1386,8 +1384,10 @@ impl<H: Host> Vm<H> {
             let date_duration = self.temporal_duration_construct(p, &date_fields)?;
             let start = self.heap.alloc(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                epoch_nanoseconds: Box::new(zoned.epoch_nanoseconds),
-                time_zone: Box::new(zoned.time_zone.to_string()),
+                instant: Box::new(crate::heap::ZonedInstant {
+                    epoch_nanoseconds: zoned.epoch_nanoseconds,
+                    time_zone: zoned.time_zone.to_string(),
+                }),
                 calendar: Box::new(zoned.calendar.to_string()),
             });
             let date_endpoint = self.temporal_zoned_date_time_arithmetic(
@@ -1397,16 +1397,13 @@ impl<H: Host> Vm<H> {
                 &[date_duration],
             )?;
             let Some(Cell::TemporalZonedDateTime {
-                epoch_nanoseconds: date_endpoint_epoch,
-                time_zone,
-                calendar,
-                ..
+                instant, calendar, ..
             }) = self.heap.get(date_endpoint)
             else {
                 return Err(self.range_error(p, "Invalid relativeTo".into()));
             };
-            let date_endpoint_epoch = **date_endpoint_epoch;
-            let time_zone = time_zone.to_string();
+            let date_endpoint_epoch = instant.epoch_nanoseconds;
+            let time_zone = instant.time_zone.to_string();
             let calendar = calendar.to_string();
             let actual = self.relative_duration_nanoseconds(p, &relative_date, &fields)?;
             let residual = zoned
@@ -1419,8 +1416,10 @@ impl<H: Host> Vm<H> {
             let next_day_duration = self.temporal_duration_construct(p, &day_fields)?;
             let date_endpoint = self.heap.alloc(Cell::TemporalZonedDateTime {
                 object: Box::new(Self::empty_object(self.object_proto)),
-                epoch_nanoseconds: Box::new(date_endpoint_epoch),
-                time_zone: Box::new(time_zone),
+                instant: Box::new(crate::heap::ZonedInstant {
+                    epoch_nanoseconds: date_endpoint_epoch,
+                    time_zone,
+                }),
                 calendar: Box::new(calendar),
             });
             let next_day = self.temporal_zoned_date_time_arithmetic(
@@ -1429,14 +1428,10 @@ impl<H: Host> Vm<H> {
                 date_endpoint,
                 &[next_day_duration],
             )?;
-            let Some(Cell::TemporalZonedDateTime {
-                epoch_nanoseconds: next_day_epoch,
-                ..
-            }) = self.heap.get(next_day)
-            else {
+            let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(next_day) else {
                 return Err(self.range_error(p, "Invalid relativeTo".into()));
             };
-            let day_length = next_day_epoch.abs_diff(date_endpoint_epoch);
+            let day_length = instant.epoch_nanoseconds.abs_diff(date_endpoint_epoch);
             if day_length != super::temporal_date_arithmetic::NANOS_PER_DAY as u128
                 && residual.unsigned_abs() >= super::temporal_date_arithmetic::NANOS_PER_DAY as u128
             {

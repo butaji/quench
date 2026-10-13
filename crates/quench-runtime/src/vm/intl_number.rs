@@ -1047,8 +1047,10 @@ impl<H: Host> Vm<H> {
             let text = formatted.to_string();
             let parts = vm.number_format_parts_for_text(this, &text)?;
             Ok(vm.heap.alloc(Cell::Array {
-                object: Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
-                elements: Rc::new(parts),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
+                    Rc::new(parts),
+                ),
             }))
         })
     }
@@ -1157,8 +1159,10 @@ impl<H: Host> Vm<H> {
                         parts.extend(vm.number_format_tag_parts(p, second, "endRange")?);
                     }
                     Ok(vm.heap.alloc(Cell::Array {
-                        object: Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
-                        elements: Rc::new(parts),
+                        object: crate::heap::ArrayObject::new(
+                            Self::empty_object(vm.array_prototype_for_realm(vm.realm.globals)),
+                            Rc::new(parts),
+                        ),
                     }))
                 })
             })

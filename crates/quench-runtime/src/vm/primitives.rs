@@ -52,9 +52,9 @@ impl<H: Host> Vm<H> {
             Some(Cell::Function {
                 kind: FunctionKind::User(program, id),
                 env,
-                realm,
+                object,
                 ..
-            }) if *realm == self.realm.globals => Some((*program, *id, *env)),
+            }) if object.realm == self.realm.globals => Some((*program, *id, *env)),
             _ => None,
         }
     }

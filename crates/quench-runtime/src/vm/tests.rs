@@ -68,8 +68,10 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
     let program = Engine::specialize("", "descriptor-owner.js").unwrap();
     let mut vm = Vm::new(SilentHost);
     let owner = vm.heap.alloc(Cell::Array {
-        object: Vm::<SilentHost>::empty_object(Value::NULL),
-        elements: Rc::new(Vec::new()),
+        object: crate::heap::ArrayObject::new(
+            Vm::<SilentHost>::empty_object(Value::NULL),
+            Rc::new(Vec::new()),
+        ),
     });
     let setter = vm.native_with_env(Native::Object, owner);
     let owner_weak = vm.heap.weak_handle(owner).unwrap();
@@ -2287,7 +2289,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 attributes,
             );
             let object = vm.object_data_mut(namespace).unwrap();
-            object.proto = Value::NULL;
+            object.set_proto(Value::NULL);
             object.set_module_namespace();
             object.set_module_bindings(vec![(
                 atom,
@@ -2733,7 +2735,7 @@ fn dynamic_constructor_roots_release_after_prototype_completion() {
                 assert_eq!(vm.active_call_roots.len(), calls);
                 let weak_result = result.ok().map(|result| {
                     assert!(vm.is_function(result));
-                    assert_eq!(vm.object_data(result).unwrap().proto, prototype);
+                    assert_eq!(vm.object_data(result).unwrap().proto(), prototype);
                     vm.heap.weak_handle(result).unwrap()
                 });
                 vm.collect_now(&program);
@@ -3568,7 +3570,7 @@ fn bound_function_proxy_metadata_roots_survive_gc_and_abrupt_completion() {
             match outcome {
                 Ok(function) => {
                     assert_eq!(phase, "accept");
-                    assert!(vm.object_data(function).unwrap().proto.is_null());
+                    assert!(vm.object_data(function).unwrap().proto().is_null());
                     let atom = vm.intern_atom("length");
                     assert_eq!(vm.own_property(function, atom), Some(Value::number(3.0)));
                     let handle = vm.heap.weak_handle(function).unwrap();
@@ -3668,10 +3670,12 @@ fn closure_identity_cache_rejects_reused_function_slots() {
     let mut reused = false;
     for _ in 0..allocation_bound {
         let replacement = vm.heap.alloc(crate::heap::Cell::Function {
-            object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
+            object: Box::new(crate::heap::FunctionObject {
+                object: Vm::<SilentHost>::empty_object(Value::NULL),
+                realm: Value::NULL,
+            }),
             kind: crate::heap::FunctionKind::User(key.0, key.1),
             env: Value::NULL,
-            realm: Value::NULL,
         });
         if replacement == old {
             reused = true;
@@ -4153,10 +4157,10 @@ fn aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm() {
             let reason_weak = vm.heap.weak_handle(reason).unwrap();
             let error = vm.aggregate_error(vec![reason]).unwrap();
             assert!(vm.error_is_error(error));
-            assert_eq!(vm.object_data(error).unwrap().proto, error_prototype);
+            assert_eq!(vm.object_data(error).unwrap().proto(), error_prototype);
             let errors_atom = vm.intern_atom("errors");
             let errors = vm.own_property(error, errors_atom).unwrap();
-            assert_eq!(vm.object_data(errors).unwrap().proto, array_prototype);
+            assert_eq!(vm.object_data(errors).unwrap().proto(), array_prototype);
             let error_weak = vm.heap.weak_handle(error).unwrap();
             let errors_weak = vm.heap.weak_handle(errors).unwrap();
             let root = vm.heap.root(error);
@@ -4277,7 +4281,7 @@ fn promise_constructor_intrinsics_survive_guest_binding_and_prototype_mutation()
         let result = vm
             .promise_then(&program, source, Value::UNDEFINED, Value::UNDEFINED)
             .unwrap();
-        assert_eq!(vm.object_data(result).unwrap().proto, prototype);
+        assert_eq!(vm.object_data(result).unwrap().proto(), prototype);
         assert_eq!(vm.heap.root_count_for_test(), roots);
         let value = vm.object();
         assert!(
@@ -4416,8 +4420,8 @@ fn property_copy_roots_release_after_callback_completion() {
                     .unwrap();
                 let args = vm
                     .heap
-                    .array(operands)
-                    .map(|(_, elements)| elements.as_ref().clone())
+                    .array_elements(operands)
+                    .map(|elements| elements.as_ref().clone())
                     .expect("operands");
                 let handles = args
                     .iter()
@@ -4509,8 +4513,8 @@ fn descriptor_snapshot_and_assign_root_fresh_native_arguments() {
                     .unwrap();
                 let args = vm
                     .heap
-                    .array(operands)
-                    .map(|(_, elements)| elements.as_ref().clone())
+                    .array_elements(operands)
+                    .map(|elements| elements.as_ref().clone())
                     .expect("operands");
                 let source_handle = vm.heap.weak_handle(args[1]).unwrap();
                 let later_handle = vm.heap.weak_handle(args[2]).unwrap();
@@ -4659,8 +4663,8 @@ fn for_in_roots_release_after_prototype_and_key_callbacks() {
                     Ok(result) => {
                         let elements = vm
                             .heap
-                            .array(result)
-                            .map(|(_, elements)| elements.as_ref().clone())
+                            .array_elements(result)
+                            .map(|elements| elements.as_ref().clone())
                             .expect("key snapshot");
                         let names = elements
                             .into_iter()
@@ -4790,8 +4794,8 @@ fn proxy_introspection_roots_release_after_nested_validation() {
                     .unwrap();
                 let args = vm
                     .heap
-                    .array(operands)
-                    .map(|(_, elements)| elements.as_ref().clone())
+                    .array_elements(operands)
+                    .map(|elements| elements.as_ref().clone())
                     .expect("operands");
                 let handles = args
                     .iter()
@@ -4938,8 +4942,8 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                     .unwrap();
                 let args = vm
                     .heap
-                    .array(operands)
-                    .map(|(_, elements)| elements.as_ref().clone())
+                    .array_elements(operands)
+                    .map(|elements| elements.as_ref().clone())
                     .expect("operands");
                 let handles = args
                     .iter()
@@ -5182,7 +5186,7 @@ fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
                                 assert_eq!(vm.own_property(proto, rank), Some(Value::number(42.0)));
                                 if success {
                                     let raw = vm.proxy_target(target);
-                                    assert_eq!(vm.object_data(raw).unwrap().proto, proto);
+                                    assert_eq!(vm.object_data(raw).unwrap().proto(), proto);
                                 }
                             } else if success {
                                 let raw = vm.proxy_target(target);
@@ -5407,8 +5411,8 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                         .unwrap();
                     let (proxy, raw) = vm
                         .heap
-                        .array(values)
-                        .map(|(_, elements)| (elements[0], elements[1]))
+                        .array_elements(values)
+                        .map(|elements| (elements[0], elements[1]))
                         .expect("operands");
                     let key = if symbol {
                         vm.heap.alloc(super::Cell::Symbol(Some("entry".into())))
@@ -5777,8 +5781,8 @@ fn coerced_binary_operands_restore_roots_after_each_completion() {
                         .unwrap();
                     let (left, right) = vm
                         .heap
-                        .array(values)
-                        .map(|(_, elements)| (elements[0], elements[1]))
+                        .array_elements(values)
+                        .map(|elements| (elements[0], elements[1]))
                         .expect("operands");
                     let handles = [left, right].map(|value| vm.heap.weak_handle(value).unwrap());
                     let roots = vm.heap.root_count_for_test();
@@ -5982,8 +5986,8 @@ fn instanceof_roots_fresh_inputs_across_lookup_and_traversal() {
                     .unwrap();
                 let (value, constructor) = vm
                     .heap
-                    .array(values)
-                    .map(|(_, elements)| (elements[0], elements[1]))
+                    .array_elements(values)
+                    .map(|elements| (elements[0], elements[1]))
                     .expect("operands");
                 let handles = [value, constructor].map(|v| vm.heap.weak_handle(v).unwrap());
                 let roots = vm.heap.root_count_for_test();
@@ -6056,8 +6060,8 @@ fn instanceof_roots_detached_prototype_and_restores_cursor_after_throw() {
                     .unwrap();
                 let values = vm
                     .heap
-                    .array(operands)
-                    .map(|(_, elements)| [elements[0], elements[1], elements[2]])
+                    .array_elements(operands)
+                    .map(|elements| [elements[0], elements[1], elements[2]])
                     .expect("operands");
                 let handles = values.map(|value| vm.heap.weak_handle(value).unwrap());
                 let roots = vm.heap.root_count_for_test();
@@ -6271,6 +6275,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     index: 0,
                     done: false,
                     ext: Box::new(crate::heap::IteratorExt {
+                        position_high: 0,
                         next_method: None,
                         helper: None,
                         helper_running: false,
@@ -6397,8 +6402,8 @@ fn array_iterator_advance_roots_owner_and_applies_index_transition() {
                             if native == Native::ArrayEntries {
                                 value = vm
                                     .heap
-                                    .array(value)
-                                    .map(|(_, elements)| {
+                                    .array_elements(value)
+                                    .map(|elements| {
                                         assert_eq!(elements[0].as_number(), Some(0.0));
                                         elements[1]
                                     })
@@ -6618,6 +6623,7 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
                         index: 0,
                         done: false,
                         ext: Box::new(crate::heap::IteratorExt {
+                            position_high: 0,
                             next_method: None,
                             helper: None,
                             helper_running: false,
@@ -6825,6 +6831,7 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                     index: 0,
                     done: false,
                     ext: Box::new(crate::heap::IteratorExt {
+                        position_high: 0,
                         next_method: None,
                         helper: Some(Box::new(
                             crate::heap::IteratorHelper::RegExpStringMatchAll {
@@ -7952,7 +7959,7 @@ fn regexp_construction_roots_protocol_inputs_and_initialization_projections() {
                             assert_eq!(source.units(), &[u16::from(b'a')]);
                             assert_eq!(flags, "i");
                             if construct {
-                                let proto = object.proto;
+                                let proto = object.proto();
                                 let atom = vm.intern_atom("tag");
                                 let tag = vm.own_property(proto, atom).unwrap();
                                 assert_eq!(tag, Value::number(42.0));
@@ -9190,7 +9197,7 @@ fn host_byte_views_preserve_intrinsics_backing_and_gc_edges() {
             let prototype=match vm.heap.get(view) {Some(super::Cell::TypedArray{object,kind,buffer,..})=>{
                 assert_eq!(*kind,TypedArrayKind::Uint8);
                 assert!(matches!(vm.heap.get(*buffer),Some(super::Cell::ArrayBuffer{shared:false,detached:false,resizable:false,immutable:false,..})));
-                object.proto
+                object.proto()
             },_=>panic!("expected Uint8Array")};
             assert_eq!(prototype,vm.typed_array_proto(TypedArrayKind::Uint8));
             vm.collect_now(&program);let view=vm.heap.root_value(root).unwrap();
