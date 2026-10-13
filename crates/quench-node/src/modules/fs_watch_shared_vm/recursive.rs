@@ -274,7 +274,7 @@ pub(crate) fn promise_watch(
         || context.is_array_rooted(options)?
     {
         let error = crate::modules::util_shared_vm::argument_type_error(
-            context, options, "options", "Object",
+            context, options, "options", "object",
         )?;
         return Err(crate::modules::net_options_shared_vm::validator_error(
             context,
@@ -301,9 +301,7 @@ pub(crate) fn promise_watch(
             return context.call_rooted(iterate, watcher, &[]);
         }
     }
-    Err(RootedError::host(
-        "nonrecursive promise watching is not implemented",
-    ))
+    super::promise::create(context, filename, options)
 }
 pub(crate) fn start(
     context: &mut NativeContext<'_, NodeHost>,
