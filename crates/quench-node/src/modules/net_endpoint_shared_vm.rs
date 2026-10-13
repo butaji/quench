@@ -102,24 +102,8 @@ pub(crate) fn normalize(
         }
     }
 
-    if connecting && !explicit_path {
-        let tcp = if explicit_port {
-            true
-        } else if context.string_text(address)?.is_some() {
-            let zero = context.number(0.0);
-            let numeric = context.subtract_rooted(address, zero)?;
-            context
-                .rooted_value(numeric)
-                .and_then(|value| value.as_number())
-                .is_some_and(|number| number >= 0.0)
-        } else {
-            true
-        };
-        if tcp {
-            host = super::net_options_shared_vm::validate_host(context, host)?;
-        }
-    }
     let original_address = address;
+    let mut empty_port = false;
     if !explicit_path {
         if let Some(text) = context.string_text(address)? {
             // Number(string) >= 0 is Node's numeric-string/pipe-name distinction.
@@ -130,12 +114,16 @@ pub(crate) fn normalize(
                 .and_then(|value| value.as_number())
                 .unwrap_or(f64::NAN);
             if explicit_port || value >= 0.0 {
-                if text.trim().is_empty() {
-                    return Err(port_error(context, original_address, connecting)?);
-                }
+                empty_port = text.trim().is_empty();
                 address = numeric;
             }
         }
+    }
+    if connecting && context.string_text(address)?.is_none() {
+        host = super::net_options_shared_vm::validate_host(context, host)?;
+    }
+    if empty_port {
+        return Err(port_error(context, original_address, connecting)?);
     }
     if context.string_text(address)?.is_none() {
         let value = context

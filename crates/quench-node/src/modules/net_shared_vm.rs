@@ -10,6 +10,18 @@ use std::os::unix::net::{UnixListener, UnixStream};
 const FIRST_TRANSPORT_ID: u64 = 1;
 const TCP_READ_CHUNK: usize = 16 * 1024;
 const TCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const CALLABLE_FACADE: &str = quench_js_check::checked_js!(
+    r#"(ip, ipv4, ipv6, getFamily, setFamily, getTimeout, setTimeout) => ({
+  isIP: function isIP(value) { 'use strict'; return ip(value); },
+  isIPv4: function isIPv4(value) { 'use strict'; return ipv4(value); },
+  isIPv6: function isIPv6(value) { 'use strict'; return ipv6(value); },
+  getDefaultAutoSelectFamily: function getDefaultAutoSelectFamily() { 'use strict'; return getFamily(); },
+  setDefaultAutoSelectFamily: function setDefaultAutoSelectFamily(value) { 'use strict'; return setFamily(value); },
+  getDefaultAutoSelectFamilyAttemptTimeout: function getDefaultAutoSelectFamilyAttemptTimeout() { 'use strict'; return getTimeout(); },
+  setDefaultAutoSelectFamilyAttemptTimeout: function setDefaultAutoSelectFamilyAttemptTimeout(value) { 'use strict'; return setTimeout(value); },
+})"#
+);
+
 const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, emitOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation) => {
   const listeners = (socket) => socket._listeners;
   class Socket extends Duplex {
@@ -138,7 +150,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
         });
         return this;
       }
-      connectOperation(this, port, host);
+      connectOperation(this, port, host, options);
       return this;
     }
   }
@@ -473,8 +485,12 @@ enum ConnectFailure {
 
 // The reference bit transfers with the socket between disjoint lifecycle maps.
 struct ConnectingSocket {
-    completion: Receiver<Result<SocketStream, ConnectFailure>>,
+    completion: ConnectCompletion,
     referenced: bool,
+}
+enum ConnectCompletion {
+    ExternalLookup,
+    NativeRequest(Receiver<Result<SocketStream, ConnectFailure>>),
 }
 struct ClosingSocket {
     referenced: bool,
@@ -655,11 +671,70 @@ pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Res
     transport.connecting.insert(
         id,
         ConnectingSocket {
-            completion: receiver,
+            completion: ConnectCompletion::NativeRequest(receiver),
             referenced: true,
         },
     );
     Ok(id)
+}
+
+pub(super) fn reserve_lookup(transport: &mut Transport) -> Result<u64, String> {
+    let id = transport.id()?;
+    transport.connecting.insert(
+        id,
+        ConnectingSocket {
+            completion: ConnectCompletion::ExternalLookup,
+            referenced: true,
+        },
+    );
+    Ok(id)
+}
+
+pub(super) fn is_looking_up(transport: &Transport, id: u64) -> bool {
+    transport
+        .connecting
+        .get(&id)
+        .is_some_and(|socket| matches!(socket.completion, ConnectCompletion::ExternalLookup))
+}
+
+pub(super) fn connect_resolved(
+    transport: &mut Transport,
+    id: u64,
+    addresses: Vec<String>,
+    port: u16,
+) -> Result<(), String> {
+    if !is_looking_up(transport, id) {
+        return Ok(());
+    }
+    let (sender, receiver) = mpsc::channel();
+    std::thread::Builder::new()
+        .name(format!("quench-node-tcp-{id}"))
+        .spawn(move || {
+            let mut result = Err("resolved socket has no destinations".to_owned());
+            for address in addresses {
+                result = connect_with_timeout(&address, port);
+                if result.is_ok() {
+                    break;
+                }
+            }
+            let result = result
+                .map(SocketStream::Tcp)
+                .and_then(|stream| {
+                    stream
+                        .set_nonblocking(true)
+                        .map(|()| stream)
+                        .map_err(|error| error.to_string())
+                })
+                .map_err(ConnectFailure::Tcp);
+            let _ = sender.send(result);
+        })
+        .map_err(|error| format!("cannot start TCP connect: {error}"))?;
+    transport
+        .connecting
+        .get_mut(&id)
+        .expect("checked lookup owner")
+        .completion = ConnectCompletion::NativeRequest(receiver);
+    Ok(())
 }
 
 pub(crate) fn address(transport: &Transport, listener: u64) -> Option<SocketAddr> {
@@ -759,7 +834,10 @@ pub(crate) fn has_work(transport: &Transport) -> bool {
         || transport.sockets.values().any(|socket| socket.referenced
             || socket.write_offset < socket.pending_write.len() || !socket.completions.is_empty())
         || !transport.closing_sockets.is_empty()
-        || !transport.connecting.is_empty()
+        || transport
+            .connecting
+            .values()
+            .any(|socket| matches!(socket.completion, ConnectCompletion::NativeRequest(_)))
 }
 
 pub(crate) fn cleanup(transport: &mut Transport) {
@@ -780,7 +858,10 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
         let Some(connection) = transport.connecting.get(&id) else {
             continue;
         };
-        let result = match connection.completion.try_recv() {
+        let ConnectCompletion::NativeRequest(receiver) = &connection.completion else {
+            continue;
+        };
+        let result = match receiver.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => {
                 continue;
@@ -1015,6 +1096,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         }
     }
     for (name, operation) in [
+        ("getDefaultAutoSelectFamily", "netGetAutoSelectFamily"),
+        ("setDefaultAutoSelectFamily", "netSetAutoSelectFamily"),
         (
             "getDefaultAutoSelectFamilyAttemptTimeout",
             "netGetAutoSelectFamilyAttemptTimeout",
@@ -1029,6 +1112,30 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         if !context.set_property_rooted(module, key, function, module)? {
             return Err(RootedError::host("cannot install shared net binding"));
         }
+    }
+    // Ordinary function facades preserve Node's public constructibility and metadata.
+    let callable_names = [
+        "isIP",
+        "isIPv4",
+        "isIPv6",
+        "getDefaultAutoSelectFamily",
+        "setDefaultAutoSelectFamily",
+        "getDefaultAutoSelectFamilyAttemptTimeout",
+        "setDefaultAutoSelectFamilyAttemptTimeout",
+    ];
+    let mut callables = Vec::new();
+    for name in callable_names {
+        let key = context.string_rooted(name);
+        callables.push(context.get_property_rooted(module, key)?);
+    }
+    let facade_factory =
+        context.evaluate_script_rooted(CALLABLE_FACADE, "node:net/callable-facade.js")?;
+    let undefined = context.undefined();
+    let facade = context.call_rooted(facade_factory, undefined, &callables)?;
+    for name in callable_names {
+        let key = context.string_rooted(name);
+        let function = context.get_property_rooted(facade, key)?;
+        context.set_property_rooted(module, key, function, module)?;
     }
     let connect = context.host_function(crate::host::shared_vm::operation("netConnect"))?;
     let write = context.host_function(crate::host::shared_vm::operation("netSocketWrite"))?;
@@ -1114,16 +1221,20 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
 
 pub(crate) fn is_ip(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
+    receiver: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let input = args.first().copied().and_then(|root| context.to_string(root).ok());
-    let family = input.as_deref().and_then(parse_ip);
-    Ok(context.number(match family {
-        Some(IpAddr::V4(_)) => 4.0,
-        Some(IpAddr::V6(_)) => 6.0,
-        None => 0.0,
-    }))
+    let ipv4 = is_ipv4(context, receiver, args)?;
+    if context.truthy_rooted(ipv4)? {
+        return Ok(context.number(f64::from(super::net_config::IPV4_FAMILY)));
+    }
+    let ipv6 = is_ipv6(context, receiver, args)?;
+    let family = if context.truthy_rooted(ipv6)? {
+        super::net_config::IPV6_FAMILY
+    } else {
+        super::net_config::ANY_FAMILY
+    };
+    Ok(context.number(f64::from(family)))
 }
 
 pub(crate) fn is_ipv4(
@@ -1131,9 +1242,9 @@ pub(crate) fn is_ipv4(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let input = args.first().copied().and_then(|root| context.to_string(root).ok());
-    let is_ipv4 = input.is_some_and(|input| input.parse::<Ipv4Addr>().is_ok());
-    Ok(context.boolean(is_ipv4))
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
+    let input = context.to_string(input)?;
+    Ok(context.boolean(input.parse::<Ipv4Addr>().is_ok()))
 }
 
 pub(crate) fn is_ipv6(
@@ -1141,9 +1252,10 @@ pub(crate) fn is_ipv6(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let input = args.first().copied().and_then(|root| context.to_string(root).ok());
-    let is_ipv6 = input.as_deref().and_then(parse_ip).is_some_and(|ip| ip.is_ipv6());
-    Ok(context.boolean(is_ipv6))
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
+    let input = context.to_string(input)?;
+    let ipv6 = parse_ip(&input).is_some_and(|ip| ip.is_ipv6());
+    Ok(context.boolean(ipv6))
 }
 
 pub(super) fn parse_ip(input: &str) -> Option<IpAddr> {
@@ -1154,7 +1266,7 @@ pub(super) fn parse_ip(input: &str) -> Option<IpAddr> {
     if zone.is_empty()
         || !zone
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b':' | b'-'))
     {
         return None;
     }
@@ -1194,6 +1306,12 @@ pub(crate) fn connect_operation(
         Some(host) => context.string_text(host)?.unwrap_or_else(|| "localhost".to_owned()),
         None => "localhost".to_owned(),
     };
+    if parse_ip(&host).is_none() {
+        let host_root = context.string_rooted(&host);
+        let port_root = context.number(f64::from(port));
+        let options = args.get(3).copied().unwrap_or_else(|| context.undefined());
+        return super::net_lookup_shared_vm::start(context, socket, host_root, port_root, options);
+    }
     let shared = context.host_mut().shared_state();
     let id = crate::modules::net_shared_vm::connect(&mut shared.borrow_mut().tcp, host, port)
         .map_err(RootedError::host)?;
@@ -1614,7 +1732,7 @@ fn connect_local(
     transport.connecting.insert(
         id,
         ConnectingSocket {
-            completion: receiver,
+            completion: ConnectCompletion::NativeRequest(receiver),
             referenced: true,
         },
     );
@@ -1628,7 +1746,7 @@ fn listener_path(transport: &Transport, id: u64) -> Option<&str> {
     }
 }
 
-fn register_socket(
+pub(super) fn register_socket(
     context: &mut NativeContext<'_, NodeHost>,
     socket: RootId,
     id: u64,
