@@ -1163,6 +1163,30 @@ impl<H: Host> Vm<H> {
                     self.write(frame, ins.result_register(), value);
                     continue;
                 }
+                // Number increments and conversions of Numbers run no guest code, allocate
+                // nothing and cannot throw.
+                Op::IncDec
+                    if let Some(value) = super::dispatch::number_increment(
+                        self.read(frame, ins.register_b()),
+                        ins.boolean_flag().expect("validated boolean immediate"),
+                    ) =>
+                {
+                    self.write(frame, ins.result_register(), value);
+                    continue;
+                }
+                Op::ToNumeric if self.read(frame, ins.register_b()).as_number().is_some() => {
+                    self.write(
+                        frame,
+                        ins.result_register(),
+                        self.read(frame, ins.register_b()),
+                    );
+                    continue;
+                }
+                // A back edge collects only once the allocation threshold is reached.
+                Op::Jump if !self.heap.should_collect() => {
+                    pc = ins.jump_target() as usize;
+                    continue;
+                }
                 _ => {}
             }
             // GC inside a getter or native operation needs this instruction's root map.

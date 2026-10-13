@@ -49,7 +49,7 @@ impl FunctionCompiler<'_, '_> {
             Expression::ComputedMemberExpression(value) => self.computed_member(value),
             Expression::ChainExpression(value) => self.chain_expression(&value.expression),
             Expression::AssignmentExpression(value) => self.assignment(value),
-            Expression::UpdateExpression(value) => self.update(value),
+            Expression::UpdateExpression(value) => self.update(value, true),
             Expression::BinaryExpression(value) => self.binary(value),
             Expression::PrivateInExpression(value) => {
                 let atom = self.owner.private_name_atom(value.left.span);
@@ -615,15 +615,30 @@ impl FunctionCompiler<'_, '_> {
         };
         self.emit(op, value, 0, site, atom);
     }
-    pub(super) fn update(&mut self, value: &UpdateExpression<'_>) -> Register {
+    /// Compiles an expression whose value is discarded. A postfix update then needs no
+    /// separate ToNumeric of the old value: `IncDec` performs the conversion itself.
+    pub(super) fn effect_expression(&mut self, expression: &Expression<'_>) -> Register {
+        match expression {
+            Expression::UpdateExpression(value) => self.update(value, false),
+            _ => self.expression(expression),
+        }
+    }
+
+    pub(super) fn update(&mut self, value: &UpdateExpression<'_>, result_used: bool) -> Register {
         let reference = self.prepare_assignment_reference(&value.argument);
         if let AssignmentReference::Abrupt(result) = reference {
             return result;
         }
         let reference = self.canonicalize_assignment_reference(reference, true);
         let old = self.load_assignment_reference(reference);
-        let numeric_old = self.reg();
-        self.emit(Op::ToNumeric, numeric_old, old, 0, 0);
+        // A postfix update whose value is used yields the old value after ToNumeric.
+        let numeric_old = if value.prefix || !result_used {
+            old
+        } else {
+            let numeric_old = self.reg();
+            self.emit(Op::ToNumeric, numeric_old, old, 0, 0);
+            numeric_old
+        };
         let next = self.reg();
         self.emit(
             Op::IncDec,
@@ -633,7 +648,11 @@ impl FunctionCompiler<'_, '_> {
             u32::from(value.operator as u8),
         );
         self.store_assignment_reference(reference, next);
-        if value.prefix { next } else { numeric_old }
+        if value.prefix || !result_used {
+            next
+        } else {
+            numeric_old
+        }
     }
 
     pub(super) fn binary(&mut self, value: &BinaryExpression<'_>) -> Register {
