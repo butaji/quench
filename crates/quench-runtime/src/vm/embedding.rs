@@ -355,8 +355,8 @@ impl<H: Host> Vm<H> {
                 brand: B::DataView,
                 bytes: self.embedding_view_bytes(value).unwrap_or_default(),
             },
-            Some(Cell::Map { entries, .. }) => D::Map(entries.clone()),
-            Some(Cell::Set { entries, .. }) => D::Set(entries.clone()),
+            Some(Cell::Map { entries, .. }) => D::Map(entries.to_vec()),
+            Some(Cell::Set { entries, .. }) => D::Set(entries.to_vec()),
             Some(Cell::RegExp { .. }) => D::RegExp,
             Some(Cell::WeakMap { .. } | Cell::WeakSet { .. }) => D::Opaque,
             Some(Cell::Error(_)) => D::Error,
@@ -812,8 +812,10 @@ impl<H: Host> Vm<H> {
         self.embedding_program()?;
         let elements = self.embedding_arguments(values)?;
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(elements),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(elements),
+            ),
         }))
     }
 

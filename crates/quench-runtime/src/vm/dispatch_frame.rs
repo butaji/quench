@@ -26,6 +26,10 @@ pub(super) struct PendingGeneralCall {
     pub(super) destination: Register,
     /// Set for an in-loop `new`; see `StepResult::PushFrame`.
     pub(super) construct_this: Option<Value>,
+    /// The call falls into a return of its result: the caller completes with the callee's
+    /// value instead of storing it. Sloppy callers keep their frame (it stays visible to
+    /// legacy `caller` reflection), so this chains returns rather than replacing frames.
+    pub(super) returns: bool,
     /// `None` only for a lane activation materialized past the guest-call budget, which
     /// `WASM_ACTIVATION_LIMIT` bounds instead.
     pub(super) call_guard: Option<crate::stack::GuestCallGuard>,
@@ -634,8 +638,10 @@ impl<H: Host> Vm<H> {
     #[inline(never)]
     fn rest_parameter_array(&mut self, rest: &[Value]) -> Value {
         self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-            elements: Rc::new(rest.to_vec()),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                Rc::new(rest.to_vec()),
+            ),
         })
     }
 
@@ -650,8 +656,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let mapped = function.arguments_are_mapped();
         let arguments = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.object_proto),
-            elements: Rc::new(args.to_vec()),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.object_proto),
+                Rc::new(args.to_vec()),
+            ),
         });
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
         if mapped {
@@ -684,7 +692,9 @@ impl<H: Host> Vm<H> {
         };
         frame.reflected_parameters = reflected as u16;
         if reflected < args.len() {
-            frame.original_arguments.extend_from_slice(&args[reflected..]);
+            frame
+                .original_arguments
+                .extend_from_slice(&args[reflected..]);
         }
     }
 
@@ -832,7 +842,7 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.object_data(arguments) else {
             return;
         };
-        let proto = object.proto;
+        let proto = object.proto();
         let Some(iterator_method) = self.heap.property_get(object, iterator_slot) else {
             return;
         };
@@ -1062,13 +1072,8 @@ impl<H: Host> Vm<H> {
         let previous_global = self.realm.globals;
         // A nested loop leaves the caller's register file active again.
         let caller_registers = self.active_registers;
-        let outcome = self.run_general_loop::<STOPS>(
-            p,
-            frame,
-            stop_pc,
-            initial_error,
-            allow_inline_calls,
-        );
+        let outcome =
+            self.run_general_loop::<STOPS>(p, frame, stop_pc, initial_error, allow_inline_calls);
         self.active_registers = caller_registers;
         self.set_active_program(previous_program);
         self.realm.globals = previous_global;
@@ -1201,7 +1206,11 @@ impl<H: Host> Vm<H> {
                     continue;
                 }
                 Op::Move => {
-                    self.write(frame, ins.result_register(), self.read(frame, ins.register_b()));
+                    self.write(
+                        frame,
+                        ins.result_register(),
+                        self.read(frame, ins.register_b()),
+                    );
                     continue;
                 }
                 Op::LoadConst => {
@@ -1235,27 +1244,167 @@ impl<H: Host> Vm<H> {
                     if let (Some(left), Some(right)) = (
                         self.inert_operand(frame, ins.operand_b()),
                         self.inert_operand(frame, ins.operand_c()),
-                    ) && let Some(truthy) = self.number_comparison_truthy(operator, left, right)
+                    ) && let Some(truthy) = self
+                        .number_comparison_truthy(operator, left, right)
+                        .or_else(|| self.identity_equality(operator, left, right))
+                        .or_else(|| self.instanceof_truthy(operator, left, right))
                     {
-                        self.profile
-                            .binary(operator as usize, ins.operand_b().0, ins.operand_c().0);
+                        self.profile.binary(
+                            operator as usize,
+                            ins.operand_b().0,
+                            ins.operand_c().0,
+                        );
                         if !truthy {
                             pc = ins.jump_target() as usize;
                         }
                         continue;
                     }
                 }
-                // A field cache hit reads a data slot: it neither allocates nor throws.
+                // A cached own-data store writes a slot in place: it neither allocates nor throws.
+                Op::SetField | Op::SetFieldStrict => {
+                    if self.cached_field_write_hit(
+                        p,
+                        self.read(frame, ins.register_b()),
+                        ins.atom_index(),
+                        self.read(frame, ins.register_a()),
+                        ins.cache_site_index(),
+                    ) {
+                        continue;
+                    }
+                }
+                // `this.x = v` with an authoritative `this` is the same cached write.
+                Op::SetThisField | Op::SetThisFieldStrict if self.frames[frame].fixed_this => {
+                    if self.cached_field_write_hit(
+                        p,
+                        self.frames[frame].this,
+                        ins.atom_index(),
+                        self.read(frame, ins.register_a()),
+                        ins.cache_site_index(),
+                    ) {
+                        continue;
+                    }
+                }
+                // Number arithmetic on register or constant operands runs no guest code,
+                // allocates nothing and cannot throw.
+                Op::Binary | Op::NumericAdd | Op::NumericMultiply
+                    if !ins.returns_from_frame()
+                        && let (Some(left), Some(right)) = (
+                            self.inert_operand(frame, ins.operand_b()),
+                            self.inert_operand(frame, ins.operand_c()),
+                        )
+                        && let Some(value) =
+                            self.number_binary(ins.binary_operator(), left, right) =>
+                {
+                    self.profile.binary(
+                        ins.binary_operator() as usize,
+                        ins.operand_b().0,
+                        ins.operand_c().0,
+                    );
+                    if let Some(local) = ins.numeric_local_target() {
+                        self.frames[frame].locals[usize::from(local)] = value;
+                        self.profile.virtual_opcode(
+                            self.frames[frame].program.raw(),
+                            Op::StoreLocalPlain as usize,
+                        );
+                    } else {
+                        self.write(frame, ins.result_register(), value);
+                    }
+                    continue;
+                }
+                // Equality decided without conversion, and instanceof reduced to a prototype
+                // walk, run no guest code either.
+                Op::Binary
+                    if !ins.returns_from_frame()
+                        && ins.numeric_local_target().is_none()
+                        && let (Some(left), Some(right)) = (
+                            self.inert_operand(frame, ins.operand_b()),
+                            self.inert_operand(frame, ins.operand_c()),
+                        )
+                        && let Some(equal) = self
+                            .identity_equality(ins.binary_operator(), left, right)
+                            .or_else(|| {
+                                self.instanceof_truthy(ins.binary_operator(), left, right)
+                            }) =>
+                {
+                    self.write(
+                        frame,
+                        ins.result_register(),
+                        if equal { Value::TRUE } else { Value::FALSE },
+                    );
+                    continue;
+                }
+                // A field cache hit reads a data slot, and an array's length is an own data
+                // property: neither allocates nor throws. Anything else takes the general path.
                 Op::GetField
                     if ins.result_flags() == 0
                         && let Some(crate::bytecode::FieldLookup::Atom {
-                            base, cache_site, ..
+                            atom,
+                            base,
+                            cache_site,
                         }) = ins.field_lookup()
-                        && let Some(register) = base.register_index()
-                        && let super::object::FieldCacheProbe::Hit(value) =
-                            self.cached_field_hit(p, self.read(frame, register), cache_site) =>
+                        && let Some(register) = base.register_index() =>
+                {
+                    let object = self.read(frame, register);
+                    let value = match self.cached_field_hit(p, object, cache_site) {
+                        super::object::FieldCacheProbe::Hit(value) => Some(value),
+                        super::object::FieldCacheProbe::Ineligible => {
+                            self.array_length_field(object, atom)
+                        }
+                        super::object::FieldCacheProbe::OrdinaryMiss => None,
+                    };
+                    if let Some(value) = value {
+                        self.write(frame, ins.result_register(), value);
+                        continue;
+                    }
+                }
+                // A present dense array element is a data property (accessor indices are
+                // stored as holes): reading it, or replacing it in an array without indexed
+                // descriptors or frozen state, runs no guest code and cannot throw.
+                Op::GetIndex
+                    if let (Some(base), Some(key)) = (
+                        self.inert_operand(frame, ins.operand_b()),
+                        self.inert_operand(frame, ins.operand_c()),
+                    ) && let Some(value) = self.dense_array_element(base, key) =>
                 {
                     self.write(frame, ins.result_register(), value);
+                    continue;
+                }
+                Op::SetIndex => {
+                    let (object, key) = (
+                        self.read(frame, ins.register_b()),
+                        self.read(frame, ins.register_c()),
+                    );
+                    if let Some(index) = self.replaceable_dense_index(object, key) {
+                        self.replace_dense_element(
+                            object,
+                            index,
+                            self.read(frame, ins.register_a()),
+                        );
+                        continue;
+                    }
+                }
+                // Number increments and conversions of Numbers run no guest code, allocate
+                // nothing and cannot throw.
+                Op::IncDec
+                    if let Some(value) = super::dispatch::number_increment(
+                        self.read(frame, ins.register_b()),
+                        ins.boolean_flag().expect("validated boolean immediate"),
+                    ) =>
+                {
+                    self.write(frame, ins.result_register(), value);
+                    continue;
+                }
+                Op::ToNumeric if self.read(frame, ins.register_b()).as_number().is_some() => {
+                    self.write(
+                        frame,
+                        ins.result_register(),
+                        self.read(frame, ins.register_b()),
+                    );
+                    continue;
+                }
+                // A back edge collects only once the allocation threshold is reached.
+                Op::Jump if !self.heap.should_collect() => {
+                    pc = ins.jump_target() as usize;
                     continue;
                 }
                 _ => {}
@@ -1265,8 +1414,20 @@ impl<H: Host> Vm<H> {
             // for every iteration that dispatches it.
             debug_assert!(std::ptr::eq(published_pc, &self.frames[frame].pc));
             unsafe { *published_pc = instruction_pc };
-            match self.step(p, frame, ins, &mut pc, allow_inline_calls) {
-                Ok(StepResult::Return(value)) => {
+            // Returns and inline calls produce their step result here rather than through the
+            // general `step` dispatch.
+            let step = match ins.op() {
+                Op::Return => Ok(StepResult::Return(self.read(frame, ins.register_a()))),
+                Op::Call if allow_inline_calls => {
+                    match self.try_inline_user_call(p, frame, ins, pc) {
+                        Some(result) => result,
+                        None => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+                    }
+                }
+                _ => self.step(p, frame, ins, &mut pc, allow_inline_calls),
+            };
+            match step {
+                Ok(StepResult::Return(mut value)) => loop {
                     if let Some(pending) = pending_calls.pop() {
                         debug_assert_eq!(frame, pending.caller + 1);
                         let completed_frame = self.frames.pop().unwrap();
@@ -1279,22 +1440,25 @@ impl<H: Host> Vm<H> {
                         self.active_registers = self.frames[frame].registers.as_mut_ptr();
                         // [[Construct]] of an ordinary constructor yields its returned object,
                         // otherwise the receiver it allocated.
-                        let value = match pending.construct_this {
+                        value = match pending.construct_this {
                             Some(this) if !self.is_object_like(value) => this,
                             _ => value,
                         };
-                        self.write(frame, pending.destination, value);
                         pc = self.frames[frame].pc;
                         cursor = pending.caller_cursor.unwrap_or_else(|| {
                             self.general_cursor(executing_program, p, self.frames[frame].function, fast_lane)
                         });
                         published_pc = &mut self.frames[frame].pc;
                         drop(pending.call_guard);
-                    } else {
-                        self.frames[frame].pc = pc;
-                        return Ok(FrameOutcome::Complete(value));
+                        if pending.returns {
+                            continue;
+                        }
+                        self.write(frame, pending.destination, value);
+                        break;
                     }
-                }
+                    self.frames[frame].pc = pc;
+                    return Ok(FrameOutcome::Complete(value));
+                },
                 Ok(StepResult::Continue) => {}
                 Ok(StepResult::PushFrame {
                     destination,
@@ -1307,6 +1471,7 @@ impl<H: Host> Vm<H> {
                         call_pc: instruction_pc as u32,
                         destination,
                         construct_this,
+                        returns: ins.returns_from_frame(),
                         call_guard: Some(call_guard),
                     });
                     frame += 1;
@@ -1366,13 +1531,8 @@ impl<H: Host> Vm<H> {
                     let mut error = error;
                     loop {
                         let function = self.frames[frame].function as usize;
-                        match self.exception_handler_target(
-                            p,
-                            frame,
-                            function,
-                            throwing_pc,
-                            error,
-                        ) {
+                        match self.exception_handler_target(p, frame, function, throwing_pc, error)
+                        {
                             Ok(target) => {
                                 pc = target;
                                 break;
@@ -1391,7 +1551,8 @@ impl<H: Host> Vm<H> {
                                         self.general_cursor(executing_program, p, self.frames[frame].function, fast_lane)
                                     });
                                     published_pc = &mut self.frames[frame].pc;
-                                    self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                                    self.active_registers =
+                                        self.frames[frame].registers.as_mut_ptr();
                                     throwing_pc = pending.call_pc;
                                     drop(pending.call_guard);
                                     error = match result {
@@ -1484,10 +1645,12 @@ impl<H: Host> Vm<H> {
         f: usize,
         window: crate::bytecode::RegisterWindow,
     ) -> &[Value] {
-        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(std::ptr::eq(
+            self.active_registers,
+            self.frames[f].registers.as_ptr()
+        ));
         debug_assert!(
-            usize::from(window.base) + usize::from(window.count)
-                <= self.frames[f].registers.len()
+            usize::from(window.base) + usize::from(window.count) <= self.frames[f].registers.len()
         );
         // SAFETY: as for `read`: the window lies in frame `f`'s register file, which
         // `active_registers` names.
@@ -1516,7 +1679,10 @@ impl<H: Host> Vm<H> {
 
     #[inline(always)]
     pub(super) fn read(&self, f: usize, r: u16) -> Value {
-        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(std::ptr::eq(
+            self.active_registers,
+            self.frames[f].registers.as_ptr()
+        ));
         debug_assert!(usize::from(r) < self.frames[f].registers.len());
         // SAFETY: register access happens only while dispatching frame `f`, whose register file
         // `active_registers` names (see `run_general_loop`); compiler-issued registers are below
@@ -1526,7 +1692,10 @@ impl<H: Host> Vm<H> {
 
     #[inline(always)]
     pub(super) fn write(&mut self, f: usize, r: u16, v: Value) {
-        debug_assert!(std::ptr::eq(self.active_registers, self.frames[f].registers.as_ptr()));
+        debug_assert!(std::ptr::eq(
+            self.active_registers,
+            self.frames[f].registers.as_ptr()
+        ));
         debug_assert!(usize::from(r) < self.frames[f].registers.len());
         // SAFETY: same active-frame invariant as `read`; mutation stays here.
         unsafe { *self.active_registers.add(usize::from(r)) = v };

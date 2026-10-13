@@ -1613,6 +1613,53 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `==`, `!=`, `===` or `!==` of non-number operands when no conversion can decide it:
+    /// equal bits are the same value; distinct strict operands differ unless both carry
+    /// contents (strings, BigInts); a loose null or undefined equals only null, undefined and
+    /// [[IsHTMLDDA]] objects; two distinct objects are loosely unequal. `None` leaves numbers
+    /// and every comparison that may coerce to the full algorithm.
+    #[inline(always)]
+    pub(super) fn identity_equality(&self, op: u32, left: Value, right: Value) -> Option<bool> {
+        const EQUALITY: u32 = BinaryOperator::Equality as u32;
+        const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
+        const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
+        const STRICT_INEQUALITY: u32 = BinaryOperator::StrictInequality as u32;
+        let (strict, negated) = match op {
+            EQUALITY => (false, false),
+            INEQUALITY => (false, true),
+            STRICT_EQUALITY => (true, false),
+            STRICT_INEQUALITY => (true, true),
+            _ => return None,
+        };
+        if left.as_number().is_some() || right.as_number().is_some() {
+            return None;
+        }
+        let equal = if left == right {
+            true
+        } else if strict {
+            let has_contents = |value: Value| {
+                matches!(
+                    self.heap.get(value),
+                    Some(Cell::String(_) | Cell::BigInt(_))
+                )
+            };
+            if has_contents(left) && has_contents(right) {
+                return None;
+            }
+            false
+        } else {
+            let nullish = |value: Value| value.is_null() || value.is_undefined();
+            match (nullish(left), nullish(right)) {
+                (true, true) => true,
+                (true, false) => self.is_html_dda(right),
+                (false, true) => self.is_html_dda(left),
+                (false, false) if self.is_object_like(left) && self.is_object_like(right) => false,
+                (false, false) => return None,
+            }
+        };
+        Some(equal != negated)
+    }
+
     pub(super) fn numeric(
         &mut self,
         p: &ResidualProgram,

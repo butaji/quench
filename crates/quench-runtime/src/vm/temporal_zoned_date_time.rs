@@ -363,8 +363,10 @@ impl<H: Host> Vm<H> {
         };
         Ok(self.heap.alloc(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(prototype)),
-            epoch_nanoseconds: Box::new(epoch),
-            time_zone: Box::new(timezone),
+            instant: Box::new(crate::heap::ZonedInstant {
+                epoch_nanoseconds: epoch,
+                time_zone: timezone,
+            }),
             calendar: Box::new(calendar),
         }))
     }
@@ -374,8 +376,8 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         value: Value,
     ) -> Result<String, JsError> {
-        if let Some(Cell::TemporalZonedDateTime { time_zone, .. }) = self.heap.get(value) {
-            return Ok(time_zone.to_string());
+        if let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(value) {
+            return Ok(instant.time_zone.to_string());
         }
         let Some(Cell::String(_)) = self.heap.get(value) else {
             return Err(self.type_error(p, "Invalid time zone".into()));
@@ -470,10 +472,7 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TemporalZonedDateTimeEquals {
             let Some(Cell::TemporalZonedDateTime {
-                epoch_nanoseconds,
-                time_zone,
-                calendar,
-                ..
+                instant, calendar, ..
             }) = self.heap.get(this)
             else {
                 return Err(self.type_error(
@@ -482,8 +481,8 @@ impl<H: Host> Vm<H> {
                 ));
             };
             let receiver = ZonedDateTimeRecord {
-                epoch_nanoseconds: **epoch_nanoseconds,
-                time_zone: time_zone.to_string(),
+                epoch_nanoseconds: instant.epoch_nanoseconds,
+                time_zone: instant.time_zone.to_string(),
                 calendar: calendar.to_string(),
             };
             let other = self.temporal_zoned_date_time_record(
@@ -513,9 +512,7 @@ impl<H: Host> Vm<H> {
         }
         if native == Native::TemporalZonedDateTimeWithTimeZone {
             let Some(Cell::TemporalZonedDateTime {
-                epoch_nanoseconds,
-                calendar,
-                ..
+                instant, calendar, ..
             }) = self.heap.get(this)
             else {
                 return Err(self.type_error(
@@ -523,7 +520,7 @@ impl<H: Host> Vm<H> {
                     "Temporal.ZonedDateTime method called on incompatible receiver".into(),
                 ));
             };
-            let epoch_nanoseconds = **epoch_nanoseconds;
+            let epoch_nanoseconds = instant.epoch_nanoseconds;
             let calendar = calendar.to_string();
             let zone = args.first().copied().unwrap_or(Value::UNDEFINED);
             let time_zone = self.temporal_timezone_id(p, zone)?;
@@ -567,10 +564,7 @@ impl<H: Host> Vm<H> {
                 | Native::TemporalZonedDateTimeValueOf
         ) {
             let Some(Cell::TemporalZonedDateTime {
-                epoch_nanoseconds,
-                time_zone,
-                calendar,
-                ..
+                instant, calendar, ..
             }) = self.heap.get(this)
             else {
                 return Err(self.type_error(
@@ -578,8 +572,8 @@ impl<H: Host> Vm<H> {
                     "Temporal.ZonedDateTime method called on incompatible receiver".into(),
                 ));
             };
-            let epoch_nanoseconds = **epoch_nanoseconds;
-            let time_zone = time_zone.to_string();
+            let epoch_nanoseconds = instant.epoch_nanoseconds;
+            let time_zone = instant.time_zone.to_string();
             let calendar = calendar.to_string();
             if native == Native::TemporalZonedDateTimeValueOf {
                 return Err(self.type_error(p, "Cannot convert ZonedDateTime to a number".into()));
@@ -618,10 +612,7 @@ impl<H: Host> Vm<H> {
             return self.temporal_plain_date_time_construct(p, &args, constructor);
         }
         let Some(Cell::TemporalZonedDateTime {
-            epoch_nanoseconds,
-            time_zone,
-            calendar,
-            ..
+            instant, calendar, ..
         }) = self.heap.get(this)
         else {
             return Err(self.type_error(
@@ -630,8 +621,8 @@ impl<H: Host> Vm<H> {
             ));
         };
         let (epoch, zone, calendar) = (
-            **epoch_nanoseconds,
-            time_zone.to_string(),
+            instant.epoch_nanoseconds,
+            instant.time_zone.to_string(),
             calendar.to_string(),
         );
         match native {
@@ -816,10 +807,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
-            epoch_nanoseconds,
-            time_zone,
-            calendar,
-            ..
+            instant, calendar, ..
         }) = self.heap.get(this)
         else {
             return Err(self.type_error(
@@ -827,8 +815,8 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let epoch_nanoseconds = **epoch_nanoseconds;
-        let time_zone = time_zone.to_string();
+        let epoch_nanoseconds = instant.epoch_nanoseconds;
+        let time_zone = instant.time_zone.to_string();
         let calendar = calendar.to_string();
         let mut duration =
             self.duration_record(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -909,10 +897,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
-            epoch_nanoseconds,
-            time_zone,
-            calendar,
-            ..
+            instant, calendar, ..
         }) = self.heap.get(this)
         else {
             return Err(self.type_error(
@@ -920,8 +905,8 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let epoch_nanoseconds = **epoch_nanoseconds;
-        let time_zone = time_zone.to_string();
+        let epoch_nanoseconds = instant.epoch_nanoseconds;
+        let time_zone = instant.time_zone.to_string();
         let calendar = calendar.to_string();
         let options = args
             .first()
@@ -971,10 +956,7 @@ impl<H: Host> Vm<H> {
         this: Value,
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
-            epoch_nanoseconds,
-            time_zone,
-            calendar,
-            ..
+            instant, calendar, ..
         }) = self.heap.get(this)
         else {
             return Err(self.type_error(
@@ -982,8 +964,8 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let epoch_nanoseconds = **epoch_nanoseconds;
-        let time_zone = time_zone.to_string();
+        let epoch_nanoseconds = instant.epoch_nanoseconds;
+        let time_zone = instant.time_zone.to_string();
         let calendar = calendar.to_string();
         let at_epoch_limit = epoch_nanoseconds.unsigned_abs() >= MAX_EPOCH_NANOSECONDS as u128;
         if at_epoch_limit && !ZERO_OFFSET_TIME_ZONES.contains(&time_zone.as_str()) {
@@ -1016,10 +998,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
-            epoch_nanoseconds,
-            time_zone,
-            calendar,
-            ..
+            instant, calendar, ..
         }) = self.heap.get(this)
         else {
             return Err(self.type_error(
@@ -1027,8 +1006,8 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let epoch_nanoseconds = **epoch_nanoseconds;
-        let time_zone = time_zone.to_string();
+        let epoch_nanoseconds = instant.epoch_nanoseconds;
+        let time_zone = instant.time_zone.to_string();
         let calendar = calendar.to_string();
         let options = args
             .first()
@@ -1121,19 +1100,14 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some(Cell::TemporalZonedDateTime {
-            epoch_nanoseconds,
-            time_zone,
-            ..
-        }) = self.heap.get(this)
-        else {
+        let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(this) else {
             return Err(self.type_error(
                 p,
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let record_epoch = **epoch_nanoseconds;
-        let record_time_zone = time_zone.to_string();
+        let record_epoch = instant.epoch_nanoseconds;
+        let record_time_zone = instant.time_zone.to_string();
         let calendar_like = args.first().copied().unwrap_or(Value::UNDEFINED);
         let calendar = match self.heap.get(calendar_like) {
             Some(Cell::String(_)) => {
@@ -1170,10 +1144,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
-            epoch_nanoseconds,
-            time_zone,
-            calendar,
-            ..
+            instant, calendar, ..
         }) = self.heap.get(this)
         else {
             return Err(self.type_error(
@@ -1182,8 +1153,8 @@ impl<H: Host> Vm<H> {
             ));
         };
         let (epoch_nanoseconds, time_zone, calendar) = (
-            **epoch_nanoseconds,
-            time_zone.to_string(),
+            instant.epoch_nanoseconds,
+            instant.time_zone.to_string(),
             calendar.to_string(),
         );
         let argument = args.first().copied().unwrap_or(Value::UNDEFINED);
@@ -1217,13 +1188,10 @@ impl<H: Host> Vm<H> {
                 time_zone.to_string(),
                 "compatible",
             )?;
-            let Some(Cell::TemporalZonedDateTime {
-                epoch_nanoseconds, ..
-            }) = self.heap.get(resolved)
-            else {
+            let Some(Cell::TemporalZonedDateTime { instant, .. }) = self.heap.get(resolved) else {
                 return Err(self.type_error(p, "Invalid ZonedDateTime".into()));
             };
-            **epoch_nanoseconds
+            instant.epoch_nanoseconds
         };
         if epoch.unsigned_abs() > MAX_EPOCH_NANOSECONDS as u128 {
             return Err(self.range_error(p, "Invalid epochNanoseconds".into()));
@@ -1256,10 +1224,7 @@ impl<H: Host> Vm<H> {
         }
 
         let Some(Cell::TemporalZonedDateTime {
-            epoch_nanoseconds,
-            time_zone,
-            calendar,
-            ..
+            instant, calendar, ..
         }) = self.heap.get(this)
         else {
             return Err(self.type_error(
@@ -1268,15 +1233,15 @@ impl<H: Host> Vm<H> {
             ));
         };
         let (epoch_nanoseconds, time_zone, calendar) = (
-            **epoch_nanoseconds,
-            time_zone.to_string(),
+            instant.epoch_nanoseconds,
+            instant.time_zone.to_string(),
             calendar.to_string(),
         );
         let partial = args.first().copied().unwrap_or(Value::UNDEFINED);
         let is_plain_time = self
             .heap
             .object_record(partial)
-            .is_some_and(|object| object.proto == self.temporal_plain_time_proto);
+            .is_some_and(|object| object.proto() == self.temporal_plain_time_proto);
         if !self.is_object_like(partial)
             || self.heap.array(partial).is_some()
             || is_plain_time
@@ -1513,8 +1478,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
-            epoch_nanoseconds: left_epoch,
-            time_zone: left_time_zone,
+            instant,
             calendar: left_calendar,
             ..
         }) = self.heap.get(this)
@@ -1525,8 +1489,8 @@ impl<H: Host> Vm<H> {
             ));
         };
         let left = ZonedDateTimeRecord {
-            epoch_nanoseconds: **left_epoch,
-            time_zone: left_time_zone.to_string(),
+            epoch_nanoseconds: instant.epoch_nanoseconds,
+            time_zone: instant.time_zone.to_string(),
             calendar: left_calendar.to_string(),
         };
         let other = self.temporal_zoned_date_time_compare_record(
@@ -1976,15 +1940,12 @@ impl<H: Host> Vm<H> {
         }
         match self.heap.get(value).cloned() {
             Some(Cell::TemporalZonedDateTime {
-                epoch_nanoseconds,
-                time_zone,
-                calendar,
-                ..
+                instant, calendar, ..
             }) => {
                 self.temporal_zoned_date_time_options(p, options)?;
                 Ok(ZonedDateTimeRecord {
-                    epoch_nanoseconds: *epoch_nanoseconds,
-                    time_zone: *time_zone,
+                    epoch_nanoseconds: instant.epoch_nanoseconds,
+                    time_zone: instant.time_zone,
                     calendar: *calendar,
                 })
             }
@@ -2067,10 +2028,7 @@ impl<H: Host> Vm<H> {
         options: ZonedDateTimeStringOptions,
     ) -> Result<Value, JsError> {
         let Some(Cell::TemporalZonedDateTime {
-            epoch_nanoseconds,
-            time_zone,
-            calendar,
-            ..
+            instant, calendar, ..
         }) = self.heap.get(this)
         else {
             return Err(self.type_error(
@@ -2078,8 +2036,8 @@ impl<H: Host> Vm<H> {
                 "Temporal.ZonedDateTime method called on incompatible receiver".into(),
             ));
         };
-        let epoch = **epoch_nanoseconds;
-        let time_zone = time_zone.to_string();
+        let epoch = instant.epoch_nanoseconds;
+        let time_zone = instant.time_zone.to_string();
         let calendar = calendar.to_string();
         let epoch = round_zoned_date_time_epoch(epoch, &time_zone, &options)
             .ok_or_else(|| self.range_error(p, "Invalid epochNanoseconds".into()))?;
@@ -2386,8 +2344,10 @@ impl<H: Host> Vm<H> {
         };
         Ok(self.heap.alloc(Cell::TemporalZonedDateTime {
             object: Box::new(Self::empty_object(prototype)),
-            epoch_nanoseconds: Box::new(record.epoch_nanoseconds),
-            time_zone: Box::new(record.time_zone),
+            instant: Box::new(crate::heap::ZonedInstant {
+                epoch_nanoseconds: record.epoch_nanoseconds,
+                time_zone: record.time_zone,
+            }),
             calendar: Box::new(record.calendar),
         }))
     }

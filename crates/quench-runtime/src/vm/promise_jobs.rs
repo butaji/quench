@@ -93,8 +93,8 @@ impl<H: Host> Vm<H> {
             let array = self.object_own_keys(p, input)?;
             let keys = self
                 .heap
-                .array(array)
-                .map_or_else(Vec::new, |(_, elements)| elements.as_ref().clone());
+                .array_elements(array)
+                .map_or_else(Vec::new, |elements| elements.as_ref().clone());
             return Ok(AggregateInput::Keyed {
                 keys: keys.into_iter().map(|key| self.heap.root(key)).collect(),
                 position: 0,

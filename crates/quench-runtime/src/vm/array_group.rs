@@ -8,7 +8,7 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let Some((_, elements)) = self.heap.array(this) else {
+        let Some(elements) = self.heap.array_elements(this) else {
             return Err(JsError("array group receiver is not array".into()));
         };
         let length = self.heap.sparse_length(this).unwrap_or(elements.len());
@@ -21,7 +21,7 @@ impl<H: Host> Vm<H> {
         let grouped = self.heap.alloc(if to_map {
             Cell::Map {
                 object: Box::new(Self::empty_object(self.map_proto)),
-                entries: Vec::new(),
+                entries: Box::default(),
             }
         } else {
             Cell::Object(Self::empty_object(self.object_proto))
@@ -51,15 +51,17 @@ impl<H: Host> Vm<H> {
                     })
                 });
             if let Some(existing) = existing {
-                let Some((_, elements)) = self.heap.array_mut(existing) else {
+                let Some(elements) = self.heap.array_elements_mut(existing) else {
                     return Err(JsError("array group bucket is not an array".into()));
                 };
                 Rc::make_mut(elements).push(value);
                 continue;
             }
             let bucket = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(vec![value]),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(self.array_proto),
+                    Rc::new(vec![value]),
+                ),
             });
             if let Some(atom) = key_atom {
                 self.set_property(grouped, atom, bucket)?;

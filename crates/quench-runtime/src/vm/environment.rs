@@ -233,7 +233,9 @@ impl<H: Host> Vm<H> {
                     || self
                         .atom_name(*candidate)
                         .strip_prefix(name)
-                        .is_some_and(|suffix| suffix.starts_with(crate::bytecode::SELF_BINDING_MARKER))
+                        .is_some_and(|suffix| {
+                            suffix.starts_with(crate::bytecode::SELF_BINDING_MARKER)
+                        })
             })
     }
 
@@ -1756,7 +1758,7 @@ impl<H: Host> Vm<H> {
                 return Ok(self.native_value(native));
             }
         }
-        if !internal && self.names_resolve_to_global_object(p) {
+        if !internal && self.names_resolve_to_global_object(p, atom) {
             return self.load_global_object_name(p, atom, cache, allow_unresolvable);
         }
         if let Some(value) = self.dynamic_binding(self.frames.len().saturating_sub(1), atom) {
@@ -1802,19 +1804,21 @@ impl<H: Host> Vm<H> {
         self.load_global_object_name(p, atom, cache, allow_unresolvable)
     }
 
-    /// Whether a source name loaded by the executing activation can only denote a global
+    /// Whether `atom` loaded by name in the executing activation can only denote a global
     /// object property: its function is nested and, with every enclosing function, free of
     /// dynamic scope access, so the compiler resolved every lexical binding statically; the
-    /// code is ordinary script code; and no global lexical binding exists in the realm or a
-    /// started script. None of the dynamic layers `load_name_without_with` searches can then
-    /// hold the name.
+    /// code runs in the global environment, as script code or a global-scope eval; and the
+    /// realm declares no global lexical binding of that name, which every started script
+    /// records before it runs. None of the dynamic layers `load_name_without_with` searches
+    /// can then hold the name.
     #[inline(always)]
-    fn names_resolve_to_global_object(&self, p: &ResidualProgram) -> bool {
-        !self.script_lexicals_seen
-            && p.kind == crate::bytecode::ProgramKind::Script
-            && self.realm.global_lexical_bindings.is_empty()
+    fn names_resolve_to_global_object(&self, p: &ResidualProgram, atom: Atom) -> bool {
+        !self.realm.global_lexical_declarations.contains(&atom)
+            && !self.realm.global_lexical_bindings.contains_key(&atom)
             && self.frames.last().is_some_and(|frame| {
                 frame.function != super::ROOT_FUNCTION_ID
+                    && (p.kind == crate::bytecode::ProgramKind::Script
+                        || self.programs.runs_in_global_scope(frame.program))
                     && p.functions
                         .get(frame.function as usize)
                         .is_some_and(|function| {

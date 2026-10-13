@@ -1,12 +1,13 @@
 use super::root::WeakHandle;
 use crate::bytecode::Atom;
-use crate::value::Value;
-use crate::value_vec::{INLINE_PROPERTY_COUNT, ValueVec};
+use crate::value::{HeapReference, Value};
+use super::records::RECORD_SPACE_CAPACITY;
+use crate::value_vec::{
+    INLINE_PROPERTY_COUNT, VALUE_VEC_INTEGRITY_BITS, VALUE_VEC_START_BITS, ValueVec,
+};
 use crate::vm::program_store::ProgramId;
 use crate::vm::wtf16::JsString;
 use rustc_hash::FxHashMap;
-use std::fmt;
-use std::mem::ManuallyDrop;
 use std::rc::Rc;
 
 #[derive(Clone, Debug, Default)]
@@ -20,10 +21,9 @@ mod cell_layout_tests {
     use super::*;
 
     /// Every heap slot stores an `Option<Cell>`. The M4 object layout includes
-    /// two inline properties, and arrays add their shared element handle.
+    /// two inline properties; an array keeps its element handle in that payload.
     const CELL_TAG_WORD_BYTES: usize = std::mem::size_of::<Value>();
-    const MAX_CELL_BYTES: usize =
-        std::mem::size_of::<Object>() + std::mem::size_of::<Rc<Vec<Value>>>() + CELL_TAG_WORD_BYTES;
+    const MAX_CELL_BYTES: usize = std::mem::size_of::<Object>() + CELL_TAG_WORD_BYTES;
 
     #[test]
     fn cells_stay_compact() {
@@ -952,29 +952,199 @@ pub(crate) enum IteratorConsumer {
     Some,
 }
 pub(crate) struct Object {
-    pub proto: Value,
-    // Property names live once in the VM's immutable shape table; objects keep
-    // only the data vector selected by that shape.
-    pub properties: ValueVec,
+    /// The prototype's heap index (`PROTO_INDEX_BITS`, with null and undefined sentinels) and
+    /// the `OBJECT_*` flags: array, inline storage, and the integrity bits `ValueVec` keeps.
+    meta: u32,
+    /// `ValueVec::auxiliary`: the shape and the dictionary flag. Property names live once in
+    /// the VM's shape table; objects keep only the data the shape selects.
+    auxiliary: u32,
+    /// The inline property values, or, for an object that has `ObjectExtras`, a tagged
+    /// pointer to them; they then also hold the inline values. Extras are rare, so the
+    /// common object pays no word for them. Without inline storage, the payload also keeps
+    /// the storage position (`ValueVec`'s start): the second word for a plain object; for an
+    /// array, whose second word is its element backing, the first word under `START_TAG`, or
+    /// the extras when it has them.
     payload: ObjectPayload,
 }
 
-/// Array identity and object semantics share one direct record; dense element
-/// storage remains copy-on-write and is traced by the heap collector.
-pub(crate) struct ArrayRecord {
-    pub(crate) object: Object,
-    pub(crate) elements: Rc<Vec<Value>>,
-}
+/// Bits of `Object::meta` holding the prototype's heap reference. The field is partitioned
+/// by reference family: legacy slot indices, then one range per direct record space, then
+/// the null and undefined sentinels at the top.
+const PROTO_INDEX_BITS: u32 = (1 << 28) - 1;
+const PROTO_NULL: u32 = PROTO_INDEX_BITS;
+const PROTO_UNDEFINED: u32 = PROTO_INDEX_BITS - 1;
+/// Cells a heap may hold so that any of them can be a prototype.
+pub(crate) const MAX_HEAP_CELLS: usize = 1 << 27;
+const PROTO_OBJECT_RECORD_BASE: u32 = MAX_HEAP_CELLS as u32;
+const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_RECORD_END: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
+const OBJECT_ARRAY: u32 = 1 << 28;
+const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
+const _: () = assert!(
+    PROTO_INDEX_BITS & (OBJECT_ARRAY | OBJECT_INLINE_STORAGE | VALUE_VEC_INTEGRITY_BITS) == 0
+        && (OBJECT_ARRAY | OBJECT_INLINE_STORAGE) & VALUE_VEC_INTEGRITY_BITS == 0
+);
+/// Marks an array's storage position in its first payload word; like `EXTRAS_TAG`, no
+/// `Value` carries it.
+const START_TAG: u64 = 0x7ffe_8000_0000_0000;
+const START_TAG_MASK: u64 = 0xffff_8000_0000_0000;
 
+/// `Object::payload`: inline values, or `EXTRAS_TAG` and an `ObjectExtras` pointer in the first
+/// word. No `Value` carries that tag: it is a NaN pattern, and numbers canonicalize NaN. An
+/// array's object never stores properties inline, and its second word holds the array's element
+/// backing, owned by the `ArrayObject` around it.
+#[repr(C)]
 union ObjectPayload {
-    inline_properties: ManuallyDrop<[Value; INLINE_PROPERTY_COUNT]>,
-    out_of_line: ManuallyDrop<Box<ObjectOutOfLine>>,
+    inline: [Value; INLINE_PROPERTY_COUNT],
+    words: [u64; INLINE_PROPERTY_COUNT],
+    array: std::mem::ManuallyDrop<ArrayPayload>,
 }
 
-#[derive(Clone, Debug)]
-struct ObjectOutOfLine {
-    inline_properties: [Value; INLINE_PROPERTY_COUNT],
-    extras: ObjectExtras,
+#[repr(C)]
+struct ArrayPayload {
+    extras: u64,
+    elements: std::mem::ManuallyDrop<Rc<Vec<Value>>>,
+}
+
+const _: () = assert!(size_of::<ArrayPayload>() == size_of::<[Value; INLINE_PROPERTY_COUNT]>());
+
+/// Inline property values held by `ObjectExtras`; undefined until an object moves its own in.
+#[derive(Clone, Copy, Debug)]
+struct DisplacedInline([Value; INLINE_PROPERTY_COUNT]);
+
+impl Default for DisplacedInline {
+    fn default() -> Self {
+        Self([Value::UNDEFINED; INLINE_PROPERTY_COUNT])
+    }
+}
+
+const EXTRAS_TAG: u64 = 0x7fff_0000_0000_0000;
+const EXTRAS_TAG_MASK: u64 = 0xffff_0000_0000_0000;
+
+impl Clone for Object {
+    fn clone(&self) -> Self {
+        // The words copy bit for bit; the copy then gets its own extras. An array's second
+        // word is its backing, which `ArrayObject::clone` replaces without reading.
+        // SAFETY: both views are plain words.
+        let mut words = unsafe { self.payload.words };
+        if let Some(extras) = self.extras() {
+            words[0] = Self::tag_extras(Box::new(extras.clone()));
+        }
+        Self {
+            meta: self.meta,
+            auxiliary: self.auxiliary,
+            payload: ObjectPayload { words },
+        }
+    }
+}
+
+impl Drop for Object {
+    fn drop(&mut self) {
+        if let Some(extras) = self.extras_pointer() {
+            // SAFETY: the pointer came from `Box::into_raw` in `extras_mut` and is owned by
+            // this object alone.
+            drop(unsafe { Box::from_raw(extras) });
+        }
+    }
+}
+
+/// An array: its object, whose payload also holds the dense element backing.
+pub(crate) struct ArrayObject {
+    object: Object,
+}
+
+impl ArrayObject {
+    pub(crate) fn new(mut object: Object, elements: Rc<Vec<Value>>) -> Self {
+        // Array objects keep named properties in the arena; a fresh object has none inline.
+        let current = object.properties();
+        object.meta |= OBJECT_ARRAY;
+        if current.has_inline_property_storage() {
+            debug_assert!(
+                object
+                    .inline_properties()
+                    .is_some_and(|values| values.iter().all(|value| value.is_undefined()))
+            );
+            let mut properties = ValueVec::new();
+            properties.set_auxiliary(current.auxiliary());
+            properties.preserve_integrity_from(current);
+            object.set_properties(properties);
+        }
+        // SAFETY: the second word is unused by an object without inline storage; this writes
+        // the backing there without reading or dropping what it held.
+        unsafe {
+            std::ptr::write(
+                std::ptr::addr_of_mut!((*object.payload.array).elements),
+                std::mem::ManuallyDrop::new(elements),
+            );
+        }
+        Self { object }
+    }
+
+    pub(crate) fn elements(&self) -> &Rc<Vec<Value>> {
+        // SAFETY: `new` stored the backing, which this array owns until it drops.
+        unsafe { &self.object.payload.array.elements }
+    }
+
+    pub(crate) fn elements_mut(&mut self) -> &mut Rc<Vec<Value>> {
+        // SAFETY: as in `elements`, with `&mut self` making the borrow unique.
+        unsafe { &mut (*self.object.payload.array).elements }
+    }
+}
+
+impl Drop for ArrayObject {
+    fn drop(&mut self) {
+        // SAFETY: the backing was stored by `new` and is dropped only here.
+        unsafe { std::mem::ManuallyDrop::drop(&mut (*self.object.payload.array).elements) };
+    }
+}
+
+impl Clone for ArrayObject {
+    fn clone(&self) -> Self {
+        Self::new_cloned(self.object.clone(), self.elements().clone())
+    }
+}
+
+impl ArrayObject {
+    /// `new` for an object that already has arena storage and a stale second word.
+    fn new_cloned(object: Object, elements: Rc<Vec<Value>>) -> Self {
+        Self::new(object, elements)
+    }
+}
+
+impl std::ops::Deref for ArrayObject {
+    type Target = Object;
+    fn deref(&self) -> &Object {
+        &self.object
+    }
+}
+
+impl std::ops::DerefMut for ArrayObject {
+    fn deref_mut(&mut self) -> &mut Object {
+        &mut self.object
+    }
+}
+
+impl std::fmt::Debug for ArrayObject {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ArrayObject")
+            .field("object", &self.object)
+            .field("elements", self.elements())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for Object {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Object")
+            .field("proto", &self.proto())
+            .field("properties", &self.properties())
+            .field("inline_properties", self.inline_property_values())
+            .field("extras", &self.extras())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1003,6 +1173,10 @@ pub(crate) enum StackData {
 
 #[derive(Clone, Debug, Default)]
 struct ObjectExtras {
+    /// The object's inline property values, displaced from its payload by the extras pointer.
+    inline_properties: DisplacedInline,
+    /// An array's storage position, displaced from its first payload word.
+    arena_start: u32,
     arguments_map: Option<Vec<u16>>,
     arguments_object: bool,
     raw_json: bool,
@@ -1080,51 +1254,209 @@ impl std::ops::DerefMut for FinalizationEntries {
 }
 impl Object {
     pub(crate) fn new(proto: Value) -> Self {
-        Self {
+        Self::with_property_storage(
             proto,
-            properties: ValueVec::inline_property_storage(0),
-            payload: ObjectPayload {
-                inline_properties: ManuallyDrop::new([Value::UNDEFINED; INLINE_PROPERTY_COUNT]),
-            },
+            ValueVec::inline_property_storage(0),
+            [Value::UNDEFINED; INLINE_PROPERTY_COUNT],
+        )
+    }
+
+    fn encode_proto(proto: Value) -> u32 {
+        match proto.heap_reference() {
+            Some(HeapReference::LegacySlot(index)) => {
+                assert!(
+                    (index as usize) < MAX_HEAP_CELLS,
+                    "heap exhausted the prototype index space"
+                );
+                index
+            }
+            Some(HeapReference::ObjectRecord(id)) => PROTO_OBJECT_RECORD_BASE + id,
+            Some(HeapReference::ArrayRecord(id)) => PROTO_ARRAY_RECORD_BASE + id,
+            None if proto.is_null() => PROTO_NULL,
+            None => {
+                debug_assert!(proto.is_undefined(), "a prototype is an object or null");
+                PROTO_UNDEFINED
+            }
+        }
+    }
+
+    pub(crate) fn proto(&self) -> Value {
+        match self.meta & PROTO_INDEX_BITS {
+            PROTO_NULL => Value::NULL,
+            PROTO_UNDEFINED => Value::UNDEFINED,
+            index if index < PROTO_OBJECT_RECORD_BASE => Value::heap(index),
+            index if index < PROTO_ARRAY_RECORD_BASE => {
+                Value::direct_object(index - PROTO_OBJECT_RECORD_BASE)
+            }
+            index => {
+                debug_assert!(index < PROTO_RECORD_END);
+                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
+            }
+        }
+    }
+
+    pub(crate) fn set_proto(&mut self, proto: Value) {
+        self.meta = (self.meta & !PROTO_INDEX_BITS) | Self::encode_proto(proto);
+    }
+
+    fn is_array(&self) -> bool {
+        self.meta & OBJECT_ARRAY != 0
+    }
+
+    /// The property storage descriptor, assembled from the header and, without inline
+    /// storage, the payload.
+    pub(crate) fn properties(&self) -> ValueVec {
+        let integrity = self.meta & VALUE_VEC_INTEGRITY_BITS;
+        let position = if self.meta & OBJECT_INLINE_STORAGE != 0 {
+            ValueVec::inline_property_storage(0).into_parts().0 & VALUE_VEC_START_BITS
+        } else {
+            self.storage_position()
+        };
+        ValueVec::from_parts(integrity | position, self.auxiliary)
+    }
+
+    /// Stores `properties`. A change from inline to other storage overwrites the payload
+    /// word that held an inline value, so callers move inline values out first.
+    pub(crate) fn set_properties(&mut self, properties: ValueVec) {
+        let (start, auxiliary) = properties.into_parts();
+        self.auxiliary = auxiliary;
+        let flags = self.meta & !(VALUE_VEC_INTEGRITY_BITS | OBJECT_INLINE_STORAGE);
+        let position = start & VALUE_VEC_START_BITS;
+        if properties.has_inline_property_storage() {
+            self.meta = flags | (start & VALUE_VEC_INTEGRITY_BITS) | OBJECT_INLINE_STORAGE;
+        } else {
+            self.meta = flags | (start & VALUE_VEC_INTEGRITY_BITS);
+            self.set_storage_position(position);
+        }
+    }
+
+    fn storage_position(&self) -> u32 {
+        if !self.is_array() {
+            // SAFETY: both views are plain words; without inline storage the second word
+            // holds the position.
+            return unsafe { self.payload.words[1] } as u32;
+        }
+        match self.extras() {
+            Some(extras) => extras.arena_start,
+            // SAFETY: as above; an array without extras keeps it in the first word.
+            None => {
+                let word = unsafe { self.payload.words[0] };
+                debug_assert_eq!(word & START_TAG_MASK, START_TAG);
+                word as u32
+            }
+        }
+    }
+
+    fn set_storage_position(&mut self, position: u32) {
+        if !self.is_array() {
+            // SAFETY: both views are plain words.
+            unsafe { self.payload.words[1] = u64::from(position) };
+        } else if let Some(extras) = self.extras_mut_existing() {
+            extras.arena_start = position;
+        } else {
+            // SAFETY: as above.
+            unsafe { self.payload.words[0] = START_TAG | u64::from(position) };
+        }
+    }
+
+    fn tag_extras(extras: Box<ObjectExtras>) -> u64 {
+        let address = Box::into_raw(extras) as usize as u64;
+        assert_eq!(
+            address & EXTRAS_TAG_MASK,
+            0,
+            "object extras outside 48-bit space"
+        );
+        EXTRAS_TAG | address
+    }
+
+    fn extras_pointer(&self) -> Option<*mut ObjectExtras> {
+        // SAFETY: both union views are plain words.
+        let word = unsafe { self.payload.words[0] };
+        (word & EXTRAS_TAG_MASK == EXTRAS_TAG)
+            .then_some((word & !EXTRAS_TAG_MASK) as usize as *mut ObjectExtras)
+    }
+
+    fn extras(&self) -> Option<&ObjectExtras> {
+        // SAFETY: a tagged payload owns a live `ObjectExtras` for the object's lifetime.
+        self.extras_pointer().map(|extras| unsafe { &*extras })
+    }
+
+    fn extras_mut(&mut self) -> &mut ObjectExtras {
+        let extras = match self.extras_pointer() {
+            Some(extras) => extras,
+            None => {
+                // An array moves its storage position from the first word into the extras;
+                // any other object's words are inline values (or, without inline storage, a
+                // stale first word and the position in the second, which stays).
+                let arena_start = if self.is_array() {
+                    self.storage_position()
+                } else {
+                    0
+                };
+                // SAFETY: an untagged payload holds plain words.
+                let inline = unsafe { self.payload.inline };
+                let word = Self::tag_extras(Box::new(ObjectExtras {
+                    inline_properties: DisplacedInline(inline),
+                    arena_start,
+                    ..ObjectExtras::default()
+                }));
+                // Only the first word changes: an array keeps its element backing in the second.
+                // SAFETY: both union views are plain words.
+                unsafe { self.payload.words[0] = word };
+                self.extras_pointer().expect("extras just installed")
+            }
+        };
+        // SAFETY: owned by this object, and `&mut self` makes the borrow unique.
+        unsafe { &mut *extras }
+    }
+
+    fn extras_mut_existing(&mut self) -> Option<&mut ObjectExtras> {
+        // SAFETY: as in `extras`, with `&mut self` making the borrow unique.
+        self.extras_pointer().map(|extras| unsafe { &mut *extras })
+    }
+
+    /// The inline property slots, wherever they live.
+    fn inline_property_values(&self) -> &[Value; INLINE_PROPERTY_COUNT] {
+        match self.extras() {
+            Some(extras) => &extras.inline_properties.0,
+            // SAFETY: an untagged payload holds the inline values.
+            None => unsafe { &self.payload.inline },
+        }
+    }
+
+    fn inline_property_values_mut(&mut self) -> &mut [Value; INLINE_PROPERTY_COUNT] {
+        if self.extras_pointer().is_some() {
+            &mut self.extras_mut().inline_properties.0
+        } else {
+            // SAFETY: an untagged payload holds the inline values.
+            unsafe { &mut self.payload.inline }
         }
     }
 
     pub(crate) fn with_property_storage(
         proto: Value,
-        mut properties: ValueVec,
+        properties: ValueVec,
         inline_properties: [Value; INLINE_PROPERTY_COUNT],
     ) -> Self {
-        properties.set_out_of_line_storage(false);
-        Self {
-            proto,
-            properties,
+        let mut object = Self {
+            meta: Self::encode_proto(proto),
+            auxiliary: 0,
             payload: ObjectPayload {
-                inline_properties: ManuallyDrop::new(inline_properties),
+                inline: inline_properties,
             },
-        }
+        };
+        object.set_properties(properties);
+        object
     }
 
     pub(crate) fn inline_properties(&self) -> Option<&[Value; INLINE_PROPERTY_COUNT]> {
-        if !self.properties.has_inline_property_storage() {
-            return None;
-        }
-        Some(if self.properties.has_out_of_line_storage() {
-            &self.out_of_line().inline_properties
-        } else {
-            // SAFETY: the out-of-line flag selects the other union arm.
-            unsafe { &self.payload.inline_properties }
-        })
+        (self.meta & OBJECT_INLINE_STORAGE != 0).then(|| self.inline_property_values())
     }
 
     pub(crate) fn set_inline_property(&mut self, slot: usize, value: Value) {
-        debug_assert!(self.properties.has_inline_property_storage());
+        debug_assert!(self.properties().has_inline_property_storage());
         debug_assert!(slot < INLINE_PROPERTY_COUNT);
-        if self.properties.has_out_of_line_storage() {
-            self.out_of_line_mut().inline_properties[slot] = value;
-        } else {
-            // SAFETY: the out-of-line flag selects the other union arm.
-            unsafe { (*self.payload.inline_properties)[slot] = value };
-        }
+        self.inline_property_values_mut()[slot] = value;
     }
 
     pub(crate) fn replace_property_storage(
@@ -1132,75 +1464,23 @@ impl Object {
         mut properties: ValueVec,
         inline_properties: [Value; INLINE_PROPERTY_COUNT],
     ) -> ValueVec {
-        let previous = self.properties;
+        let previous = self.properties();
         properties.preserve_integrity_from(previous);
-        properties.set_out_of_line_storage(previous.has_out_of_line_storage());
-        self.properties = properties;
-        self.set_inline_words(inline_properties);
+        self.set_properties(properties);
+        // Arena storage leaves the inline values alone: an array keeps its element backing in
+        // the payload.
+        if properties.has_inline_property_storage() {
+            *self.inline_property_values_mut() = inline_properties;
+        }
         previous
     }
 
     pub(crate) fn copy_property_storage_from(&mut self, source: &Self) {
-        let out_of_line = self.properties.has_out_of_line_storage();
-        self.properties = source.properties;
-        self.properties.set_out_of_line_storage(out_of_line);
-        self.set_inline_words(source.inline_words());
-    }
-
-    fn inline_words(&self) -> [Value; INLINE_PROPERTY_COUNT] {
-        if self.properties.has_out_of_line_storage() {
-            self.out_of_line().inline_properties
-        } else {
-            // SAFETY: the out-of-line flag selects the other union arm.
-            unsafe { *self.payload.inline_properties }
+        let properties = source.properties();
+        self.set_properties(properties);
+        if properties.has_inline_property_storage() {
+            *self.inline_property_values_mut() = *source.inline_property_values();
         }
-    }
-
-    fn set_inline_words(&mut self, values: [Value; INLINE_PROPERTY_COUNT]) {
-        if self.properties.has_out_of_line_storage() {
-            self.out_of_line_mut().inline_properties = values;
-        } else {
-            // SAFETY: the out-of-line flag selects the other union arm.
-            unsafe { *self.payload.inline_properties = values };
-        }
-    }
-
-    fn out_of_line(&self) -> &ObjectOutOfLine {
-        debug_assert!(self.properties.has_out_of_line_storage());
-        // SAFETY: the out-of-line flag selects this initialized union arm.
-        unsafe { self.payload.out_of_line.as_ref() }
-    }
-
-    fn out_of_line_mut(&mut self) -> &mut ObjectOutOfLine {
-        debug_assert!(self.properties.has_out_of_line_storage());
-        // SAFETY: the out-of-line flag selects this initialized union arm.
-        unsafe { (&mut *self.payload.out_of_line).as_mut() }
-    }
-
-    fn extras(&self) -> Option<&ObjectExtras> {
-        self.properties
-            .has_out_of_line_storage()
-            .then(|| &self.out_of_line().extras)
-    }
-
-    fn extras_mut(&mut self) -> &mut ObjectExtras {
-        if !self.properties.has_out_of_line_storage() {
-            let inline_properties = self.inline_words();
-            self.payload = ObjectPayload {
-                out_of_line: ManuallyDrop::new(Box::new(ObjectOutOfLine {
-                    inline_properties,
-                    extras: ObjectExtras::default(),
-                })),
-            };
-            self.properties.set_out_of_line_storage(true);
-        }
-        &mut self.out_of_line_mut().extras
-    }
-
-    fn extras_mut_if_present(&mut self) -> Option<&mut ObjectExtras> {
-        self.properties
-            .has_out_of_line_storage()
-            .then(|| &mut self.out_of_line_mut().extras)
     }
 
     /// Presence of [[ErrorData]] is the unforgeable Error brand.
@@ -1236,28 +1516,34 @@ impl Object {
     }
 
     pub(crate) fn shape(&self) -> u32 {
-        self.properties.auxiliary()
+        ValueVec::from_parts(0, self.auxiliary).auxiliary()
     }
     pub(crate) fn set_shape(&mut self, shape: u32) {
-        self.properties.set_auxiliary(shape);
+        let mut properties = ValueVec::from_parts(0, self.auxiliary);
+        properties.set_auxiliary(shape);
+        self.auxiliary = properties.into_parts().1;
     }
     pub(crate) fn is_extensible(&self) -> bool {
-        self.properties.is_extensible()
+        self.properties().is_extensible()
     }
     pub(crate) fn set_extensible(&mut self, value: bool) {
-        self.properties.set_extensible(value);
+        let mut properties = ValueVec::from_parts(self.meta & VALUE_VEC_INTEGRITY_BITS, 0);
+        properties.set_extensible(value);
+        self.meta = (self.meta & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0;
     }
     pub(crate) fn is_frozen(&self) -> bool {
-        self.properties.is_frozen()
+        self.properties().is_frozen()
     }
     pub(crate) fn set_frozen(&mut self, value: bool) {
-        self.properties.set_frozen(value);
+        let mut properties = ValueVec::from_parts(self.meta & VALUE_VEC_INTEGRITY_BITS, 0);
+        properties.set_frozen(value);
+        self.meta = (self.meta & !VALUE_VEC_INTEGRITY_BITS) | properties.into_parts().0;
     }
     pub(crate) fn arguments_map(&self) -> Option<&[u16]> {
         self.extras()?.arguments_map.as_deref()
     }
     pub(crate) fn arguments_map_mut(&mut self) -> Option<&mut Vec<u16>> {
-        self.extras_mut_if_present()?.arguments_map.as_mut()
+        self.extras_mut_existing()?.arguments_map.as_mut()
     }
     pub(crate) fn mapped_argument_slot(&self, index: usize) -> Option<usize> {
         self.arguments_map()?
@@ -1321,9 +1607,7 @@ impl Object {
     }
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     pub(crate) fn allocated_extra_bytes(&self) -> usize {
-        self.extras().map_or(0, |extras| {
-            std::mem::size_of::<[Value; INLINE_PROPERTY_COUNT]>() + extras.allocated_bytes()
-        })
+        self.extras().map_or(0, ObjectExtras::allocated_bytes)
     }
 
     pub(crate) fn module_binding(&self, atom: Atom) -> Option<(ProgramId, u16)> {
@@ -1333,50 +1617,7 @@ impl Object {
     }
 }
 
-const _: () = assert!(std::mem::size_of::<Object>() == 4 * std::mem::size_of::<Value>());
-
-impl Clone for Object {
-    fn clone(&self) -> Self {
-        let payload = if self.properties.has_out_of_line_storage() {
-            ObjectPayload {
-                out_of_line: ManuallyDrop::new(Box::new(self.out_of_line().clone())),
-            }
-        } else {
-            ObjectPayload {
-                inline_properties: ManuallyDrop::new(self.inline_words()),
-            }
-        };
-        Self {
-            proto: self.proto,
-            properties: self.properties,
-            payload,
-        }
-    }
-}
-
-impl Drop for Object {
-    fn drop(&mut self) {
-        if self.properties.has_out_of_line_storage() {
-            // SAFETY: the out-of-line flag names the initialized Box arm.
-            unsafe { ManuallyDrop::drop(&mut self.payload.out_of_line) };
-        }
-    }
-}
-
-impl fmt::Debug for Object {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Object")
-            .field("proto", &self.proto)
-            .field("properties", &self.properties)
-            .field("inline_properties", &self.inline_properties())
-            .field(
-                "has_out_of_line_storage",
-                &self.properties.has_out_of_line_storage(),
-            )
-            .finish()
-    }
-}
+const _: () = assert!(std::mem::size_of::<Object>() == 3 * std::mem::size_of::<Value>());
 
 #[cfg(test)]
 mod object_payload_tests {
@@ -1411,6 +1652,26 @@ mod object_payload_tests {
     }
 
     #[test]
+    fn prototype_references_round_trip_through_every_family() {
+        for proto in [
+            Value::NULL,
+            Value::UNDEFINED,
+            Value::heap(0),
+            Value::heap(super::MAX_HEAP_CELLS as u32 - 1),
+            Value::direct_object(0),
+            Value::direct_object(super::RECORD_SPACE_CAPACITY as u32 - 1),
+            Value::direct_array(0),
+            Value::direct_array(super::RECORD_SPACE_CAPACITY as u32 - 1),
+        ] {
+            let mut object = Object::new(proto);
+            assert_eq!(object.proto(), proto);
+            object.set_proto(Value::NULL);
+            object.set_proto(proto);
+            assert_eq!(object.proto(), proto);
+        }
+    }
+
+    #[test]
     fn out_of_line_extras_keep_arena_storage_mode_and_integrity() {
         let mut properties = ValueVec::new();
         properties.set_extensible(false);
@@ -1418,7 +1679,7 @@ mod object_payload_tests {
             Object::with_property_storage(Value::NULL, properties, [Value::UNDEFINED; 2]);
         object.set_module_namespace();
         assert!(object.is_module_namespace());
-        assert!(!object.properties.has_inline_property_storage());
+        assert!(!object.properties().has_inline_property_storage());
         assert!(!object.is_extensible());
     }
 }
@@ -1452,7 +1713,9 @@ pub(crate) struct EnvironmentScope {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct EnvironmentSlots(pub(super) Box<[EnvironmentSlot]>);
+/// An environment's slots behind a one-word pointer, which keeps the environment cell within
+/// the common cell size.
+pub(crate) struct EnvironmentSlots(pub(super) super::thin_slice::ThinBoxSlice<EnvironmentSlot>);
 
 impl EnvironmentSlots {
     pub(crate) fn len(&self) -> usize {
@@ -1478,7 +1741,13 @@ impl EnvironmentSlots {
 
 impl From<Box<[Value]>> for EnvironmentSlots {
     fn from(values: Box<[Value]>) -> Self {
-        Self(values.into_iter().map(EnvironmentSlot::Owned).collect())
+        Self(
+            values
+                .into_iter()
+                .map(EnvironmentSlot::Owned)
+                .collect::<Box<[_]>>()
+                .into(),
+        )
     }
 }
 
@@ -1499,11 +1768,120 @@ impl From<Vec<(Atom, Value)>> for EnvironmentBindings {
 /// `source`, `kind`, `index` and `done`.
 #[derive(Debug, Clone)]
 pub(crate) struct IteratorExt {
+    /// Upper half of the iterator position; nonzero only for array-likes iterated past
+    /// 2^32 elements, whose lengths reach 2^53 - 1.
+    pub(crate) position_high: u32,
     pub(crate) next_method: Option<Value>,
     pub(crate) helper: Option<Box<IteratorHelper>>,
     pub(crate) helper_running: bool,
     pub(crate) helper_started: bool,
     pub(crate) generator: Option<Box<crate::vm::activation::GeneratorRecord>>,
+}
+
+impl IteratorExt {
+    /// The full position whose low half is the cell's `index`.
+    pub(crate) fn position(&self, low: u32) -> usize {
+        ((u64::from(self.position_high) << u32::BITS) | u64::from(low)) as usize
+    }
+
+    /// Splits `position` between the cell's `index` and this box.
+    pub(crate) fn store_position(&mut self, low: &mut u32, position: usize) {
+        let position = position as u64;
+        *low = position as u32;
+        self.position_high = (position >> u32::BITS) as u32;
+    }
+}
+
+/// A function's ordinary object and creation realm. The realm rides in the box, which
+/// calls already reach through property and prototype reads, so the cell keeps four words.
+#[derive(Clone, Debug)]
+pub(crate) struct FunctionObject {
+    pub(crate) object: Object,
+    pub(crate) realm: Value,
+}
+
+impl std::ops::Deref for FunctionObject {
+    type Target = Object;
+    fn deref(&self) -> &Object {
+        &self.object
+    }
+}
+
+impl std::ops::DerefMut for FunctionObject {
+    fn deref_mut(&mut self) -> &mut Object {
+        &mut self.object
+    }
+}
+
+/// A typed array's or DataView's ordinary object and byte offset into its buffer, boxed
+/// together so the view cell keeps four words.
+#[derive(Clone, Debug)]
+pub(crate) struct BufferViewObject {
+    pub(crate) object: Object,
+    pub(crate) offset: usize,
+}
+
+impl std::ops::Deref for BufferViewObject {
+    type Target = Object;
+    fn deref(&self) -> &Object {
+        &self.object
+    }
+}
+
+impl std::ops::DerefMut for BufferViewObject {
+    fn deref_mut(&mut self) -> &mut Object {
+        &mut self.object
+    }
+}
+
+/// A Wasm GC object's field values and optional descriptor, boxed together so the cell
+/// keeps four words; field access reads the values through `Deref`.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct WasmGcFields {
+    pub(crate) values: Vec<Value>,
+    pub(crate) descriptor: Option<Value>,
+}
+
+/// A Wasm table's references and optional maximum, boxed together so the cell keeps four
+/// words; element access reads the references through `Deref`.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct WasmTableElements {
+    pub(crate) values: Vec<Value>,
+    pub(crate) maximum: Option<u64>,
+}
+
+macro_rules! deref_to_values {
+    ($($owner:ty),*) => {$(
+        impl std::ops::Deref for $owner {
+            type Target = Vec<Value>;
+            fn deref(&self) -> &Vec<Value> {
+                &self.values
+            }
+        }
+
+        impl std::ops::DerefMut for $owner {
+            fn deref_mut(&mut self) -> &mut Vec<Value> {
+                &mut self.values
+            }
+        }
+    )*};
+}
+deref_to_values!(WasmGcFields, WasmTableElements);
+
+/// A PlainDateTime's ISO year, month and day with its hour-through-nanosecond fields, boxed
+/// together so the cell keeps four words.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct IsoDateTimeFields {
+    pub(crate) date: (i32, u32, u32),
+    pub(crate) time: [u32; 6],
+}
+
+/// A ZonedDateTime's exact time and time-zone identifier, boxed together so the cell keeps
+/// four words.
+#[derive(Clone, Debug)]
+pub(crate) struct ZonedInstant {
+    pub(crate) epoch_nanoseconds: i128,
+    pub(crate) time_zone: String,
 }
 
 /// A RegExp's source text, flags and legacy-constructor owner: read when a pattern is
@@ -1534,8 +1912,7 @@ impl RegExpLegacyOwner {
 pub(crate) enum Cell {
     Object(Object),
     Array {
-        object: Object,
-        elements: Rc<Vec<Value>>,
+        object: ArrayObject,
     },
     ArrayBuffer {
         object: Box<Object>,
@@ -1548,26 +1925,24 @@ pub(crate) enum Cell {
     },
     TypedArray {
         kind: TypedArrayKind,
-        object: Box<Object>,
+        object: Box<BufferViewObject>,
         buffer: Value,
-        offset: usize,
         length: usize,
         length_tracking: bool,
     },
     DataView {
-        object: Box<Object>,
+        object: Box<BufferViewObject>,
         buffer: Value,
-        offset: usize,
         length: usize,
         length_tracking: bool,
     },
     Map {
         object: Box<Object>,
-        entries: Vec<(Value, Value)>,
+        entries: Box<Vec<(Value, Value)>>,
     },
     Set {
         object: Box<Object>,
-        entries: Vec<Value>,
+        entries: Box<Vec<Value>>,
     },
     ShadowRealm {
         object: Box<Object>,
@@ -1580,7 +1955,7 @@ pub(crate) enum Cell {
     },
     WeakSet {
         object: Box<Object>,
-        entries: Vec<Value>,
+        entries: Box<Vec<Value>>,
     },
     WeakRef {
         object: Box<Object>,
@@ -1595,7 +1970,9 @@ pub(crate) enum Cell {
         object: Box<Object>,
         source: Value,
         kind: IteratorKind,
-        index: usize,
+        /// Low half of the position within `source`; `IteratorExt::position` joins it with
+        /// the upper half.
+        index: u32,
         done: bool,
         ext: Box<IteratorExt>,
     },
@@ -1607,10 +1984,9 @@ pub(crate) enum Cell {
         handler: Value,
     },
     Function {
-        object: Box<Object>,
+        object: Box<FunctionObject>,
         kind: FunctionKind,
         env: Value,
-        realm: Value,
     },
     BindingReference {
         environment: Value,
@@ -1629,11 +2005,11 @@ pub(crate) enum Cell {
     /// Opaque external payload in the internal anyref hierarchy, outside eqref.
     WasmExtern(Value),
     /// One exception identity owns its original tag and traced payload.
-    WasmException { tag: Value, payload: Vec<Value> },
+    WasmException { tag: Value, payload: Box<Vec<Value>> },
     /// A tag retains its original declaration; identity is independent of type equality.
     WasmTag { declarations: crate::WasmTypes, ty: u32 },
     /// GC object identity owns its original declaration and traced field values.
-    WasmGc { declarations: Box<crate::WasmTypes>, ty: u32, fields: Box<Vec<Value>>, descriptor: Option<Value> },
+    WasmGc { declarations: Box<crate::WasmTypes>, ty: u32, fields: Box<WasmGcFields> },
     /// The native callable's immutable host operation and structural signature.
     WasmHostFunction {
         id: crate::WasmHostFunctionId,
@@ -1642,15 +2018,14 @@ pub(crate) enum Cell {
     /// Immutable references available until an element segment drops.
     WasmElements(Vec<Value>),
     /// One memory identity owns its bytes and original optional maximum.
-    WasmGlobal { value: Value, ty: crate::WasmType, declarations: crate::WasmTypes, mutable: bool },
+    WasmGlobal { value: Value, ty: crate::WasmType, declarations: Box<crate::WasmTypes>, mutable: bool },
     WasmMemory { bytes: std::rc::Rc<crate::wasm::memory::MemoryStorage>, ty: Box<wasmparser::MemoryType> },
     /// Typed references owned by a Wasm instance, traced like other heap edges.
     WasmTable {
         table64: bool,
-        elements: Box<Vec<Value>>,
+        elements: Box<WasmTableElements>,
         element_type: wasmparser::RefType,
         declarations: Box<crate::WasmTypes>,
-        maximum: Option<u64>,
     },
     String(JsString), BigInt(String),
     Symbol(Option<String>),
@@ -1678,8 +2053,7 @@ pub(crate) enum Cell {
     },
     TemporalPlainDateTime {
         object: Box<Object>,
-        date: (i32, u32, u32),
-        time: Box<[u32; 6]>,
+        date_time: Box<IsoDateTimeFields>,
         calendar: Box<String>,
     },
     TemporalPlainMonthDay {
@@ -1698,8 +2072,7 @@ pub(crate) enum Cell {
     },
     TemporalZonedDateTime {
         object: Box<Object>,
-        epoch_nanoseconds: Box<i128>,
-        time_zone: Box<String>,
+        instant: Box<ZonedInstant>,
         calendar: Box<String>,
     },
     TemporalInstant {
