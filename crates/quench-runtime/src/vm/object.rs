@@ -668,13 +668,23 @@ impl<H: Host> Vm<H> {
         atom: Atom,
         site: u16,
     ) -> Result<Value, JsError> {
-        let heap_reference = object.heap_reference();
+        let direct_object = object.direct_object_index();
+        let (heap_reference, record_receiver) = if let Some(record_id) = direct_object {
+            (
+                Some(HeapReference::ObjectRecord(record_id)),
+                Some(self.heap.object_record_by_id(record_id)),
+            )
+        } else {
+            let heap_reference = object.heap_reference();
+            let record_receiver =
+                heap_reference.and_then(|reference| self.heap.record_object(reference));
+            (heap_reference, record_receiver)
+        };
         if matches!(heap_reference, Some(HeapReference::ArrayRecord(_)))
             && self.atom_class(atom).contains(AtomClass::ARRAY_INDEX)
         {
             return self.get_property(p, object, atom);
         }
-        let record_receiver = heap_reference.and_then(|reference| self.heap.record_object(reference));
         // A site is only populated after the atom and non-dictionary receiver and holder shapes
         // passed `shape_property_lookup_cell`, and an ordinary object is eligible whenever those
         // hold, so an own-data hit on ordinary objects needs no further eligibility probe. These
