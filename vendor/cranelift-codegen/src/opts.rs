@@ -338,6 +338,14 @@ impl<'a, 'b, 'c> generated_code::Context for IsleContext<'a, 'b, 'c> {
         Ieee64::with_float(n as f64)
     }
 
+    fn f32_from_bits(&mut self, n: u64) -> Ieee32 {
+        Ieee32::with_bits(n as u32)
+    }
+
+    fn f64_from_bits(&mut self, n: u64) -> Ieee64 {
+        Ieee64::with_bits(n)
+    }
+
     fn u64_bswap16(&mut self, n: u64) -> u64 {
         (n as u16).swap_bytes() as u64
     }

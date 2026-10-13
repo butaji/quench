@@ -1,5 +1,5 @@
---- a/cranelift-codegen/src/egraph/elaborate.rs	2026-10-13 09:07:31.332258211 +0000
-+++ b/cranelift-codegen/src/egraph/elaborate.rs	2026-10-13 09:07:31.345096132 +0000
+--- a/cranelift-codegen/src/egraph/elaborate.rs	2026-10-13 09:28:32.501539435 +0000
++++ b/cranelift-codegen/src/egraph/elaborate.rs	2026-10-13 09:28:32.513163244 +0000
 @@ -47,6 +47,10 @@
      /// Map from Value to the best (lowest-cost) Value in its eclass
      /// (tree of union value-nodes).
@@ -258,8 +258,8 @@
          self.elaborate_domtree(&self.domtree);
          self.stats.elaborate_func_post_insts += self.func.dfg.num_insts() as u64;
      }
---- a/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-13 09:07:31.339720213 +0000
-+++ b/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-13 09:07:31.351429307 +0000
+--- a/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-13 09:28:32.507971962 +0000
++++ b/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-13 09:28:32.519103333 +0000
 @@ -1478,6 +1478,12 @@
          }
      }
@@ -273,16 +273,16 @@
      fn function_alignment() -> FunctionAlignment {
          FunctionAlignment {
              minimum: 1,
---- a/cranelift-codegen/src/lib.rs	2026-10-13 09:07:31.340497501 +0000
-+++ b/cranelift-codegen/src/lib.rs	2026-10-13 09:07:31.354157691 +0000
+--- a/cranelift-codegen/src/lib.rs	2026-10-13 09:28:32.508628210 +0000
++++ b/cranelift-codegen/src/lib.rs	2026-10-13 09:28:32.522767103 +0000
 @@ -1,4 +1,5 @@
  //! Cranelift code generation library.
 +#![allow(warnings)]
  #![deny(missing_docs)]
  // Display feature requirements in the documentation when building on docs.rs
  #![cfg_attr(docsrs, feature(doc_cfg))]
---- a/cranelift-codegen/src/machinst/mod.rs	2026-10-13 09:07:31.341032135 +0000
-+++ b/cranelift-codegen/src/machinst/mod.rs	2026-10-13 09:07:31.352598715 +0000
+--- a/cranelift-codegen/src/machinst/mod.rs	2026-10-13 09:28:32.509081715 +0000
++++ b/cranelift-codegen/src/machinst/mod.rs	2026-10-13 09:28:32.520969474 +0000
 @@ -363,6 +363,12 @@
      /// order.
      fn gen_nop_units() -> Vec<Vec<u8>>;
@@ -296,8 +296,8 @@
      /// Align a basic block offset (from start of function).  By default, no
      /// alignment occurs.
      fn align_basic_block(offset: CodeOffset) -> CodeOffset {
---- a/cranelift-codegen/src/machinst/vcode.rs	2026-10-13 09:07:31.341124429 +0000
-+++ b/cranelift-codegen/src/machinst/vcode.rs	2026-10-13 09:07:31.352228759 +0000
+--- a/cranelift-codegen/src/machinst/vcode.rs	2026-10-13 09:28:32.509169259 +0000
++++ b/cranelift-codegen/src/machinst/vcode.rs	2026-10-13 09:28:32.520371262 +0000
 @@ -76,6 +76,11 @@
  pub trait VCodeInst: MachInst + MachInstEmit {}
  impl<I: MachInst + MachInstEmit> VCodeInst for I {}
@@ -386,3 +386,40 @@
              while new_offset > buffer.cur_offset() {
                  // Pad with NOPs up to the aligned block offset.
                  let nop = I::gen_nop((new_offset - buffer.cur_offset()) as usize);
+--- a/cranelift-codegen/src/opts/cprop.isle	2026-10-13 09:28:32.509440124 +0000
++++ b/cranelift-codegen/src/opts/cprop.isle	2026-10-13 09:28:32.521292684 +0000
+@@ -352,6 +352,17 @@
+ (decl f64_from_sint (i64) Ieee64)
+ (extern constructor f64_from_sint f64_from_sint)
+ 
++;; Quench: a scalar bitcast of an integer constant is the float constant with
++;; those bits, which rematerializes where it is used instead of staying live.
++(rule (simplify (bitcast $F32 _ (iconst_u $I32 n)))
++      (f32const $F32 (f32_from_bits n)))
++(rule (simplify (bitcast $F64 _ (iconst_u $I64 n)))
++      (f64const $F64 (f64_from_bits n)))
++(decl f32_from_bits (u64) Ieee32)
++(extern constructor f32_from_bits f32_from_bits)
++(decl f64_from_bits (u64) Ieee64)
++(extern constructor f64_from_bits f64_from_bits)
++
+ ;; Constant fold bswap of a constant.
+ (rule (simplify (bswap $I16 (iconst ty (u64_from_imm64 n))))
+       (subsume (iconst $I16 (imm64 (u64_bswap16 n)))))
+--- a/cranelift-codegen/src/opts.rs	2026-10-13 09:28:32.509751466 +0000
++++ b/cranelift-codegen/src/opts.rs	2026-10-13 09:28:32.521762550 +0000
+@@ -338,6 +338,14 @@
+         Ieee64::with_float(n as f64)
+     }
+ 
++    fn f32_from_bits(&mut self, n: u64) -> Ieee32 {
++        Ieee32::with_bits(n as u32)
++    }
++
++    fn f64_from_bits(&mut self, n: u64) -> Ieee64 {
++        Ieee64::with_bits(n)
++    }
++
+     fn u64_bswap16(&mut self, n: u64) -> u64 {
+         (n as u16).swap_bytes() as u64
+     }
