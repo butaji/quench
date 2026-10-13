@@ -348,3 +348,19 @@ target/iteration/run-parallel --all --parallel-dir "$NODE_PARALLEL_DIR" \
 Complete sweeps use frozen sibling binaries and retain every case outcome,
 binary/source revisions, inventory identity, deadlines and resource counters.
 Their results belong in `evidence/`; work status belongs in Linear.
+
+## Buffer string construction byte projection
+
+`Buffer.from(string, encoding)` obtains encoded bytes from the shared Rust
+codec and passes an intrinsic Uint8Array to the Buffer constructor. The temporary
+view owns fixed backing storage and does not invoke guest constructors,
+iterators, or indexed hooks. The Buffer result retains its ordinary brand and
+independent contents across GC.
+
+Other private encoder callers currently consume a number-array projection from
+the same codec. Their existing byte-length, write, and fill operations keep that
+projection until their method and property hooks have their own native contract.
+The oracle covers original byte contents, UTF-8 replacement, hex truncation,
+base64, GC, constructor/iterator poisoning, typed length getters, and subarray
+hooks. Complete Buffer pooling, argument policy, and remaining method behavior
+are separate work.

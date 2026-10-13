@@ -344,6 +344,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "zlibCallbackRun" (0) => crate::modules::zlib_shared_vm::run_callback,
         method "zlibCrc32" (2) => crate::modules::zlib_shared_vm::crc32,
         method "bufferEncode" (2) => crate::modules::buffer_shared_vm::encode,
+        method "bufferEncodeView" (2) => crate::modules::buffer_shared_vm::encode_view,
         method "bufferDecode" (2) => crate::modules::buffer_shared_vm::decode,
         method "bufferCanonicalEncoding" (1) => crate::modules::buffer_shared_vm::canonical_encoding,
         method "textDecoderCanonicalEncoding" (1) => crate::modules::text_decoder_shared_vm::canonical_encoding,
