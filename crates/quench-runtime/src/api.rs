@@ -4636,6 +4636,41 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
     }
 
     #[test]
+    fn regression_namespace_keys_sort_utf16_names_without_array_index_priority() {
+        const DEPENDENCY: &str = "const value=1; export {value as z,value as '2',value as '10',value as a,value as '\\u{1F600}',value as '\\uE000'};";
+        const SOURCE: &str = r#"
+            import * as ns from './ordered-namespace.mjs';
+            print(JSON.stringify(Object.keys(ns)));
+            print(JSON.stringify(Object.getOwnPropertyNames(ns)));
+            print(JSON.stringify(Reflect.ownKeys(ns).map(String)));
+            var names=[];for(var name in ns) names.push(name);print(JSON.stringify(names));
+            print(JSON.stringify(Object.keys({'2':1,z:1,'10':1,a:1})));
+        "#;
+        struct Modules(Capture);
+        impl Host for Modules {
+            fn write_line(&mut self, text: &str) { self.0.write_line(text); }
+            fn clock_millis(&mut self) -> f64 { 0.0 }
+            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::host::ModuleSource>, String> {
+                assert_eq!(specifier, "./ordered-namespace.mjs");
+                Ok(Some(crate::host::ModuleSource { name: "ordered-namespace.mjs".into(), source: DEPENDENCY.into(), bytes: vec![] }))
+            }
+        }
+        for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
+            let view = Capture::default();
+            let mut runtime = Runtime::new(Modules(view.clone()));
+            let program = compile(SOURCE, "namespace-order.mjs").unwrap();
+            runtime.execute(&program).unwrap();
+            assert_eq!(view.0.borrow().as_slice(), &[
+                "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
+                "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
+                "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\",\"Symbol(Symbol.toStringTag)\"]",
+                "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
+                "[\"2\",\"10\",\"z\",\"a\"]",
+            ]);
+        }
+    }
+
+    #[test]
     fn regression_legacy_accessor_records_preserve_order_and_roots() {
         assert_output_in_execution_modes(
             r#"

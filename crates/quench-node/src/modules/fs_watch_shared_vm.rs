@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]
 mod kernel;
+pub(crate) mod promise;
 pub(crate) mod recursive;
 #[cfg(target_os = "linux")]
 use kernel::{EventKind, WatchDescriptor};
@@ -43,9 +44,27 @@ const FACTORY: &str = quench_js_check::checked_js!(
 }"#
 );
 
+#[derive(Clone, Copy)]
+enum WatchTarget {
+    Watcher(RootId),
+    Handle(RootId),
+}
+impl WatchTarget {
+    fn root(self) -> RootId {
+        match self {
+            Self::Watcher(root) | Self::Handle(root) => root,
+        }
+    }
+    fn with_root(self, root: RootId) -> Self {
+        match self {
+            Self::Watcher(_) => Self::Watcher(root),
+            Self::Handle(_) => Self::Handle(root),
+        }
+    }
+}
 struct ActiveWatch {
     descriptor: WatchDescriptor,
-    watcher: RootId,
+    target: WatchTarget,
     encoding: String,
 }
 enum Phase {
@@ -145,6 +164,7 @@ pub(crate) fn install(
         let undefined = context.undefined();
         let api = context.call_rooted(factory, undefined, &functions)?;
         recursive::install(context, api, fs, emitter)?;
+        promise::install(context, api)?;
         let regexp = get(context, global, "RegExp")?;
         let prototype = get(context, regexp, "prototype")?;
         let exec = get(context, prototype, "exec")?;
@@ -592,6 +612,36 @@ pub(crate) fn watch(
     let undefined = context.undefined();
     set(context, handle, "onchange", undefined)?;
     set(context, watcher, "_handle", handle)?;
+    register(
+        context,
+        handle,
+        pathname,
+        filename,
+        WatchTarget::Watcher(watcher),
+        referenced,
+        encoding,
+        Some(options),
+    )?;
+    if context.truthy_rooted(listener)? {
+        let add = get(context, watcher, "addListener")?;
+        let change = context.string_rooted("change");
+        context.call_rooted(add, watcher, &[change, listener])?;
+    }
+    attach_signal(context, watcher, signal)?;
+    Ok(watcher)
+}
+
+fn register(
+    context: &mut NativeContext<'_, NodeHost>,
+    handle: RootId,
+    pathname: PathBuf,
+    filename: RootId,
+    target: WatchTarget,
+    referenced: bool,
+    encoding: String,
+    options: Option<RootId>,
+) -> Result<(), RootedError> {
+    let state = context.host_mut().shared_state();
     let weak = context.host_weak_root(handle)?;
     let id = {
         let mut state = state.borrow_mut();
@@ -612,7 +662,8 @@ pub(crate) fn watch(
     ));
     let phase = match result {
         Ok(descriptor) => {
-            let watcher = context.retain(watcher)?;
+            let root = context.retain(target.root())?;
+            let target = target.with_root(root);
             let mut state = state.borrow_mut();
             let group = state
                 .fs_watch
@@ -628,12 +679,16 @@ pub(crate) fn watch(
             group.owners.push(id);
             Phase::Watching(ActiveWatch {
                 descriptor,
-                watcher,
+                target,
                 encoding,
             })
         }
         Err(error) => {
-            let throw = get(context, options, "throwIfNoEntry")?;
+            let throw = if let Some(options) = options {
+                get(context, options, "throwIfNoEntry")?
+            } else {
+                context.boolean(true)
+            };
             if error.raw_os_error() == Some(libc::ENOENT)
                 && context
                     .rooted_value(throw)
@@ -655,13 +710,37 @@ pub(crate) fn watch(
             phase,
         },
     );
-    if context.truthy_rooted(listener)? {
-        let add = get(context, watcher, "addListener")?;
-        let change = context.string_rooted("change");
-        context.call_rooted(add, watcher, &[change, listener])?;
-    }
-    attach_signal(context, watcher, signal)?;
-    Ok(watcher)
+    Ok(())
+}
+
+pub(super) fn raw_watch(
+    context: &mut NativeContext<'_, NodeHost>,
+    filename: RootId,
+    referenced: bool,
+    encoding: String,
+    callback: RootId,
+) -> Result<RootId, RootedError> {
+    let (pathname, filename) = path_argument(context, filename, "path")?;
+    let state = context.host_mut().shared_state();
+    let api = state
+        .borrow()
+        .fs_watch
+        .api
+        .ok_or_else(|| RootedError::host("watch API missing"))?;
+    let constructor = get(context, api, "FSEvent")?;
+    let handle = context.construct_rooted(constructor, constructor, &[])?;
+    set(context, handle, "onchange", callback)?;
+    register(
+        context,
+        handle,
+        pathname,
+        filename,
+        WatchTarget::Handle(handle),
+        referenced,
+        encoding,
+        None,
+    )?;
+    Ok(handle)
 }
 
 fn attach_signal(
@@ -679,7 +758,16 @@ fn attach_signal(
         } else {
             let add = get(context, signal, "addEventListener")?;
             let event = context.string_rooted("abort");
-            context.call_rooted(add, signal, &[event, abort])?;
+            let state = context.host_mut().shared_state();
+            let events = state
+                .borrow()
+                .event_targets_api
+                .ok_or_else(|| RootedError::host("event API missing"))?;
+            let resist = get(context, events, "resistKey")?;
+            let options = context.null_object_rooted()?;
+            let yes = context.boolean(true);
+            context.define_data_property_rooted(options, resist, yes, true, true, true)?;
+            context.call_rooted(add, signal, &[event, abort, options])?;
             let data = context.object_rooted()?;
             set(context, data, "signal", signal)?;
             set(context, data, "listener", abort)?;
@@ -725,7 +813,7 @@ fn stop(state: &mut State, id: u64) -> Option<RootId> {
             state.kernel.unsubscribe(active.descriptor);
         }
     }
-    Some(active.watcher)
+    Some(active.target.root())
 }
 pub(crate) fn handle_close(
     context: &mut NativeContext<'_, NodeHost>,
@@ -904,7 +992,7 @@ pub(crate) fn dispatch(
     let Some(delivery) = state.borrow_mut().fs_watch.deliveries.pop_front() else {
         return Ok(context.undefined());
     };
-    let (watcher, encoding) = {
+    let (target, encoding) = {
         let state = state.borrow();
         let Some(entry) = state.fs_watch.handles.get(&delivery.owner) else {
             return Ok(context.undefined());
@@ -912,9 +1000,9 @@ pub(crate) fn dispatch(
         let Phase::Watching(active) = &entry.phase else {
             return Ok(context.undefined());
         };
-        (active.watcher, active.encoding.clone())
+        (active.target, active.encoding.clone())
     };
-    let watcher = context.retain(watcher)?;
+    let receiver = context.retain(target.root())?;
     let result = (|| {
         let filename = if encoding == "buffer" {
             let bytes = context.uint8_array_rooted(&delivery.name)?;
@@ -927,22 +1015,31 @@ pub(crate) fn dispatch(
             let units = super::buffer_codec::decode_units(&delivery.name, &encoding);
             context.string_units_rooted(&units)
         };
-        let matcher = get(context, watcher, "_ignoreMatcher")?;
-        if !nullish(context, matcher) {
-            let ignored = context.call_rooted(matcher, watcher, &[filename])?;
-            if context.truthy_rooted(ignored)? {
-                return Ok(context.undefined());
-            }
-        }
-        let emit = get(context, watcher, "emit")?;
-        let change = context.string_rooted("change");
         let kind = context.string_rooted(match delivery.kind {
             EventKind::Change => "change",
             EventKind::Rename => "rename",
         });
-        context.call_rooted(emit, watcher, &[change, kind, filename])
+        match target {
+            WatchTarget::Handle(_) => {
+                let callback = get(context, receiver, "onchange")?;
+                let status = context.number(0.0);
+                context.call_rooted(callback, receiver, &[status, kind, filename])
+            }
+            WatchTarget::Watcher(_) => {
+                let matcher = get(context, receiver, "_ignoreMatcher")?;
+                if !nullish(context, matcher) {
+                    let ignored = context.call_rooted(matcher, receiver, &[filename])?;
+                    if context.truthy_rooted(ignored)? {
+                        return Ok(context.undefined());
+                    }
+                }
+                let emit = get(context, receiver, "emit")?;
+                let change = context.string_rooted("change");
+                context.call_rooted(emit, receiver, &[change, kind, filename])
+            }
+        }
     })();
-    context.release_root(watcher);
+    context.release_root(receiver);
     result
 }
 pub(crate) fn has_work(state: &State) -> bool {
@@ -1026,7 +1123,7 @@ pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
     let handles = std::mem::take(&mut state.borrow_mut().fs_watch.handles);
     for entry in handles.into_values() {
         if let Phase::Watching(active) = entry.phase {
-            runtime.release_root(active.watcher);
+            runtime.release_root(active.target.root());
         }
         runtime.release_host_weak_root(entry.weak);
     }
