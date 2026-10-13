@@ -520,7 +520,7 @@ impl Heap {
         (
             self.slots.len(),
             self.slots.capacity() * size_of::<super::Slot>(),
-            self.free.capacity() * size_of::<u32>(),
+            self.free.memory_bytes(),
             dynamic,
             property.0,
             property.1,
