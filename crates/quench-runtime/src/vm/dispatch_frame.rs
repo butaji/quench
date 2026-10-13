@@ -1527,44 +1527,67 @@ impl<H: Host> Vm<H> {
                     });
                 }
                 Err(error) => {
-                    let mut throwing_pc = instruction_pc as u32;
-                    let mut error = error;
-                    loop {
-                        let function = self.frames[frame].function as usize;
-                        match self.exception_handler_target(p, frame, function, throwing_pc, error)
-                        {
-                            Ok(target) => {
-                                pc = target;
-                                break;
-                            }
-                            Err(unhandled) => {
-                                self.frames[frame].pc = pc;
-                                if let Some(pending) = pending_calls.pop() {
-                                    debug_assert_eq!(frame, pending.caller + 1);
-                                    let result = Err(unhandled);
-                                    let mut failed_frame = self.frames.pop().unwrap();
-                                    self.deactivate_frame(&mut failed_frame, &result);
-                                    self.persist_global_lexical_bindings(p, &failed_frame);
-                                    frame = pending.caller;
-                                    pc = self.frames[frame].pc;
-                                    cursor = pending.caller_cursor.unwrap_or_else(|| {
-                                        self.general_cursor(executing_program, p, self.frames[frame].function, fast_lane)
-                                    });
-                                    published_pc = &mut self.frames[frame].pc;
-                                    self.active_registers =
-                                        self.frames[frame].registers.as_mut_ptr();
-                                    throwing_pc = pending.call_pc;
-                                    drop(pending.call_guard);
-                                    error = match result {
-                                        Err(error) => error,
-                                        Ok(_) => unreachable!(),
-                                    };
-                                } else {
-                                    return Err(unhandled);
-                                }
-                            }
-                        }
-                    }
+                    (frame, pc) = self.unwind_general_loop(
+                        p,
+                        frame,
+                        pc,
+                        instruction_pc as u32,
+                        error,
+                        &mut pending_calls,
+                        &mut cursor,
+                        executing_program,
+                        fast_lane,
+                    )?;
+                    published_pc = &mut self.frames[frame].pc;
+                }
+            }
+        }
+    }
+
+    /// Finds the handler for `error` thrown at `throwing_pc`, popping in-loop activations
+    /// that have none; returns the frame and PC to resume at, or the error no frame handles.
+    /// Out of line and cold, so the dispatch loop keeps registers for its hot paths.
+    #[cold]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn unwind_general_loop(
+        &mut self,
+        p: &ResidualProgram,
+        mut frame: usize,
+        mut pc: usize,
+        mut throwing_pc: u32,
+        mut error: JsError,
+        pending_calls: &mut Vec<PendingGeneralCall>,
+        cursor: &mut GeneralCodeCursor,
+        executing_program: ProgramId,
+        fast_lane: bool,
+    ) -> Result<(usize, usize), JsError> {
+        loop {
+            let function = self.frames[frame].function as usize;
+            match self.exception_handler_target(p, frame, function, throwing_pc, error) {
+                Ok(target) => return Ok((frame, target)),
+                Err(unhandled) => {
+                    self.frames[frame].pc = pc;
+                    let Some(pending) = pending_calls.pop() else {
+                        return Err(unhandled);
+                    };
+                    debug_assert_eq!(frame, pending.caller + 1);
+                    let result = Err(unhandled);
+                    let mut failed_frame = self.frames.pop().unwrap();
+                    self.deactivate_frame(&mut failed_frame, &result);
+                    self.persist_global_lexical_bindings(p, &failed_frame);
+                    frame = pending.caller;
+                    pc = self.frames[frame].pc;
+                    *cursor = pending.caller_cursor.unwrap_or_else(|| {
+                        self.general_cursor(executing_program, p, self.frames[frame].function, fast_lane)
+                    });
+                    self.active_registers = self.frames[frame].registers.as_mut_ptr();
+                    throwing_pc = pending.call_pc;
+                    drop(pending.call_guard);
+                    error = match result {
+                        Err(error) => error,
+                        Ok(_) => unreachable!(),
+                    };
                 }
             }
         }
