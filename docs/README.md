@@ -7,6 +7,7 @@
 - [Wasm boundary](spec.md)
 - [Test262 stages](STAGES.md) and [Node stages](../STAGES.md)
 - [Native Node host contracts](node-host-contracts.md)
+- [Shared array operation contracts](shared-array-contracts.md)
 - [V8-v7 commands](v8_v7.md)
 - [Benchmark micros](../quench-bench/micros/README.md)
 
