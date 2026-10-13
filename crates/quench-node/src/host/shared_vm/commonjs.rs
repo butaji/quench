@@ -1153,10 +1153,8 @@ fn module_record(
     set(context, module, "loaded", loaded)?;
     let children = context.array_rooted(&[])?;
     set(context, module, "children", children)?;
-    let paths = directory
-        .ancestors()
-        .filter(|path| path.file_name().is_none_or(|name| name != "node_modules"))
-        .map(|path| context.string_rooted(&path.join("node_modules").to_string_lossy()))
+    let paths = crate::modules::module_shared_vm::node_search_paths(directory)
+        .map(|path| context.string_rooted(&path.to_string_lossy()))
         .collect::<Vec<_>>();
     let paths = context.array_rooted(&paths)?;
     set(context, module, "paths", paths)?;

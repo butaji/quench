@@ -2,6 +2,15 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Path, PathBuf};
 
+const REQUIRE_FACADES: &str = quench_js_check::checked_js!(
+    r#"(requireNative, pathsNative) => {
+      'use strict';
+      return [
+      function createRequire(filename) { return requireNative(filename); },
+      function(from) { return pathsNative(from); }
+    ]; }"#
+);
+
 const BUILTIN_MODULES: &[&str] = &[
     "_http_agent",
     "_http_client",
@@ -97,9 +106,15 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "builtinModules", names)?;
     let is_builtin = context.host_function(crate::host::shared_vm::operation("isBuiltin"))?;
     set(context, module, "isBuiltin", is_builtin)?;
-    let create_require =
-        context.host_function(crate::host::shared_vm::operation("createRequire"))?;
+    let require_native = context.host_function(crate::host::shared_vm::operation("createRequire"))?;
+    let paths_native = context.host_function(crate::host::shared_vm::operation("moduleNodePaths"))?;
+    let factory = context.evaluate_script_rooted(REQUIRE_FACADES, "node:module/require-facades.js")?;
+    let undefined = context.undefined();
+    let facades = context.call_rooted(factory, undefined, &[require_native, paths_native])?;
+    let create_require = get(context, facades, "0")?;
+    let paths = get(context, facades, "1")?;
     set(context, module, "createRequire", create_require)?;
+    set(context, module, "_nodeModulePaths", paths)?;
     let find_package_json =
         context.host_function(crate::host::shared_vm::operation("findPackageJSON"))?;
     set(context, module, "findPackageJSON", find_package_json)?;
@@ -398,32 +413,79 @@ pub(crate) fn create_require(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let filename = args
-        .first()
-        .copied()
-        .map(|root| context.string_text(root))
-        .transpose()?
-        .flatten()
-        .and_then(|filename| {
-            if filename.starts_with("file:") {
-                url::Url::parse(&filename)
-                    .ok()
-                    .filter(|url| url.scheme() == "file")
-                    .and_then(|url| url.to_file_path().ok())
-            } else {
-                let path = PathBuf::from(filename);
-                path.is_absolute().then_some(path)
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
+    // Node deliberately tests this URL-like shape before string coercion.
+    // Getter order and exceptions here are outside the conversion catch.
+    let url_like = super::url_shared_vm::is_url_like(context, input)?;
+    let text = context.string_text(input)?;
+    let filename = if url_like
+        || text
+            .as_ref()
+            .is_some_and(|text| !Path::new(text).is_absolute())
+    {
+        let conversion = (|| {
+            let text = context.to_string(input)?;
+            let text = context.string_rooted(&text);
+            let undefined = context.undefined();
+            let filename = super::url_shared_vm::file_url_to_path(context, undefined, &[text])?;
+            context.to_string(filename)
+        })();
+        match conversion {
+            Ok(filename) => filename,
+            Err(error) => {
+                if let Some(exception) = error.exception {
+                    context.release_root(exception);
+                }
+                return Err(super::util_shared_vm::argument_value_error(
+                    context,
+                    input,
+                    "filename",
+                    "must be a file URL object, file URL string, or absolute path string",
+                )?);
             }
-        });
-    let Some(filename) = filename else {
-        let error = context.type_error_rooted(
-            "The argument 'filename' must be a file URL or an absolute path string",
-        )?;
-        let code = context.string_rooted("ERR_INVALID_ARG_VALUE");
-        set(context, error, "code", code)?;
-        return Err(context.throw(error));
+        }
+    } else if let Some(text) = text {
+        text
+    } else {
+        return Err(super::util_shared_vm::argument_value_error(
+            context,
+            input,
+            "filename",
+            "must be a file URL object, file URL string, or absolute path string",
+        )?);
+    };
+    // A trailing separator gives the require a directory, rather than its parent.
+    let trailing_separator = filename.ends_with('/') || (cfg!(windows) && filename.ends_with('\\'));
+    let filename = if trailing_separator {
+        PathBuf::from(filename).join("noop.js")
+    } else {
+        PathBuf::from(filename)
     };
     crate::host::shared_vm::commonjs::create_require(context, &filename)
+}
+
+/// One projection of ancestor search directories, shared with CJS module records.
+pub(crate) fn node_search_paths(directory: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    directory
+        .ancestors()
+        .filter(|path| path.file_name().is_none_or(|name| name != "node_modules"))
+        .map(|path| path.join("node_modules"))
+}
+
+pub(crate) fn node_module_paths(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
+    let path = super::path_shared_vm::module(context)?;
+    let resolve = get(context, path, "resolve")?;
+    let resolved = context.call_rooted(resolve, path, &[input])?;
+    let resolved = context.to_string(resolved)?;
+    let roots = node_search_paths(Path::new(&resolved))
+        .map(|path| context.string_rooted(&path.to_string_lossy()))
+        .collect::<Vec<_>>();
+    context.array_rooted(&roots)
 }
 
 pub(crate) fn is_builtin(
