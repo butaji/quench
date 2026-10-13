@@ -12,6 +12,13 @@ pub(crate) fn module(
         "node:stream/shared.js",
     )?;
     let dependencies = context.object_rooted()?;
+    for (name, operation) in [
+        ("closeOption", "streamCloseOption"),
+        ("emitClose", "streamEmitClose"),
+    ] {
+        let function = context.host_function(crate::host::shared_vm::operation(operation))?;
+        set(context, dependencies, name, function)?;
+    }
     let pipe_plan = context.host_function(crate::host::shared_vm::operation("streamPipePlan"))?;
     set(context, dependencies, "pipePlan", pipe_plan)?;
     let pipe_end =

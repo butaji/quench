@@ -85,6 +85,8 @@ pub(crate) struct SharedNodeState {
     pub(crate) http: crate::modules::http_shared_vm::State,
     pub(crate) tcp: crate::modules::net_shared_vm::Transport,
     pub(crate) net_sockets: std::collections::HashMap<u64, NetSocket>,
+    pub(crate) net_closing_sockets: std::collections::HashMap<u64, quench_runtime::RootId>,
+    pub(crate) net_socket_close_completed: Option<quench_runtime::RootId>,
     pub(crate) net_servers: std::collections::HashMap<u64, NetServer>,
     pub(crate) child_process_shell_args_warning_emitted: bool,
     pub(crate) child_processes:
@@ -205,6 +207,8 @@ impl SharedNodeState {
             http: crate::modules::http_shared_vm::State::new(),
             tcp: crate::modules::net_shared_vm::Transport::new(),
             net_sockets: std::collections::HashMap::new(),
+            net_closing_sockets: std::collections::HashMap::new(),
+            net_socket_close_completed: None,
             net_servers: std::collections::HashMap::new(),
             child_process_shell_args_warning_emitted: false,
             child_processes: std::collections::HashMap::new(),
