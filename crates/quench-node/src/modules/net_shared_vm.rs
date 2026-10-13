@@ -1858,10 +1858,10 @@ fn validate_local_path(path: &std::path::Path) -> std::io::Result<()> {
 #[cfg(unix)]
 fn bind_local_address(
     path: &std::path::Path,
-    display: &str,
+    _display: &str,
 ) -> std::io::Result<(UnixListener, Option<std::path::PathBuf>)> {
     #[cfg(target_os = "linux")]
-    if let Some(name) = display.strip_prefix('\0') {
+    if let Some(name) = _display.strip_prefix('\0') {
         use std::os::linux::net::SocketAddrExt;
         let address = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes())
             .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
@@ -1871,9 +1871,9 @@ fn bind_local_address(
     UnixListener::bind(path).map(|listener| (listener, Some(path.to_owned())))
 }
 #[cfg(unix)]
-fn connect_local_address(path: &std::path::Path, display: &str) -> std::io::Result<UnixStream> {
+fn connect_local_address(path: &std::path::Path, _display: &str) -> std::io::Result<UnixStream> {
     #[cfg(target_os = "linux")]
-    if let Some(name) = display.strip_prefix('\0') {
+    if let Some(name) = _display.strip_prefix('\0') {
         use std::os::linux::net::SocketAddrExt;
         let address = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes())
             .map_err(|_| std::io::Error::from_raw_os_error(libc::EINVAL))?;
