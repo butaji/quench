@@ -339,7 +339,52 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
+        if let Some(length) = self.array_push_dense(this, args) {
+            return Ok(length);
+        }
         self.array_push_with_array_like_semantics(p, this, args)
+    }
+
+    /// `push` onto a plain dense array as one append: the generic steps reduce to it when the
+    /// array is extensible, unfrozen, holds no indexed descriptors or sparse elements, has a
+    /// writable `length`, and no prototype provides an accessor for an appended index (an
+    /// index no atom names cannot key any named property). `None` leaves every other
+    /// receiver to the generic algorithm.
+    fn array_push_dense(&mut self, this: Value, args: &[Value]) -> Option<Value> {
+        let Some(Cell::Array { object }) = self.heap.get(this) else {
+            return None;
+        };
+        if object.has_indexed_descriptors()
+            || object.is_frozen()
+            || !object.is_extensible()
+            || object.is_arguments_object()
+            || self.heap.sparse_length(this).is_some()
+        {
+            return None;
+        }
+        let length = object.elements().len();
+        let final_length = length.checked_add(args.len())?;
+        if final_length > MAX_ARRAY_LENGTH {
+            return None;
+        }
+        if self
+            .property_attributes(this, PropertyKey::string(self.length_atom))
+            .is_some_and(|attributes| !attributes.writable)
+        {
+            return None;
+        }
+        for index in length..final_length {
+            if let Some(atom) = self.lookup_array_index_atom(index)
+                && self.property_accessor(this, atom).is_some()
+            {
+                return None;
+            }
+        }
+        let Some(Cell::Array { object }) = self.heap.get_mut(this) else {
+            unreachable!("matched an array above");
+        };
+        super::index::mutable_array_elements(object.elements_mut()).extend_from_slice(args);
+        Some(Value::number(final_length as f64))
     }
 
     fn array_push_with_array_like_semantics(

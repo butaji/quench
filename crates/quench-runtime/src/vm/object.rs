@@ -624,8 +624,21 @@ impl<H: Host> Vm<H> {
         match self.cached_field_hit(p, object, site) {
             FieldCacheProbe::Hit(value) => Ok(value),
             FieldCacheProbe::OrdinaryMiss => self.get_field_polymorphic(p, object, atom, site),
-            FieldCacheProbe::Ineligible => self.get_field_uncached(p, object, atom, site),
+            FieldCacheProbe::Ineligible => match self.array_length_field(object, atom) {
+                Some(length) => Ok(length),
+                None => self.get_field_uncached(p, object, atom, site),
+            },
         }
+    }
+
+    /// `array.length`: an array's own `length` is a data property no definition can turn
+    /// into an accessor or hide, so reading it needs no lookup.
+    #[inline(always)]
+    pub(super) fn array_length_field(&self, object: Value, atom: Atom) -> Option<Value> {
+        (atom == self.length_atom)
+            .then(|| self.own_array_length(object))
+            .flatten()
+            .map(|length| Value::number(length as f64))
     }
 
     /// The inline field cache hits for `object` at `site`. A site is only populated after the
