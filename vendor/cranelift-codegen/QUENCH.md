@@ -40,6 +40,10 @@ A scalar `bitcast` of an integer constant folds to the float constant with
 those bits, which rematerializes at each use instead of staying live (a
 register's float view of an integer zero had been spilled and reloaded per
 pixel in mandel).
+On x64, a 32-bit load (`load.i32`, `uload8`/`uload16` to i32) counts as
+zeroing its register's upper 32 bits, as `movl`/`movzx` do, so widening its
+result for an address needs no `movl` copy (coremark's list walks carried
+one on each pointer-chasing step).
 `#![allow(warnings)]` keeps the workspace's `-D warnings`
 from failing on upstream lints that a registry dependency's capped lints
 would hide. `QUENCH.patch` records these changes against the published
