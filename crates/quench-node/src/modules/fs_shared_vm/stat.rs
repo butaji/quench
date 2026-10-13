@@ -1,3 +1,5 @@
+#[path = "stat_types.rs"]
+pub(crate) mod types;
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::collections::VecDeque;
@@ -5,11 +7,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(unix)]
-use std::{
-    ffi::CString,
-    os::unix::ffi::OsStrExt,
-    os::unix::fs::PermissionsExt,
-};
+use std::{ffi::CString, os::unix::ffi::OsStrExt, os::unix::fs::PermissionsExt};
 
 #[cfg(not(unix))]
 const S_IF_DIRECTORY: f64 = 0o040000 as f64;
@@ -59,7 +57,8 @@ const STAT_API: &str = r#"(readMetadata) => {
   };
 }"#;
 
-const DECORATE_STATS: &str = quench_js_check::checked_js!(r#"(stats) => {
+const DECORATE_STATS: &str = quench_js_check::checked_js!(
+    r#"(stats) => {
   for (const name of ["atime", "mtime", "ctime", "birthtime"]) {
     stats[name] = new Date(stats[`${name}Ms`]);
   }
@@ -68,38 +67,126 @@ const DECORATE_STATS: &str = quench_js_check::checked_js!(r#"(stats) => {
     Object.defineProperty(stats, name, { value: () => result, configurable: true, enumerable: false });
   }
   return stats;
-}"#);
+}"#
+);
 
-const STATS_CONSTRUCTOR: &str = quench_js_check::checked_js!(r#"(emitWarning) => {
-  function Stats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atime, mtime, ctime, birthtime) {
-    emitWarning('fs.Stats constructor is deprecated.', { type: 'DeprecationWarning', code: 'DEP0180' });
-    for (const [name, value] of Object.entries({ dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks })) this[name] = value;
-    for (const [name, value] of Object.entries({ atime, mtime, ctime, birthtime })) {
-      this[`${name}Ms`] = value;
-      this[name] = new Date(value);
+/// Polling needs exact integer metadata before any JavaScript projection.
+/// Keep the operating-system value intact; the ordinary stat APIs may choose
+/// their existing Number view, while watchFile's bigint view never rounds it.
+#[derive(Clone, Default)]
+struct StatMetadata {
+    fields: [i128; types::BASE_FIELDS.len()],
+    times: [i128; types::TIME_FIELDS.len()],
+}
+const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
+const NANOSECONDS_PER_MILLISECOND: i128 = 1_000_000;
+const MILLISECONDS_PER_SECOND: f64 = (NANOSECONDS_PER_SECOND / NANOSECONDS_PER_MILLISECOND) as f64;
+impl StatMetadata {
+    fn from_metadata(metadata: Option<&std::fs::Metadata>) -> Self {
+        let Some(metadata) = metadata else {
+            return Self::default();
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let birth = metadata.created().ok().map(exact_time_ns).unwrap_or(0);
+            Self {
+                fields: [
+                    i128::from(metadata.dev()),
+                    i128::from(metadata.mode()),
+                    i128::from(metadata.nlink()),
+                    i128::from(metadata.uid()),
+                    i128::from(metadata.gid()),
+                    i128::from(metadata.rdev()),
+                    i128::from(metadata.blksize()),
+                    i128::from(metadata.ino()),
+                    i128::from(metadata.len()),
+                    i128::from(metadata.blocks()),
+                ],
+                times: [
+                    i128::from(metadata.atime()) * NANOSECONDS_PER_SECOND
+                        + i128::from(metadata.atime_nsec()),
+                    i128::from(metadata.mtime()) * NANOSECONDS_PER_SECOND
+                        + i128::from(metadata.mtime_nsec()),
+                    i128::from(metadata.ctime()) * NANOSECONDS_PER_SECOND
+                        + i128::from(metadata.ctime_nsec()),
+                    birth,
+                ],
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let mut result = Self::default();
+            result.fields[1] = if metadata.is_dir() {
+                S_IF_DIRECTORY as i128
+            } else {
+                S_IF_REGULAR as i128
+            };
+            result.fields[2] = 1;
+            result.fields[8] = i128::from(metadata.len());
+            result.times = [
+                metadata.accessed().ok(),
+                metadata.modified().ok(),
+                metadata.created().ok(),
+                metadata.created().ok(),
+            ]
+            .map(|time| time.map(exact_time_ns).unwrap_or(0));
+            result
+        }
     }
-    for (const name of ['isDirectory', 'isFile', 'isSymbolicLink', 'isBlockDevice', 'isCharacterDevice', 'isFIFO', 'isSocket']) this[name] = () => false;
-  }
-  return Stats;
-}"#);
+}
+fn exact_time_ns(time: SystemTime) -> i128 {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos() as i128,
+        Err(error) => -(error.duration().as_nanos() as i128),
+    }
+}
+
+pub(crate) fn watch_stats(
+    context: &mut NativeContext<'_, NodeHost>,
+    metadata: Option<&std::fs::Metadata>,
+    bigint: bool,
+) -> Result<RootId, RootedError> {
+    let snapshot = StatMetadata::from_metadata(metadata);
+    let result = context.object_rooted()?;
+    for (name, value) in types::BASE_FIELDS.into_iter().zip(snapshot.fields) {
+        let value = if bigint {
+            context.bigint_rooted(value)
+        } else {
+            context.number(value as f64)
+        };
+        set(context, result, name, value)?;
+    }
+    for (name, time) in types::TIME_FIELDS.into_iter().zip(snapshot.times) {
+        let milliseconds = if bigint {
+            context.bigint_rooted(time / NANOSECONDS_PER_MILLISECOND)
+        } else {
+            context.number(stat_time_ms(time))
+        };
+        set(context, result, &format!("{name}Ms"), milliseconds)?;
+        if bigint {
+            let nanoseconds = context.bigint_rooted(time);
+            set(context, result, &format!("{name}Ns"), nanoseconds)?;
+        } else {
+            let nanos = context.number(time.rem_euclid(NANOSECONDS_PER_SECOND) as f64);
+            types::set_partial_time(context, result, name, nanos)?;
+        }
+    }
+    // The shared stats facade is attached by the watcher install step.
+    types::decorate_stats(context, result, bigint)
+}
 
 pub(crate) fn install(
     context: &mut NativeContext<'_, NodeHost>,
     module: RootId,
 ) -> Result<(), RootedError> {
+    types::install(context, module)?;
     let host_operation =
         context.host_function(crate::host::shared_vm::operation("fsStatMetadata"))?;
     let factory = context.evaluate_script_rooted(STAT_API, "node:fs/shared-stat.js")?;
     let undefined = context.undefined();
     let stat = context.call_rooted(factory, undefined, &[host_operation])?;
     set(context, module, "stat", stat)?;
-    let global = context.global_root()?;
-    let process = get(context, global, "process")?;
-    let emit_warning = get(context, process, "emitWarning")?;
-    let constructor_factory =
-        context.evaluate_script_rooted(STATS_CONSTRUCTOR, "node:fs/shared-stats-constructor.js")?;
-    let stats = context.call_rooted(constructor_factory, undefined, &[emit_warning])?;
-    set(context, module, "Stats", stats)?;
     let utimes = context.host_function(crate::host::shared_vm::operation("fsUtimesSync"))?;
     set(context, module, "utimesSync", utimes)
 }
@@ -127,15 +214,16 @@ pub(crate) fn utimes_sync(
     let mtime = seconds(2);
     #[cfg(unix)]
     let result = {
-        let path = CString::new(path.as_bytes()).map_err(|_| {
-            RootedError::host("utimes path contains an interior null byte")
-        })?;
+        let path = CString::new(path.as_bytes())
+            .map_err(|_| RootedError::host("utimes path contains an interior null byte"))?;
         let times = [to_timespec(atime), to_timespec(mtime)];
         // SAFETY: path and times point to valid C values for the duration of the call.
-        let result = unsafe {
-            libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0)
-        };
-        if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+        let result = unsafe { libc::utimensat(libc::AT_FDCWD, path.as_ptr(), times.as_ptr(), 0) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
     };
     #[cfg(not(unix))]
     let result = std::fs::metadata(&path).map(|_| ());
@@ -280,10 +368,7 @@ pub(crate) fn ftruncate_sync(
     }
 }
 
-fn truncate_length(
-    context: &NativeContext<'_, NodeHost>,
-    value: Option<RootId>,
-) -> u64 {
+fn truncate_length(context: &NativeContext<'_, NodeHost>, value: Option<RootId>) -> u64 {
     value
         .and_then(|value| context.rooted_value(value))
         .and_then(|value| value.as_number())
@@ -438,7 +523,11 @@ fn change_owner(
                     libc::chown(path_string.as_ptr(), uid, gid)
                 }
             };
-            if status == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+            if status == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
         }
         Err(_) => Err(io::Error::from_raw_os_error(libc::EINVAL)),
     };
@@ -472,7 +561,11 @@ pub(crate) fn fchown_sync(
         match descriptor.get(&fd) {
             Some(descriptor) => {
                 let status = unsafe { libc::fchown(descriptor.file.as_raw_fd(), uid, gid) };
-                if status == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+                if status == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::last_os_error())
+                }
             }
             None => Err(io::Error::from_raw_os_error(libc::EBADF)),
         }
@@ -490,7 +583,13 @@ fn owner_id(context: &NativeContext<'_, NodeHost>, value: Option<RootId>) -> lib
         .and_then(|value| context.rooted_value(value))
         .and_then(|value| value.as_number())
         .filter(|value| value.is_finite() && *value >= -1.0 && *value <= u32::MAX as f64)
-        .map(|value| if value == -1.0 { u32::MAX } else { value as u32 })
+        .map(|value| {
+            if value == -1.0 {
+                u32::MAX
+            } else {
+                value as u32
+            }
+        })
         .unwrap_or(u32::MAX)
 }
 
@@ -630,10 +729,20 @@ pub(crate) fn read_dir_sync(
             Err(error) => return Err(stat_error(context, error, &path)?),
         };
         let dirent = context.object_rooted()?;
-        set_string(context, dirent, "name", &entry.file_name().to_string_lossy())?;
+        set_string(
+            context,
+            dirent,
+            "name",
+            &entry.file_name().to_string_lossy(),
+        )?;
         set_bool(context, dirent, "isFile", metadata.is_file())?;
         set_bool(context, dirent, "isDirectory", metadata.is_dir())?;
-        set_bool(context, dirent, "isSymbolicLink", metadata.file_type().is_symlink())?;
+        set_bool(
+            context,
+            dirent,
+            "isSymbolicLink",
+            metadata.file_type().is_symlink(),
+        )?;
         for name in ["isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"] {
             set_bool(context, dirent, name, false)?;
         }
@@ -725,11 +834,17 @@ fn stats(
     }
     set_bool(context, result, "isDirectory", snapshot.is_directory)?;
     set_bool(context, result, "isFile", metadata.is_file())?;
-    set_bool(context, result, "isSymbolicLink", metadata.file_type().is_symlink())?;
+    set_bool(
+        context,
+        result,
+        "isSymbolicLink",
+        metadata.file_type().is_symlink(),
+    )?;
     for name in ["isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"] {
         set_bool(context, result, name, false)?;
     }
-    let decorator = context.evaluate_script_rooted(DECORATE_STATS, "node:fs/shared-stat-methods.js")?;
+    let decorator =
+        context.evaluate_script_rooted(DECORATE_STATS, "node:fs/shared-stat-methods.js")?;
     let undefined = context.undefined();
     context.call_rooted(decorator, undefined, &[result])
 }
@@ -752,75 +867,33 @@ struct StatSnapshot {
     is_directory: bool,
 }
 
-#[cfg(unix)]
 impl From<&std::fs::Metadata> for StatSnapshot {
     fn from(metadata: &std::fs::Metadata) -> Self {
-        use std::os::unix::fs::MetadataExt;
-        let created_ms = metadata.created().ok().map(system_time_ms).unwrap_or(0.0);
+        let exact = StatMetadata::from_metadata(Some(metadata));
+        let [dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks] = exact.fields;
+        let [atime_ms, mtime_ms, ctime_ms, birthtime_ms] = exact.times.map(stat_time_ms);
         Self {
-            mode: metadata.mode() as f64,
-            dev: metadata.dev() as f64,
-            ino: metadata.ino() as f64,
-            nlink: metadata.nlink() as f64,
-            uid: metadata.uid() as f64,
-            gid: metadata.gid() as f64,
-            rdev: metadata.rdev() as f64,
-            size: metadata.len() as f64,
-            blksize: metadata.blksize() as f64,
-            blocks: metadata.blocks() as f64,
-            atime_ms: unix_time_ms(metadata.atime(), metadata.atime_nsec()),
-            mtime_ms: unix_time_ms(metadata.mtime(), metadata.mtime_nsec()),
-            ctime_ms: unix_time_ms(metadata.ctime(), metadata.ctime_nsec()),
-            birthtime_ms: created_ms,
+            mode: mode as f64,
+            dev: dev as f64,
+            ino: ino as f64,
+            nlink: nlink as f64,
+            uid: uid as f64,
+            gid: gid as f64,
+            rdev: rdev as f64,
+            size: size as f64,
+            blksize: blksize as f64,
+            blocks: blocks as f64,
+            atime_ms,
+            mtime_ms,
+            ctime_ms,
+            birthtime_ms,
             is_directory: metadata.is_dir(),
         }
     }
 }
-
-#[cfg(not(unix))]
-impl From<&std::fs::Metadata> for StatSnapshot {
-    fn from(metadata: &std::fs::Metadata) -> Self {
-        let time = |value: Option<SystemTime>| value.map(system_time_ms).unwrap_or(0.0);
-        let created_ms = time(metadata.created().ok());
-        Self {
-            mode: if metadata.is_dir() {
-                S_IF_DIRECTORY
-            } else {
-                S_IF_REGULAR
-            },
-            dev: 0.0,
-            ino: 0.0,
-            nlink: 1.0,
-            uid: 0.0,
-            gid: 0.0,
-            rdev: 0.0,
-            size: metadata.len() as f64,
-            blksize: 0.0,
-            blocks: 0.0,
-            atime_ms: time(metadata.accessed().ok()),
-            mtime_ms: time(metadata.modified().ok()),
-            ctime_ms: created_ms,
-            birthtime_ms: created_ms,
-            is_directory: metadata.is_dir(),
-        }
-    }
-}
-
-#[cfg(unix)]
-fn unix_time_ms(seconds: i64, nanoseconds: i64) -> f64 {
-    seconds as f64 * 1_000.0 + nanoseconds as f64 / 1_000_000.0
-}
-
-fn system_time_ms(time: SystemTime) -> f64 {
-    match time.duration_since(UNIX_EPOCH) {
-        Ok(duration) => {
-            duration.as_secs() as f64 * 1_000.0 + duration.subsec_nanos() as f64 / 1_000_000.0
-        }
-        Err(error) => {
-            let duration = error.duration();
-            -(duration.as_secs() as f64 * 1_000.0 + duration.subsec_nanos() as f64 / 1_000_000.0)
-        }
-    }
+fn stat_time_ms(time: i128) -> f64 {
+    time.div_euclid(NANOSECONDS_PER_SECOND) as f64 * MILLISECONDS_PER_SECOND
+        + time.rem_euclid(NANOSECONDS_PER_SECOND) as f64 / NANOSECONDS_PER_MILLISECOND as f64
 }
 
 fn stat_error(
@@ -901,15 +974,6 @@ fn set(
         return Err(RootedError::host("cannot set shared fs stat property"));
     }
     Ok(())
-}
-
-fn get(
-    context: &mut NativeContext<'_, NodeHost>,
-    object: RootId,
-    name: &str,
-) -> Result<RootId, RootedError> {
-    let key = context.string_rooted(name);
-    context.get_property_rooted(object, key)
 }
 
 fn set_number(
