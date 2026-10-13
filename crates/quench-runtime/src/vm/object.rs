@@ -1515,6 +1515,45 @@ impl<H: Host> Vm<H> {
         true
     }
 
+    /// A cached own-data store or a cached property add to an ordinary object: neither runs
+    /// guest code nor throws, so the dispatch loop's fast match completes both.
+    #[inline(always)]
+    pub(super) fn cached_field_write_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+    ) -> bool {
+        self.cached_field_store_hit(p, object, atom, value, site)
+            || self.cached_field_add_hit(p, object, atom, value, site)
+    }
+
+    /// The add half of `cached_field_write_hit`, out of line so stores keep their code.
+    #[inline(never)]
+    fn cached_field_add_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        site: u16,
+    ) -> bool {
+        if !(self.specialized && p.specialized) || !self.field_cache_atom_eligible(atom) {
+            return false;
+        }
+        let Some(Cell::Object(data)) = self.heap.get(object) else {
+            return false;
+        };
+        if data.is_module_namespace() || data.is_arguments_object() || !data.is_extensible() {
+            return false;
+        }
+        let (shape, proto) = (data.shape(), data.proto());
+        let site = self.field_cache_index(site);
+        self.try_cached_field_add(object, atom, shape, proto, value, site)
+    }
+
     /// `set_field_cached` past the inline own-data store hits.
     #[inline(never)]
     fn set_field_polymorphic(

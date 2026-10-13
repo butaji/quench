@@ -185,15 +185,18 @@ impl<H: Host> Vm<H> {
     /// a data property holding an object, and `value`'s chain has no proxy. Every step is then
     /// an ordinary data read that runs no guest code and cannot throw; `None` leaves any other
     /// case, unobserved, to the general path.
-    fn ordinary_instanceof(&mut self, value: Value, constructor: Value) -> Option<bool> {
-        let Some(Cell::Function { kind, .. }) = self.heap.get(constructor) else {
+    pub(super) fn ordinary_instanceof(
+        &mut self,
+        value: Value,
+        constructor: Value,
+    ) -> Option<bool> {
+        let Some(Cell::Function { kind, object, .. }) = self.heap.get(constructor) else {
             return None;
         };
         if matches!(kind, FunctionKind::Native(Native::FunctionBoundCall)) {
             return None;
         }
-        let constructor_data = self.object_data(constructor)?;
-        let (shape, holder) = (constructor_data.shape(), constructor_data.proto());
+        let (shape, holder) = (object.shape(), object.proto());
         let prototype_slot = match self.instanceof_constructor_layout {
             Some((cached, slot)) if cached == shape => slot,
             _ => {
@@ -217,14 +220,14 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(prototype) {
             return None;
         }
+        // One cell lookup per link: a proxy anywhere on the chain needs the full algorithm.
         let mut current = value;
         loop {
-            if self.proxy_parts(current).is_some() {
-                return None;
-            }
-            let next = self
-                .object_data(current)
-                .map_or(Value::NULL, |object| object.proto());
+            let next = match self.heap.get(current) {
+                Some(Cell::Proxy { .. }) => return None,
+                Some(cell) => cell.object().map_or(Value::NULL, |object| object.proto()),
+                None => Value::NULL,
+            };
             if next.is_null() {
                 return Some(false);
             }
@@ -233,6 +236,16 @@ impl<H: Host> Vm<H> {
             }
             current = next;
         }
+    }
+
+    /// `left instanceof right` when it reduces to a prototype-chain walk; `None` for any
+    /// other operator or a case the full algorithm must decide.
+    #[inline(always)]
+    pub(super) fn instanceof_truthy(&mut self, op: u32, left: Value, right: Value) -> Option<bool> {
+        if op != oxc_ast::ast::BinaryOperator::Instanceof as u32 {
+            return None;
+        }
+        self.ordinary_instanceof(left, right)
     }
 
     /// The slot of `constructor`'s own data `prototype` when it has no own `@@hasInstance`.
