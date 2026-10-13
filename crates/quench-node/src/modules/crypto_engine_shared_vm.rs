@@ -99,8 +99,7 @@ pub(crate) fn set_engine(
     let zero = context.number(0.0);
     // The canonical VM operation performs the same integer coercion; reinterpret
     // its signed result as the unsigned OpenSSL method bitmask.
-    let flags =
-        context.arithmetic_rooted(quench_runtime::NativeArithmetic::BitwiseOr, flags, zero)?;
+    let flags = context.bitwise_or_rooted(flags, zero)?;
     let flags = context
         .rooted_value(flags)
         .and_then(|value| value.as_number())
