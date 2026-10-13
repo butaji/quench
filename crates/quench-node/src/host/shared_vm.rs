@@ -187,6 +187,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netListenerHasRef" (0) => crate::modules::net_reference_shared_vm::handle_has_ref,
         method "netListenError" (2) => crate::modules::net_shared_vm::listen_error,
         method "netSocketOptions" (2) => crate::modules::net_options_shared_vm::socket_options,
+        method "netServerOptions" (1) => crate::modules::net_options_shared_vm::server_options,
         method "netNormalizeEndpoint" (4) => crate::modules::net_endpoint_shared_vm::normalize,
         method "netConnect" (4) => crate::modules::net_shared_vm::connect_operation,
         method "streamCloseOption" (1) => crate::modules::stream_close_shared_vm::option,
