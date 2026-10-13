@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]
 mod kernel;
+pub(crate) mod recursive;
 #[cfg(target_os = "linux")]
 use kernel::{EventKind, WatchDescriptor};
 #[cfg(not(target_os = "linux"))]
@@ -143,6 +144,7 @@ pub(crate) fn install(
         let factory = context.evaluate_script_rooted(FACTORY, "node:fs/watch-facade.js")?;
         let undefined = context.undefined();
         let api = context.call_rooted(factory, undefined, &functions)?;
+        recursive::install(context, api, fs, emitter)?;
         let regexp = get(context, global, "RegExp")?;
         let prototype = get(context, regexp, "prototype")?;
         let exec = get(context, prototype, "exec")?;
@@ -223,6 +225,19 @@ fn clone_options(
         context.set_property_rooted(options, key, entry, options)?;
     }
     Ok(options)
+}
+
+pub(crate) fn event_binding(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<RootId, RootedError> {
+    let shared = context.host_mut().shared_state();
+    let Some(api) = shared.borrow().fs_watch.api else {
+        return Ok(context.undefined());
+    };
+    let constructor = get(context, api, "FSEvent")?;
+    let binding = context.object_rooted()?;
+    set(context, binding, "FSEvent", constructor)?;
+    Ok(binding)
 }
 fn validate_encoding(
     context: &mut NativeContext<'_, NodeHost>,
@@ -528,17 +543,33 @@ pub(crate) fn watch(
         args.get(2).copied().unwrap_or_else(|| context.undefined())
     };
     let options = clone_options(context, raw_options)?;
+    for (name, default) in [
+        ("persistent", true),
+        ("recursive", false),
+        ("throwIfNoEntry", true),
+    ] {
+        let value = get(context, options, name)?;
+        if context
+            .rooted_value(value)
+            .is_some_and(|value| value.is_undefined())
+        {
+            let value = context.boolean(default);
+            set(context, options, name, value)?;
+        }
+    }
     let persistent = get(context, options, "persistent")?;
-    let referenced = if nullish(context, persistent) {
+    let referenced = if context
+        .rooted_value(persistent)
+        .is_some_and(|value| value.is_undefined())
+    {
         true
     } else {
         context.truthy_rooted(persistent)?
     };
     let recursive = get(context, options, "recursive")?;
     if context.truthy_rooted(recursive)? {
-        return Err(RootedError::host(
-            "recursive filesystem watching is not implemented",
-        ));
+        let (_, filename) = path(context, filename)?;
+        return recursive::watch(context, filename, options, listener);
     }
     let encoding = get(context, options, "encoding")?;
     let encoding = validate_encoding(context, encoding)?;
@@ -629,6 +660,16 @@ pub(crate) fn watch(
         let change = context.string_rooted("change");
         context.call_rooted(add, watcher, &[change, listener])?;
     }
+    attach_signal(context, watcher, signal)?;
+    Ok(watcher)
+}
+
+fn attach_signal(
+    context: &mut NativeContext<'_, NodeHost>,
+    watcher: RootId,
+    signal: RootId,
+) -> Result<(), RootedError> {
+    let undefined = context.undefined();
     if !nullish(context, signal) && context.truthy_rooted(signal)? {
         let aborted = get(context, signal, "aborted")?;
         let abort = context
@@ -651,7 +692,7 @@ pub(crate) fn watch(
             context.call_rooted(once, watcher, &[close, detach])?;
         }
     }
-    Ok(watcher)
+    Ok(())
 }
 
 fn handle_id(
@@ -827,7 +868,8 @@ pub(crate) fn abort(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let watcher = context.host_function_data()?;
-    close(context, watcher, &[watcher])
+    let close = get(context, watcher, "close")?;
+    context.call_rooted(close, watcher, &[])
 }
 pub(crate) fn detach_abort(
     context: &mut NativeContext<'_, NodeHost>,
