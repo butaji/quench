@@ -56,6 +56,17 @@ pub(super) enum RecordSweep<'a, T> {
     Dead(RecordId, T),
 }
 
+#[cfg(feature = "profile-memory")]
+#[derive(Clone, Copy)]
+pub(crate) struct RecordSpaceMemory {
+    pub(crate) high_water: usize,
+    pub(crate) live_records: usize,
+    pub(crate) record_bytes: usize,
+    pub(crate) block_metadata_bytes: usize,
+    pub(crate) free_ids: usize,
+    pub(crate) free_id_capacity: usize,
+}
+
 impl RecordBlock {
     fn new() -> Self {
         Self {
@@ -327,9 +338,22 @@ impl<T> RecordSpace<T> {
 
     #[cfg(feature = "profile-memory")]
     pub(super) fn allocated_bytes(&self) -> usize {
-        self.blocks.len() * RECORDS_PER_BLOCK * size_of::<T>()
-            + self.blocks.capacity() * size_of::<RecordBlock>()
-            + self.free.capacity() * size_of::<RecordId>()
+        let memory = self.memory_breakdown();
+        memory.record_bytes
+            + memory.block_metadata_bytes
+            + memory.free_id_capacity * size_of::<RecordId>()
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn memory_breakdown(&self) -> RecordSpaceMemory {
+        RecordSpaceMemory {
+            high_water: self.next_id as usize,
+            live_records: self.live,
+            record_bytes: self.blocks.len() * RECORDS_PER_BLOCK * size_of::<T>(),
+            block_metadata_bytes: self.blocks.capacity() * size_of::<RecordBlock>(),
+            free_ids: self.free.len(),
+            free_id_capacity: self.free.capacity(),
+        }
     }
 }
 

@@ -1,3 +1,4 @@
+use super::records::RecordSpaceMemory;
 use super::{ArrayRecord, Cell, CellKind, Heap, Object, ObjectRef};
 use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
@@ -33,6 +34,8 @@ pub(crate) struct HeapMemoryComposition {
     pub slot_arena_reserved_bytes: usize,
     pub object_record_reserved_bytes: usize,
     pub array_record_reserved_bytes: usize,
+    pub object_record_memory: RecordSpaceMemory,
+    pub array_record_memory: RecordSpaceMemory,
     pub legacy_cell_record_reserved_bytes: usize,
     pub slot_size_bytes: usize,
     pub cell_size_bytes: usize,
@@ -518,8 +521,7 @@ impl Heap {
             } else if let Some((object, elements)) = self.array(identity)
                 && direct_array
             {
-                object.allocated_extra_bytes()
-                    + elements.capacity() * size_of::<Value>()
+                object.allocated_extra_bytes() + elements.capacity() * size_of::<Value>()
             } else {
                 cell.map_or(0, Self::cell_payload_bytes)
             };
@@ -589,6 +591,8 @@ impl Heap {
             slot_arena_reserved_bytes: self.slots.capacity() * size_of::<super::Slot>(),
             object_record_reserved_bytes: self.object_records.allocated_bytes(),
             array_record_reserved_bytes: self.array_records.allocated_bytes(),
+            object_record_memory: self.object_records.memory_breakdown(),
+            array_record_memory: self.array_records.memory_breakdown(),
             legacy_cell_record_reserved_bytes: 0,
             slot_size_bytes: size_of::<super::Slot>(),
             cell_size_bytes: size_of::<Cell>(),
