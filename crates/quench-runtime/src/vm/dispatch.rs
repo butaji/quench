@@ -1934,9 +1934,10 @@ impl<H: Host> Vm<H> {
             }
             Op::Construct => {
                 self.profile.call_source(4);
+                // A construction whose result is returned is pushed too; its caller returns
+                // the constructed value (see `PendingGeneralCall::returns`).
                 if allow_inline_calls
                     && !i.is_super_construct()
-                    && !i.returns_from_frame()
                     && let crate::bytecode::ConstructArguments::Registers(window) =
                         i.construct_arguments()
                 {
