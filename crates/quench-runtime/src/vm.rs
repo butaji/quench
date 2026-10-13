@@ -226,12 +226,7 @@ impl Frame {
     #[inline(always)]
     fn reset_locals_undefined(&mut self, count: usize) {
         self.locals.clear();
-        self.locals.reserve(count);
-        for slot in &mut self.locals.spare_capacity_mut()[..count] {
-            slot.write(Value::UNDEFINED);
-        }
-        // SAFETY: the loop initialized the first `count` slots, which `reserve` provided.
-        unsafe { self.locals.set_len(count) };
+        self.locals.resize(count, Value::UNDEFINED);
     }
 
     /// `initialize_promoted_registers` for a plain activation, whose locals already start
@@ -243,14 +238,14 @@ impl Frame {
             .local_registers
             .split_at(usize::from(function.params));
         let supplied = parameters.len().min(args.len());
-        for (index, (entry, value)) in parameters.iter().zip(args).enumerate() {
-            debug_assert_eq!(usize::from(entry.local), index);
-            // SAFETY: residual validation bounds each promoted register by the register count
-            // the file was sized to.
+        let registers = self.registers.as_mut_ptr();
+        for index in 0..supplied {
+            // SAFETY: `index` is below both lengths; residual validation bounds each promoted
+            // register by the register count the file was sized to.
             unsafe {
-                *self
-                    .registers
-                    .get_unchecked_mut(usize::from(entry.register)) = *value;
+                let entry = parameters.get_unchecked(index);
+                debug_assert_eq!(usize::from(entry.local), index);
+                *registers.add(usize::from(entry.register)) = *args.get_unchecked(index);
             }
         }
         for entry in parameters[supplied..].iter().chain(variables) {
