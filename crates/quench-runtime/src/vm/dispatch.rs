@@ -55,14 +55,16 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
-        // Compilation flags every call that falls into a return of its result.
+        // A sloppy call that falls into a return of its result is pushed like any other; its
+        // caller then returns the callee's completion (see `PendingGeneralCall::returns`).
+        // Strict ones keep the proper tail call `step` performs.
         if i.op() != Op::Call
             || self.direct_eval
             || self.parameter_eval
-            || i.returns_from_frame()
             || p.kind == crate::bytecode::ProgramKind::Wasm
             || f + 1 != self.frames.len()
             || self.frames[f].function == super::ROOT_FUNCTION_ID
+            || (i.returns_from_frame() && p.functions[self.frames[f].function as usize].strict)
         {
             return None;
         }
