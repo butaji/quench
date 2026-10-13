@@ -51,8 +51,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
         self.with_call_roots([target, key], |vm| {
-            if let Some((target, handler)) = vm.proxy_parts(target)
-            {
+            if let Some((target, handler)) = vm.proxy_parts(target) {
                 if handler.is_null() {
                     return Err(vm.type_error(p, "cannot access a revoked proxy".into()));
                 }
@@ -190,8 +189,7 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
-        if let Some((target, handler)) = self.proxy_parts(value)
-        {
+        if let Some((target, handler)) = self.proxy_parts(value) {
             if handler.is_null() {
                 return Err(self.type_error(p, "cannot access a revoked proxy".into()));
             }
@@ -249,7 +247,7 @@ impl<H: Host> Vm<H> {
         let value = self.box_object_or_type_error(p, value)?;
         Ok(self
             .object_data(value)
-            .map(|object| object.proto)
+            .map(|object| object.proto())
             .unwrap_or(Value::NULL))
     }
 
@@ -346,7 +344,7 @@ impl<H: Host> Vm<H> {
         let data = self
             .object_data(target)
             .expect("SetPrototypeOf target is an object");
-        if self.same_value(data.proto, proto) {
+        if self.same_value(data.proto(), proto) {
             return Ok(true);
         }
         if target == self.object_proto || !data.is_extensible() {
@@ -362,12 +360,12 @@ impl<H: Host> Vm<H> {
             }
             cursor = self
                 .object_data(cursor)
-                .map(|object| object.proto)
+                .map(|object| object.proto())
                 .unwrap_or(Value::NULL);
         }
         self.object_data_mut(target)
             .expect("object validated")
-            .proto = proto;
+            .set_proto(proto);
         self.mark_object_dictionary(target, DictionaryTrigger::PrototypeUse);
         self.invalidate_field_caches();
         self.invalidate_method_caches();
@@ -438,8 +436,7 @@ impl<H: Host> Vm<H> {
         source: Value,
     ) -> Result<bool, JsError> {
         let _stack = self.enter_stack()?;
-        if let Some((target, handler)) = self.proxy_parts(source)
-        {
+        if let Some((target, handler)) = self.proxy_parts(source) {
             if handler.is_null() {
                 return Err(self.type_error(p, "cannot access a revoked proxy".into()));
             }
@@ -497,8 +494,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let _stack = self.enter_stack()?;
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
-        if let Some((target, handler)) = self.proxy_parts(source)
-        {
+        if let Some((target, handler)) = self.proxy_parts(source) {
             if handler.is_null() {
                 return Err(self.type_error(p, "cannot access a revoked proxy".into()));
             }

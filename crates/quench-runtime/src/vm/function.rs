@@ -65,13 +65,13 @@ impl<H: Host> Vm<H> {
                         kind:
                             FunctionKind::User(program_id, id)
                             | FunctionKind::NumericUser(program_id, id),
-                        realm,
+                        object,
                         ..
                     }) = self.heap.get(caller)
                     else {
                         return Value::NULL;
                     };
-                    let visible = *realm == self.realm.globals
+                    let visible = object.realm == self.realm.globals
                         && self.programs.get(*program_id).is_some_and(|program| {
                             program.functions.get(*id as usize).is_some_and(|metadata| {
                                 !metadata.strict && !metadata.is_async && !metadata.is_generator
@@ -182,7 +182,7 @@ impl<H: Host> Vm<H> {
             .expect("bound function root remains live");
         self.object_data_mut(function)
             .expect("bound function has object storage")
-            .proto = prototype;
+            .set_proto(prototype);
         let target = self
             .heap
             .root_value(target_root)

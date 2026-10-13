@@ -83,7 +83,7 @@ impl<H: Host> Vm<H> {
                 Ok(SetRelationResult::Set) => {
                     let set = self.heap.alloc(Cell::Set {
                         object: Box::new(Self::empty_object(self.set_proto)),
-                        entries: values,
+                        entries: Box::new(values),
                     });
                     Ok(set)
                 }
@@ -194,7 +194,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Set { entries, .. }) => entries.clone(),
             _ => return Err(self.type_error(p, "Set method called on incompatible receiver".into())),
         };
-        for value in values {
+        for value in *values {
             if !visit(self, value)? {
                 break;
             }
@@ -253,10 +253,10 @@ impl<H: Host> Vm<H> {
             SetRecord::Native { set, .. } => {
                 let values = match self.heap.get(*set) {
                     Some(Cell::Set { entries, .. }) => entries.clone(),
-                    _ => Vec::new(),
+                    _ => Box::default(),
                 };
                 let mut acc = initialize(self)?;
-                for value in values {
+                for value in *values {
                     acc = match step(self, acc, value)? {
                         SetRecordStep::Continue(acc) => acc,
                         SetRecordStep::Stop(acc) => return Ok(acc),
@@ -409,9 +409,9 @@ impl<H: Host> Vm<H> {
             Native::SetDifference => {
                 let current = match self.heap.get(own) {
                     Some(Cell::Set { entries, .. }) => entries.clone(),
-                    _ => Vec::new(),
+                    _ => Box::default(),
                 };
-                for value in current {
+                for value in *current {
                     self.push_set_result(values, roots, value);
                 }
                 self.fold_set_record(p, other, |_| Ok(()), |vm, (), value| {
@@ -444,9 +444,9 @@ impl<H: Host> Vm<H> {
                         let mut result_roots = Vec::new();
                         let current = match vm.heap.get(own) {
                             Some(Cell::Set { entries, .. }) => entries.clone(),
-                            _ => Vec::new(),
+                            _ => Box::default(),
                         };
-                        for value in current {
+                        for value in *current {
                             vm.push_set_result(&mut result, &mut result_roots, value);
                         }
                         Ok((result, result_roots))

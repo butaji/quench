@@ -19,7 +19,7 @@ impl<H: Host> Vm<H> {
                     .unwrap_or(Value::UNDEFINED);
                 self.function_realm(p, target)
             }
-            Some(Cell::Function { realm, .. }) => Ok(realm),
+            Some(Cell::Function { object, .. }) => Ok(object.realm),
             Some(Cell::Proxy { handler, .. }) if handler.is_null() => {
                 Err(self.type_error(p, "cannot access a revoked proxy".into()))
             }
@@ -312,13 +312,15 @@ impl<H: Host> Vm<H> {
             self.realm_function_prototype(realm)
         };
         let function = self.heap.alloc(Cell::Function {
-            object: Box::new(Self::empty_object(function_object_prototype)),
+            object: Box::new(crate::heap::FunctionObject {
+                object: Self::empty_object(function_object_prototype),
+                realm: realm,
+            }),
             kind: match function_plan.dispatch {
                 DispatchClass::General => FunctionKind::User(self.active_program, id),
                 DispatchClass::Numeric => FunctionKind::NumericUser(self.active_program, id),
             },
             env,
-            realm,
         });
         if let Some(source) = function_plan.source_text.as_deref() {
             let source_value = self
@@ -634,14 +636,14 @@ impl<H: Host> Vm<H> {
         let Some(Cell::Function {
             kind: FunctionKind::User(program_id, id),
             env,
-            realm,
+            object,
             ..
         }) = self.heap.get(callee)
         else {
             return None;
         };
         let (program_id, id, env) = (*program_id, *id, *env);
-        if *realm != self.realm.globals
+        if object.realm != self.realm.globals
             || program_id != caller.program
             || program_id != self.active_program
             || id == super::ROOT_FUNCTION_ID

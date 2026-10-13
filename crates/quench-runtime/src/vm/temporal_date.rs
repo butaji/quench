@@ -589,22 +589,27 @@ impl<H: Host> Vm<H> {
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
             return self.make_temporal_plain_date(p, date, calendar, constructor);
         }
-        if let Some(Cell::TemporalPlainDateTime { date, calendar, .. }) = self.heap.get(value) {
-            let (date, calendar) = (*date, calendar.to_string());
+        if let Some(Cell::TemporalPlainDateTime {
+            date_time,
+            calendar,
+            ..
+        }) = self.heap.get(value)
+        {
+            let (date, calendar) = (date_time.date, calendar.to_string());
             let _ = self.plain_date_overflow(p, options)?;
             let date = checked_iso_date(date.0, date.1 as i32, date.2 as i32)
                 .ok_or_else(|| self.range_error(p, "Invalid PlainDate".into()))?;
             return self.make_temporal_plain_date(p, date, calendar, constructor);
         }
         if let Some(Cell::TemporalZonedDateTime {
-            epoch_nanoseconds,
-            time_zone,
-            calendar,
-            ..
+            instant, calendar, ..
         }) = self.heap.get(value)
         {
-            let (epoch_nanoseconds, time_zone, calendar) =
-                (**epoch_nanoseconds, time_zone.to_string(), calendar.to_string());
+            let (epoch_nanoseconds, time_zone, calendar) = (
+                instant.epoch_nanoseconds,
+                instant.time_zone.to_string(),
+                calendar.to_string(),
+            );
             let _ = self.plain_date_overflow(p, options)?;
             let fields = super::temporal_zoned_date_time::zoned_date_time_fields(
                 epoch_nanoseconds,

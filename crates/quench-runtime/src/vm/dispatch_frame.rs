@@ -734,7 +734,7 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.object_data(arguments) else {
             return;
         };
-        let proto = object.proto;
+        let proto = object.proto();
         let Some(iterator_method) = self.heap.property_get(object, iterator_slot) else {
             return;
         };

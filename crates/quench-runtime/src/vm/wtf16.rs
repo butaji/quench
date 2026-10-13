@@ -4,11 +4,12 @@ use std::ops::Range;
 use std::rc::Rc;
 
 /// Heap-owned JavaScript string. The UTF-16 units are authoritative; `host`
-/// memoizes the lossy Rust-text view only after a host/API boundary requests it.
+/// memoizes the lossy Rust-text view only after a host/API boundary requests it, behind a
+/// thin pointer so the string stays three words.
 #[derive(Clone, Debug)]
 pub(crate) struct JsString {
     units: Rc<[u16]>,
-    host: OnceCell<Rc<str>>,
+    host: OnceCell<Box<Rc<str>>>,
 }
 
 impl JsString {
@@ -20,7 +21,7 @@ impl JsString {
             && self
                 .host
                 .get()
-                .is_none_or(|host| Rc::strong_count(host) == 1 && Rc::weak_count(host) == 0)
+                .is_none_or(|host| Rc::strong_count(&**host) == 1 && Rc::weak_count(&**host) == 0)
     }
 }
 
@@ -150,7 +151,7 @@ impl JsString {
 
     pub(crate) fn host_string(&self) -> &str {
         self.host
-            .get_or_init(|| Rc::<str>::from(String::from_utf16_lossy(&self.units)))
+            .get_or_init(|| Box::new(Rc::<str>::from(String::from_utf16_lossy(&self.units))))
             .as_ref()
     }
 
@@ -173,7 +174,7 @@ impl JsString {
         );
         let host = self.host.get().map(|host| {
             (
-                Rc::as_ptr(host) as *const u8 as usize,
+                Rc::as_ptr(&**host) as *const u8 as usize,
                 rc_header_bytes + host.len(),
             )
         });

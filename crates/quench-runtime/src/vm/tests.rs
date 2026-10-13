@@ -2270,7 +2270,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 attributes,
             );
             let object = vm.object_data_mut(namespace).unwrap();
-            object.proto = Value::NULL;
+            object.set_proto(Value::NULL);
             object.set_module_namespace();
             object.set_module_bindings(vec![(
                 atom,
@@ -2716,7 +2716,7 @@ fn dynamic_constructor_roots_release_after_prototype_completion() {
                 assert_eq!(vm.active_call_roots.len(), calls);
                 let weak_result = result.ok().map(|result| {
                     assert!(vm.is_function(result));
-                    assert_eq!(vm.object_data(result).unwrap().proto, prototype);
+                    assert_eq!(vm.object_data(result).unwrap().proto(), prototype);
                     vm.heap.weak_handle(result).unwrap()
                 });
                 vm.collect_now(&program);
@@ -3551,7 +3551,7 @@ fn bound_function_proxy_metadata_roots_survive_gc_and_abrupt_completion() {
             match outcome {
                 Ok(function) => {
                     assert_eq!(phase, "accept");
-                    assert!(vm.object_data(function).unwrap().proto.is_null());
+                    assert!(vm.object_data(function).unwrap().proto().is_null());
                     let atom = vm.intern_atom("length");
                     assert_eq!(vm.own_property(function, atom), Some(Value::number(3.0)));
                     let handle = vm.heap.weak_handle(function).unwrap();
@@ -3651,10 +3651,12 @@ fn closure_identity_cache_rejects_reused_function_slots() {
     let mut reused = false;
     for _ in 0..allocation_bound {
         let replacement = vm.heap.alloc(crate::heap::Cell::Function {
-            object: Box::new(Vm::<SilentHost>::empty_object(Value::NULL)),
+            object: Box::new(crate::heap::FunctionObject {
+                object: Vm::<SilentHost>::empty_object(Value::NULL),
+                realm: Value::NULL,
+            }),
             kind: crate::heap::FunctionKind::User(key.0, key.1),
             env: Value::NULL,
-            realm: Value::NULL,
         });
         if replacement == old {
             reused = true;
@@ -4125,10 +4127,10 @@ fn aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm() {
             let reason_weak = vm.heap.weak_handle(reason).unwrap();
             let error = vm.aggregate_error(vec![reason]).unwrap();
             assert!(vm.error_is_error(error));
-            assert_eq!(vm.object_data(error).unwrap().proto, error_prototype);
+            assert_eq!(vm.object_data(error).unwrap().proto(), error_prototype);
             let errors_atom = vm.intern_atom("errors");
             let errors = vm.own_property(error, errors_atom).unwrap();
-            assert_eq!(vm.object_data(errors).unwrap().proto, array_prototype);
+            assert_eq!(vm.object_data(errors).unwrap().proto(), array_prototype);
             let error_weak = vm.heap.weak_handle(error).unwrap();
             let errors_weak = vm.heap.weak_handle(errors).unwrap();
             let root = vm.heap.root(error);
@@ -4249,7 +4251,7 @@ fn promise_constructor_intrinsics_survive_guest_binding_and_prototype_mutation()
         let result = vm
             .promise_then(&program, source, Value::UNDEFINED, Value::UNDEFINED)
             .unwrap();
-        assert_eq!(vm.object_data(result).unwrap().proto, prototype);
+        assert_eq!(vm.object_data(result).unwrap().proto(), prototype);
         assert_eq!(vm.heap.root_count_for_test(), roots);
         let value = vm.object();
         assert!(
@@ -5174,7 +5176,7 @@ fn proxy_mutations_root_fresh_operands_and_restore_scopes() {
                                 assert_eq!(vm.own_property(proto, rank), Some(Value::number(42.0)));
                                 if success {
                                     let raw = vm.proxy_target(target);
-                                    assert_eq!(vm.object_data(raw).unwrap().proto, proto);
+                                    assert_eq!(vm.object_data(raw).unwrap().proto(), proto);
                                 }
                             } else if success {
                                 let raw = vm.proxy_target(target);
@@ -6279,6 +6281,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                     index: 0,
                     done: false,
                     ext: Box::new(crate::heap::IteratorExt {
+                        position_high: 0,
                         next_method: None,
                         helper: None,
                         helper_running: false,
@@ -6630,6 +6633,7 @@ fn iterator_close_retains_forwarded_wrappers_and_restores_scopes() {
                         index: 0,
                         done: false,
                         ext: Box::new(crate::heap::IteratorExt {
+                            position_high: 0,
                             next_method: None,
                             helper: None,
                             helper_running: false,
@@ -6837,6 +6841,7 @@ fn regexp_iterator_advance_roots_fresh_exec_result_and_restores_scopes() {
                     index: 0,
                     done: false,
                     ext: Box::new(crate::heap::IteratorExt {
+                        position_high: 0,
                         next_method: None,
                         helper: Some(Box::new(
                             crate::heap::IteratorHelper::RegExpStringMatchAll {
@@ -7964,7 +7969,7 @@ fn regexp_construction_roots_protocol_inputs_and_initialization_projections() {
                             assert_eq!(source.units(), &[u16::from(b'a')]);
                             assert_eq!(flags, "i");
                             if construct {
-                                let proto = object.proto;
+                                let proto = object.proto();
                                 let atom = vm.intern_atom("tag");
                                 let tag = vm.own_property(proto, atom).unwrap();
                                 assert_eq!(tag, Value::number(42.0));

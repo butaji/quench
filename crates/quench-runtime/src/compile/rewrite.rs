@@ -260,9 +260,10 @@ fn coalesce_distant_producer_moves(
                         | crate::bytecode::ControlFlowLayout::Call
                 ) && !function.code[pc].returns_from_frame()
             })
-            && function.handlers.iter().all(|handler| {
-                handler.end as usize <= producer || handler.start as usize > target
-            });
+            && function
+                .handlers
+                .iter()
+                .all(|handler| handler.end as usize <= producer || handler.start as usize > target);
         if !span_is_block
             || !fuses(instruction.op(), Op::Move, |recipe| {
                 matches!(recipe, Recipe::ProducerMove)
@@ -456,8 +457,7 @@ pub(super) fn protected_positions(
     parameter_end_pc: u32,
     binding_sites: &[crate::bytecode::BindingSite],
 ) -> Vec<bool> {
-    let mut protected =
-        region_boundaries(code.len(), handlers, parameter_end_pc, binding_sites);
+    let mut protected = region_boundaries(code.len(), handlers, parameter_end_pc, binding_sites);
     for instruction in code {
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
             protected[instruction.jump_target() as usize] = true;

@@ -1221,7 +1221,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_value_named(global, "SharedArrayBuffer", shared_array_buffer)?;
         self.object_data_mut(global)
             .expect("realm global is an object")
-            .proto = object_prototype;
+            .set_proto(object_prototype);
         self.install_string_for_realm(program, global, object_prototype)?;
         self.install_number_for_realm(program, global, object_prototype)?;
         self.install_function_prototype_for_realm(global, object_prototype, function)?;
@@ -1331,7 +1331,7 @@ impl<H: Host> Vm<H> {
             let constructor = self.native_with_realm(native, global, global);
             self.object_data_mut(constructor)
                 .expect("realm dynamic function")
-                .proto = function;
+                .set_proto(function);
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
             let prototype_atom = self.prototype_atom();
             self.set_property_attributes(
@@ -1606,10 +1606,10 @@ impl<H: Host> Vm<H> {
         )?;
         self.object_data_mut(type_error_prototype)
             .expect("realm TypeError prototype")
-            .proto = realm_error_prototype;
+            .set_proto(realm_error_prototype);
         self.object_data_mut(type_error)
             .expect("realm TypeError constructor")
-            .proto = realm_error_constructor;
+            .set_proto(realm_error_constructor);
         self.set_builtin_function_name(type_error, "TypeError")?;
         for &(name, native) in ERROR_CONSTRUCTORS {
             if matches!(native, Native::Error | Native::TypeError) {
@@ -1631,7 +1631,9 @@ impl<H: Host> Vm<H> {
             let empty_message = self.heap.alloc(Cell::String("".into()));
             self.set_builtin_value_named(prototype, "message", empty_message)?;
             self.set_builtin_value_named(global, name, constructor)?;
-            self.object_data_mut(constructor).unwrap().proto = realm_error_constructor;
+            self.object_data_mut(constructor)
+                .unwrap()
+                .set_proto(realm_error_constructor);
         }
         for (name, native) in [
             ("parseFloat", Native::NumberParseFloat),
@@ -1769,10 +1771,12 @@ impl<H: Host> Vm<H> {
             },
         );
         let prototype = self.heap.alloc(Cell::Function {
-            object: Box::new(Self::empty_object(object_prototype)),
+            object: Box::new(crate::heap::FunctionObject {
+                object: Self::empty_object(object_prototype),
+                realm: global,
+            }),
             kind: FunctionKind::Native(Native::FunctionPrototype),
             env: Value::NULL,
-            realm: global,
         });
         self.realm
             .intrinsics
@@ -1912,7 +1916,7 @@ impl<H: Host> Vm<H> {
         for (_, native) in ERROR_CONSTRUCTORS.iter().skip(1) {
             let constructor = self.native_value(*native);
             if let Some(function) = self.object_data_mut(constructor) {
-                function.proto = error_constructor;
+                function.set_proto(error_constructor);
             }
         }
         self.set_builtin_named(program, error_prototype, "toString", Native::ErrorToString)?;

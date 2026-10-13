@@ -568,7 +568,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .regexp_intrinsics
             .get(&self.realm.globals)?;
-        if self.object_data(receiver)?.proto != intrinsics.prototype {
+        if self.object_data(receiver)?.proto() != intrinsics.prototype {
             return None;
         }
         let RuntimeAtoms {
@@ -1038,7 +1038,7 @@ impl<H: Host> Vm<H> {
             .regexp_intrinsics
             .get(&self.realm.globals)?;
         let exec = self.runtime_atoms.regexp_exec;
-        (self.object_data(regexp)?.proto == intrinsics.prototype
+        (self.object_data(regexp)?.proto() == intrinsics.prototype
             && self
                 .property_attributes(regexp, PropertyKey::string(exec))
                 .is_none()
@@ -1219,6 +1219,7 @@ impl<H: Host> Vm<H> {
                         index: 0,
                         done: false,
                         ext: Box::new(crate::heap::IteratorExt {
+                            position_high: 0,
                             next_method: None,
                             helper: Some(Box::new(IteratorHelper::RegExpStringMatchAll {
                                 input,
@@ -2028,7 +2029,7 @@ impl<H: Host> Vm<H> {
         let proto = self
             .object_data(result)
             .expect("RegExp result is an array")
-            .proto;
+            .proto();
         let anchor = self.heap.alloc_object_with_properties(
             proto,
             shape,

@@ -193,7 +193,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let constructor_data = self.object_data(constructor)?;
-        let (shape, holder) = (constructor_data.shape(), constructor_data.proto);
+        let (shape, holder) = (constructor_data.shape(), constructor_data.proto());
         let prototype_slot = match self.instanceof_constructor_layout {
             Some((cached, slot)) if cached == shape => slot,
             _ => {
@@ -224,7 +224,7 @@ impl<H: Host> Vm<H> {
             }
             let next = self
                 .object_data(current)
-                .map_or(Value::NULL, |object| object.proto);
+                .map_or(Value::NULL, |object| object.proto());
             if next.is_null() {
                 return Some(false);
             }

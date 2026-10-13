@@ -136,7 +136,6 @@ impl<H: Host> Vm<H> {
                     elements,
                     element_type,
                     declarations,
-                    maximum,
                     table64,
                 }) = self.heap.get(value)
                 else {
@@ -157,7 +156,7 @@ impl<H: Host> Vm<H> {
                     )
                     || !crate::wasm::import_limits_match(
                         elements.len() as u64,
-                        *maximum,
+                        elements.maximum,
                         table.ty.initial,
                         table.ty.maximum,
                     )
@@ -342,10 +341,12 @@ impl<H: Host> Vm<H> {
             elements.resize(length, Value::NULL);
             values.push(self.heap.alloc(Cell::WasmTable {
                 table64: table.ty.table64,
-                elements: Box::new(elements),
+                elements: Box::new(crate::heap::WasmTableElements {
+                    values: elements,
+                    maximum: table.ty.maximum,
+                }),
                 element_type: table.ty.element_type,
                 declarations: Box::new(module.signatures.declarations.clone()),
-                maximum: table.ty.maximum,
             }));
         }
         values.extend(std::iter::repeat_n(Value::UNDEFINED, module.elements.len()));
@@ -497,7 +498,7 @@ impl<H: Host> Vm<H> {
             let binding = self.heap.alloc(Cell::WasmGlobal {
                 value,
                 ty: expression.value_type(),
-                declarations: module.signatures.declarations.clone(),
+                declarations: Box::new(module.signatures.declarations.clone()),
                 mutable: global.mutable,
             });
             *self.heap.environment_slot_mut(environment, index).unwrap() = binding;

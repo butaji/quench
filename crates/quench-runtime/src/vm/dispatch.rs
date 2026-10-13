@@ -1611,9 +1611,9 @@ impl<H: Host> Vm<H> {
                         self.heap.get(callee),
                         Some(Cell::Function {
                             kind: FunctionKind::Native(Native::Eval),
-                            realm,
+                            object,
                             ..
-                        }) if *realm == self.realm.globals
+                        }) if object.realm == self.realm.globals
                     );
                 let previous_binding_site_pc = if direct_eval {
                     Some(std::mem::replace(
@@ -1645,7 +1645,7 @@ impl<H: Host> Vm<H> {
                         JsError::validation("missing Wasm tail-call program".into())
                     })?;
                     let realm = match self.heap.get(callee) {
-                        Some(Cell::Function { realm, .. }) => *realm,
+                        Some(Cell::Function { object, .. }) => object.realm,
                         _ => self.realm.globals,
                     };
                     let result = self.with_call_roots(

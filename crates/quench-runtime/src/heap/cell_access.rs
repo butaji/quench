@@ -15,8 +15,6 @@ impl Cell {
             Self::Object(object) => Some(object),
             Self::Array { object } => Some(object),
             Self::ArrayBuffer { object, .. }
-            | Self::TypedArray { object, .. }
-            | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
             | Self::ShadowRealm { object, .. }
@@ -28,7 +26,6 @@ impl Cell {
             | Self::Date { object, .. }
             | Self::RegExp { object, .. }
             | Self::Proxy { object, .. }
-            | Self::Function { object, .. }
             | Self::TemporalDuration { object, .. }
             | Self::TemporalPlainDate { object, .. }
             | Self::TemporalPlainDateTime { object, .. }
@@ -36,6 +33,8 @@ impl Cell {
             | Self::TemporalPlainYearMonth { object, .. }
             | Self::TemporalZonedDateTime { object, .. }
             | Self::TemporalInstant { object, .. } => Some(object),
+            Self::Function { object, .. } => Some(&object.object),
+            Self::TypedArray { object, .. } | Self::DataView { object, .. } => Some(&object.object),
             _ => None,
         }
     }
@@ -47,8 +46,6 @@ impl Cell {
             Self::Object(object) => Some(object),
             Self::Array { object } => Some(object),
             Self::ArrayBuffer { object, .. }
-            | Self::TypedArray { object, .. }
-            | Self::DataView { object, .. }
             | Self::Map { object, .. }
             | Self::Set { object, .. }
             | Self::ShadowRealm { object, .. }
@@ -60,7 +57,6 @@ impl Cell {
             | Self::Date { object, .. }
             | Self::RegExp { object, .. }
             | Self::Proxy { object, .. }
-            | Self::Function { object, .. }
             | Self::TemporalDuration { object, .. }
             | Self::TemporalPlainDate { object, .. }
             | Self::TemporalPlainDateTime { object, .. }
@@ -68,6 +64,10 @@ impl Cell {
             | Self::TemporalPlainYearMonth { object, .. }
             | Self::TemporalZonedDateTime { object, .. }
             | Self::TemporalInstant { object, .. } => Some(object),
+            Self::Function { object, .. } => Some(&mut object.object),
+            Self::TypedArray { object, .. } | Self::DataView { object, .. } => {
+                Some(&mut object.object)
+            }
             _ => None,
         }
     }

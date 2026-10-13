@@ -2481,7 +2481,10 @@ impl<'a> Compiler<'a> {
                 None
             } else {
                 let name = self.atoms[source_name as usize].to_string();
-                let binding = self.atom(&format!("{name}{}{id}", crate::bytecode::SELF_BINDING_MARKER));
+                let binding = self.atom(&format!(
+                    "{name}{}{id}",
+                    crate::bytecode::SELF_BINDING_MARKER
+                ));
                 locals.push(binding);
                 Some((source_name, binding))
             }
@@ -2543,9 +2546,9 @@ impl<'a> Compiler<'a> {
             || early::body_contains_direct_eval(body)
             || expression_body.is_some_and(early::expression_contains_direct_eval);
         let simple_parameters = !options.rest_override
-            && options.defaults.is_none_or(|formal| {
-                !FunctionCompiler::has_non_simple_parameters(formal)
-            });
+            && options
+                .defaults
+                .is_none_or(|formal| !FunctionCompiler::has_non_simple_parameters(formal));
         let register_local_facts = early::fixed_register_local_facts(body, expression_body);
         let promote_plain_locals = parent.is_some()
             && simple_parameters

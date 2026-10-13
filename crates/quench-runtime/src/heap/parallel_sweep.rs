@@ -127,11 +127,11 @@ fn sweep_run(context: &SweepContext<'_>, run: SlabRun<'_>) -> SweepShare {
             if Heap::marked(context.marks, index) {
                 share.live += 1;
                 if let Some(object) = slot.cell.as_ref().and_then(Cell::object)
-                    && context.properties.has_compact_range(object.properties)
+                    && context.properties.has_compact_range(object.properties())
                 {
                     share
                         .property_owners
-                        .push(pack_offset_owner(object.properties.start_offset(), index));
+                        .push(pack_offset_owner(object.properties().start_offset(), index));
                 }
                 continue;
             }
@@ -140,9 +140,10 @@ fn sweep_run(context: &SweepContext<'_>, run: SlabRun<'_>) -> SweepShare {
                 // A dead object's arena range is discarded by the compaction that follows the
                 // sweep, which keeps only live owners; only dictionary storage needs a release.
                 Some(Cell::Object(object))
-                    if object.owns_no_allocation() && !object.properties.is_dictionary() =>
+                    if object.owns_no_allocation() && !object.properties().is_dictionary() =>
                 {
-                    share.dropped_ranges |= !context.properties.release_is_noop(object.properties);
+                    share.dropped_ranges |=
+                        !context.properties.release_is_noop(object.properties());
                     std::mem::forget(slot.cell.take());
                     share.free(context, index);
                 }
@@ -153,12 +154,13 @@ fn sweep_run(context: &SweepContext<'_>, run: SlabRun<'_>) -> SweepShare {
                 }
                 Some(Cell::Array { object })
                     if object.owns_no_allocation()
-                        && !object.properties.is_dictionary()
+                        && !object.properties().is_dictionary()
                         && context
                             .sparse_arrays
                             .is_none_or(|arrays| !arrays.contains_key(&(index as u32))) =>
                 {
-                    share.dropped_ranges |= !context.properties.release_is_noop(object.properties);
+                    share.dropped_ranges |=
+                        !context.properties.release_is_noop(object.properties());
                     let elements = object.elements();
                     let unique = Rc::strong_count(elements) == 1 && Rc::weak_count(elements) == 0;
                     let Some(Cell::Array { object }) = slot.cell.take() else {

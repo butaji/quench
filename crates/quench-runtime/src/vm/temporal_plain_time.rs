@@ -370,7 +370,7 @@ impl<H: Host> Vm<H> {
         let Some(object) = self.object_data(value) else {
             return false;
         };
-        let mut prototype = object.proto;
+        let mut prototype = object.proto();
         while !prototype.is_null() {
             if prototype == self.temporal_plain_time_proto {
                 return true;
@@ -378,7 +378,7 @@ impl<H: Host> Vm<H> {
             let Some(object) = self.object_data(prototype) else {
                 return false;
             };
-            prototype = object.proto;
+            prototype = object.proto();
         }
         false
     }

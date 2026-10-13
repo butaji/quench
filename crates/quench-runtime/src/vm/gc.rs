@@ -68,7 +68,10 @@ impl LiveShapes {
     #[inline(always)]
     fn insert(&mut self, shape: u32) -> bool {
         let index = shape as usize;
-        let (word, mask) = (index / u64::BITS as usize, 1_u64 << (index % u64::BITS as usize));
+        let (word, mask) = (
+            index / u64::BITS as usize,
+            1_u64 << (index % u64::BITS as usize),
+        );
         let new = self.bits[word] & mask == 0;
         if new {
             self.bits[word] |= mask;

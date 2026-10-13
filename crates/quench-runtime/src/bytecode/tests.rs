@@ -7,10 +7,8 @@ fn promoted_parameter_registers_survive_residual_round_trip() {
         "promoted-registers.js",
     )
     .unwrap();
-    let path = std::env::temp_dir().join(format!(
-        "quench-promoted-registers-{}",
-        std::process::id()
-    ));
+    let path =
+        std::env::temp_dir().join(format!("quench-promoted-registers-{}", std::process::id()));
     program.write_binary(&path).unwrap();
     let decoded = ResidualProgram::read_binary(&path).unwrap();
     std::fs::remove_file(path).unwrap();

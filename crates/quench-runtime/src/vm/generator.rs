@@ -185,6 +185,7 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: Box::new(crate::heap::IteratorExt {
+                position_high: 0,
                 next_method: None,
                 helper: None,
                 helper_running: false,

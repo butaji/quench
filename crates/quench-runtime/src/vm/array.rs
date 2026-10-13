@@ -479,9 +479,9 @@ impl<H: Host> Vm<H> {
             self.heap.get(constructor),
             Some(Cell::Function {
                 kind: FunctionKind::Native(Native::Array),
-                realm,
+                object,
                 ..
-            }) if *realm != self.realm.globals
+            }) if object.realm != self.realm.globals
         );
         if constructor_is_foreign_intrinsic_array {
             constructor = Value::UNDEFINED;
