@@ -160,3 +160,64 @@ candidate. The refreshed parent and candidate are pinned as:
 The refreshed 11-round Splay A/A, Splay A/B and all-eight regression guard
 complete with the WP6 pass above. The stock diagnostic is complete, but neither
 Splay bar is won and the candidate is not integrated.
+
+## Matched d437 bitmap-cursor result
+
+The current matched parent/candidate pair is based on parent
+`d437123d995a2194722f179d901a54e227c546e1` and candidate
+`8fc956af62ca502def4a0d246ee42d62b4db9c3b`. The earlier d437 screens launched
+from the main checkout at `597dd55d4` are invalid because the runner recorded
+the wrong source root; those raw reports remain with `wrong-source-root` in
+their names for audit only. The corrected A/A and A/B runs started from their
+respective clean worktrees, both on corpus
+`64e1860c736c1b899708f4cd646721bc71e53d8b`.
+
+The schema-5 fixed-work A/A and A/B reports plus top-ups pass the resumable
+all-eight WP6 gate. At least 11 clean pairs are available per fixture, outputs
+match, and the A/A-adjusted thresholds pass. Splay marginal wall is +0.7975%
+with 95% interval [−0.3555%, +1.1586%], so this is neutral for speed. Work max
+RSS moves from 122,634,240 B to 117,407,744 B, a paired median reduction of
+4.324% [−4.4204%, −4.1951%]. The exact paired/bootstrap calculations are in
+`all-eight-wp6-summary-d437.json`.
+
+The current-source stock Splay retake has 11 valid rounds per engine and
+matching outputs. Its sampled one-minute host load ranged from 3.05 to 4.89
+across 10 logical CPUs, with no Deno, Cargo, rustc or esbuild worker in the
+recorded top consumers. Median scores are Quench 9,176, Node `--jitless`
+14,782, Bun no-JIT 9,926, QuickJS 8,630. Median max RSS is Quench 117,440,512
+B, Node 408,387,584 B, Bun 65,880,064 B, QuickJS 151,044,096 B. The best
+same-campaign score bar is Node and the lowest RSS bar is Bun: candidate
+distances are 1.61× for Score and 1.78× for RSS. The candidate remains far from
+the Splay win condition.
+
+The stock report is complete and the Splay fixture is valid/output-equal, but
+the runner's `qualification_ready` is false because its corpus check expects
+the full eight-fixture set while this focused invocation intentionally selected
+only Splay. Treat these as a valid Splay diagnostic, not an all-suite
+qualification report. The official trunk scoreboard remains unchanged because
+this candidate is isolated.
+
+Correct-source evidence hashes:
+
+- Parent A/A: `all-eight-aa-d437.json`, SHA-256
+  `d39f259ab5b05ae7878f86daa9ec858123209c866202ea9923d7991e0f4a7b58`
+- Parent Crypto A/A top-up: `all-eight-aa-crypto-topup-d437.json`, SHA-256
+  `a8fb0d667c6f4620601a2e244ef045d7b590a0adfaa1afaa4f12b0878a3d2d1e`
+- Candidate A/B: `all-eight-ab-d437.json`, SHA-256
+  `ae07ab699dd41e690690252538dd08e1d3f991cb985e0f4ecb145f666344e47b`
+- Candidate RayTrace A/B top-up: `all-eight-ab-raytrace-topup-d437.json`, SHA-256
+  `e93c68f8bc93062c464a6172bd2c2bb1a8bfc650475a4b28fd61bd8bc9cd80e9`
+- WP6 summary: `all-eight-wp6-summary-d437.json`, SHA-256
+  `496c8ee167b9f55d8053ea24f0b0dab94e4cfd7f9b35333f571be5f79dec2eee`
+- Stock Splay report: `splay-stock-d437.json`, SHA-256
+  `8a2a03d2650636df5d621f5d1b482a19ee6d13d94a5e892c993a46d7aa84f913`
+- Full WAST report: `wasm-d437.json`, SHA-256
+  `d3f4fcc8dfe012ba22059d25e88cc9bd3aabfdb32c47ea411c1be5804472fce0`
+
+The two invalid wrong-source-root reports are preserved separately. Pinned
+candidate binary SHA-256 is
+`3c9b0c25ecdd939762d86b2e39275e02cd4aab5f20adc97c811b9048a73968bf`, parent
+binary SHA-256 is
+`4eafb40ab6ab97569f48fe733f0b4b297bc2e37d0333bdf8153c61255c85fe4d`, and the
+stock runner SHA-256 is
+`bdc9d6c4afc537fe8ed30d4fccba9157cd4232e345ce75810465a0fff98db109`.
