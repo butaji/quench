@@ -5519,3 +5519,40 @@ console.log(tls.createSecureContext().context.getMinProto(),creations);console.l
     }
     assert_eq!(observations[0].stdout,observations[1].stdout);
 }
+
+#[test]
+fn native_tls_cipher_discovery_and_cached_copy_contract_match_node() {
+    compare_node_stream_source(r#"
+const tls=require('tls');const first=tls.getCiphers();console.log(JSON.stringify(first));
+console.log(JSON.stringify([tls.getCiphers.name,tls.getCiphers.length,Object.hasOwn(tls.getCiphers,'prototype'),Object.getOwnPropertyDescriptor(tls,'getCiphers')]));
+first.length=0;first.push('guest mutation');const next=tls.getCiphers();console.log(JSON.stringify([first===next,next.length,next.includes('guest mutation'),next.every(x=>x===x.toLowerCase())]));
+try{Reflect.construct(tls.getCiphers,[]);}catch(e){console.log(e.name);}
+globalThis.Array=function(){throw new Error('public Array used')};console.log(tls.getCiphers().length);
+"#);
+}
+
+#[test]
+fn native_tls_hostname_authorization_values_errors_and_getter_order_match_node() {
+    compare_node_stream_source(r#"
+const tls=require('tls');
+for(const [host,cert] of [
+['a.example.com',{subject:{CN:'*.example.com'}}],['a.b.example.com',{subject:{CN:'*.example.com'}}],
+['bücher.example.com',{subject:{CN:'xn--bcher-kva.example.com'}}],['a.com',{subject:{CN:'a.com'},subjectaltname:'DNS:b.com'}],
+['127.0.0.1',{subjectaltname:'IP Address:127.0.0.1'}],['::1',{subjectaltname:'IP Address:0:0:0:0:0:0:0:1'}],
+['a,com',{subjectaltname:'DNS:"a,com"'}],['a.com',{subjectaltname:'DNS:"unterminated'}],
+[false,{subject:{CN:['a.com','b.com']}}],['a.com',{}]
+])try{const e=tls.checkServerIdentity(host,cert);console.log(e?JSON.stringify([e.name,e.code,e.message,e.reason,e.host,e.cert===cert,Object.keys(e)]):'valid');}catch(e){console.log(JSON.stringify(['throw',e.name,e.code,e.message,Object.keys(e)]));}
+const log=[];const host={valueOf(){log.push('host.valueOf');return 'a.com'},toString(){throw new Error('wrong string hint')}};
+const cert={get subject(){log.push('subject');return {get CN(){log.push('CN');return 'a.com'}}},get subjectaltname(){log.push('alt');return ''}};
+console.log(tls.checkServerIdentity(host,cert),JSON.stringify(log));
+console.log(tls.checkServerIdentity.name,tls.checkServerIdentity.length,Object.hasOwn(tls.checkServerIdentity,'prototype'));
+const hooks=[];const alt={includes(v){hooks.push(['includes',v]);return false},split(v){hooks.push(['split',v]);return {forEach(cb){hooks.push('forEach');cb('DNS:a.com')}}},toString(){throw new Error('unused alt coercion')}};
+console.log(tls.checkServerIdentity('a.com',{subjectaltname:alt}),JSON.stringify(hooks));
+console.log(tls.checkServerIdentity('A.COM',{subject:{CN:new String('a.com')}}));
+try{tls.checkServerIdentity('a.com',{subject:{CN:123}})}catch(e){console.log('numeric CN',e.name)}
+const originalReplace=String.prototype.replace,patterns=[],callbacks=[];
+String.prototype.replace=function(pattern,replacer){patterns.push(pattern);if(typeof replacer==='function')callbacks.push(replacer);return originalReplace.call(this,pattern,replacer)};
+try{for(let i=0;i<2;i++)tls.checkServerIdentity('A.COM',{subject:{CN:'a.com'}})}finally{String.prototype.replace=originalReplace}
+console.log(JSON.stringify([patterns.length,new Set(patterns).size,callbacks.every(c=>c===callbacks[0]),callbacks.map(c=>[c.name,c.length,Object.hasOwn(c,'prototype')])])) ;
+"#);
+}
