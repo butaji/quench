@@ -512,7 +512,7 @@ globalThis.require = (specifier) =>
           UV_EINVAL: -22,
           UV_ENOTSOCK: -88,
         };
-        return {};
+        return __quenchOriginalRequireWithDgram("internal/test/binding").internalBinding(name);
       },
     }
     : __quenchOriginalRequireWithDgram(specifier);
