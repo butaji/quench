@@ -1617,6 +1617,70 @@ console.log('internal-url');
 }
 
 #[test]
+fn native_promise_watch_buffers_burst_events_and_closes_like_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),fsp=require('fs/promises'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-pwatch-burst-'));
+(async()=>{const watcher=fsp.watch(dir);const next=watcher.next();process.nextTick(()=>{for(const name of ['a','b','c'])fs.writeFileSync(path.join(dir,name),'data');});
+const first=await next;assert.strictEqual(first.done,false);assert.strictEqual(Object.getPrototypeOf(first.value),null);const seen=new Set([first.value.filename]);await new Promise(resolve=>setTimeout(resolve,30));
+while(seen.size<3){const item=await watcher.next();seen.add(item.value.filename);}assert.deepStrictEqual([...seen].sort(),['a','b','c']);assert.strictEqual((await watcher.return()).done,true);assert.strictEqual((await watcher.next()).done,true);fs.rmSync(dir,{recursive:true,force:true});console.log('buffered');})();
+"#);
+}
+
+#[test]
+fn native_promise_watch_lazy_validation_matches_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs/promises'),assert=require('assert');
+(async()=>{const result=[];
+for(const [file,options] of [[1,{}],['.',1],['.',null],['.',[]],['.',{persistent:1}],['.',{recursive:1}],['.',{encoding:1}],['.',{signal:1}],['.',{maxQueue:'silly'}],['.',{maxQueue:1.5}],['.',{maxQueue:Infinity}],['.',{maxQueue:9007199254740992}],['.',{overflow:1}],['.',{overflow:'bad'}],['.',{ignore:123}],['.',{ignore:''}]]){
+let iterator;assert.doesNotThrow(()=>{iterator=fs.watch(file,options);});try{await iterator.next();assert.fail('expected error');}catch(error){result.push([error.name,error.code,error.message]);}}
+console.log(JSON.stringify(result));})();
+"#);
+}
+
+#[test]
+fn native_promise_watch_abort_preserves_cause_and_descriptor_like_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),fsp=require('fs/promises'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-pwatch-abort-'));
+(async()=>{const result=[];for(const pre of [false,true]){const ac=new AbortController(),marker={original:true};if(pre)ac.abort(marker);const watcher=fsp.watch(dir,{signal:ac.signal});const pending=watcher.next();if(!pre)ac.abort(marker);
+try{await pending;assert.fail('expected abort')}catch(error){assert.strictEqual(error.cause,marker);assert.strictEqual(error.code,'ABORT_ERR');const d=Object.getOwnPropertyDescriptor(error,'cause');result.push([pre,error.name,error.constructor.name,Object.keys(error),[d.enumerable,d.writable,d.configurable]]);}}
+fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));})();
+"#);
+}
+
+#[test]
+fn native_promise_watch_overflow_error_releases_handle_like_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),fsp=require('fs/promises'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-pwatch-overflow-'));
+(async()=>{const watcher=fsp.watch(dir,{maxQueue:1,overflow:'error'});const first=watcher.next();process.nextTick(()=>fs.writeFileSync(path.join(dir,'initial'),'data'));await first;
+for(const name of ['a','b','c','d'])fs.writeFileSync(path.join(dir,name),'data');await new Promise(resolve=>setTimeout(resolve,50));
+await assert.rejects(watcher.next(),error=>{assert.strictEqual(error.code,'ERR_FS_WATCH_QUEUE_OVERFLOW');console.log(error.message);return true;});assert.strictEqual((await watcher.next()).done,true);fs.rmSync(dir,{recursive:true,force:true});console.log('overflow-closed');})();
+"#);
+}
+
+#[test]
+fn native_promise_watch_abort_resists_stopped_propagation_like_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),fsp=require('fs/promises'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-pwatch-stopabort-'));
+(async()=>{const ac=new AbortController(),marker={original:true};ac.signal.addEventListener('abort',event=>event.stopImmediatePropagation());const watcher=fsp.watch(dir,{signal:ac.signal});const next=watcher.next();ac.abort(marker);await assert.rejects(next,error=>error.code==='ABORT_ERR'&&error.cause===marker);
+const other=new AbortController();other.signal.addEventListener('abort',event=>event.stopImmediatePropagation());const publicWatcher=fs.watch(dir,{signal:other.signal});let closed=false;publicWatcher.once('close',()=>{closed=true;});other.abort();await new Promise(resolve=>process.nextTick(resolve));assert(closed);fs.rmSync(dir,{recursive:true,force:true});console.log('resisted');})();
+"#);
+}
+
+#[test]
+fn commonjs_namespace_static_prefix_uses_syntax_and_matches_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-cjs-export-prefix-'));
+const sources={accessor:"const refresh=()=>1,resolve=()=>2;module.exports={refresh,resolve,get path(){return '.';}};",nested:"const before=1,after=2;module.exports={before,nested:{x:1},after};",literal:"const later=2;module.exports={first:1,later};",assignments:"const text='exports.fake=1';/* exports.comment=1 */module.exports['hyphen-name']=3;module.exports.for=4;function unused(){exports.never=5;} exports.compound+=1;exports.logical ||=3;"};
+(async()=>{for(const [name,source] of Object.entries(sources)){const file=path.join(dir,name+'.cjs');fs.writeFileSync(file,source);const namespace=await import(file);assert.strictEqual(namespace.default,require(file));assert.strictEqual(namespace['module.exports'],namespace.default);console.log(name,Object.keys(namespace).join(','));if(name==='accessor'){assert.strictEqual(namespace.refresh(),1);assert.strictEqual(namespace.resolve(),2);}if(name==='assignments'){assert(!Object.hasOwn(namespace,'fake'));assert(!Object.hasOwn(namespace,'comment'));assert.strictEqual(namespace['hyphen-name'],3);assert.strictEqual(namespace.for,4);}}fs.rmSync(dir,{recursive:true,force:true});})();
+"#);
+}
+
+#[test]
 fn native_recursive_watch_iterator_and_gc_match_node() {
     const SOURCE: &str = r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
