@@ -500,3 +500,11 @@ alias and supports quoted export names. Full reexport/defineProperty detection a
 file-URL dynamic import resolution remain separate work. Module namespace key
 projection belongs to the shared runtime: string names sort by UTF-16 units,
 without ordinary array-index priority; symbols follow the string names.
+
+### Module URL inputs and search paths
+
+The Rust `createRequire` adapter follows the pinned Node URL-like property checks in order (`href`, `protocol`, `auth`, `path`), then ordinary string coercion and the canonical file-URL conversion operation. Recognition getter errors escape unchanged; conversion errors become `ERR_INVALID_ARG_VALUE` for the original input. That error projection uses the captured internal inspector and caps the inspected value at 128 UTF-16 code units. A trailing directory separator adds the Node proxy filename before creating the ordinary CJS require record.
+
+The `_nodeModulePaths` operation calls the existing public path resolver, preserving its receiver, argument, overrides and errors. Ancestor `node_modules` directories have one Rust projection shared with ordinary CJS module records. Thin checked function facades preserve ordinary constructor calls and function metadata while Rust owns their policy. Three Node comparisons cover these inputs, original hooks, constructor calls, error presentation and cwd behavior. URL query metadata, full Module construction/resolution hooks and global lookup paths remain open.
+
+`pathToFileURL` uses the same public POSIX or Win32 resolver as Node, including guest cwd and original resolver hooks, and restores an original trailing separator. Its former fixture-relative remapping is removed. Shared path argument errors derive their received-value description from the existing Node utility.
