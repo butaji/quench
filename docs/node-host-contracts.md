@@ -310,21 +310,52 @@ sockets and emitClose false for all three stream kinds. Full handle-wrap methods
 prototype/brand behavior and complete generic destruction/property ordering
 remain separate work.
 
-## TLS material validation
+## Native TLS configurations
 
-Secure-context CRL and PKCS12 checks use native OpenSSL parsers. CRLs use
-the PEM parser; arrays follow the guest iterator protocol and close on a
-validation error. PKCS12 uses the BIO decoder and native password bytes,
-including zero termination, so malformed input and incorrect passwords come
-from the same parsing operations as Node. PFX arrays capture length, skip
-holes and read each entry immediately before validation. Missing private keys
-and certificates produce the corresponding coded operation errors. Parser
-failures drain the OpenSSL error stack and expose the first reason.
+`SecureContext` owns a real OpenSSL `SSL_CTX` builder. Its VM inner object has a
+weak host identity and explicit Allocated/Initialized phases. Unreachable
+identities release native configurations at job checkpoints. Contexts add no
+referenced event-loop work. Synchronous exit listeners retain access to held
+contexts; native entries and private builtin roots are released after those
+listeners, including error exits. OpenSSL SSL objects retain their own context
+references when transport support is added.
 
-This checkpoint validates material; the existing SecureContext object remains
-a compatibility shell. It does not retain an SSL_CTX, configure trust stores
-or establish TLS socket/handshake support. Provider-dependent unsupported
-archives and the complete secure-context option surface need further work.
+Rust implements protocol selection, version/options validation, configuration
+snapshots and native setters. Checked JavaScript functions/classes forward
+calls and preserve callable construction and method metadata. TLS captures the
+canonical private crypto-binding constructor when its module loads, preserving
+earlier replacements and ignoring later replacements as Node does. Engine
+method availability and repeated getter effects follow the actual inner object.
+Original public
+method/property hooks retain their ordering and exceptions. Native crypto
+string arguments use Node's UTF-8 C-string prefix, including embedded nul
+handling; the existing rooted VM bitwise operation owns integer coercion.
+
+Certificates, keys, CA roots, CRLs and PKCS12 material are retained by the native
+configuration rather than discarded after validation. Bundled public trust
+roots come from the pinned Node product source; their provenance and license
+sit beside the PEM data. CRL arrays use the original iterator and close on
+errors. CA/certificate/PFX arrays capture length and skip holes; key arrays read
+length on each iteration. PKCS12 uses the BIO decoder and password bytes with
+C-string termination. Native certificate outputs use intrinsic typed bytes
+and the original Buffer prototype, independently of public Buffer aliases.
+
+Crypto and TLS share one native engine loader and DEP0183 warning owner.
+The loader uses OpenSSL's structural/functional references and dynamic loading
+fallback. TLS private-key engine ownership follows the SSL_CTX's final native
+reference through typed ex-data. Client engines are retained by SSL_CTX.
+Public engine methods follow the linked library's actual build capability.
+Crypto setters share OpenSSL's decorated errors; engine searches retain Node's
+plain error plus reversed remaining error stack. PKCS12 retains its distinct
+reason-only parser presentation.
+
+This foundation does not provide TLS/HTTPS sockets, handshakes, certificate
+verification callbacks or session resumption. Ticket-key callbacks, certificate
+compression, complete public cipher/root discovery, CLI/provider trust policy,
+permission-model integration and remaining native methods/option details are
+open work. The pinned fixture group and Node comparisons establish only the
+implemented behaviors; they do not establish complete TLS compatibility or a
+production performance claim.
 
 ## Verification
 

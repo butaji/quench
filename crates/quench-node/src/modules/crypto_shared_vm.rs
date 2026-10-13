@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative) => {
+r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   const kHandle = Symbol.for("quench.internal.crypto.kHandle");
@@ -306,29 +306,7 @@ r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf
   }
   HmacConstructor.prototype = Hmac.prototype;
 
-  let setEngineWarningEmitted = false;
-  function setEngine(id, flags) {
-    if (typeof id !== "string") {
-      const error = new TypeError('The "id" argument must be of type string');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (flags !== undefined && typeof flags !== "number") {
-      const error = new TypeError('The "flags" argument must be of type number');
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
-    }
-    if (!setEngineWarningEmitted) {
-      setEngineWarningEmitted = true;
-      process.emitWarning("OpenSSL engine-based APIs are deprecated.", {
-        type: "DeprecationWarning",
-        code: "DEP0183",
-      });
-    }
-    const error = new Error("Engine-based crypto is not supported");
-    error.code = "ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED";
-    throw error;
-  }
+  function setEngine(id, flags) { return setEngineNative(id, flags); }
 
   class Sign {
     constructor(algorithm) {
@@ -1909,6 +1887,7 @@ pub(crate) fn module(
     let generate_rsa_key_pair = context
         .host_function(crate::host::shared_vm::operation("cryptoGenerateRsaKeyPair"))?;
     let rsa_crypt = context.host_function(crate::host::shared_vm::operation("cryptoRsaCrypt"))?;
+    let set_engine = context.host_function(crate::host::shared_vm::operation("cryptoSetEngine"))?;
     let ecdh = context.host_function(crate::host::shared_vm::operation("cryptoEcdh"))?;
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
@@ -1930,6 +1909,7 @@ pub(crate) fn module(
             generate_rsa_key_pair,
             rsa_crypt,
             ecdh,
+            set_engine,
         ],
     )
 }

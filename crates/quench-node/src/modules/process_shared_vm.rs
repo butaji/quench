@@ -2352,6 +2352,7 @@ fn drain_shared_jobs(
             runtime.clear_kept_objects();
             crate::modules::zlib_stream_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
+            super::tls_shared_vm::contexts::prune(runtime);
             super::fs_stat_watch_shared_vm::prune(runtime);
             return Ok(());
         }
@@ -2854,7 +2855,19 @@ fn cleanup_environment(
     super::fs_stat_watch_shared_vm::cleanup(runtime);
 }
 
+// Builtin native objects remain usable throughout synchronous exit listeners.
 fn emit_exit(
+    runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    code: i32,
+) -> Result<(), String> {
+    let result = emit_exit_inner(runtime, program, code);
+    super::tls_shared_vm::contexts::cleanup(runtime);
+    super::buffer_shared_vm::cleanup(runtime);
+    result
+}
+
+fn emit_exit_inner(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     code: i32,
