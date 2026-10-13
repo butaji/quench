@@ -1,6 +1,40 @@
---- a/cranelift-codegen/src/egraph/elaborate.rs	2006-07-24 01:21:28.000000000 +0000
-+++ b/cranelift-codegen/src/egraph/elaborate.rs	2026-10-12 14:08:21.349644685 +0000
-@@ -134,7 +134,10 @@
+--- a/cranelift-codegen/src/egraph/elaborate.rs	2026-10-13 00:42:23.937445819 +0000
++++ b/cranelift-codegen/src/egraph/elaborate.rs	2026-10-13 00:42:23.951619225 +0000
+@@ -47,6 +47,10 @@
+     /// Map from Value to the best (lowest-cost) Value in its eclass
+     /// (tree of union value-nodes).
+     value_to_best_value: SecondaryMap<Value, BestEntry>,
++    /// Quench: the longest chain of pure instructions producing each
++    /// value, so the taller operand of a binary instruction elaborates
++    /// first and the critical path leads the schedule.
++    value_height: SecondaryMap<Value, u32>,
+     /// Stack of blocks and loops in current elaboration path.
+     loop_stack: SmallVec<[LoopStackEntry; 8]>,
+     /// The current block into which we are elaborating.
+@@ -71,6 +75,13 @@
+     ctrl_plane: &'a mut ControlPlane,
+ }
+ 
++/// Quench: how many more pure operations the second operand's chain must
++/// hold before it elaborates ahead of the first. Out-of-order issue absorbs
++/// a shorter lead, and loop-invariant subtrees (hoisted later, but counted
++/// here) produce leads of a few operations that reordering would only
++/// disturb; a recurrence such as SHA-256's round function leads by more.
++const CRITICAL_LEAD: u32 = 4;
++
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ struct BestEntry(Cost, Value);
+ 
+@@ -128,13 +139,19 @@
+         result_idx: usize,
+         num_args: usize,
+         before: Inst,
++        /// The two operands of a binary instruction elaborated in reverse
++        /// order; their results are swapped back before use.
++        swapped: bool,
+     },
+ }
+ 
  #[derive(Clone, Debug)]
  enum BlockStackEntry {
      Elaborate { block: Block, idom: Option<Block> },
@@ -12,7 +46,66 @@
  }
  
  impl<'a> Elaborator<'a> {
-@@ -829,7 +832,9 @@
+@@ -156,6 +173,7 @@
+             loop_analysis,
+             value_to_elaborated_value: ScopedHashMap::with_capacity(num_values),
+             value_to_best_value,
++            value_height: SecondaryMap::new(),
+             loop_stack: smallvec![],
+             cur_block: Block::reserved_value(),
+             remat_values,
+@@ -513,17 +531,29 @@
+                     // layout. First, enqueue all args to be
+                     // elaborated. Push state to receive the results
+                     // and later elab this inst.
+-                    let num_args = self.func.dfg.inst_values(inst).count();
++                    let mut args: SmallVec<[Value; 4]> =
++                        self.func.dfg.inst_values(inst).collect();
++                    let num_args = args.len();
++                    let height = |value: Value| {
++                        let BestEntry(_, best) = self.value_to_best_value[value];
++                        self.value_height[best]
++                    };
++                    let swapped =
++                        num_args == 2 && height(args[1]) >= height(args[0]) + CRITICAL_LEAD;
++                    if swapped {
++                        args.swap(0, 1);
++                    }
+                     self.elab_stack.push(ElabStackEntry::PendingInst {
+                         inst,
+                         result_idx,
+                         num_args,
+                         before,
++                        swapped,
+                     });
+ 
+                     // Push args in reverse order so we process the
+-                    // first arg first.
+-                    for arg in self.func.dfg.inst_values(inst).rev() {
++                    // first arg (the taller, when swapped) first.
++                    for &arg in args.iter().rev() {
+                         debug_assert_ne!(arg, Value::reserved_value());
+                         self.elab_stack
+                             .push(ElabStackEntry::Start { value: arg, before });
+@@ -535,6 +565,7 @@
+                     result_idx,
+                     num_args,
+                     before,
++                    swapped,
+                 } => {
+                     trace!(
+                         "PendingInst: {} result {} args {} before {}",
+@@ -546,6 +577,9 @@
+                     // them.
+                     let arg_idx = self.elab_result_stack.len() - num_args;
+                     let arg_values = &mut self.elab_result_stack[arg_idx..];
++                    if swapped {
++                        arg_values.swap(0, 1);
++                    }
+ 
+                     // Compute max loop depth.
+                     //
+@@ -829,7 +863,9 @@
          while let Some(top) = self.block_stack.pop() {
              match top {
                  BlockStackEntry::Elaborate { block, idom } => {
@@ -23,7 +116,7 @@
                      self.value_to_elaborated_value.increment_depth();
  
                      self.elaborate_block(&mut elab_values, idom, block);
-@@ -850,8 +855,9 @@
+@@ -850,17 +886,51 @@
                      // we can't `.rev()` above.)
                      self.block_stack[block_stack_end..].reverse();
                  }
@@ -34,8 +127,50 @@
                  }
              }
          }
---- a/cranelift-codegen/src/isa/x64/inst/mod.rs	2006-07-24 01:21:28.000000000 +0000
-+++ b/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-12 13:19:07.555669508 +0000
+     }
+ 
++    /// Values are numbered after their operands, so one pass in order
++    /// sees each operand's height first; a best value numbered later than
++    /// its user counts as a leaf, which only weakens the heuristic.
++    fn compute_heights(&mut self) {
++        let num_values = self.func.dfg.num_values();
++        self.value_height.resize(num_values);
++        for index in 0..num_values {
++            let value = <Value as cranelift_entity::EntityRef>::new(index);
++            if !self.func.dfg.value_is_real(value) {
++                continue;
++            }
++            let height = match self.func.dfg.value_def(value) {
++                ValueDef::Result(inst, _) if is_pure_for_egraph(self.func, inst) => {
++                    1 + self
++                        .func
++                        .dfg
++                        .inst_values(inst)
++                        .map(|arg| {
++                            let BestEntry(_, best) = self.value_to_best_value[arg];
++                            let best = if best.is_reserved_value() { arg } else { best };
++                            self.value_height[best]
++                        })
++                        .max()
++                        .unwrap_or(0)
++                }
++                ValueDef::Union(a, b) => self.value_height[a].min(self.value_height[b]),
++                _ => 0,
++            };
++            self.value_height[value] = height;
++        }
++    }
++
+     pub(crate) fn elaborate(&mut self) {
+         self.stats.elaborate_func += 1;
+         self.stats.elaborate_func_pre_insts += self.func.dfg.num_insts() as u64;
+         self.compute_best_values();
++        self.compute_heights();
+         self.elaborate_domtree(&self.domtree);
+         self.stats.elaborate_func_post_insts += self.func.dfg.num_insts() as u64;
+     }
+--- a/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-13 00:42:23.945323711 +0000
++++ b/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-13 00:42:23.958991962 +0000
 @@ -1478,6 +1478,12 @@
          }
      }
@@ -49,16 +184,16 @@
      fn function_alignment() -> FunctionAlignment {
          FunctionAlignment {
              minimum: 1,
---- a/cranelift-codegen/src/lib.rs	2006-07-24 01:21:28.000000000 +0000
-+++ b/cranelift-codegen/src/lib.rs	2026-10-12 09:18:26.568602936 +0000
+--- a/cranelift-codegen/src/lib.rs	2026-10-13 00:42:23.946168433 +0000
++++ b/cranelift-codegen/src/lib.rs	2026-10-13 00:42:23.962181395 +0000
 @@ -1,4 +1,5 @@
  //! Cranelift code generation library.
 +#![allow(warnings)]
  #![deny(missing_docs)]
  // Display feature requirements in the documentation when building on docs.rs
  #![cfg_attr(docsrs, feature(doc_cfg))]
---- a/cranelift-codegen/src/machinst/mod.rs	2006-07-24 01:21:28.000000000 +0000
-+++ b/cranelift-codegen/src/machinst/mod.rs	2026-10-12 09:38:00.181164348 +0000
+--- a/cranelift-codegen/src/machinst/mod.rs	2026-10-13 00:42:23.946710851 +0000
++++ b/cranelift-codegen/src/machinst/mod.rs	2026-10-13 00:42:23.960556548 +0000
 @@ -363,6 +363,12 @@
      /// order.
      fn gen_nop_units() -> Vec<Vec<u8>>;
@@ -72,8 +207,8 @@
      /// Align a basic block offset (from start of function).  By default, no
      /// alignment occurs.
      fn align_basic_block(offset: CodeOffset) -> CodeOffset {
---- a/cranelift-codegen/src/machinst/vcode.rs	2006-07-24 01:21:28.000000000 +0000
-+++ b/cranelift-codegen/src/machinst/vcode.rs	2026-10-12 09:37:52.523696652 +0000
+--- a/cranelift-codegen/src/machinst/vcode.rs	2026-10-13 00:42:23.946819215 +0000
++++ b/cranelift-codegen/src/machinst/vcode.rs	2026-10-13 00:42:23.960070554 +0000
 @@ -76,6 +76,11 @@
  pub trait VCodeInst: MachInst + MachInstEmit {}
  impl<I: MachInst + MachInstEmit> VCodeInst for I {}
@@ -86,17 +221,17 @@
  /// A function in "VCode" (virtualized-register code) form, after
  /// lowering.  This is essentially a standard CFG of basic blocks,
  /// where each basic block consists of lowered instructions produced
-@@ -656,6 +661,51 @@
+@@ -656,6 +661,55 @@
  
      /// Get the number of blocks. Block indices will be in the range `0 ..
      /// (self.num_blocks() - 1)`.
-+    /// Quench: the headers of small loops without calls, by block. A loop
-+    /// is a header with the back edges reaching it from later in
-+    /// `final_order`; its body is the blocks from the header to its last
-+    /// back edge. Such a loop runs many iterations per entry, so starting
-+    /// it on `small_loop_alignment` keeps its body in the fewest fetch
-+    /// windows; a loop with a call or a longer body gains nothing to pay
-+    /// for the padding.
++    /// Quench: the headers of small loops without calls, and of loops whose
++    /// header dispatches through a table, by block. A loop is a header with
++    /// the back edges reaching it from later in `final_order`; its body is
++    /// the blocks from the header to its last back edge. Such a loop runs
++    /// many iterations per entry, so starting it on `small_loop_alignment`
++    /// keeps its hot code in the fewest fetch windows; a loop with a call or
++    /// a longer body gains nothing to pay for the padding.
 +    fn small_loop_headers(&self, final_order: &[BlockIndex]) -> Vec<bool> {
 +        let mut aligned = vec![false; self.num_blocks()];
 +        if I::small_loop_alignment() <= 1 {
@@ -130,7 +265,11 @@
 +                    break;
 +                }
 +            }
-+            aligned[block.index()] = small;
++            // A header that dispatches through a table (an interpreter's
++            // switch) is entered once per dispatched case, so it is hot
++            // whatever the loop's size.
++            let dispatches = regalloc2::Function::block_succs(self, *block).len() > 2;
++            aligned[block.index()] = small || dispatches;
 +        }
 +        aligned
 +    }
@@ -138,7 +277,7 @@
      pub fn num_blocks(&self) -> usize {
          self.block_ranges.len()
      }
-@@ -768,6 +818,7 @@
+@@ -768,6 +822,7 @@
              }
          }
          final_order.extend(cold_blocks.clone());
@@ -146,7 +285,7 @@
  
          // Compute/save info we need for the prologue: clobbers and
          // number of spillslots.
-@@ -827,7 +878,10 @@
+@@ -827,7 +882,10 @@
              state.on_new_block();
  
              // Emit NOPs to align the block.
