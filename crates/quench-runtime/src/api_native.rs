@@ -12,6 +12,7 @@ pub enum NativeArithmetic {
     Multiply,
     Divide,
     BitwiseAnd,
+    BitwiseOr,
 }
 
 /// Private weak host reference, pruned by the core collector before slot reuse.
