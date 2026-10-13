@@ -4,7 +4,9 @@
 //! count, so worker threads may read the heap concurrently. Each worker claims a cell by
 //! setting its mark bit atomically and traces it with the same `Heap::children` the
 //! single-threaded marker uses; surplus work moves between workers through a shared pool.
-use super::{Cell, FxHashMap, Heap, SlotArena, SparseElements, Value, ValueArena};
+use super::{
+    Cell, FxHashMap, Heap, SlotArena, SparseElements, Value, ValueArena, property_owner_key,
+};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
@@ -183,12 +185,13 @@ impl Heap {
         self.last_survivors >= PARALLEL_MARK_MIN_LIVE_CELLS && mark_threads() > 1
     }
 
-    /// Marks everything reachable from `roots` with helper threads.
+    /// Marks everything reachable from `roots` with helper threads; returns each thread's
+    /// tracer state and the arena owners it marked.
     pub(super) fn mark_parallel<T: ObjectRootTracer>(
         &mut self,
         roots: Vec<Value>,
         tracer: &T,
-    ) -> Vec<T::Local> {
+    ) -> (Vec<T::Local>, Vec<Vec<u64>>) {
         let workers = mark_threads();
         // SAFETY: `AtomicU64` has `u64`'s size and alignment, and the bitmap is accessed only
         // through this view until the scope below has joined every worker.
@@ -212,16 +215,16 @@ impl Heap {
                 .map(|_| {
                     scope.spawn(|| {
                         let mut local = tracer.local();
-                        mark_worker(&context, &pool, tracer, &mut local, Vec::new());
-                        local
+                        let owners = mark_worker(&context, &pool, tracer, &mut local, Vec::new());
+                        (local, owners)
                     })
                 })
                 .collect();
             let mut local = tracer.local();
-            mark_worker(&context, &pool, tracer, &mut local, roots);
-            std::iter::once(local)
+            let owners = mark_worker(&context, &pool, tracer, &mut local, roots);
+            std::iter::once((local, owners))
                 .chain(helpers.into_iter().map(|helper| helper.join().unwrap()))
-                .collect()
+                .unzip()
         })
     }
 }
@@ -238,7 +241,8 @@ fn mark_worker<T: ObjectRootTracer>(
     tracer: &T,
     local: &mut T::Local,
     mut stack: Vec<Value>,
-) {
+) -> Vec<u64> {
+    let mut owners = Vec::new();
     let mut last_shared_elements: *const Vec<Value> = std::ptr::null();
     // Cells whose slots were prefetched and that wait to be traced, oldest first.
     let mut pending = PrefetchQueue::default();
@@ -260,6 +264,7 @@ fn mark_worker<T: ObjectRootTracer>(
             {
                 continue;
             }
+            owners.extend(property_owner_key(context.properties, index, cell));
             Heap::children(
                 value,
                 cell,
@@ -280,7 +285,7 @@ fn mark_worker<T: ObjectRootTracer>(
             }
         }
         if !pool.refill(&mut stack) {
-            return;
+            return owners;
         }
     }
 }
