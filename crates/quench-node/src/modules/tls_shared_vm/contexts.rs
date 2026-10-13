@@ -6,6 +6,7 @@ use quench_runtime::{HostWeakRoot, NativeContext, RootId, RootedError, Runtime};
 #[derive(Default)]
 pub(crate) struct State {
     pub(crate) api: Option<RootId>,
+    pub(crate) ciphers: Option<Vec<String>>,
     entries: Vec<Entry>,
 }
 struct Entry {
