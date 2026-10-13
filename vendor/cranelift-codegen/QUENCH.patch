@@ -1,5 +1,5 @@
---- a/cranelift-codegen/src/egraph/elaborate.rs	2026-10-13 00:42:23.937445819 +0000
-+++ b/cranelift-codegen/src/egraph/elaborate.rs	2026-10-13 00:42:23.951619225 +0000
+--- a/cranelift-codegen/src/egraph/elaborate.rs	2026-10-13 09:07:31.332258211 +0000
++++ b/cranelift-codegen/src/egraph/elaborate.rs	2026-10-13 09:07:31.345096132 +0000
 @@ -47,6 +47,10 @@
      /// Map from Value to the best (lowest-cost) Value in its eclass
      /// (tree of union value-nodes).
@@ -11,7 +11,7 @@
      /// Stack of blocks and loops in current elaboration path.
      loop_stack: SmallVec<[LoopStackEntry; 8]>,
      /// The current block into which we are elaborating.
-@@ -71,6 +75,13 @@
+@@ -71,6 +75,25 @@
      ctrl_plane: &'a mut ControlPlane,
  }
  
@@ -22,10 +22,22 @@
 +/// disturb; a recurrence such as SHA-256's round function leads by more.
 +const CRITICAL_LEAD: u32 = 4;
 +
++/// Quench: whether `value` is rematerialized where it is used: a value the
++/// remat rules chose, or a clone of one (placed for another dominator
++/// subtree), which shares its best value.
++fn is_rematerialized(
++    remat_values: &FxHashSet<Value>,
++    value_to_best_value: &SecondaryMap<Value, BestEntry>,
++    value: Value,
++) -> bool {
++    let BestEntry(_, best) = value_to_best_value[value];
++    remat_values.contains(&value) || remat_values.contains(&best)
++}
++
  #[derive(Clone, Copy, Debug, PartialEq, Eq)]
  struct BestEntry(Cost, Value);
  
-@@ -128,13 +139,19 @@
+@@ -128,13 +151,19 @@
          result_idx: usize,
          num_args: usize,
          before: Inst,
@@ -46,7 +58,7 @@
  }
  
  impl<'a> Elaborator<'a> {
-@@ -156,6 +173,7 @@
+@@ -156,6 +185,7 @@
              loop_analysis,
              value_to_elaborated_value: ScopedHashMap::with_capacity(num_values),
              value_to_best_value,
@@ -54,7 +66,26 @@
              loop_stack: smallvec![],
              cur_block: Block::reserved_value(),
              remat_values,
-@@ -513,17 +531,29 @@
+@@ -414,6 +444,7 @@
+     /// `true` if a rewrite occurred.
+     fn maybe_remat_arg(
+         remat_values: &FxHashSet<Value>,
++        value_to_best_value: &SecondaryMap<Value, BestEntry>,
+         func: &mut Function,
+         remat_copies: &mut FxHashMap<(Block, Value), Value>,
+         insert_block: Block,
+@@ -427,7 +458,9 @@
+         // would affect, e.g., adds-with-one-constant-arg, which are
+         // currently rematerialized. Right now we don't do this, to
+         // avoid the need for another fixpoint loop here.
+-        if arg.in_block != insert_block && remat_values.contains(&arg.value) {
++        if arg.in_block != insert_block
++            && is_rematerialized(remat_values, value_to_best_value, arg.value)
++        {
+             let new_value = match remat_copies.entry((insert_block, arg.value)) {
+                 HashEntry::Occupied(o) => *o.get(),
+                 HashEntry::Vacant(v) => {
+@@ -513,17 +546,29 @@
                      // layout. First, enqueue all args to be
                      // elaborated. Push state to receive the results
                      // and later elab this inst.
@@ -87,7 +118,7 @@
                          debug_assert_ne!(arg, Value::reserved_value());
                          self.elab_stack
                              .push(ElabStackEntry::Start { value: arg, before });
-@@ -535,6 +565,7 @@
+@@ -535,6 +580,7 @@
                      result_idx,
                      num_args,
                      before,
@@ -95,7 +126,7 @@
                  } => {
                      trace!(
                          "PendingInst: {} result {} args {} before {}",
-@@ -546,6 +577,9 @@
+@@ -546,6 +592,9 @@
                      // them.
                      let arg_idx = self.elab_result_stack.len() - num_args;
                      let arg_values = &mut self.elab_result_stack[arg_idx..];
@@ -105,7 +136,65 @@
  
                      // Compute max loop depth.
                      //
-@@ -829,7 +863,9 @@
+@@ -559,8 +608,41 @@
+                     // placing too much register pressure on the entire
+                     // function. This is modeled with the `.saturating_sub(1)`
+                     // as the default if there's otherwise no maximum.
++                    //
++                    // Quench: for a float operator, a rematerialized constant
++                    // is copied into whichever block the operator lands in
++                    // (`maybe_remat_arg` below), so where its first copy was
++                    // placed does not bound the hoist; counting it pinned a
++                    // loop-invariant float chain inside the loop its
++                    // constants were first elaborated in. Float registers
++                    // have the slack to hold such a chain across the loop;
++                    // integer chains stay where they are (hoisting them
++                    // measured slower through register pressure).
++                    let float_result = self
++                        .func
++                        .dfg
++                        .inst_results(inst)
++                        .first()
++                        .is_some_and(|&result| self.func.dfg.value_type(result).is_float());
+                     let loop_hoist_level = arg_values
+                         .iter()
++                        .filter(|value| {
++                            // Only a constant: a rematerialized operator
++                            // with operands of its own still needs them.
++                            let constant = self
++                                .func
++                                .dfg
++                                .value_def(value.value)
++                                .inst()
++                                .is_some_and(|inst| self.func.dfg.inst_values(inst).next().is_none());
++                            !(float_result
++                                && constant
++                                && is_rematerialized(
++                                    self.remat_values,
++                                    &self.value_to_best_value,
++                                    value.value,
++                                ))
++                        })
+                         .map(|&value| {
+                             // Find the outermost loop level at which
+                             // the value's defining block *is not* a
+@@ -636,6 +718,7 @@
+                     for arg_value in arg_values.iter_mut() {
+                         if Self::maybe_remat_arg(
+                             &self.remat_values,
++                            &self.value_to_best_value,
+                             &mut self.func,
+                             &mut self.remat_copies,
+                             insert_block,
+@@ -783,6 +866,7 @@
+                 let mut new_arg = self.elaborate_eclass_use(*arg, before);
+                 Self::maybe_remat_arg(
+                     &self.remat_values,
++                    &self.value_to_best_value,
+                     &mut self.func,
+                     &mut self.remat_copies,
+                     block,
+@@ -829,7 +913,9 @@
          while let Some(top) = self.block_stack.pop() {
              match top {
                  BlockStackEntry::Elaborate { block, idom } => {
@@ -116,7 +205,7 @@
                      self.value_to_elaborated_value.increment_depth();
  
                      self.elaborate_block(&mut elab_values, idom, block);
-@@ -850,17 +886,51 @@
+@@ -850,17 +936,51 @@
                      // we can't `.rev()` above.)
                      self.block_stack[block_stack_end..].reverse();
                  }
@@ -169,8 +258,8 @@
          self.elaborate_domtree(&self.domtree);
          self.stats.elaborate_func_post_insts += self.func.dfg.num_insts() as u64;
      }
---- a/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-13 00:42:23.945323711 +0000
-+++ b/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-13 00:42:23.958991962 +0000
+--- a/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-13 09:07:31.339720213 +0000
++++ b/cranelift-codegen/src/isa/x64/inst/mod.rs	2026-10-13 09:07:31.351429307 +0000
 @@ -1478,6 +1478,12 @@
          }
      }
@@ -184,16 +273,16 @@
      fn function_alignment() -> FunctionAlignment {
          FunctionAlignment {
              minimum: 1,
---- a/cranelift-codegen/src/lib.rs	2026-10-13 00:42:23.946168433 +0000
-+++ b/cranelift-codegen/src/lib.rs	2026-10-13 00:42:23.962181395 +0000
+--- a/cranelift-codegen/src/lib.rs	2026-10-13 09:07:31.340497501 +0000
++++ b/cranelift-codegen/src/lib.rs	2026-10-13 09:07:31.354157691 +0000
 @@ -1,4 +1,5 @@
  //! Cranelift code generation library.
 +#![allow(warnings)]
  #![deny(missing_docs)]
  // Display feature requirements in the documentation when building on docs.rs
  #![cfg_attr(docsrs, feature(doc_cfg))]
---- a/cranelift-codegen/src/machinst/mod.rs	2026-10-13 00:42:23.946710851 +0000
-+++ b/cranelift-codegen/src/machinst/mod.rs	2026-10-13 00:42:23.960556548 +0000
+--- a/cranelift-codegen/src/machinst/mod.rs	2026-10-13 09:07:31.341032135 +0000
++++ b/cranelift-codegen/src/machinst/mod.rs	2026-10-13 09:07:31.352598715 +0000
 @@ -363,6 +363,12 @@
      /// order.
      fn gen_nop_units() -> Vec<Vec<u8>>;
@@ -207,8 +296,8 @@
      /// Align a basic block offset (from start of function).  By default, no
      /// alignment occurs.
      fn align_basic_block(offset: CodeOffset) -> CodeOffset {
---- a/cranelift-codegen/src/machinst/vcode.rs	2026-10-13 00:42:23.946819215 +0000
-+++ b/cranelift-codegen/src/machinst/vcode.rs	2026-10-13 00:42:23.960070554 +0000
+--- a/cranelift-codegen/src/machinst/vcode.rs	2026-10-13 09:07:31.341124429 +0000
++++ b/cranelift-codegen/src/machinst/vcode.rs	2026-10-13 09:07:31.352228759 +0000
 @@ -76,6 +76,11 @@
  pub trait VCodeInst: MachInst + MachInstEmit {}
  impl<I: MachInst + MachInstEmit> VCodeInst for I {}
