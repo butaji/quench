@@ -1671,6 +1671,52 @@ const other=new AbortController();other.signal.addEventListener('abort',event=>e
 }
 
 #[test]
+fn module_path_to_file_url_uses_guest_cwd_and_original_resolver_hooks() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert'),{pathToFileURL}=require('url');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-file-url-cwd-')),before=process.cwd();
+fs.mkdirSync(path.join(dir,'test'),{recursive:true});fs.mkdirSync(path.join(dir,'tests/node/test'),{recursive:true});fs.writeFileSync(path.join(dir,'test/target'),'ordinary');fs.writeFileSync(path.join(dir,'tests/node/test/target'),'other');process.chdir(dir);
+assert.strictEqual(pathToFileURL('./test/target').pathname,dir+'/test/target');assert.strictEqual(pathToFileURL('./test/').pathname,dir+'/test/');
+const resolve=path.posix.resolve,marker={};path.posix.resolve=function(value){assert.strictEqual(this,path.posix);assert.strictEqual(value,'input/');return '/hook/dir';};assert.strictEqual(pathToFileURL('input/').href,'file:///hook/dir/');path.posix.resolve=()=>{throw marker};assert.throws(()=>pathToFileURL('input'),e=>e===marker);path.posix.resolve=resolve;
+assert.throws(()=>pathToFileURL('input',{get windows(){throw marker}}),e=>e===marker);process.chdir(before);fs.rmSync(dir,{recursive:true,force:true});console.log('cwd-and-resolver');
+"#);
+}
+
+#[test]
+fn module_node_search_paths_share_resolution_and_preserve_public_hooks() {
+    compare_node_stream_source(r#"
+const Module=require('module'),path=require('path'),assert=require('assert');
+for(const input of ['/','/node_modules','/a/node_modules/b/node_modules/c','/a/foo_node_modules','/a/../b/./c','','.','..'])console.log(JSON.stringify([input,Module._nodeModulePaths(input)]));
+console.log(JSON.stringify([Module._nodeModulePaths.name,Module._nodeModulePaths.length,Object.getOwnPropertyDescriptor(Module._nodeModulePaths,'name')]));
+console.log(JSON.stringify(Reflect.ownKeys(Module._nodeModulePaths).map(String)));
+console.log(JSON.stringify(new Module._nodeModulePaths('/construct/node_modules/child')));
+for(const value of [undefined,null,1,{},Symbol('x')])try{Module._nodeModulePaths(value)}catch(e){console.log(JSON.stringify([e.name,e.code,e.message]));}
+const original=path.resolve,marker={};path.resolve=function(...args){assert.strictEqual(this,path);console.log('resolve-hook',args.length);return '/hook/node_modules/child';};console.log(JSON.stringify(Module._nodeModulePaths(marker)));path.resolve=()=>{throw marker};assert.throws(()=>Module._nodeModulePaths('/absolute'),e=>e===marker);path.resolve=original;
+"#);
+}
+
+#[test]
+fn module_create_require_url_shapes_errors_and_directory_base_match_node() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const {createRequire}=require('module'),{pathToFileURL}=require('url');
+console.log(JSON.stringify([Reflect.ownKeys(createRequire).map(String),Object.getOwnPropertyDescriptor(createRequire,'prototype').writable]));
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-create-require-'));
+fs.mkdirSync(path.join(dir,'新建文件夹'));fs.writeFileSync(path.join(dir,'新建文件夹','dependency.cjs'),'module.exports=42');
+const file=path.join(dir,'新建文件夹','あ.js'),url=pathToFileURL(file),directory=path.dirname(file)+path.sep;
+for(const value of [file,url,url.href,pathToFileURL(directory),directory]){const req=createRequire(value);assert.strictEqual(req('./dependency.cjs'),42);assert.strictEqual(req.resolve('./dependency.cjs'),path.join(directory,'dependency.cjs'));}
+for(const value of [undefined,null,1,{},'../','https://example.org/x','file://remote/x','file:///a%2Fb','😀'.repeat(100)]){
+ try{createRequire(value);assert.fail('accepted invalid value')}catch(e){console.log(JSON.stringify([e.name,e.code,e.message,Object.keys(e),Object.getOwnPropertyDescriptor(e,'message'),e.constructor.name,Reflect.ownKeys(Object.getPrototypeOf(e)).map(String)]));}
+}
+const log=[],candidate={get href(){log.push('href');return 'file:///irrelevant'},get protocol(){log.push('protocol');return 'file:'},get auth(){log.push('auth')},get path(){log.push('path')},toString(){log.push('toString');return pathToFileURL(directory).href}};
+assert.strictEqual(createRequire(candidate)('./dependency.cjs'),42);console.log(JSON.stringify(log));
+const marker={};const originalURL=global.URL;global.URL=function(){throw marker};assert.strictEqual(createRequire(url)('./dependency.cjs'),42);global.URL=originalURL;assert.strictEqual((new createRequire(url))('./dependency.cjs'),42);assert.throws(()=>createRequire({get href(){throw marker}}),e=>e===marker);
+const coercion={href:'x',protocol:'file:',toString(){throw marker}};assert.throws(()=>createRequire(coercion),e=>e.code==='ERR_INVALID_ARG_VALUE'&&e!==marker);
+console.log('url-and-directory');fs.rmSync(dir,{recursive:true,force:true});
+"#);
+}
+
+#[test]
 fn commonjs_namespace_static_prefix_uses_syntax_and_matches_node() {
     compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
