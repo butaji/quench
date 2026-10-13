@@ -206,6 +206,7 @@ fn set_number(
 }
 
 /// Public and captured-private projections derive from the OS signal owner.
+#[cfg(target_os = "linux")]
 pub(crate) fn signal_constants(
     context: &mut NativeContext<'_, NodeHost>,
 ) -> Result<RootId, RootedError> {
