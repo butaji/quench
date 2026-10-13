@@ -481,6 +481,7 @@
       pipes: [],
       pipeListeners: [],
       autoDestroy: options.autoDestroy !== false,
+      emitClose: deps.closeOption(options),
       defaultEncoding: validateEncoding(options.defaultEncoding || "utf8"),
     };
     installAutoDestroyErrorListener(stream, stream._readableState.autoDestroy);
@@ -2405,7 +2406,7 @@
         stream._destroyErrorEmitted = true;
         stream._emitter.emit("error", endError);
       }
-      stream._emitter.emit("close");
+      deps.emitClose(stream);
       if (callback) callback(endError);
     };
     if (destroy) {
@@ -2472,6 +2473,8 @@
       final: options.final || null,
       endCallbacks: [],
       autoDestroy: options.autoDestroy !== false,
+      emitClose: deps.closeOption(options),
+      closeEmitted: false,
       destroyed: false,
     };
     installAutoDestroyErrorListener(stream, stream._writableState.autoDestroy);
@@ -3052,7 +3055,7 @@
           stream._destroyErrorEmitted = true;
           stream._emitter.emit("error", destroyError);
         }
-        stream._emitter.emit("close");
+        deps.emitClose(stream);
         if (callback) callback(endError);
       };
       if (destroy) {
