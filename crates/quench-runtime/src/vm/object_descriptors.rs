@@ -510,8 +510,8 @@ impl<H: Host> Vm<H> {
                 }
                 let value = self
                     .heap
-                    .array(target)
-                    .and_then(|(_, elements)| {
+                    .array_elements(target)
+                    .and_then(|elements| {
                         elements
                             .get(index)
                             .copied()

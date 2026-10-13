@@ -1,4 +1,4 @@
-use super::{ArrayRecord, Cell, CellKind, FreeSlotBitmap, Heap, Object, Slot};
+use super::{ArrayObject, Cell, CellKind, FreeSlotBitmap, Heap, Object, Slot};
 use crate::value::Value;
 use crate::value_vec::INLINE_PROPERTY_COUNT;
 use rustc_hash::FxHashMap;
@@ -160,13 +160,13 @@ impl MemoryProfile {
     pub(super) fn allocated_array(
         &mut self,
         identity: Value,
-        array: &ArrayRecord,
+        array: &ArrayObject,
         object_slots: usize,
     ) {
         self.allocated_record(
             identity,
             CellKind::Array as usize,
-            array.object.allocated_extra_bytes() + array.elements.capacity() * size_of::<Value>(),
+            array.allocated_extra_bytes() + array.elements().capacity() * size_of::<Value>(),
             "array",
             Some(object_slots),
         );
@@ -229,7 +229,7 @@ impl MemoryProfile {
         &mut self,
         identity: Value,
         object_slots: usize,
-        _array: &ArrayRecord,
+        _array: &ArrayObject,
     ) {
         let Some(index) = self.identity_slots.remove(&identity) else {
             return;
@@ -371,7 +371,7 @@ impl MemoryProfile {
                 allocated: self.object_allocated_slots[index],
                 peak: self.object_peak_slots[index],
                 death: None,
-                checkpoint: Some(heap.properties.len(object.properties) as u32),
+                checkpoint: Some(heap.properties.len(object.properties()) as u32),
             };
             *rows.entry(lifetime).or_default() += 1;
         });
@@ -478,7 +478,7 @@ impl Heap {
             let object = object_record.or_else(|| self.object(identity));
             if let Some(object) = object {
                 object_headers += 1;
-                let property_width = self.properties.len(object.properties);
+                let property_width = self.properties.len(object.properties());
                 object_property_counts_by_width.resize(
                     object_property_counts_by_width
                         .len()
@@ -494,8 +494,8 @@ impl Heap {
                 } else {
                     embedded_object_headers += 1;
                 }
-                if !object.properties.has_inline_property_storage() {
-                    let (used, capacity) = self.properties.vector_stats(object.properties);
+                if !object.properties().has_inline_property_storage() {
+                    let (used, capacity) = self.properties.vector_stats(object.properties());
                     live_property_used_values += used;
                     live_property_capacity_values += capacity;
                     live_property_used_values_by_width.resize(
@@ -516,15 +516,17 @@ impl Heap {
             }
             let payload_bytes = if direct_object {
                 object_record.map_or(0, Object::allocated_extra_bytes)
-            } else if let Some((object, elements)) = self.array(identity)
+            } else if let Some(array) = self.array(identity)
                 && direct_array
             {
-                object.allocated_extra_bytes() + elements.capacity() * size_of::<Value>()
+                array.allocated_extra_bytes() + array.elements().capacity() * size_of::<Value>()
             } else {
                 cell.map_or(0, Self::cell_payload_bytes)
             };
             if direct_array {
-                let (_, elements) = self.array(identity).expect("live direct array record");
+                let elements = self
+                    .array_elements(identity)
+                    .expect("live direct array record");
                 let element_bytes = elements.capacity() * size_of::<Value>();
                 other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
                 let identity = Rc::as_ptr(elements) as usize;
@@ -537,7 +539,8 @@ impl Heap {
                 }
             } else {
                 match cell {
-                    Some(Cell::Array { elements, .. }) => {
+                    Some(Cell::Array { object }) => {
+                        let elements = object.elements();
                         let element_bytes = elements.capacity() * size_of::<Value>();
                         other_cell_payload_bytes += payload_bytes.saturating_sub(element_bytes);
                         let identity = Rc::as_ptr(elements) as usize;
@@ -654,8 +657,8 @@ impl Heap {
             } else if let Some(array_id) = identity.direct_array_index() {
                 // SAFETY: profile walks only live values.
                 let array = unsafe { self.array_records.get_live(array_id) };
-                bytes[CellKind::Array as usize] += array.object.allocated_extra_bytes()
-                    + array.elements.capacity() * size_of::<Value>();
+                bytes[CellKind::Array as usize] += array.allocated_extra_bytes()
+                    + array.elements().capacity() * size_of::<Value>();
             } else if let Some(cell) = self.get(identity) {
                 bytes[Self::cell_kind(cell) as usize] += Self::cell_payload_bytes(cell);
             }
@@ -695,7 +698,7 @@ impl Heap {
             let Some(object) = self.object(identity) else {
                 return;
             };
-            let vector = self.properties.vector_stats(object.properties);
+            let vector = self.properties.vector_stats(object.properties());
             stats.0 += vector.0;
             stats.1 += vector.1;
         });
@@ -710,8 +713,8 @@ impl Heap {
                     if let Some(array_id) = identity.direct_array_index() {
                         // SAFETY: profile walks only live values.
                         let array = unsafe { self.array_records.get_live(array_id) };
-                        array.object.allocated_extra_bytes()
-                            + array.elements.capacity() * size_of::<Value>()
+                        array.allocated_extra_bytes()
+                            + array.elements().capacity() * size_of::<Value>()
                     } else {
                         self.get(identity).map_or(0, cell_bytes)
                     }
@@ -725,13 +728,15 @@ impl Heap {
     pub(crate) fn array_element_stats(&self) -> (usize, usize) {
         let mut total = (0, 0);
         self.array_records.for_each_live(|_, array| {
-            total.0 += array.elements.len();
-            total.1 += array.elements.capacity();
+            total.0 += array.elements().len();
+            total.1 += array.elements().capacity();
         });
         self.slots
             .iter()
             .filter_map(|slot| match slot.cell.as_ref()? {
-                Cell::Array { elements, .. } => Some((elements.len(), elements.capacity())),
+                Cell::Array { object } => {
+                    Some((object.elements().len(), object.elements().capacity()))
+                }
                 _ => None,
             })
             .fold(total, |(len, capacity), value| {
@@ -769,20 +774,16 @@ fn cell_bytes(cell: &Cell) -> usize {
                 Heap::cell_payload_bytes(cell)
             }
             Cell::TemporalZonedDateTime {
-                time_zone,
-                calendar,
-                ..
-            } => time_zone.capacity() + calendar.capacity(),
+                instant, calendar, ..
+            } => instant.time_zone.capacity() + calendar.capacity(),
             Cell::TemporalPlainDate { calendar, .. } => calendar.capacity(),
             Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
             Cell::TemporalPlainMonthDay { calendar, .. }
             | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
             Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
-            Cell::WasmTable { elements, .. }
-            | Cell::WasmGc {
-                fields: elements, ..
-            } => elements.capacity() * size_of::<Value>(),
-            Cell::Array { elements, .. } => elements.capacity() * size_of::<Value>(),
+            Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
+            Cell::WasmGc { fields, .. } => fields.capacity() * size_of::<Value>(),
+            Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::WasmMemory { bytes, .. } => bytes.capacity(),
             Cell::Map { entries, .. } => entries.capacity() * size_of::<(Value, Value)>(),

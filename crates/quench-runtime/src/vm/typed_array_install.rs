@@ -89,7 +89,7 @@ impl<H: Host> Vm<H> {
             let constructor = self.native_with_realm(native, Value::NULL, global);
             self.object_data_mut(constructor)
                 .expect("typed array constructor")
-                .proto = typed_array;
+                .set_proto(typed_array);
             self.set_builtin_function_name(constructor, name)?;
             let prototype = self
                 .heap
@@ -132,7 +132,7 @@ impl<H: Host> Vm<H> {
         let typed_array = self.native_value(Native::TypedArray);
         self.object_data_mut(constructor)
             .expect("typed array constructor")
-            .proto = typed_array;
+            .set_proto(typed_array);
         let proto = self
             .heap
             .alloc(Cell::Object(Self::empty_object(self.typed_array_proto)));

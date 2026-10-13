@@ -1194,23 +1194,24 @@ impl Function {
                     matches!(
                         instruction.op(),
                         Op::LoadName | Op::LoadNameCall | Op::LoadNameTypeof
-                    ) && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
-                        atom >= atoms.len() || atoms[atom].starts_with('\0')
-                    }) || matches!(
-                        instruction.op(),
-                        Op::ResolveName
-                            | Op::LoadResolvedName
-                            | Op::DeleteName
-                            | Op::StoreName
-                            | Op::StoreResolvedName
-                            | Op::StoreVarBinding
-                            | Op::MakeClosure
-                            | Op::CloneEnv
-                            | Op::CallDirectEvalArray
-                            | Op::InitializeThis
-                            | Op::SuperCallCheck
-                    ) || (instruction.op() == Op::Call
-                        && (instruction.direct_eval() || instruction.parameter_eval()))
+                    ) && usize::try_from(instruction.atom_index())
+                        .is_ok_and(|atom| atom >= atoms.len() || atoms[atom].starts_with('\0'))
+                        || matches!(
+                            instruction.op(),
+                            Op::ResolveName
+                                | Op::LoadResolvedName
+                                | Op::DeleteName
+                                | Op::StoreName
+                                | Op::StoreResolvedName
+                                | Op::StoreVarBinding
+                                | Op::MakeClosure
+                                | Op::CloneEnv
+                                | Op::CallDirectEvalArray
+                                | Op::InitializeThis
+                                | Op::SuperCallCheck
+                        )
+                        || (instruction.op() == Op::Call
+                            && (instruction.direct_eval() || instruction.parameter_eval()))
                 })
         })
     }
@@ -1317,7 +1318,11 @@ impl Function {
     /// Whether neither this function nor any enclosing one has dynamic scope access or
     /// contains a `with` statement. The compiler then resolved every lexical binding the body
     /// names, so a by-name load in it can only denote a global binding.
-    pub(crate) fn names_resolve_statically(&self, functions: &[Function], atoms: &AtomTable) -> bool {
+    pub(crate) fn names_resolve_statically(
+        &self,
+        functions: &[Function],
+        atoms: &AtomTable,
+    ) -> bool {
         *self.static_name_scope.get_or_init(|| {
             !self.has_dynamic_scope_access()
                 && !self.instructions().any(|instruction| {

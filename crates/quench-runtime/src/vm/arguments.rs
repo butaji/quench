@@ -27,8 +27,8 @@ impl<H: Host> Vm<H> {
             return fallback;
         };
         self.heap
-            .array(arguments)
-            .and_then(|(_, elements)| elements.get(index).copied())
+            .array_elements(arguments)
+            .and_then(|elements| elements.get(index).copied())
             .filter(|value| !value.is_deleted())
             .unwrap_or(fallback)
     }

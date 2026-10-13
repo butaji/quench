@@ -505,7 +505,7 @@ impl<H: Host> Vm<H> {
         let prototype_atom = self.prototype_atom();
         let function_prototype = self.get_property(p, constructor, prototype_atom)?;
         if let Some(object) = self.object_data_mut(wrapper) {
-            object.proto = function_prototype;
+            object.set_proto(function_prototype);
         }
         self.set_function_metadata_value(wrapper, name_atom, name)?;
         self.set_function_metadata_value(wrapper, length_atom, length)?;

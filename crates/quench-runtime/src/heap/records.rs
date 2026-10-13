@@ -1,4 +1,4 @@
-use super::{ArrayRecord, Object};
+use super::{ArrayObject, Object};
 use std::alloc::Layout;
 use std::alloc::{alloc, dealloc};
 use std::mem::MaybeUninit;
@@ -9,11 +9,11 @@ use std::ptr::NonNull;
 pub(super) type RecordId = u32;
 
 pub(super) type ObjectRecordSpace = RecordSpace<Object>;
-pub(super) type ArrayRecordSpace = RecordSpace<ArrayRecord>;
+pub(super) type ArrayRecordSpace = RecordSpace<ArrayObject>;
 
 const RECORDS_PER_BLOCK: usize = 1_024;
 const OCCUPANCY_WORD_BITS: usize = u64::BITS as usize;
-const RECORD_SPACE_CAPACITY: usize = 1 << 24;
+pub(super) const RECORD_SPACE_CAPACITY: usize = 1 << 24;
 
 const _: () = assert!(RECORDS_PER_BLOCK.is_power_of_two());
 const _: () = assert!(RECORD_SPACE_CAPACITY.is_power_of_two());
