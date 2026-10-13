@@ -47,6 +47,10 @@ pub(crate) fn install(context: &mut NativeContext<'_, NodeHost>) -> Result<RootI
     let name = context.string_rooted("name");
     let text = context.string_rooted("SecureContext");
     context.define_data_property_rooted(native, name, text, false, false, true)?;
+    let binding = context.object_rooted()?;
+    let key = context.string_rooted("SecureContext");
+    context.define_data_property_rooted(binding, key, native, true, true, true)?;
+    set(context, api, "binding", binding)?;
     let prototype = get(context, native, "prototype")?;
     for (name, operation) in [
         ("init", "tlsContextInit"),
@@ -183,7 +187,7 @@ pub(crate) fn initialize(
     }
     let minimum = version(context, api, *minimum, true)?;
     let maximum = version(context, api, *maximum, false)?;
-    let constructor = get(context, api, "NativeSecureContext")?;
+    let constructor = get(context, api, "contextConstructor")?;
     let inner = context.construct_rooted(constructor, constructor, &[])?;
     set(context, receiver, "context", inner)?;
     let inner = get(context, receiver, "context")?;
@@ -249,11 +253,7 @@ pub(crate) fn create(
     let mut bits = get(context, options, "secureOptions")?;
     if context.truthy_rooted(honor)? {
         let preference = context.number(openssl_sys::SSL_OP_CIPHER_SERVER_PREFERENCE as f64);
-        bits = context.arithmetic_rooted(
-            quench_runtime::NativeArithmetic::BitwiseOr,
-            bits,
-            preference,
-        )?;
+        bits = context.bitwise_or_rooted(bits, preference)?;
     }
     let api = install(context)?;
     let constructor = get(context, api, "SecureContext")?;
@@ -264,4 +264,9 @@ pub(crate) fn create(
     )?;
     super::configuration::configure(context, outer, options)?;
     Ok(outer)
+}
+
+pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let api = install(context)?;
+    get(context, api, "binding")
 }

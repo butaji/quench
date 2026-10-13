@@ -42,6 +42,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let factory = context.evaluate_script_rooted(TLS_FACTORY, "node:tls/shared.js")?;
     let undefined = context.undefined();
     let api = facade::install(context)?;
+    let binding = facade::binding(context)?;
+    let key = context.string_rooted("SecureContext");
+    let constructor = context.get_property_rooted(binding, key)?;
+    let key = context.string_rooted("contextConstructor");
+    context.define_data_property_rooted(api, key, constructor, true, true, true)?;
     let module = context.call_rooted(factory, undefined, &[api])?;
     for (name, text) in [
         ("DEFAULT_MIN_VERSION", "TLSv1.2"),

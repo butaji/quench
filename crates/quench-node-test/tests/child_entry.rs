@@ -5493,3 +5493,29 @@ console.log(JSON.stringify(warnings));
 "#,
     );
 }
+
+#[test]
+fn native_tls_context_internal_binding_constructor_snapshot_and_missing_engine_hooks_match_node() {
+    const SOURCE: &str = r#"
+const assert=require('assert'),warnings=[];process.emitWarning=function(...args){warnings.push(args);};
+const {internalBinding}=require('internal/test/binding'),binding=internalBinding('crypto');assert.strictEqual(binding,internalBinding('crypto'));
+const Native=binding.SecureContext;let creations=0;
+binding.SecureContext=function(){creations++;const context=new Native();context.setClientCertEngine=undefined;context.setEngineKey=undefined;return context;};
+const tls=require('tls');
+for(const options of [{clientCertEngine:'x'},{privateKeyIdentifier:'key',privateKeyEngine:'x'}])try{tls.createSecureContext(options);}catch(e){console.log(JSON.stringify([e.name,e.code,e.message,Object.keys(e)]));}
+binding.SecureContext=function(){throw new Error('late constructor read')};
+console.log(tls.createSecureContext().context.getMinProto(),creations);console.log(JSON.stringify(warnings));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--no-warnings", "--expose-internals", "-e", SOURCE]);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(),"{}",String::from_utf8_lossy(&observation.stderr));
+    }
+    assert_eq!(observations[0].stdout,observations[1].stdout);
+}
