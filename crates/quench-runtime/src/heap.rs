@@ -909,58 +909,38 @@ impl Heap {
     /// One cached property add: appends `value` at `slot`, the object's current storage
     /// length, and moves the object to `shape`, whose storage length is `slot + 1`.
     #[inline(always)]
-    pub(crate) fn property_add(&mut self, object: Value, slot: usize, value: Value, shape: u32) {
-        let data = self.get_mut(object).unwrap().object_mut().unwrap();
-        if slot < INLINE_PROPERTY_COUNT && data.inline_properties().is_some() {
-            data.set_inline_property(slot, value);
-            data.set_shape(shape);
-            #[cfg(feature = "profile-memory")]
-            self.note_object_slots(object, slot + 1);
-            return;
-        }
-        self.property_push(object, value);
-        self.get_mut(object)
-            .unwrap()
-            .object_mut()
-            .unwrap()
-            .set_shape(shape);
-    }
-    pub(crate) fn property_push(&mut self, object: Value, value: Value) {
-        let (vector, inline, slot) = {
-            let data = self.get(object).unwrap().object().unwrap();
-            (
-                data.properties(),
-                data.inline_properties().copied(),
-                self.properties.len(data.properties()),
-            )
-        };
-        if let Some(inline) = inline {
-            if slot < INLINE_PROPERTY_COUNT {
-                self.get_mut(object)
-                    .unwrap()
-                    .object_mut()
-                    .unwrap()
-                    .set_inline_property(slot, value);
-                #[cfg(feature = "profile-memory")]
-                self.note_object_slots(object, slot + 1);
-                return;
+    /// Appends `value` as the next property of `object`, which moves to `shape`: inline while
+    /// the values fit, otherwise in the arena, into which the add that outgrows the inline
+    /// values moves them. One cell lookup; the arena borrow is disjoint from the slots.
+    pub(crate) fn property_add(&mut self, object: Value, value: Value, shape: u32) {
+        let index = object.heap_index().expect("property owner is a heap value") as usize;
+        assert!(index < self.slots.len(), "property owner is a live cell");
+        let Self {
+            slots, properties, ..
+        } = self;
+        // SAFETY: bounds-checked above.
+        let data = unsafe { slots.get_unchecked_mut(index) }
+            .cell
+            .as_mut()
+            .and_then(Cell::object_mut)
+            .expect("property owner is an object");
+        let vector = data.properties();
+        let slot = properties.len(vector);
+        match data.inline_properties().copied() {
+            Some(_) if slot < INLINE_PROPERTY_COUNT => data.set_inline_property(slot, value),
+            Some(inline) => {
+                debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
+                let mut moved = properties.with_values(vector.auxiliary(), &inline);
+                properties.push(&mut moved, value);
+                data.replace_property_storage(moved, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
             }
-            debug_assert_eq!(slot, INLINE_PROPERTY_COUNT);
-            let mut vector = self.properties.with_values(vector.auxiliary(), &inline);
-            self.properties.push(&mut vector, value);
-            self.get_mut(object)
-                .unwrap()
-                .object_mut()
-                .unwrap()
-                .replace_property_storage(vector, [Value::UNDEFINED; INLINE_PROPERTY_COUNT]);
-            #[cfg(feature = "profile-memory")]
-            self.note_object_slots(object, slot + 1);
-            return;
+            None => {
+                let mut vector = vector;
+                properties.push(&mut vector, value);
+                data.set_properties(vector);
+            }
         }
-        let mut vector = vector;
-        self.properties.push(&mut vector, value);
-        let data = self.get_mut(object).unwrap().object_mut().unwrap();
-        data.set_properties(vector);
+        data.set_shape(shape);
         #[cfg(feature = "profile-memory")]
         self.note_object_slots(object, slot + 1);
     }

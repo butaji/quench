@@ -1451,8 +1451,7 @@ impl<H: Host> Vm<H> {
             .shape();
         self.check_property_key_write(object, key, false)?;
         let next_shape = self.transition_property_shape(shape, key);
-        self.heap.property_push(object, value);
-        self.object_data_mut(object).unwrap().set_shape(next_shape);
+        self.heap.property_add(object, value, next_shape);
         if let PropertyKey::String(atom) = key {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }
@@ -1803,8 +1802,7 @@ impl<H: Host> Vm<H> {
             return false;
         }
         debug_assert_eq!(cache.slot as usize, self.shapes[shape as usize].storage_len);
-        self.heap
-            .property_add(object, usize::from(cache.slot), value, cache.target_shape);
+        self.heap.property_add(object, value, cache.target_shape);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
         }
