@@ -340,6 +340,9 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| self.type_error(p, "dynamic program is unavailable".into()))?;
         let active_program = self.replace_active_program(program_id);
         let direct_eval = std::mem::replace(&mut self.direct_eval, false);
+        if !direct_eval {
+            self.programs.mark_global_scope(program_id);
+        }
         let root_function = residual.functions[super::ROOT_FUNCTION_ID as usize].clone();
         let root_scope = self
             .frames

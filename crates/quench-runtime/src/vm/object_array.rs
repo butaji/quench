@@ -26,7 +26,8 @@ fn array_length_uint32(number: f64) -> u32 {
 
 impl<H: Host> Vm<H> {
     pub(super) fn own_array_length(&self, target: Value) -> Option<usize> {
-        let (object, elements) = self.heap.array(target)?;
+        let object = self.heap.array(target)?;
+        let elements = object.elements();
         (!object.is_arguments_object()).then(|| {
             self.heap
                 .sparse_length(target)
@@ -37,7 +38,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn has_own_array_index(&self, target: Value, index: usize) -> bool {
         self.array_descriptor(target, index).is_some()
-            || self.heap.array(target).is_some_and(|(_, elements)| {
+            || self.heap.array_elements(target).is_some_and(|elements| {
                 elements.get(index).is_some_and(|value| !value.is_deleted())
                     || self
                         .heap
@@ -98,7 +99,7 @@ impl<H: Host> Vm<H> {
                     .max();
                 if let Some(blocked_index) = blocked_index {
                     let partial_len = blocked_index + 1;
-                    if let Some((_, elements)) = self.heap.array_mut(target) {
+                    if let Some(elements) = self.heap.array_elements_mut(target) {
                         Rc::make_mut(elements).truncate(partial_len);
                     }
                     self.heap.sparse_set_length(target, partial_len);
@@ -120,7 +121,7 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(false);
                 }
-                if let Some((_, elements)) = self.heap.array_mut(target) {
+                if let Some(elements) = self.heap.array_elements_mut(target) {
                     Rc::make_mut(elements).truncate(next_len);
                 }
                 for (atom, _, _) in &tail {
@@ -186,7 +187,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn array_present_indices(&self, target: Value) -> Vec<usize> {
-        let Some((_, elements)) = self.heap.array(target) else {
+        let Some(elements) = self.heap.array_elements(target) else {
             return Vec::new();
         };
         let length = self.heap.sparse_length(target).unwrap_or(elements.len());
@@ -311,8 +312,8 @@ impl<H: Host> Vm<H> {
         let atom = self.intern_atom(&index.to_string());
         let existing = self
             .heap
-            .array(target)
-            .and_then(|(_, elements)| {
+            .array_elements(target)
+            .and_then(|elements| {
                 elements
                     .get(index)
                     .copied()
@@ -327,7 +328,7 @@ impl<H: Host> Vm<H> {
             && !self
                 .descriptors
                 .contains_key(&(target, PropertyKey::string(atom)));
-        let current_len = self.heap.array(target).map_or(0, |(_, elements)| {
+        let current_len = self.heap.array_elements(target).map_or(0, |elements| {
             self.heap
                 .sparse_length(target)
                 .unwrap_or(0)
@@ -377,7 +378,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn delete_array_index(&mut self, target: Value, index: usize) -> Value {
-        let present = self.heap.array(target).is_some_and(|(_, elements)| {
+        let present = self.heap.array_elements(target).is_some_and(|elements| {
             elements
                 .get(index)
                 .copied()
@@ -397,7 +398,7 @@ impl<H: Host> Vm<H> {
         }
         self.unmap_argument_index(target, index);
         if present {
-            if let Some((_, elements)) = self.heap.array_mut(target)
+            if let Some(elements) = self.heap.array_elements_mut(target)
                 && index < elements.len()
             {
                 Rc::make_mut(elements)[index] = Value::DELETED;

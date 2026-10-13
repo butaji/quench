@@ -236,16 +236,15 @@ impl<H: Host> Vm<H> {
             return Err(JsError::validation("invalid Wasm table reference".into()));
         }
         let Some(Cell::WasmTable {
-            elements,
-            maximum,
-            table64,
-            ..
+            elements, table64, ..
         }) = self.heap.get_mut(table)
         else {
             unreachable!()
         };
         let old_size = elements.len();
-        let limit = maximum.unwrap_or(crate::wasm::table::table_index_limit(*table64));
+        let limit = elements
+            .maximum
+            .unwrap_or(crate::wasm::table::table_index_limit(*table64));
         let Some(length) = usize::try_from(delta)
             .ok()
             .and_then(|delta| old_size.checked_add(delta))
@@ -680,7 +679,7 @@ mod reference_boundary_tests {
         let binding = vm.heap.alloc(Cell::WasmGlobal {
             value: host_value,
             ty: WasmType::EXTERNREF,
-            declarations: crate::WasmTypes::default(),
+            declarations: Box::default(),
             mutable: false,
         });
         let binding_root = vm.root(binding);

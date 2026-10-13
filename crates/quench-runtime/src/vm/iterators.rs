@@ -226,9 +226,10 @@ impl<H: Host> Vm<H> {
                 .insert((self.realm.globals, native), prototype);
             let constructor = self.native_value(native);
             self.set_builtin_function_name(constructor, name)?;
+            let function = self.native_value(Native::Function);
             self.object_data_mut(constructor)
                 .expect("function constructor")
-                .proto = self.native_value(Native::Function);
+                .set_proto(function);
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
             let prototype_atom = self.prototype_atom();
             self.set_property_attributes(
@@ -719,7 +720,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.object_data_mut(prototype)
             .expect("async iterator prototype is an object")
-            .proto = parent;
+            .set_proto(parent);
         for (symbol_name, native, function_name) in [
             (
                 "asyncIterator",
@@ -842,6 +843,7 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: Box::new(crate::heap::IteratorExt {
+                position_high: 0,
                 next_method: None,
                 helper: None,
                 helper_running: false,
@@ -895,6 +897,7 @@ impl<H: Host> Vm<H> {
                 index: 0,
                 done: false,
                 ext: Box::new(crate::heap::IteratorExt {
+                    position_high: 0,
                     next_method: None,
                     helper: None,
                     helper_running: false,
@@ -1002,6 +1005,7 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: Box::new(crate::heap::IteratorExt {
+                position_high: 0,
                 next_method: Some(next_method),
                 helper: None,
                 helper_running: false,
@@ -1038,6 +1042,7 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: Box::new(crate::heap::IteratorExt {
+                position_high: 0,
                 next_method: None,
                 helper: Some(Box::new(helper)),
                 helper_running: false,
@@ -1890,8 +1895,8 @@ impl<H: Host> Vm<H> {
         let keys_root = self.heap.root(keys_value);
         let keys = self
             .heap
-            .array(keys_value)
-            .map_or_else(Vec::new, |(_, elements)| elements.as_ref().clone());
+            .array_elements(keys_value)
+            .map_or_else(Vec::new, |elements| elements.as_ref().clone());
         let mut iterators = Vec::new();
         let mut output_keys = Vec::new();
         let mut roots = Vec::new();
@@ -2613,6 +2618,7 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: Box::new(crate::heap::IteratorExt {
+                position_high: 0,
                 next_method: None,
                 helper: None,
                 helper_running: false,
@@ -2661,6 +2667,7 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: Box::new(crate::heap::IteratorExt {
+                position_high: 0,
                 next_method: None,
                 helper: None,
                 helper_running: false,
@@ -2795,16 +2802,18 @@ impl<H: Host> Vm<H> {
             }
         };
         let env = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(vec![
-                if done { Value::TRUE } else { Value::FALSE },
-                iterator,
-                if close_on_rejection {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                },
-            ]),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(vec![
+                    if done { Value::TRUE } else { Value::FALSE },
+                    iterator,
+                    if close_on_rejection {
+                        Value::TRUE
+                    } else {
+                        Value::FALSE
+                    },
+                ]),
+            ),
         });
         let fulfilled = self.native_with_env(Native::AsyncFromSyncValue, env);
         let rejected = self.native_with_env(Native::AsyncFromSyncValueRejected, env);
@@ -2816,8 +2825,8 @@ impl<H: Host> Vm<H> {
         let env = self.active_native_env().unwrap_or(Value::UNDEFINED);
         let (done, iterator) =
             self.heap
-                .array(env)
-                .map_or((false, Value::UNDEFINED), |(_, elements)| {
+                .array_elements(env)
+                .map_or((false, Value::UNDEFINED), |elements| {
                     (
                         elements.first().is_some_and(|done| self.truthy(*done)),
                         elements.get(1).copied().unwrap_or(Value::UNDEFINED),
@@ -2840,8 +2849,8 @@ impl<H: Host> Vm<H> {
         let env = self.active_native_env().unwrap_or(Value::UNDEFINED);
         let (iterator, close_on_rejection) =
             self.heap
-                .array(env)
-                .map_or((Value::UNDEFINED, false), |(_, elements)| {
+                .array_elements(env)
+                .map_or((Value::UNDEFINED, false), |elements| {
                     (
                         elements.get(1).copied().unwrap_or(Value::UNDEFINED),
                         elements.get(2).is_some_and(|close| self.truthy(*close)),
@@ -2893,8 +2902,9 @@ impl<H: Host> Vm<H> {
                     kind,
                     index,
                     done,
+                    ext,
                     ..
-                }) if !done => (*source, *kind, *index),
+                }) if !done => (*source, *kind, ext.position(*index)),
                 Some(Cell::Iterator { done: true, .. }) => {
                     return vm.iterator_result(Value::UNDEFINED, true);
                 }
@@ -3059,16 +3069,20 @@ impl<H: Host> Vm<H> {
             let item = selected.map(|(value, second)| {
                 second.map_or(value, |second| {
                     vm.heap.alloc(Cell::Array {
-                        object: Self::empty_object(vm.array_proto),
-                        elements: Rc::new(vec![value, second]),
+                        object: crate::heap::ArrayObject::new(
+                            Self::empty_object(vm.array_proto),
+                            Rc::new(vec![value, second]),
+                        ),
                     })
                 })
             });
             if let Some(value) = item {
                 if !kind.is_array_iterator()
-                    && let Some(Cell::Iterator { index, .. }) = vm.heap.get_mut(this)
+                    && let Some(Cell::Iterator {
+                        index: low, ext, ..
+                    }) = vm.heap.get_mut(this)
                 {
-                    *index += 1;
+                    ext.store_position(low, index + 1);
                 }
                 vm.iterator_result(value, false)
             } else {
@@ -3105,8 +3119,11 @@ impl<H: Host> Vm<H> {
             if index >= length {
                 return Ok(None);
             }
-            if let Some(Cell::Iterator { index: next, .. }) = vm.heap.get_mut(iterator) {
-                *next = index + 1;
+            if let Some(Cell::Iterator {
+                index: next, ext, ..
+            }) = vm.heap.get_mut(iterator)
+            {
+                ext.store_position(next, index + 1);
             }
             if kind == IteratorKind::ArrayKeys {
                 return Ok(Some((Value::number(index as f64), None)));
@@ -3124,8 +3141,10 @@ impl<H: Host> Vm<H> {
                 IteratorKind::ArrayValues | IteratorKind::Array => Some((value, None)),
                 IteratorKind::ArrayEntries => {
                     let entry = vm.heap.alloc(Cell::Array {
-                        object: Self::empty_object(vm.array_proto),
-                        elements: Rc::new(vec![Value::number(index as f64), value]),
+                        object: crate::heap::ArrayObject::new(
+                            Self::empty_object(vm.array_proto),
+                            Rc::new(vec![Value::number(index as f64), value]),
+                        ),
                     });
                     Some((entry, None))
                 }

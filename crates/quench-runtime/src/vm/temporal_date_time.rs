@@ -198,8 +198,10 @@ impl<H: Host> Vm<H> {
         };
         Ok(self.heap.alloc(Cell::TemporalPlainDateTime {
             object: Box::new(Self::empty_object(prototype)),
-            date: (date.year, date.month, date.day),
-            time: Box::new(time.map(|value| value as u32)),
+            date_time: Box::new(crate::heap::IsoDateTimeFields {
+                date: (date.year, date.month, date.day),
+                time: time.map(|value| value as u32),
+            }),
             calendar: Box::new(calendar),
         }))
     }
@@ -786,17 +788,16 @@ impl<H: Host> Vm<H> {
     ) -> Result<(IsoDate, [u32; 6], String), JsError> {
         match self.heap.get(value) {
             Some(Cell::TemporalPlainDateTime {
-                date,
-                time,
+                date_time,
                 calendar,
                 ..
             }) => Ok((
                 IsoDate {
-                    year: date.0,
-                    month: date.1,
-                    day: date.2,
+                    year: date_time.date.0,
+                    month: date_time.date.1,
+                    day: date_time.date.2,
                 },
-                time.map(|value| value as u32),
+                date_time.time,
                 calendar.to_string(),
             )),
             _ => Err(self.type_error(
@@ -944,7 +945,7 @@ impl<H: Host> Vm<H> {
         let is_plain_time = self
             .heap
             .object_record(changes)
-            .is_some_and(|object| object.proto == self.temporal_plain_time_proto);
+            .is_some_and(|object| object.proto() == self.temporal_plain_time_proto);
         if !self.is_object_like(changes)
             || self.heap.array(changes).is_some()
             || is_plain_time
