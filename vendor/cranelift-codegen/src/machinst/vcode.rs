@@ -661,13 +661,13 @@ impl<I: VCodeInst> VCode<I> {
 
     /// Get the number of blocks. Block indices will be in the range `0 ..
     /// (self.num_blocks() - 1)`.
-    /// Quench: the headers of small loops without calls, by block. A loop
-    /// is a header with the back edges reaching it from later in
-    /// `final_order`; its body is the blocks from the header to its last
-    /// back edge. Such a loop runs many iterations per entry, so starting
-    /// it on `small_loop_alignment` keeps its body in the fewest fetch
-    /// windows; a loop with a call or a longer body gains nothing to pay
-    /// for the padding.
+    /// Quench: the headers of small loops without calls, and of loops whose
+    /// header dispatches through a table, by block. A loop is a header with
+    /// the back edges reaching it from later in `final_order`; its body is
+    /// the blocks from the header to its last back edge. Such a loop runs
+    /// many iterations per entry, so starting it on `small_loop_alignment`
+    /// keeps its hot code in the fewest fetch windows; a loop with a call or
+    /// a longer body gains nothing to pay for the padding.
     fn small_loop_headers(&self, final_order: &[BlockIndex]) -> Vec<bool> {
         let mut aligned = vec![false; self.num_blocks()];
         if I::small_loop_alignment() <= 1 {
@@ -701,7 +701,11 @@ impl<I: VCodeInst> VCode<I> {
                     break;
                 }
             }
-            aligned[block.index()] = small;
+            // A header that dispatches through a table (an interpreter's
+            // switch) is entered once per dispatched case, so it is hot
+            // whatever the loop's size.
+            let dispatches = regalloc2::Function::block_succs(self, *block).len() > 2;
+            aligned[block.index()] = small || dispatches;
         }
         aligned
     }
