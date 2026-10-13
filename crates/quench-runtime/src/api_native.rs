@@ -503,6 +503,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    pub fn syntax_error_rooted(&mut self, message: &str) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .create_embedding_exception(crate::heap::Native::SyntaxError, message);
+        self.completion(result)
+    }
+
     pub fn range_error_rooted(&mut self, message: &str) -> Result<RootId, RootedError> {
         let result = self
             .vm
