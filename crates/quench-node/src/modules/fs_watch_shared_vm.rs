@@ -78,6 +78,7 @@ struct Handle {
     phase: Phase,
 }
 struct Group {
+    #[cfg(target_os = "linux")]
     basename: Vec<u8>,
     owners: Vec<u64>,
 }
@@ -634,7 +635,7 @@ pub(crate) fn watch(
 fn register(
     context: &mut NativeContext<'_, NodeHost>,
     handle: RootId,
-    pathname: PathBuf,
+    _pathname: PathBuf,
     filename: RootId,
     target: WatchTarget,
     referenced: bool,
@@ -654,7 +655,7 @@ fn register(
         id
     };
     #[cfg(target_os = "linux")]
-    let result = state.borrow_mut().fs_watch.kernel.subscribe(&pathname);
+    let result = state.borrow_mut().fs_watch.kernel.subscribe(&_pathname);
     #[cfg(not(target_os = "linux"))]
     let result: std::io::Result<WatchDescriptor> = Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
@@ -670,7 +671,8 @@ fn register(
                 .groups
                 .entry(descriptor)
                 .or_insert_with(|| Group {
-                    basename: pathname
+                    #[cfg(target_os = "linux")]
+                    basename: _pathname
                         .file_name()
                         .map(|name| name.as_encoded_bytes().to_vec())
                         .unwrap_or_default(),
