@@ -11,7 +11,7 @@
 //! freed on the collecting thread.
 use super::parallel_mark::mark_threads;
 use super::slots::SLOTS_PER_SLAB;
-use super::{Cell, FxHashMap, Heap, Slot, SparseElements, Value, ValueArena};
+use super::{Cell, FxHashMap, Heap, Slot, SparseElements, Value, ValueArena, ValueVec};
 use std::rc::Rc;
 
 /// One worker's results: survivors, arena owners, the slots it freed and the dead cells it left
@@ -21,8 +21,8 @@ struct SweepShare {
     live: usize,
     freed: usize,
     deferred: Vec<u32>,
-    /// A freed object's arena storage was dropped without release.
-    dropped_ranges: bool,
+    /// Freed objects' arena storage, released to the arena by the collecting thread.
+    released: Vec<ValueVec>,
     /// References to shared element backings held by freed arrays, by backing.
     shared_backings: FxHashMap<*const Vec<Value>, usize>,
     /// The latest shared backing and its references not yet in `shared_backings`: dead
@@ -54,9 +54,9 @@ struct SweepContext<'a> {
 unsafe impl Sync for SweepContext<'_> {}
 
 impl Heap {
-    /// Sweeps in parallel; returns survivors and whether freed objects dropped arena ranges.
+    /// Sweeps in parallel and returns the survivors; freed objects' arena ranges are released.
     /// Each dead cell the workers left in place is then freed by `free_cell`.
-    pub(super) fn sweep_parallel(&mut self) -> (usize, bool) {
+    pub(super) fn sweep_parallel(&mut self) -> usize {
         let workers = mark_threads();
         self.free.cover(self.slots.len());
         let slabs: Vec<_> = self.slots.slabs_mut().collect();
@@ -85,10 +85,11 @@ impl Heap {
         });
         let mut live = 0;
         let mut deferred = Vec::new();
-        let mut dropped_ranges = false;
         for mut share in shares {
             share.flush_backing();
-            dropped_ranges |= share.dropped_ranges;
+            for properties in share.released.drain(..) {
+                self.properties.release(properties);
+            }
             live += share.live;
             self.free.add_inserted(share.freed);
             deferred.extend(share.deferred);
@@ -108,11 +109,17 @@ impl Heap {
                 .unwrap();
             self.free_cell(index as usize, cell);
         }
-        (live, dropped_ranges)
+        live
     }
 }
 
 impl SweepShare {
+    fn release_properties(&mut self, arena: &ValueArena, properties: ValueVec) {
+        if !arena.release_is_noop(properties) {
+            self.released.push(properties);
+        }
+    }
+
     /// Counts one reference to the shared element backing `backing` for release.
     fn release_backing(&mut self, backing: *const Vec<Value>) {
         match &mut self.last_backing {
@@ -162,8 +169,7 @@ fn sweep_run(context: &SweepContext<'_>, run: SlabRun<'_>) -> SweepShare {
                     Some(Cell::Object(object))
                         if object.owns_no_allocation() && !object.properties().is_dictionary() =>
                     {
-                        share.dropped_ranges |=
-                            !context.properties.release_is_noop(object.properties());
+                        share.release_properties(context.properties, object.properties());
                         std::mem::forget(slot.cell.take());
                         freed |= 1 << bit;
                     }
@@ -179,8 +185,7 @@ fn sweep_run(context: &SweepContext<'_>, run: SlabRun<'_>) -> SweepShare {
                                 .sparse_arrays
                                 .is_none_or(|arrays| !arrays.contains_key(&(index as u32))) =>
                     {
-                        share.dropped_ranges |=
-                            !context.properties.release_is_noop(object.properties());
+                        share.release_properties(context.properties, object.properties());
                         let elements = object.elements();
                         let unique =
                             Rc::strong_count(elements) == 1 && Rc::weak_count(elements) == 0;
