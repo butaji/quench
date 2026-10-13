@@ -5,6 +5,15 @@ use crate::{Host, JsError, RootId, RootedError, Value, vm::Vm};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostFunctionId(pub u32);
 
+/// Arithmetic operations at native boundaries use the same guest coercions as code.
+#[derive(Clone, Copy)]
+pub enum NativeArithmetic {
+    Add,
+    Multiply,
+    Divide,
+    BitwiseAnd,
+}
+
 /// Private weak host reference, pruned by the core collector before slot reuse.
 /// Its persistent root must be released when the host resource is discarded.
 #[derive(Clone, Copy, Debug)]
@@ -305,6 +314,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    pub fn arithmetic_rooted(
+        &mut self,
+        operation: NativeArithmetic,
+        left: RootId,
+        right: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_arithmetic(operation, left, right);
+        self.completion(result)
+    }
+
     /// Apply ToNumeric and the shared ++/-- numeric update, preserving BigInt.
     pub fn numeric_update_rooted(
         &mut self,
@@ -579,6 +598,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     pub fn number(&mut self, value: f64) -> RootId {
         self.scoped_value(Value::number(value))
+    }
+
+    /// Create an exact integer primitive without consulting the guest BigInt binding.
+    pub fn bigint_rooted(&mut self, value: i128) -> RootId {
+        let root = self.vm.bigint_rooted(value);
+        self.roots.push(root);
+        root
     }
 
     pub fn undefined(&mut self) -> RootId {

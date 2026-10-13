@@ -2245,6 +2245,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let constants = fs_constants(context)?;
     set(context, module, "constants", constants)?;
     stat::install(context, module)?;
+    super::fs_stat_watch_shared_vm::install(context, module)?;
     sync::install(context, module)?;
     let fsync_sync = get(context, module, "fsyncSync")?;
     let fdatasync_sync = get(context, module, "fdatasyncSync")?;
