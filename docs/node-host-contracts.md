@@ -370,6 +370,12 @@ Original connection callbacks finish before any stream IO. Handshake completion
 waits for authorization before application IO; client verification invokes the
 original hostname callback after native chain verification.
 
+Connection delivery clears the accepted endpoint's pending state in its native
+completion operation, including when the original callback throws. Resource
+reporting derives reference state from the transport owner and includes sockets
+awaiting native close completion. The general scheduler does not infer socket
+lifecycle transitions from callback argument positions.
+
 SSL writes retain their retry extent while queued data appends. Readiness returns
 to the event loop; native SSL errors keep their typed payload and shared error
 projection. TLS close_notify becomes readable EOF. Duplex data/end/finish owns

@@ -1479,14 +1479,29 @@ pub(crate) fn get_active_network_resources(
     let state = shared.borrow();
     let active_sockets = state
         .net_sockets
-        .values()
-        .filter(|socket| !socket.connection_event_pending)
+        .iter()
+        .filter(|(id, socket)| {
+            !socket.connection_event_pending
+                && crate::modules::net_shared_vm::socket_has_ref(&state.tcp, **id) == Some(true)
+        })
+        .count()
+        + state
+            .net_closing_sockets
+            .keys()
+            .filter(|id| {
+                crate::modules::net_shared_vm::socket_has_ref(&state.tcp, **id) == Some(true)
+            })
+            .count();
+    let active_servers = state
+        .net_servers
+        .keys()
+        .filter(|id| crate::modules::net_shared_vm::listener_resource_active(&state.tcp, **id))
         .count();
-    let mut resources = Vec::with_capacity(active_sockets + state.net_servers.len());
+    let mut resources = Vec::with_capacity(active_sockets + active_servers);
     for _ in 0..active_sockets {
         resources.push(context.string_rooted("TCPSocketWrap"));
     }
-    for _ in 0..state.net_servers.len() {
+    for _ in 0..active_servers {
         resources.push(context.string_rooted("TCPServerWrap"));
     }
     context.array_rooted(&resources)
@@ -2321,20 +2336,7 @@ fn drain_shared_jobs(
             let Some(callback) = callback else {
                 break;
             };
-            let possible_connection = callback
-                .args
-                .get(1)
-                .and_then(|root| runtime.rooted_value(*root));
             runtime.with_native_stack_frame("process.processTicksAndRejections", |runtime| invoke_async_callback(runtime, program, callback))?;
-            if let Some(connection) = possible_connection {
-                let mut host = shared_state.borrow_mut();
-                if let Some(socket) = host.net_sockets.values_mut().find(|socket| {
-                    socket.connection_event_pending
-                        && runtime.rooted_value(socket.root) == Some(connection)
-                }) {
-                    socket.connection_event_pending = false;
-                }
-            }
         }
         run_host_jobs_with_uncaught(runtime, program)?;
         if shared_state.borrow().scheduler.has_shared_next_ticks() {
