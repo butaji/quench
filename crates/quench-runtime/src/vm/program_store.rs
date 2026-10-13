@@ -13,6 +13,9 @@ struct ProgramEntry {
     import_meta: Option<Value>,
     module_imports: Vec<(u16, ModuleImport)>,
     module: bool,
+    /// An eval program evaluated in the global environment (indirect eval or a host script),
+    /// whose names resolve as script code's do.
+    global_scope: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -64,6 +67,18 @@ impl ProgramStore {
         id
     }
 
+    pub(crate) fn mark_global_scope(&mut self, id: ProgramId) {
+        if let Some(entry) = self.programs.get_mut(id.index()) {
+            entry.global_scope = true;
+        }
+    }
+
+    pub(crate) fn runs_in_global_scope(&self, id: ProgramId) -> bool {
+        self.programs
+            .get(id.index())
+            .is_some_and(|entry| entry.global_scope)
+    }
+
     pub(crate) fn insert(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         self.insert_shared(Rc::new(program))
     }
@@ -90,6 +105,7 @@ impl ProgramStore {
             import_meta: None,
             module_imports: Vec::new(),
             module: false,
+            global_scope: false,
         });
         Some(id)
     }
