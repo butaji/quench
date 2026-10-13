@@ -219,8 +219,33 @@ separate direct/validator prototype presentations. The lazy prototype cache
 preserves observable identity across errors of the same presentation. The
 validator presentation inherits its coded prototype and supplies its own
 constructor getter. This does not establish complete Node stack-frame filtering.
-Custom lookup callback invocation, full option ordering and family attempt/race
-semantics remain separate work.
+Full option ordering and family attempt/race semantics remain separate work.
+
+## Net lookup callback ownership
+
+A connecting endpoint distinguishes an external lookup callback wait from an
+active native connect request. Both retain one handle reference bit; the
+external wait does not independently keep the loop alive. The canonical DNS
+module supplies the default lookup function, including its public override;
+custom lookup functions receive the family/hints/all options and an ordinary
+strict callback with Node metadata.
+
+Native callbacks preserve the original error object, lookup event order and
+next-tick error delivery. Valid results retain their order within each family,
+deduplicate destinations and alternate families by the first valid preference.
+The same endpoint identifier and reference bit transfer to the native request,
+so preconnect writes retain their original byte/completion owner. A callback
+after destruction cannot start a new request. Native IP predicates preserve
+original string-coercion exceptions/counts and scoped IPv6 syntax.
+
+The current DNS adapter resolves synchronously and queues an immediate callback;
+its resolver flags and failure fields remain incomplete. Native TCP attempts
+remain sequential worker operations with the existing timeout and lossy error
+presentation. Exact family staggering, attempt events, aggregate errors and
+physical cancellation of an already started worker remain separate work. This
+checkpoint covers ordinary callback errors, invalid array/IP/family results,
+preconnect bytes, callback metadata and inactive-lookup process liveness; it
+does not establish complete formatter/proxy, option or TCP/Pipe wrap behavior.
 
 ## Socket reference ownership
 
