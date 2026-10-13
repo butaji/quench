@@ -18,17 +18,30 @@ the pinned parent binary `01c22fa3…` with candidate `b1fd4907b`, binary
 
 Wall and cycles are statistically flat; instructions are lower.
 
-## Stock attempts
+## Stock comparison
 
-Both 11-round stock attempts are excluded: although each produced valid,
-output-equal samples, host interference and a cross-engine score collapse
-occurred during the runs. The raw reports are retained as
-`stock-attempt-excluded-11.json` and
-`stock-attempt-excluded-11-retry.json`; no distances are derived from them.
-No official M4 score or RSS result changes.
+The latest 11-round Splay stock diagnostic is valid and output-equal. Maximum
+sampled one-minute load was 2.62 on 10 logical CPUs; the five-minute maximum
+was 4.46. One low Quench score and one low Node score occur in adjacent rounds.
+The report is a single-fixture diagnostic (`qualification_ready=false`), so it
+does not update the official trunk row. SHA-256: `f8466aa8a51bb6a4fd0069d950425530b2241e895eaa847e7c95646138e644a4`.
 
-The official M4 Splay row remains 1.648× Score / 1.781× max RSS on runtime
-`17077748a`. A clean stock retake on the current source is still required.
+| Engine | Median Score | Median max RSS |
+| --- | ---: | ---: |
+| Quench candidate | 8,392 | 100,515,840 B |
+| Node `--jitless` | 14,954 | 407,322,624 B |
+| Bun no-JIT | 9,999 | 65,961,984 B |
+| QuickJS | 8,630 | 151,044,096 B |
+
+The bars are Node for Score and Bun for RSS. Candidate distances are **1.782×
+Score / 1.524× max RSS**; neither bar is won. These medians are worse than the
+previous ArrayRecord candidate `6186d6a51` (1.518× / 1.322×), so the next
+Splay measurement is a matched fixed-work comparison against that binary. The
+official M4 trunk remains 1.648× / 1.781× on runtime `17077748a`.
+
+Two earlier 11-round stock attempts are excluded for host interference; their
+raw reports remain `stock-attempt-excluded-11.json` and
+`stock-attempt-excluded-11-retry.json`.
 
 ## Reproduction
 
@@ -42,6 +55,17 @@ target/pinned/101aa4b65250b8bdcc41095d10f2c5eeba22d151e25413c299fe9c15da8af964/q
   --out fixed-work-parent-comparison-11.json
 ```
 
-The report files are `fixed-work-parent-comparison-11.json` and the two
-excluded stock reports. Their SHA-256 values are recorded in the commit that
-adds this directory.
+Stock reproduction:
+
+```sh
+target/pinned/101aa4b65250b8bdcc41095d10f2c5eeba22d151e25413c299fe9c15da8af964/quench-bench \
+  quench-bench/js-engine-benchmark/v8-v7/splay.js \
+  --quench target/pinned/0600ef24633c8df6da83999a50a22e6a6554c49334eb9efb482059ea71bc48d7/quench-node \
+  --qjs /opt/homebrew/Cellar/quickjs/2026-06-04/bin/qjs \
+  --bun /opt/homebrew/Cellar/bun/1.4.2/bin/bun \
+  --node /opt/homebrew/Cellar/node/26.10.0_1/bin/node \
+  --runs 11 --timeout-ms 300000 \
+  --out evidence/task61-splay-b1fd-stock-m4-2026-10-13/stock-retake-11.json
+```
+
+SHA-256 of the stock report is recorded in the evidence commit.
