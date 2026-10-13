@@ -6,6 +6,29 @@ use quench_runtime::{NativeContext, RootId, RootedError};
 use std::path::{Component, Path, PathBuf};
 
 const URL_CONSTRUCTOR_SOURCE: &str = "(class Url {})";
+
+pub(crate) fn to_path_if_file_url(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    if context.is_object_rooted(value)? {
+        let shared = context.host_mut().shared_state();
+        let state = shared.borrow().url_state;
+        if let Some(state) = state {
+            let stored = context.weak_map_get_rooted(state, value)?;
+            if !context
+                .rooted_value(stored)
+                .is_some_and(|value| value.is_undefined())
+            {
+                let undefined = context.undefined();
+                return file_url_to_path(context, undefined, &[value]);
+            }
+        }
+    }
+    Ok(value)
+}
 const WHATWG_URL_FACTORY: &str = quench_js_check::checked_js!(
     r#"(parse, URLSearchParams, state) => {
   const fields = [
@@ -222,18 +245,20 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let url_to_http_options =
         context.host_function(crate::host::shared_vm::operation("urlToHttpOptions"))?;
     set(context, module, "urlToHttpOptions", url_to_http_options)?;
-    let path_to_file_url = context.host_function(
-        crate::host::shared_vm::operation("pathToFileURL"),
-    )?;
+    let path_to_file_url =
+        context.host_function(crate::host::shared_vm::operation("pathToFileURL"))?;
     set(context, module, "pathToFileURL", path_to_file_url)?;
-    let file_url_to_path = context.host_function(
-        crate::host::shared_vm::operation("fileURLToPath"),
-    )?;
+    let file_url_to_path =
+        context.host_function(crate::host::shared_vm::operation("fileURLToPath"))?;
     set(context, module, "fileURLToPath", file_url_to_path)?;
-    let file_url_to_path_buffer = context.host_function(
-        crate::host::shared_vm::operation("fileURLToPathBuffer"),
+    let file_url_to_path_buffer =
+        context.host_function(crate::host::shared_vm::operation("fileURLToPathBuffer"))?;
+    set(
+        context,
+        module,
+        "fileURLToPathBuffer",
+        file_url_to_path_buffer,
     )?;
-    set(context, module, "fileURLToPathBuffer", file_url_to_path_buffer)?;
     Ok(module)
 }
 
@@ -264,7 +289,11 @@ pub(crate) fn domain_to_unicode(
     let output = match url::Host::parse(&input) {
         Ok(url::Host::Domain(domain)) => {
             let (unicode, result) = idna::domain_to_unicode(&domain);
-            if result.is_ok() { unicode } else { String::new() }
+            if result.is_ok() {
+                unicode
+            } else {
+                String::new()
+            }
         }
         Ok(host) => host.to_string(),
         Err(_) => String::new(),
@@ -340,9 +369,7 @@ fn nullish_string(
     }
 }
 
-fn invalid_url_to_http_options_argument(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> RootedError {
+fn invalid_url_to_http_options_argument(context: &mut NativeContext<'_, NodeHost>) -> RootedError {
     coded_url_type_error(
         context,
         "ERR_INVALID_ARG_TYPE",
@@ -402,9 +429,10 @@ pub(crate) fn file_url_to_path(
             "The URL must be of scheme file",
         ));
     }
-    if !windows && parsed
-        .host_str()
-        .is_some_and(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
+    if !windows
+        && parsed
+            .host_str()
+            .is_some_and(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
     {
         return Err(coded_url_type_error(
             context,
@@ -586,7 +614,10 @@ fn windows_path_to_url(path: &str) -> Option<url::Url> {
         let drive = &path[..2];
         let mut rest = path[2..].to_owned();
         if !rest.starts_with('/') {
-            let cwd = std::env::current_dir().ok()?.to_string_lossy().replace('\\', "/");
+            let cwd = std::env::current_dir()
+                .ok()?
+                .to_string_lossy()
+                .replace('\\', "/");
             rest = format!("/{}/{}", cwd.trim_start_matches('/'), rest);
         }
         let mut url = url::Url::parse("file:///").ok()?;
@@ -765,10 +796,8 @@ fn url_search_params_constructor(
     if let Some(constructor) = roots.borrow().url_search_params_constructor {
         return Ok(constructor);
     }
-    let factory = context.evaluate_script_rooted(
-        URL_SEARCH_PARAMS_FACTORY,
-        "node:url/url-search-params.js",
-    )?;
+    let factory = context
+        .evaluate_script_rooted(URL_SEARCH_PARAMS_FACTORY, "node:url/url-search-params.js")?;
     let undefined = context.undefined();
     let constructor = context.call_rooted(factory, undefined, &[])?;
     let retained = context.retain(constructor)?;
@@ -797,12 +826,19 @@ fn url_constructor(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, 
     Ok(constructor)
 }
 
-pub(crate) fn comparison_href(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<Option<RootId>, RootedError> {
+pub(crate) fn comparison_href(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<Option<RootId>, RootedError> {
     let state = context.host_mut().shared_state().borrow().url_state;
-    let Some(state) = state else { return Ok(None); };
+    let Some(state) = state else {
+        return Ok(None);
+    };
     let data = context.weak_map_get_rooted(state, value)?;
     let undefined = context.undefined();
-    if context.same_value_rooted(data, undefined)? { return Ok(None); }
+    if context.same_value_rooted(data, undefined)? {
+        return Ok(None);
+    }
     let key = context.string_rooted("href");
     context.get_property_rooted(value, key).map(Some)
 }
@@ -865,8 +901,18 @@ pub(crate) fn resolve(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let base = args.first().copied().map(|root| context.to_string(root)).transpose()?.unwrap_or_default();
-    let target = args.get(1).copied().map(|root| context.to_string(root)).transpose()?.unwrap_or_default();
+    let base = args
+        .first()
+        .copied()
+        .map(|root| context.to_string(root))
+        .transpose()?
+        .unwrap_or_default();
+    let target = args
+        .get(1)
+        .copied()
+        .map(|root| context.to_string(root))
+        .transpose()?
+        .unwrap_or_default();
     let resolved = resolve_legacy_url(&base, &target);
     Ok(context.string_rooted(&resolved))
 }
@@ -925,13 +971,19 @@ fn normalize_relative_url_path(value: &str) -> String {
     for segment in path.split('/') {
         match segment {
             "" | "." => {}
-            ".." => { segments.pop(); }
+            ".." => {
+                segments.pop();
+            }
             segment => segments.push(segment),
         }
     }
     let mut normalized = segments.join("/");
-    if rooted { normalized.insert(0, '/'); }
-    if path.ends_with('/') && !normalized.ends_with('/') { normalized.push('/'); }
+    if rooted {
+        normalized.insert(0, '/');
+    }
+    if path.ends_with('/') && !normalized.ends_with('/') {
+        normalized.push('/');
+    }
     normalized.push_str(suffix);
     normalized
 }
@@ -1063,7 +1115,12 @@ fn format_legacy_fields(fields: LegacyFormatFields) -> String {
     let mut search = fields
         .search
         .filter(|search| !search.is_empty())
-        .or_else(|| fields.query.filter(|query| !query.is_empty()).map(|query| format!("?{query}")))
+        .or_else(|| {
+            fields
+                .query
+                .filter(|query| !query.is_empty())
+                .map(|query| format!("?{query}"))
+        })
         .unwrap_or_default();
     if search.contains('#') {
         search = search.replace('#', "%23");
@@ -1090,7 +1147,10 @@ fn format_legacy_fields(fields: LegacyFormatFields) -> String {
 }
 
 fn is_slashed_protocol(protocol: &str) -> bool {
-    matches!(protocol, "http:" | "https:" | "ftp:" | "gopher:" | "file:" | "ws:" | "wss:")
+    matches!(
+        protocol,
+        "http:" | "https:" | "ftp:" | "gopher:" | "file:" | "ws:" | "wss:"
+    )
 }
 
 fn encode_auth(auth: &str) -> String {
@@ -1227,7 +1287,11 @@ fn invalid_format_argument(context: &mut NativeContext<'_, NodeHost>) -> RootedE
 }
 
 fn invalid_format_options(context: &mut NativeContext<'_, NodeHost>) -> RootedError {
-    coded_url_type_error(context, "ERR_INVALID_ARG_TYPE", "The \"options\" argument must be of type object")
+    coded_url_type_error(
+        context,
+        "ERR_INVALID_ARG_TYPE",
+        "The \"options\" argument must be of type object",
+    )
 }
 
 fn parse_whatwg(
