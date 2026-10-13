@@ -11,6 +11,9 @@ const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
 const DIRECT_OBJECT_HANDLE_BIT: u64 = 1 << 47;
 const DIRECT_ARRAY_HANDLE_BIT: u64 = 1 << 46;
+const HEAP_REFERENCE_MASK: u64 = TAG_MASK | DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT;
+const DIRECT_OBJECT_REFERENCE_TAG: u64 = TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT;
+const DIRECT_ARRAY_REFERENCE_TAG: u64 = TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeapReference {
@@ -131,18 +134,12 @@ impl Value {
 
     #[inline(always)]
     pub(crate) fn direct_object_index(self) -> Option<u32> {
-        match self.heap_reference()? {
-            HeapReference::ObjectRecord(index) => Some(index),
-            HeapReference::LegacySlot(_) | HeapReference::ArrayRecord(_) => None,
-        }
+        (self.0 & HEAP_REFERENCE_MASK == DIRECT_OBJECT_REFERENCE_TAG).then_some(self.0 as u32)
     }
 
     #[inline(always)]
     pub(crate) fn direct_array_index(self) -> Option<u32> {
-        match self.heap_reference()? {
-            HeapReference::ArrayRecord(index) => Some(index),
-            HeapReference::LegacySlot(_) | HeapReference::ObjectRecord(_) => None,
-        }
+        (self.0 & HEAP_REFERENCE_MASK == DIRECT_ARRAY_REFERENCE_TAG).then_some(self.0 as u32)
     }
 
     pub fn is_undefined(self) -> bool {
