@@ -324,18 +324,18 @@ impl Frame {
         let (parameters, variables) = function
             .local_registers
             .split_at(usize::from(function.params));
-        for (index, entry) in parameters.iter().enumerate() {
+        let supplied = parameters.len().min(args.len());
+        for (index, (entry, value)) in parameters.iter().zip(args).enumerate() {
             debug_assert_eq!(usize::from(entry.local), index);
             // SAFETY: residual validation bounds each promoted register by the register count
             // the file was sized to.
             unsafe {
                 *self
                     .registers
-                    .get_unchecked_mut(usize::from(entry.register)) =
-                    args.get(index).copied().unwrap_or(Value::UNDEFINED);
+                    .get_unchecked_mut(usize::from(entry.register)) = *value;
             }
         }
-        for entry in variables {
+        for entry in parameters[supplied..].iter().chain(variables) {
             // SAFETY: as above.
             unsafe {
                 *self
@@ -665,10 +665,14 @@ pub(crate) enum DictionaryTrigger {
     PropertyCount,
     DeletionPattern,
     PrototypeUse,
+    /// A module namespace starts in dictionary mode, so no ordinary object shares its shape
+    /// and a field cache hit, which only records non-dictionary shapes, proves an ordinary
+    /// receiver.
+    ModuleNamespace,
 }
 impl DictionaryTrigger {
     #[cfg(feature = "profile-aggregate")]
-    pub(crate) const COUNT: usize = 3;
+    pub(crate) const COUNT: usize = 4;
 
     #[cfg(feature = "profile-aggregate")]
     pub(crate) const fn index(self) -> usize {
@@ -676,6 +680,7 @@ impl DictionaryTrigger {
             Self::PropertyCount => 0,
             Self::DeletionPattern => 1,
             Self::PrototypeUse => 2,
+            Self::ModuleNamespace => 3,
         }
     }
 }
