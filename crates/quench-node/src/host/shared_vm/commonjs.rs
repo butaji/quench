@@ -867,6 +867,10 @@ pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedErr
     cached_builtin(context, BuiltinModule::Util)
 }
 
+pub(crate) fn net_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Net)
+}
+
 pub(crate) fn dns_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Dns)
 }
