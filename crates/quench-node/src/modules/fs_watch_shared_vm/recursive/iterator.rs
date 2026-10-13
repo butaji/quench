@@ -75,9 +75,12 @@ pub(crate) fn executor(
         }
         let add = get(context, signal, "addEventListener")?;
         let event = context.string_rooted("abort");
-        let options = context.object_rooted()?;
-        let yes = context.boolean(true);
-        set(context, options, "once", yes)?;
+        let shared = context.host_mut().shared_state();
+        let events = shared
+            .borrow()
+            .event_targets_api
+            .ok_or_else(|| RootedError::host("event API missing"))?;
+        let options = get(context, events, "abortListenerOptions")?;
         context.call_rooted(add, signal, &[event, abort, options])?;
     }
     let callback = context.host_function_with_data(
@@ -121,15 +124,8 @@ pub(crate) fn abort(
     let data = context.host_function_data()?;
     let owner = get(context, data, "owner")?;
     method(context, owner, "close")?;
-    let error = context.error_rooted("The operation was aborted")?;
     let signal = get(context, data, "signal")?;
-    let cause = get(context, signal, "reason")?;
-    let key = context.string_rooted("cause");
-    context.define_data_property_rooted(error, key, cause, true, false, true)?;
-    let code = context.string_rooted("ABORT_ERR");
-    set(context, error, "code", code)?;
-    let name = context.string_rooted("AbortError");
-    set(context, error, "name", name)?;
+    let error = super::super::promise::abort_error(context, signal)?;
     let reject = get(context, data, "reject")?;
     let undefined = context.undefined();
     context.call_rooted(reject, undefined, &[error])

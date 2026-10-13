@@ -443,7 +443,7 @@ BigIntStats identity. The tested contract includes constructor reflection,
 original coercion/callback exceptions, GC, stop ordering, missing/created/deleted
 files, and reference lifecycle. Complete internal handle and Symbol mutation
 behavior, Temporal fields, all ordinary stat prototypes and bigint decorators,
-nonrecursive promise watches and complete iterator queue policy remain separate work.
+complete iterator queue and stat/error policy remain separate work.
 
 ## Native recursive watch composition
 
@@ -462,8 +462,8 @@ and repeated closure is inert. The pinned Node implementation's `ref` and `unref
 leave ordinary stat records unchanged and return undefined. Its async iterator
 uses the native Promise and event operations, returns the tested null-prototype
 results, and preserves abort causes. Recursive `fs.promises.watch` forwards through
-the shared async-generator protocol to that iterator. Nonrecursive promise watches,
-queue/overflow policy, complete abort propagation flags, and all private handle and
+the shared async-generator protocol to that iterator. Complete queue/overflow policy
+and all private handle and
 reflection details remain open.
 
 The internal event binding exports the same event constructor as the public native
@@ -473,3 +473,30 @@ add the private helper to the public URL namespace. Callback `fs.rm` shares the
 existing remove operation and recursive/force option policy, snapshots those
 options once, and delivers completion through the canonical next-tick queue;
 complete retry and option/error policy remains separate work.
+
+## Native promise-watch queues and module names
+
+Nonrecursive promise watches use a direct handle-callback projection of the same
+native kernel subscription, reference, close, prune, and cleanup owner as public
+watches. Public EventEmitter dispatch remains the public watcher projection.
+One private heap FIFO stores values and overflow errors while its async-generator
+consumer is suspended. Pending resolvers, option snapshots, abort hooks, and the
+watching/closed state remain in that GC-visible private data. Native callbacks use
+captured array/Promise operations, shared ignore matching, and existing abort
+propagation-resistance options. Error completion closes the handle and detaches
+abort hooks. Abort errors preserve original causes and tested descriptor/constructor
+shape through one shared watch-error operation.
+
+The tested surface includes lazy validation, burst buffering, abort before/after
+startup, stopped propagation, and overflow error closure. Broader queue cancellation,
+full private binding/start metadata, complete subclass/proxy/error reflection, and
+all watch scheduling details remain separate work.
+
+CommonJS named export recognition uses OXC syntax and the Node-matched static
+object prefix/direct-assignment rules. Accessor or nested-value stopping points
+preserve names discovered earlier; strings/comments and compound assignments are
+not export assignments. The generated interop module includes the module.exports
+alias and supports quoted export names. Full reexport/defineProperty detection and
+file-URL dynamic import resolution remain separate work. Module namespace key
+projection belongs to the shared runtime: string names sort by UTF-16 units,
+without ordinary array-index priority; symbols follow the string names.
