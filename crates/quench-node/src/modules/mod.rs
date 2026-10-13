@@ -68,6 +68,7 @@ pub(crate) mod querystring_data;
 pub(crate) mod querystring_shared_vm;
 pub(crate) mod shared_event_loop;
 pub(crate) mod stream_shared_vm;
+pub(crate) mod stream_close_shared_vm;
 pub(crate) mod stream_pipe_shared_vm;
 pub(crate) mod stream_state;
 pub(crate) mod stream_source;

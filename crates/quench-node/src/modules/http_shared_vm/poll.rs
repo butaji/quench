@@ -50,6 +50,7 @@ pub(crate) fn poll(
             .into_iter()
             .filter_map(|(socket_id, was_connected)| {
                 let socket = host.net_sockets.remove(&socket_id)?;
+                host.net_closing_sockets.insert(socket_id, socket.root);
                 let closed_server = socket.parent_server.and_then(|server_id| {
                     let closed = host.net_servers.get_mut(&server_id).is_some_and(|server| {
                         server.connections.remove(&socket_id);
@@ -98,7 +99,7 @@ pub(crate) fn poll(
             }
             runtime.release_root(error);
         }
-        runtime.release_root(socket);
+        // The socket root transferred to the close-completion projection.
         if let Some(server) = server {
             queue_net_event(runtime, shared_state, server, "close", &[])?;
             runtime.release_root(server);
@@ -657,6 +658,33 @@ pub(crate) fn poll(
                     progressed = true;
                 }
             }
+            net_shared_vm::TransportEvent::CloseCompleted { socket } => {
+                let (root, callback) = {
+                    let mut state = shared_state.borrow_mut();
+                    (
+                        state.net_closing_sockets.remove(&socket),
+                        state.net_socket_close_completed,
+                    )
+                };
+                if let Some(root) = root {
+                    let callback = callback.ok_or("native socket close callback unavailable")?;
+                    let callback = runtime.root(
+                        runtime
+                            .rooted_value(callback)
+                            .ok_or("socket close callback expired")?,
+                    );
+                    let receiver = runtime.root(Value::UNDEFINED);
+                    // Transfer the retained socket root into the scheduled callback.
+                    shared_state.borrow_mut().scheduler.queue_shared_next_tick(
+                        crate::modules::shared_event_loop::SharedCallback {
+                            callback,
+                            receiver,
+                            args: vec![root, runtime.root(Value::TRUE)],
+                        },
+                    );
+                    progressed = true;
+                }
+            }
             net_shared_vm::TransportEvent::Closed { socket } => {
                 let net_root = shared_state
                     .borrow()
@@ -1035,6 +1063,7 @@ pub(crate) fn cleanup(
             for socket in host.net_sockets.values_mut() {
                 roots.extend(socket.write_callbacks.drain(..));
             }
+            roots.extend(host.net_closing_sockets.drain().map(|(_, root)| root));
             net_shared_vm::cleanup(&mut host.tcp);
             (roots, async_ids)
         };
