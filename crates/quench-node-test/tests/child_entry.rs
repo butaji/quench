@@ -4591,3 +4591,88 @@ console.log(JSON.stringify(result));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn net_family_attempt_timeout_matches_node_ranges_brands_and_defaults() {
+    const SOURCE: &str = r#"
+const net=require('net'),assert=require('assert'),result=[];
+result.push(['default',net.getDefaultAutoSelectFamilyAttemptTimeout()]);
+for(const value of [undefined,null,false,'1',{},Symbol('timeout'),1n,NaN,Infinity,-Infinity,-0,-1,1.5,2147483648,4294967297]) {
+  for(const connect of [false,true]) {
+    if(connect&&(value===undefined||value===null)) continue;
+    try {
+      if(connect) net.connect({host:'127.0.0.1',port:1,autoSelectFamilyAttemptTimeout:value});
+      else net.setDefaultAutoSelectFamilyAttemptTimeout(value);
+      assert.fail('expected rejection');
+    } catch(error) {
+      assert(error instanceof TypeError || error instanceof RangeError);
+      const prototype=Object.getPrototypeOf(error),base=Object.getPrototypeOf(prototype);
+      result.push([connect,error.name,error.code,error.message,String(error),Object.keys(error),Object.hasOwn(prototype,'constructor'),Object.hasOwn(base,'constructor')]);
+    }
+  }
+}
+for(const value of [1,9,10,500,2147483647]) {
+  assert.strictEqual(net.setDefaultAutoSelectFamilyAttemptTimeout(value),undefined);
+  result.push([value,net.getDefaultAutoSelectFamilyAttemptTimeout()]);
+}
+for(const host of ['127.0.0.1','validation.invalid']) {
+  const marker={},socket=new net.Socket(),trace=[];
+  assert.throws(()=>socket.connect({host,port:1,get autoSelectFamilyAttemptTimeout(){trace.push(socket._handle!==null,socket.connecting);throw marker}}),error=>error===marker);
+  result.push(['getter',host,trace]);socket.destroy();
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn net_family_attempt_timeout_cli_preserves_value_and_last_override() {
+    const SOURCE: &str = "console.log(require('net').getDefaultAutoSelectFamilyAttemptTimeout())";
+    for flags in [
+        vec!["--network-family-autoselection-attempt-timeout=1"],
+        vec!["--network-family-autoselection-attempt-timeout=123"],
+        vec![
+            "--network-family-autoselection-attempt-timeout=123",
+            "--network-family-autoselection-attempt-timeout=456",
+        ],
+    ] {
+        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command = Command::new(executable);
+            command.args(&flags).args(["-e", SOURCE]);
+            if executable != "node" {
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            }
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
+                .unwrap()
+        });
+        for observation in &observations {
+            assert!(!observation.timed_out);
+            assert_eq!(
+                observation.exit_code,
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&observation.stderr)
+            );
+            assert!(observation.stderr.is_empty());
+        }
+        assert_eq!(observations[0].stdout, observations[1].stdout);
+    }
+}

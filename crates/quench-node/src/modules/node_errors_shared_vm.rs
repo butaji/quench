@@ -100,13 +100,26 @@ pub(super) fn hide_type_error(
     error: RootId,
     code: &'static str,
 ) -> Result<(), RootedError> {
-    let base = coded_error_prototype(context, code, ErrorClass::TypeError)?;
+    hide_error(context, error, code, ErrorClass::TypeError)
+}
+
+pub(super) fn hide_range_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+) -> Result<(), RootedError> {
+    hide_error(context, error, code, ErrorClass::RangeError)
+}
+
+fn hide_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    error: RootId,
+    code: &'static str,
+    class: ErrorClass,
+) -> Result<(), RootedError> {
+    let base = coded_error_prototype(context, code, class)?;
     let state = context.host_mut().shared_state();
-    let key = (
-        code,
-        ErrorClass::TypeError,
-        ErrorPresentation::HiddenStackFrames,
-    );
+    let key = (code, class, ErrorPresentation::HiddenStackFrames);
     let cached = state
         .borrow()
         .node_error_api
