@@ -349,13 +349,27 @@ Crypto setters share OpenSSL's decorated errors; engine searches retain Node's
 plain error plus reversed remaining error stack. PKCS12 retains its distinct
 reason-only parser presentation.
 
-This foundation does not provide TLS/HTTPS sockets, handshakes, certificate
+Cipher discovery enumerates the linked OpenSSL provider's SSL cipher stack and
+Node's named TLS 1.3 suites. The logical process caches lowercase, deduplicated,
+sorted names, and each call returns a fresh intrinsic array. Public function
+shape and the complete list are compared with the pinned Node oracle.
+
+Certificate hostname authorization shares one Rust matcher. It applies DNS SAN
+precedence, common-name fallback, IP canonicalization, IDNA normalization,
+restricted wildcards, and quoted SAN parsing through the shared JSON parser.
+Original certificate getters precede hostname coercion with the default
+primitive hint. Public string/array methods and net.isIP remain observable;
+errors retain the original certificate identity, reason, and hostname.
+Malformed quoted SANs use the realm's intrinsic SyntaxError. Node comparisons
+cover values, errors, getter order, boxed names, and custom SAN method hooks.
+
+This foundation does not provide TLS/HTTPS sockets, handshakes, connection
 verification callbacks or session resumption. Ticket-key callbacks, certificate
-compression, complete public cipher/root discovery, CLI/provider trust policy,
-permission-model integration and remaining native methods/option details are
-open work. The pinned fixture group and Node comparisons establish only the
-implemented behaviors; they do not establish complete TLS compatibility or a
-production performance claim.
+compression, complete public root discovery, CLI/provider trust policy,
+permission-model integration, hostile method-return values and UTF-16 edge cases,
+and remaining native methods/option details are open work. The pinned fixture
+group and Node comparisons establish only the implemented behaviors; they do
+not establish complete TLS compatibility or a production performance claim.
 
 ## Verification
 

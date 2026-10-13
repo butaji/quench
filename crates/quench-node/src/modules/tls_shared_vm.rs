@@ -1,9 +1,11 @@
-//! Initial TLS builtin surface for modules that load TLS paths but do not open a TLS socket.
+//! Native TLS configuration, discovery, and certificate name authorization.
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) mod configuration;
 pub(crate) mod contexts;
+pub(crate) mod discovery;
+pub(crate) mod identity;
 pub(crate) mod facade;
 
 // Node's default TLS policy, from src/node_constants.h DEFAULT_CIPHER_LIST_CORE.
@@ -17,16 +19,11 @@ const DEFAULT_CIPHER_LIST: &str = concat!(
 );
 
 const TLS_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(contextApi) => {
+    r#"(contextApi, cipherOperation, identityOperation) => {
       'use strict';
-      const cipherNames = Object.freeze([
-        "aes128-gcm-sha256", "aes256-gcm-sha384", "aes256-sha",
-        "ecdhe-ecdsa-aes128-gcm-sha256", "ecdhe-rsa-aes128-gcm-sha256",
-        "tls_aes_128_ccm_8_sha256", "tls_aes_128_ccm_sha256",
-        "tls_aes_128_gcm_sha256", "tls_aes_256_gcm_sha384",
-      ].sort());
       return {
-      getCiphers() { return cipherNames.slice(); },
+      getCiphers: (0, () => cipherOperation()),
+      checkServerIdentity: function checkServerIdentity(hostname, cert) { return identityOperation(hostname, cert); },
       SecureContext: contextApi.SecureContext,
       createSecureContext: contextApi.createSecureContext,
       connect() {
@@ -42,12 +39,25 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let factory = context.evaluate_script_rooted(TLS_FACTORY, "node:tls/shared.js")?;
     let undefined = context.undefined();
     let api = facade::install(context)?;
+    let patterns = context.evaluate_script_rooted(quench_js_check::checked_js!("({trailingDot:()=>/[.]$/,upperCase:()=>/[A-Z]/g})"), "node:tls/identity-patterns.js")?;
+    let patterns_key = context.string_rooted("identityPatterns");
+    context.define_data_property_rooted(api, patterns_key, patterns, false, false, false)?;
+    let lower = context.host_function(crate::host::shared_vm::operation("tlsLowercaseName"))?;
+    let lower_factory = context.evaluate_script_rooted(quench_js_check::checked_js!("(lower)=>function toLowerCase(c){return lower(c);}"), "node:tls/lowercase-facade.js")?;
+    let lower_callback = context.call_rooted(lower_factory, undefined, &[lower])?;
+    let lower_key = context.string_rooted("identityLowercase");
+    context.define_data_property_rooted(api, lower_key, lower_callback, false, false, false)?;
+    let net = crate::host::shared_vm::commonjs::net_module(context)?;
+    let net_key = context.string_rooted("identityNet");
+    context.define_data_property_rooted(api, net_key, net, false, false, false)?;
     let binding = facade::binding(context)?;
     let key = context.string_rooted("SecureContext");
     let constructor = context.get_property_rooted(binding, key)?;
     let key = context.string_rooted("contextConstructor");
     context.define_data_property_rooted(api, key, constructor, true, true, true)?;
-    let module = context.call_rooted(factory, undefined, &[api])?;
+    let ciphers = context.host_function(crate::host::shared_vm::operation("tlsGetCiphers"))?;
+    let identity = context.host_function(crate::host::shared_vm::operation("tlsCheckServerIdentity"))?;
+    let module = context.call_rooted(factory, undefined, &[api, ciphers, identity])?;
     for (name, text) in [
         ("DEFAULT_MIN_VERSION", "TLSv1.2"),
         ("DEFAULT_MAX_VERSION", "TLSv1.3"),
