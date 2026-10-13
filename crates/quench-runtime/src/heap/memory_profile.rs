@@ -32,11 +32,11 @@ pub(crate) struct HeapMemoryComposition {
     pub cell_variant_counts: Vec<usize>,
     pub slot_arena_reserved_bytes: usize,
     pub object_record_reserved_bytes: usize,
-    /// Subtotal already included in `object_record_reserved_bytes`.
-    pub object_record_free_id_capacity_bytes: usize,
+    pub object_record_reusable_ids: usize,
+    pub object_record_allocation_scan_cursor: usize,
     pub array_record_reserved_bytes: usize,
-    /// Subtotal already included in `array_record_reserved_bytes`.
-    pub array_record_free_id_capacity_bytes: usize,
+    pub array_record_reusable_ids: usize,
+    pub array_record_allocation_scan_cursor: usize,
     pub legacy_cell_record_reserved_bytes: usize,
     pub free_slot_metadata_bytes: usize,
     pub slot_size_bytes: usize,
@@ -588,11 +588,11 @@ impl Heap {
             cell_variant_counts: cell_variant_counts.values().copied().collect(),
             slot_arena_reserved_bytes: self.slots.capacity() * size_of::<Slot>(),
             object_record_reserved_bytes: self.object_records.allocated_bytes(),
-            object_record_free_id_capacity_bytes: self
-                .object_records
-                .free_id_vector_capacity_bytes(),
+            object_record_reusable_ids: self.object_records.reusable_ids(),
+            object_record_allocation_scan_cursor: self.object_records.allocation_scan_cursor(),
             array_record_reserved_bytes: self.array_records.allocated_bytes(),
-            array_record_free_id_capacity_bytes: self.array_records.free_id_vector_capacity_bytes(),
+            array_record_reusable_ids: self.array_records.reusable_ids(),
+            array_record_allocation_scan_cursor: self.array_records.allocation_scan_cursor(),
             legacy_cell_record_reserved_bytes: 0,
             free_slot_metadata_bytes: self.free_by_slab.capacity() * size_of::<FreeSlotBitmap>()
                 + self.free_slabs.capacity() * size_of::<u32>(),
