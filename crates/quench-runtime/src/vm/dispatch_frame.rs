@@ -1196,6 +1196,32 @@ impl<H: Host> Vm<H> {
                         continue;
                     }
                 }
+                // A present dense array element is a data property (accessor indices are
+                // stored as holes): reading it, or replacing it in an array without indexed
+                // descriptors or frozen state, runs no guest code and cannot throw.
+                Op::GetIndex
+                    if let (Some(base), Some(key)) = (
+                        self.inert_operand(frame, ins.operand_b()),
+                        self.inert_operand(frame, ins.operand_c()),
+                    ) && let Some(value) = self.dense_array_element(base, key) =>
+                {
+                    self.write(frame, ins.result_register(), value);
+                    continue;
+                }
+                Op::SetIndex => {
+                    let (object, key) = (
+                        self.read(frame, ins.register_b()),
+                        self.read(frame, ins.register_c()),
+                    );
+                    if let Some(index) = self.replaceable_dense_index(object, key) {
+                        self.replace_dense_element(
+                            object,
+                            index,
+                            self.read(frame, ins.register_a()),
+                        );
+                        continue;
+                    }
+                }
                 // Number increments and conversions of Numbers run no guest code, allocate
                 // nothing and cannot throw.
                 Op::IncDec
