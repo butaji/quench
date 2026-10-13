@@ -661,9 +661,6 @@ impl<H: Host> Vm<H> {
         let Some(Cell::Object(receiver)) = self.heap.get(object) else {
             return FieldCacheProbe::Ineligible;
         };
-        if receiver.is_module_namespace() {
-            return FieldCacheProbe::Ineligible;
-        }
         let index = self.field_cache_index(site);
         let shape = receiver.shape();
         // SAFETY: the active program's layout reserves every compiler-emitted site.
@@ -680,10 +677,14 @@ impl<H: Host> Vm<H> {
         };
         if let Some(slot) = slot {
             // SAFETY: receiver shape and slot were recorded together for an own data
-            // property on the cache miss path.
+            // property on the cache miss path. Entries record only non-dictionary shapes,
+            // which no module namespace has (`DictionaryTrigger::ModuleNamespace`).
             return FieldCacheProbe::Hit(unsafe {
                 self.heap.property_get_unchecked(receiver, slot as usize)
             });
+        }
+        if receiver.is_module_namespace() {
+            return FieldCacheProbe::Ineligible;
         }
         if let Some(hit) = self.cached_ordinary_holder_field_value(index, receiver) {
             self.profile

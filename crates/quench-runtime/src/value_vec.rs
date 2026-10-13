@@ -134,6 +134,8 @@ impl Default for ValueVec {
 pub(crate) struct ValueArena {
     values: Vec<Value>,
     free: [Vec<u32>; BUCKETS],
+    /// Value slots the free buckets hold, the arena storage compaction could reclaim.
+    free_values: usize,
     shape_lengths: Vec<u32>,
     dictionaries: FxHashMap<u32, FxHashMap<u32, Value>>,
     free_dictionaries: Vec<u32>,
@@ -145,6 +147,7 @@ impl Default for ValueArena {
         Self {
             values: vec![],
             free: Default::default(),
+            free_values: 0,
             shape_lengths: vec![0],
             dictionaries: FxHashMap::default(),
             free_dictionaries: Vec::new(),
@@ -159,6 +162,7 @@ impl ValueArena {
         for bucket in &mut self.free {
             bucket.clear();
         }
+        self.free_values = 0;
         self.shape_lengths.truncate(1);
         self.shape_lengths[0] = 0;
         self.dictionaries.clear();
@@ -340,6 +344,7 @@ impl ValueArena {
         let capacity = self.capacity(vector);
         if capacity != 0 {
             self.free[Self::bucket(capacity)].push(vector.start & START_MASK);
+            self.free_values += capacity;
         }
     }
 
@@ -349,8 +354,11 @@ impl ValueArena {
             || (!vector.is_dictionary() && self.capacity(vector) == 0)
     }
 
-    pub(crate) fn has_released_ranges(&self) -> bool {
-        self.free.iter().any(|bucket| !bucket.is_empty())
+    /// Whether released ranges hold at least `share` of the arena: free buckets reuse a
+    /// range only for a vector of its size class, so a mostly free arena compacts.
+    pub(crate) fn released_share_reaches(&self, share: (usize, usize)) -> bool {
+        let (numerator, denominator) = share;
+        self.free_values != 0 && self.free_values * denominator >= self.values.len() * numerator
     }
 
     pub(crate) fn has_compact_range(&self, vector: ValueVec) -> bool {
@@ -382,6 +390,7 @@ impl ValueArena {
         for bucket in &mut self.free {
             bucket.clear();
         }
+        self.free_values = 0;
     }
 
     #[cfg(feature = "profile-memory")]
@@ -482,6 +491,7 @@ impl ValueArena {
     fn allocate(&mut self, capacity: usize, max_start: usize) -> Option<usize> {
         let bucket = Self::bucket(capacity);
         if let Some(start) = self.free[bucket].pop() {
+            self.free_values -= capacity;
             return Some(start as usize);
         }
         let start = self.values.len();
