@@ -11,6 +11,19 @@ pub(crate) struct JsString {
     host: OnceCell<Rc<str>>,
 }
 
+impl JsString {
+    /// Whether no other value shares this string's buffers, so dropping it frees them and
+    /// touches no reference count another string can read.
+    pub(crate) fn is_uniquely_owned(&self) -> bool {
+        Rc::strong_count(&self.units) == 1
+            && Rc::weak_count(&self.units) == 0
+            && self
+                .host
+                .get()
+                .is_none_or(|host| Rc::strong_count(host) == 1 && Rc::weak_count(host) == 0)
+    }
+}
+
 impl PartialEq for JsString {
     fn eq(&self, other: &Self) -> bool {
         self.units == other.units

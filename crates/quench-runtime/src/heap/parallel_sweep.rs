@@ -20,6 +20,8 @@ struct SweepShare {
     property_owners: Vec<u64>,
     freed: usize,
     deferred: Vec<u32>,
+    /// A freed object's arena storage was dropped without release.
+    dropped_ranges: bool,
     /// References to shared element backings held by freed arrays, by backing.
     shared_backings: FxHashMap<*const Vec<Value>, usize>,
 }
@@ -50,7 +52,7 @@ unsafe impl Sync for SweepContext<'_> {}
 impl Heap {
     /// Sweeps in parallel; returns survivors and arena owners. Each dead cell the workers left
     /// in place is then freed by `free_cell`.
-    pub(super) fn sweep_parallel(&mut self) -> (usize, Vec<u64>) {
+    pub(super) fn sweep_parallel(&mut self) -> (usize, Vec<u64>, bool) {
         let workers = mark_threads();
         self.free.cover(self.slots.len());
         let slabs: Vec<_> = self.slots.slabs_mut().collect();
@@ -80,7 +82,9 @@ impl Heap {
         let mut live = 0;
         let mut property_owners = Vec::new();
         let mut deferred = Vec::new();
+        let mut dropped_ranges = false;
         for share in shares {
+            dropped_ranges |= share.dropped_ranges;
             live += share.live;
             property_owners.extend(share.property_owners);
             self.free.add_inserted(share.freed);
@@ -101,7 +105,7 @@ impl Heap {
                 .unwrap();
             self.free_cell(index as usize, cell);
         }
-        (live, property_owners)
+        (live, property_owners, dropped_ranges)
     }
 }
 
@@ -133,21 +137,28 @@ fn sweep_run(context: &SweepContext<'_>, run: SlabRun<'_>) -> SweepShare {
             }
             match &slot.cell {
                 None => {}
+                // A dead object's arena range is discarded by the compaction that follows the
+                // sweep, which keeps only live owners; only dictionary storage needs a release.
                 Some(Cell::Object(object))
-                    if object.owns_no_allocation()
-                        && context.properties.release_is_noop(object.properties) =>
+                    if object.owns_no_allocation() && !object.properties.is_dictionary() =>
                 {
-                    // Nothing to drop: the object owns no allocation and no arena storage.
+                    share.dropped_ranges |= !context.properties.release_is_noop(object.properties);
                     std::mem::forget(slot.cell.take());
+                    share.free(context, index);
+                }
+                Some(Cell::String(text)) if text.is_uniquely_owned() => {
+                    // No other value shares the buffers, so freeing them here is thread-local.
+                    drop(slot.cell.take());
                     share.free(context, index);
                 }
                 Some(Cell::Array { object })
                     if object.owns_no_allocation()
-                        && context.properties.release_is_noop(object.properties)
+                        && !object.properties.is_dictionary()
                         && context
                             .sparse_arrays
                             .is_none_or(|arrays| !arrays.contains_key(&(index as u32))) =>
                 {
+                    share.dropped_ranges |= !context.properties.release_is_noop(object.properties);
                     let elements = object.elements();
                     let unique = Rc::strong_count(elements) == 1 && Rc::weak_count(elements) == 0;
                     let Some(Cell::Array { object }) = slot.cell.take() else {
