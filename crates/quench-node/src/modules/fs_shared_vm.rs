@@ -2246,6 +2246,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "constants", constants)?;
     stat::install(context, module)?;
     super::fs_stat_watch_shared_vm::install(context, module)?;
+    let rm = context.host_function(crate::host::shared_vm::operation("fsRm"))?;
+    let factory = context.evaluate_script_rooted("native => function rm(path, options, callback) { 'use strict'; return native(path, options, callback); }", "node:fs/rm-facade.js")?;
+    let undefined = context.undefined();
+    let rm = context.call_rooted(factory, undefined, &[rm])?;
+    set(context, module, "rm", rm)?;
     sync::install(context, module)?;
     let fsync_sync = get(context, module, "fsyncSync")?;
     let fdatasync_sync = get(context, module, "fdatasyncSync")?;
@@ -2652,6 +2657,13 @@ pub(crate) fn promises_module(
     )?;
     let rmdir = context.call_rooted(rmdir_factory, undefined, &[rmdir_sync])?;
     set(context, promises, "rmdir", rmdir)?;
+    let native_watch = context.host_function(crate::host::shared_vm::operation("fsRecursivePromiseWatch"))?;
+    let watch_factory = context.evaluate_script_rooted(
+        "native => async function* _watch(filename, options = undefined) { yield* native(filename, options); }",
+        "node:fs/promises/watch-facade.js",
+    )?;
+    let watch = context.call_rooted(watch_factory, undefined, &[native_watch])?;
+    set(context, promises, "watch", watch)?;
     let rm_factory = context.evaluate_script_rooted(
         "(rmSync) => (...args) => Promise.resolve().then(() => rmSync(...args))",
         "node:fs/promises/shared-rm.js",
