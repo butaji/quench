@@ -1361,8 +1361,10 @@ impl Heap {
 #[cfg(test)]
 mod tests;
 
-/// Bits per radix pass when ordering property owners by arena offset.
-const OFFSET_RADIX_BITS: u32 = 16;
+/// Bits per radix pass when ordering property owners by arena offset: the per-pass count
+/// table (2^bits entries) stays a small stack array, so a collection with few owners pays
+/// for its keys, not for the table.
+const OFFSET_RADIX_BITS: u32 = 8;
 /// An owner key keeps the arena offset in the high half and the slot index in the low half.
 const OWNER_KEY_HALF_BITS: u32 = u32::BITS;
 
@@ -1385,23 +1387,29 @@ fn owner_of_packed(key: u64) -> usize {
 }
 
 /// Orders packed owner keys by arena offset in linear time. Offsets are distinct arena
-/// positions, so two stable 16-bit passes over the offset half give a full ordering.
+/// positions, so stable radix passes over the offset digits the largest offset uses give a
+/// full ordering.
 fn sort_by_unique_offset(keys: &mut Vec<u64>) {
-    let buckets = 1usize << OFFSET_RADIX_BITS;
-    let mask = (buckets - 1) as u64;
+    const BUCKETS: usize = 1 << OFFSET_RADIX_BITS;
+    const MASK: u64 = (BUCKETS - 1) as u64;
+    let largest = keys
+        .iter()
+        .map(|key| key >> OWNER_KEY_HALF_BITS)
+        .max()
+        .unwrap_or(0);
+    let passes = (u64::BITS - largest.leading_zeros()).div_ceil(OFFSET_RADIX_BITS);
     let mut scratch = vec![0; keys.len()];
-    let mut counts = vec![0usize; buckets + 1];
-    for pass in 0..2 {
+    for pass in 0..passes {
         let shift = OWNER_KEY_HALF_BITS + pass * OFFSET_RADIX_BITS;
-        counts.fill(0);
+        let mut counts = [0usize; BUCKETS + 1];
         for key in keys.iter() {
-            counts[((key >> shift) & mask) as usize + 1] += 1;
+            counts[((key >> shift) & MASK) as usize + 1] += 1;
         }
-        for bucket in 0..buckets {
+        for bucket in 0..BUCKETS {
             counts[bucket + 1] += counts[bucket];
         }
         for key in keys.iter() {
-            let bucket = ((key >> shift) & mask) as usize;
+            let bucket = ((key >> shift) & MASK) as usize;
             scratch[counts[bucket]] = *key;
             counts[bucket] += 1;
         }
