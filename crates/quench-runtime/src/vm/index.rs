@@ -214,6 +214,22 @@ impl<H: Host> Vm<H> {
                         .unwrap_or_else(|| self.intern_atom(&index.to_string()));
                     return self.set_property_with_program_mode(p, object, atom, value, strict);
                 }
+                // An array cannot gain an index at or past a non-writable length
+                // (ArrayDefineOwnProperty step 3.f), so the store fails.
+                if !existing
+                    && self
+                        .own_array_length(object)
+                        .is_some_and(|length| index >= length)
+                    && self
+                        .property_attributes(object, PropertyKey::string(self.length_atom))
+                        .is_some_and(|attributes| !attributes.writable)
+                {
+                    return if strict {
+                        Err(self.type_error(p, "array length is not writable".into()))
+                    } else {
+                        Ok(())
+                    };
+                }
             }
             if self.typed_array_set(p, object, index, value)? {
                 return Ok(());

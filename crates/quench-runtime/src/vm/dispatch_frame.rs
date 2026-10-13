@@ -1172,20 +1172,29 @@ impl<H: Host> Vm<H> {
                     );
                     continue;
                 }
-                // A field cache hit reads a data slot: it neither allocates nor throws.
+                // A field cache hit reads a data slot, and an array's length is an own data
+                // property: neither allocates nor throws. Anything else takes the general path.
                 Op::GetField
                     if ins.result_flags() == 0
                         && let Some(crate::bytecode::FieldLookup::Atom {
+                            atom,
                             base,
                             cache_site,
-                            ..
                         }) = ins.field_lookup()
-                        && let Some(register) = base.register_index()
-                        && let super::object::FieldCacheProbe::Hit(value) =
-                            self.cached_field_hit(p, self.read(frame, register), cache_site) =>
+                        && let Some(register) = base.register_index() =>
                 {
-                    self.write(frame, ins.result_register(), value);
-                    continue;
+                    let object = self.read(frame, register);
+                    let value = match self.cached_field_hit(p, object, cache_site) {
+                        super::object::FieldCacheProbe::Hit(value) => Some(value),
+                        super::object::FieldCacheProbe::Ineligible => {
+                            self.array_length_field(object, atom)
+                        }
+                        super::object::FieldCacheProbe::OrdinaryMiss => None,
+                    };
+                    if let Some(value) = value {
+                        self.write(frame, ins.result_register(), value);
+                        continue;
+                    }
                 }
                 // Number increments and conversions of Numbers run no guest code, allocate
                 // nothing and cannot throw.
