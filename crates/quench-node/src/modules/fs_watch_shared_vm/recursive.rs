@@ -5,6 +5,7 @@ use crate::host::NodeHost;
 use quench_runtime::{BuiltinData, NativeContext, RootId, RootedError};
 pub(crate) mod iterator;
 
+#[cfg(target_os = "linux")]
 const FACTORY: &str = quench_js_check::checked_js!(
     r#"(Emitter, initialize, start, close, reference, notify, iterate, next, finish, startSymbol, MapConstructor, mapGet, mapSet, mapDelete, fs, resolve, join, relative, basename) => {
  'use strict';
@@ -24,6 +25,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
 }"#
 );
 
+#[cfg(target_os = "linux")]
 pub(super) fn install(
     context: &mut NativeContext<'_, NodeHost>,
     parent: RootId,

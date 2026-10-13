@@ -9,7 +9,9 @@ use quench_runtime::{HostWeakRoot, RootId};
 use serde_json::{json, Value};
 
 const DEFAULT_FILE_PATTERN: &str = "node_trace.${rotation}.log";
+#[cfg(target_os = "linux")]
 const MICROSECONDS_PER_SECOND: u64 = 1_000_000;
+#[cfg(target_os = "linux")]
 const NANOSECONDS_PER_MICROSECOND: u64 = 1000;
 const FIRST_FILE_ROTATION: &str = "1";
 
