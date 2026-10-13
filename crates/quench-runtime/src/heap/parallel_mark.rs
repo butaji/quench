@@ -179,6 +179,12 @@ impl WorkPool {
 }
 
 impl Heap {
+    /// Starts the parallel phases' helper threads once.
+    pub(super) fn start_gc_workers(&mut self) {
+        self.gc_workers
+            .get_or_insert_with(|| super::workers::GcWorkers::new(mark_threads() - 1));
+    }
+
     /// Whether this collection should mark in parallel: its previous live set was large.
     /// Ephemerons are resolved afterwards by `mark_ephemerons` on the collecting thread.
     pub(super) fn parallel_marking(&self) -> bool {
@@ -192,9 +198,11 @@ impl Heap {
         roots: Vec<Value>,
         tracer: &T,
     ) -> (Vec<T::Local>, Vec<Vec<u64>>) {
-        let workers = mark_threads();
+        self.start_gc_workers();
+        let helpers = self.gc_workers.as_ref().expect("started above");
+        let workers = helpers.workers();
         // SAFETY: `AtomicU64` has `u64`'s size and alignment, and the bitmap is accessed only
-        // through this view until the scope below has joined every worker.
+        // through this view until every worker has finished the phase below.
         let marks: &[AtomicU64] = unsafe {
             &*(std::ptr::from_mut::<[u64]>(self.marks.as_mut_slice()) as *const [AtomicU64])
         };
@@ -210,22 +218,20 @@ impl Heap {
             done: AtomicBool::new(false),
             workers,
         };
-        std::thread::scope(|scope| {
-            let helpers: Vec<_> = (1..workers)
-                .map(|_| {
-                    scope.spawn(|| {
-                        let mut local = tracer.local();
-                        let owners = mark_worker(&context, &pool, tracer, &mut local, Vec::new());
-                        (local, owners)
-                    })
-                })
-                .collect();
-            let mut local = tracer.local();
-            let owners = mark_worker(&context, &pool, tracer, &mut local, roots);
-            std::iter::once((local, owners))
-                .chain(helpers.into_iter().map(|helper| helper.join().unwrap()))
-                .unzip()
-        })
+        let roots = Mutex::new(Some(roots));
+        helpers
+            .run(|index| {
+                let stack = if index == 0 {
+                    roots.lock().unwrap().take().unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                let mut local = tracer.local();
+                let owners = mark_worker(&context, &pool, tracer, &mut local, stack);
+                (local, owners)
+            })
+            .into_iter()
+            .unzip()
     }
 }
 
