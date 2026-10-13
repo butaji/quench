@@ -1630,6 +1630,11 @@
 (rule (value32_zeros_upper32 (ishl _ _ _)) true)
 (rule (value32_zeros_upper32 (ushr _ _ _)) true)
 (rule (value32_zeros_upper32 (uload32 _ _ _ _)) true)
+;; Quench: a 32-bit load writes its register with `movl` or `movzx` to a
+;; 32-bit destination, which zeroes the upper 32 bits.
+(rule (value32_zeros_upper32 (load $I32 _ _ _)) true)
+(rule (value32_zeros_upper32 (uload8 $I32 _ _ _)) true)
+(rule (value32_zeros_upper32 (uload16 $I32 _ _ _)) true)
 (rule -1 (value32_zeros_upper32 _) false)
 
 ;;;; Helpers for Working SSE tidbits ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
