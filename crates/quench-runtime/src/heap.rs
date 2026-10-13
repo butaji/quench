@@ -77,7 +77,7 @@ pub(super) struct Slot {
 pub(crate) struct Heap {
     slots: SlotArena,
     marks: Vec<u64>,
-    free: Vec<u32>,
+    free: slots::FreeSlots,
     external_bytes: usize,
     allocations: usize,
     threshold: usize,
@@ -273,7 +273,7 @@ impl Heap {
         Self {
             slots: SlotArena::with_small_capacity(),
             marks: Vec::with_capacity(12),
-            free: Vec::with_capacity(384),
+            free: slots::FreeSlots::default(),
             threshold: MINIMUM_GC_ALLOCATION_HEADROOM,
             max_threshold: MINIMUM_GC_ALLOCATION_HEADROOM,
             ..Self::default()
@@ -321,7 +321,7 @@ impl Heap {
         self.total_allocations += 1;
         self.external_bytes += cell.external_bytes();
         let weak = cell.holds_weak_references();
-        if let Some(index) = self.free.pop() {
+        if let Some(index) = self.free.pop().map(|index| index as u32) {
             if weak {
                 self.weak_holders.insert(index);
             }
@@ -707,7 +707,7 @@ impl Heap {
         external_bytes: &mut usize,
         weak_holders: &mut FxHashSet<u32>,
         sparse_arrays: &mut Option<Box<FxHashMap<u32, SparseElements>>>,
-        free: &mut Vec<u32>,
+        free: &mut slots::FreeSlots,
         index: usize,
         cell: Cell,
         #[cfg(feature = "profile-memory")] memory_profile: &mut memory_profile::MemoryProfile,
@@ -730,7 +730,7 @@ impl Heap {
             arrays.remove(&(index as u32));
         }
         // Reused slots enter `free` only after their side-table entries are gone.
-        free.push(index as u32);
+        free.insert(index);
         // The commonest dead cells, plain objects and arrays without extras, own nothing
         // beyond an array's element backing.
         match cell {
