@@ -29,7 +29,6 @@ use slots::SlotArena;
 // representation. The slot limit is derived from Value's representation.
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
-const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
 const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
 
 #[derive(Clone, Copy)]
@@ -48,25 +47,18 @@ impl GcHeadroomFactor {
     }
 }
 
-const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
+// The allocation headroom after each collection, as a fraction of its survivors. A factor
+// of 1/1 allows one live set's worth of new cells before collection (2x total occupied
+// high-water); 3/4 targets 1.75x and 1/2 targets 1.5x. With prefetched parallel marking,
+// 1/2 measured Splay 4066 vs 4129 for 1/1 (within run noise) at 55.3 vs 69.1 MB peak RSS
+// (x86_64, 4 vCPU, 9 interleaved rounds); smaller heaps already used 1/2.
+const GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
     numerator: 1,
     denominator: 2,
 };
-// This is the sweep variable for large-heap RSS/Score measurements. A factor
-// of 1/1 allows one live set's worth of new cells before collection (2x total
-// occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x.
-const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
-    numerator: 1,
-    denominator: 1,
-};
 
 fn gc_allocation_headroom(live_cells: usize) -> usize {
-    let factor = if live_cells >= LARGE_HEAP_MINIMUM_LIVE_CELLS {
-        LARGE_HEAP_GC_HEADROOM
-    } else {
-        SMALL_HEAP_GC_HEADROOM
-    };
-    factor
+    GC_HEADROOM
         .allocation_headroom(live_cells)
         .max(MINIMUM_GC_ALLOCATION_HEADROOM)
 }
