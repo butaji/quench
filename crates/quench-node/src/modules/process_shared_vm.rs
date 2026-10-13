@@ -1954,6 +1954,9 @@ fn drain_checkpoint(
             continue;
         }
 
+        if has_referenced_shared_work(&shared_state) && super::fs_watch_shared_vm::poll(runtime, program)? {
+            continue;
+        }
         let can_run_timers = has_referenced_shared_work(&shared_state);
         let due = if can_run_timers {
             shared_state
@@ -2097,6 +2100,7 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
         || crate::modules::fetch_shared_vm::has_pending(shared_state)
         || crate::modules::child_process_shared_vm::has_pending(shared_state)
         || crate::modules::http_shared_vm::has_work(shared_state)
+        || super::fs_watch_shared_vm::has_work(&shared_state.borrow().fs_watch)
         || shared_state.borrow().scheduler.has_refed_shared_timers()
         || shared_state
             .borrow()
@@ -2212,7 +2216,7 @@ fn call_shared_callback(
     }
 }
 
-fn route_callback_failure(
+pub(super) fn route_callback_failure(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
     mut failure: RootedError,
@@ -2343,6 +2347,7 @@ fn drain_shared_jobs(
         if unhandled.is_empty() {
             runtime.clear_kept_objects();
             crate::modules::zlib_stream_shared_vm::prune(runtime);
+            super::fs_watch_shared_vm::prune(runtime);
             return Ok(());
         }
         dispatch_promise_rejection_batch(runtime, program, unhandled)?;
@@ -2840,6 +2845,7 @@ fn cleanup_environment(
 ) {
     let _span = crate::modules::trace_state::EnvironmentSpan::enter(state, "RunCleanup");
     crate::modules::http_shared_vm::cleanup(runtime, state);
+    super::fs_watch_shared_vm::cleanup(runtime);
 }
 
 fn emit_exit(
