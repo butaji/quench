@@ -6,6 +6,9 @@ pub(crate) mod configuration;
 pub(crate) mod contexts;
 pub(crate) mod discovery;
 pub(crate) mod identity;
+pub(crate) mod socket;
+pub(crate) mod certificate;
+pub(crate) mod server;
 pub(crate) mod facade;
 
 // Node's default TLS policy, from src/node_constants.h DEFAULT_CIPHER_LIST_CORE.
@@ -19,18 +22,23 @@ const DEFAULT_CIPHER_LIST: &str = concat!(
 );
 
 const TLS_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(contextApi, cipherOperation, identityOperation) => {
+    r#"(contextApi, cipherOperation, identityOperation, connectOperation, constructOperation, infoOperation, startOperation, serverCreateOperation, serverConstructOperation, serverContextOperation) => {
+      function Server(options, listener) { return serverConstructOperation(this,new.target,options,listener); }
+      Server.prototype.setSecureContext=function setSecureContext(options){return serverContextOperation(this,options);};
+      function TLSSocket(socket, opts) { return constructOperation(this, new.target, socket, {...opts}); }
+      TLSSocket.prototype.getProtocol=function getProtocol(){return infoOperation(this,'protocol');};
+      TLSSocket.prototype.getPeerCertificate=function getPeerCertificate(detailed){return infoOperation(this,'peerCertificate',detailed);};
+      TLSSocket.prototype.isSessionReused=function isSessionReused(){return infoOperation(this,'sessionReused');};
+      TLSSocket.prototype._start=function(){return startOperation(this);};
       'use strict';
       return {
       getCiphers: (0, () => cipherOperation()),
       checkServerIdentity: function checkServerIdentity(hostname, cert) { return identityOperation(hostname, cert); },
       SecureContext: contextApi.SecureContext,
       createSecureContext: contextApi.createSecureContext,
-      connect() {
-        const error = new Error('TLS sockets are not implemented');
-        error.code = 'ERR_METHOD_NOT_IMPLEMENTED';
-        throw error;
-      },
+      TLSSocket,Server,
+      createServer:function createServer(options,listener){return serverCreateOperation(options,listener);},
+      connect: function connect(...args) { return connectOperation(...args); },
     };
     }"#
 );
@@ -57,7 +65,24 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     context.define_data_property_rooted(api, key, constructor, true, true, true)?;
     let ciphers = context.host_function(crate::host::shared_vm::operation("tlsGetCiphers"))?;
     let identity = context.host_function(crate::host::shared_vm::operation("tlsCheckServerIdentity"))?;
-    let module = context.call_rooted(factory, undefined, &[api, ciphers, identity])?;
+    let connect=context.host_function(crate::host::shared_vm::operation("tlsSocketConnect"))?;
+    let construct=context.host_function(crate::host::shared_vm::operation("tlsSocketConstruct"))?;
+    let info=context.host_function(crate::host::shared_vm::operation("tlsSocketInfo"))?;
+    let start=context.host_function(crate::host::shared_vm::operation("tlsSocketStart"))?;
+    let create_server=context.host_function(crate::host::shared_vm::operation("tlsServerCreate"))?;
+    let construct_server=context.host_function(crate::host::shared_vm::operation("tlsServerConstruct"))?;
+    let server_context=context.host_function(crate::host::shared_vm::operation("tlsServerSetContext"))?;
+    let module = context.call_rooted(factory, undefined, &[api,ciphers,identity,connect,construct,info,start,create_server,construct_server,server_context])?;
+    let tls_key=context.string_rooted("TLSSocket");let tls=context.get_property_rooted(module,tls_key)?;
+    let socket_key=context.string_rooted("Socket");let base=context.get_property_rooted(net,socket_key)?;
+    let key=context.string_rooted("prototype");let tls_proto=context.get_property_rooted(tls,key)?;
+    let base_proto=context.get_property_rooted(base,key)?;
+    context.set_prototype_rooted(tls_proto,base_proto)?;context.set_prototype_rooted(tls,base)?;
+    let key=context.string_rooted("socketConstructor");context.define_data_property_rooted(api,key,tls,false,false,false)?;
+    let server_key=context.string_rooted("Server");let server=context.get_property_rooted(module,server_key)?;let base_server=context.get_property_rooted(net,server_key)?;
+    let key=context.string_rooted("prototype");let server_proto=context.get_property_rooted(server,key)?;let base_proto=context.get_property_rooted(base_server,key)?;
+    context.set_prototype_rooted(server_proto,base_proto)?;context.set_prototype_rooted(server,base_server)?;
+    let key=context.string_rooted("serverConstructor");context.define_data_property_rooted(api,key,server,false,false,false)?;
     for (name, text) in [
         ("DEFAULT_MIN_VERSION", "TLSv1.2"),
         ("DEFAULT_MAX_VERSION", "TLSv1.3"),
