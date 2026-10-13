@@ -57,7 +57,9 @@ impl<H: Host> Vm<H> {
     ) -> Option<Result<StepResult, JsError>> {
         // A sloppy call that falls into a return of its result is pushed like any other; its
         // caller then returns the callee's completion (see `PendingGeneralCall::returns`).
-        // Strict ones keep the proper tail call `step` performs.
+        // Strict ones keep the proper tail call `step` performs. Wasm programs also run in
+        // the loop (as in-loop Wasm frames), and their calls keep Wasm's own activation and
+        // exhaustion accounting, so they are never inlined as user calls.
         if i.op() != Op::Call
             || self.direct_eval
             || self.parameter_eval
