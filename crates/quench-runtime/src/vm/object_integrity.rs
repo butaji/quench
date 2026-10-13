@@ -95,7 +95,7 @@ impl<H: Host> Vm<H> {
                     && vm.heap.array(target).is_some()
                     && !vm
                         .object_data(target)
-                        .is_some_and(Object::is_arguments_object)
+                        .is_some_and(ObjectRef::is_arguments_object)
                 {
                     return Ok(Value::FALSE);
                 }
@@ -537,7 +537,7 @@ impl<H: Host> Vm<H> {
             return outcome;
         }
         Ok(Self::integrity_bool(
-            self.object_data(source).is_some_and(Object::is_extensible),
+            self.object_data(source).is_some_and(ObjectRef::is_extensible),
         ))
     }
 
@@ -647,7 +647,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
         ) || self
             .object_data(source)
-            .is_some_and(Object::is_module_namespace)
+            .is_some_and(ObjectRef::is_module_namespace)
         {
             return self.set_integrity_level(p, source, freeze);
         }
@@ -655,7 +655,7 @@ impl<H: Host> Vm<H> {
         if self.object_data(target).is_none() {
             return Ok(target);
         }
-        if let Some(object) = self.object_data_mut(target) {
+        if let Some(mut object) = self.object_data_mut(target) {
             object.set_extensible(false);
             if freeze {
                 object.set_frozen(true);
@@ -705,7 +705,7 @@ impl<H: Host> Vm<H> {
             Some(Cell::Proxy { .. } | Cell::TypedArray { .. } | Cell::Function { .. })
         ) || self
             .object_data(source)
-            .is_some_and(Object::is_module_namespace)
+            .is_some_and(ObjectRef::is_module_namespace)
         {
             return self.test_integrity_level(p, source, freeze);
         }

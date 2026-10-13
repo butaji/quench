@@ -267,7 +267,7 @@ impl<H: Host> Vm<H> {
         if self.heap.array(target).is_some()
             && !self
                 .object_data(target)
-                .is_some_and(Object::is_arguments_object)
+                .is_some_and(ObjectRef::is_arguments_object)
         {
             atoms.push(self.length_atom);
         }
@@ -280,7 +280,7 @@ impl<H: Host> Vm<H> {
         }
         if self
             .object_data(target)
-            .is_some_and(Object::is_arguments_object)
+            .is_some_and(ObjectRef::is_arguments_object)
         {
             return true;
         }
@@ -351,7 +351,7 @@ impl<H: Host> Vm<H> {
         let current_record = (!is_new).then(|| {
             PropertyDescriptorRecord::from_attributes(existing.unwrap_or(Value::UNDEFINED), current)
         });
-        let extensible = self.object_data(target).is_some_and(Object::is_extensible);
+        let extensible = self.object_data(target).is_some_and(ObjectRef::is_extensible);
         if !descriptor.compatible_with(current_record, extensible, |a, b| self.same_value(a, b)) {
             return Ok(false);
         }

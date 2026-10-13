@@ -194,7 +194,7 @@ impl<H: Host> Vm<H> {
                         .sparse_get(object, index)
                         .is_some_and(|value| !value.is_deleted());
                 let integrity = self.object_data(object);
-                if integrity.is_some_and(Object::is_frozen)
+                if integrity.is_some_and(ObjectRef::is_frozen)
                     || integrity.is_some_and(|object| !object.is_extensible()) && !existing
                 {
                     let atom = self
@@ -440,7 +440,7 @@ impl<H: Host> Vm<H> {
                 .sparse_get(object, index)
                 .is_some_and(|value| !value.is_deleted());
         let integrity = self.object_data(object);
-        if integrity.is_some_and(Object::is_frozen)
+        if integrity.is_some_and(ObjectRef::is_frozen)
             || integrity.is_some_and(|object| !object.is_extensible()) && !existing
         {
             return Err(JsError("cannot write sealed or frozen array".into()));

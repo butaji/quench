@@ -82,7 +82,7 @@ impl<H: Host> Vm<H> {
 
     fn mapped_argument_index(&self, arguments: Value, slot: usize) -> Option<usize> {
         self.object_data(arguments)
-            .and_then(Object::arguments_map)
+            .and_then(ObjectRef::arguments_map)
             .and_then(|mapping| {
                 mapping
                     .iter()
@@ -153,7 +153,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn unmap_argument_index(&mut self, object: Value, index: usize) {
         if let Some(mapping) = self
             .object_data_mut(object)
-            .and_then(Object::arguments_map_mut)
+            .and_then(|object| object.arguments_map_mut())
             && let Some(slot) = mapping.get_mut(index)
         {
             *slot = u16::MAX;

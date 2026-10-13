@@ -9,7 +9,11 @@ impl<H: Host> Vm<H> {
     }
 
     // Shapes prove ordinary data storage only when no exotic or virtual lookup intervenes.
-    pub(super) fn shape_property_lookup(&self, value: Value, atom: Atom) -> Option<&Object> {
+    pub(super) fn shape_property_lookup(
+        &self,
+        value: Value,
+        atom: Atom,
+    ) -> Option<ObjectRef<'_>> {
         if let Some((object, _)) = self.heap.array(value) {
             if self.atom_class(atom).contains(AtomClass::ARRAY_INDEX) {
                 return None;
@@ -26,7 +30,7 @@ impl<H: Host> Vm<H> {
         &self,
         cell: &'a Cell,
         atom: Atom,
-    ) -> Option<&'a Object> {
+    ) -> Option<ObjectRef<'a>> {
         let object = cell.object()?;
         let class = self.atom_class(atom);
         match cell {
@@ -39,14 +43,14 @@ impl<H: Host> Vm<H> {
             }
             _ => {}
         }
-        self.shape_property_lookup_object(object, atom)
+        self.shape_property_lookup_object(ObjectRef::Object(object), atom)
     }
 
     fn shape_property_lookup_object<'a>(
         &self,
-        object: &'a Object,
+        object: ObjectRef<'a>,
         atom: Atom,
-    ) -> Option<&'a Object> {
+    ) -> Option<ObjectRef<'a>> {
         if !self.field_cache_atom_eligible(atom) {
             return None;
         }

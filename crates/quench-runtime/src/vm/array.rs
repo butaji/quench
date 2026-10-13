@@ -400,7 +400,7 @@ impl<H: Host> Vm<H> {
         if self.heap.array(object).is_some()
             && !self
                 .object_data(object)
-                .is_some_and(Object::is_arguments_object)
+                .is_some_and(ObjectRef::is_arguments_object)
         {
             if self
                 .property_attributes(object, PropertyKey::string(atom))

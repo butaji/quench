@@ -498,7 +498,7 @@ impl<H: Host> Vm<H> {
         self.initialize_arguments_object(arguments, context.callee(), args, mapped)?;
         if mapped {
             let mapping = (0..function.params.min(args.len() as u16)).collect();
-            if let Some(object) = self.object_data_mut(arguments) {
+            if let Some(mut object) = self.object_data_mut(arguments) {
                 object.set_arguments_map(mapping);
             }
         }
@@ -570,7 +570,7 @@ impl<H: Host> Vm<H> {
                 .initialize_object_properties(arguments, shape, &properties);
             return Ok(());
         }
-        if let Some(object) = self.object_data_mut(arguments) {
+        if let Some(mut object) = self.object_data_mut(arguments) {
             object.set_arguments_object();
         }
         let length = self.intern_atom("length");

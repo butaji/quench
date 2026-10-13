@@ -243,7 +243,7 @@ impl<H: Host> Vm<H> {
         }
         let Some(StackData::Captured(records)) = self
             .object_data(receiver)
-            .and_then(Object::stack_data)
+            .and_then(ObjectRef::stack_data)
             .cloned()
         else {
             return if self.error_is_error(receiver) {
@@ -468,7 +468,7 @@ impl<H: Host> Vm<H> {
         native: Native,
         receiver: Value,
     ) -> Result<Value, JsError> {
-        let record = match self.object_data(receiver).and_then(Object::stack_data) {
+        let record = match self.object_data(receiver).and_then(ObjectRef::stack_data) {
             Some(StackData::CallSite(record)) => record.clone(),
             _ => {
                 return Err(self.type_error(
@@ -546,7 +546,7 @@ impl<H: Host> Vm<H> {
                     return Err(self.type_error(program, "cannot set Error stack property".into()));
                 }
             }
-            if let Some(object) = self.object_data_mut(target) {
+            if let Some(mut object) = self.object_data_mut(target) {
                 object.clear_stack_data();
             }
             Ok(Value::UNDEFINED)

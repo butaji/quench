@@ -2245,7 +2245,7 @@ impl<H: Host> Vm<H> {
                 .collect(),
             "Deferred Module",
         )?;
-        let Some(object) = self.object_data_mut(namespace) else {
+        let Some(mut object) = self.object_data_mut(namespace) else {
             return Err(self.type_error(p, "module namespace allocation failed".into()));
         };
         object.set_deferred_module(Some(module.clone()));
@@ -2310,7 +2310,7 @@ impl<H: Host> Vm<H> {
             }
             Err(error) => {
                 let settled = self.settle_static_module(p, &cache_key, Err(error));
-                if let Some(object) = self.object_data_mut(namespace) {
+                if let Some(mut object) = self.object_data_mut(namespace) {
                     object.set_deferred_module(Some(module));
                 }
                 settled?;
@@ -2396,12 +2396,16 @@ impl<H: Host> Vm<H> {
         target: Value,
         p: &ResidualProgram,
     ) -> Result<(), JsError> {
-        let Some(source) = self.object_data(source).cloned() else {
+        let Some(source) = self
+            .object_data(source)
+            .and_then(ObjectRef::as_object)
+            .cloned()
+        else {
             return Err(self.type_error(p, "evaluated module namespace is invalid".into()));
         };
         let prototype = self.prototype_for_data(&source);
-        if let Some(target) = self.object_data_mut(target) {
-            target.copy_property_storage_from(&source);
+        if let Some(mut target) = self.object_data_mut(target) {
+            target.copy_property_storage_from(ObjectRef::Object(&source));
             if source.is_module_namespace() {
                 target.set_module_namespace();
             }
@@ -2799,7 +2803,7 @@ impl<H: Host> Vm<H> {
                     let atom = self.intern_atom(name);
                     let is_namespace = self
                         .object_data(namespace)
-                        .is_some_and(Object::is_module_namespace);
+                        .is_some_and(ObjectRef::is_module_namespace);
                     let fallback = self.own_property(namespace, atom);
                     if is_namespace && named_binding.is_none() && fallback.is_none() {
                         return self
@@ -4382,7 +4386,7 @@ impl<H: Host> Vm<H> {
             values.push((name, value));
         }
         let namespace = self.module_namespace(values)?;
-        if let Some(object) = self.object_data_mut(namespace) {
+        if let Some(mut object) = self.object_data_mut(namespace) {
             object.set_module_bindings(bindings);
         }
         Ok(namespace)
@@ -4515,7 +4519,7 @@ impl<H: Host> Vm<H> {
         let namespace = self
             .heap
             .alloc(Cell::Object(self.shapes.empty_object(Value::NULL)));
-        if let Some(object) = self.object_data_mut(namespace) {
+        if let Some(mut object) = self.object_data_mut(namespace) {
             object.set_module_namespace();
         }
         for (name, value) in exports {
@@ -4552,7 +4556,7 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if let Some(object) = self.object_data_mut(namespace) {
+        if let Some(mut object) = self.object_data_mut(namespace) {
             object.set_extensible(false);
         }
         Ok(namespace)

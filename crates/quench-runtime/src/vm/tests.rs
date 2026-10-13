@@ -2268,7 +2268,7 @@ fn module_namespace_operations_share_uninitialized_export_errors() {
                 attributes,
             );
             vm.set_object_prototype(namespace, Value::NULL);
-            let object = vm.object_data_mut(namespace).unwrap();
+            let mut object = vm.object_data_mut(namespace).unwrap();
             object.set_module_namespace();
             object.set_module_bindings(vec![(
                 atom,
@@ -4068,7 +4068,12 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
             assert!(vm.error_is_error(error));
             let clone = vm
                 .heap
-                .alloc(super::Cell::Object(vm.object_data(error).unwrap().clone()));
+                .alloc(super::Cell::Object(
+                    vm.object_data(error)
+                        .and_then(super::ObjectRef::as_object)
+                        .unwrap()
+                        .clone(),
+                ));
             assert!(vm.error_is_error(clone));
             vm.heap.release_root(root);
             vm.collect_now(&program);

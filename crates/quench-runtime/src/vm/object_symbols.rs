@@ -375,7 +375,7 @@ impl<H: Host> Vm<H> {
             } else if self.symbol_property(receiver, key).is_none()
                 && !self
                     .object_data(receiver)
-                    .is_some_and(Object::is_extensible)
+                    .is_some_and(ObjectRef::is_extensible)
             {
                 return Ok(false);
             }

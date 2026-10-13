@@ -1,0 +1,33 @@
+{
+  "status": "excluded_from_qualification",
+  "reason": "Manual host snapshots during the 11-round stock campaign showed an unrelated Deno test burst and load 3.90 on 10 logical CPUs, above the established 0.32-per-CPU clean-window threshold. Stock schema does not retain per-round host snapshots.",
+  "platform": "M4 arm64 macOS; Mac16,10; 10 logical CPUs",
+  "binary_sha256": "6ad304cf3fdb121555f0350671bb222215c149460d9e4f1d5bc69df4c450f987",
+  "runner_source_revision": "597dd55d41a79584e73d8965a16d5243a784349b",
+  "candidate_source_revision": "216cc2a0e3b412cd051362b48ba07a5df92e4713 (dirty diff SHA-256 80b60132481e9c3f7d6750f57368f9301b270573bf8e9d9e128a8551d3233b06)",
+  "report_sha256": "2b3453ae7727bb9d8b08cb80331476258ebc97b776240d9fc473e44e8deac9ff",
+  "valid_rounds": 11,
+  "output_equal": true,
+  "diagnostic_medians": {
+    "quench_score": 9879,
+    "node_jitless_score": 14945,
+    "bun_no_jit_score": 10121,
+    "quickjs_score": 8581,
+    "quench_max_rss_bytes": 65257472,
+    "bun_no_jit_max_rss_bytes": 64012288
+  },
+  "diagnostic_ratios": {
+    "score_distance_vs_node": 1.512804939771232,
+    "rss_distance_vs_bun": 1.0194522651650884
+  },
+  "load_snapshot_during_run": {
+    "one_minute_load": 3.9,
+    "logical_cpus": 10,
+    "load_per_cpu": 0.39,
+    "processes": [
+      "Deno test workers",
+      "Bun workers"
+    ]
+  },
+  "scoreboard_changed": false
+}

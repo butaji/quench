@@ -119,7 +119,7 @@ impl<H: Host> Vm<H> {
                     if let Some(atom) = key_atom
                         && vm
                             .object_data(current)
-                            .is_some_and(Object::is_module_namespace)
+                            .is_some_and(ObjectRef::is_module_namespace)
                     {
                         vm.evaluate_deferred_namespace_for_key(
                             p,
