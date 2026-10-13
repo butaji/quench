@@ -47,6 +47,10 @@ pub(crate) struct Elaborator<'a> {
     /// Map from Value to the best (lowest-cost) Value in its eclass
     /// (tree of union value-nodes).
     value_to_best_value: SecondaryMap<Value, BestEntry>,
+    /// Quench: the longest chain of pure instructions producing each
+    /// value, so the taller operand of a binary instruction elaborates
+    /// first and the critical path leads the schedule.
+    value_height: SecondaryMap<Value, u32>,
     /// Stack of blocks and loops in current elaboration path.
     loop_stack: SmallVec<[LoopStackEntry; 8]>,
     /// The current block into which we are elaborating.
@@ -70,6 +74,13 @@ pub(crate) struct Elaborator<'a> {
     /// correct results when our heuristics make bad decisions.
     ctrl_plane: &'a mut ControlPlane,
 }
+
+/// Quench: how many more pure operations the second operand's chain must
+/// hold before it elaborates ahead of the first. Out-of-order issue absorbs
+/// a shorter lead, and loop-invariant subtrees (hoisted later, but counted
+/// here) produce leads of a few operations that reordering would only
+/// disturb; a recurrence such as SHA-256's round function leads by more.
+const CRITICAL_LEAD: u32 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct BestEntry(Cost, Value);
@@ -128,6 +139,9 @@ enum ElabStackEntry {
         result_idx: usize,
         num_args: usize,
         before: Inst,
+        /// The two operands of a binary instruction elaborated in reverse
+        /// order; their results are swapped back before use.
+        swapped: bool,
     },
 }
 
@@ -159,6 +173,7 @@ impl<'a> Elaborator<'a> {
             loop_analysis,
             value_to_elaborated_value: ScopedHashMap::with_capacity(num_values),
             value_to_best_value,
+            value_height: SecondaryMap::new(),
             loop_stack: smallvec![],
             cur_block: Block::reserved_value(),
             remat_values,
@@ -516,17 +531,29 @@ impl<'a> Elaborator<'a> {
                     // layout. First, enqueue all args to be
                     // elaborated. Push state to receive the results
                     // and later elab this inst.
-                    let num_args = self.func.dfg.inst_values(inst).count();
+                    let mut args: SmallVec<[Value; 4]> =
+                        self.func.dfg.inst_values(inst).collect();
+                    let num_args = args.len();
+                    let height = |value: Value| {
+                        let BestEntry(_, best) = self.value_to_best_value[value];
+                        self.value_height[best]
+                    };
+                    let swapped =
+                        num_args == 2 && height(args[1]) >= height(args[0]) + CRITICAL_LEAD;
+                    if swapped {
+                        args.swap(0, 1);
+                    }
                     self.elab_stack.push(ElabStackEntry::PendingInst {
                         inst,
                         result_idx,
                         num_args,
                         before,
+                        swapped,
                     });
 
                     // Push args in reverse order so we process the
-                    // first arg first.
-                    for arg in self.func.dfg.inst_values(inst).rev() {
+                    // first arg (the taller, when swapped) first.
+                    for &arg in args.iter().rev() {
                         debug_assert_ne!(arg, Value::reserved_value());
                         self.elab_stack
                             .push(ElabStackEntry::Start { value: arg, before });
@@ -538,6 +565,7 @@ impl<'a> Elaborator<'a> {
                     result_idx,
                     num_args,
                     before,
+                    swapped,
                 } => {
                     trace!(
                         "PendingInst: {} result {} args {} before {}",
@@ -549,6 +577,9 @@ impl<'a> Elaborator<'a> {
                     // them.
                     let arg_idx = self.elab_result_stack.len() - num_args;
                     let arg_values = &mut self.elab_result_stack[arg_idx..];
+                    if swapped {
+                        arg_values.swap(0, 1);
+                    }
 
                     // Compute max loop depth.
                     //
@@ -863,10 +894,43 @@ impl<'a> Elaborator<'a> {
         }
     }
 
+    /// Values are numbered after their operands, so one pass in order
+    /// sees each operand's height first; a best value numbered later than
+    /// its user counts as a leaf, which only weakens the heuristic.
+    fn compute_heights(&mut self) {
+        let num_values = self.func.dfg.num_values();
+        self.value_height.resize(num_values);
+        for index in 0..num_values {
+            let value = <Value as cranelift_entity::EntityRef>::new(index);
+            if !self.func.dfg.value_is_real(value) {
+                continue;
+            }
+            let height = match self.func.dfg.value_def(value) {
+                ValueDef::Result(inst, _) if is_pure_for_egraph(self.func, inst) => {
+                    1 + self
+                        .func
+                        .dfg
+                        .inst_values(inst)
+                        .map(|arg| {
+                            let BestEntry(_, best) = self.value_to_best_value[arg];
+                            let best = if best.is_reserved_value() { arg } else { best };
+                            self.value_height[best]
+                        })
+                        .max()
+                        .unwrap_or(0)
+                }
+                ValueDef::Union(a, b) => self.value_height[a].min(self.value_height[b]),
+                _ => 0,
+            };
+            self.value_height[value] = height;
+        }
+    }
+
     pub(crate) fn elaborate(&mut self) {
         self.stats.elaborate_func += 1;
         self.stats.elaborate_func_pre_insts += self.func.dfg.num_insts() as u64;
         self.compute_best_values();
+        self.compute_heights();
         self.elaborate_domtree(&self.domtree);
         self.stats.elaborate_func_post_insts += self.func.dfg.num_insts() as u64;
     }
