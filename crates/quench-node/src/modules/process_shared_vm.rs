@@ -2477,16 +2477,7 @@ fn dispatch_unhandled_rejection(
             }
         }
         UnhandledRejectionMode::Strict => {
-            let (exception, owned_exception) =
-                unhandled_rejection_exception(runtime, program, reason)?;
-            let handled =
-                route_uncaught_exception_value(runtime, program, exception, "unhandledRejection");
-            if let Some(exception) = owned_exception {
-                runtime.release_root(exception);
-            }
-            if !handled? {
-                return terminate_unhandled_rejection(runtime);
-            }
+            route_unhandled_rejection(runtime, program, reason)?;
             let handled =
                 emit_process_event(runtime, program, "unhandledRejection", &[reason, promise])?;
             if !handled {
@@ -2503,18 +2494,22 @@ fn route_unhandled_rejection(
     reason: RootId,
 ) -> Result<(), String> {
     let (exception, owned_exception) = unhandled_rejection_exception(runtime, program, reason)?;
-    let handled = route_uncaught_exception_value(runtime, program, exception, "unhandledRejection");
+    let routed = route_uncaught_exception_value(runtime, program, exception, "unhandledRejection");
+    let result = match routed {
+        Ok(true) => Ok(()),
+        Ok(false) => terminate_unhandled_rejection(runtime, program, exception),
+        Err(handler_error) => Err(handler_error),
+    };
     if let Some(exception) = owned_exception {
         runtime.release_root(exception);
     }
-    if !handled? {
-        terminate_unhandled_rejection(runtime)?;
-    }
-    Ok(())
+    result
 }
 
 fn terminate_unhandled_rejection(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
+    program: &quench_runtime::ResidualProgram,
+    exception: RootId,
 ) -> Result<(), String> {
     let control = runtime
         .host_mut()
@@ -2523,7 +2518,10 @@ fn terminate_unhandled_rejection(
         .process_control
         .clone();
     control.set_exit_code(Some(1));
-    Err("unhandled Promise rejection was not handled".into())
+    // The caller owns the exception until fatal formatting has finished.
+    let mut failure = RootedError::host("unhandled Promise rejection");
+    failure.exception = Some(exception);
+    Err(format_uncaught_error(runtime, program, &mut failure))
 }
 
 fn unhandled_rejection_exception(
@@ -2548,31 +2546,23 @@ fn unhandled_rejection_exception(
     );
     let mut temporary_roots = Vec::new();
     let result = (|| {
-        let global = runtime
-            .global_root()
-            .map_err(|error| runtime.format_error(program, &error))?;
-        temporary_roots.push(global);
-        let constructor = get_rooted_property(runtime, program, global, "Error")?;
-        temporary_roots.push(constructor);
-        let message = runtime.string_rooted(&message);
-        temporary_roots.push(message);
         let exception = runtime
-            .construct_rooted(constructor, constructor, &[message])
+            .error_rooted(&message)
             .map_err(|error| rooted_error_message(runtime, program, error))?;
         temporary_roots.push(exception);
         set_rooted_text_property(
             runtime,
             program,
             exception,
-            "name",
-            "UnhandledPromiseRejection",
+            "code",
+            "ERR_UNHANDLED_REJECTION",
         )?;
         set_rooted_text_property(
             runtime,
             program,
             exception,
-            "code",
-            "ERR_UNHANDLED_REJECTION",
+            "name",
+            "UnhandledPromiseRejection",
         )?;
         let value = runtime
             .rooted_value(exception)
