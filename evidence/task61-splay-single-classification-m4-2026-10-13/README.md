@@ -4,7 +4,7 @@ Host: Apple M4, macOS arm64. This work attributes the all-eight guard regression
 
 ## Current Splay distances
 
-The latest clean stock result is still trunk `17077748a`: 1.64× Score distance and 1.81× max-RSS distance. The isolated record candidate has no clean stock qualification result. Its trunk-relative schema-5 fixed-work report is `all-eight-trunk-vs-candidate-11.json` (SHA-256 `1e2370e379c6a872c2303d8396b7336b716b1cd1b8bc3eaf323a1c499e568763`): Splay cycles −7.994%, instructions −5.683%, and work max RSS −37.504%, with 11/11 clean pairs. The same report rejects the candidate on Richards cycles (+2.249%, 11/11 clean) and instructions (+1.299%); RegExp instructions rise +0.807%.
+The latest clean stock result is still trunk `17077748a`: 1.648× Score distance and 1.781× max-RSS distance. Candidate `5501981f5` / binary `578c7f1c1e3b1fedb6ea47413d5ad275413d655880bd5fddaf556fc50a2a0bf4` has no clean stock qualification result. Its latest trunk-relative schema-5 report, `all-eight-analysis-direct-object.json`, is derived from `all-eight-direct-object-classification-vs-trunk-11.json` (SHA-256 `c17783435f002238ae9f4a9e7d7fe5dce15d54f4eb0c5c67190913a22f12fbc0`): Splay wall/run −8.979% [−10.053%, −7.745%], instructions −5.825%, and work max RSS −37.546% [−37.567%, −37.467%], with 11/11 clean pairs. Under the written WP6 wall/RSS rule, all-eight passes after same-fixture A/A allowances; the generic cycle-only report remains separate. The candidate's stock retake was contaminated and excluded below. A clean stock retake and Linux own-host result remain pending.
 
 ## Setup-subtracted counters
 
