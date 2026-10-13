@@ -434,8 +434,10 @@ impl Heap {
     }
     /// Slide every live arena range down over released ones, in offset order.
     /// `objects` holds each live arena owner packed with its range offset.
-    fn compact_property_arena(&mut self, mut objects: Vec<u64>) {
-        if !self.properties.has_released_ranges() {
+    /// Packs live arena vectors to the front. `dropped_ranges` reports dead arena storage the
+    /// sweep discarded without releasing it, which only this compaction reclaims.
+    fn compact_property_arena(&mut self, mut objects: Vec<u64>, dropped_ranges: bool) {
+        if !dropped_ranges && !self.properties.has_released_ranges() {
             return;
         }
         #[cfg(feature = "profile-memory")]
@@ -565,8 +567,9 @@ impl Heap {
         }
         // Live arena owners, keyed for the offset-ordered compaction below.
         let mut property_owners = Vec::new();
+        let mut dropped_ranges = false;
         if self.parallel_marking() && !cfg!(feature = "profile-memory") {
-            (live, property_owners) = self.sweep_parallel();
+            (live, property_owners, dropped_ranges) = self.sweep_parallel();
         } else {
             for (base, slab) in self.slots.slabs_mut() {
                 for (offset, slot) in slab.iter_mut().enumerate() {
@@ -599,7 +602,7 @@ impl Heap {
                 }
             }
         }
-        self.compact_property_arena(property_owners);
+        self.compact_property_arena(property_owners, dropped_ranges);
         #[cfg(any(feature = "profile-aggregate", feature = "profile-gc-time"))]
         {
             self.gc_profile.sweep_nanos += sweep_started.elapsed().as_nanos() as u64;

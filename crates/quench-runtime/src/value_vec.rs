@@ -50,7 +50,7 @@ impl ValueVec {
         self.auxiliary = (self.auxiliary & DICTIONARY_STORAGE) | value;
     }
 
-    fn is_dictionary(self) -> bool {
+    pub(crate) fn is_dictionary(self) -> bool {
         self.auxiliary & DICTIONARY_STORAGE != 0
     }
 
