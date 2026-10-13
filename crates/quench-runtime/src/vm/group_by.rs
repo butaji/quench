@@ -46,7 +46,7 @@ impl<H: Host> Vm<H> {
                             .copied()
                             .unwrap_or(self.map_proto),
                     )),
-                    entries: Vec::new(),
+                    entries: Box::default(),
                 },
             };
             let result = self.heap.alloc(result);
@@ -137,14 +137,16 @@ impl<H: Host> Vm<H> {
             }),
         };
         if let Some(group) = group {
-            let Some((_, elements)) = self.heap.array_mut(group) else {
+            let Some(elements) = self.heap.array_elements_mut(group) else {
                 unreachable!("groupBy owns array groups")
             };
             Rc::make_mut(elements).push(value);
         } else {
             let group = self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
-                elements: Rc::new(vec![value]),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(self.array_prototype_for_realm(self.realm.globals)),
+                    Rc::new(vec![value]),
+                ),
             });
             match kind {
                 GroupByKind::Object => match self.heap.get(key).cloned() {

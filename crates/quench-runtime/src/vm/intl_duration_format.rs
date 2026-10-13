@@ -352,8 +352,10 @@ impl<H: Host> Vm<H> {
             values.push(object);
         }
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(values),
+            ),
         }))
     }
 

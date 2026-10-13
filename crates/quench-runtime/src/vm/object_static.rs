@@ -142,7 +142,7 @@ impl<H: Host> Vm<H> {
             "Error"
         } else if let Some(brand) = boxed_brand {
             brand
-        } else if let Some((object, _)) = self.heap.array(value) {
+        } else if let Some(object) = self.heap.array(value) {
             if object.is_arguments_object() {
                 "Arguments"
             } else {
@@ -263,8 +263,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         if source.is_null() || source.is_undefined() {
             return Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(Vec::new()),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(self.array_proto),
+                    Rc::new(Vec::new()),
+                ),
             }));
         }
         let mut current = self.box_object(source)?;
@@ -317,8 +319,10 @@ impl<H: Host> Vm<H> {
                 .map(|key| self.heap.root_value(*key).unwrap())
                 .collect();
             Ok(self.heap.alloc(Cell::Array {
-                object: Self::empty_object(self.array_proto),
-                elements: Rc::new(elements),
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(self.array_proto),
+                    Rc::new(elements),
+                ),
             }))
         })();
         for root in visited_objects.into_values().chain(own_keys).chain(keys) {

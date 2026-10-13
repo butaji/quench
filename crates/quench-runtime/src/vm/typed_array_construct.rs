@@ -163,11 +163,13 @@ impl<H: Host> Vm<H> {
                     }
                     return Ok(self.heap.alloc(Cell::TypedArray {
                         kind,
-                        object: Box::new(Self::empty_object(
-                            self.heap.root_value(prototype_root.unwrap()).unwrap(),
-                        )),
+                        object: Box::new(crate::heap::BufferViewObject {
+                            object: Self::empty_object(
+                                self.heap.root_value(prototype_root.unwrap()).unwrap(),
+                            ),
+                            offset,
+                        }),
                         buffer: source,
-                        offset,
                         length,
                         length_tracking: resizable && requested_length.is_none(),
                     }));
@@ -190,11 +192,13 @@ impl<H: Host> Vm<H> {
                 backing = Some(buffer_root);
                 let typed_array = self.heap.alloc(Cell::TypedArray {
                     kind,
-                    object: Box::new(Self::empty_object(
-                        self.heap.root_value(prototype_root.unwrap()).unwrap(),
-                    )),
+                    object: Box::new(crate::heap::BufferViewObject {
+                        object: Self::empty_object(
+                            self.heap.root_value(prototype_root.unwrap()).unwrap(),
+                        ),
+                        offset: 0,
+                    }),
                     buffer: self.heap.root_value(buffer_root).unwrap(),
-                    offset: 0,
                     length,
                     length_tracking: false,
                 });

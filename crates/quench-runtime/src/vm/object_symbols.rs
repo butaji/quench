@@ -21,8 +21,10 @@ impl<H: Host> Vm<H> {
             .filter_map(|root| self.heap.root_value(*root))
             .collect::<Vec<_>>();
         let result = self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(keys),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(keys),
+            ),
         });
         roots.into_iter().for_each(|root| {
             self.heap.release_root(root);
@@ -193,7 +195,7 @@ impl<H: Host> Vm<H> {
         object: Value,
     ) -> Result<Vec<Value>, JsError> {
         let keys = self.object_own_keys(p, object)?;
-        Ok(self.heap.array(keys).map_or_else(Vec::new, |(_, elements)| {
+        Ok(self.heap.array_elements(keys).map_or_else(Vec::new, |elements| {
             elements
                 .iter()
                 .copied()
@@ -221,8 +223,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let excluded = self
             .heap
-            .array(exclusions)
-            .map_or_else(Vec::new, |(_, elements)| elements.as_ref().clone());
+            .array_elements(exclusions)
+            .map_or_else(Vec::new, |elements| elements.as_ref().clone());
         self.copy_enumerable_properties(
             p,
             target,
@@ -414,8 +416,10 @@ impl<H: Host> Vm<H> {
             .filter(|key| matches!(self.heap.get(*key), Some(Cell::Symbol(_))))
             .collect();
         Ok(self.heap.alloc(Cell::Array {
-            object: Self::empty_object(self.array_proto),
-            elements: Rc::new(values),
+            object: crate::heap::ArrayObject::new(
+                Self::empty_object(self.array_proto),
+                Rc::new(values),
+            ),
         }))
     }
 

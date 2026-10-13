@@ -86,8 +86,7 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::WasmGc {
             declarations: Box::new(declarations),
             ty: index,
-            fields: Box::new(values),
-            descriptor,
+            fields: Box::new(crate::heap::WasmGcFields { values, descriptor }),
         }))
     }
     pub(super) fn wasm_descriptor_matches(
@@ -112,7 +111,7 @@ impl<H: Host> Vm<H> {
             return Ok(target.reference_type().unwrap().is_nullable());
         }
         Ok(
-            matches!(self.heap.get(reference), Some(Cell::WasmGc { descriptor: Some(actual), .. }) if *actual == descriptor),
+            matches!(self.heap.get(reference), Some(Cell::WasmGc { fields, .. }) if fields.descriptor == Some(descriptor)),
         )
     }
 
@@ -140,10 +139,9 @@ impl<H: Host> Vm<H> {
             ));
         }
         match self.heap.get(reference) {
-            Some(Cell::WasmGc {
-                descriptor: Some(descriptor),
-                ..
-            }) => Ok(*descriptor),
+            Some(Cell::WasmGc { fields, .. }) if let Some(descriptor) = fields.descriptor => {
+                Ok(descriptor)
+            }
             _ => Err(JsError::validation("Wasm struct has no descriptor".into())),
         }
     }
@@ -305,8 +303,10 @@ impl<H: Host> Vm<H> {
         Ok(self.heap.alloc(Cell::WasmGc {
             declarations: Box::new(declarations.clone()),
             ty: index,
-            fields: Box::new(fields),
-            descriptor: None,
+            fields: Box::new(crate::heap::WasmGcFields {
+                values: fields,
+                descriptor: None,
+            }),
         }))
     }
 

@@ -43,6 +43,16 @@ every edit pay release-build costs. It is not the production/performance-
 evidence profile. Use `--release` for the final release gate and matched
 performance measurements.
 
+Production and benchmark binaries are profile-guided: `tools/pgo-build.sh
+[PROFILE]` (default `production`) builds an instrumented `quench-node`, trains it
+on the interpreter curriculum (`quench-bench/deegen-curriculum`) and the Node
+compatibility fixtures (`tests/node-compat`), then rebuilds `PROFILE` with the
+merged profile into `target/PROFILE/quench-node`. The scored engine suites are
+never part of the training corpus. It needs the toolchain's `llvm-tools`
+component. Measured on x86_64 Linux against the plain production build, V8-v7
+Score rose 7-24% on six fixtures (Splay and NavierStokes flat) and peak RSS fell
+about 1 MiB on all eight.
+
 ```sh
 TEST262_TEST_TIMEOUT_MS=900000 TEST262_JOBS=4 \
   cargo run --profile iteration -p quench-test262 --bin run-stages -- 10 10
