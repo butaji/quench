@@ -113,6 +113,14 @@ impl<H: Host> Runtime<H> {
             .map_err(|error| self.retain_error(error))
     }
 
+    /// Create an Error through the same intrinsic owner used by native contexts.
+    pub fn error_rooted(&mut self, message: &str) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .create_embedding_exception(crate::heap::Native::Error, message);
+        self.retain_completion(result)
+    }
+
     /// Create and retain an ordinary object using the realm's intrinsic prototype.
     pub fn object_rooted(&mut self) -> Result<RootId, RootedError> {
         let result = self.vm.create_embedding_object();

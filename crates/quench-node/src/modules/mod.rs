@@ -47,6 +47,7 @@ pub(crate) mod fs_state;
 pub(crate) mod http_protocol;
 pub(crate) mod http_shared_vm;
 pub(crate) mod net_config;
+pub(crate) mod net_connect_error;
 pub(crate) mod net_shared_vm;
 pub(crate) mod net_endpoint_shared_vm;
 pub(crate) mod net_options_shared_vm;
