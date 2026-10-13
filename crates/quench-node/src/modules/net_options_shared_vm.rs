@@ -144,6 +144,85 @@ pub(super) fn validator_error(
     Ok(error)
 }
 
+const MIN_VALID_ATTEMPT_TIMEOUT: i32 = 1;
+
+/// Node's positive signed-32-bit timeout validator, shared by the setter and connect.
+pub(super) fn attempt_timeout(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    name: &str,
+) -> Result<u64, RootedError> {
+    let Some(number) = context
+        .rooted_value(value)
+        .and_then(|value| value.as_number())
+    else {
+        let error = super::util_shared_vm::argument_type_error(context, value, name, "number")?;
+        return Err(validator_error(context, error, "ERR_INVALID_ARG_TYPE")?);
+    };
+    let range = if !number.is_finite() || number.fract() != 0.0 {
+        Some("an integer".to_owned())
+    } else if !(f64::from(MIN_VALID_ATTEMPT_TIMEOUT)..=f64::from(i32::MAX)).contains(&number) {
+        Some(format!(">= {MIN_VALID_ATTEMPT_TIMEOUT} && <= {}", i32::MAX))
+    } else {
+        None
+    };
+    if let Some(range) = range {
+        let received = super::util_shared_vm::range_error_received(context, value)?;
+        let error = context.range_error_rooted(&format!(
+            "The value of \"{name}\" is out of range. It must be {range}. Received {received}"
+        ))?;
+        super::node_errors_shared_vm::decorate_range_error(context, error, "ERR_OUT_OF_RANGE")?;
+        super::node_errors_shared_vm::hide_range_error(context, error, "ERR_OUT_OF_RANGE")?;
+        return Err(context.throw(error));
+    }
+    Ok(super::net_config::normalize_auto_select_family_attempt_timeout(number as u64))
+}
+
+/// Read the invocation settings once, in Node's destructuring order, before lookup.
+pub(super) fn connect_family_options(
+    context: &mut NativeContext<'_, NodeHost>,
+    options: RootId,
+) -> Result<bool, RootedError> {
+    let has_options = context.is_object_rooted(options)?;
+    let timeout = if has_options {
+        get(context, options, "autoSelectFamilyAttemptTimeout")?
+    } else {
+        context.undefined()
+    };
+    let auto = if has_options {
+        get(context, options, "autoSelectFamily")?
+    } else {
+        context.undefined()
+    };
+    let auto = if context
+        .rooted_value(auto)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        context
+            .host_mut()
+            .shared_state()
+            .borrow()
+            .net_auto_select_family
+    } else if let Some(value) = context.rooted_value(auto).and_then(|value| value.as_bool()) {
+        value
+    } else {
+        let error = super::util_shared_vm::argument_type_error(
+            context,
+            auto,
+            "options.autoSelectFamily",
+            "boolean",
+        )?;
+        return Err(validator_error(context, error, "ERR_INVALID_ARG_TYPE")?);
+    };
+    if !context
+        .rooted_value(timeout)
+        .is_some_and(|value| value.is_null() || value.is_undefined())
+    {
+        attempt_timeout(context, timeout, "options.autoSelectFamilyAttemptTimeout")?;
+    }
+    Ok(auto)
+}
+
 fn invalid_property_value(
     context: &mut NativeContext<'_, NodeHost>,
     name: &str,

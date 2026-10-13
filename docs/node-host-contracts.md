@@ -214,11 +214,19 @@ NUL bytes and invalid lookup function types preserve Node error messages and
 original option getter/exception behavior. Numeric and local path overloads
 continue through the existing endpoint owner.
 
-Coded TypeError prototypes have one native owner, shared private brand, and
+Coded TypeError and RangeError prototypes have one native owner, shared private brand, and
 separate direct/validator prototype presentations. The lazy prototype cache
 preserves observable identity across errors of the same presentation. The
 validator presentation inherits its coded prototype and supplies its own
 constructor getter. This does not establish complete Node stack-frame filtering.
+The family-attempt timeout has a 500 ms invocation default and a shared native
+validator for the public setter and TCP connect options. The validator accepts
+positive signed 32-bit integers, clamps values below 10 ms, and preserves coded
+TypeError/RangeError prototypes, messages, and original getter exceptions.
+The CLI override preserves its value and selects the last supplied value,
+independently of the setter's 10 ms clamp. This covers configuration
+validation; the existing sequential connection worker does not yet implement
+Node's per-attempt timeout scheduling.
 Full option ordering and family attempt/race semantics remain separate work.
 
 ## Net lookup callback ownership
