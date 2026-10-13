@@ -4521,6 +4521,7 @@ impl<H: Host> Vm<H> {
         if let Some(object) = self.object_data_mut(namespace) {
             object.set_module_namespace();
         }
+        self.mark_object_dictionary(namespace, DictionaryTrigger::ModuleNamespace);
         for (name, value) in exports {
             let atom = self.intern_atom(&name);
             self.set_property(namespace, atom, value)?;
