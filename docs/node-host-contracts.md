@@ -322,10 +322,14 @@ references when transport support is added.
 
 Rust implements protocol selection, version/options validation, configuration
 snapshots and native setters. Checked JavaScript functions/classes forward
-calls and preserve callable construction and method metadata. Original public
+calls and preserve callable construction and method metadata. TLS captures the
+canonical private crypto-binding constructor when its module loads, preserving
+earlier replacements and ignoring later replacements as Node does. Engine
+method availability and repeated getter effects follow the actual inner object.
+Original public
 method/property hooks retain their ordering and exceptions. Native crypto
 string arguments use Node's UTF-8 C-string prefix, including embedded nul
-handling; the canonical VM owns bitwise coercion.
+handling; the existing rooted VM bitwise operation owns integer coercion.
 
 Certificates, keys, CA roots, CRLs and PKCS12 material are retained by the native
 configuration rather than discarded after validation. Bundled public trust
