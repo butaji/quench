@@ -659,6 +659,7 @@ impl<H: Host> Vm<H> {
             NativeArithmetic::Multiply => BinaryOperator::Multiplication,
             NativeArithmetic::Divide => BinaryOperator::Division,
             NativeArithmetic::BitwiseAnd => BinaryOperator::BitwiseAnd,
+            NativeArithmetic::BitwiseOr => BinaryOperator::BitwiseOR,
         };
         let left = self.embedding_value(left)?;
         let right = self.embedding_value(right)?;

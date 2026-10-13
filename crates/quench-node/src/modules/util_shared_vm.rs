@@ -622,7 +622,10 @@ pub(crate) fn argument_type_error(
     name: &str,
     expected: &str,
 ) -> Result<RootedError, RootedError> {
-    let expected = if expected.chars().next().is_some_and(char::is_uppercase) {
+    // Node treats the validator's "Object" token as the object primitive type.
+    let expected = if expected == "Object" {
+        "of type object".to_owned()
+    } else if expected.chars().next().is_some_and(char::is_uppercase) {
         format!("an instance of {expected}")
     } else {
         format!("of type {expected}")
