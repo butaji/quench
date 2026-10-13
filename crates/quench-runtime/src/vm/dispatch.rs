@@ -1508,20 +1508,17 @@ impl<H: Host> Vm<H> {
             Op::IncDec => {
                 let input = self.read(f, i.register_b());
                 let is_decrement = i.boolean_flag().expect("validated boolean immediate");
-                let delta = if is_decrement { -1.0 } else { 1.0 };
-                let value = if matches!(self.heap.get(input), Some(Cell::BigInt(_))) {
-                    let one = self.heap.alloc(Cell::BigInt("1".into()));
-                    self.binary(p, if is_decrement { 9 } else { 8 }, input, one)?
-                } else if let Some(integer) = input.as_int() {
-                    let next = if is_decrement {
-                        integer.checked_sub(1)
-                    } else {
-                        integer.checked_add(1)
-                    };
-                    next.map(Value::integer)
-                        .unwrap_or_else(|| Value::number(f64::from(integer) + delta))
+                // ToNumeric, then Number::add or BigInt::add of one (ECMA-262 13.4).
+                let value = if let Some(value) = number_increment(input, is_decrement) {
+                    value
                 } else {
-                    Value::number(self.to_number(p, input)? + delta)
+                    let numeric = self.to_numeric(p, input)?;
+                    if let Some(value) = number_increment(numeric, is_decrement) {
+                        value
+                    } else {
+                        let one = self.heap.alloc(Cell::BigInt("1".into()));
+                        self.binary(p, if is_decrement { 9 } else { 8 }, numeric, one)?
+                    }
                 };
                 self.write(f, i.result_register(), value);
             }
@@ -1969,4 +1966,29 @@ impl<H: Host> Vm<H> {
             None => Ok(value),
         }
     }
+}
+
+/// The `++`/`--` step: one, negated for a decrement.
+fn increment_delta(is_decrement: bool) -> f64 {
+    if is_decrement { -1.0 } else { 1.0 }
+}
+
+/// `++`/`--` of a Number operand, staying an integer while the result fits; `None` for any
+/// other operand, whose conversion may run guest code or allocate.
+#[inline(always)]
+pub(super) fn number_increment(input: Value, is_decrement: bool) -> Option<Value> {
+    if let Some(integer) = input.as_int() {
+        let next = if is_decrement {
+            integer.checked_sub(1)
+        } else {
+            integer.checked_add(1)
+        };
+        return Some(next.map_or_else(
+            || Value::number(f64::from(integer) + increment_delta(is_decrement)),
+            Value::integer,
+        ));
+    }
+    input
+        .as_number()
+        .map(|number| Value::number(number + increment_delta(is_decrement)))
 }

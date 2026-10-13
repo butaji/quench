@@ -117,7 +117,14 @@ impl FunctionCompiler<'_, '_> {
                 self.class_declaration(item);
             }
             Statement::ExpressionStatement(item) => {
-                let value = self.expression(&item.expression);
+                let value = if matches!(
+                    self.statement_completion,
+                    StatementCompletion::Ignored | StatementCompletion::Suppress(_)
+                ) {
+                    self.effect_expression(&item.expression)
+                } else {
+                    self.expression(&item.expression)
+                };
                 self.record_statement_completion(value);
             }
             Statement::BlockStatement(block) => self.scoped_statements(&block.body),
@@ -514,7 +521,7 @@ impl FunctionCompiler<'_, '_> {
             self.clone_lexical_environment();
         }
         if let Some(expression) = &item.update {
-            self.expression(expression);
+            self.effect_expression(expression);
         }
         self.emit(Op::Jump, 0, 0, 0, head);
         let end = self.code.len() as u32;
