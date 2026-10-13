@@ -34,14 +34,39 @@ does not update the official trunk row. SHA-256: `f8466aa8a51bb6a4fd0069d9504255
 | QuickJS | 8,630 | 151,044,096 B |
 
 The bars are Node for Score and Bun for RSS. Candidate distances are **1.782×
-Score / 1.524× max RSS**; neither bar is won. These medians are worse than the
-previous ArrayRecord candidate `6186d6a51` (1.518× / 1.322×), so the next
-Splay measurement is a matched fixed-work comparison against that binary. The
+Score / 1.524× max RSS**; neither bar is won. The previous ArrayRecord
+snapshot measured 1.518× / 1.322×; the matched fixed-work screen below confirms
+that the current candidate is slower and larger than that snapshot. The
 official M4 trunk remains 1.648× / 1.781× on runtime `17077748a`.
 
 Two earlier 11-round stock attempts are excluded for host interference; their
 raw reports remain `stock-attempt-excluded-11.json` and
 `stock-attempt-excluded-11-retry.json`.
+
+## Matched fixed-work Splay screens
+
+All screens used 300 `run()` calls, output-equal inputs, 11/11 clean pairs,
+and deterministic 20,000-sample paired bootstrap intervals. Candidate binary
+SHA-256 is `0600ef24633c8df6da83999a50a22e6a6554c49334eb9efb482059ea71bc48d7`.
+
+Against the pinned M4 trunk binary for runtime `17077748a`
+(`8432da1159e301d021c236148a4f4a13e5f1b8de40fb87893fb54a2ebf5795dd`),
+marginal wall/run was +7.369% [−0.857%, +23.973%], cycles +6.698%
+[+2.353%, +11.527%], instructions +1.236% [+1.179%, +1.338%], and work
+max RSS −11.983% [−12.707%, −10.977%]. The candidate trades lower RSS for a
+measured cycle and instruction increase; it does not qualify as a Splay win.
+
+Against the older ArrayRecord snapshot binary
+`61373063e8d1ed13b1aafdc959e3b831b331db33fabb056a89129630eab8879a`, the
+candidate was +14.836% wall/run [+13.912%, +17.817%], +17.015% cycles
+[+15.614%, +17.433%], +7.177% instructions [+7.082%, +7.252%], and +17.588%
+work max RSS [+17.531%, +17.700%]. This is a cross-revision comparison, not a
+single-change attribution. Raw reports and derived summaries are
+`fixed-work-vs-trunk-8432-11.json` / `.analysis.json` and
+`fixed-work-vs-6186-11.json` / `.analysis.json`; their raw report SHA-256 values
+are `28f5c5cb29fb3f3d1a3fb5495bafbc8f60dfbec576638f2a076a661f2681c73e` and
+`8cbd67935c04bf60d0f6c8cb7f8d3f7d10f75a912328267f778602784e16efac`.
+
 
 ## Reproduction
 
@@ -49,10 +74,10 @@ raw reports remain `stock-attempt-excluded-11.json` and
 target/pinned/101aa4b65250b8bdcc41095d10f2c5eeba22d151e25413c299fe9c15da8af964/quench-bench \
   quench-bench/js-engine-benchmark/v8-v7/splay.js \
   --fixed-work \
-  --quench target/pinned/01c22fa3d6c323159dbad38047b8cecb0ccd38edb77773821df17671c8257331/quench-node \
+  --quench /Users/admin/Code/GitHub/quench-v2/target/pinned/8432da1159e301d021c236148a4f4a13e5f1b8de40fb87893fb54a2ebf5795dd/quench-node \
   --quench-peer target/pinned/0600ef24633c8df6da83999a50a22e6a6554c49334eb9efb482059ea71bc48d7/quench-node \
   --runs 11 --timeout-ms 300000 \
-  --out fixed-work-parent-comparison-11.json
+  --out fixed-work-vs-trunk-8432-11.json
 ```
 
 Stock reproduction:
