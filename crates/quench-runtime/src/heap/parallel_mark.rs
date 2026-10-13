@@ -16,6 +16,65 @@ const MAX_MARK_THREADS: usize = 4;
 /// A worker whose stack grows past this donates half of it while another worker is idle.
 const DONATION_THRESHOLD: usize = 64;
 
+/// Cells a worker prefetches before tracing the oldest: marking chases pointers through a
+/// heap larger than the caches, and the queue overlaps those misses with tracing.
+const MARK_PREFETCH_DISTANCE: usize = 8;
+
+/// A ring of heap indices whose slots have been prefetched, filled from the mark stack.
+#[derive(Default)]
+struct PrefetchQueue {
+    indices: [usize; MARK_PREFETCH_DISTANCE],
+    head: usize,
+    len: usize,
+}
+
+impl PrefetchQueue {
+    /// Tops the queue up from `stack`, prefetching each admitted slot, and returns the oldest
+    /// index; `None` once both are empty.
+    #[inline(always)]
+    fn next(&mut self, slots: &SlotArena, stack: &mut Vec<Value>) -> Option<usize> {
+        while self.len < MARK_PREFETCH_DISTANCE
+            && let Some(value) = stack.pop()
+        {
+            let Some(index) = value.heap_index().map(|index| index as usize) else {
+                continue;
+            };
+            if index >= slots.len() {
+                continue;
+            }
+            // SAFETY: bounds-checked above.
+            prefetch_read(unsafe { slots.get_unchecked(index) });
+            self.indices[(self.head + self.len) % MARK_PREFETCH_DISTANCE] = index;
+            self.len += 1;
+        }
+        (self.len > 0).then(|| {
+            let index = self.indices[self.head];
+            self.head = (self.head + 1) % MARK_PREFETCH_DISTANCE;
+            self.len -= 1;
+            index
+        })
+    }
+}
+
+/// Hints that `target` will be read soon; a no-op where no hint instruction is used.
+#[inline(always)]
+fn prefetch_read<T>(target: &T) {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: a prefetch never faults and has no architectural effect.
+    unsafe {
+        std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(
+            std::ptr::from_ref(target).cast(),
+        );
+    }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: as above; PRFM only hints the cache.
+    unsafe {
+        std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) std::ptr::from_ref(target), options(nostack, readonly, preserves_flags));
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    let _ = target;
+}
+
 /// Per-object root discovery supplied by the VM: `visit` runs for every marked object with
 /// its shape and may append further roots. Each marking thread keeps its own `Local` state,
 /// which the caller merges after collection.
@@ -181,21 +240,19 @@ fn mark_worker<T: ObjectRootTracer>(
     mut stack: Vec<Value>,
 ) {
     let mut last_shared_elements: *const Vec<Value> = std::ptr::null();
+    // Cells whose slots were prefetched and that wait to be traced, oldest first.
+    let mut pending = PrefetchQueue::default();
     loop {
-        while let Some(value) = stack.pop() {
-            let Some(index) = value.heap_index().map(|index| index as usize) else {
-                continue;
-            };
-            if index >= context.slots.len() {
-                continue;
-            }
-            // SAFETY: bounds-checked above; slots are not resized during marking.
+        while let Some(index) = pending.next(context.slots, &mut stack) {
+            // SAFETY: the queue only admits indices below the slot count; slots are not
+            // resized during marking.
             let Some(cell) = (unsafe { context.slots.get_unchecked(index) })
                 .cell
                 .as_ref()
             else {
                 continue;
             };
+            let value = Value::heap(index as u32);
             let bit = 1 << (index % 64);
             let word = &context.marks[index / 64];
             if word.load(Ordering::Relaxed) & bit != 0
