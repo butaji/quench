@@ -133,7 +133,7 @@ pub(crate) fn validate_lookup(
     Err(validator_error(context, error, "ERR_INVALID_ARG_TYPE")?)
 }
 
-fn validator_error(
+pub(super) fn validator_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: RootedError,
     code: &'static str,

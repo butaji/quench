@@ -4368,3 +4368,97 @@ console.log(JSON.stringify(result));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+
+#[test]
+fn net_lookup_callbacks_preserve_original_errors_order_metadata_and_preconnect_bytes() {
+    const SOURCE: &str = r#"
+const net=require('net'),assert=require('assert'),cp=require('child_process'),result=[];
+(async()=>{
+for(const family of [undefined,4,6])for(const kind of ['original','ip','family'])await new Promise((resolve,reject)=>{
+ const socket=new net.Socket(),trace=[],marker=Object.assign(new Error('original lookup failure'),{code:'ORIGINAL',errno:'original',syscall:'lookup-owner'});
+ socket.on('lookup',(error,ip,type,host)=>trace.push(['lookup',error===marker,ip,type,host]));
+ socket.on('connect',()=>reject(new Error('unexpected connect')));
+ socket.on('error',error=>{try{
+  if(kind==='original')assert.strictEqual(error,marker);
+  else assert.strictEqual(error.code,kind==='ip'?'ERR_INVALID_IP_ADDRESS':'ERR_INVALID_ADDRESS_FAMILY');
+  result.push([family,kind,trace,error.name,error.code,error.message,error.toString(),Object.keys(error),error.host,error.port]);resolve();
+ }catch(error){reject(error)}});
+ socket.connect({port:0,host:'lookup.invalid',family,lookup(host,options,callback){
+  trace.push(['request',host,options.family,options.hints,options.all,callback.name,callback.length,Object.hasOwn(callback,'prototype')]);
+  if(kind==='original')callback(marker);
+  else if(options.all)callback(null,[{address:kind==='ip'?1:'127.0.0.1',family:kind==='family'?100:4}]);
+  else callback(null,kind==='ip'?['127.0.0.1']:'127.0.0.1',kind==='family'?100:4);
+  trace.push(['returned']);
+ }});
+ trace.push(['connected-call-returned']);
+});
+await new Promise((resolve,reject)=>{
+ const server=net.createServer(peer=>peer.on('data',chunk=>{peer.end(chunk)}));server.on('error',reject);
+ server.listen(0,'127.0.0.1',()=>{
+  const trace=[],socket=net.connect({port:server.address().port,host:'custom.lookup',family:4,lookup(host,options,callback){trace.push([host,options.family,options.hints,options.all]);process.nextTick(()=>callback(null,'127.0.0.1',4))}});
+  let bytes='';socket.on('error',reject);socket.on('data',chunk=>bytes+=chunk.toString('hex'));
+  socket.on('end',()=>{try{assert.strictEqual(bytes,'0080ff');result.push(['bytes',bytes,trace]);server.close(resolve)}catch(error){reject(error)}});
+  socket.write(Buffer.from([0,128,255]));
+ });
+});
+const source='const net=require("net");const socket=net.connect({port:0,host:"custom.lookup",lookup(host,options,callback){console.log(callback.name,callback.length,Object.hasOwn(callback,"prototype"));}});console.log(socket._handle.hasRef());';
+const child=cp.spawnSync(process.execPath,['-e',source],{encoding:'utf8',timeout:2000});assert.strictEqual(child.status,0);assert.strictEqual(child.error,undefined);result.push(['inactive',child.stdout]);
+console.log(JSON.stringify(result));
+})().catch(error=>{console.error(error);process.exitCode=1});
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(20)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn net_ip_predicates_preserve_original_coercion_exceptions_and_zone_syntax() {
+    const SOURCE: &str = r#"
+const net=require('net'),assert=require('assert'),result=[];
+for(const name of ['isIP','isIPv4','isIPv6']){
+ const method=net[name],descriptor=Object.getOwnPropertyDescriptor(method,'name');result.push([method.name,method.length,Object.hasOwn(method,'prototype'),descriptor.writable,descriptor.enumerable,descriptor.configurable]);
+ const marker={};assert.throws(()=>net[name]({[Symbol.toPrimitive](){throw marker}}),error=>error===marker);
+ assert.throws(()=>net[name](Symbol('ip')),{name:'TypeError'});
+ for(const text of ['127.0.0.1','::1','bad','fe80::1%eth_0','fe80::1%eth:0','fe80::1%eth-0','fe80::1%eth.0']){
+  let calls=0;const value={[Symbol.toPrimitive](hint){assert.strictEqual(hint,'string');calls++;return text}};
+  result.push([name,text,net[name](value),calls]);
+ }
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}

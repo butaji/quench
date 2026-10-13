@@ -70,6 +70,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode,
     pub(crate) output: Option<NodeOutputSink>,
     pub(crate) net_auto_select_family_attempt_timeout: u64,
+    pub(crate) net_auto_select_family: bool,
     pub(crate) process_module: Option<quench_runtime::RootId>,
     pub(crate) assert_module: Option<quench_runtime::RootId>,
     pub(crate) path_module: Option<quench_runtime::RootId>,
@@ -187,6 +188,7 @@ impl SharedNodeState {
             stream_high_water_marks: crate::modules::stream_state::HighWaterMarks::default(),
             unhandled_rejection_mode: crate::modules::process_state::UnhandledRejectionMode::Throw,
             output: None,
+            net_auto_select_family: crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY,
             net_auto_select_family_attempt_timeout:
                 crate::modules::net_config::DEFAULT_AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT,
             process_module: None,
@@ -286,10 +288,14 @@ impl NodeHost {
             crate::modules::net_config::auto_select_family_attempt_timeout_from_exec_argv(
                 &exec_argv,
             );
+        let net_family = crate::modules::net_config::auto_select_family_from_exec_argv(&exec_argv);
         let mut shared = self.shared_state.borrow_mut();
         shared.trace.configure(&exec_argv);
         shared.exec_argv = exec_argv;
         shared.unhandled_rejection_mode = mode;
+        if let Some(enabled) = net_family {
+            shared.net_auto_select_family = enabled;
+        }
         if let Some(net_timeout) = net_timeout {
             shared.net_auto_select_family_attempt_timeout = net_timeout;
         }
