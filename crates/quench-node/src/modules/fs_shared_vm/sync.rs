@@ -386,9 +386,12 @@ pub(crate) fn install(
     let open = context.host_function(crate::host::shared_vm::operation("fsOpenSync"))?;
     let close = context.host_function(crate::host::shared_vm::operation("fsCloseSync"))?;
     let fstat = context.host_function(crate::host::shared_vm::operation("fsFstatSync"))?;
-    let read_descriptor = context.host_function(crate::host::shared_vm::operation("fsReadDescriptor"))?;
-    let write_descriptor = context.host_function(crate::host::shared_vm::operation("fsWriteDescriptor"))?;
-    let sync_descriptor = context.host_function(crate::host::shared_vm::operation("fsSyncDescriptor"))?;
+    let read_descriptor =
+        context.host_function(crate::host::shared_vm::operation("fsReadDescriptor"))?;
+    let write_descriptor =
+        context.host_function(crate::host::shared_vm::operation("fsWriteDescriptor"))?;
+    let sync_descriptor =
+        context.host_function(crate::host::shared_vm::operation("fsSyncDescriptor"))?;
     let factory = context.evaluate_script_rooted(SYNC_API, "node:fs/shared-sync.js")?;
     let decorate_bigint_stats = context.evaluate_script_rooted(
         shared_vm::BIGINT_STATS_API,
@@ -706,10 +709,7 @@ pub(crate) fn mkdtemp_sync(
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(
-                        &path,
-                        std::fs::Permissions::from_mode(0o700),
-                    );
+                    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700));
                 }
                 return Ok(context.string_rooted(&path));
             }
@@ -880,6 +880,61 @@ pub(crate) fn rm_sync(
         return throw_operation_error(context, &error);
     }
     Ok(context.undefined())
+}
+
+pub(crate) fn rm_async(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let path = args.first().copied().unwrap_or_else(|| context.undefined());
+    let mut options = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let mut callback = args.get(2).copied().unwrap_or_else(|| context.undefined());
+    if context.is_callable_rooted(options)? {
+        callback = options;
+        options = context.undefined();
+    }
+    let path = path_argument(context, Some(path))?;
+    if !context.is_callable_rooted(callback)? {
+        return Err(crate::modules::util_shared_vm::argument_type_error(
+            context, callback, "cb", "function",
+        )?);
+    }
+    let options = rm_options(context, Some(options))?;
+    let data = context.object_rooted()?;
+    let path = context.string_rooted(&path);
+    set(context, data, "path", path)?;
+    set(context, data, "callback", callback)?;
+    let saved = context.object_rooted()?;
+    let recursive = context.boolean(options.recursive);
+    let force = context.boolean(options.force);
+    set(context, saved, "recursive", recursive)?;
+    set(context, saved, "force", force)?;
+    set(context, data, "options", saved)?;
+    let complete =
+        context.host_function_with_data(crate::host::shared_vm::operation("fsRmComplete"), data)?;
+    let undefined = context.undefined();
+    crate::modules::shared_event_loop::queue_next_tick(context, complete, undefined, &[])?;
+    Ok(undefined)
+}
+
+pub(crate) fn rm_complete(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let path = property(context, data, "path")?;
+    let options = property(context, data, "options")?;
+    let callback = property(context, data, "callback")?;
+    let undefined = context.undefined();
+    let error = match rm_sync(context, undefined, &[path, options]) {
+        Ok(_) => context.null(),
+        Err(error) => error
+            .exception
+            .ok_or_else(|| RootedError::host("rm lost its exception"))?,
+    };
+    context.call_rooted(callback, undefined, &[error])
 }
 
 pub(crate) fn write_file_sync(
