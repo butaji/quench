@@ -1103,6 +1103,7 @@ impl<H: Host> Vm<H> {
                     ) && let Some(truthy) = self
                         .number_comparison_truthy(operator, left, right)
                         .or_else(|| self.identity_equality(operator, left, right))
+                        .or_else(|| self.instanceof_truthy(operator, left, right))
                     {
                         self.profile.binary(
                             operator as usize,
@@ -1117,9 +1118,21 @@ impl<H: Host> Vm<H> {
                 }
                 // A cached own-data store writes a slot in place: it neither allocates nor throws.
                 Op::SetField | Op::SetFieldStrict => {
-                    if self.cached_field_store_hit(
+                    if self.cached_field_write_hit(
                         p,
                         self.read(frame, ins.register_b()),
+                        ins.atom_index(),
+                        self.read(frame, ins.register_a()),
+                        ins.cache_site_index(),
+                    ) {
+                        continue;
+                    }
+                }
+                // `this.x = v` with an authoritative `this` is the same cached write.
+                Op::SetThisField | Op::SetThisFieldStrict if self.frames[frame].fixed_this => {
+                    if self.cached_field_write_hit(
+                        p,
+                        self.frames[frame].this,
                         ins.atom_index(),
                         self.read(frame, ins.register_a()),
                         ins.cache_site_index(),
@@ -1154,7 +1167,8 @@ impl<H: Host> Vm<H> {
                     }
                     continue;
                 }
-                // Equality decided without conversion runs no guest code either.
+                // Equality decided without conversion, and instanceof reduced to a prototype
+                // walk, run no guest code either.
                 Op::Binary
                     if !ins.returns_from_frame()
                         && ins.numeric_local_target().is_none()
@@ -1162,8 +1176,11 @@ impl<H: Host> Vm<H> {
                             self.inert_operand(frame, ins.operand_b()),
                             self.inert_operand(frame, ins.operand_c()),
                         )
-                        && let Some(equal) =
-                            self.identity_equality(ins.binary_operator(), left, right) =>
+                        && let Some(equal) = self
+                            .identity_equality(ins.binary_operator(), left, right)
+                            .or_else(|| {
+                                self.instanceof_truthy(ins.binary_operator(), left, right)
+                            }) =>
                 {
                     self.write(
                         frame,
