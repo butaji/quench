@@ -5,17 +5,21 @@
 //! inline or empty and which have no sparse elements: such a cell touches no shared table. An
 //! array's element backing is dropped by the worker when the array is its only owner; a shared
 //! backing's references are counted and released by the collecting thread, so no reference
-//! count is written concurrently. Every other dead cell is reported back and freed on the
-//! collecting thread, whose pass over the slots then rebuilds the free list.
+//! count is written concurrently. Workers mark the slots they free in the free-slot bitmap,
+//! whose words their disjoint slab runs never share. Every other dead cell is reported back and
+//! freed on the collecting thread.
 use super::parallel_mark::mark_threads;
 use super::{Cell, FxHashMap, Heap, Slot, SparseElements, Value, ValueArena, pack_offset_owner};
 use std::rc::Rc;
 
-/// One worker's results: survivors and arena owners.
+/// One worker's results: survivors, arena owners, the slots it freed and the dead cells it left
+/// to the collecting thread.
 #[derive(Default)]
 struct SweepShare {
     live: usize,
     property_owners: Vec<u64>,
+    freed: usize,
+    deferred: Vec<u32>,
     /// References to shared element backings held by freed arrays, by backing.
     shared_backings: FxHashMap<*const Vec<Value>, usize>,
 }
@@ -34,6 +38,7 @@ unsafe impl Send for SlabRun<'_> {}
 /// Shared read-only state for sweep workers.
 struct SweepContext<'a> {
     marks: &'a [u64],
+    free: &'a [std::sync::atomic::AtomicU64],
     properties: &'a ValueArena,
     sparse_arrays: Option<&'a FxHashMap<u32, SparseElements>>,
 }
@@ -43,10 +48,11 @@ struct SweepContext<'a> {
 unsafe impl Sync for SweepContext<'_> {}
 
 impl Heap {
-    /// Sweeps in parallel; returns survivors and arena owners. The free list is rebuilt from
-    /// every empty slot, and each dead cell the workers left in place is freed by `free_cell`.
+    /// Sweeps in parallel; returns survivors and arena owners. Each dead cell the workers left
+    /// in place is then freed by `free_cell`.
     pub(super) fn sweep_parallel(&mut self) -> (usize, Vec<u64>) {
         let workers = mark_threads();
+        self.free.cover(self.slots.len());
         let slabs: Vec<_> = self.slots.slabs_mut().collect();
         let per_worker = slabs.len().div_ceil(workers).max(1);
         let mut runs: Vec<SlabRun<'_>> = Vec::new();
@@ -56,6 +62,7 @@ impl Heap {
         }
         let context = SweepContext {
             marks: &self.marks,
+            free: self.free.atomic_bits(),
             properties: &self.properties,
             sparse_arrays: self.sparse_arrays.as_deref(),
         };
@@ -72,9 +79,12 @@ impl Heap {
         });
         let mut live = 0;
         let mut property_owners = Vec::new();
+        let mut deferred = Vec::new();
         for share in shares {
             live += share.live;
             property_owners.extend(share.property_owners);
+            self.free.add_inserted(share.freed);
+            deferred.extend(share.deferred);
             for (backing, references) in share.shared_backings {
                 for _ in 0..references {
                     // SAFETY: each count is a strong reference a freed array gave up through
@@ -83,20 +93,25 @@ impl Heap {
                 }
             }
         }
-        // The free list is the set of empty slots; it is rebuilt in index order, as the
-        // sequential sweep builds it, freeing on the way the dead cells workers left.
-        self.free.clear();
-        for index in 0..self.slots.len() {
-            if Self::marked(&self.marks, index) {
-                continue;
-            }
-            // SAFETY: `index` is below the arena length.
-            match unsafe { self.slots.get_unchecked_mut(index) }.cell.take() {
-                None => self.free.push(index as u32),
-                Some(cell) => self.free_cell(index, cell),
-            }
+        for index in deferred {
+            // SAFETY: workers report only occupied, in-bounds slots they left untouched.
+            let cell = unsafe { self.slots.get_unchecked_mut(index as usize) }
+                .cell
+                .take()
+                .unwrap();
+            self.free_cell(index as usize, cell);
         }
         (live, property_owners)
+    }
+}
+
+impl SweepShare {
+    fn free(&mut self, context: &SweepContext<'_>, index: usize) {
+        context.free[index / u64::BITS as usize].fetch_or(
+            1 << (index % u64::BITS as usize),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.freed += 1;
     }
 }
 
@@ -124,6 +139,7 @@ fn sweep_run(context: &SweepContext<'_>, run: SlabRun<'_>) -> SweepShare {
                 {
                     // Nothing to drop: the object owns no allocation and no arena storage.
                     std::mem::forget(slot.cell.take());
+                    share.free(context, index);
                 }
                 Some(Cell::Array { object })
                     if object.owns_no_allocation()
@@ -148,8 +164,9 @@ fn sweep_run(context: &SweepContext<'_>, run: SlabRun<'_>) -> SweepShare {
                             .entry(Rc::into_raw(elements))
                             .or_default() += 1;
                     }
+                    share.free(context, index);
                 }
-                Some(_) => {}
+                Some(_) => share.deferred.push(index as u32),
             }
         }
     }

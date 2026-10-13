@@ -94,3 +94,81 @@ impl SlotArena {
         self.slabs.len() * SLOTS_PER_SLAB
     }
 }
+
+/// The empty slots below the arena length, one bit each. Allocation takes the lowest set bit
+/// at or after a cursor that freeing moves back, so reuse runs forward through memory and the
+/// set costs a bit per slot instead of an index per free slot.
+#[derive(Default)]
+pub(super) struct FreeSlots {
+    bits: Vec<u64>,
+    /// No word before this one has a set bit.
+    cursor: usize,
+    count: usize,
+}
+
+impl FreeSlots {
+    pub(super) const fn len(&self) -> usize {
+        self.count
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.bits.clear();
+        self.cursor = 0;
+        self.count = 0;
+    }
+
+    /// Makes room for every slot below `slots`.
+    pub(super) fn cover(&mut self, slots: usize) {
+        let words = slots.div_ceil(u64::BITS as usize);
+        if self.bits.len() < words {
+            self.bits.resize(words, 0);
+        }
+    }
+
+    pub(super) fn insert(&mut self, index: usize) {
+        let word = index / u64::BITS as usize;
+        self.cover(index + 1);
+        let bit = 1 << (index % u64::BITS as usize);
+        debug_assert_eq!(self.bits[word] & bit, 0, "slot freed twice");
+        self.bits[word] |= bit;
+        self.count += 1;
+        self.cursor = self.cursor.min(word);
+    }
+
+    /// Records `count` slots whose bits were set through `atomic_bits`.
+    pub(super) fn add_inserted(&mut self, count: usize) {
+        self.count += count;
+        self.cursor = 0;
+    }
+
+    /// The bitmap as atomics, for workers that set bits in disjoint words.
+    pub(super) fn atomic_bits(&mut self) -> &[std::sync::atomic::AtomicU64] {
+        // SAFETY: `AtomicU64` has `u64`'s size and alignment; the exclusive borrow keeps any
+        // plain access out while the atomic view lives.
+        unsafe {
+            &*(std::ptr::from_mut::<[u64]>(self.bits.as_mut_slice())
+                as *const [std::sync::atomic::AtomicU64])
+        }
+    }
+
+    pub(super) fn pop(&mut self) -> Option<usize> {
+        if self.count == 0 {
+            return None;
+        }
+        while let Some(&word) = self.bits.get(self.cursor) {
+            if word != 0 {
+                let bit = word.trailing_zeros() as usize;
+                self.bits[self.cursor] = word & (word - 1);
+                self.count -= 1;
+                return Some(self.cursor * u64::BITS as usize + bit);
+            }
+            self.cursor += 1;
+        }
+        unreachable!("free slot count exceeds the set bits")
+    }
+
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn memory_bytes(&self) -> usize {
+        self.bits.capacity() * size_of::<u64>()
+    }
+}
