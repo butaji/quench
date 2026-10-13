@@ -82,6 +82,18 @@ pub(crate) struct Elaborator<'a> {
 /// disturb; a recurrence such as SHA-256's round function leads by more.
 const CRITICAL_LEAD: u32 = 4;
 
+/// Quench: whether `value` is rematerialized where it is used: a value the
+/// remat rules chose, or a clone of one (placed for another dominator
+/// subtree), which shares its best value.
+fn is_rematerialized(
+    remat_values: &FxHashSet<Value>,
+    value_to_best_value: &SecondaryMap<Value, BestEntry>,
+    value: Value,
+) -> bool {
+    let BestEntry(_, best) = value_to_best_value[value];
+    remat_values.contains(&value) || remat_values.contains(&best)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct BestEntry(Cost, Value);
 
@@ -432,6 +444,7 @@ impl<'a> Elaborator<'a> {
     /// `true` if a rewrite occurred.
     fn maybe_remat_arg(
         remat_values: &FxHashSet<Value>,
+        value_to_best_value: &SecondaryMap<Value, BestEntry>,
         func: &mut Function,
         remat_copies: &mut FxHashMap<(Block, Value), Value>,
         insert_block: Block,
@@ -445,7 +458,9 @@ impl<'a> Elaborator<'a> {
         // would affect, e.g., adds-with-one-constant-arg, which are
         // currently rematerialized. Right now we don't do this, to
         // avoid the need for another fixpoint loop here.
-        if arg.in_block != insert_block && remat_values.contains(&arg.value) {
+        if arg.in_block != insert_block
+            && is_rematerialized(remat_values, value_to_best_value, arg.value)
+        {
             let new_value = match remat_copies.entry((insert_block, arg.value)) {
                 HashEntry::Occupied(o) => *o.get(),
                 HashEntry::Vacant(v) => {
@@ -593,8 +608,41 @@ impl<'a> Elaborator<'a> {
                     // placing too much register pressure on the entire
                     // function. This is modeled with the `.saturating_sub(1)`
                     // as the default if there's otherwise no maximum.
+                    //
+                    // Quench: for a float operator, a rematerialized constant
+                    // is copied into whichever block the operator lands in
+                    // (`maybe_remat_arg` below), so where its first copy was
+                    // placed does not bound the hoist; counting it pinned a
+                    // loop-invariant float chain inside the loop its
+                    // constants were first elaborated in. Float registers
+                    // have the slack to hold such a chain across the loop;
+                    // integer chains stay where they are (hoisting them
+                    // measured slower through register pressure).
+                    let float_result = self
+                        .func
+                        .dfg
+                        .inst_results(inst)
+                        .first()
+                        .is_some_and(|&result| self.func.dfg.value_type(result).is_float());
                     let loop_hoist_level = arg_values
                         .iter()
+                        .filter(|value| {
+                            // Only a constant: a rematerialized operator
+                            // with operands of its own still needs them.
+                            let constant = self
+                                .func
+                                .dfg
+                                .value_def(value.value)
+                                .inst()
+                                .is_some_and(|inst| self.func.dfg.inst_values(inst).next().is_none());
+                            !(float_result
+                                && constant
+                                && is_rematerialized(
+                                    self.remat_values,
+                                    &self.value_to_best_value,
+                                    value.value,
+                                ))
+                        })
                         .map(|&value| {
                             // Find the outermost loop level at which
                             // the value's defining block *is not* a
@@ -670,6 +718,7 @@ impl<'a> Elaborator<'a> {
                     for arg_value in arg_values.iter_mut() {
                         if Self::maybe_remat_arg(
                             &self.remat_values,
+                            &self.value_to_best_value,
                             &mut self.func,
                             &mut self.remat_copies,
                             insert_block,
@@ -817,6 +866,7 @@ impl<'a> Elaborator<'a> {
                 let mut new_arg = self.elaborate_eclass_use(*arg, before);
                 Self::maybe_remat_arg(
                     &self.remat_values,
+                    &self.value_to_best_value,
                     &mut self.func,
                     &mut self.remat_copies,
                     block,
