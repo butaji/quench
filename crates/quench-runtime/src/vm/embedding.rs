@@ -267,9 +267,7 @@ impl<H: Host> Vm<H> {
             | B::SymbolObject
             | B::BigIntObject
             | B::BoxedPrimitive => {
-                if value.direct_object_index().is_none()
-                    && !matches!(cell, Some(Cell::Object(_)))
-                {
+                if value.direct_object_index().is_none() && !matches!(cell, Some(Cell::Object(_))) {
                     false
                 } else {
                     BOXED_MARKERS.iter().copied().any(|(candidate, marker)| {
@@ -443,7 +441,11 @@ impl<H: Host> Vm<H> {
         self.prevent_extensions(&program, object)
     }
 
-    pub(crate) fn embedding_has_property(&mut self, object: RootId, key: RootId) -> Result<bool, JsError> {
+    pub(crate) fn embedding_has_property(
+        &mut self,
+        object: RootId,
+        key: RootId,
+    ) -> Result<bool, JsError> {
         let object = self.embedding_value(object)?;
         let key = self.embedding_value(key)?;
         let program = self.embedding_program()?;
@@ -644,6 +646,26 @@ impl<H: Host> Vm<H> {
         self.to_string(&program, value)
     }
 
+    pub(crate) fn embedding_arithmetic(
+        &mut self,
+        operation: crate::NativeArithmetic,
+        left: RootId,
+        right: RootId,
+    ) -> Result<Value, JsError> {
+        use crate::NativeArithmetic;
+        use oxc_ast::ast::BinaryOperator;
+        let operation = match operation {
+            NativeArithmetic::Add => BinaryOperator::Addition,
+            NativeArithmetic::Multiply => BinaryOperator::Multiplication,
+            NativeArithmetic::Divide => BinaryOperator::Division,
+            NativeArithmetic::BitwiseAnd => BinaryOperator::BitwiseAnd,
+        };
+        let left = self.embedding_value(left)?;
+        let right = self.embedding_value(right)?;
+        let program = self.embedding_program()?;
+        self.binary(&program, operation as u32, left, right)
+    }
+
     pub(crate) fn embedding_numeric_update(
         &mut self,
         root: RootId,
@@ -812,6 +834,11 @@ impl<H: Host> Vm<H> {
 
     pub(crate) fn string_rooted(&mut self, text: &str) -> RootId {
         let value = self.heap.alloc(Cell::String(JsString::from_str(text)));
+        self.root(value)
+    }
+
+    pub(crate) fn bigint_rooted(&mut self, integer: i128) -> RootId {
+        let value = self.heap.alloc(Cell::BigInt(integer.to_string()));
         self.root(value)
     }
 
