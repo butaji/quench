@@ -578,10 +578,11 @@ impl<H: Host> Vm<H> {
         frame.context = context;
         frame.original_arguments.clear();
         frame.reflected_parameters = 0;
-        if context.callable().is_none() || function.has_restricted_legacy_caller_access() {
+        let plan = function.call_plan(atoms);
+        if context.callable().is_none() || !plan.legacy_reflection {
             return;
         }
-        let reflected = if function.reflects_live_parameters(atoms) {
+        let reflected = if plan.live_parameters {
             args.len().min(usize::from(function.params))
         } else {
             0

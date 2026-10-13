@@ -230,31 +230,30 @@ impl Frame {
     }
 
     /// `initialize_promoted_registers` for a plain activation, whose locals already start
-    /// undefined: its promoted entries, ordered by local, begin with every parameter.
+    /// undefined: its promoted entries, ordered by local, begin with every parameter, and
+    /// validation places promoted entry `i` in register `i`.
     #[inline(always)]
     fn place_plain_parameters(&mut self, function: &crate::bytecode::Function, args: &[Value]) {
         debug_assert_eq!(self.registers.len(), usize::from(function.registers));
-        let (parameters, variables) = function
-            .local_registers
-            .split_at(usize::from(function.params));
-        let supplied = parameters.len().min(args.len());
+        debug_assert!(
+            function
+                .local_registers
+                .iter()
+                .enumerate()
+                .all(|(index, entry)| usize::from(entry.register) == index)
+        );
+        let promoted = function.local_registers.len();
+        let supplied = usize::from(function.params).min(args.len());
         let registers = self.registers.as_mut_ptr();
-        for index in 0..supplied {
-            // SAFETY: `index` is below both lengths; residual validation bounds each promoted
-            // register by the register count the file was sized to.
-            unsafe {
-                let entry = parameters.get_unchecked(index);
-                debug_assert_eq!(usize::from(entry.local), index);
-                *registers.add(usize::from(entry.register)) = *args.get_unchecked(index);
+        // SAFETY: residual validation bounds every promoted register, hence `promoted`, by
+        // the register count the file was sized to, and `supplied` by `args.len()`.
+        unsafe {
+            for index in 0..supplied {
+                *registers.add(index) = *args.get_unchecked(index);
             }
-        }
-        for entry in parameters[supplied..].iter().chain(variables) {
-            // SAFETY: as above.
-            unsafe {
-                *self
-                    .registers
-                    .get_unchecked_mut(usize::from(entry.register)) = Value::UNDEFINED
-            };
+            for index in supplied..promoted {
+                *registers.add(index) = Value::UNDEFINED;
+            }
         }
     }
 
