@@ -2126,6 +2126,7 @@ fn make_readdir_async(
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
+    super::fs_watch_shared_vm::install(context, module)?;
     let opendir_promise;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
     set(context, module, "readFileSync", read_file)?;

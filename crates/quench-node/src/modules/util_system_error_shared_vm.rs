@@ -31,7 +31,7 @@ pub(crate) fn get_system_error_name(
     Ok(context.string_rooted(&system_error_name(number)))
 }
 
-pub(crate) fn system_error_name(number: f64) -> String {
+fn visit_system_errors(mut visit: impl FnMut(i32, &'static str)) {
     // libuv's non-errno errors have stable values across platforms.
     const UV_ERRORS: &[(i32, &str)] = &[
         (-4094, "UNKNOWN"),
@@ -51,11 +51,8 @@ pub(crate) fn system_error_name(number: f64) -> String {
         (-3013, "EAI_BADHINTS"),
         (-3014, "EAI_PROTOCOL"),
     ];
-    if let Some((_, name)) = UV_ERRORS
-        .iter()
-        .find(|(code, _)| f64::from(*code) == number)
-    {
-        return (*name).to_owned();
+    for &(number, name) in UV_ERRORS {
+        visit(number, name);
     }
     #[cfg(unix)]
     {
@@ -130,12 +127,12 @@ pub(crate) fn system_error_name(number: f64) -> String {
         #[cfg(target_os = "linux")]
         {
             let extra: &[(i32, &str)] = error_names![ENODATA, ENONET, EUNATCH, EREMOTEIO];
-            if let Some((_, name)) = extra.iter().find(|(code, _)| f64::from(*code) == number) {
-                return (*name).to_owned();
+            for &(number, name) in extra {
+                visit(number, name);
             }
         }
-        if let Some((_, name)) = names.iter().find(|(code, _)| f64::from(*code) == number) {
-            return (*name).to_owned();
+        for &(number, name) in names {
+            visit(number, name);
         }
     }
     #[cfg(not(unix))]
@@ -156,9 +153,40 @@ pub(crate) fn system_error_name(number: f64) -> String {
             (-110, "ETIMEDOUT"),
             (-32, "EPIPE"),
         ];
-        if let Some((_, name)) = names.iter().find(|(code, _)| f64::from(*code) == number) {
-            return (*name).to_owned();
+        for (number, name) in names {
+            visit(number, name);
         }
     }
-    format!("Unknown system error {number}")
+}
+
+pub(crate) fn system_error_name(number: f64) -> String {
+    let mut found = None;
+    visit_system_errors(|code, name| {
+        if found.is_none() && f64::from(code) == number {
+            found = Some(name);
+        }
+    });
+    found
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("Unknown system error {number}"))
+}
+
+pub(crate) fn uv_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    const UV_UDP_REUSEADDR: i32 = 4;
+    let binding = context.object_rooted()?;
+    let mut result = Ok(());
+    visit_system_errors(|number, name| {
+        if result.is_ok() {
+            let key = context.string_rooted(&format!("UV_{name}"));
+            let value = context.number(f64::from(number));
+            result = context
+                .define_data_property_rooted(binding, key, value, true, true, true)
+                .map(|_| ());
+        }
+    });
+    result?;
+    let key = context.string_rooted("UV_UDP_REUSEADDR");
+    let value = context.number(f64::from(UV_UDP_REUSEADDR));
+    context.define_data_property_rooted(binding, key, value, true, true, true)?;
+    Ok(binding)
 }

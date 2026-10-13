@@ -383,3 +383,35 @@ Net Server construction rejects non-nullish primitive options through the
 shared direct coded argument TypeError owner before registering a connection
 listener. Objects and listener functions remain accepted. Full Server option
 copying, getter ordering, and configuration policy are separate work.
+
+## Native Linux filesystem event watches
+
+`fs.watch` on Linux uses one native nonblocking CLOEXEC inotify descriptor,
+with libuv's event masks and event/name projection. Kernel watch groups retain
+ordered subscriber identities and the first path's basename. Callback delivery
+checks live ownership between subscribers and kernel records, so closure during
+a callback cannot deliver into a stopped watcher.
+
+Each handle has one reference bit and a named unstarted/watching/stopped
+lifecycle. An active referenced watch holds the loop; a stopped handle preserves
+its captured reference metadata without holding the loop. Weak handle metadata
+is pruned by the shared collector. Watcher roots transfer out of native ownership
+on stop; public close queues its event through the canonical next-tick queue.
+Abort listeners are detached during the close event. Cleanup and replacement VM
+bootstrap close the native descriptor and discard the prior watch state.
+
+Filename encodings use the shared Rust Buffer codec. Buffer filenames are
+intrinsic byte views; ordinary callbacks and ignore predicates preserve their
+original exceptions and roots across GC. Option copying follows inherited
+enumerable string properties and nonenumerable shadowing. Invalid encoding and
+ignore values use coded errors with the tested messages and field order.
+Function, RegExp, and simple wildcard ignore patterns are supported. Pattern
+sources are resolved in Rust at creation and run through captured intrinsic
+RegExp operations; RegExp instances retain their original lastIndex behavior.
+
+Mounted virtual paths retain their existing VFS routing. On other hosts this
+checkpoint preserves the prior fallback. Recursive watching, stat-based
+watchFile, async-iterator watching, advanced glob semantics, and complete
+handle-wrap/proxy/error details remain separate work. The internal test uv
+binding projects errno constants from the same platform table as
+util.getSystemErrorName.
