@@ -364,3 +364,22 @@ The oracle covers original byte contents, UTF-8 replacement, hex truncation,
 base64, GC, constructor/iterator poisoning, typed length getters, and subarray
 hooks. Complete Buffer pooling, argument policy, and remaining method behavior
 are separate work.
+
+## Fatal promise rejection diagnostics
+
+Throw and strict rejection modes share native exception routing. When exception
+handlers decline the rejection, the original exception remains rooted through
+fatal formatting, then its owned wrapper root is released. The fatal output
+uses the existing uncaught-error formatter and preserves the original Error
+stack. Primitive rejection wrappers use the intrinsic Error constructor,
+independently of guest replacement of the global constructor, and install code
+before name in the same field order as Node's wrapper.
+
+This covers fatal diagnostics and the tested primitive wrapper fields; complete
+wrapper subclass prototypes and remaining Error-like/proxy classification and
+formatter behavior require separate qualification.
+
+Net Server construction rejects non-nullish primitive options through the
+shared direct coded argument TypeError owner before registering a connection
+listener. Objects and listener functions remain accepted. Full Server option
+copying, getter ordering, and configuration policy are separate work.

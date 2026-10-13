@@ -4772,3 +4772,123 @@ console.log(JSON.stringify(result));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+#[test]
+fn fatal_promise_rejections_preserve_original_stack_and_intrinsic_wrapper() {
+    for mode in ["throw", "strict"] {
+        for primitive in [false, true] {
+            let source = if primitive {
+                "globalThis.Error=function(){throw 'constructor-poison'};Promise.reject('primitive-rejection-marker');"
+            } else {
+                "const error=new Error('original-rejection-marker');error.stack='Error: original-rejection-marker\\n    at preserved-origin';globalThis.Error=function(){throw 'constructor-poison'};Promise.reject(error);"
+            };
+            for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+                let mut command = Command::new(executable);
+                command.arg(format!("--unhandled-rejections={mode}")).args([
+                    "--no-warnings",
+                    "-e",
+                    source,
+                ]);
+                if executable != "node" {
+                    command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+                }
+                let observation = quench_node_test::case_process::observe_command(
+                    command,
+                    Duration::from_secs(10),
+                )
+                .unwrap();
+                assert!(!observation.timed_out);
+                assert_eq!(observation.exit_code, Some(1));
+                assert_eq!(observation.signal, None);
+                assert!(observation.stdout.is_empty());
+                let stderr = String::from_utf8_lossy(&observation.stderr);
+                let marker = if primitive {
+                    "primitive-rejection-marker"
+                } else {
+                    "original-rejection-marker"
+                };
+                assert!(stderr.contains(marker), "{executable}: {stderr}");
+                assert!(
+                    !stderr.contains("constructor-poison"),
+                    "{executable}: {stderr}"
+                );
+                if !primitive {
+                    assert!(
+                        stderr.contains("at preserved-origin"),
+                        "{executable}: {stderr}"
+                    );
+                }
+            }
+        }
+    }
+    const SOURCE: &str = r#"
+const OriginalError=Error,assert=require('assert');
+globalThis.Error=function(){throw 'constructor-poison'};
+process.on('uncaughtException',(error,origin)=>{
+ assert(error instanceof OriginalError);
+ assert.strictEqual(origin,'unhandledRejection');
+ console.log(JSON.stringify([error.name,error.code,error.message,Object.keys(error)]));
+});
+Promise.reject('primitive-rejection-marker');
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args([
+            "--unhandled-rejections=throw",
+            "--no-warnings",
+            "-e",
+            SOURCE,
+        ]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+#[test]
+fn net_server_constructor_rejects_primitive_options_with_direct_node_errors() {
+    const SOURCE: &str = r#"
+const net=require('net'),assert=require('assert'),result=[];
+for(const value of ['path','',0,1,NaN,true,false,Symbol('options'),1n]) {
+ for(const invoke of [value=>net.createServer(value),value=>new net.Server(value),value=>net.Server(value)]) {
+  try {invoke(value);assert.fail('expected options rejection')}catch(error){
+   assert(error instanceof TypeError);assert.strictEqual(error.code,'ERR_INVALID_ARG_TYPE');
+   result.push([error.name,error.code,error.message,String(error),Object.keys(error),Object.hasOwn(Object.getPrototypeOf(error),'constructor')]);
+  }
+ }
+}
+for(const value of [undefined,null,{},[],function connection(){}]) {
+ const server=net.createServer(value);assert(server instanceof net.Server);assert.strictEqual(server._handle,null);
+}
+console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
