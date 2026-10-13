@@ -490,12 +490,17 @@ fn apply(
     Ok(context.string_rooted(&result))
 }
 
-fn path_matches_glob(path: &str, pattern: &str, windows: bool) -> bool {
+pub(super) fn path_matches_glob(path: &str, pattern: &str, windows: bool) -> bool {
     let (path, pattern) = if windows {
         (path.replace('\\', "/"), pattern.replace('\\', "/"))
     } else {
         (path.to_owned(), pattern.to_owned())
     };
+    let source = glob_regex_source(&pattern);
+    regex::Regex::new(&source).is_ok_and(|matcher| matcher.is_match(&path))
+}
+
+pub(super) fn glob_regex_source(pattern: &str) -> String {
     let chars: Vec<char> = pattern.chars().collect();
     let mut regex = String::from("^");
     let mut index = 0;
@@ -539,7 +544,7 @@ fn path_matches_glob(path: &str, pattern: &str, windows: bool) -> bool {
         index += 1;
     }
     regex.push('$');
-    regex::Regex::new(&regex).is_ok_and(|matcher| matcher.is_match(&path))
+    regex
 }
 
 fn parse_flavor(name: String) -> Option<Flavor> {

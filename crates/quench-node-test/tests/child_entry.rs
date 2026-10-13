@@ -4892,3 +4892,187 @@ console.log(JSON.stringify(result));
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
 }
+#[test]
+fn native_fs_watch_matches_node_events_close_references_and_abort_lifecycle() {
+    const SOURCE: &str = r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-watch-oracle-')),file=path.join(dir,'watched'),result=[];
+fs.writeFileSync(file,'before');
+const a=fs.watch(file),b=fs.watch(file,{encoding:'buffer'}),ha=a._handle;
+result.push(['meta',a.constructor.name,Object.keys(a),Object.keys(ha),['close','ref','unref'].map(k=>[a[k].name,a[k].length,Object.hasOwn(a[k],'prototype')])]);
+assert.strictEqual(a.ref(),a);assert.strictEqual(a.unref(),a);assert.strictEqual(ha.hasRef(),false);a.ref();assert.strictEqual(ha.hasRef(),true);
+let seenA=false,seenB=false;
+a.on('change',(kind,name)=>{if(seenA)return;seenA=true;result.push(['a',kind,name]);a.close();assert.strictEqual(a._handle,null);assert.strictEqual(ha.hasRef(),true);assert.strictEqual(a.close(),undefined);});
+b.on('change',(kind,name)=>{if(seenB)return;seenB=true;assert(Buffer.isBuffer(name));result.push(['b',kind,name.toString()]);b.close();});
+let closed=0;
+for(const watcher of [a,b])watcher.on('close',()=>{closed++;if(closed===2){assert(seenA&&seenB);const ac=new AbortController();const aborted=fs.watch(file,{signal:ac.signal});aborted.on('close',()=>{result.push(['abort',aborted._handle]);const pre=fs.watch(file,{signal:AbortSignal.abort()});pre.on('close',()=>{result.push(['preabort',pre._handle]);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));});});ac.abort();}});
+fs.writeFileSync(file,'after');
+setTimeout(()=>{assert.strictEqual(closed,2);},100);
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn native_fs_watch_missing_path_and_unreferenced_exit_match_node() {
+    const SOURCE: &str = r#"
+const fs=require('fs'),cp=require('child_process'),path=require('path'),os=require('os'),assert=require('assert'),result=[];
+try{fs.watch('quench-watch-definitely-missing');assert.fail('expected error')}catch(error){result.push([error.message,error.errno,error.code,error.syscall,error.path,error.filename,Object.keys(error)]);}
+const dormant=fs.watch('quench-watch-definitely-missing',{throwIfNoEntry:false});assert.strictEqual(dormant._handle.initialized,false);assert.strictEqual(dormant.close(),undefined);assert(dormant._handle);dormant.unref();
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-watch-exit-')),file=path.join(dir,'watched');fs.writeFileSync(file,'data');
+for(const action of ['options','unref','restore']){
+ const source='const fs=require("fs");const watcher=fs.watch('+JSON.stringify(file)+','+(action==='options'?'{persistent:false}':'{}')+');'+(action==='options'?'':'watcher.unref();')+(action==='restore'?'watcher.ref();':'')+'console.log("ready");';
+ const child=cp.spawnSync(process.execPath,['-e',source],{encoding:'utf8',timeout:1000});assert.strictEqual(child.stdout,'ready\n');
+ if(action==='restore'){assert.strictEqual(child.error.code,'ETIMEDOUT');result.push([action,child.error.code]);}else{assert.strictEqual(child.status,0);assert.strictEqual(child.error,undefined);result.push([action,child.status]);}
+}
+fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+#[test]
+fn native_fs_watch_ignore_validation_and_filters_match_node() {
+    const SOURCE: &str = r#"
+const fs=require('fs'),assert=require('assert'),path=require('path'),os=require('os'),result=[];
+for(const ignore of [123,'',[123],['']]){
+ try{fs.watch('.',{ignore});assert.fail('expected rejection')}catch(error){result.push([error.name,error.code,error.message,Object.keys(error)]);}
+}
+for(const encoding of [true,1,Symbol('encoding'),'invalid']){
+ try{fs.watch('.',{encoding});assert.fail('expected rejection')}catch(error){result.push([error.name,error.code,error.message]);}
+}
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-watch-ignore-'));
+const trace=[],re=/\.tmp$/;re.exec=()=>{throw new Error('public exec consulted')};
+const watcher=fs.watch(dir,{ignore:['*.log',re,function(name){trace.push([Array.isArray(this),this.length]);return name.startsWith('.')} ]});
+watcher.on('change',(kind,name)=>{
+ assert.strictEqual(name,'keep.txt');watcher.close();
+});
+watcher.on('close',()=>{assert(trace.length>0);assert(trace.every(row=>row[0]&&row[1]===3));result.push(['kept',trace[trace.length-1]]);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));});
+for(const name of ['ignored.log','ignored.tmp','.hidden','keep.txt'])fs.writeFileSync(path.join(dir,name),'data');
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+#[test]
+fn native_fs_watch_inherited_options_and_encoding_getters_match_node() {
+    const SOURCE: &str = r#"
+const fs=require('fs'),assert=require('assert'),path=require('path'),os=require('os'),result=[];
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-watch-options-')),file=path.join(dir,'watched');fs.writeFileSync(file,'data');
+for(const encoding of ['utf8','buffer']){
+ const trace=[],proto={get encoding(){trace.push('encoding');return encoding},get signal(){trace.push('signal');return undefined},persistent:false};
+ const options=Object.create(proto);const marker={};Object.defineProperty(options,Symbol('ignored'),{enumerable:true,get(){throw marker}});
+ const watcher=fs.watch(file,options);result.push([encoding,trace,watcher._handle.hasRef()]);watcher.close();
+}
+for(const encoding of ['',false,0,null]){const watcher=fs.watch(file,{encoding,persistent:false});watcher.close();}
+const options=Object.create({persistent:false});Object.defineProperty(options,'persistent',{value:false,enumerable:false});const watcher=fs.watch(file,options);result.push(['shadow',watcher._handle.hasRef()]);watcher.close();
+fs.rmSync(dir,{recursive:true,force:true});process.nextTick(()=>console.log(JSON.stringify(result)));
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+#[test]
+fn native_fs_watch_keeps_roots_across_gc_and_routes_original_callback_errors() {
+    const SOURCE: &str = r#"
+const fs=require('fs'),assert=require('assert'),path=require('path'),os=require('os');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-watch-errors-')),file=path.join(dir,'watched');fs.writeFileSync(file,'before');
+const marker={},result=[];
+let watcher=fs.watch(file),handle=watcher._handle;
+watcher.on('change',()=>{globalThis.gc();throw marker});
+process.once('uncaughtException',(reason,origin)=>{
+ assert.strictEqual(reason,marker);assert.strictEqual(origin,'uncaughtException');watcher.close();
+ result.push(['listener',handle.hasRef()]);
+ watcher.on('close',()=>{
+  globalThis.gc();const filterMarker={};const filtered=fs.watch(file,{ignore(){globalThis.gc();throw filterMarker}});
+  process.once('uncaughtException',(reason,origin)=>{assert.strictEqual(reason,filterMarker);assert.strictEqual(origin,'uncaughtException');filtered.close();filtered.on('close',()=>{fs.rmSync(dir,{recursive:true,force:true});result.push(['filter']);console.log(JSON.stringify(result));});});
+  fs.writeFileSync(file,'filter');
+ });
+});
+globalThis.gc();fs.writeFileSync(file,'after');
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--expose-gc", "-e", SOURCE]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(
+            observation.exit_code,
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&observation.stderr)
+        );
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
