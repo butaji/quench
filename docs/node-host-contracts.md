@@ -410,8 +410,38 @@ sources are resolved in Rust at creation and run through captured intrinsic
 RegExp operations; RegExp instances retain their original lastIndex behavior.
 
 Mounted virtual paths retain their existing VFS routing. On other hosts this
-checkpoint preserves the prior fallback. Recursive watching, stat-based
-watchFile, async-iterator watching, advanced glob semantics, and complete
+checkpoint preserves the prior fallback. Recursive watching,
+async-iterator watching, advanced glob semantics, and complete
 handle-wrap/proxy/error details remain separate work. The internal test uv
 binding projects errno constants from the same platform table as
 util.getSystemErrorName.
+
+## Native filesystem stat polling
+
+`fs.watchFile` keeps an absolute lexical path cache separate from active polling
+ownership. Repeated subscriptions return the cached watcher and increment its
+listener reference limit. Public stop releases the polling root and queues one
+`stop` event through the shared next-tick queue; it does not remove the path
+cache. `unwatchFile` removes that cache entry when no change listeners remain.
+Reference counts control loop lifetime independently of cache size. The initial
+stat request remains work even when the watcher is unreferenced, matching Node;
+later unreferenced polls run only while other referenced work holds the loop.
+
+Polling distinguishes initial, present, and missing states. The initial existing
+file establishes a baseline, an initial missing file reports zero stats, and
+error transitions preserve the most recent successful metadata. The comparison
+uses libuv's stat fields rather than atime-only changes. Zero interval means one
+millisecond; interval validation uses the unsigned 32-bit stat-poll domain,
+independently of ordinary Timeout coercion. Options are copied from enumerable
+own properties, including Symbols, before listener validation.
+
+One exact integer metadata snapshot projects the ordinary Number stat view and
+the watch's bigint view. The latter constructs integer primitives directly,
+preserving nanosecond precision. Stat presentation owns constructor facades,
+mode methods, lazy dates, and partial timestamp Symbols; date rounding calls
+the shared VM operation. Loaded internal fs utilities retain their exported
+BigIntStats identity. The tested contract includes constructor reflection,
+original coercion/callback exceptions, GC, stop ordering, missing/created/deleted
+files, and reference lifecycle. Complete internal handle and Symbol mutation
+behavior, Temporal fields, all ordinary stat prototypes and bigint decorators,
+recursive watches, and async iterator watches remain separate work.

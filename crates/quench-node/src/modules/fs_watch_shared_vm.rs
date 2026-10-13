@@ -430,9 +430,16 @@ pub(crate) fn ignore_regexp(
     Ok(context.boolean(!nullish(context, result)))
 }
 
-fn path(
+pub(super) fn path(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
+) -> Result<(PathBuf, RootId), RootedError> {
+    path_argument(context, value, "filename")
+}
+pub(super) fn path_argument(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    name: &str,
 ) -> Result<(PathBuf, RootId), RootedError> {
     let bytes = if let Some(text) = context.string_text(value)? {
         text.into_bytes()
@@ -444,25 +451,25 @@ fn path(
             return Err(super::util_shared_vm::argument_type_error_with_expected(
                 context,
                 value,
-                "filename",
+                name,
                 "of type string or an instance of Buffer or URL",
             )?);
         }
         let undefined = context.undefined();
         let filename = super::url_shared_vm::file_url_to_path(context, undefined, &[value])?;
-        return path(context, filename);
+        return path_argument(context, filename, name);
     } else {
         return Err(super::util_shared_vm::argument_type_error_with_expected(
             context,
             value,
-            "filename",
+            name,
             "of type string or an instance of Buffer or URL",
         )?);
     };
     if bytes.contains(&0) {
-        let error = context.type_error_rooted(
-            "The argument 'filename' must be a string, Uint8Array, or URL without null bytes",
-        )?;
+        let error = context.type_error_rooted(&format!(
+            "The argument '{name}' must be a string, Uint8Array, or URL without null bytes",
+        ))?;
         super::node_errors_shared_vm::decorate_type_error(context, error, "ERR_INVALID_ARG_VALUE")?;
         return Err(context.throw(error));
     }
