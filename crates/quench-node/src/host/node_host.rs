@@ -51,6 +51,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) async_hooks: crate::modules::async_hooks_state::SharedAsyncHooksState,
     pub(crate) scheduler: crate::modules::shared_event_loop::SharedEventLoop,
     pub(crate) fs: crate::modules::fs_state::FsState,
+    pub(crate) fs_watch: crate::modules::fs_watch_shared_vm::State,
     pub(crate) cwd: crate::modules::process_state::ProcessCwd,
     pub(crate) module_cache: std::collections::HashMap<String, quench_runtime::RootId>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
@@ -159,6 +160,7 @@ impl SharedNodeState {
         self.url_search_params_constructor = None;
         self.timer_handle_api = None;
         self.net_socket_constructor = None;
+        self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
     }
 
     fn new(
@@ -174,6 +176,7 @@ impl SharedNodeState {
             ),
             scheduler: crate::modules::shared_event_loop::SharedEventLoop::new(),
             fs,
+            fs_watch: crate::modules::fs_watch_shared_vm::State::default(),
             cwd,
             module_cache: std::collections::HashMap::new(),
             primordials_module: None,

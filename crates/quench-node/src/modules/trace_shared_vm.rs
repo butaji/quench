@@ -360,6 +360,7 @@ pub(crate) fn internal_binding(
     let name = context.to_string(args.first().copied().unwrap_or(absent))?;
     let binding = context.object_rooted()?;
     match name.as_str() {
+        "uv" => return super::util_system_error_shared_vm::uv_binding(context),
         "trace_events" => {
             for (name, operation) in [
                 ("getCategoryEnabledBuffer", "traceCategoryBuffer"),
