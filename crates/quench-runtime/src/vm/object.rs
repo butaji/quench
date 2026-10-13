@@ -426,7 +426,11 @@ impl<H: Host> Vm<H> {
     /// `this` through the activation's lexical-this binding, for frames whose own `this` is
     /// not authoritative.
     #[inline(never)]
-    fn resolved_this_binding(&mut self, p: &ResidualProgram, frame: usize) -> Result<Value, JsError> {
+    fn resolved_this_binding(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+    ) -> Result<Value, JsError> {
         let atom = self.runtime_atoms.lexical_this;
         let value = self
             .dynamic_binding(frame, atom)
@@ -667,7 +671,8 @@ impl<H: Host> Vm<H> {
             });
         }
         if let Some(hit) = self.cached_ordinary_holder_field_value(index, receiver) {
-            self.profile.field_cache_hit(usize::from(hit.tier), hit.depth);
+            self.profile
+                .field_cache_hit(usize::from(hit.tier), hit.depth);
             return FieldCacheProbe::Hit(hit.value);
         }
         FieldCacheProbe::OrdinaryMiss
@@ -828,7 +833,7 @@ impl<H: Host> Vm<H> {
         if cache.holder == NO_FIELD_HOLDER || cache.receiver != receiver.shape() {
             return None;
         }
-        let Some(Cell::Object(holder)) = self.heap.get(receiver.proto) else {
+        let Some(Cell::Object(holder)) = self.heap.get(receiver.proto()) else {
             return None;
         };
         if holder.is_module_namespace() || cache.holder != holder.shape() {
@@ -854,7 +859,7 @@ impl<H: Host> Vm<H> {
         receiver: &Object,
         atom: Atom,
     ) -> Option<FieldCacheHit> {
-        let holder_value = receiver.proto;
+        let holder_value = receiver.proto();
         let holder_cell = self.heap.get(holder_value)?;
         let holder = self.shape_property_lookup_cell(holder_cell, atom)?;
         // SAFETY: the active program's layout reserves every compiler-emitted site.
@@ -932,7 +937,8 @@ impl<H: Host> Vm<H> {
             return self.get_property(p, object, atom);
         };
         if let Some(hit) = self.cached_inherited_field_value(site, receiver) {
-            self.profile.field_cache_hit(usize::from(hit.tier), hit.depth);
+            self.profile
+                .field_cache_hit(usize::from(hit.tier), hit.depth);
             return Ok(hit.value);
         }
         if self
@@ -980,12 +986,16 @@ impl<H: Host> Vm<H> {
     /// each prototype up to the holder still has its recorded shape. Consulted on the miss
     /// path, so the inline cache tiers keep their shape.
     #[inline(always)]
-    fn cached_inherited_field_value(&self, site: usize, receiver: &Object) -> Option<FieldCacheHit> {
+    fn cached_inherited_field_value(
+        &self,
+        site: usize,
+        receiver: &Object,
+    ) -> Option<FieldCacheHit> {
         let cache = self.inherited_field_caches.get(&site)?;
         if cache.receiver != receiver.shape() {
             return None;
         }
-        let mut prototype = receiver.proto;
+        let mut prototype = receiver.proto();
         let mut holder = None;
         for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
             let Some(Cell::Object(data)) = self.heap.get(prototype) else {
@@ -994,11 +1004,14 @@ impl<H: Host> Vm<H> {
             if data.shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
                 return None;
             }
-            prototype = data.proto;
+            prototype = data.proto();
             holder = Some(data);
         }
         // SAFETY: the holder's shape was recorded together with this data slot.
-        let value = unsafe { self.heap.property_get_unchecked(holder?, usize::from(cache.slot)) };
+        let value = unsafe {
+            self.heap
+                .property_get_unchecked(holder?, usize::from(cache.slot))
+        };
         Some(FieldCacheHit {
             value,
             tier: 0,
@@ -1021,7 +1034,7 @@ impl<H: Host> Vm<H> {
             depth: 0,
             slot: 0,
         };
-        let mut prototype = object.proto;
+        let mut prototype = object.proto();
         for depth in 0..INHERITED_FIELD_CACHE_MAX_DEPTH {
             let Some(Cell::Object(data)) = self.heap.get(prototype) else {
                 return None;
@@ -1048,7 +1061,7 @@ impl<H: Host> Vm<H> {
                 cache.slot = slot as u16;
                 return Some((cache, self.heap.property_get(data, slot)?));
             }
-            prototype = data.proto;
+            prototype = data.proto();
         }
         None
     }
@@ -1060,7 +1073,7 @@ impl<H: Host> Vm<H> {
         receiver_value: Value,
         atom: Atom,
     ) -> Option<(u32, usize, Value)> {
-        let holder_value = self.object_data(receiver_value)?.proto;
+        let holder_value = self.object_data(receiver_value)?.proto();
         let holder_cell = self.heap.get(holder_value)?;
         let holder = self.shape_property_lookup_cell(holder_cell, atom)?;
         let holder_shape = holder.shape();
@@ -1126,8 +1139,7 @@ impl<H: Host> Vm<H> {
         } else {
             None
         };
-        if let Some((target, handler)) = self.proxy_parts(target)
-        {
+        if let Some((target, handler)) = self.proxy_parts(target) {
             return self.proxy_set(
                 p,
                 target,
@@ -1172,8 +1184,7 @@ impl<H: Host> Vm<H> {
                     super::object_descriptors::TypedArrayIndexKey::NotCanonical => {}
                 }
             }
-            if let Some((target, handler)) = self.proxy_parts(current)
-            {
+            if let Some((target, handler)) = self.proxy_parts(current) {
                 return self.proxy_set(
                     p,
                     target,
@@ -1192,7 +1203,7 @@ impl<H: Host> Vm<H> {
             let Some(data) = self.object_data(current) else {
                 break;
             };
-            current = data.proto;
+            current = data.proto();
             if current.is_null() {
                 break;
             }
@@ -1483,7 +1494,10 @@ impl<H: Host> Vm<H> {
             return false;
         };
         // SAFETY: a matching immutable shape proves the cached slot layout.
-        unsafe { self.heap.property_set_unchecked(object, slot as usize, value) };
+        unsafe {
+            self.heap
+                .property_set_unchecked(object, slot as usize, value)
+        };
         self.profile.field_cache_hit(0, 0);
         true
     }
@@ -1509,7 +1523,7 @@ impl<H: Host> Vm<H> {
             && !data.is_arguments_object()
         {
             let site = self.field_cache_index(site);
-            let (shape, proto, extensible) = (data.shape(), data.proto, data.is_extensible());
+            let (shape, proto, extensible) = (data.shape(), data.proto(), data.is_extensible());
             if self.try_cached_field_store(object, atom, shape, value, site)
                 || (extensible
                     && self.field_cache_atom_eligible(atom)
@@ -1747,7 +1761,7 @@ impl<H: Host> Vm<H> {
     /// The prototype shapes a cached add of `atom` to `object` must find again, as the depth and
     /// shape fields of a `FieldAddCache`.
     fn field_add_prototype_guard(&self, object: Value, atom: Atom) -> Option<FieldAddCache> {
-        let mut prototype = self.object_data(object)?.proto;
+        let mut prototype = self.object_data(object)?.proto();
         let key = PropertyKey::string(atom);
         let mut guard = FieldAddCache::EMPTY;
         while !prototype.is_null() {
@@ -1770,7 +1784,7 @@ impl<H: Host> Vm<H> {
             }
             guard.prototype_shapes[depth] = shape;
             guard.prototype_depth += 1;
-            prototype = data.proto;
+            prototype = data.proto();
         }
         Some(guard)
     }
@@ -1787,7 +1801,7 @@ impl<H: Host> Vm<H> {
             {
                 return false;
             }
-            prototype = data.proto;
+            prototype = data.proto();
         }
         prototype.is_null()
     }
@@ -1872,29 +1886,29 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn prototype_chain_contains_proxy(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto);
+        let mut current = self.object_data(object).map(|data| data.proto());
         while let Some(value) = current.filter(|value| !value.is_null()) {
             if matches!(self.heap.get(value), Some(Cell::Proxy { .. })) {
                 return true;
             }
-            current = self.object_data(value).map(|data| data.proto);
+            current = self.object_data(value).map(|data| data.proto());
         }
         false
     }
 
     pub(super) fn prototype_chain_has_typed_array(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto);
+        let mut current = self.object_data(object).map(|data| data.proto());
         while let Some(value) = current.filter(|value| !value.is_null()) {
             if matches!(self.heap.get(value), Some(Cell::TypedArray { .. })) {
                 return true;
             }
-            current = self.object_data(value).map(|data| data.proto);
+            current = self.object_data(value).map(|data| data.proto());
         }
         false
     }
 
     pub(super) fn prototype_chain_has_indexed_set_exotic(&self, object: Value) -> bool {
-        let mut current = self.object_data(object).map(|data| data.proto);
+        let mut current = self.object_data(object).map(|data| data.proto());
         while let Some(value) = current.filter(|value| !value.is_null()) {
             if matches!(
                 self.heap.get(value),
@@ -1902,7 +1916,7 @@ impl<H: Host> Vm<H> {
             ) {
                 return true;
             }
-            current = self.object_data(value).map(|data| data.proto);
+            current = self.object_data(value).map(|data| data.proto());
         }
         false
     }
@@ -1927,7 +1941,7 @@ impl<H: Host> Vm<H> {
             if self.own_property(object, atom).is_some() {
                 return None;
             }
-            object = self.object_data(object)?.proto;
+            object = self.object_data(object)?.proto();
             if object.is_null() {
                 return None;
             }
@@ -1935,12 +1949,12 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn inherited_write_blocked(&self, object: Value, atom: Atom) -> bool {
-        let mut object = self.object_data(object).map(|data| data.proto);
+        let mut object = self.object_data(object).map(|data| data.proto());
         while let Some(current) = object.filter(|value| !value.is_null()) {
             if let Some(attributes) = self.property_attributes(current, PropertyKey::string(atom)) {
                 return !attributes.accessor && !attributes.writable;
             }
-            object = self.object_data(current).map(|data| data.proto);
+            object = self.object_data(current).map(|data| data.proto());
         }
         false
     }

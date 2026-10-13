@@ -56,13 +56,9 @@ pub(super) fn to_time_with_options<H: Host>(
         let _ = vm.plain_date_overflow(p, options)?;
         return Ok(time);
     }
-    if let Some(Cell::TemporalZonedDateTime {
-        epoch_nanoseconds,
-        time_zone,
-        ..
-    }) = vm.heap.get(value)
-    {
-        let (epoch_nanoseconds, time_zone) = (**epoch_nanoseconds, time_zone.to_string());
+    if let Some(Cell::TemporalZonedDateTime { instant, .. }) = vm.heap.get(value) {
+        let (epoch_nanoseconds, time_zone) =
+            (instant.epoch_nanoseconds, instant.time_zone.to_string());
         validate_overflow_options_type(vm, p, options)?;
         let local =
             super::temporal_zoned_date_time::zoned_date_time_fields(epoch_nanoseconds, &time_zone)

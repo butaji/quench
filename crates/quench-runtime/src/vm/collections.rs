@@ -132,7 +132,7 @@ impl<H: Host> Vm<H> {
             },
             Native::WeakSet => Cell::WeakSet {
                 object: Box::new(Self::empty_object(prototype)),
-                entries: Vec::new(),
+                entries: Box::default(),
             },
             _ => return Err(JsError("invalid weak collection constructor".into())),
         };
@@ -627,7 +627,7 @@ impl<H: Host> Vm<H> {
             Native::Map => {
                 let map = self.heap.alloc(Cell::Map {
                     object: Box::new(Self::empty_object(prototype)),
-                    entries: Vec::new(),
+                    entries: Box::default(),
                 });
                 let Some(iterable) = args
                     .first()
@@ -678,7 +678,7 @@ impl<H: Host> Vm<H> {
             Native::Set => {
                 let set = self.heap.alloc(Cell::Set {
                     object: Box::new(Self::empty_object(prototype)),
-                    entries: Vec::new(),
+                    entries: Box::default(),
                 });
                 let Some(iterable) = args
                     .first()

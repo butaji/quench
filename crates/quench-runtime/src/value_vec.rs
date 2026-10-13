@@ -22,7 +22,22 @@ pub(crate) struct ValueVec {
     auxiliary: u32,
 }
 
+/// `ValueVec::start` bits that hold the storage position: an arena offset, a dictionary id,
+/// or one of the empty and inline markers.
+pub(crate) const VALUE_VEC_START_BITS: u32 = START_MASK;
+/// `ValueVec::start` bits that hold the object's integrity level.
+pub(crate) const VALUE_VEC_INTEGRITY_BITS: u32 = NON_EXTENSIBLE | FROZEN;
+
 impl ValueVec {
+    /// The two words, for an owner that stores them apart.
+    pub(crate) const fn into_parts(self) -> (u32, u32) {
+        (self.start, self.auxiliary)
+    }
+
+    pub(crate) const fn from_parts(start: u32, auxiliary: u32) -> Self {
+        Self { start, auxiliary }
+    }
+
     pub(crate) const fn new() -> Self {
         Self {
             start: EMPTY_START,

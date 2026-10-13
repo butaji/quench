@@ -274,7 +274,7 @@ impl MemoryProfile {
                 allocated: self.object_allocated_slots[index],
                 peak: self.object_peak_slots[index],
                 death: None,
-                checkpoint: Some(heap.properties.len(object.properties) as u32),
+                checkpoint: Some(heap.properties.len(object.properties()) as u32),
             };
             *rows.entry(lifetime).or_default() += 1;
         }
@@ -363,7 +363,7 @@ impl Heap {
                 .or_insert(0usize) += 1;
             if let Some(object) = cell.object() {
                 object_headers += 1;
-                let property_width = self.properties.len(object.properties);
+                let property_width = self.properties.len(object.properties());
                 object_property_counts_by_width.resize(
                     object_property_counts_by_width
                         .len()
@@ -376,8 +376,8 @@ impl Heap {
                 } else {
                     embedded_object_headers += 1;
                 }
-                if !object.properties.has_inline_property_storage() {
-                    let (used, capacity) = self.properties.vector_stats(object.properties);
+                if !object.properties().has_inline_property_storage() {
+                    let (used, capacity) = self.properties.vector_stats(object.properties());
                     live_property_used_values += used;
                     live_property_capacity_values += capacity;
                     live_property_used_values_by_width.resize(
@@ -533,7 +533,7 @@ impl Heap {
             .iter()
             .filter_map(|slot| slot.cell.as_ref()?.object())
             .fold((0, 0), |(len, capacity), object| {
-                let stats = self.properties.vector_stats(object.properties);
+                let stats = self.properties.vector_stats(object.properties());
                 (len + stats.0, capacity + stats.1)
             })
     }
@@ -542,7 +542,9 @@ impl Heap {
         self.slots
             .iter()
             .filter_map(|slot| match slot.cell.as_ref()? {
-                Cell::Array { object } => Some((object.elements().len(), object.elements().capacity())),
+                Cell::Array { object } => {
+                    Some((object.elements().len(), object.elements().capacity()))
+                }
                 _ => None,
             })
             .fold((0, 0), |(len, capacity), value| {
@@ -580,19 +582,15 @@ fn cell_bytes(cell: &Cell) -> usize {
                 Heap::cell_payload_bytes(cell)
             }
             Cell::TemporalZonedDateTime {
-                time_zone,
-                calendar,
-                ..
-            } => time_zone.capacity() + calendar.capacity(),
+                instant, calendar, ..
+            } => instant.time_zone.capacity() + calendar.capacity(),
             Cell::TemporalPlainDate { calendar, .. } => calendar.capacity(),
             Cell::TemporalPlainDateTime { calendar, .. } => calendar.capacity(),
             Cell::TemporalPlainMonthDay { calendar, .. }
             | Cell::TemporalPlainYearMonth { calendar, .. } => calendar.capacity(),
             Cell::WasmElements(elements) => elements.capacity() * size_of::<Value>(),
-            Cell::WasmTable { elements, .. }
-            | Cell::WasmGc {
-                fields: elements, ..
-            } => elements.capacity() * size_of::<Value>(),
+            Cell::WasmTable { elements, .. } => elements.capacity() * size_of::<Value>(),
+            Cell::WasmGc { fields, .. } => fields.capacity() * size_of::<Value>(),
             Cell::Array { object } => object.elements().capacity() * size_of::<Value>(),
             Cell::ArrayBuffer { bytes, .. } => bytes.capacity(),
             Cell::WasmMemory { bytes, .. } => bytes.capacity(),

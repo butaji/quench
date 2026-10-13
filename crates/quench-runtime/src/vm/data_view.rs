@@ -165,9 +165,11 @@ impl<H: Host> Vm<H> {
             .copied()
             .unwrap_or(self.data_view_proto);
         Ok(self.heap.alloc(Cell::DataView {
-            object: Box::new(Self::empty_object(prototype)),
+            object: Box::new(crate::heap::BufferViewObject {
+                object: Self::empty_object(prototype),
+                offset: offset,
+            }),
             buffer,
-            offset,
             length,
             length_tracking: self.array_buffer_resizable(buffer) && requested_length.is_none(),
         }))
@@ -193,17 +195,17 @@ impl<H: Host> Vm<H> {
         match self.heap.get(object) {
             Some(Cell::DataView {
                 buffer,
-                offset,
+                object,
                 length,
                 length_tracking,
                 ..
             }) => Some((
                 *buffer,
-                *offset,
+                object.offset,
                 if *length_tracking {
                     match self.heap.get(*buffer) {
                         Some(Cell::ArrayBuffer { bytes, .. }) => {
-                            bytes.len().saturating_sub(*offset)
+                            bytes.len().saturating_sub(object.offset)
                         }
                         _ => 0,
                     }

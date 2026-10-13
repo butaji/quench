@@ -226,9 +226,10 @@ impl<H: Host> Vm<H> {
                 .insert((self.realm.globals, native), prototype);
             let constructor = self.native_value(native);
             self.set_builtin_function_name(constructor, name)?;
+            let function = self.native_value(Native::Function);
             self.object_data_mut(constructor)
                 .expect("function constructor")
-                .proto = self.native_value(Native::Function);
+                .set_proto(function);
             self.set_builtin_value_named(constructor, "prototype", prototype)?;
             let prototype_atom = self.prototype_atom();
             self.set_property_attributes(
@@ -719,7 +720,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         self.object_data_mut(prototype)
             .expect("async iterator prototype is an object")
-            .proto = parent;
+            .set_proto(parent);
         for (symbol_name, native, function_name) in [
             (
                 "asyncIterator",
@@ -842,6 +843,7 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: Box::new(crate::heap::IteratorExt {
+                position_high: 0,
                 next_method: None,
                 helper: None,
                 helper_running: false,
@@ -890,6 +892,7 @@ impl<H: Host> Vm<H> {
                 index: 0,
                 done: false,
                 ext: Box::new(crate::heap::IteratorExt {
+                    position_high: 0,
                     next_method: None,
                     helper: None,
                     helper_running: false,
@@ -997,6 +1000,7 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: Box::new(crate::heap::IteratorExt {
+                position_high: 0,
                 next_method: Some(next_method),
                 helper: None,
                 helper_running: false,
@@ -1033,6 +1037,7 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: Box::new(crate::heap::IteratorExt {
+                position_high: 0,
                 next_method: None,
                 helper: Some(Box::new(helper)),
                 helper_running: false,
@@ -2612,6 +2617,7 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: Box::new(crate::heap::IteratorExt {
+                position_high: 0,
                 next_method: None,
                 helper: None,
                 helper_running: false,
@@ -2660,6 +2666,7 @@ impl<H: Host> Vm<H> {
             index: 0,
             done: false,
             ext: Box::new(crate::heap::IteratorExt {
+                position_high: 0,
                 next_method: None,
                 helper: None,
                 helper_running: false,
@@ -2900,8 +2907,9 @@ impl<H: Host> Vm<H> {
                     kind,
                     index,
                     done,
+                    ext,
                     ..
-                }) if !done => (*source, *kind, *index),
+                }) if !done => (*source, *kind, ext.position(*index)),
                 Some(Cell::Iterator { done: true, .. }) => {
                     return vm.iterator_result(Value::UNDEFINED, true);
                 }
@@ -3075,9 +3083,11 @@ impl<H: Host> Vm<H> {
             });
             if let Some(value) = item {
                 if !kind.is_array_iterator()
-                    && let Some(Cell::Iterator { index, .. }) = vm.heap.get_mut(this)
+                    && let Some(Cell::Iterator {
+                        index: low, ext, ..
+                    }) = vm.heap.get_mut(this)
                 {
-                    *index += 1;
+                    ext.store_position(low, index + 1);
                 }
                 vm.iterator_result(value, false)
             } else {
@@ -3114,8 +3124,11 @@ impl<H: Host> Vm<H> {
             if index >= length {
                 return Ok(None);
             }
-            if let Some(Cell::Iterator { index: next, .. }) = vm.heap.get_mut(iterator) {
-                *next = index + 1;
+            if let Some(Cell::Iterator {
+                index: next, ext, ..
+            }) = vm.heap.get_mut(iterator)
+            {
+                ext.store_position(next, index + 1);
             }
             if kind == IteratorKind::ArrayKeys {
                 return Ok(Some((Value::number(index as f64), None)));

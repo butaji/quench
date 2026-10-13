@@ -291,7 +291,7 @@ impl<H: Host> Vm<H> {
             candidate
         } else {
             let realm = match self.heap.get(new_target) {
-                Some(Cell::Function { realm, .. }) => *realm,
+                Some(Cell::Function { object, .. }) => object.realm,
                 _ => self.realm.globals,
             };
             let constructor_atom = self.intern_atom(if async_stack {

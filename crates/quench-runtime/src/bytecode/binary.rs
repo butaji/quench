@@ -1,10 +1,9 @@
 use super::{
     AtomTable, BindingSite, Constant, DispatchClass, EvalBinding, EvalBindingDeclaration,
     EvalBindingLocation, FieldBase, FieldSite, Function, Handler, Instr, LexicalBindingKind,
-    LocalRegister,
-    MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind, ModuleLinkPlan,
-    ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase, ObjectSite, Op,
-    RegExpLiteralSite, SourcePosition, Superinstruction, WideInstruction,
+    LocalRegister, MethodSite, ModuleImportBinding, ModuleImportName, ModuleImportNameKind,
+    ModuleLinkPlan, ModuleReexport, ModuleReexportKind, ModuleRequest, ModuleRequestPhase,
+    ObjectSite, Op, RegExpLiteralSite, SourcePosition, Superinstruction, WideInstruction,
 };
 
 /// Encodes a function without an `undefined` register.
