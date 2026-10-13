@@ -14,6 +14,7 @@ mod root;
 mod slots;
 mod thin_slice;
 mod weak;
+mod workers;
 pub(crate) use cell::*;
 use parallel_mark::MarkBits;
 #[cfg(test)]
@@ -88,6 +89,8 @@ pub(crate) struct Heap {
     properties: ValueArena,
     roots: RootTable,
     sparse_arrays: Option<Box<FxHashMap<u32, SparseElements>>>,
+    /// Helper threads for parallel marking and sweeping, started by the first large collection.
+    gc_workers: Option<workers::GcWorkers>,
     /// Slots of the live cells that hold weak references (`Cell::holds_weak_references`):
     /// collection resolves ephemerons and prunes weak entries through these alone.
     weak_holders: FxHashSet<u32>,

@@ -9,7 +9,6 @@
 //! count is written concurrently. Workers mark the slots they free in the free-slot bitmap,
 //! whose words their disjoint slab runs never share. Every other dead cell is reported back and
 //! freed on the collecting thread.
-use super::parallel_mark::mark_threads;
 use super::slots::SLOTS_PER_SLAB;
 use super::{Cell, FxHashMap, Heap, Slot, SparseElements, Value, ValueArena, ValueVec};
 use std::rc::Rc;
@@ -57,7 +56,8 @@ impl Heap {
     /// Sweeps in parallel and returns the survivors; freed objects' arena ranges are released.
     /// Each dead cell the workers left in place is then freed by `free_cell`.
     pub(super) fn sweep_parallel(&mut self) -> usize {
-        let workers = mark_threads();
+        self.start_gc_workers();
+        let workers = self.gc_workers.as_ref().expect("started above").workers();
         self.free.cover(self.slots.len());
         let slabs: Vec<_> = self.slots.slabs_mut().collect();
         let per_worker = slabs.len().div_ceil(workers).max(1);
@@ -72,17 +72,20 @@ impl Heap {
             properties: &self.properties,
             sparse_arrays: self.sparse_arrays.as_deref(),
         };
-        let shares: Vec<SweepShare> = std::thread::scope(|scope| {
-            let mut runs = runs.into_iter();
-            let own = runs.next();
-            let helpers: Vec<_> = runs
-                .map(|run| scope.spawn(|| sweep_run(&context, run)))
-                .collect();
-            own.map(|run| sweep_run(&context, run))
-                .into_iter()
-                .chain(helpers.into_iter().map(|helper| helper.join().unwrap()))
-                .collect()
-        });
+        let runs: Vec<std::sync::Mutex<Option<SlabRun<'_>>>> = runs
+            .into_iter()
+            .map(|run| std::sync::Mutex::new(Some(run)))
+            .collect();
+        let shares: Vec<SweepShare> =
+            self.gc_workers
+                .as_ref()
+                .expect("started above")
+                .run(|index| {
+                    runs.get(index)
+                        .and_then(|run| run.lock().unwrap().take())
+                        .map(|run| sweep_run(&context, run))
+                        .unwrap_or_default()
+                });
         let mut live = 0;
         let mut deferred = Vec::new();
         for mut share in shares {
