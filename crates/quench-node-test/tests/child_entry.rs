@@ -5644,3 +5644,13 @@ socket.on('secureConnect',()=>socket.end(Buffer.from([0,22,23,127,254,255])));so
     });
     assert_eq!(observations[1],observations[0]);
 }
+
+#[test]
+fn native_net_resource_visibility_follows_original_connection_delivery_and_close() {
+    compare_node_stream_source(r#"
+const net=require('net');let peer,client;const count=t=>process.getActiveResourcesInfo().filter(x=>x===t).length;
+const server=net.createServer(socket=>{peer=socket;});server.listen(0,'127.0.0.1',()=>{client=net.connect(server.address().port,'127.0.0.1',()=>setImmediate(()=>{
+console.log(JSON.stringify([count('TCPSocketWrap'),count('TCPServerWrap')]));client.unref();peer.unref();server.unref();console.log(JSON.stringify([count('TCPSocketWrap'),count('TCPServerWrap')]));client.ref();peer.ref();server.ref();console.log(JSON.stringify([count('TCPSocketWrap'),count('TCPServerWrap')]));client.destroy();peer.end();console.log(count('TCPServerWrap'));server.close(()=>console.log(JSON.stringify([count('TCPSocketWrap'),count('TCPServerWrap')])));
+}));});
+"#);
+}
