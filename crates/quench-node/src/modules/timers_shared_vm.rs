@@ -117,6 +117,7 @@ pub(crate) struct TimerHandleApi {
     pub(crate) timer_callback: RootId,
     pub(crate) repeat_delay: RootId,
     pub(crate) apply: RootId,
+    pub(crate) binding: RootId,
     pub(crate) timeout_prototype: RootId,
     pub(crate) immediate_prototype: RootId,
 }
@@ -870,6 +871,12 @@ fn timer_handle_api(
     let apply = property(context, reflect, "apply")?;
     let timer_callback = context.host_function(crate::host::shared_vm::operation("timerInvoke"))?;
     let repeat_delay = context.host_function(crate::host::shared_vm::operation("timerRepeatDelay"))?;
+    let binding = context.object_rooted()?;
+    let clock = context.host_function(crate::host::shared_vm::operation("timerLibuvNow"))?;
+    let name = context.string_rooted("name");
+    let value = context.string_rooted("getLibuvNow");
+    context.define_data_property_rooted(clock, name, value, false, false, true)?;
+    install(context, binding, "getLibuvNow", clock)?;
     let timeout_prototype = timer_handle_prototype(context, "Timeout", "timerHasRef")?;
     let immediate_prototype = timer_handle_prototype(context, "Immediate", "immediateHasRef")?;
     let api = TimerHandleApi {
@@ -883,6 +890,7 @@ fn timer_handle_api(
         timer_callback: context.retain(timer_callback)?,
         repeat_delay: context.retain(repeat_delay)?,
         apply: context.retain(apply)?,
+        binding: context.retain(binding)?,
         timeout_prototype: context.retain(timeout_prototype)?,
         immediate_prototype: context.retain(immediate_prototype)?,
     };
@@ -1433,4 +1441,15 @@ pub(crate) fn internal_module(context: &mut NativeContext<'_, NodeHost>) -> Resu
     let maximum = context.number(MAX_TIMER_DELAY_MS as f64);
     install(context, module, "TIMEOUT_MAX", maximum)?;
     Ok(module)
+}
+
+/// The shared host's logical-process monotonic origin owns this clock;
+/// mutable public process.uptime and guest wall clocks do not replace it.
+pub(crate) fn libuv_now(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let milliseconds = context.host_mut().shared_state().borrow().process_control.uptime() * 1000.0;
+    Ok(context.number(milliseconds.floor()))
+}
+
+pub(crate) fn binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    Ok(timer_handle_api(context)?.binding)
 }
