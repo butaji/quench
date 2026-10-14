@@ -397,7 +397,9 @@ Wrapping an existing socket transfers its unread buffered bytes to that same
 SSL input owner at next-tick initialization. Socket byte accounting observes
 native data delivery without adding a data listener that forces readable flow.
 Physical read EOF pushes null and reads zero, matching Node's stream-base path.
-Duplex half-close follows readable-end emission and defers its finalizer;
+Duplex half-close follows readable-end emission and defers its finalizer without
+adding an observable event listener. Physical read EOF stops a referenced socket
+from keeping the event loop alive once write and shutdown requests finish;
 incoming EOF does not independently shut down writes. Empty-error native SSL
 syscall EOF becomes stream EOF after handshake; real syscall and SSL failures
 retain their error projection.
