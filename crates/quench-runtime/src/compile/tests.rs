@@ -235,4 +235,3 @@ fn constructor_source_anchor_survives_argument_move_coalescing() {
         program.validate().unwrap();
     }
 }
-
