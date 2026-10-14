@@ -1403,8 +1403,9 @@ impl<H: Host> Vm<H> {
     }
 
     /// The capture read when every layer on the walk belongs to a function, so no with-object
-    /// or lexical-this wrapper is skipped, and the binding is an initialized slot its non-root
-    /// environment owns. One cell read per layer; anything else is `None`.
+    /// or lexical-this wrapper is skipped, and the binding is an initialized slot its
+    /// environment owns: a non-root slot, or a root slot no projection reads through. One cell
+    /// read per layer; anything else is `None`.
     #[inline(always)]
     pub(super) fn direct_capture(&self, frame: usize, depth: u16, slot: u16) -> Option<Value> {
         let frame = &self.frames[frame];
@@ -1421,6 +1422,7 @@ impl<H: Host> Vm<H> {
                 parent,
                 function,
                 slots,
+                scope,
                 ..
             } = cell
             else {
@@ -1430,7 +1432,9 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             if remaining == 0 {
-                if *function == super::ROOT_FUNCTION_ID {
+                if *function == super::ROOT_FUNCTION_ID
+                    && !self.root_environment_slot_is_binding(scope.program, slot)
+                {
                     return None;
                 }
                 return slots
@@ -1465,15 +1469,29 @@ impl<H: Host> Vm<H> {
         slot: u16,
     ) -> Result<Value, JsError> {
         // Global var, global lexical and module-import projections exist only for a program's
-        // root function, so any other initialized environment slot is the binding itself.
-        if let Some(Cell::Environment { function, .. }) = self.heap.get(env)
-            && *function != super::ROOT_FUNCTION_ID
+        // root function, so any other initialized environment slot, and a root slot of a
+        // program without projections, is the binding itself.
+        if let Some(Cell::Environment {
+            function, scope, ..
+        }) = self.heap.get(env)
+            && (*function != super::ROOT_FUNCTION_ID
+                || self.root_environment_slot_is_binding(scope.program, slot))
             && let Some(value) = self.heap.environment_slot(env, usize::from(slot))
             && !value.is_deleted()
         {
             return Ok(value);
         }
         self.load_projected_environment_binding(p, env, slot)
+    }
+
+    /// Whether `slot` of a root environment owned by `program` (the active program when
+    /// `None`) is the binding itself rather than a projection.
+    #[inline(always)]
+    fn root_environment_slot_is_binding(&self, program: Option<u32>, slot: u16) -> bool {
+        self.programs.root_slot_is_binding(
+            program.map_or(self.active_program, super::ProgramId::from_raw),
+            slot,
+        )
     }
 
     /// Reads a root-function projection (global var, global lexical or module import) or
