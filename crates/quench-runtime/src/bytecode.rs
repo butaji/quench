@@ -18,6 +18,17 @@ pub(crate) use atoms::{AtomSequence, AtomTable};
 /// Infix of the compiler's hidden atom for a named function expression's own binding:
 /// `{name}{SELF_BINDING_MARKER}{function id}`.
 pub(crate) const SELF_BINDING_MARKER: &str = "\0quench:self-binding:";
+/// Prefix of the compiler's hidden local for a block-scoped binding renamed apart from a
+/// same-named binding of its function: `{BLOCK_BINDING_MARKER}{name}`.
+pub(crate) const BLOCK_BINDING_MARKER: &str = "\0quench:block-binding:";
+
+/// Whether a local named `name` must live in its function's environment whatever its
+/// captures: other hidden bindings (lexical `this`, `new.target`, home objects, private
+/// names, ...) are reached by name, not only through capture slots. A renamed block binding
+/// is reached only through its slot.
+pub(crate) fn local_name_requires_environment(name: &str) -> bool {
+    name.starts_with('\0') && !name.starts_with(BLOCK_BINDING_MARKER)
+}
 pub(crate) use control_flow::branch_table_entries;
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
