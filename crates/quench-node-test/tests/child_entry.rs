@@ -5940,3 +5940,33 @@ function check(label,big,num,exact){
 })().catch(error=>{console.error(error);process.exitCode=1;});
 "#);
 }
+
+#[test]
+fn native_socket_paused_accept_defers_actual_reads_until_resume() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),assert=require('assert');const out=[];
+const server=net.createServer({pauseOnConnect:true},socket=>{
+ socket.on('data',data=>{out.push(['data',data.toString()]);socket.end();});
+ setTimeout(()=>{
+  out.push(['paused',socket.bytesRead,socket.readableFlowing,socket.isPaused()]);assert.strictEqual(socket.bytesRead,0);socket.resume();
+ },20);
+}).listen(0,()=>{
+ const client=net.connect(server.address().port,()=>client.write('payload'));
+ client.on('close',()=>server.close(()=>console.log(JSON.stringify(out))));
+});
+"#);
+}
+
+#[test]
+fn stream_explicit_flowing_false_prevents_automatic_data_resume() {
+    compare_node_stream_source(r#"
+'use strict';
+const {Readable}=require('stream');const out=[];let reads=0;
+const stream=new Readable({read(){reads++;this.push('x');this.push(null);}});
+stream.readableFlowing=false;stream.on('data',data=>out.push(['data',data.toString()]));
+out.push(['initial',stream.isPaused(),stream.readableFlowing,reads]);
+process.nextTick(()=>{out.push(['tick',stream.isPaused(),stream.readableFlowing,reads]);stream.resume();});
+stream.on('end',()=>{out.push(['end',reads]);console.log(JSON.stringify(out));});
+"#);
+}

@@ -92,6 +92,7 @@
       }
       if (
         name === "data" && !this.destroyed && this._readableState &&
+        deps.shouldResumeData(this._readableState) &&
         (listenerCountOf(this, "readable") === 0 ||
           this._readableState.pipes.length > 0)
       ) {
@@ -181,13 +182,6 @@
         this._listenerWrappers = wrappers.filter((item) => item !== entry);
       }
       syncEventsView(this);
-      if (
-        name === "data" && this._readableState &&
-        listenerCountOf(this, "data") === 0 &&
-        listenerCountOf(this, "readable") === 0
-      ) {
-        this._readableState.flowing = false;
-      }
       return this;
     },
     off(name, fn) {
@@ -201,13 +195,6 @@
           : this._listenerWrappers.filter((entry) => entry.name !== name);
       }
       syncEventsView(this);
-      if (
-        (name === undefined || name === "data") && this._readableState &&
-        listenerCountOf(this, "data") === 0 &&
-        listenerCountOf(this, "readable") === 0
-      ) {
-        this._readableState.flowing = false;
-      }
       return this;
     },
     emit(name, ...args) {
@@ -881,6 +868,9 @@
     get readableFlowing() {
       return this._readableState.flowing;
     }
+    set readableFlowing(value) {
+      deps.setFlowing(this._readableState, value);
+    }
 
     get readableErrored() {
       return this._readableState.errored || null;
@@ -891,8 +881,7 @@
     }
 
     isPaused() {
-      // Node: a stream is "paused" only after an explicit pause().
-      return this._readableState.paused === true;
+      return deps.isPaused(this._readableState);
     }
     pause() {
       this._readableState.paused = true;
@@ -1232,6 +1221,7 @@
       dest.on("close", cleanup);
       dest.on("unpipe", onunpipe);
       dest.emit("pipe", source);
+      deps.pipeStart(source, dest);
       return dest;
     }
 
