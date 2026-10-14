@@ -96,4 +96,8 @@ impl<H: Host> crate::compile::AtomPrefix for Vm<H> {
             crate::compile::AtomPrefix::len(self),
         )
     }
+
+    fn specialized(&self) -> bool {
+        self.specialized
+    }
 }
