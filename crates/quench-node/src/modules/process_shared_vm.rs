@@ -2060,7 +2060,9 @@ fn drain_checkpoint(
                 .scheduler
                 .complete_shared_timer(timer, std::time::Instant::now());
             if let Some(callback) = released {
+                let settled = mark_timer_destroyed(runtime, callback.receiver);
                 release_callback(runtime, callback);
+                if let Err(error) = settled { route_callback_failure(runtime, program, error)?; }
             }
             callback_result?;
             continue;
@@ -2187,6 +2189,15 @@ fn has_referenced_shared_work(shared_state: &Rc<RefCell<crate::host::SharedNodeS
             .has_refed_shared_immediates()
 }
 
+fn mark_timer_destroyed(runtime: &mut quench_runtime::Runtime<NodeHost>, handle: RootId) -> Result<(), RootedError> {
+    let key = runtime.string_rooted(crate::modules::timers_shared_vm::TIMER_DESTROYED);
+    let destroyed = runtime.root(Value::TRUE);
+    let result = runtime.set_property_rooted(handle, key, destroyed, handle);
+    runtime.release_root(key);
+    runtime.release_root(destroyed);
+    result.map(|_| ())
+}
+
 fn settle_immediate_reference(
     runtime: &mut quench_runtime::Runtime<NodeHost>,
     program: &quench_runtime::ResidualProgram,
@@ -2197,6 +2208,7 @@ fn settle_immediate_reference(
     match owner {
         crate::modules::shared_event_loop::SharedImmediateOwner::Host => Ok(()),
         crate::modules::shared_event_loop::SharedImmediateOwner::Guest => {
+            mark_timer_destroyed(runtime, handle).map_err(|error| runtime.format_error(program, &error.error))?;
             let refed_key = shared_state
                 .borrow()
                 .timer_handle_api
