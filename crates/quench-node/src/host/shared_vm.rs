@@ -716,6 +716,7 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::process_shared_vm::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_process");
+        crate::host::resident_pages::release_read_only_pages();
         crate::modules::events_shared_vm::initialize_targets(context)?;
         crate::modules::async_hook_registry_shared_vm::initialize(context)?;
         #[cfg(feature = "profile-memory")]
@@ -758,6 +759,7 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::child_process_ipc_shared_vm::install_process(context, process, emitter)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_emitter_polyfill");
+        crate::host::resident_pages::release_read_only_pages();
         let expose_gc = context
             .host_mut()
             .shared_state()
