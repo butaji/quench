@@ -565,7 +565,7 @@ pub(crate) fn read_descriptor(
         (state.fs.read_descriptor(fd, size, position), path)
     };
     match result {
-        Ok(bytes) => super::buffer_from_bytes(context, &bytes),
+        Ok(bytes) => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
         Err(error) => Err(super::stream_io_error(context, error, "read", &path)?),
     }
 }
