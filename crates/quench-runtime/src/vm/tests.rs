@@ -9336,3 +9336,23 @@ fn private_host_weak_roots_clear_before_slot_reuse_without_kept_objects() {
         vm.heap.release_root(weak);
     }
 }
+
+#[test]
+fn string_repeat_limits_preserve_lazy_utf16_length_and_fractional_counts() {
+    let limit = super::wtf16::MAX_STRING_UNITS;
+    let source = format!(r#"
+      print('x'.repeat({limit}).length);
+      print('x'.repeat(70000000).repeat(2).length);
+      print('xy'.repeat(-0.5).length);
+      print('日'.repeat(3).length);
+      try {{ 'x'.repeat({limit} + 1); }}
+      catch (error) {{ print(error.name + ':' + error.message); }}
+    "#);
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(&source, "string-repeat-limit.js").unwrap();
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [limit.to_string(), "140000000".into(), "0".into(), "3".into(), "RangeError:Invalid string length".into()]);
+    }
+}
