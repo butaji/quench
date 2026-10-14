@@ -947,13 +947,22 @@ fn has_backward_branch(code: &[Instr], wide: &[WideInstruction]) -> bool {
     })
 }
 
+/// A byte range of a program's source text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceSpan {
+    pub start: u32,
+    pub end: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub parent: Option<u32>,
     pub name: Option<Atom>,
     pub is_arrow: bool,
     pub self_binding_slot: Option<u16>,
-    pub source_text: Option<String>,
+    /// The function's source text as a range of the program's `source`, which
+    /// `Function.prototype.toString` reads on demand.
+    pub source_span: Option<SourceSpan>,
     pub params: u16,
     pub length: u16,
     pub parameter_end_pc: u32,
@@ -1969,7 +1978,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 87;
+    pub const FORMAT_VERSION: u8 = 88;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
