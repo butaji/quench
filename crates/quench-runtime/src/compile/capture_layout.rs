@@ -1,8 +1,8 @@
-use std::rc::Rc;
+use super::CompilerAtoms;
 
 use crate::bytecode::{Function, Op, WITH_ENTER_BINDING};
 
-pub(super) fn apply(functions: &mut [Function], atoms: &[Rc<str>]) {
+pub(super) fn apply(functions: &mut [Function], atoms: &CompilerAtoms<'_>) {
     let captured = captured_slots(functions);
     let dynamic_ancestors = dynamic_scope_ancestors(functions, atoms);
 
@@ -71,12 +71,12 @@ fn captured_slots(functions: &[Function]) -> Vec<Vec<u16>> {
 /// Functions enclosing dynamic name resolution, including a `with` body's by-name
 /// loads, which may denote any ancestor's binding and so need every ancestor's
 /// locals in its environment.
-fn dynamic_scope_ancestors(functions: &[Function], atoms: &[Rc<str>]) -> Vec<bool> {
+fn dynamic_scope_ancestors(functions: &[Function], atoms: &CompilerAtoms<'_>) -> Vec<bool> {
     let inherited_dynamic_scope = inherited_dynamic_scope(functions);
     let is_with_enter = |atom: usize| {
         atoms
             .get(atom)
-            .is_some_and(|name| &**name == WITH_ENTER_BINDING)
+            .is_some_and(|name| name == WITH_ENTER_BINDING)
     };
     let mut unsafe_layout = vec![false; functions.len()];
     for (id, function) in functions.iter().enumerate() {
@@ -110,7 +110,7 @@ fn selective_layout_is_safe(
     function: &Function,
     id: usize,
     has_dynamic_descendant: bool,
-    atoms: &[Rc<str>],
+    atoms: &CompilerAtoms<'_>,
 ) -> bool {
     id != 0
         && function.parent.is_some()

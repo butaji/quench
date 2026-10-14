@@ -74,3 +74,26 @@ impl<H: Host> Vm<H> {
         }
     }
 }
+
+/// Programs compiled at run time extend the VM's atoms in place: their prefix ids are the
+/// VM's, read through the shared sequence instead of copied.
+impl<H: Host> crate::compile::AtomPrefix for Vm<H> {
+    fn len(&self) -> usize {
+        self.atom_text.len() + self.dynamic_atoms.len()
+    }
+
+    fn name(&self, atom: Atom) -> &str {
+        self.atom_name(atom)
+    }
+
+    fn find(&self, name: &str) -> Option<Atom> {
+        self.lookup_atom(name)
+    }
+
+    fn table(&self) -> crate::bytecode::AtomTable {
+        crate::bytecode::AtomTable::shared(
+            self.atom_sequence.clone(),
+            crate::compile::AtomPrefix::len(self),
+        )
+    }
+}

@@ -1101,9 +1101,6 @@ impl<H: Host> Vm<H> {
         let parameters = argument_strings.join(",");
         let parser_parameters = format!("{parameters}\n");
         let source_name = format!("<Function:{}>", self.programs.len());
-        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
-            .map(|atom| self.atom_name(atom as u32).to_owned())
-            .collect::<Vec<_>>();
         let kind = match native {
             Native::AsyncFunction => crate::compile::DynamicFunctionKind::Async,
             Native::GeneratorFunction => crate::compile::DynamicFunctionKind::Generator,
@@ -1114,7 +1111,7 @@ impl<H: Host> Vm<H> {
             &parser_parameters,
             source,
             &source_name,
-            &atom_prefix,
+            &*self,
             kind,
         )
         .map_err(|diagnostics| {

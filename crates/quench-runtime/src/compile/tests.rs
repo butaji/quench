@@ -38,11 +38,11 @@ fn regression_global_var_lowering_checks_instruction_roles_before_slots() {
 
 #[test]
 fn scalar_constants_reuse_exact_slots() {
-    let mut compiler = Compiler::new_with_mode(
+    let mut compiler = Compiler::new(
         "test.js",
         "",
         SpecializationMode::Enabled,
-        &[],
+        &NoAtomPrefix,
         FxHashMap::default(),
     );
     assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
@@ -54,11 +54,11 @@ fn scalar_constants_reuse_exact_slots() {
 
 #[test]
 fn scalar_constants_preserve_signed_zero_bits() {
-    let mut compiler = Compiler::new_with_mode(
+    let mut compiler = Compiler::new(
         "test.js",
         "",
         SpecializationMode::Enabled,
-        &[],
+        &NoAtomPrefix,
         FxHashMap::default(),
     );
     assert_ne!(
@@ -120,11 +120,11 @@ fn validator_rejects_a_promoted_binding_read_through_its_local_slot() {
 
 #[test]
 fn constant_runs_remain_fresh_and_contiguous() {
-    let mut compiler = Compiler::new_with_mode(
+    let mut compiler = Compiler::new(
         "test.js",
         "",
         SpecializationMode::Enabled,
-        &[],
+        &NoAtomPrefix,
         FxHashMap::default(),
     );
     assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
