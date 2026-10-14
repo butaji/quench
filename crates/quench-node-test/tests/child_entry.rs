@@ -6319,3 +6319,29 @@ fn cli_print_evaluates_script_statements_and_language_completion_like_node() {
         if !source.contains("t.setTimeout") { assert_eq!(observations[0].stdout,observations[1].stdout); }
     }
 }
+
+#[test]
+fn native_timer_primitive_aliases_cancel_original_handles_like_node() {
+    compare_node_stream_source(r#"
+"use strict";
+const assert=require('assert'),out=[],fired=[];
+const a=setTimeout(()=>fired.push('number'),10),b=setInterval(()=>fired.push('string'),10);
+const proto=Object.getPrototypeOf(a),method=proto[Symbol.toPrimitive],d=Object.getOwnPropertyDescriptor(proto,Symbol.toPrimitive);
+out.push([method.name,method.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(method,'prototype')]);
+const primitive=Object.getOwnPropertySymbols(a).find(s=>s.description==='kHasPrimitive');
+const asyncId=Object.getOwnPropertySymbols(a).find(s=>s.description==='asyncId');
+out.push(a[primitive],typeof a[asyncId]);
+const id=+a;out.push(typeof id,Number.isNaN(id),id===method.call(a),String(a)===String(id),a[primitive]);
+clearTimeout(id);clearInterval(String(b));out.push(a._destroyed,b._destroyed);
+const c=setTimeout(()=>fired.push('uncoerced'),1);clearTimeout(c[asyncId]);
+const e=setTimeout(()=>fired.push('getter'),10),original=e[asyncId],log=[];
+Object.defineProperty(e,asyncId,{configurable:true,get(){log.push('id');return original;}});
+Object.defineProperty(e,primitive,{configurable:true,get(){log.push('flag');return false;},set(v){log.push(['set',v]);}});
+out.push(method.call(e)===original,log.slice());clearTimeout(original);
+const marker={},f=setTimeout(()=>fired.push('throw'),10);
+Object.defineProperty(f,primitive,{configurable:true,get(){throw marker;}});
+try{method.call(f)}catch(error){out.push(error===marker)}
+Object.defineProperty(f,primitive,{configurable:true,value:false,writable:true});clearTimeout(f);
+setTimeout(()=>{out.push(fired);console.log(JSON.stringify(out));},30);
+"#);
+}
