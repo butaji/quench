@@ -222,7 +222,7 @@ fn scope_slot_owners_survive_collection_and_release() {
             with_objects: Box::default(),
         }),
     });
-    let slots = heap.clone_environment_slots(owner, &[0]).unwrap();
+    let slots = heap.clone_environment_slots(owner, &[0], &[]).unwrap();
     let view = heap.alloc(Cell::Environment {
         parent: Value::NULL,
         function: 0,

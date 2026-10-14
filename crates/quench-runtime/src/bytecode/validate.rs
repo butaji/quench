@@ -616,9 +616,14 @@ impl ResidualProgram {
                 ));
             }
 
-            if function.environment_clones.iter().any(|slots| {
-                slots.iter().any(|slot| *slot >= function.locals)
-                    || slots.windows(2).any(|pair| pair[0] >= pair[1])
+            if function.environment_clones.iter().any(|clone| {
+                [&clone.fresh, &clone.reset].into_iter().any(|slots| {
+                    slots.iter().any(|slot| *slot >= function.locals)
+                        || slots.windows(2).any(|pair| pair[0] >= pair[1])
+                }) || clone
+                    .reset
+                    .iter()
+                    .any(|slot| clone.fresh.binary_search(slot).is_ok())
             }) {
                 return Err(format!(
                     "function {index} has invalid environment clone slots"
@@ -1121,7 +1126,7 @@ mod tests {
         assert!(program.validate().is_ok());
         for slots in [vec![u16::MAX], vec![0, 0], vec![1, 0]] {
             let mut invalid = program.clone();
-            invalid.functions[0].environment_clones[0] = slots;
+            invalid.functions[0].environment_clones[0].fresh = slots;
             assert!(invalid.validate().is_err());
         }
         let mut invalid = program;

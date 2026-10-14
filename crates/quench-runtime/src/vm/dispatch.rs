@@ -220,11 +220,9 @@ impl<H: Host> Vm<H> {
         match i.op() {
             Op::Nop => {}
             Op::CloneEnv => {
-                self.clone_frame_environment(
-                    f,
-                    &p.functions[self.frames[f].function as usize].environment_clones
-                        [i.environment_clone_index()],
-                )?;
+                let plan = &p.functions[self.frames[f].function as usize].environment_clones
+                    [i.environment_clone_index()];
+                self.clone_frame_environment(f, &plan.fresh, &plan.reset)?;
             }
             Op::Wide => unreachable!("validated dispatch cannot contain nested wide instruction"),
             Op::LoadConst => {
