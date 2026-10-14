@@ -1120,8 +1120,26 @@ impl<H: Host> Vm<H> {
         let previous_global = self.realm.globals;
         // A nested loop leaves the caller's register file active again.
         let caller_registers = self.active_registers;
-        let outcome =
-            self.run_general_loop::<STOPS>(p, frame, stop_pc, initial_error, allow_inline_calls);
+        // Only Wasm programs have lane views (`general_cursor`); JavaScript runs a loop
+        // instance without the per-instruction lane probe. A cross-program switch inside a
+        // lane-free instance just runs the general path, which the lane only prefixes.
+        let outcome = if p.kind == crate::bytecode::ProgramKind::Wasm && !STOPS {
+            self.run_general_loop::<STOPS, true>(
+                p,
+                frame,
+                stop_pc,
+                initial_error,
+                allow_inline_calls,
+            )
+        } else {
+            self.run_general_loop::<STOPS, false>(
+                p,
+                frame,
+                stop_pc,
+                initial_error,
+                allow_inline_calls,
+            )
+        };
         self.active_registers = caller_registers;
         self.set_active_program(previous_program);
         self.switch_realm_global(previous_global);
@@ -1131,7 +1149,7 @@ impl<H: Host> Vm<H> {
     /// The general dispatch loop of `run_frame_general_until`, whose caller restores the active
     /// program and realm around it.
     #[inline(always)]
-    fn run_general_loop<const STOPS: bool>(
+    fn run_general_loop<const STOPS: bool, const LANE: bool>(
         &mut self,
         entry_program: &ResidualProgram,
         frame: usize,
@@ -1154,7 +1172,8 @@ impl<H: Host> Vm<H> {
         };
         // Parameter-initialization stops and instruction profiling observe
         // every PC, so they run the general path only.
-        let fast_lane = !STOPS
+        let fast_lane = LANE
+            && !STOPS
             && stop_pc.is_none()
             && !cfg!(any(
                 feature = "profile-aggregate",
@@ -1187,7 +1206,7 @@ impl<H: Host> Vm<H> {
             // call, or at the residual `current_program` keeps alive until it is replaced,
             // and it is re-derived at that replacement.
             let p = unsafe { &*executing_residual };
-            if Self::lane_runs(cursor.lane, pc) {
+            if LANE && Self::lane_runs(cursor.lane, pc) {
                 pc = self.run_fast_lane(
                     p,
                     cursor.program,
