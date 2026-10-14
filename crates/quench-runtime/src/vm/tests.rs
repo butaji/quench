@@ -44,21 +44,31 @@ fn promoted_locals_preserve_order_and_survive_collection() {
         ({ field: value } = { field: 3 });
         return value;
       }
+      function held(x, i) { var r = x[i] + x[++i] + x[++i]; return r * 10 + i; }
+      function keyed(x, i) { x[i] = x[++i] * 10; return x.join() + ":" + i; }
+      function window(i) { var a = [i, ++i, i++, i]; return a.join() + ":" + i; }
+      function compound(i) { i += i++ + ++i; return i; }
       print(read({ answer: 42 }));
       print(ordered(5));
       print(destructured(9));
+      print(held([10, 20, 30, 40], 0));
+      print(keyed([1, 2, 3, 4], 0));
+      print(window(0));
+      print(compound(2));
     "#;
     let output = Rc::new(RefCell::new(Vec::new()));
     let mut vm = Vm::new(RecordingHost(output.clone()));
     let program = Engine::specialize(source, "promoted-parameter.js").unwrap();
     vm.execute(&program).unwrap();
-    assert_eq!(output.borrow().as_slice(), ["42", "3", "3"]);
+    assert_eq!(
+        output.borrow().as_slice(),
+        ["42", "3", "3", "602", "20,2,3,4:1", "0,1,1,2:2", "8"]
+    );
 
-    // `value`, `index` and `discarded` are written only at statement level.
-    let read = &program.functions[1];
-    assert_eq!(read.local_registers.len(), 3);
-    assert!(program.functions[2].local_registers.is_empty());
-    assert!(program.functions[3].local_registers.is_empty());
+    // Every binding here stays in a register, including those written inside expressions.
+    assert_eq!(program.functions[1].local_registers.len(), 3);
+    assert_eq!(program.functions[2].local_registers.len(), 1);
+    assert_eq!(program.functions[3].local_registers.len(), 1);
 }
 
 #[test]

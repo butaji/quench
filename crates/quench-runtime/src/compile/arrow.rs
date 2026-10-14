@@ -72,6 +72,7 @@ impl Compiler<'_> {
             parameter_local_count,
             with_depth,
             &[],
+            &[],
         );
         function.strict = strict;
         function.super_static = super_static;
@@ -164,7 +165,7 @@ impl Compiler<'_> {
             activation_bindings: Default::default(),
             live_parameter_reflection: Default::default(),
             static_name_scope: Default::default(),
-            plain_activation: Default::default(),
+            call_plan: Default::default(),
             handlers: function.handlers,
             register_root_offset: u32::MAX,
             undefined_register,
