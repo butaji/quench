@@ -108,3 +108,30 @@ pub(crate) fn delivered(context: &mut NativeContext<'_, NodeHost>, socket: RootI
     }
     Ok(())
 }
+
+
+/// TLS owns one mutable reading view; its original TCP handle forwards to it.
+pub(crate) fn redirect_parent_reading(context: &mut NativeContext<'_, NodeHost>, parent: RootId, handle: RootId) -> Result<(), RootedError> {
+    let getter = context.host_function_with_data(crate::host::shared_vm::operation("netParentReadingGet"), handle)?;
+    let setter = context.host_function_with_data(crate::host::shared_vm::operation("netParentReadingSet"), handle)?;
+    let name = context.string_rooted("name");
+    let value = context.string_rooted("get");
+    context.define_data_property_rooted(getter, name, value, false, false, true)?;
+    let value = context.string_rooted("set");
+    context.define_data_property_rooted(setter, name, value, false, false, true)?;
+    let descriptor = context.null_object_rooted()?;
+    set(context, descriptor, "get", getter)?;
+    set(context, descriptor, "set", setter)?;
+    let key = context.string_rooted("reading");
+    context.define_property_descriptor_rooted(parent, key, descriptor)?;
+    Ok(())
+}
+pub(crate) fn parent_reading_get(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let handle = context.host_function_data()?;
+    get(context, handle, "reading")
+}
+pub(crate) fn parent_reading_set(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let handle = context.host_function_data()?;
+    set(context, handle, "reading", args[0])?;
+    Ok(context.undefined())
+}

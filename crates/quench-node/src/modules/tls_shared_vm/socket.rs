@@ -306,7 +306,12 @@ pub(crate) fn construct(
         context.release_root(old);
         let id_root = context.number(id as f64);
         set(context, socket, "__quenchNetSocketId", id_root)?;
+        let parent_handle = get(context, wrapped, "_handle")?;
+        let reading = get(context, parent_handle, "reading")?;
         super::super::net_reference_shared_vm::install_socket_handle(context, id, socket)?;
+        let handle = get(context, socket, "_handle")?;
+        set(context, handle, "reading", reading)?;
+        super::super::net_socket_read::redirect_parent_reading(context, parent_handle, handle)?;
         set(context, socket, "_parent", wrapped)?;
         let false_value = context.boolean(false);
         set(context, socket, "connecting", false_value)?;
