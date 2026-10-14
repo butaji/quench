@@ -1,0 +1,243 @@
+{
+  "schema": 1,
+  "engine": "quench",
+  "policy": "Pinned Test262 cases whose raw Quench failure the local Node oracle reproduces. A waived case stays a failure in every report; runners accept it only while it fails with exactly the recorded failure.",
+  "oracle": {
+    "runtime": "node",
+    "version": "v26.11.1",
+    "command": "node tools/test262-node-oracle.cjs"
+  },
+  "suite_revision": "f2d1435644797268dca1f7988cad5a4e89ccd8d2",
+  "groups": [
+    {
+      "id": "error-stack-accessor",
+      "reason": "Node has no Error.prototype.stack accessor (proposal feature error-stack-accessor); V8 gives each error an own stack property, which Quench matches.",
+      "cases": [
+        {
+          "path": "built-ins/Error/prototype/stack/getter-cross-realm.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/getter-data-property-shadows.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/getter-error-as-prototype.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/getter-error-instance.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/getter-error-prototype.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/getter-foreign-new-target.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/getter-no-error-data.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/getter-not-a-constructor.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/getter-receiver-is-proxy.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/getter-subclass.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/getter-this-not-object.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/instance-no-own-stack.js",
+          "failure": "quench runtime: Test262Error: Error: hasOwnProperty(\"stack\") is false Expected SameValue(«true», «false») to be true"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/instance-not-enumerable.js",
+          "failure": "quench runtime: Test262Error: Error: getOwnPropertyNames does not include \"stack\" Expected SameValue(«1», «-1») to be true"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/prop-desc.js",
+          "failure": "quench runtime: Test262Error: Error.prototype.stack getter should be a function Expected SameValue(«\"undefined\"», «\"function\"») to be true"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-creates-own-property.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-cross-realm.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-delete-round-trip.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-empty-string.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-existing-own-property.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-no-argument.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-non-error-receiver.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-non-extensible-receiver.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-non-string-value.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-non-writable-stack.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-not-a-constructor.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-own-accessor.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-proxy-trap-rejects.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-proxy-trap-throws.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-proxy-wrapping-prototype.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-receiver-is-null-proto.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-receiver-is-other-prototype.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-receiver-is-prototype.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-receiver-is-proxy.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-this-not-object.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        },
+        {
+          "path": "built-ins/Error/prototype/stack/setter-via-assignment.js",
+          "failure": "quench runtime: TypeError: cannot read properties of undefined"
+        }
+      ]
+    },
+    {
+      "id": "reference-evaluation-order",
+      "reason": "Node evaluates compound and update assignment references in V8 order: the base reference is re-resolved and the property key converted again where the specification evaluates each once.",
+      "cases": [
+        {
+          "path": "language/expressions/compound-assignment/S11.13.2_A7.10_T4.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/compound-assignment/S11.13.2_A7.11_T4.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/compound-assignment/S11.13.2_A7.1_T4.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/compound-assignment/S11.13.2_A7.2_T4.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/compound-assignment/S11.13.2_A7.3_T4.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/compound-assignment/S11.13.2_A7.4_T4.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/compound-assignment/S11.13.2_A7.5_T4.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/compound-assignment/S11.13.2_A7.6_T4.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/compound-assignment/S11.13.2_A7.7_T4.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/compound-assignment/S11.13.2_A7.8_T4.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/compound-assignment/S11.13.2_A7.9_T4.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/postfix-decrement/S11.3.2_A6_T3.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/postfix-increment/S11.3.1_A6_T3.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/prefix-decrement/S11.4.5_A6_T3.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "language/expressions/prefix-increment/S11.4.4_A6_T3.js",
+          "failure": "quench runtime: Test262Error: Expected true but got false"
+        },
+        {
+          "path": "staging/sm/expressions/short-circuit-compound-assignment-property-key-evaluation.js",
+          "failure": "quench runtime: Test262Error: Expected SameValue(«2», «1») to be true"
+        },
+        {
+          "path": "staging/sm/statements/property-reference-self-assignment.js",
+          "failure": "quench runtime: Test262Error: toString calls for obj[p]++ Expected SameValue(«2», «1») to be true"
+        }
+      ]
+    },
+    {
+      "id": "annexb-block-function-arguments",
+      "reason": "Node lets a sloppy Annex B block function named arguments replace the containing function's arguments binding (task 20 Node-oracle resolution).",
+      "cases": [
+        {
+          "path": "annexB/language/function-code/block-decl-func-skip-arguments.js",
+          "failure": "quench runtime: Test262Error: Expected SameValue(«\"function arguments() {}\"», «\"[object Arguments]\"») to be true"
+        }
+      ]
+    }
+  ]
+}
