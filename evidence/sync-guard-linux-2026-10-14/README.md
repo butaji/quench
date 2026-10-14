@@ -25,3 +25,7 @@ Then merged `origin/v2-merged` (Node-lane socket options, static OpenSSL zlib, T
 ## 13:50 UTC: v2-cloud-c `56447112c`, `d11d9917e` (guard FAILS, held)
 
 Base `e3fc15972`, candidate `0736e42b8` (`e3fc15972` + those two commits; not published). Runtime lib 591/591, Wasm 67,124/67,124. `guard-e3fc15972-vs-0736e42b8.txt`: Crypto -20.42%, NavierStokes -25.53%, but Splay +7.18% and Richards +2.19% per run (DeltaBlue +0.66%, EarleyBoyer +0.46%).
+
+## 14:20 UTC: v2-cloud-c2 (3 commits) published, v2-cloud-c (7) held
+
+Base `490a0461f`. Candidate A `6d3cd48a2` (+ `v2-cloud-c2` through `6f2cb3522`): all eight flat or lower, Splay -18.63% per run; published. Candidate B `9ad7d4a7b` (A + `v2-cloud-c` through `3b09e9ea9`): Crypto -38.01%, NavierStokes -46.65%, Splay -12.25% against base but +7.8% against A, Richards +2.12%: held (decision 24). Runtime lib 594/594, quench-regexp 11/11 on B.
