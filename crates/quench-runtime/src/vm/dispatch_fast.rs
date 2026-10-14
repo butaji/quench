@@ -657,22 +657,6 @@ lane_handler! {
     }
 }
 
-/// `Binary` of operator `OP` on Numbers as `number_binary` computes it: the four arithmetic
-/// operators directly, integer operators directly on integers; `None` for any other value.
-#[inline(always)]
-fn operator_value<H: Host, const OP: u32>(
-    cx: *mut LaneContext<H>,
-    left: Value,
-    right: Value,
-) -> Option<Value> {
-    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
-    if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION) {
-        return super::operations::number_operator::<OP>(left, right).map(|(value, _)| value);
-    }
-    super::operations::integer_operator::<OP>(left, right)
-        .or_else(|| unsafe { vm(cx) }.number_binary(OP, left, right))
-}
-
 /// Runs `handler` for the record at `ip` as a sibling call: the calling handler's fast path
 /// then keeps no state across a slow path that needs more registers.
 macro_rules! sibling {
@@ -698,10 +682,11 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// `lane_operator` at a site that has met operands other than two integers: any Numbers.
+    /// `lane_operator` at a site that has met operands other than two integers: any Numbers,
+    /// through their double values.
     #[inline(never)]
     fn lane_operator_numbers<OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = operator_value::<H, OP>(cx, r.get(i.b), r.get(i.c)) else {
+        let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -726,7 +711,7 @@ lane_handler! {
     /// `lane_operator_numbers` with a constant right operand.
     #[inline(never)]
     fn lane_operator_constant_numbers<OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = operator_value::<H, OP>(cx, r.get(i.b), i.constant()) else {
+        let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), i.constant()) else {
             return exit(ip);
         };
         r.set(i.a, value);
