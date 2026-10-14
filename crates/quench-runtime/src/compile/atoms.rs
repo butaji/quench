@@ -13,6 +13,8 @@ pub(crate) trait AtomPrefix {
     fn find(&self, name: &str) -> Option<Atom>;
     /// The prefix's names, which the compiled program reads until its host adopts it.
     fn table(&self) -> AtomTable;
+    /// Whether the host runs specialized programs, which a program extending it follows.
+    fn specialized(&self) -> bool;
 }
 
 /// A standalone program numbers its atoms from zero.
@@ -34,13 +36,19 @@ impl AtomPrefix for NoAtomPrefix {
     fn table(&self) -> AtomTable {
         AtomTable::default()
     }
+
+    fn specialized(&self) -> bool {
+        false
+    }
 }
 
 /// A compilation's atoms: the borrowed prefix, then the names this source adds.
 pub(super) struct CompilerAtoms<'a> {
     prefix: &'a dyn AtomPrefix,
     added: Vec<Rc<str>>,
-    added_index: FxHashMap<Rc<str>, Atom>,
+    /// Every name this compilation interned, added or found in the prefix: a source repeats
+    /// its names, and the prefix answers each one only once.
+    index: FxHashMap<Rc<str>, Atom>,
 }
 
 impl<'a> CompilerAtoms<'a> {
@@ -48,7 +56,7 @@ impl<'a> CompilerAtoms<'a> {
         Self {
             prefix,
             added: Vec::new(),
-            added_index: FxHashMap::default(),
+            index: FxHashMap::default(),
         }
     }
 
@@ -61,19 +69,22 @@ impl<'a> CompilerAtoms<'a> {
     }
 
     pub(super) fn find(&self, name: &str) -> Option<Atom> {
-        self.prefix
-            .find(name)
-            .or_else(|| self.added_index.get(name).copied())
+        self.index
+            .get(name)
+            .copied()
+            .or_else(|| self.prefix.find(name))
     }
 
     pub(super) fn intern(&mut self, name: &str) -> Atom {
-        if let Some(atom) = self.find(name) {
-            return atom;
+        if let Some(atom) = self.index.get(name) {
+            return *atom;
         }
-        let atom = self.len() as Atom;
         let name: Rc<str> = Rc::from(name);
-        self.added.push(Rc::clone(&name));
-        self.added_index.insert(name, atom);
+        let atom = self.prefix.find(&name).unwrap_or_else(|| {
+            self.added.push(Rc::clone(&name));
+            (self.len() - 1) as Atom
+        });
+        self.index.insert(name, atom);
         atom
     }
 
