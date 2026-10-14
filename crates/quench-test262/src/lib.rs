@@ -13,6 +13,7 @@ pub mod reporting;
 mod runner_support;
 pub mod runtime_host;
 mod stages;
+pub mod waivers;
 pub use harness_cache::HarnessCache;
 pub use runtime_host::Test262RuntimeHost;
 pub use stages::{list_stages, resolve_stages, ConformanceStage, ResolvedStage};
@@ -318,6 +319,9 @@ pub struct StageReport {
     pub total: usize,
     pub passed: usize,
     pub failed: usize,
+    /// Raw failures that match their Node waiver; counted in `failed` too.
+    pub waived: usize,
+    /// Outcomes the run must reject: unwaived failures and stale waivers.
     pub failures: Vec<(std::path::PathBuf, String)>,
 }
 

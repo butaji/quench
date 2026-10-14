@@ -79,6 +79,8 @@ fn install_handle(
 ) -> Result<(), RootedError> {
     let is_socket = context.boolean(matches!(kind, EndpointKind::Socket));
     let handle = context.object_rooted()?;
+    let owner_key = owner_symbol(context)?;
+    context.set_property_rooted(handle, owner_key, object, handle)?;
     let id_root = context.number(id as f64);
     for (name, referenced) in [("ref", true), ("unref", false)] {
         let referenced = context.boolean(referenced);
@@ -99,6 +101,26 @@ fn install_handle(
     let name = context.string_rooted("hasRef");
     context.define_data_property_rooted(method, key, name, false, false, true)?;
     set(context, handle, "hasRef", method)?;
+    if matches!(kind, EndpointKind::Socket)
+        && super::net_shared_vm::socket_is_tcp(&context.host_mut().shared_state().borrow().tcp, id)
+    {
+        for (name, operation) in [("setNoDelay", "netHandleSetNoDelay"), ("setKeepAlive", "netHandleSetKeepAlive")] {
+            let method = context.host_function_with_data(crate::host::shared_vm::operation(operation), data)?;
+            let key = context.string_rooted("name");
+            let name_root = context.string_rooted(name);
+            context.define_data_property_rooted(method, key, name_root, false, false, true)?;
+            set(context, handle, name, method)?;
+        }
+    }
+
+    if matches!(kind, EndpointKind::Listener) {
+        let data = context.array_rooted(&[object, handle])?;
+        let method = context.host_function_with_data(crate::host::shared_vm::operation("netServerOnConnection"), data)?;
+        let key = context.string_rooted("name");
+        let name = context.string_rooted("onconnection");
+        context.define_data_property_rooted(method, key, name, false, false, true)?;
+        set(context, handle, "onconnection", method)?;
+    }
     set(context, object, "_handle", handle)
 }
 fn owner(
@@ -200,4 +222,59 @@ pub(crate) fn unref_timeout(
         .copied()
         .ok_or_else(|| RootedError::host("socket timeout missing"))?;
     super::timers_shared_vm::timer_unref(context, timer, &[])
+}
+
+
+const DEFAULT_KEEPALIVE_INTERVAL_SECONDS: u32 = 1;
+const DEFAULT_KEEPALIVE_PROBE_COUNT: u32 = 10;
+fn tcp_option_owner(context: &mut NativeContext<'_, NodeHost>, receiver: RootId) -> Result<Option<u64>, RootedError> {
+    let data = context.host_function_data()?;
+    let handle = get(context, data, "1")?;
+    if !context.strict_equal_rooted(receiver, handle)? { return Ok(None); }
+    let id = get(context, data, "0")?;
+    Ok(context.rooted_value(id).and_then(|value| value.as_number()).map(|id| id as u64))
+}
+fn option_result(context: &mut NativeContext<'_, NodeHost>, result: std::io::Result<()>) -> RootId {
+    let code = result.err().map_or(0, |error| -error.raw_os_error().unwrap_or(libc::EINVAL));
+    context.number(f64::from(code))
+}
+fn unsigned_argument(context: &NativeContext<'_, NodeHost>, root: Option<RootId>) -> Option<u32> {
+    root.and_then(|root| context.rooted_value(root)).and_then(|value| value.as_number())
+        .filter(|number| number.is_finite() && number.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(number))
+        .map(|number| number as u32)
+}
+pub(crate) fn set_no_delay(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let Some(id) = tcp_option_owner(context, receiver)? else { return Ok(context.number(-f64::from(libc::EBADF))); };
+    let enabled = args.first().and_then(|root| context.rooted_value(*root)).and_then(|value| value.as_bool()) == Some(true);
+    let shared = context.host_mut().shared_state();
+    let result = super::net_shared_vm::tcp_no_delay(&mut shared.borrow_mut().tcp, id, enabled);
+    Ok(option_result(context, result))
+}
+pub(crate) fn set_keep_alive(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let Some(id) = tcp_option_owner(context, receiver)? else { return Ok(context.number(-f64::from(libc::EBADF))); };
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
+    let mask = context.number(-1.0);
+    let enabled = context.arithmetic_rooted(quench_runtime::NativeArithmetic::BitwiseAnd, input, mask)?;
+    let enabled = context.rooted_value(enabled).and_then(|value| value.as_number()).unwrap_or(0.0) != 0.0;
+    let delay = args.get(1).and_then(|root| context.rooted_value(*root)).and_then(|value| value.as_number()).unwrap_or(0.0) as i32 as u32;
+    let options = super::net_shared_vm::TcpKeepAlive {
+        enabled,
+        delay,
+        interval: unsigned_argument(context, args.get(2).copied()).unwrap_or(DEFAULT_KEEPALIVE_INTERVAL_SECONDS),
+        count: unsigned_argument(context, args.get(3).copied()).unwrap_or(DEFAULT_KEEPALIVE_PROBE_COUNT),
+    };
+    let shared = context.host_mut().shared_state();
+    let result = super::net_shared_vm::tcp_keep_alive(&mut shared.borrow_mut().tcp, id, options);
+    Ok(option_result(context, result))
+}
+
+
+pub(crate) fn owner_symbol(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let shared = context.host_mut().shared_state();
+    let existing = shared.borrow().net_handle_owner_symbol;
+    if let Some(symbol) = existing { return Ok(symbol); }
+    let symbol = context.symbol_rooted(Some("owner_symbol"));
+    let retained = context.retain(symbol)?;
+    shared.borrow_mut().net_handle_owner_symbol = Some(retained);
+    Ok(symbol)
 }
