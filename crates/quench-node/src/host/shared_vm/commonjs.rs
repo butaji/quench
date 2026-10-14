@@ -110,6 +110,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let bootstrap_require = create_require(context, &bootstrap_filename)?;
     set(context, global, "\0quench:require", bootstrap_require)?;
     context.release_root(bootstrap_require);
+    install_performance_global(context)?;
     let node_primordials = context
         .host_mut()
         .node_library_root
@@ -210,6 +211,36 @@ fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.release_root(root);
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_polyfill");
+    Ok(())
+}
+
+/// Node's replaceable `performance` global loads `perf_hooks` on first access.
+fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let root = context.evaluate_script_rooted(
+        quench_js_check::checked_js!(
+            r#"(() => {
+  let value;
+  let loaded = false;
+  const accessors = {
+    get performance() {
+      if (!loaded) {
+        value = globalThis["\0quench:require"]("perf_hooks").performance;
+        loaded = true;
+      }
+      return value;
+    },
+    set performance(replacement) {
+      value = replacement;
+      loaded = true;
+    },
+  };
+  Object.defineProperty(globalThis, "performance",
+    Object.getOwnPropertyDescriptor(accessors, "performance"));
+})()"#
+        ),
+        "node:bootstrap/performance-global.js",
+    )?;
+    context.release_root(root);
     Ok(())
 }
 

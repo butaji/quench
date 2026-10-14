@@ -419,6 +419,26 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Create a realm with fresh ECMAScript intrinsics and return its global object.
+    pub fn create_realm_rooted(&mut self) -> Result<RootId, RootedError> {
+        let result = self.vm.create_embedding_realm();
+        self.completion(result)
+    }
+
+    /// Evaluate host Script source as a global Script of the realm owning `global`:
+    /// its top-level lexical declarations persist in that realm.
+    pub fn evaluate_script_in_realm_rooted(
+        &mut self,
+        global: RootId,
+        source: &str,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .evaluate_embedding_script_in_realm(global, source, name);
+        self.completion(result)
+    }
+
     /// Compile and evaluate host-owned Script source through the specializer.
     /// Dynamic eval remains on `evaluate_script_rooted`.
     pub fn evaluate_specialized_script_rooted(

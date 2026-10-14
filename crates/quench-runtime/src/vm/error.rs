@@ -1238,7 +1238,33 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn create_realm(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
+        let global = self.create_realm_global(program)?;
+        let realm = self.install_realm_host_api(program, global)?;
+        for binding in self.host.globals() {
+            if binding.capability == CapabilityId::CreateRealm {
+                self.set_builtin_value_named(global, binding.name, realm)?;
+            }
+        }
+        Ok(realm)
+    }
+
+    /// Creates a realm's global object with its intrinsics, without host APIs.
+    pub(super) fn create_realm_global(
+        &mut self,
+        program: &ResidualProgram,
+    ) -> Result<Value, JsError> {
         let global = self.object();
+        // Compiled code reaches its helper natives through internal global names.
+        let creator = self.realm.globals;
+        for atom in self.internal_named_keys(creator) {
+            if let Some(value) = self.own_property(creator, atom) {
+                let attributes = self.property_attributes(creator, PropertyKey::string(atom));
+                self.set_property(global, atom, value)?;
+                if let Some(attributes) = attributes {
+                    self.set_property_attributes(global, PropertyKey::string(atom), attributes);
+                }
+            }
+        }
         self.set_builtin_value_named(global, "globalThis", global)?;
         self.install_throw_type_error_for_realm(global)?;
         for (name, value) in [
@@ -1542,6 +1568,11 @@ impl<H: Host> Vm<H> {
             ("hasOwn", Native::ObjectHasOwn),
             ("preventExtensions", Native::ObjectPreventExtensions),
             ("isExtensible", Native::ObjectIsExtensible),
+            ("groupBy", Native::ObjectGroupBy),
+            ("seal", Native::ObjectSeal),
+            ("isSealed", Native::ObjectIsSealed),
+            ("freeze", Native::ObjectFreeze),
+            ("isFrozen", Native::ObjectIsFrozen),
         ] {
             self.set_realm_builtin_named(program, object, name, native, Some(global))?;
         }
@@ -1570,26 +1601,7 @@ impl<H: Host> Vm<H> {
         let map_prototype = self
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.set_builtin_function_name(map, "Map")?;
-        self.realm
-            .intrinsics
-            .builtin_prototypes
-            .insert((global, Native::Map), map_prototype);
-        self.set_builtin_value_named(map, "prototype", map_prototype)?;
-        self.set_builtin_value_named(map_prototype, "constructor", map)?;
-        let prototype_atom = self.prototype_atom();
-        self.set_property_attributes(
-            map,
-            PropertyKey::string(prototype_atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: false,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
+        self.install_map(program, global, map, map_prototype)?;
         self.set_builtin_value_named(global, "Map", map)?;
         let regexp = self.native_with_realm(Native::RegExp, global, global);
         let regexp_escape = self.native_with_realm(Native::RegExpEscape, global, global);
@@ -1702,13 +1714,7 @@ impl<H: Host> Vm<H> {
         self.install_json_for_realm(program, global)?;
         self.install_symbol_for_realm(program, global, object_prototype)?;
         self.install_intl_for_realm(program, global, object_prototype)?;
-        let realm = self.install_realm_host_api(program, global)?;
-        for binding in self.host.globals() {
-            if binding.capability == CapabilityId::CreateRealm {
-                self.set_builtin_value_named(global, binding.name, realm)?;
-            }
-        }
-        Ok(realm)
+        Ok(global)
     }
 
     fn install_realm_host_api(
