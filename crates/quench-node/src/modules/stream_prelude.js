@@ -549,11 +549,7 @@
     state.reading = false;
     stream.readable = false;
     stream._emitter.emit("end");
-    if (
-      state.autoDestroy && (!stream._isDuplex || stream._writableState.finished)
-    ) {
-      nextTick(() => stream.destroy());
-    }
+    deps.afterReadableEnd(stream);
     return true;
   }
   deps.completeReadableEnd = completeReadableEnd;
@@ -3115,7 +3111,6 @@
       initWritable(this, options || {});
       initConstruct(this, options || {});
       this.allowHalfOpen = !options || options.allowHalfOpen !== false;
-      deps.duplexInit(this);
       if (options?.readable === false) {
         this.readable = false;
         this._readableState.ended = true;
