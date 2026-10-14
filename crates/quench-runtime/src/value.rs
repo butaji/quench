@@ -171,12 +171,21 @@ impl Value {
         Self(TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT | u64::from(index))
     }
 
+    /// The Number this value holds. Doubles are tested first: arithmetic that reaches this
+    /// conversion has already handled the integer pair.
+    #[inline(always)]
     pub fn as_number(self) -> Option<f64> {
-        if let Some(value) = self.as_int() {
-            Some(value as f64)
+        if !self.is_tagged() {
+            Some(f64::from_bits(self.0))
         } else {
-            (!self.is_tagged()).then(|| f64::from_bits(self.0))
+            self.as_int().map(f64::from)
         }
+    }
+
+    /// Both operands as Numbers.
+    #[inline(always)]
+    pub(crate) fn number_pair(left: Self, right: Self) -> Option<(f64, f64)> {
+        Some((left.as_number()?, right.as_number()?))
     }
 
     pub fn as_bool(self) -> Option<bool> {

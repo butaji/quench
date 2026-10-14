@@ -143,6 +143,28 @@ fn numeric_integer_subtract_result(left: i32, right: i32) -> Value {
         .unwrap_or_else(|| Value::number(f64::from(left) - f64::from(right)))
 }
 
+/// An arithmetic operator on two Numbers: `integer` when both are integers, else `number` on
+/// their IEEE 754 values.
+#[inline(always)]
+fn number_arithmetic(
+    left: Value,
+    right: Value,
+    integer: fn(i32, i32) -> Value,
+    number: fn(f64, f64) -> f64,
+) -> Option<(Value, crate::profile::BinaryValuePath)> {
+    if let Some((left, right)) = Value::int_pair(left, right) {
+        return Some((
+            integer(left, right),
+            crate::profile::BinaryValuePath::IntegerFastPath,
+        ));
+    }
+    let (left, right) = Value::number_pair(left, right)?;
+    Some((
+        Value::number(number(left, right)),
+        crate::profile::BinaryValuePath::NumberFastPath,
+    ))
+}
+
 #[inline(always)]
 fn numeric_integer_result(operator: BinaryOperator, left: i32, right: i32) -> Option<Value> {
     Some(match operator {
@@ -1210,9 +1232,40 @@ impl<H: Host> Vm<H> {
     }
     /// An arithmetic, bitwise or shift operator applied to two numbers: the integer fast path
     /// when both are integers, otherwise the IEEE 754 result. Any other operand pair, and
-    /// every other operator, is left to `binary`.
+    /// every other operator, is left to `binary`. The four arithmetic operators match the
+    /// immediate directly; the rest go through the operator table.
     #[inline(always)]
     pub(super) fn number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
+        const ADDITION: u32 = BinaryOperator::Addition as u32;
+        const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
+        const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
+        const DIVISION: u32 = BinaryOperator::Division as u32;
+        let (value, path) = match op {
+            ADDITION => number_arithmetic(left, right, numeric_integer_add_result, |l, r| l + r)?,
+            SUBTRACTION => {
+                number_arithmetic(left, right, numeric_integer_subtract_result, |l, r| l - r)?
+            }
+            MULTIPLICATION => {
+                number_arithmetic(left, right, numeric_integer_multiply_result, |l, r| l * r)?
+            }
+            // `Value::number` keeps an exact quotient an integer, which is all the integer
+            // case would add.
+            DIVISION => {
+                let (left, right) = Value::number_pair(left, right)?;
+                (
+                    Value::number(left / right),
+                    crate::profile::BinaryValuePath::NumberFastPath,
+                )
+            }
+            _ => return self.tabled_number_binary(op, left, right),
+        };
+        self.record_binary_value_path(op, left, right, path);
+        Some(value)
+    }
+
+    /// `number_binary` for the operators past the four arithmetic ones.
+    #[inline(always)]
+    fn tabled_number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
         if !is_numeric_binary_operator(op) {
             return None;
         }
@@ -1225,9 +1278,7 @@ impl<H: Host> Vm<H> {
             );
             return Some(value);
         }
-        let (Some(left_number), Some(right_number)) = (left.as_number(), right.as_number()) else {
-            return None;
-        };
+        let (left_number, right_number) = Value::number_pair(left, right)?;
         let operator = numeric_binary_operator(op)
             .expect("numeric operator range is represented in the operator table");
         self.record_binary_value_path(
