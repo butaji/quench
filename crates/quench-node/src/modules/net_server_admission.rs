@@ -116,17 +116,6 @@ pub(crate) fn on_connection(context: &mut NativeContext<'_, NodeHost>, _: RootId
     shared.borrow_mut().net_sockets.insert(id, crate::host::node_host::NetSocket {
         root: retained, encoding: None, parent_server: None, write_callbacks: Default::default(),
     });
-    for (peer, prefix) in [(false, "local"), (true, "remote")] {
-        let address = super::net_shared_vm::socket_address(&shared.borrow().tcp, id, peer);
-        if let Ok(address) = address {
-            let value = context.string_rooted(&address.ip().to_string());
-            set(context, socket, &format!("{prefix}Address"), value)?;
-            let value = context.string_rooted(if address.is_ipv4() { "IPv4" } else { "IPv6" });
-            set(context, socket, &format!("{prefix}Family"), value)?;
-            let value = context.number(f64::from(address.port()));
-            set(context, socket, &format!("{prefix}Port"), value)?;
-        }
-    }
     super::net_socket_options::apply_accepted(context, server, socket, handle)?;
     let count = get(context, server, "_connections")?;
     let count = context.numeric_update_rooted(count, false)?;
