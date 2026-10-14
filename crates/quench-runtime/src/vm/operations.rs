@@ -197,7 +197,9 @@ pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) ->
 /// `None` otherwise, leaving other Numbers to `number_binary`.
 #[inline(always)]
 pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
-    let (left, right) = Value::int_pair(left, right)?;
+    // One operand at a time: each tag test needs a single scratch register, which keeps the
+    // lane's integer handlers free of saved registers.
+    let (left, right) = (left.as_int()?, right.as_int()?);
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
 }
 
