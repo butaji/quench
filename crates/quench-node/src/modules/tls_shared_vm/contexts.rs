@@ -8,6 +8,7 @@ pub(crate) struct State {
     pub(crate) api: Option<RootId>,
     pub(crate) ciphers: Option<Vec<String>>,
     pub(crate) transport_errors: std::collections::VecDeque<(u64, openssl::error::ErrorStack)>,
+    pub(crate) sessions: super::sessions::State,
     entries: Vec<Entry>,
 }
 struct Entry {
@@ -61,6 +62,7 @@ pub(crate) fn owner(
     Err(context.throw(error))
 }
 pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
+    super::sessions::prune(runtime);
     let shared = runtime.host_mut().shared_state();
     let dead = shared
         .borrow()
@@ -78,6 +80,7 @@ pub(crate) fn prune(runtime: &mut Runtime<NodeHost>) {
     }
 }
 pub(crate) fn cleanup(runtime: &mut Runtime<NodeHost>) {
+    super::sessions::cleanup(runtime);
     let shared = runtime.host_mut().shared_state();
     let entries = std::mem::take(&mut shared.borrow_mut().tls_contexts.entries);
     for entry in entries {

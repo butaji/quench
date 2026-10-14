@@ -13,7 +13,7 @@ mod atoms;
 mod control_flow;
 mod instruction;
 mod numeric_ops;
-pub(crate) use atoms::AtomTable;
+pub(crate) use atoms::{AtomSequence, AtomTable};
 
 /// Infix of the compiler's hidden atom for a named function expression's own binding:
 /// `{name}{SELF_BINDING_MARKER}{function id}`.
@@ -1958,6 +1958,15 @@ impl ResidualProgram {
         self.is_module()
             || (self.kind == ProgramKind::Eval
                 && self.functions.first().is_some_and(|root| root.strict))
+    }
+
+    /// The root function's slots project no global var or global lexical binding, so each
+    /// slot of its environment is the binding itself.
+    pub(crate) fn root_slots_are_bindings(&self) -> bool {
+        self.functions.first().is_some_and(|root| {
+            (self.root_variables_are_local() || root.global_var_atoms.is_empty())
+                && (self.kind != ProgramKind::Script || root.global_lexical_atoms.is_empty())
+        })
     }
 
     pub fn function_count(&self) -> usize {
