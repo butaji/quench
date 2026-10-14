@@ -415,7 +415,10 @@ impl JsStringBuilder {
             .try_reserve_exact(length)
             .map_err(|_| StringBuildError::Allocation)?;
         for part in &self.parts {
-            part.units.view().slice(part.range.clone()).extend_into(&mut output);
+            part.units
+                .view()
+                .slice(part.range.clone())
+                .extend_into(&mut output);
         }
         Ok(JsString::from_units(&output))
     }
@@ -737,7 +740,10 @@ mod tests {
     #[test]
     fn searches_and_splits_by_units() {
         let value = JsString::from_units(&[0xD800, b'|' as u16, 0xDC00]);
-        assert_eq!(value.find_units(super::Units::Wide(&[b'|' as u16]), 0), Some(1));
+        assert_eq!(
+            value.find_units(super::Units::Wide(&[b'|' as u16]), 0),
+            Some(1)
+        );
         let parts = value.split_units(super::Units::Wide(&[b'|' as u16]));
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].units(), &[0xD800]);
