@@ -721,6 +721,9 @@ impl<H: Host> Vm<H> {
         index: usize,
         value: Value,
     ) -> Result<(), JsError> {
+        if self.create_plain_array_element(target, index, value) {
+            return Ok(());
+        }
         let key = self.to_property_key(p, Value::number(index as f64))?;
         let record = super::object_descriptors::PropertyDescriptorRecord::data(value);
         if self.define_own_property_record(p, target, key, record)? {
@@ -728,6 +731,25 @@ impl<H: Host> Vm<H> {
         } else {
             Err(self.type_error(p, "cannot create data property".into()))
         }
+    }
+
+    /// CreateDataProperty on an extensible ordinary array whose elements and `length` carry
+    /// only default attributes: every element is a writable, enumerable, configurable data
+    /// property, so the definition always succeeds and is the element store itself. Other
+    /// receivers take the full DefineOwnProperty path.
+    fn create_plain_array_element(&mut self, target: Value, index: usize, value: Value) -> bool {
+        let plain = self.heap.array(target).is_some()
+            && index < MAX_ARRAY_LENGTH
+            && self.object_data(target).is_some_and(|object| {
+                object.is_extensible()
+                    && !object.has_indexed_descriptors()
+                    && !object.is_arguments_object()
+            })
+            && self
+                .descriptors
+                .get(&(target, PropertyKey::string(self.length_atom)))
+                .is_none_or(|length| length.writable);
+        plain && self.set_array_element(target, index, value)
     }
 
     pub(super) fn iterator_abrupt(

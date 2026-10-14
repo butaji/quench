@@ -73,10 +73,11 @@ const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
 };
 // This is the sweep variable for large-heap RSS/Score measurements. A factor
 // of 1/1 allows one live set's worth of new cells before collection (2x total
-// occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x.
+// occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x. The RSS lane
+// (TOD-123) takes 1/2: stock Splay max RSS 66.3 -> 54.5 MB for -14% Score.
 const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
     numerator: 1,
-    denominator: 1,
+    denominator: 2,
 };
 
 #[derive(Clone, Copy)]

@@ -189,7 +189,7 @@ impl FunctionCompiler<'_, '_> {
     }
     fn parameter_binding_atom(&self, atom: Atom) -> Atom {
         if self.parameter_context
-            && self.owner.atoms[atom as usize].as_ref() == "arguments"
+            && &self.owner.atoms[atom as usize] == "arguments"
             && let Some(slot) = self.parameter_arguments_slot
         {
             self.locals[usize::from(slot)]
@@ -329,7 +329,6 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         if self.owner.atoms[atom as usize]
-            .as_ref()
             .contains("\0quench:class-binding:")
             || immutable_lexical
             || (self.with_depth == 0
@@ -411,7 +410,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn has_immutable_capture(&mut self, atom: Atom) -> bool {
-        let name = self.owner.atoms[atom as usize].clone();
+        let name = self.owner.atoms[atom as usize].to_owned();
         let marker = self.owner.atom(&format!(
             "{}{name}",
             LexicalBindingKind::Immutable.capture_prefix()
@@ -420,7 +419,7 @@ impl FunctionCompiler<'_, '_> {
     }
 
     fn has_function_name_capture(&mut self, atom: Atom) -> bool {
-        let name = self.owner.atoms[atom as usize].clone();
+        let name = self.owner.atoms[atom as usize].to_owned();
         let marker = self.owner.atom(&format!(
             "{}{name}",
             LexicalBindingKind::FunctionName.capture_prefix()
@@ -455,7 +454,7 @@ impl FunctionCompiler<'_, '_> {
             &scopes,
             Some(self.function_id),
             FunctionOptions {
-                source_text: self.owner.source_text(value.span),
+                source_span: self.owner.source_span(value.span),
                 defaults: Some(&value.params),
                 name_binding,
                 async_function: value.r#async,

@@ -564,9 +564,13 @@ impl<H: Host> Vm<H> {
             return Ok((!descriptor.is_undefined())
                 .then(|| self.descriptor_flag(descriptor, "enumerable")));
         }
-        Ok(self
-            .ordinary_own_property(p, target, key)?
-            .map(|(_, attributes)| attributes.enumerable))
+        // A deferred module namespace evaluates its module on first access.
+        let roots = [self.heap.root(target), self.heap.root(key)];
+        let found = self.ordinary_own_property(p, target, key);
+        roots.into_iter().for_each(|root| {
+            self.heap.release_root(root);
+        });
+        Ok(found?.map(|(_, attributes)| attributes.enumerable))
     }
 
     fn proxy_own_property_descriptor(

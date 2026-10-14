@@ -591,24 +591,17 @@ impl ProgramStore {
         })
     }
 
-    pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        self.programs.iter().flatten().flat_map(|entry| {
-            entry
-                .constants
-                .iter()
-                .copied()
-                .chain(entry.function_sources.iter().flatten().copied())
-                .chain(entry.module_environment)
-                .chain(entry.import_meta)
-                .chain(
-                    entry
-                        .module_imports
-                        .iter()
-                        .filter_map(|(_, import)| match import {
-                            ModuleImport::Value(value) => Some(*value),
-                            ModuleImport::Binding(_, _, fallback) => Some(*fallback),
-                        }),
-                )
-        })
+    /// Appends every value the stored programs keep alive to `roots`.
+    pub(crate) fn extend_roots(&self, roots: &mut Vec<Value>) {
+        for entry in self.programs.iter().flatten() {
+            roots.extend_from_slice(&entry.constants);
+            roots.extend(entry.function_sources.iter().flatten());
+            roots.extend(entry.module_environment);
+            roots.extend(entry.import_meta);
+            roots.extend(entry.module_imports.iter().map(|(_, import)| match import {
+                ModuleImport::Value(value) => *value,
+                ModuleImport::Binding(_, _, fallback) => *fallback,
+            }));
+        }
     }
 }

@@ -24,6 +24,7 @@ impl FunctionCompiler<'_, '_> {
         let first_class_slot = self.locals.len();
         let scopes = self.active_lexical_slots();
         let clone_plan = self.push_environment_clone(Vec::new(), scopes);
+        self.class_environment_clones.insert(clone_plan);
         self.emit(Op::CloneEnv, 0, 0, 0, clone_plan as u32);
         let class_binding = class.id.as_ref().map(|identifier| {
             let source = self.owner.atom(identifier.name.as_str());
@@ -222,7 +223,7 @@ impl FunctionCompiler<'_, '_> {
                     Some(self.function_id),
                     FunctionOptions {
                         defaults: None,
-                        source_text: self.owner.source_text(class.span),
+                        source_span: self.owner.source_span(class.span),
                         name_binding: None,
                         async_function: false,
                         generator: false,
@@ -979,9 +980,9 @@ impl Compiler<'_> {
             parent,
             FunctionOptions {
                 defaults: Some(&method.value.params),
-                source_text: source_span.and_then(|span| {
+                source_span: source_span.and_then(|span| {
                     class_method_source_span(self.text, span, method.key.span().start)
-                        .and_then(|span| self.source_text(span))
+                        .and_then(|span| self.source_span(span))
                 }),
                 name_binding: None,
                 async_function: method.value.r#async,
@@ -1019,7 +1020,7 @@ impl Compiler<'_> {
             parent,
             FunctionOptions {
                 defaults: None,
-                source_text: None,
+                source_span: None,
                 name_binding: None,
                 async_function: false,
                 generator: false,
