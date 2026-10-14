@@ -105,6 +105,17 @@ fn create_handle(
         context.set_property_rooted(handle, owner_key, object, handle)?;
     }
     let id_root = context.number(id as f64);
+    if matches!(kind, EndpointKind::Socket) {
+        let shared = context.host_mut().shared_state();
+        let first_handle = !shared.borrow().net_handle_identities.iter().any(|(_, existing)| *existing == id);
+        if first_handle { super::net_shared_vm::stop_read(&mut shared.borrow_mut().tcp, id); }
+        else {
+            // A TLS wrapper inherits its original endpoint's existing request.
+            let active = super::net_shared_vm::read_active(&shared.borrow().tcp, id);
+            let reading = context.boolean(active);
+            set(context, handle, "reading", reading)?;
+        }
+    }
     register_identity(context, handle, id)?;
     for (name, referenced) in [("ref", true), ("unref", false)] {
         let referenced = context.boolean(referenced);
@@ -138,6 +149,13 @@ fn create_handle(
     }
 
     if matches!(kind, EndpointKind::Socket) {
+        for (name, operation) in [("readStart", "netHandleReadStart"), ("readStop", "netHandleReadStop")] {
+            let method = context.host_function_with_data(crate::host::shared_vm::operation(operation), data)?;
+            let key = context.string_rooted("name");
+            let name_root = context.string_rooted(name);
+            context.define_data_property_rooted(method, key, name_root, false, false, true)?;
+            set(context, handle, name, method)?;
+        }
         let method = context.host_function_with_data(crate::host::shared_vm::operation("netHandleClose"), data)?;
         let key = context.string_rooted("name");
         let name = context.string_rooted("close");
@@ -424,4 +442,17 @@ pub(crate) fn close_complete(context: &mut NativeContext<'_, NodeHost>, receiver
     let socket = context.host_mut().shared_state().borrow_mut().net_sockets.remove(&id);
     if let Some(socket) = socket { context.release_root(socket.root); }
     result
+}
+
+
+pub(crate) fn read_start(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let Some(id) = tcp_option_owner(context, receiver)? else { return Ok(context.number(-f64::from(libc::EBADF))); };
+    let shared = context.host_mut().shared_state();
+    let result = super::net_shared_vm::start_read(&mut shared.borrow_mut().tcp, id);
+    Ok(option_result(context, result))
+}
+pub(crate) fn read_stop(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let Some(id) = tcp_option_owner(context, receiver)? else { return Ok(context.number(-f64::from(libc::EBADF))); };
+    super::net_shared_vm::stop_read(&mut context.host_mut().shared_state().borrow_mut().tcp, id);
+    Ok(context.number(0.0))
 }
