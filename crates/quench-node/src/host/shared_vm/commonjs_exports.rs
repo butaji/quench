@@ -3,7 +3,7 @@ use oxc_ast::ast::{
     AssignmentExpression, Expression, ObjectPropertyKind, PropertyKey, PropertyKind,
     SimpleAssignmentTarget, Statement,
 };
-use oxc_ast_visit::{Visit, walk};
+use oxc_ast_visit::{walk, Visit};
 use std::collections::BTreeSet;
 
 pub(super) fn names(source: &str) -> Vec<String> {

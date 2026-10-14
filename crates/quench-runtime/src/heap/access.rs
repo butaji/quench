@@ -1,7 +1,10 @@
-use super::{ArrayObject, Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, IteratorKind, Object};
-use crate::value_vec::ValueArena;
+use super::{
+    ArrayObject, Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, IteratorKind,
+    Object,
+};
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
+use crate::value_vec::ValueArena;
 
 impl Heap {
     pub(crate) fn collection_entry_deleted(&mut self, collection: Value, index: usize, map: bool) {
@@ -17,9 +20,16 @@ impl Heap {
             else {
                 continue;
             };
-            let tracks_map = matches!(kind, IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries);
+            let tracks_map = matches!(
+                kind,
+                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries
+            );
             let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
-            if *source == collection && !*done && ((map && tracks_map) || (!map && tracks_set)) && ext.position(*cursor) > index {
+            if *source == collection
+                && !*done
+                && ((map && tracks_map) || (!map && tracks_set))
+                && ext.position(*cursor) > index
+            {
                 let position = ext.position(*cursor) - 1;
                 ext.store_position(cursor, position);
             }
@@ -38,7 +48,10 @@ impl Heap {
             else {
                 continue;
             };
-            let tracks_map = matches!(kind, IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries);
+            let tracks_map = matches!(
+                kind,
+                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries
+            );
             let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
             if *source == collection && !*done && ((map && tracks_map) || (!map && tracks_set)) {
                 *index = 0;
@@ -150,6 +163,7 @@ impl Heap {
             .map(|slots| EnvironmentSlots(slots.into()))
     }
 
+    #[inline(always)]
     pub fn get(&self, value: Value) -> Option<&Cell> {
         let HeapReference::LegacySlot(index) = value.heap_reference()? else {
             return None;
@@ -157,6 +171,7 @@ impl Heap {
         self.get_legacy(index)
     }
 
+    #[inline(always)]
     pub(crate) fn get_legacy(&self, index: u32) -> Option<&Cell> {
         let index = index as usize;
         if index >= self.slots.len() {
@@ -179,6 +194,7 @@ impl Heap {
         unsafe { self.slots.get_unchecked_mut(index).cell.as_mut() }
     }
 
+    #[inline(always)]
     pub(crate) fn object(&self, value: Value) -> Option<&Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: a direct-object Value is only created after the
@@ -192,6 +208,7 @@ impl Heap {
         self.get(value)?.object()
     }
 
+    #[inline(always)]
     pub(crate) fn object_mut(&mut self, value: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.
@@ -230,11 +247,9 @@ impl Heap {
             HeapReference::ArrayRecord(record_id) => unsafe {
                 array_records.get_live_mut(record_id)
             },
-            HeapReference::LegacySlot(index) => slots
-                .get_mut(index as usize)?
-                .cell
-                .as_mut()?
-                .object_mut()?,
+            HeapReference::LegacySlot(index) => {
+                slots.get_mut(index as usize)?.cell.as_mut()?.object_mut()?
+            }
         };
         Some((object, properties))
     }
