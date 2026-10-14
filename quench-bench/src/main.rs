@@ -1,10 +1,13 @@
 mod analysis;
 mod contention;
+mod jetstream;
 
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    env, fs,
+    env,
+    ffi::OsString,
+    fs,
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Output},
@@ -100,6 +103,111 @@ BenchmarkSuite.RunSuites({
 });
 "#;
 const SUITE_DIR: &str = "quench-bench/js-engine-benchmark/v8-v7";
+const V8_V7_CORPUS: &str = "quench-bench/js-engine-benchmark";
+
+/// A benchmark suite: its corpus checkout, fixtures, engine invocation and
+/// Score line. Every suite shares the matched-round runner and its report.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+enum Suite {
+    #[default]
+    V8V7,
+    JetStream3,
+}
+
+impl Suite {
+    fn parse(name: &str) -> Self {
+        match name {
+            "v8-v7" => Self::V8V7,
+            "jetstream3" => Self::JetStream3,
+            _ => usage(&format!("unknown suite: {name}")),
+        }
+    }
+
+    /// The submodule pinned by the repository.
+    fn corpus(self) -> &'static str {
+        match self {
+            Self::V8V7 => V8_V7_CORPUS,
+            Self::JetStream3 => jetstream::SUITE_DIR,
+        }
+    }
+
+    fn fixtures(self) -> Vec<PathBuf> {
+        match self {
+            Self::V8V7 => FIXTURES.iter().map(|name| Path::new(SUITE_DIR).join(name)).collect(),
+            Self::JetStream3 => jetstream::fixtures(),
+        }
+    }
+
+    /// A fixture named on the command line: a file, or a JetStream test.
+    fn fixture(self, name: &str) -> PathBuf {
+        match self {
+            Self::V8V7 => PathBuf::from(name),
+            Self::JetStream3 => jetstream::fixture_path(name),
+        }
+    }
+
+    fn inputs(self) -> Vec<Artifact> {
+        match self {
+            Self::V8V7 => std::iter::once(Path::new(SUITE_DIR).join("base.js"))
+                .chain(FIXTURES.iter().map(|name| Path::new(SUITE_DIR).join(name)))
+                .map(|path| artifact(&path))
+                .collect(),
+            Self::JetStream3 => ["cli.js", "JetStreamDriver.js", "utils/params.js", "utils/shell-config.js"]
+                .iter()
+                .map(|name| artifact(&Path::new(jetstream::SUITE_DIR).join(name)))
+                .collect(),
+        }
+    }
+
+    /// The measured engines, Quench first. QuickJS has no realm API, which
+    /// JetStream needs for every benchmark.
+    fn engine_names(self) -> &'static [&'static str] {
+        match self {
+            Self::V8V7 => &["quench", "quickjs", "bun", "node"],
+            Self::JetStream3 => &["quench", "bun", "node"],
+        }
+    }
+
+    fn fixture_names(self) -> &'static [&'static str] {
+        match self {
+            Self::V8V7 => FIXTURES,
+            Self::JetStream3 => jetstream::FIXTURES,
+        }
+    }
+
+    /// Writes the runnable source and returns it with the engine arguments.
+    fn materialize(self, file: &Path) -> (PathBuf, Vec<OsString>) {
+        match self {
+            Self::V8V7 => {
+                let source = materialize(file);
+                let arguments = vec![source.clone().into_os_string()];
+                (source, arguments)
+            }
+            Self::JetStream3 => {
+                let prelude = temporary_path("jetstream3-prelude.js");
+                fs::write(&prelude, jetstream::prelude())
+                    .unwrap_or_else(|error| fail(&error.to_string()));
+                let arguments = jetstream::arguments(file, &prelude);
+                (prelude, arguments)
+            }
+        }
+    }
+
+    fn score(self, file: &Path, stdout: &str) -> Option<f64> {
+        match self {
+            Self::V8V7 => v8_v7_score(stdout),
+            Self::JetStream3 => jetstream::score(file, stdout),
+        }
+    }
+
+    fn semantic_output(self, stdout: &str) -> String {
+        match self {
+            Self::V8V7 => semantic_output(stdout),
+            Self::JetStream3 => jetstream::semantic_output(stdout),
+        }
+    }
+}
 
 #[derive(Clone)]
 struct EngineSpec {
@@ -231,6 +339,8 @@ struct FixtureRecord {
 #[derive(Clone, Deserialize, Serialize)]
 struct SuiteRecord {
     schema: u32,
+    #[serde(default)]
+    suite: Suite,
     created_unix_ns: u128,
     rounds_requested: usize,
     timeout_ms: u64,
@@ -372,7 +482,8 @@ struct FixedWorkReport {
 }
 
 struct Options {
-    fixture: Option<PathBuf>,
+    suite: Suite,
+    fixture: Option<String>,
     all: bool,
     preflight_only: bool,
     node: PathBuf,
@@ -436,17 +547,19 @@ fn main() {
         return;
     }
 
+    let suite = options.suite;
     let mut report = SuiteRecord {
         schema: 5,
+        suite,
         created_unix_ns: now_ns(),
         rounds_requested: options.rounds,
         timeout_ms: options.timeout_ms,
         source_revision,
         source_dirty,
-        corpus: corpus_record(&files),
+        corpus: corpus_record(suite, &files),
         host: host_identity(),
         engines: engine_records,
-        suite_inputs: corpus_inputs(),
+        suite_inputs: suite.inputs(),
         fixtures: BTreeMap::new(),
         complete: false,
         qualification_ready: false,
@@ -482,7 +595,7 @@ fn main() {
             );
             continue;
         }
-        let fixture = run_fixture(&file, &engines, options.rounds, options.timeout_ms);
+        let fixture = run_fixture(suite, &file, &engines, options.rounds, options.timeout_ms);
         eprintln!(
             "{}: {} ({}/{} rounds)",
             file.display(),
@@ -591,6 +704,7 @@ fn write_new_report(path: &Path, bytes: &[u8]) {
 
 fn validate_resume(saved: &SuiteRecord, expected: &SuiteRecord, files: &[PathBuf]) {
     let metadata_matches = saved.schema == expected.schema
+        && saved.suite == expected.suite
         && saved.rounds_requested == expected.rounds_requested
         && saved.timeout_ms == expected.timeout_ms
         && saved.source_revision == expected.source_revision
@@ -664,6 +778,7 @@ fn parse_options() -> Options {
         .next()
         .unwrap_or_else(|| usage("missing fixture or --all"));
     let mut options = Options {
+        suite: Suite::V8V7,
         fixture: None,
         all: first == "--all",
         preflight_only: first == "--preflight-only",
@@ -680,10 +795,14 @@ fn parse_options() -> Options {
         resume: None,
     };
     if !options.all && !options.preflight_only {
-        options.fixture = Some(PathBuf::from(first));
+        options.fixture = Some(first);
     }
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--suite" => {
+                let name = args.next().unwrap_or_else(|| usage("missing value for --suite"));
+                options.suite = Suite::parse(&name);
+            }
             "--node" => options.node = required_path(&mut args, "--node"),
             "--bun" => options.bun = required_path(&mut args, "--bun"),
             "--qjs" => options.qjs = required_path(&mut args, "--qjs"),
@@ -724,6 +843,9 @@ fn parse_options() -> Options {
     if options.preflight_only && (options.checkpoint.is_some() || options.resume.is_some()) {
         usage("--preflight-only cannot use checkpoints");
     }
+    if options.fixed_work && options.suite != Suite::V8V7 {
+        usage("--fixed-work measures V8-v7 fixtures only");
+    }
     if options.quench_peer.is_some() && !options.fixed_work {
         usage("--quench-peer requires --fixed-work");
     }
@@ -756,6 +878,21 @@ fn required_number(args: &mut impl Iterator<Item = String>, option: &str) -> u64
 }
 
 fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
+    options
+        .suite
+        .engine_names()
+        .iter()
+        .map(|name| match *name {
+            "quench" => quench_engine(options),
+            "quickjs" => quickjs_engine(options),
+            "bun" => bun_engine(options),
+            "node" => node_engine(options),
+            _ => unreachable!("suites name only known engines"),
+        })
+        .collect()
+}
+
+fn node_engine(options: &Options) -> EngineSpec {
     let mut node = spec(
         "node",
         &options.node,
@@ -779,7 +916,10 @@ fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
         &node.env,
     );
     node.jit_proof = require_proof("node --jitless", &proof, "true");
+    node
+}
 
+fn bun_engine(options: &Options) -> EngineSpec {
     let mut bun_env = BTreeMap::new();
     bun_env.insert("BUN_JSC_useJIT".into(), "0".into());
     let mut bun = spec("bun", &options.bun, vec![], bun_env);
@@ -799,14 +939,20 @@ fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
         "console.log(Bun.version)".into(),
     ];
     bun.jit_proof = require_proof("BUN_JSC_useJIT=0 + JSC option dump", &proof, "useJIT=false");
+    bun
+}
 
+fn quickjs_engine(options: &Options) -> EngineSpec {
     let mut qjs = spec("quickjs", &options.qjs, vec![], BTreeMap::new());
     qjs.version = version(&qjs.executable, &["--version"], &qjs.env);
     qjs.jit_proof_command = vec![qjs.executable.display().to_string(), "--version".into()];
     qjs.jit_proof =
         "QuickJS qjs executes bytecode in its interpreter; binary version and SHA-256 are recorded"
             .into();
+    qjs
+}
 
+fn quench_engine(options: &Options) -> EngineSpec {
     let mut quench = spec("quench", &options.quench, vec![], BTreeMap::new());
     quench.version = format!(
         "Quench shared-VM interpreter build; package {}",
@@ -815,8 +961,7 @@ fn prepare_engines(options: &Options) -> Vec<EngineSpec> {
     quench.jit_proof_command = vec![quench.executable.display().to_string()];
     quench.jit_proof =
         "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled".into();
-
-    vec![quench, qjs, bun, node]
+    quench
 }
 
 fn prepare_quench_pair(options: &Options) -> Vec<EngineSpec> {
@@ -954,12 +1099,9 @@ fn capture_output(output: std::io::Result<Output>) -> Capture {
 
 fn selected_fixtures(options: &Options) -> Vec<PathBuf> {
     if options.all {
-        return FIXTURES
-            .iter()
-            .map(|name| Path::new(SUITE_DIR).join(name))
-            .collect();
+        return options.suite.fixtures();
     }
-    vec![options.fixture.clone().unwrap()]
+    vec![options.suite.fixture(options.fixture.as_deref().unwrap())]
 }
 
 fn fixed_work_plan(file: &Path) -> FixedWorkPlan {
@@ -1082,12 +1224,12 @@ fn run_fixed_work_report(
         timeout_ms: options.timeout_ms,
         source_revision,
         source_dirty,
-        corpus: corpus_record(files),
+        corpus: corpus_record(Suite::V8V7, files),
         host,
         contention_policy: contention::POLICY,
         measurement_runner: artifact(&env::current_exe().expect("current benchmark executable")),
         engines: engine_records,
-        suite_inputs: corpus_inputs(),
+        suite_inputs: Suite::V8V7.inputs(),
         fixtures,
         complete,
         qualification_ready: false,
@@ -1218,7 +1360,8 @@ fn run_fixed_work_attempt(
                 FixedWorkSampleKind::Work => work_source,
                 FixedWorkSampleKind::SetupOnly => setup_only_source,
             };
-            let sample = run(engine, source, timeout_ms);
+            let mut sample = run(engine, &[source.as_os_str().to_owned()], timeout_ms);
+            sample.score = v8_v7_score(&sample.stdout);
             execution_order.push(FixedWorkExecution {
                 engine: engine.name.to_string(),
                 sample: kind,
@@ -1425,18 +1568,21 @@ fn fixed_work_marginal_summary(
 }
 
 fn run_fixture(
+    suite: Suite,
     file: &Path,
     engines: &[EngineSpec],
     rounds: usize,
     timeout_ms: u64,
 ) -> FixtureRecord {
-    let temporary = materialize(file);
+    let (temporary, arguments) = suite.materialize(file);
     let mut results = Vec::with_capacity(rounds);
     for round in 0..rounds {
         let order = rotated_order(engines, round);
         let mut samples = BTreeMap::new();
         for engine in &order {
-            samples.insert(engine.name.to_string(), run(engine, &temporary, timeout_ms));
+            let mut sample = run(engine, &arguments, timeout_ms);
+            sample.score = suite.score(file, &sample.stdout);
+            samples.insert(engine.name.to_string(), sample);
         }
         results.push(RoundRecord {
             round,
@@ -1452,7 +1598,7 @@ fn run_fixture(
         && results
             .iter()
             .all(|round| round.samples.values().all(Sample::valid));
-    let output_equal = outputs_equal(&results, engines);
+    let output_equal = outputs_equal(suite, &results, engines);
     let summaries = engines
         .iter()
         .map(|engine| (engine.name.to_string(), summary(&results, engine.name)))
@@ -1472,7 +1618,7 @@ fn rotated_order(engines: &[EngineSpec], round: usize) -> Vec<EngineSpec> {
         .collect()
 }
 
-fn outputs_equal(rounds: &[RoundRecord], engines: &[EngineSpec]) -> bool {
+fn outputs_equal(suite: Suite, rounds: &[RoundRecord], engines: &[EngineSpec]) -> bool {
     rounds.iter().all(|round| {
         let Some(first) = engines
             .first()
@@ -1483,22 +1629,22 @@ fn outputs_equal(rounds: &[RoundRecord], engines: &[EngineSpec]) -> bool {
         engines.iter().all(|engine| {
             round.samples.get(engine.name).is_some_and(|sample| {
                 sample.status == first.status
-                    && semantic_output(&sample.stdout) == semantic_output(&first.stdout)
+                    && suite.semantic_output(&sample.stdout) == suite.semantic_output(&first.stdout)
             })
         })
     })
 }
 
-fn run(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
+fn run(engine: &EngineSpec, arguments: &[OsString], timeout_ms: u64) -> Sample {
     let host_before = host_snapshot();
-    let mut sample = run_measured(engine, source, timeout_ms);
+    let mut sample = run_measured(engine, arguments, timeout_ms);
     sample.host_before = Some(host_before);
     sample.host_after = Some(host_snapshot());
     sample
 }
 
 #[cfg(target_os = "macos")]
-fn run_measured(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
+fn run_measured(engine: &EngineSpec, arguments: &[OsString], timeout_ms: u64) -> Sample {
     let started = Instant::now();
     let timeout_seconds = format!("{:.3}", timeout_ms as f64 / 1000.0);
     let output = Command::new("timeout")
@@ -1511,7 +1657,7 @@ fn run_measured(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
         ])
         .arg(&engine.executable)
         .args(&engine.argv)
-        .arg(source)
+        .args(arguments)
         .env_clear()
         .envs(&engine.env)
         .output();
@@ -1524,16 +1670,12 @@ fn run_measured(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
         Err(error) => (-1, String::new(), error.to_string()),
     };
     let timed_out = matches!(status, 124 | 137);
-    let score = stdout
-        .lines()
-        .find_map(|line| line.strip_prefix("Score: "))
-        .and_then(|value| value.parse().ok());
     Sample {
         status,
         timed_out,
         wall_ns: started.elapsed().as_nanos(),
         peak_rss_bytes: time_metric(&stderr, "maximum resident set size"),
-        score,
+        score: None,
         instructions: time_metric(&stderr, "instructions retired"),
         cycles: time_metric(&stderr, "cycles elapsed"),
         page_faults: time_metric(&stderr, "page faults"),
@@ -1548,17 +1690,17 @@ fn run_measured(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn run_measured(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
-    run_wait4(engine, source, timeout_ms)
+fn run_measured(engine: &EngineSpec, arguments: &[OsString], timeout_ms: u64) -> Sample {
+    run_wait4(engine, arguments, timeout_ms)
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn run_wait4(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
+fn run_wait4(engine: &EngineSpec, arguments: &[OsString], timeout_ms: u64) -> Sample {
     let started = Instant::now();
     let mut command = Command::new(&engine.executable);
     command
         .args(&engine.argv)
-        .arg(source)
+        .args(arguments)
         .env_clear()
         .envs(&engine.env)
         .stdout(Stdio::piped())
@@ -1601,16 +1743,12 @@ fn run_wait4(engine: &EngineSpec, source: &Path, timeout_ms: u64) -> Sample {
         stderr.push_str(&format!("\nstderr read failed: {error}"));
     }
     let stdout = String::from_utf8_lossy(&stdout).into_owned();
-    let score = stdout
-        .lines()
-        .find_map(|line| line.strip_prefix("Score: "))
-        .and_then(|value| value.parse().ok());
     Sample {
         status,
         timed_out,
         wall_ns: started.elapsed().as_nanos(),
         peak_rss_bytes: usage.peak_rss_bytes,
-        score,
+        score: None,
         instructions: None,
         cycles: None,
         page_faults: Some(usage.page_faults),
@@ -1788,13 +1926,13 @@ fn materialize(file: &Path) -> PathBuf {
     materialize_with_runner(file, RUNNER.as_bytes())
 }
 
+fn temporary_path(name: &str) -> PathBuf {
+    Path::new("/tmp").join(format!("quench-{}-{}-{name}", std::process::id(), now_ns()))
+}
+
 fn materialize_with_runner(file: &Path, runner: &[u8]) -> PathBuf {
-    let nonce = now_ns();
     let name = file.file_name().unwrap_or_default().to_string_lossy();
-    let path = Path::new("/tmp").join(format!(
-        "quench-v8-v7-{}-{nonce}-{name}",
-        std::process::id()
-    ));
+    let path = temporary_path(&format!("v8-v7-{name}"));
     let base = fs::read(Path::new(SUITE_DIR).join("base.js"))
         .unwrap_or_else(|error| fail(&error.to_string()));
     let fixture = fs::read(file).unwrap_or_else(|error| fail(&error.to_string()));
@@ -1806,6 +1944,13 @@ fn materialize_with_runner(file: &Path, runner: &[u8]) -> PathBuf {
     source.extend_from_slice(runner);
     fs::write(&path, source).unwrap_or_else(|error| fail(&error.to_string()));
     path
+}
+
+fn v8_v7_score(stdout: &str) -> Option<f64> {
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("Score: "))
+        .and_then(|value| value.parse().ok())
 }
 
 fn semantic_output(stdout: &str) -> String {
@@ -1939,47 +2084,19 @@ fn parse_cpu_consumers(text: &str) -> Vec<CpuConsumer> {
     consumers
 }
 
-fn corpus_inputs() -> Vec<Artifact> {
-    std::iter::once(Path::new(SUITE_DIR).join("base.js"))
-        .chain(FIXTURES.iter().map(|name| Path::new(SUITE_DIR).join(name)))
-        .map(|path| artifact(&path))
-        .collect()
-}
-
-fn corpus_record(selected: &[PathBuf]) -> CorpusRecord {
-    let pinned_revision = command_output(
-        "git",
-        &["ls-tree", "HEAD", "--", "quench-bench/js-engine-benchmark"],
-    )
-    .split_whitespace()
-    .nth(2)
-    .map(str::to_string);
-    let checkout_revision = command_output(
-        "git",
-        &[
-            "-C",
-            "quench-bench/js-engine-benchmark",
-            "rev-parse",
-            "HEAD",
-        ],
-    )
-    .lines()
-    .next()
-    .map(str::to_string);
-    let checkout_clean = command_output(
-        "git",
-        &[
-            "-C",
-            "quench-bench/js-engine-benchmark",
-            "status",
-            "--porcelain",
-        ],
-    )
-    .is_empty();
-    let expected = FIXTURES
-        .iter()
-        .map(|name| Path::new(SUITE_DIR).join(name))
-        .collect::<BTreeSet<_>>();
+fn corpus_record(suite: Suite, selected: &[PathBuf]) -> CorpusRecord {
+    let corpus = suite.corpus();
+    let pinned_revision = command_output("git", &["ls-tree", "HEAD", "--", corpus])
+        .split_whitespace()
+        .nth(2)
+        .map(str::to_string);
+    let checkout_revision = command_output("git", &["-C", corpus, "rev-parse", "HEAD"])
+        .lines()
+        .next()
+        .map(str::to_string);
+    let checkout_clean =
+        command_output("git", &["-C", corpus, "status", "--porcelain"]).is_empty();
+    let expected = suite.fixtures().into_iter().collect::<BTreeSet<_>>();
     let actual = selected.iter().cloned().collect::<BTreeSet<_>>();
     CorpusRecord {
         pinned_revision,
@@ -2389,6 +2506,7 @@ mod tests {
         let report_path = directory.join("report.json");
         let expected = SuiteRecord {
             schema: 5,
+            suite: super::Suite::V8V7,
             created_unix_ns: now_ns(),
             rounds_requested: 11,
             timeout_ms: 300_000,
