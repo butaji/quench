@@ -2,7 +2,7 @@
 
 use crate::host::node_host::NodeHost;
 use crate::modules::process_state::{self, ProcessFact, UnhandledRejectionMode};
-use quench_runtime::{NativeContext, PromiseRejectionEvent, RootId, RootedError, Value};
+use quench_runtime::{NativeArithmetic, NativeContext, PromiseRejectionEvent, RootId, RootedError, Value};
 use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
@@ -40,6 +40,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     install_exit_code(context, process)?;
     let exit = context.host_function(crate::host::shared_vm::operation("processExit"))?;
     install(context, process, "exit", exit)?;
+    let really_exit = context.host_function(crate::host::shared_vm::operation("reallyExit"))?;
+    install(context, process, "reallyExit", really_exit)?;
     let stdout = create_stream(context, STDOUT_FD)?;
     install(context, process, "stdout", stdout)?;
     crate::modules::process_stdin_shared_vm::install(context, process)?;
@@ -555,6 +557,25 @@ fn parse_exit_code_string(value: &str) -> f64 {
         "-Infinity" => f64::NEG_INFINITY,
         _ => value.parse().unwrap_or(f64::NAN),
     }
+}
+
+pub(crate) fn really_exit(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let value = args.first().copied().unwrap_or_else(|| context.undefined());
+    let mask = context.number(-1.0);
+    // Node's native Int32Value boundary exits with zero when coercion throws.
+    let code = match context.arithmetic_rooted(NativeArithmetic::BitwiseAnd, value, mask) {
+        Ok(value) => context.rooted_value(value).and_then(Value::as_number).unwrap_or(0.0) as i32,
+        Err(error) => {
+            if let Some(exception) = error.exception { context.release_root(exception); }
+            0
+        }
+    };
+    context.host_mut().shared_state().borrow().process_control.request_really_exit(code);
+    Err(RootedError::host("process.exit"))
 }
 
 fn invalid_exit_code_type(
@@ -1838,6 +1859,11 @@ pub(crate) fn finish_requested_exit(
         .clone();
     let shared_state = runtime.host_mut().shared_state();
     cleanup_environment(runtime, &shared_state);
+    if process_control.exit_without_event() {
+        super::tls_shared_vm::contexts::cleanup(runtime);
+        super::buffer_shared_vm::cleanup(runtime);
+        return Ok(());
+    }
     emit_exit(runtime, program, process_control.exit_code().unwrap_or(0))
 }
 
