@@ -770,7 +770,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub(super) fn needs_strict_global_reference_capture(&mut self, atom: Atom) -> bool {
-        if !self.strict || self.owner.atoms[atom as usize].as_ref().starts_with('\0') {
+        if !self.strict || self.owner.atoms[atom as usize].starts_with('\0') {
             return false;
         }
         let binding = self.resolve_lexical(atom);
@@ -1079,15 +1079,15 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         .get(source)
                         .copied()
                         .unwrap_or(LexicalBindingKind::Mutable);
-                    let name = self.owner.atoms[*source as usize].clone();
+                    let name = self.owner.atoms[*source as usize].to_owned();
                     for kind in LexicalBindingKind::ALL {
                         let marker = format!("{}{name}", kind.capture_prefix());
-                        if let Some(marker) = self.owner.atom_index.get(marker.as_str()) {
+                        if let Some(marker) = self.owner.atoms.find(&marker).as_ref() {
                             scope.remove(marker);
                         }
                     }
                     let catch_name = format!("\0quench:catch-capture:{name}");
-                    if let Some(marker) = self.owner.atom_index.get(catch_name.as_str()) {
+                    if let Some(marker) = self.owner.atoms.find(&catch_name).as_ref() {
                         scope.remove(marker);
                     }
                     let marker = self.owner.atom(&format!("{}{name}", kind.capture_prefix()));
@@ -1112,7 +1112,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     scope
                         .iter()
                         .filter_map(|(atom, slot)| {
-                            let name = self.owner.atoms[*atom as usize].as_ref();
+                            let name = &self.owner.atoms[*atom as usize];
                             (self.is_compiler_binding(*atom)
                                 && !LexicalBindingKind::ALL
                                     .into_iter()

@@ -200,10 +200,6 @@ impl JsString {
         self.inner.length
     }
 
-    pub(crate) fn has_lossless_host_string(&self) -> bool {
-        char::decode_utf16(self.units().iter().copied()).all(|decoded| decoded.is_ok())
-    }
-
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(crate) fn capacity(&self) -> usize {
         self.units().len() * std::mem::size_of::<u16>()
@@ -430,8 +426,6 @@ mod tests {
 
         assert!(paired.inner.host.get().is_none());
         assert!(lone.inner.host.get().is_none());
-        assert!(paired.has_lossless_host_string());
-        assert!(!lone.has_lossless_host_string());
         assert!(paired.inner.host.get().is_none());
         assert!(lone.inner.host.get().is_none());
         assert_eq!(lone.host_string(), "�");
