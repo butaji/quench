@@ -6,9 +6,6 @@ use super::*;
 /// one descriptor-table entry.
 const INDEX_PROBE_COST_RATIO: usize = 8;
 
-// Three decimal digits per byte safely cover the largest `usize` value.
-const ARRAY_INDEX_TEXT_CAPACITY: usize = std::mem::size_of::<usize>() * 3;
-
 const ARRAY_LENGTH_MODULUS: f64 = u32::MAX as f64 + 1.0;
 pub(super) const ARRAY_LENGTH_ATTRIBUTES: PropertyAttributes = PropertyAttributes {
     enumerable: false,
@@ -243,20 +240,10 @@ impl<H: Host> Vm<H> {
     /// Finds an existing canonical index atom without allocating. An absent
     /// atom proves that no string-keyed property for this index can exist.
     pub(super) fn lookup_array_index_atom(&self, index: usize) -> Option<Atom> {
-        let mut bytes = [0; ARRAY_INDEX_TEXT_CAPACITY];
-        let mut start = bytes.len();
-        let mut value = index;
-        loop {
-            start -= 1;
-            bytes[start] = b'0' + (value % 10) as u8;
-            value /= 10;
-            if value == 0 {
-                break;
-            }
+        match u32::try_from(index) {
+            Ok(index) if index < u32::MAX => self.array_index_atoms.get(&index).copied(),
+            _ => self.lookup_atom(&index.to_string()),
         }
-        let text = std::str::from_utf8(&bytes[start..])
-            .expect("array index formatting emits only decimal digits");
-        self.lookup_atom(text)
     }
 
     pub(super) fn array_integrity_atoms(&mut self, target: Value) -> Vec<Atom> {
