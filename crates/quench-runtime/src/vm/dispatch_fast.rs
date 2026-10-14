@@ -92,6 +92,11 @@ pub(super) struct LaneView {
     /// How a lane call activates the function without a frame; `None`
     /// when its activation needs a frame (locals outside registers).
     activation: Option<ActivationShape>,
+    /// The general loop enters the lane in this function: a Wasm function, or a JavaScript
+    /// one with a loop the lane runs whole (`closes_loop`). Elsewhere JavaScript leaves the
+    /// lane at its calls and property operations, and the hand-offs cost more than the lane
+    /// saves (Richards +22%, DeltaBlue +15% instructions when every function used it).
+    enters: bool,
 }
 
 /// Registers a lane call writes as one fixed block when the window fits it:
@@ -616,7 +621,7 @@ lane_handler! {
         };
         let operator = i.imm();
         let vm = unsafe { vm(cx) };
-        let Some(value) = vm.numeric_integer_binary(operator, left, right) else {
+        let Some(value) = vm.number_binary(operator, left, right) else {
             return exit(ip);
         };
         if i.a & crate::bytecode::NUMERIC_LOCAL_TARGET != 0 {
@@ -627,6 +632,51 @@ lane_handler! {
         } else {
             r.set(i.a, value);
         }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// A present dense array element; any other read takes the general path.
+    fn lane_get_index<>(cx, r, ip, i, view) {
+        let (Some(base), Some(key)) =
+            (lane_operand_value(cx, r, i.b), lane_operand_value(cx, r, i.c))
+        else {
+            return exit(ip);
+        };
+        let Some(value) = (unsafe { vm(cx) }).dense_array_element(base, key) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// Replacing a present dense element; any other write takes the general path.
+    fn lane_set_index<>(cx, r, ip, i, view) {
+        let (object, key) = (r.get(i.b), r.get(i.c));
+        let vm = unsafe { vm(cx) };
+        let Some(index) = vm.replaceable_dense_index(object, key) else {
+            return exit(ip);
+        };
+        vm.replace_dense_element(object, index, r.get(i.a));
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// A capture the frame's environment owns directly; any other read takes the general path.
+    fn lane_load_capture<>(cx, r, ip, i, view) {
+        let imm = i.imm();
+        let Some(value) = (unsafe { vm(cx) }).cached_direct_capture(
+            unsafe { (*cx).frame },
+            ImmediateLayout::capture_depth(imm),
+            ImmediateLayout::capture_slot(imm),
+        ) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
         next!(cx, r, following(ip), view)
     }
 }
@@ -649,7 +699,9 @@ lane_handler! {
         };
         // SAFETY: the context's program outlives the lane run.
         let code = unsafe { &*(*cx).code };
-        let Some(value) = vm.field_cache_hit(code, object, i.imm(), i.c) else {
+        // The general loop's probe (`cached_field_hit`): own, megamorphic and holder entries.
+        let super::object::FieldCacheProbe::Hit(value) = vm.cached_field_hit(code, object, i.c)
+        else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -2530,7 +2582,10 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field::<H>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
         Op::IncDec => Some(lane_inc_dec::<H>),
-        Op::Binary => Some(lane_binary::<H>),
+        Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),
+        Op::GetIndex => Some(lane_get_index::<H>),
+        Op::SetIndex => Some(lane_set_index::<H>),
+        Op::LoadCapture => Some(lane_load_capture::<H>),
         Op::JumpBinaryFalse => Some(lane_jump_binary_false::<H, BACKWARD>),
         Op::LoadLocalPlain => Some(lane_load_local_plain::<H>),
         Op::Jump => Some(lane_jump_always::<H, BACKWARD>),
@@ -3345,12 +3400,26 @@ fn derive_lane_view<H: Host>(
             params: function.params,
             initial: function.initial_register.value(),
         });
+    let enters = kind == crate::bytecode::ProgramKind::Wasm || closes_loop(function, &exits);
     LaneView {
         records,
         entries,
         memory_register,
         activation,
+        enters,
     }
+}
+
+/// Whether some loop of `function`, from a backward jump's target through the jump, has no
+/// instruction the lane exits at.
+fn closes_loop(function: &Function, exits: &[bool]) -> bool {
+    function.code.iter().enumerate().any(|(pc, packed)| {
+        let instruction = decoded_instruction(function, *packed);
+        let target = instruction.imm() as usize;
+        instruction.op().immediate_role() == ImmediateRole::JumpTarget
+            && target <= pc
+            && !exits[target..=pc].contains(&true)
+    })
 }
 
 /// The register field of `instruction` that reads `register`, as an
@@ -3403,6 +3472,8 @@ impl<H: Host> Vm<H> {
     pub(super) fn lane_view(&self, program: ProgramId, function: u32) -> *const LaneView {
         self.programs
             .lane_view(program, function, derive_lane_view::<H>)
+            // SAFETY: the program store keeps a derived view alive with its program.
+            .filter(|view| unsafe { (**view).enters })
             .unwrap_or(std::ptr::null())
     }
 
