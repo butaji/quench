@@ -1727,6 +1727,165 @@ const sources={accessor:"const refresh=()=>1,resolve=()=>2;module.exports={refre
 }
 
 #[test]
+fn commonjs_namespace_follows_static_require_reexports_and_cycles() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-cjs-reexports-'));
+fs.writeFileSync(path.join(dir,'leaf.cjs'), 'exports.answer=42; exports.forwardRef=x=>x;');
+fs.writeFileSync(path.join(dir,'index.cjs'), "module.exports = require('./bridge.cjs');");
+fs.writeFileSync(path.join(dir,'bridge.cjs'), "module.exports = require('./leaf.cjs');");
+fs.writeFileSync(path.join(dir,'cycle-a.cjs'), "exports.a=1;if(false)module.exports=require('./cycle-b.cjs');");
+fs.writeFileSync(path.join(dir,'cycle-b.cjs'), "exports.b=2;if(false)module.exports=require('./cycle-a.cjs');");
+(async()=>{
+  const file=path.join(dir,'index.cjs'), ns=await import(file);
+  assert.strictEqual(ns.default,require(file));
+  assert.strictEqual(ns.answer,42); assert.strictEqual(ns.forwardRef(7),7);
+  console.log(Object.keys(ns).join(','));
+  const cycle=await import(path.join(dir,'cycle-a.cjs'));
+  console.log(Object.keys(cycle).join(','));
+  fs.rmSync(dir,{recursive:true,force:true});
+})();
+"#);
+}
+
+#[test]
+fn global_crypto_is_lazy_and_random_values_preserve_views() {
+    compare_node_stream_source(r#"
+const assert=require('assert');
+const descriptor=Object.getOwnPropertyDescriptor(globalThis,'crypto');
+console.log(JSON.stringify([descriptor.enumerable,descriptor.configurable,typeof descriptor.get,descriptor.get.name,descriptor.get.length,descriptor.set]));
+const cryptoObject=globalThis.crypto;
+assert.strictEqual(cryptoObject,require('crypto').webcrypto);
+const values=new Uint8Array(12), slice=values.subarray(3,9);
+assert.strictEqual(cryptoObject.getRandomValues(slice),slice);
+assert.strictEqual(values[0],0);assert.strictEqual(values[11],0);
+for(const value of [new Float32Array(1),new DataView(new ArrayBuffer(1)),new Uint8Array(65537)]) {
+  try{cryptoObject.getRandomValues(value);assert.fail('accepted invalid view');}
+  catch(error){console.log(error.name);}
+}
+const method=cryptoObject.getRandomValues;
+assert.throws(()=>method(new Uint8Array(1)), {code:'ERR_INVALID_THIS'});
+console.log('random-views');
+"#);
+}
+
+#[test]
+fn buffer_alloc_supports_construction_and_ordinary_calls() {
+    compare_node_stream_source(r#"
+const assert=require('assert');
+assert.strictEqual(Buffer.alloc.length,3);
+for(const value of [Buffer.alloc(5,'ab'),new Buffer.alloc(5,'ab'),Reflect.construct(Buffer.alloc,[5,'ab'],function Other(){})]) {
+  assert(Buffer.isBuffer(value));assert.strictEqual(value.toString(),'ababa');
+  assert.strictEqual(Object.getPrototypeOf(value),Buffer.prototype);
+}
+assert.throws(()=>new Buffer.alloc(-1),{code:'ERR_OUT_OF_RANGE'});
+console.log('constructible-alloc');
+"#);
+}
+
+#[test]
+fn http_agent_pool_names_preserve_property_reads_and_coercion() {
+    compare_node_stream_source(r#"
+const agent=new(require('http').Agent)();
+for(const options of [undefined,{}, {host:'a',port:80},{host:'a',port:0,localAddress:'b',family:4,socketPath:'/tmp/socket'},{family:'4'},{family:6}]) console.log(agent.getName(options));
+const log=[];
+const value={ [Symbol.toPrimitive](hint){log.push(hint);return 'custom';} };
+const options={get host(){log.push('host');return value},get port(){log.push('port');return value},get localAddress(){log.push('localAddress');return value},get family(){log.push('family');return 6},get socketPath(){log.push('socketPath');return value}};
+console.log(agent.getName(options));console.log(JSON.stringify(log));
+agent.destroy();
+"#);
+}
+
+#[test]
+fn extensionless_entries_use_the_package_module_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("package.json"), r#"{"type":"module"}"#).unwrap();
+    std::fs::write(directory.path().join("dependency.js"), "export default 42;").unwrap();
+    let entry = directory.path().join("cli");
+    std::fs::write(&entry, "import value from './dependency.js';console.log(value);").unwrap();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.arg(&entry);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, b"42\n"); assert!(result.stderr.is_empty());
+    }
+}
+
+#[test]
+fn json_import_attributes_parse_the_original_payload() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-json-module-'));
+const file=path.join(dir,'value.json');fs.writeFileSync(file,'{"value":[1,null,"hello"]}');
+(async()=>{const ns=await import(file,{with:{type:'json'}});assert.deepStrictEqual(ns.default,{value:[1,null,'hello']});console.log(Object.keys(ns).join(','));
+fs.writeFileSync(path.join(dir,'bad.json'),']');try{await import(path.join(dir,'bad.json'),{with:{type:'json'}});assert.fail('invalid JSON accepted')}catch(e){console.log(e.name)}
+fs.rmSync(dir,{recursive:true,force:true});})();
+"#);
+}
+
+#[test]
+fn module_resolve_filename_uses_the_parent_base_without_loading() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert'),Module=require('module');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-parent-resolve-'));
+fs.writeFileSync(path.join(dir,'dependency.cjs'),'throw Error("must not execute")');
+const parent={id:path.join(dir,'noop.js'),filename:path.join(dir,'noop.js'),paths:Module._nodeModulePaths(dir)};
+assert.strictEqual(Module._resolveFilename('./dependency.cjs',parent),path.join(dir,'dependency.cjs'));
+assert.strictEqual(Module._resolveFilename('fs',parent),'fs');
+assert.throws(()=>Module._resolveFilename('./missing.cjs',parent),{code:'MODULE_NOT_FOUND'});
+console.log('parent-resolution');fs.rmSync(dir,{recursive:true,force:true});
+"#);
+}
+
+#[test]
+fn read_file_sync_accepts_file_urls_and_uses_url_validation() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert'),url=require('url');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-url-'));
+const file=path.join(dir,'a space %.txt');fs.writeFileSync(file,'hello');
+assert.strictEqual(fs.readFileSync(url.pathToFileURL(file),'utf8'),'hello');
+for(const input of ['https://example.com/a','file://example.com/a','file:///a%2Fb']) {
+  try { fs.readFileSync(new URL(input));assert.fail('invalid file URL accepted'); }
+  catch(error) { console.log(error.name,error.code); }
+}
+console.log('file-url-read');fs.rmSync(dir,{recursive:true,force:true});
+"#);
+}
+
+#[test]
+fn public_commonjs_wrappers_have_five_parameters_and_no_internal_bindings() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-cjs-wrapper-'));
+const file=path.join(dir,'module.cjs');
+fs.writeFileSync(file,'const primordials=42;module.exports=[arguments.length,primordials,typeof internalBinding]');
+assert.deepStrictEqual(require(file),[5,42,'undefined']);
+console.log('public-cjs-wrapper');fs.rmSync(dir,{recursive:true,force:true});
+"#);
+}
+
+#[test]
+fn really_exit_coerces_int32_and_skips_guest_exit_handlers() {
+    for value in ["undefined", "7.9", "'7'", "true", "NaN", "4294967298", "Symbol()", "1n", "({valueOf(){console.log('coerce');throw Error('marker')}})"] {
+        let source = format!("process.on('exit',()=>console.log('must-not-emit'));console.log('before');process.reallyExit({value});console.log('must-not-return');");
+        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command = Command::new(executable);
+            command.args(["-e", &source]);
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap()
+        });
+        for observation in &observations {
+            assert!(!observation.timed_out); assert!(observation.signal.is_none());
+            assert!(observation.stderr.is_empty(), "{}", String::from_utf8_lossy(&observation.stderr));
+        }
+        assert_eq!(observations[0].exit_code, observations[1].exit_code, "{value}");
+        assert_eq!(observations[0].stdout, observations[1].stdout, "{value}");
+    }
+}
+
+#[test]
 fn native_recursive_watch_iterator_and_gc_match_node() {
     const SOURCE: &str = r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
@@ -5939,4 +6098,123 @@ function check(label,big,num,exact){
  fs.closeSync(fd);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(out));
 })().catch(error=>{console.error(error);process.exitCode=1;});
 "#);
+}
+
+#[test]
+fn native_socket_paused_accept_defers_actual_reads_until_resume() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),assert=require('assert');const out=[];
+const server=net.createServer({pauseOnConnect:true},socket=>{
+ socket.on('data',data=>{out.push(['data',data.toString()]);socket.end();});
+ setTimeout(()=>{
+  out.push(['paused',socket.bytesRead,socket.readableFlowing,socket.isPaused()]);assert.strictEqual(socket.bytesRead,0);socket.resume();
+ },20);
+}).listen(0,()=>{
+ const client=net.connect(server.address().port,()=>client.write('payload'));
+ client.on('close',()=>server.close(()=>console.log(JSON.stringify(out))));
+});
+"#);
+}
+
+#[test]
+fn stream_explicit_flowing_false_prevents_automatic_data_resume() {
+    compare_node_stream_source(r#"
+'use strict';
+const {Readable}=require('stream');const out=[];let reads=0;
+const stream=new Readable({read(){reads++;this.push('x');this.push(null);}});
+stream.readableFlowing=false;stream.on('data',data=>out.push(['data',data.toString()]));
+out.push(['initial',stream.isPaused(),stream.readableFlowing,reads]);
+process.nextTick(()=>{out.push(['tick',stream.isPaused(),stream.readableFlowing,reads]);stream.resume();});
+stream.on('end',()=>{out.push(['end',reads]);console.log(JSON.stringify(out));});
+"#);
+}
+
+#[test]
+fn native_paused_connected_socket_keeps_reference_bit_without_active_loop_work() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),assert=require('assert');const output=[];
+const server=net.createServer(socket=>socket.unref()).listen(0,()=>{
+ const client=net.connect(server.address().port,()=>output.push(['connected',client._handle.hasRef(),client.isPaused()]));client.pause();
+ setTimeout(()=>assert.fail('idle referenced socket kept event loop alive'),100).unref();
+}).unref();
+process.on('exit',()=>console.log(JSON.stringify(output)));
+"#);
+}
+
+#[test]
+fn tls_wrapped_parent_and_tls_handle_share_original_reading_view() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),tls=require('tls'),fs=require('fs');const output=[];
+const root='/workspace/work/node-fixtures/test/fixtures/keys/';
+const server=tls.createServer({key:fs.readFileSync(root+'agent1-key.pem'),cert:fs.readFileSync(root+'agent1-cert.pem')}).listen(0,()=>{
+ const plain=net.connect(server.address().port,()=>{
+  const secure=tls.connect({socket:plain,rejectUnauthorized:false},()=>{
+   const parent=plain._handle,handle=secure._handle,descriptor=Object.getOwnPropertyDescriptor(parent,'reading');
+   output.push([typeof descriptor.get,typeof descriptor.set,parent.reading===handle.reading]);
+   handle.reading=false;output.push(parent.reading);parent.reading=true;output.push(handle.reading);
+   secure.destroy();server.close(()=>console.log(JSON.stringify(output)));
+  });
+ });
+});
+"#);
+}
+
+#[test]
+fn native_socket_endpoint_getters_follow_original_handle_and_cache_like_node() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),assert=require('assert');const out=[];
+for(const name of ['remoteAddress','remoteFamily','remotePort','localAddress','localFamily','localPort']){
+ const d=Object.getOwnPropertyDescriptor(net.Socket.prototype,name);out.push([name,d.enumerable,d.configurable,d.get.name,d.get.length,d.set===undefined,Object.hasOwn(d.get,'prototype')]);
+}
+const socket=new net.Socket(), calls=[];let fail=true;
+const handle={get getpeername(){calls.push('get-peer');return function(o){calls.push(['peer',this===handle,Object.getPrototypeOf(o)===Object.prototype]);o.address='peer';o.family='IPv6';o.port=42;return fail?1:0;};},get getsockname(){calls.push('get-local');return function(o){calls.push(['local',this===handle]);o.address='local';o.family='IPv4';o.port=7;return 1;};}};
+socket._handle=handle;socket.connecting=true;out.push(['connecting',socket.remoteAddress]);socket.connecting=false;
+out.push(['failed',socket.remoteAddress,!!socket._peername]);fail=false;out.push(['success',socket.remotePort,socket.remoteFamily]);socket._handle=null;out.push(['closed',socket.remoteAddress,socket.localAddress]);
+socket._handle=handle;out.push(['local',socket.localAddress,socket.localPort]);socket._handle=null;out.push(['local-after-close',socket.localAddress]);socket._getpeername=()=>({address:'override'});out.push(['override',socket.remoteAddress]);out.push(calls);console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_timer_callbacks_and_resource_projection_match_node() {
+    compare_node_stream_source(r#"
+'use strict';
+const assert=require('assert'),out=[];
+for(const value of [null,undefined,0,false,{},'none']){out.push(['clear',String(value),clearTimeout(value),clearInterval(value),clearImmediate(value)]);}
+const dormant=setTimeout(()=>assert.fail('dormant timer fired'),10000).unref();
+const held=setTimeout(()=>assert.fail('held timer fired'),10000);
+const dormantImmediate=setImmediate(()=>{}).unref();
+out.push(['resources',process.getActiveResourcesInfo().filter(v=>v==='Timeout').length,process.getActiveResourcesInfo().filter(v=>v==='Immediate').length]);clearTimeout(held);clearTimeout(dormant);clearImmediate(dormantImmediate);
+let left=3;const rows=[];
+function record(kind,handle,args){assert.strictEqual(this,handle);rows.push([kind,this===handle,args]);if(--left===0){rows.sort((a,b)=>a[0].localeCompare(b[0]));out.push(rows);console.log(JSON.stringify(out));}}
+const immediate=setImmediate(function(...args){record.call(this,'immediate',immediate,args)},'i',2);
+const timeout=setTimeout(function(...args){const before=process.getActiveResourcesInfo().filter(v=>v==='Timeout').length;clearTimeout(timeout);assert.strictEqual(process.getActiveResourcesInfo().filter(v=>v==='Timeout').length,before-1);record.call(this,'timeout',timeout,args)},1,'t',3);
+const interval=setInterval(function(...args){clearInterval(interval);record.call(this,'interval',interval,args)},1,'r',4);
+"#);
+}
+
+#[test]
+fn global_crypto_is_installed_before_commonjs_entry_and_preloads() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = r#"const descriptor=Object.getOwnPropertyDescriptor(globalThis,'crypto');
+console.log(JSON.stringify([typeof globalThis.crypto,descriptor.enumerable,descriptor.configurable,typeof descriptor.get,globalThis.crypto===require('crypto').webcrypto]));"#;
+    std::fs::write(directory.path().join("preload.cjs"), source).unwrap();
+    std::fs::write(directory.path().join("entry.cjs"), source).unwrap();
+    for arguments in [vec!["entry.cjs"], vec!["--require", "./preload.cjs", "entry.cjs"]] {
+        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command = Command::new(executable);
+            command.current_dir(directory.path()).args(&arguments);
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+        });
+        for observation in &observations {
+            assert!(!observation.timed_out);
+            assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+            assert!(observation.stderr.is_empty());
+        }
+        assert_eq!(observations[0].stdout, observations[1].stdout);
+    }
 }

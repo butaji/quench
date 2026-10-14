@@ -1,5 +1,5 @@
-use super::*;
 use super::wtf16::FlatUnits;
+use super::*;
 use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -847,8 +847,9 @@ impl<H: Host> Vm<H> {
                 .iter()
                 .map(|range| {
                     range.clone().map_or(Value::UNDEFINED, |range| {
-                        self.heap
-                            .alloc(Cell::String(JsString::from_unit_run(input.units().slice(range))))
+                        self.heap.alloc(Cell::String(JsString::from_unit_run(
+                            input.units().slice(range),
+                        )))
                     })
                 })
                 .collect::<Vec<_>>();
@@ -1047,9 +1048,9 @@ impl<H: Host> Vm<H> {
                         cursor += 1;
                         continue;
                     };
-                    let name = self
-                        .heap
-                        .alloc(Cell::String(JsString::from_unit_run(units.slice(cursor + 2..end))));
+                    let name = self.heap.alloc(Cell::String(JsString::from_unit_run(
+                        units.slice(cursor + 2..end),
+                    )));
                     let value = self.get_index(p, groups, name)?;
                     if !value.is_undefined() {
                         let value = self.coerce_js_string(p, value)?;
@@ -1187,7 +1188,9 @@ impl<H: Host> Vm<H> {
                                     false,
                                 ));
                             }
-                            let piece = vm.heap.alloc(Cell::String(JsString::from_unit_run(input.units().slice(p_index..q))));
+                            let piece = vm.heap.alloc(Cell::String(JsString::from_unit_run(
+                                input.units().slice(p_index..q),
+                            )));
                             if vm.append_fresh_array_element(array, piece) >= limit {
                                 return Ok((end, true));
                             }
@@ -1208,7 +1211,9 @@ impl<H: Host> Vm<H> {
                         }
                         q = next;
                     }
-                    let tail = vm.heap.alloc(Cell::String(JsString::from_unit_run(input.units().slice(p_index..input.units().len()))));
+                    let tail = vm.heap.alloc(Cell::String(JsString::from_unit_run(
+                        input.units().slice(p_index..input.units().len()),
+                    )));
                     vm.append_fresh_array_element(array, tail);
                     Ok(array)
                 })
@@ -1279,15 +1284,18 @@ impl<H: Host> Vm<H> {
                 q = advance_string_index_units(input.units(), q, unicode);
                 continue;
             }
-            let piece = self.heap.alloc(Cell::String(JsString::from_unit_run(input.units().slice(p_index..q))));
+            let piece = self.heap.alloc(Cell::String(JsString::from_unit_run(
+                input.units().slice(p_index..q),
+            )));
             if self.append_fresh_array_element(array, piece) >= limit {
                 return self.finish_regexp_split_builtin(splitter, input, last_match, array);
             }
             p_index = end;
             for capture in captures {
                 let value = capture.map_or(Value::UNDEFINED, |range| {
-                    self.heap
-                        .alloc(Cell::String(JsString::from_unit_run(input.units().slice(range))))
+                    self.heap.alloc(Cell::String(JsString::from_unit_run(
+                        input.units().slice(range),
+                    )))
                 });
                 if self.append_fresh_array_element(array, value) >= limit {
                     return self.finish_regexp_split_builtin(splitter, input, last_match, array);
@@ -1295,7 +1303,9 @@ impl<H: Host> Vm<H> {
             }
             q = p_index;
         }
-        let tail = self.heap.alloc(Cell::String(JsString::from_unit_run(input.units().slice(p_index..input.units().len()))));
+        let tail = self.heap.alloc(Cell::String(JsString::from_unit_run(
+            input.units().slice(p_index..input.units().len()),
+        )));
         self.append_fresh_array_element(array, tail);
         self.finish_regexp_split_builtin(splitter, input, last_match, array)
     }
@@ -2116,8 +2126,9 @@ impl<H: Host> Vm<H> {
                 .chain(matched.captures.iter().cloned())
                 .map(|range| {
                     range.map_or(Value::UNDEFINED, |range| {
-                        vm.heap
-                            .alloc(Cell::String(JsString::from_unit_run(input.units().slice(range))))
+                        vm.heap.alloc(Cell::String(JsString::from_unit_run(
+                            input.units().slice(range),
+                        )))
                     })
                 })
                 .collect::<Vec<_>>();
@@ -2259,8 +2270,9 @@ impl<H: Host> Vm<H> {
         for (name, range) in named {
             let atom = self.intern_atom(name);
             let value = range.as_ref().map_or(Value::UNDEFINED, |range| {
-                self.heap
-                    .alloc(Cell::String(JsString::from_unit_run(input.slice(range.clone()))))
+                self.heap.alloc(Cell::String(JsString::from_unit_run(
+                    input.slice(range.clone()),
+                )))
             });
             self.set_property(groups, atom, value)?;
         }

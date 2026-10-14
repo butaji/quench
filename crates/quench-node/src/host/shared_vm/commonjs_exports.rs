@@ -4,21 +4,58 @@ use oxc_ast::ast::{
     SimpleAssignmentTarget, Statement,
 };
 use oxc_ast_visit::{walk, Visit};
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, path::Path};
 
-pub(super) fn names(source: &str) -> Vec<String> {
+pub(super) fn names(path: &Path, source: &str) -> Vec<String> {
+    let resolver = super::commonjs::commonjs_resolver();
+    let mut names = BTreeSet::new();
+    collect(path, source, &resolver, &mut BTreeSet::new(), &mut names);
+    names.remove("default");
+    names.remove("module.exports");
+    names.into_iter().collect()
+}
+
+fn collect(
+    path: &Path,
+    source: &str,
+    resolver: &oxc_resolver::Resolver,
+    visited: &mut BTreeSet<std::path::PathBuf>,
+    names: &mut BTreeSet<String>,
+) {
+    let Ok(_guard) = quench_stack::StackGuard::enter() else {
+        return;
+    };
+    if !visited.insert(path.to_path_buf()) {
+        return;
+    }
     let allocator = oxc_allocator::Allocator::default();
     let parsed = oxc_parser::Parser::new(&allocator, source, oxc_span::SourceType::cjs()).parse();
     let mut exports = Exports {
         names: BTreeSet::new(),
+        reexports: BTreeSet::new(),
     };
     exports.visit_program(&parsed.program);
-    exports.names.remove("default");
-    exports.names.remove("module.exports");
-    exports.names.into_iter().collect()
+    names.extend(exports.names);
+    for specifier in exports.reexports {
+        let Some(base) = path.parent() else {
+            continue;
+        };
+        let Ok(resolution) = resolver.resolve(base, &specifier) else {
+            continue;
+        };
+        let resolved = resolution.full_path();
+        let resolved = std::fs::canonicalize(&resolved).unwrap_or(resolved);
+        if super::source_kind(&resolved).ok() != Some(quench_runtime::SourceKind::Script) {
+            continue;
+        }
+        if let Ok(source) = std::fs::read_to_string(&resolved) {
+            collect(&resolved, &source, resolver, visited, names);
+        }
+    }
 }
 struct Exports {
     names: BTreeSet<String>,
+    reexports: BTreeSet<String>,
 }
 fn identifier(expression: &Expression<'_>, expected: &str) -> bool {
     matches!(expression, Expression::Identifier(reference) if reference.name == expected)
@@ -67,6 +104,15 @@ impl<'a> Visit<'a> for Exports {
                 _ => {}
             }
             if is_module_exports(target) {
+                if let Expression::CallExpression(call) = &assignment.right {
+                    if identifier(&call.callee, "require") && call.arguments.len() == 1 {
+                        if let Some(Expression::StringLiteral(specifier)) =
+                            call.arguments[0].as_expression()
+                        {
+                            self.reexports.insert(specifier.value.to_string());
+                        }
+                    }
+                }
                 if let Expression::ObjectExpression(object) = &assignment.right {
                     // Node's CJS lexer recognizes this lexical prefix. A method,
                     // accessor, spread, computed key, or non-identifier value

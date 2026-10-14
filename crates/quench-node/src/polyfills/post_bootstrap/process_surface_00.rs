@@ -105,69 +105,8 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
         }
       });
     }
-    const activeTimers = new Map();
-    const originalSetTimeout = globalThis.setTimeout;
-    const originalClearTimeout = globalThis.clearTimeout;
-    const originalSetInterval = globalThis.setInterval;
-    const originalClearInterval = globalThis.clearInterval;
-    const originalSetImmediate = globalThis.setImmediate;
-    const originalClearImmediate = globalThis.clearImmediate;
-    const validateTimerCallback = (callback) => {
-      if (typeof callback !== "function") {
-        throw new TypeError('The "callback" argument must be of type function');
-      }
-    };
-    if (typeof originalSetTimeout === "function") {
-      globalThis.setTimeout = (callback, delay, ...args) => {
-        validateTimerCallback(callback);
-        let timer;
-        const wrappedCallback = (...callbackArgs) => {
-          try {
-            return callback(...callbackArgs);
-          } finally {
-            activeTimers.delete(timer);
-          }
-        };
-        timer = originalSetTimeout(wrappedCallback, delay, ...args);
-        activeTimers.set(timer, "Timeout");
-        return timer;
-      };
-      globalThis.clearTimeout = (timer) => {
-        activeTimers.delete(timer);
-        return originalClearTimeout(timer);
-      };
-    }
-    if (typeof originalSetInterval === "function") {
-      globalThis.setInterval = (callback, delay, ...args) => {
-        validateTimerCallback(callback);
-        const timer = originalSetInterval(callback, delay, ...args);
-        activeTimers.set(timer, "Timeout");
-        return timer;
-      };
-      globalThis.clearInterval = (timer) => {
-        activeTimers.delete(timer);
-        return originalClearInterval(timer);
-      };
-    }
-    if (typeof originalSetImmediate === "function") {
-      globalThis.setImmediate = (callback, ...args) => {
-        validateTimerCallback(callback);
-        let timer;
-        const wrappedCallback = (...callbackArgs) => {
-          activeTimers.delete(timer);
-          return callback(...callbackArgs);
-        };
-        timer = originalSetImmediate(wrappedCallback, ...args);
-        activeTimers.set(timer, "Immediate");
-        return timer;
-      };
-      globalThis.clearImmediate = (timer) => {
-        activeTimers.delete(timer);
-        return originalClearImmediate(timer);
-      };
-    }
     globalThis.process.getActiveResourcesInfo = () => [
-      ...activeTimers.values(),
+      ...globalThis.process.__quenchGetActiveTimerResources(),
       ...globalThis.process.__quenchGetActiveNetworkResources(),
       ...Array.from(
         globalThis.process.__quenchActiveRequests || [],

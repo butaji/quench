@@ -18,9 +18,13 @@ struct SlotProperty {
 
 impl SlotProperty {
     fn values(&self) -> impl Iterator<Item = Value> {
-        [Some(self.value), self.attributes.getter, self.attributes.setter]
-            .into_iter()
-            .flatten()
+        [
+            Some(self.value),
+            self.attributes.getter,
+            self.attributes.setter,
+        ]
+        .into_iter()
+        .flatten()
     }
 }
 
@@ -198,7 +202,9 @@ impl<H: Host> Vm<H> {
     ) -> Result<bool, JsError> {
         let key = self.property_key_value(key);
         let record = PropertyDescriptorRecord::from_attributes(property.value, property.attributes);
-        self.with_call_roots([key], |vm| vm.define_own_property_record(p, holder, key, record))
+        self.with_call_roots([key], |vm| {
+            vm.define_own_property_record(p, holder, key, record)
+        })
     }
 
     /// `key` as a JavaScript property key value.

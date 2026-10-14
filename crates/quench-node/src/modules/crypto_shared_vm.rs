@@ -1760,17 +1760,8 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       process.nextTick(bindAsyncCallback(callback), null, result.publicKey, result.privateKey);
     } catch (error) { process.nextTick(bindAsyncCallback(callback), error); }
   };
-  const webCrypto = globalThis.crypto || {};
-  if (!globalThis.crypto) {
-    Object.defineProperty(globalThis, "crypto", {
-      configurable: true,
-      enumerable: false,
-      writable: true,
-      value: webCrypto,
-    });
-  }
-  if (webCrypto) {
-    webCrypto.getRandomValues = function(values) {
+  const webCrypto = {};
+  webCrypto.getRandomValues = function(values) {
       if (this !== webCrypto) {
         const error = new TypeError("Illegal invocation");
         error.code = "ERR_INVALID_THIS";
@@ -1788,8 +1779,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       }
       randomFillSync(values);
       return values;
-    };
-  }
+  };
   const api = {
     Hash: HashConstructor,
     Verify,
@@ -1861,6 +1851,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     DH_NOT_SUITABLE_GENERATOR: 8,
   });
   Object.defineProperties(api, {
+    webcrypto: { enumerable: true, get() { return webCrypto; } },
     pseudoRandomBytes: { configurable: true, writable: true, value: pseudoRandomBuffer },
     prng: { configurable: true, value: randomBuffer },
     rng: { configurable: true, value: randomBuffer },
@@ -1868,6 +1859,31 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
   return api;
 }"#
 );
+
+/// Node exposes crypto before imports, but initializes its implementation lazily.
+pub(crate) fn install_global(
+    context: &mut NativeContext<'_, NodeHost>,
+) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    let getter = context.host_function(crate::host::shared_vm::operation("get crypto"))?;
+    let descriptor = context.null_object_rooted()?;
+    set(context, descriptor, "get", getter)?;
+    let yes = context.boolean(true);
+    set(context, descriptor, "enumerable", yes)?;
+    set(context, descriptor, "configurable", yes)?;
+    let key = context.string_rooted("crypto");
+    context.define_property_descriptor_rooted(global, key, descriptor)?;
+    Ok(())
+}
+
+pub(crate) fn global_crypto(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = crate::host::shared_vm::commonjs::crypto_module(context)?;
+    get(context, module, "webcrypto")
+}
 
 pub(crate) fn module(
     context: &mut NativeContext<'_, NodeHost>,
