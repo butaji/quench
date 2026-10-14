@@ -156,7 +156,7 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
-        if i.op() != Op::Call
+        if !matches!(i.op(), Op::Call | Op::CallForwardingArguments)
             || self.direct_eval
             || self.parameter_eval
             || p.kind == crate::bytecode::ProgramKind::Wasm
@@ -181,11 +181,19 @@ impl<H: Host> Vm<H> {
             Some(Cell::Function {
                 kind: FunctionKind::Native(Native::FunctionApply),
                 ..
-            }) => {
-                apply_arguments =
-                    self.dense_apply_arguments(window.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-                apply_arguments.as_slice()
-            }
+            }) => match window.get(1).copied().unwrap_or(Value::UNDEFINED) {
+                // The caller's unmaterialized `arguments`: the values its frame kept.
+                Value::UNMATERIALIZED_ARGUMENTS => {
+                    let kept: *const [Value] = self.frames[f].original_arguments.as_slice();
+                    // SAFETY: the caller's frame stays on the stack and is not mutated while
+                    // the callee is set up; its buffer does not move when `frames` grows.
+                    unsafe { &*kept }
+                }
+                list => {
+                    apply_arguments = self.dense_apply_arguments(list)?;
+                    apply_arguments.as_slice()
+                }
+            },
             _ => return None,
         };
         let (program_id, id, env) = self.same_realm_user_target(target)?;
@@ -214,6 +222,34 @@ impl<H: Host> Vm<H> {
             call_guard,
             construct_this: None,
         }))
+    }
+
+    /// `CallForwardingArguments` whose argument is the caller's unmaterialized `arguments`:
+    /// the intrinsic `apply` of an in-loop user function is pushed with the kept values;
+    /// any other call first materializes the object, then proceeds as `Call` (`None`).
+    #[inline(never)]
+    fn forward_activation_arguments(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: WideInstruction,
+        pc: usize,
+        allow_inline_calls: bool,
+    ) -> Option<Result<StepResult, JsError>> {
+        let last = i.call_window().last()?;
+        if self.read(f, last) != Value::UNMATERIALIZED_ARGUMENTS {
+            return None;
+        }
+        if allow_inline_calls && let Some(result) = self.try_inline_call_apply(p, f, i, pc) {
+            return Some(result);
+        }
+        match self.materialize_activation_arguments(p, f) {
+            Ok(arguments) => {
+                self.write(f, last, arguments);
+                None
+            }
+            Err(error) => Some(Err(error)),
+        }
     }
 
     /// CreateListFromArrayLike for `apply` when it reduces to a copy: null or undefined, a
@@ -1725,7 +1761,13 @@ impl<H: Host> Vm<H> {
                     *pc = i.jump_target() as usize;
                 }
             }
-            Op::Call | Op::CallDirectEvalArray => {
+            Op::Call | Op::CallDirectEvalArray | Op::CallForwardingArguments => {
+                if i.op() == Op::CallForwardingArguments
+                    && let Some(result) =
+                        self.forward_activation_arguments(p, f, i, *pc, allow_inline_calls)
+                {
+                    return result;
+                }
                 self.profile.call_source(0);
                 let window = i.call_window();
                 // A spread direct-eval array is read before any call state changes, since

@@ -70,6 +70,10 @@ impl Value {
     pub const FALSE: Self = Self(TAG_BOOL);
     pub const TRUE: Self = Self(TAG_BOOL | 1);
     pub(crate) const DELETED: Self = Self(TAG_DELETED);
+    /// An activation's `arguments` binding whose object does not exist yet
+    /// (`CallPlan::forwards_arguments`). Not a heap reference, and distinct from every value a
+    /// guest operation produces.
+    pub(crate) const UNMATERIALIZED_ARGUMENTS: Self = Self(TAG_DELETED | 1);
 
     /// A Number: integral values in `i32` range other than -0 are stored as integers, NaN
     /// canonically. A value is integral exactly when its truncation converts back to the

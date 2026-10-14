@@ -549,11 +549,14 @@ pub struct Subject {
 
 impl Subject {
     pub fn new(units: std::rc::Rc<[u16]>) -> Self {
-        let ascii = units
-            .iter()
-            .all(|unit| *unit <= ASCII_MAX)
-            .then(|| units.iter().map(|unit| *unit as u8).collect());
-        let has_carriage_return = units.contains(&u16::from(b'\r'));
+        // One branch-free pass classifies the text (vectorizable); a second narrows ASCII
+        // text to bytes. Early-exit scans would stop the compiler from vectorizing either.
+        let carriage_return = u16::from(b'\r');
+        let (all_bits, has_carriage_return) =
+            units.iter().fold((0, false), |(bits, carriage), unit| {
+                (bits | *unit, carriage | (*unit == carriage_return))
+            });
+        let ascii = (all_bits <= ASCII_MAX).then(|| units.iter().map(|unit| *unit as u8).collect());
         Self {
             units,
             ascii,
