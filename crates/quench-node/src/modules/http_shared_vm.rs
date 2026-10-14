@@ -18,7 +18,7 @@ pub(crate) use client::{
     write as request_write,
 };
 pub(crate) use operations::{
-    agent_create, agent_destroy, create_server, response_destroy, response_finish,
+    agent_create, agent_destroy, agent_get_name, create_server, response_destroy, response_finish,
     response_get_header, response_remove_header, response_set_header, response_write,
     response_write_head, server_address, server_close, server_listen,
 };

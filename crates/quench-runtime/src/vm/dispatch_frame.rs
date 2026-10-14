@@ -81,10 +81,7 @@ impl GeneralCodeCursor {
 }
 
 impl<H: Host> Vm<H> {
-    /// A code cursor for `function`, with its lane view where the lane runs: Wasm programs.
-    /// JavaScript keeps the general loop, whose inline fast arms the lane's per-entry
-    /// hand-off measured slower on every V8-v7 fixture but RegExp (Linux x86_64, 4 vCPU:
-    /// Richards -7%, DeltaBlue -15%, RayTrace -14%, Splay -13%, NavierStokes -16% Score).
+    /// A code cursor for `function`, with its lane view where the lane runs (`LaneView::enters`).
     pub(super) fn general_cursor(
         &self,
         program_id: ProgramId,
@@ -93,7 +90,7 @@ impl<H: Host> Vm<H> {
         lane: bool,
     ) -> GeneralCodeCursor {
         GeneralCodeCursor {
-            lane: if lane && program.kind == crate::bytecode::ProgramKind::Wasm {
+            lane: if lane {
                 self.lane_view(program_id, function)
             } else {
                 std::ptr::null()
@@ -1435,12 +1432,11 @@ impl<H: Host> Vm<H> {
                         self.read(frame, ins.register_b()),
                         self.read(frame, ins.register_c()),
                     );
-                    if let Some(index) = self.replaceable_dense_index(object, key) {
-                        self.replace_dense_element(
-                            object,
-                            index,
-                            self.read(frame, ins.register_a()),
-                        );
+                    if self.try_replace_dense_element(
+                        object,
+                        key,
+                        self.read(frame, ins.register_a()),
+                    ) {
                         continue;
                     }
                 }

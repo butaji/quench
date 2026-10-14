@@ -113,6 +113,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let paths = get(context, facades, "1")?;
     set(context, module, "createRequire", create_require)?;
     set(context, module, "_nodeModulePaths", paths)?;
+    let resolve_filename = context.host_function(crate::host::shared_vm::operation("_resolveFilename"))?;
+    set(context, module, "_resolveFilename", resolve_filename)?;
     let find_package_json =
         context.host_function(crate::host::shared_vm::operation("findPackageJSON"))?;
     set(context, module, "findPackageJSON", find_package_json)?;
