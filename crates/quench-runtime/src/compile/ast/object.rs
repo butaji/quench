@@ -292,7 +292,7 @@ impl FunctionCompiler<'_, '_> {
             Some(self.function_id),
             FunctionOptions {
                 defaults: Some(&function.params),
-                source_text: self.owner.source_text(source_span),
+                source_span: self.owner.source_span(source_span),
                 async_function: function.r#async,
                 generator: function.generator,
                 with_depth: self.with_depth,

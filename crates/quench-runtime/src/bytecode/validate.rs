@@ -1134,7 +1134,7 @@ mod tests {
             name: None,
             is_arrow: false,
             self_binding_slot: None,
-            source_text: None,
+            source_span: None,
             params: 0,
             length: 0,
             parameter_end_pc: 0,
