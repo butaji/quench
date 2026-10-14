@@ -95,14 +95,7 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     #[cfg(target_os = "linux")]
     {
         let signals = super::os_shared_vm::signal_constants(context)?;
-        #[cfg(feature = "profile-memory")]
-        context.profile_memory_checkpoint("node_process_before_kill_util");
-        let util = crate::host::shared_vm::commonjs::util_module(context)?;
-        #[cfg(feature = "profile-memory")]
-        context.profile_memory_checkpoint("node_process_kill_util");
-        let key = context.string_rooted("inspect");
-        let inspect = context.get_property_rooted(util, key)?;
-        let data = context.array_rooted(&[process, signals, inspect])?;
+        let data = context.array_rooted(&[process, signals])?;
         let operation = context
             .host_function_with_data(crate::host::shared_vm::operation("processKill"), data)?;
         let factory = context.evaluate_script_rooted(
@@ -3732,8 +3725,10 @@ pub(crate) fn kill(
         let number = context.get_property_rooted(signals, signal)?;
         if !context.truthy_rooted(number)? {
             let message = if context.is_object_rooted(signal)? {
-                let key = context.string_rooted("2");
-                let inspect = context.get_property_rooted(data, key)?;
+                // `util` is built on this error path, not for every process start.
+                let util = crate::host::shared_vm::commonjs::util_module(context)?;
+                let key = context.string_rooted("inspect");
+                let inspect = context.get_property_rooted(util, key)?;
                 let options = context.null_object_rooted()?;
                 let depth = context.number(0.0);
                 install(context, options, "depth", depth)?;

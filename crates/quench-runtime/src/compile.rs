@@ -1653,7 +1653,7 @@ enum FunctionBody<'a> {
 #[derive(Default)]
 struct FunctionOptions<'a> {
     defaults: Option<&'a FormalParameters<'a>>,
-    source_text: Option<String>,
+    source_span: Option<crate::bytecode::SourceSpan>,
     name_binding: Option<Atom>,
     async_function: bool,
     generator: bool,
@@ -1848,7 +1848,7 @@ impl<'a> Compiler<'a> {
             None,
             FunctionOptions {
                 defaults: None,
-                source_text: None,
+                source_span: None,
                 name_binding: None,
                 async_function: async_module,
                 generator: false,
@@ -2180,9 +2180,12 @@ impl<'a> Compiler<'a> {
             .any(|name| self.atoms.find(name) == Some(atom))
     }
 
-    fn source_text(&self, span: Span) -> Option<String> {
-        let source = self.text.get(span.start as usize..span.end as usize)?;
-        Some(source.to_owned())
+    fn source_span(&self, span: Span) -> Option<crate::bytecode::SourceSpan> {
+        self.text.get(span.start as usize..span.end as usize)?;
+        Some(crate::bytecode::SourceSpan {
+            start: span.start,
+            end: span.end,
+        })
     }
 
     fn private_name_label(&self, span: Span, id: u32) -> String {
@@ -2627,7 +2630,7 @@ impl<'a> Compiler<'a> {
             name: name.map(|value| function.owner.atom(value)),
             is_arrow: false,
             self_binding_slot,
-            source_text: options.source_text,
+            source_span: options.source_span,
             params: params.len() as u16,
             length: options.defaults.map_or(params.len(), Self::formal_length) as u16,
             parameter_end_pc: if options.generator {
