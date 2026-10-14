@@ -901,7 +901,46 @@ impl<H: Host> Vm<H> {
         let receiver = self.embedding_value(receiver)?;
         let args = self.embedding_arguments(args)?;
         let program = self.embedding_program()?;
-        self.call_value(&program, callee, receiver, &args)
+        // A host-initiated call enters the callee's realm, as promise jobs do.
+        let realm = self.function_realm(&program, callee)?;
+        let previous_global = self.switch_realm_global(realm);
+        let result = self.call_value(&program, callee, receiver, &args);
+        self.switch_realm_global(previous_global);
+        result
+    }
+
+    /// Creates a realm and returns its global object.
+    pub(crate) fn create_embedding_realm(&mut self) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        self.create_realm_global(&program)
+    }
+
+    /// Evaluates host Script source as a global Script of the realm owning `global`.
+    pub(crate) fn evaluate_embedding_script_in_realm(
+        &mut self,
+        global: RootId,
+        source: &str,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        let global = self.embedding_value(global)?;
+        if !self.is_realm_global(global) {
+            let program = self.embedding_program()?;
+            return Err(self.type_error(&program, "value is not a realm global object".into()));
+        }
+        let previous_global = self.switch_realm_global(global);
+        let result = self.evaluate_embedding_global_script(source, name);
+        self.switch_realm_global(previous_global);
+        result
+    }
+
+    fn is_realm_global(&self, value: Value) -> bool {
+        value == self.realm.globals
+            || self.realm.global_lexical_states.contains_key(&value)
+            || self
+                .realm
+                .intrinsics
+                .builtin_prototypes
+                .contains_key(&(value, Native::Object))
     }
 
     pub(crate) fn embedding_enqueue_job(

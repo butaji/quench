@@ -683,12 +683,12 @@ impl FunctionCompiler<'_, '_> {
 
     pub(super) fn binary(&mut self, value: &BinaryExpression<'_>) -> Register {
         let left = if let Some(constant) = binding_time::expression(&value.left).static_value() {
-            Operand::constant(self.owner.constant(constant))
+            self.constant_operand(constant)
         } else {
             Operand::register(self.expression(&value.left))
         };
         let right = if let Some(constant) = binding_time::expression(&value.right).static_value() {
-            Operand::constant(self.owner.constant(constant))
+            self.constant_operand(constant)
         } else if let Expression::Identifier(identifier) = &value.right
             && let Some(operand) = self.local_operand(identifier.name.as_str())
         {
@@ -698,6 +698,15 @@ impl FunctionCompiler<'_, '_> {
         };
         self.emit_binary(value.operator as u32, left, right)
     }
+    fn constant_operand(&mut self, constant: Constant) -> Operand {
+        let index = self.owner.constant(constant);
+        Operand::constant(index).unwrap_or_else(|| {
+            let register = self.reg();
+            self.emit(Op::LoadConst, register, 0, 0, index);
+            Operand::register(register)
+        })
+    }
+
     fn local_operand(&mut self, name: &str) -> Option<Operand> {
         let source = self.owner.atom(name);
         let compiler_binding = self.is_compiler_binding(source);
@@ -715,13 +724,13 @@ impl FunctionCompiler<'_, '_> {
         if let Expression::BinaryExpression(binary) = value {
             let left = if let Some(constant) = binding_time::expression(&binary.left).static_value()
             {
-                Operand::constant(self.owner.constant(constant))
+                self.constant_operand(constant)
             } else {
                 Operand::register(self.expression(&binary.left))
             };
             let right =
                 if let Some(constant) = binding_time::expression(&binary.right).static_value() {
-                    Operand::constant(self.owner.constant(constant))
+                    self.constant_operand(constant)
                 } else if let Expression::Identifier(identifier) = &binary.right
                     && let Some(operand) = self.local_operand(identifier.name.as_str())
                 {

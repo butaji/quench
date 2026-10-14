@@ -49,11 +49,12 @@ impl<H: Host> Vm<H> {
                 if !matches!(self.heap.get(property), Some(Cell::String(_))) {
                     continue;
                 }
-                let descriptor = self.object_get_own_property_descriptor(
+                let enumerable = self.own_property_enumerable(
                     p,
-                    &[self.heap.root_value(object).unwrap(), property],
+                    self.heap.root_value(object).unwrap(),
+                    property,
                 )?;
-                if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable") {
+                if enumerable != Some(true) {
                     continue;
                 }
                 let item = match kind {
