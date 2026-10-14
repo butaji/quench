@@ -996,8 +996,8 @@ pub struct Function {
     /// Lexical projections at eval calls and dynamic name operations.
     pub binding_sites: Vec<BindingSite>,
     pub(crate) source_positions: Vec<SourcePosition>,
-    /// Sorted local slots receiving fresh storage for each CloneEnv plan.
-    pub environment_clones: Vec<Vec<u16>>,
+    /// The plan of each CloneEnv instruction.
+    pub environment_clones: Vec<EnvironmentClone>,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
@@ -1681,6 +1681,16 @@ impl Operand {
     pub(crate) fn register_index(self) -> Option<Register> {
         (self.kind() == Some(OperandKind::Register)).then_some(self.payload())
     }
+}
+
+/// A CloneEnv plan. The clone owns the `fresh` slots, copied from the source
+/// environment, and the `reset` slots, cleared: block bindings out of scope at
+/// the clone's site, whose next scope entry initializes them again. Every other
+/// slot is shared with its owner. Both lists are sorted local slots.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EnvironmentClone {
+    pub fresh: Vec<u16>,
+    pub reset: Vec<u16>,
 }
 
 #[derive(Clone, Debug)]
