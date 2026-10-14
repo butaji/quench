@@ -803,7 +803,25 @@ fn coded_url_type_error(
 
 /// Install the realm's one URL constructor as the global; `node:url` reads the
 /// same rooted constructor from host state.
+/// Installs `URL` and `URLSearchParams` as lazy data properties, built on first use.
 pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let initializer = context.host_function(crate::host::shared_vm::operation("urlInitialize"))?;
+    let global = context.global_root()?;
+    context.define_lazy_data_properties_rooted(
+        global,
+        &["URL", "URLSearchParams"],
+        false,
+        initializer,
+    )?;
+    context.release_root(initializer);
+    Ok(())
+}
+
+pub(crate) fn initialize(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
     let constructor = url_constructor(context)?;
     let search_params = url_search_params_constructor(context)?;
     let install = context.evaluate_script_rooted(
@@ -812,7 +830,7 @@ pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Resul
     )?;
     let undefined = context.undefined();
     context.call_rooted(install, undefined, &[constructor, search_params])?;
-    Ok(())
+    Ok(undefined)
 }
 
 fn url_search_params_constructor(

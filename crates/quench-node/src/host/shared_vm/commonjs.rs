@@ -257,21 +257,86 @@ fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedErr
     Ok(())
 }
 
-fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
-    let web_streams = crate::polyfills::bootstrap::web_streams::JS;
-    let root =
-        context.evaluate_script_rooted(web_streams, "node:bootstrap/shared-vm/web-streams.js")?;
-    context.release_root(root);
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_web_streams_polyfill");
-    crate::host::resident_pages::release_read_only_pages();
+/// The globals each web polyfill defines, in definition order. They are lazy data properties
+/// (as in Node), so a polyfill is evaluated only when script first observes one of its globals.
+/// A member materializes writable, so a polyfill defining one read-only says so explicitly.
+const WEB_STREAM_GLOBALS: &[&str] = &[
+    "__quenchWebStreamsState",
+    "ReadableStream",
+    "__quenchWebStreams",
+    "__quenchReadableStream",
+    "WritableStream",
+    "TransformStream",
+    "CompressionStream",
+    "DecompressionStream",
+    "TextEncoderStream",
+    "TextDecoderStream",
+    "ByteLengthQueuingStrategy",
+    "CountQueuingStrategy",
+    "ReadableStreamDefaultReader",
+    "ReadableStreamBYOBReader",
+    "ReadableStreamBYOBRequest",
+    "ReadableByteStreamController",
+    "ReadableStreamDefaultController",
+    "TransformStreamDefaultController",
+    "WritableStreamDefaultWriter",
+    "WritableStreamDefaultController",
+];
+const WEB_API_GLOBALS: &[&str] = &[
+    "__quenchBlobEnsureReadable",
+    "Blob",
+    "Headers",
+    "Request",
+    "Response",
+];
 
-    let web_apis = crate::polyfills::bootstrap::globals_extra::web_api_source();
-    let root = context.evaluate_script_rooted(web_apis, "node:bootstrap/shared-vm/web-apis.js")?;
-    context.release_root(root);
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_web_apis_polyfill");
+fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    for (operation, names) in [
+        ("webStreamsInitialize", WEB_STREAM_GLOBALS),
+        ("webApisInitialize", WEB_API_GLOBALS),
+    ] {
+        let initializer = context.host_function(super::operation(operation))?;
+        context.define_lazy_data_properties_rooted(global, names, false, initializer)?;
+        context.release_root(initializer);
+    }
     Ok(())
+}
+
+/// Evaluates a polyfill as a block, so its declarations stay its own instead of becoming
+/// global lexical bindings that script could collide with.
+fn evaluate_polyfill_block(
+    context: &mut Context<'_>,
+    source: &str,
+    label: &str,
+) -> Result<RootId, RootedError> {
+    let root = context.evaluate_script_rooted(&format!("{{\n{source}\n}}"), label)?;
+    context.release_root(root);
+    Ok(context.undefined())
+}
+
+pub(super) fn initialize_web_streams(
+    context: &mut Context<'_>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    evaluate_polyfill_block(
+        context,
+        crate::polyfills::bootstrap::web_streams::JS,
+        "node:bootstrap/shared-vm/web-streams.js",
+    )
+}
+
+pub(super) fn initialize_web_apis(
+    context: &mut Context<'_>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    evaluate_polyfill_block(
+        context,
+        crate::polyfills::bootstrap::globals_extra::web_api_source(),
+        "node:bootstrap/shared-vm/web-apis.js",
+    )
 }
 
 pub(super) fn require(

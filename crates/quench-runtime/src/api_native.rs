@@ -749,6 +749,21 @@ impl<'a, H: Host> NativeContext<'a, H> {
             .map_err(|error| self.error(error))
     }
 
+    /// Defines `names` on `holder` as one group of writable, configurable lazy data
+    /// properties: the first time script observes any of them, `initializer` runs once, with
+    /// the startup intrinsics in place, and defines them all.
+    pub fn define_lazy_data_properties_rooted(
+        &mut self,
+        holder: RootId,
+        names: &[&str],
+        enumerable: bool,
+        initializer: RootId,
+    ) -> Result<(), RootedError> {
+        self.vm
+            .define_lazy_data_properties_rooted(holder, names, enumerable, initializer)
+            .map_err(|error| self.error(error))
+    }
+
     pub fn set_prototype_rooted(
         &mut self,
         object: RootId,
