@@ -1012,8 +1012,8 @@ pub struct Function {
     pub(crate) live_parameter_reflection: std::cell::OnceCell<bool>,
     /// Lazily derived `names_resolve_statically`; never serialized.
     pub(crate) static_name_scope: std::cell::OnceCell<bool>,
-    /// Lazily derived `plain_activation`; never serialized.
-    pub(crate) plain_activation: std::cell::OnceCell<bool>,
+    /// Lazily derived `call_plan`; never serialized.
+    pub(crate) call_plan: std::cell::OnceCell<CallPlan>,
     pub(crate) handlers: Vec<Handler>,
     pub(crate) register_root_offset: u32,
     /// A register that holds `undefined` for the whole activation, set at frame entry and
@@ -1024,6 +1024,23 @@ pub struct Function {
     pub(crate) parameter_registers: Option<u16>,
     /// The value every register holds when an activation starts.
     pub(crate) initial_register: InitialRegister,
+}
+
+/// Call-setup facts derived once per function from its static layout, so an activation reads
+/// one cached word instead of re-testing each flag.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CallPlan {
+    /// `plain_activation`.
+    pub(crate) plain: bool,
+    /// The dispatch loop may push the activation in place: an ordinary body that is no
+    /// generator, async function, class constructor or field initializer and raises no
+    /// parameter-scope `arguments` error.
+    pub(crate) in_loop: bool,
+    /// Legacy `caller`/`arguments` reflection may observe the activation
+    /// (`!has_restricted_legacy_caller_access`).
+    pub(crate) legacy_reflection: bool,
+    /// `reflects_live_parameters`.
+    pub(crate) live_parameters: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1280,24 +1297,40 @@ impl Function {
     /// (cleared when no root map lets the collector skip stale registers), its parameters
     /// placed and its scalar state set; see `activate_plain_frame`.
     pub(crate) fn plain_activation(&self, atoms: &AtomTable) -> bool {
-        *self.plain_activation.get_or_init(|| {
+        self.call_plan(atoms).plain
+    }
+
+    /// The function's `CallPlan`, derived on first use.
+    #[inline(always)]
+    pub(crate) fn call_plan(&self, atoms: &AtomTable) -> CallPlan {
+        *self.call_plan.get_or_init(|| {
             let promoted_parameters = self
                 .local_registers
                 .iter()
                 .filter(|entry| entry.local < self.params)
                 .count();
-            self.parent.is_some()
-                && !self.is_arrow
-                && !self.derived_constructor
-                && !self.rest
-                && self.self_binding_slot.is_none()
-                && self.arguments_slot.is_none()
-                && !self.parameter_eval_arguments_error
-                && !self.inherited_with_scope
-                && !self.is_generator
-                && !self.is_async
-                && promoted_parameters == usize::from(self.params)
-                && !self.activation_bindings_observable(atoms)
+            CallPlan {
+                plain: self.parent.is_some()
+                    && !self.is_arrow
+                    && !self.derived_constructor
+                    && !self.rest
+                    && self.self_binding_slot.is_none()
+                    && self.arguments_slot.is_none()
+                    && !self.parameter_eval_arguments_error
+                    && !self.inherited_with_scope
+                    && !self.is_generator
+                    && !self.is_async
+                    && promoted_parameters == usize::from(self.params)
+                    && !self.activation_bindings_observable(atoms),
+                in_loop: !self.is_async
+                    && !self.is_generator
+                    && !self.is_class_constructor
+                    && !self.derived_constructor
+                    && !self.class_field_initializer
+                    && !self.parameter_eval_arguments_error,
+                legacy_reflection: !self.has_restricted_legacy_caller_access(),
+                live_parameters: self.reflects_live_parameters(atoms),
+            }
         })
     }
 
