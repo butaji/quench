@@ -2,7 +2,7 @@ use super::*;
 use crate::{HostFunctionId, NativeContext};
 
 // Native environments have no bytecode-function binding metadata.
-const HOST_ENVIRONMENT_FUNCTION: u32 = u32::MAX;
+const NATIVE_ENVIRONMENT_FUNCTION: u32 = u32::MAX;
 
 #[repr(usize)]
 enum HostEnvironmentSlot {
@@ -15,6 +15,22 @@ impl HostEnvironmentSlot {
 }
 
 impl<H: Host> Vm<H> {
+    /// A native function's private environment: traced slots outside any scope chain.
+    pub(super) fn native_environment(&mut self, slots: Vec<Value>) -> Value {
+        self.heap.alloc(Cell::Environment {
+            parent: Value::NULL,
+            function: NATIVE_ENVIRONMENT_FUNCTION,
+            slots: slots.into_boxed_slice().into(),
+            scope: Box::new(crate::heap::EnvironmentScope {
+                program: None,
+                root_eval_scope: false,
+                binding_site_pc: None,
+                dynamic_bindings: Vec::new().into(),
+                with_objects: Box::default(),
+            }),
+        })
+    }
+
     pub(crate) fn create_host_function(&mut self, id: HostFunctionId) -> Result<Value, JsError> {
         self.create_host_function_with_capture(id, None)
     }
@@ -47,18 +63,7 @@ impl<H: Host> Vm<H> {
                 let mut slots = vec![Value::UNDEFINED; HostEnvironmentSlot::COUNT];
                 slots[HostEnvironmentSlot::Operation as usize] = Value::number(f64::from(id.0));
                 slots[HostEnvironmentSlot::Data as usize] = data;
-                self.heap.alloc(Cell::Environment {
-                    parent: Value::NULL,
-                    function: HOST_ENVIRONMENT_FUNCTION,
-                    slots: slots.into_boxed_slice().into(),
-                    scope: Box::new(crate::heap::EnvironmentScope {
-                        program: None,
-                        root_eval_scope: false,
-                        binding_site_pc: None,
-                        dynamic_bindings: Vec::new().into(),
-                        with_objects: Box::default(),
-                    }),
-                })
+                self.native_environment(slots)
             }
         };
         let function = self.native_with_env(Native::HostFunction, environment);
