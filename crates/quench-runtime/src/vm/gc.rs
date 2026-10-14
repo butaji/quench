@@ -197,7 +197,40 @@ impl<H: Host> Vm<H> {
 
     #[cold]
     #[inline(never)]
+    /// Drops dynamic programs that no live function, environment, generator
+    /// or activation can run any more, with their constants and caches. Runs
+    /// after a full collection, when only live cells remain in the heap.
+    fn reclaim_unreferenced_programs(&mut self) {
+        let mut referenced = vec![false; self.programs.len()];
+        let mut reference = |program: ProgramId| {
+            if let Some(slot) = referenced.get_mut(program.raw() as usize) {
+                *slot = true;
+            }
+        };
+        reference(ProgramId::MAIN);
+        reference(self.active_program);
+        self.direct_eval_var_program.into_iter().for_each(&mut reference);
+        self.frames.iter().for_each(|frame| reference(frame.program));
+        self.suspended
+            .iter()
+            .filter_map(|entry| entry.continuation.as_ref())
+            .for_each(|continuation| reference(continuation.program));
+        self.heap
+            .for_each_cell(|cell| cell.program_references(&mut reference));
+        let reclaimed = self.programs.reclaim_unreferenced(&referenced);
+        if reclaimed.is_empty() {
+            return;
+        }
+        let reclaimed = reclaimed.into_iter().collect::<FxHashSet<_>>();
+        self.function_values
+            .retain(|(program, _), _| !reclaimed.contains(program));
+        self.realm
+            .template_objects
+            .retain(|(program, _, _), _| !reclaimed.contains(program));
+    }
+
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
+        let full = self.heap.collection_is_full(full);
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
@@ -556,6 +589,9 @@ impl<H: Host> Vm<H> {
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.
         self.prune_function_values();
+        if full && self.programs.has_unchecked_reclaimable() {
+            self.reclaim_unreferenced_programs();
+        }
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.

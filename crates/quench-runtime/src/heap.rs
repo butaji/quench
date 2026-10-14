@@ -713,6 +713,17 @@ impl Heap {
     }
 
     /// Live legacy Cells and direct object-family records.
+    /// Visits every cell in the slot heap.
+    pub(crate) fn for_each_cell(&mut self, mut visit: impl FnMut(&Cell)) {
+        for (_, slab) in self.slots.slabs_mut() {
+            for slot in slab.iter() {
+                if let Some(cell) = &slot.cell {
+                    visit(cell);
+                }
+            }
+        }
+    }
+
     pub(crate) fn live_slots(&self) -> usize {
         self.slots.len() - self.free_slots
             + self.object_records.live_count()
@@ -1034,6 +1045,13 @@ impl Heap {
         self.collect_with_object_roots(roots, |_, _, _, _| {}, None, true)
             .0
     }
+    /// Whether a collection requested as `full` traces and sweeps the whole heap.
+    /// Direct records do not yet carry a generation. A full trace is the
+    /// exact fallback until their write barrier and remembered set exist.
+    pub(crate) fn collection_is_full(&self, full: bool) -> bool {
+        full || self.has_direct_records()
+    }
+
     pub(crate) fn collect_with_object_roots(
         &mut self,
         roots: impl IntoIterator<Item = Value>,
@@ -1041,9 +1059,7 @@ impl Heap {
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
         full: bool,
     ) -> (Vec<(Value, Value)>, Vec<u32>) {
-        // Direct records do not yet carry a generation. A full trace is the
-        // exact fallback until their write barrier and remembered set exist.
-        let full = full || self.has_direct_records();
+        let full = self.collection_is_full(full);
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
         self.collection_state = if full {
             CollectionState::FullMarking
