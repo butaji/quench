@@ -6271,3 +6271,93 @@ Object.defineProperty(immediate,'_destroyed',{value:false,writable:true,enumerab
 setImmediate(()=>{out.push('rescue');console.log(JSON.stringify(out));process.exit(0);});
 "#);
 }
+
+#[test]
+fn native_timer_custom_promisify_getters_preserve_exports_identity_and_mutation() {
+    compare_node_stream_source(r#"
+'use strict';
+const assert=require('assert'),timers=require('timers'),promises=require('timers/promises'),util=require('util'),out=[];
+for(const name of ['setTimeout','setImmediate']){
+ assert.strictEqual(timers[name],globalThis[name]);const d=Object.getOwnPropertyDescriptor(timers[name],util.promisify.custom);
+ out.push([name,d.enumerable,d.configurable,d.get.name,d.get.length,d.set===undefined,Object.hasOwn(d.get,'prototype'),util.promisify(timers[name])===promises[name],d.get.call(null)===promises[name]]);
+ const original=promises[name],marker=function changed(){};promises[name]=marker;out.push(util.promisify(timers[name])===marker);promises[name]=original;
+}
+Promise.all([util.promisify(timers.setTimeout)(1,'timeout'),util.promisify(timers.setImmediate)('immediate')]).then(values=>{out.push(values);console.log(JSON.stringify(out));});
+"#);
+}
+
+#[test]
+fn native_timer_promise_options_validate_with_original_getters_and_coded_errors() {
+    compare_node_stream_source(r#"
+'use strict';
+const timers=require('timers/promises'),out=[];
+(async()=>{
+ for(const [label,call] of [
+  ['delay',()=>timers.setTimeout(false)],['options',()=>timers.setTimeout(1,null,2)],
+  ['signal',()=>timers.setTimeout(1,null,{signal:null})],['ref',()=>timers.setTimeout(1,null,{ref:2})],
+  ['immediate-options',()=>timers.setImmediate(null,2)],['immediate-signal',()=>timers.setImmediate(null,{signal:{}})],['immediate-ref',()=>timers.setImmediate(null,{ref:null})]]){
+  try{await call();out.push([label,'accepted'])}catch(e){out.push([label,e.name,e.code,e.message,String(e)]);}
+ }
+ const log=[],options={get signal(){log.push('signal');return undefined},get ref(){log.push('ref');return true}};
+ await timers.setTimeout(1,'done',options);out.push(log);
+ const marker={};try{await timers.setImmediate(null,{get signal(){throw marker}})}catch(e){out.push(e===marker)}
+ console.log(JSON.stringify(out));
+})();
+"#);
+}
+
+#[test]
+fn cli_print_evaluates_script_statements_and_language_completion_like_node() {
+    for source in ["const x=1; x+2", "var x=4; x*3", "'first'; const x=1;", "if(true){7}else{9}", "globalThis.eval=()=>99; 5", "const t=require('timers/promises'); t.setTimeout(1000,null,{ref:false}).then(()=>{throw Error('unreferenced timer fired')});"] {
+        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command=Command::new(executable);
+            command.args(["-pe",source]);
+            if executable!="node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+            quench_node_test::case_process::observe_command(command,Duration::from_secs(5)).unwrap()
+        });
+        for observation in &observations { assert!(!observation.timed_out); assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr)); assert!(observation.stderr.is_empty()); }
+        if !source.contains("t.setTimeout") { assert_eq!(observations[0].stdout,observations[1].stdout); }
+    }
+}
+
+#[test]
+fn native_timer_primitive_aliases_cancel_original_handles_like_node() {
+    compare_node_stream_source(r#"
+"use strict";
+const assert=require('assert'),out=[],fired=[];
+const a=setTimeout(()=>fired.push('number'),10),b=setInterval(()=>fired.push('string'),10);
+const proto=Object.getPrototypeOf(a),method=proto[Symbol.toPrimitive],d=Object.getOwnPropertyDescriptor(proto,Symbol.toPrimitive);
+out.push([method.name,method.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(method,'prototype')]);
+const primitive=Object.getOwnPropertySymbols(a).find(s=>s.description==='kHasPrimitive');
+const asyncId=Object.getOwnPropertySymbols(a).find(s=>s.description==='asyncId');
+out.push(a[primitive],typeof a[asyncId]);
+const id=+a;out.push(typeof id,Number.isNaN(id),id===method.call(a),String(a)===String(id),a[primitive]);
+clearTimeout(id);clearInterval(String(b));out.push(a._destroyed,b._destroyed);
+const c=setTimeout(()=>fired.push('uncoerced'),1);clearTimeout(c[asyncId]);
+const e=setTimeout(()=>fired.push('getter'),10),original=e[asyncId],log=[];
+Object.defineProperty(e,asyncId,{configurable:true,get(){log.push('id');return original;}});
+Object.defineProperty(e,primitive,{configurable:true,get(){log.push('flag');return false;},set(v){log.push(['set',v]);}});
+out.push(method.call(e)===original,log.slice());clearTimeout(original);
+const marker={},f=setTimeout(()=>fired.push('throw'),10);
+Object.defineProperty(f,primitive,{configurable:true,get(){throw marker;}});
+try{method.call(f)}catch(error){out.push(error===marker)}
+Object.defineProperty(f,primitive,{configurable:true,value:false,writable:true});clearTimeout(f);
+setTimeout(()=>{out.push(fired);console.log(JSON.stringify(out));},30);
+"#);
+}
+
+#[test]
+fn native_timer_duration_coercion_warning_policy_and_overflow_delay_match_node() {
+    compare_node_stream_source(r#"
+"use strict";
+const out=[],log=[],noop=()=>{};
+process.emitWarning=function(message,name){out.push([this===process,arguments.length,message,name]);};
+globalThis.String=()=>"wrong conversion";
+for(const delay of [undefined,null,0,false,NaN,NaN,-1,-2,Infinity,2147483648,2147483647,'0x10']) { const t=setTimeout(noop,delay);clearTimeout(t); }
+const delay={ [Symbol.toPrimitive](hint){log.push(hint);return 0;} };clearInterval(setInterval(noop,delay));out.push(log);
+const marker={};try{setTimeout(noop,{[Symbol.toPrimitive](){throw marker;}});}catch(error){out.push(error===marker);}
+for(const delay of [Symbol('x'),1n]) {try{setTimeout(noop,delay);}catch(error){out.push(error.name);}}
+process.emitWarning=()=>{throw marker;};try{setTimeout(noop,Infinity);}catch(error){out.push(error===marker);}
+let fired=false;process.emitWarning=()=>{};setTimeout(()=>{fired=true;},2147483648);setTimeout(()=>{out.push(fired);console.log(JSON.stringify(out));},30);
+"#);
+}
