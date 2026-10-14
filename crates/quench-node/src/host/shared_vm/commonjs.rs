@@ -197,6 +197,10 @@ fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
 }
 
 fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
+    // The VFS sources wrap `globalThis.__nodeFs`, which building `fs` defines.
+    cached_builtin(context, BuiltinModule::Fs)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_vfs_fs_module");
     let path = crate::modules::path_shared_vm::module(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_path_module");
