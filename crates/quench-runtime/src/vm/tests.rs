@@ -155,6 +155,41 @@ fn minor_collection_roots_external_edges_of_old_owners() {
 }
 
 #[test]
+fn rootless_shapes_survive_collection_and_shape_compaction() {
+    let program = Engine::specialize("", "shape-compaction.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    let atom = vm.intern_atom("survivor");
+    let live_shape = vm.transition_shape(0, atom);
+    assert!(!vm.shapes[live_shape as usize].may_have_gc_roots);
+    let owner =
+        vm.heap
+            .alloc_object_with_properties(Value::NULL, live_shape, &[Value::integer(42)]);
+    let root = vm.heap.root(owner);
+    // Dead transition history must be reclaimed even when the surviving
+    // object's shape has no symbol keys or accessor functions to trace.
+    let dead_shape_count = vm.shapes.len() * 2;
+    for index in 0..dead_shape_count {
+        let dead_atom = vm.intern_atom(&format!("dead-{index}"));
+        vm.transition_shape(0, dead_atom);
+    }
+    let before = vm.shapes.len();
+    vm.collect_now(&program);
+    assert!(vm.shapes.len() < before);
+    let object = vm.object_data(owner).unwrap();
+    assert_eq!(vm.shapes[object.shape() as usize].storage_len, 1);
+    assert_eq!(
+        vm.heap.property_get(vm.object_data(owner).unwrap(), 0),
+        Some(Value::integer(42))
+    );
+    vm.collect_now(&program);
+    assert_eq!(
+        vm.heap.property_get(vm.object_data(owner).unwrap(), 0),
+        Some(Value::integer(42))
+    );
+    assert!(vm.heap.release_root(root));
+}
+
+#[test]
 fn shape_roots_keep_symbols_and_active_accessors_alive() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
     use crate::heap::Cell;
