@@ -112,6 +112,7 @@ impl Compiler<'_> {
         }
         let name_bindings = function.name_bindings();
         let undefined_register = function.used_undefined_register();
+        let environment_clones = function.per_site_environment_clones();
         let result = BcFunction {
             parent,
             name: None,
@@ -155,7 +156,7 @@ impl Compiler<'_> {
             name_bindings,
             binding_sites: function.binding_sites,
             source_positions: function.source_positions,
-            environment_clones: function.environment_clones,
+            environment_clones,
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,

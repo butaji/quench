@@ -221,10 +221,12 @@ pub(super) fn write_program(
             write_eval_binding(&mut out, binding);
         }
         out.u32(function.environment_clones.len() as u32);
-        for slots in &function.environment_clones {
-            out.u32(slots.len() as u32);
-            for slot in slots {
-                out.u16(*slot);
+        for clone in &function.environment_clones {
+            for slots in [&clone.fresh, &clone.reset] {
+                out.u32(slots.len() as u32);
+                for slot in slots {
+                    out.u16(*slot);
+                }
             }
         }
         match &function.selective_capture_slots {
@@ -539,7 +541,12 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         })?;
         let environment_atoms = input.list(|input| input.u32())?;
         let name_bindings = input.list(read_eval_binding)?;
-        let environment_clones = input.list(|input| input.list(|input| input.u16()))?;
+        let environment_clones = input.list(|input| {
+            Ok(crate::bytecode::EnvironmentClone {
+                fresh: input.list(|input| input.u16())?,
+                reset: input.list(|input| input.u16())?,
+            })
+        })?;
         let selective_capture_slots = match input.u8()? {
             0 => None,
             1 => Some(input.u16s()?),
