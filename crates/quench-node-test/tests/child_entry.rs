@@ -5970,3 +5970,16 @@ process.nextTick(()=>{out.push(['tick',stream.isPaused(),stream.readableFlowing,
 stream.on('end',()=>{out.push(['end',reads]);console.log(JSON.stringify(out));});
 "#);
 }
+
+#[test]
+fn native_paused_connected_socket_keeps_reference_bit_without_active_loop_work() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),assert=require('assert');const output=[];
+const server=net.createServer(socket=>socket.unref()).listen(0,()=>{
+ const client=net.connect(server.address().port,()=>output.push(['connected',client._handle.hasRef(),client.isPaused()]));client.pause();
+ setTimeout(()=>assert.fail('idle referenced socket kept event loop alive'),100).unref();
+}).unref();
+process.on('exit',()=>console.log(JSON.stringify(output)));
+"#);
+}
