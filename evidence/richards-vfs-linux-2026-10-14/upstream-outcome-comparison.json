@@ -1,0 +1,28 @@
+{
+  "vfs": {
+    "inventory_equal": true,
+    "cases": 99,
+    "differences": [],
+    "unchanged_failures": [
+      "/tmp/quench-node-fixtures/test/parallel/test-vfs.js"
+    ]
+  },
+  "fs": {
+    "inventory_equal": true,
+    "cases": 19,
+    "differences": [],
+    "unchanged_failures": [
+      "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-aggregate-errors.js",
+      "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-close-errors.js",
+      "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-dispose.js",
+      "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-op-errors.js",
+      "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-pull.js",
+      "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-pullsync.js",
+      "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-read-worker.js",
+      "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-readLines.mjs",
+      "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-stream.js",
+      "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-truncate.js",
+      "/tmp/quench-node-fixtures/test/parallel/test-fs-promises-file-handle-writer.js"
+    ]
+  }
+}
