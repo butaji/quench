@@ -53,7 +53,7 @@ fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
     // the legacy space so the parallel marker and sweep remain covered.
     let root = heap.alloc(Cell::Set {
         object: Box::new(plain_object()),
-        entries: Box::new(children.clone()),
+        entries: Box::new(children.clone().into()),
     });
 
     heap.collect([root]);
@@ -63,7 +63,8 @@ fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
         .map(|_| heap.alloc(Cell::String("remembered young survivor".into())))
         .collect::<Vec<_>>();
     if let Some(Cell::Set { entries, .. }) = heap.get_mut(root) {
-        entries.extend(young.iter().copied());
+        // The set is only traced, never searched, so the key hash is immaterial.
+        young.iter().for_each(|child| entries.push(*child, 0));
     }
     collect_minor(&mut heap, [root]);
     assert!(young.iter().all(|child| heap.get(*child).is_some()));
