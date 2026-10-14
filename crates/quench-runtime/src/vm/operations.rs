@@ -180,11 +180,26 @@ pub(super) const BITWISE_OR: u32 = BinaryOperator::BitwiseOR as u32;
 pub(super) const BITWISE_XOR: u32 = BinaryOperator::BitwiseXOR as u32;
 pub(super) const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
 
+/// Operator `OP` on two Numbers through their double values, which is how ECMA-262 defines
+/// every numeric operator's result (`Value::number` stores the integral ones as integers);
+/// `None` for any other operand.
+#[inline(always)]
+pub(super) fn number_value_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+    let (left, right) = Value::number_pair(left, right)?;
+    Some(Value::number(numeric_number_result(
+        numeric_binary_operator(OP)?,
+        left,
+        right,
+    )))
+}
+
 /// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;
 /// `None` otherwise, leaving other Numbers to `number_binary`.
 #[inline(always)]
 pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
-    let (left, right) = Value::int_pair(left, right)?;
+    // One operand at a time: each tag test needs a single scratch register, which keeps the
+    // lane's integer handlers free of saved registers.
+    let (left, right) = (left.as_int()?, right.as_int()?);
     numeric_integer_result(numeric_binary_operator(OP)?, left, right)
 }
 
