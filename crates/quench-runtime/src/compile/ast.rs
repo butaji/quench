@@ -95,6 +95,13 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) max_reg: Register,
     pub(super) local_slots: Rc<FxHashMap<Atom, u16>>,
     local_registers: Vec<Option<Register>>,
+    /// Promoted locals written inside an expression (`x[++i]`): a read of one that an
+    /// enclosing operation holds while evaluating later operands takes a copy, since those
+    /// operands may write the register first.
+    clobbered_locals: Vec<bool>,
+    /// The expression being compiled is the last operand its consumer evaluates, which
+    /// then executes at once; a clobbered local read there may alias its register.
+    pub(super) last_operand: bool,
     local_register_count: Register,
     shared_undefined: SharedUndefined,
     function_scope: FxHashSet<Atom>,
@@ -153,6 +160,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         parameter_local_count: usize,
         with_depth: u16,
         promoted_local_slots: &[u16],
+        clobbered_local_slots: &[u16],
     ) -> Self {
         if locals.len() > usize::from(u16::MAX) {
             owner.reject(Span::default(), "function exceeds the local-slot limit");
@@ -176,6 +184,12 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             };
             *location = Some(register);
         }
+        let mut clobbered_locals = vec![false; locals.len()];
+        for &slot in clobbered_local_slots {
+            if let Some(clobbered) = clobbered_locals.get_mut(usize::from(slot)) {
+                *clobbered = true;
+            }
+        }
         // The register after the promoted locals holds `undefined` for plain-call receivers.
         let shared_undefined = promoted_local_slots.len() as Register;
         let local_register_count = shared_undefined + 1;
@@ -190,6 +204,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             max_reg: local_register_count,
             local_slots,
             local_registers,
+            clobbered_locals,
+            last_operand: false,
             local_register_count,
             shared_undefined: SharedUndefined {
                 register: shared_undefined,
@@ -261,6 +277,28 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .get(usize::from(*slot))
             .copied()
             .flatten()
+    }
+
+    /// Whether `atom` is a promoted local some expression writes (`clobbered_locals`).
+    pub(super) fn local_is_clobbered(&self, atom: Atom) -> bool {
+        self.local_slots
+            .get(&atom)
+            .and_then(|slot| self.clobbered_locals.get(usize::from(*slot)))
+            .is_some_and(|clobbered| *clobbered)
+    }
+
+    /// Whether `register` holds a promoted local: promoted locals occupy the registers
+    /// below the shared `undefined` register.
+    pub(super) fn is_promoted_register(&self, register: Register) -> bool {
+        register < self.shared_undefined.register
+    }
+
+    /// Compiles `expression` as the last operand its consumer evaluates before executing.
+    pub(super) fn last_operand(&mut self, expression: &Expression<'_>) -> Register {
+        self.last_operand = true;
+        let result = self.expression(expression);
+        self.last_operand = false;
+        result
     }
 
     pub(super) fn promoted_local_layout(&self) -> Vec<crate::bytecode::LocalRegister> {
