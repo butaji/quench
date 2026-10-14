@@ -6345,3 +6345,19 @@ Object.defineProperty(f,primitive,{configurable:true,value:false,writable:true})
 setTimeout(()=>{out.push(fired);console.log(JSON.stringify(out));},30);
 "#);
 }
+
+#[test]
+fn native_timer_duration_coercion_warning_policy_and_overflow_delay_match_node() {
+    compare_node_stream_source(r#"
+"use strict";
+const out=[],log=[],noop=()=>{};
+process.emitWarning=function(message,name){out.push([this===process,arguments.length,message,name]);};
+globalThis.String=()=>"wrong conversion";
+for(const delay of [undefined,null,0,false,NaN,NaN,-1,-2,Infinity,2147483648,2147483647,'0x10']) { const t=setTimeout(noop,delay);clearTimeout(t); }
+const delay={ [Symbol.toPrimitive](hint){log.push(hint);return 0;} };clearInterval(setInterval(noop,delay));out.push(log);
+const marker={};try{setTimeout(noop,{[Symbol.toPrimitive](){throw marker;}});}catch(error){out.push(error===marker);}
+for(const delay of [Symbol('x'),1n]) {try{setTimeout(noop,delay);}catch(error){out.push(error.name);}}
+process.emitWarning=()=>{throw marker;};try{setTimeout(noop,Infinity);}catch(error){out.push(error===marker);}
+let fired=false;process.emitWarning=()=>{};setTimeout(()=>{fired=true;},2147483648);setTimeout(()=>{out.push(fired);console.log(JSON.stringify(out));},30);
+"#);
+}
