@@ -655,18 +655,19 @@ impl<H: Host> Vm<H> {
                     None | Some(Value::UNDEFINED) => JsString::from_str(","),
                     Some(value) => vm.coerce_js_string(p, value)?,
                 };
-                let mut output = Vec::new();
+                let mut output = super::wtf16::JsStringBuilder::default();
                 for index in 0..length {
                     if index != 0 {
-                        output.extend_from_slice(separator.units());
+                        output.append(&separator);
                     }
                     let value = vm.get_index(p, object, Value::number(index as f64))?;
                     if value.is_null() || value.is_undefined() {
                         continue;
                     }
-                    output.extend_from_slice(vm.coerce_js_string(p, value)?.units());
+                    output.append(&vm.coerce_js_string(p, value)?);
                 }
-                Ok(vm.heap.alloc(Cell::String(JsString::from_units(&output))))
+                let output = vm.string_build_result(p, output.finish())?;
+                Ok(vm.heap.alloc(Cell::String(output)))
             })
         })
     }
