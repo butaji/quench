@@ -1660,6 +1660,7 @@ enum FunctionBody<'a> {
 #[derive(Default)]
 struct FunctionOptions<'a> {
     defaults: Option<&'a FormalParameters<'a>>,
+    directive_completion: Option<&'a StringLiteral<'a>>,
     source_span: Option<crate::bytecode::SourceSpan>,
     name_binding: Option<Atom>,
     async_function: bool,
@@ -1950,6 +1951,7 @@ impl<'a> Compiler<'a> {
             None,
             FunctionOptions {
                 defaults: None,
+                directive_completion: program.directives.last().map(|directive| &directive.expression),
                 source_span: None,
                 name_binding: None,
                 async_function: async_module,
@@ -2648,8 +2650,11 @@ impl<'a> Compiler<'a> {
         function.class_field_initializer = options.class_field_initializer;
         if capture_script_completion {
             let completion = function.reg();
-            let undefined = function.literal(Constant::Undefined);
-            function.emit(Op::Move, completion, undefined, 0, 0);
+            // Directive expressions precede the body and contribute its initial completion.
+            let initial = if let Some(directive) = options.directive_completion {
+                function.string_literal(directive)
+            } else { function.literal(Constant::Undefined) };
+            function.emit(Op::Move, completion, initial, 0, 0);
             function.statement_completion = StatementCompletion::Track(completion);
         }
         function.dynamic_eval = dynamic_eval;

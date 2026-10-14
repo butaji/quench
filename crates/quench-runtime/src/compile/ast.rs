@@ -516,6 +516,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     &scopes,
                     Some(self.function_id),
                     FunctionOptions {
+                        directive_completion: None,
                         defaults: Some(&function.params),
                         source_span: self.owner.source_span(function.span),
                         name_binding: None,
