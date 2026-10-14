@@ -836,7 +836,7 @@ impl<H: Host> Vm<H> {
             IteratorKind::SetValues | IteratorKind::SetEntries => self.set_iterator_proto,
             _ => return Err(JsError("collection iterator kind is invalid".into())),
         };
-        Ok(self.heap.alloc(Cell::Iterator {
+        let iterator = self.heap.alloc(Cell::Iterator {
             object: Box::new(Self::empty_object(prototype)),
             source,
             kind,
@@ -850,7 +850,13 @@ impl<H: Host> Vm<H> {
                 helper_started: false,
                 generator: None,
             }),
-        }))
+        });
+        match self.heap.get_mut(source) {
+            Some(Cell::Map { entries, .. }) => entries.register_iterator(iterator),
+            Some(Cell::Set { entries, .. }) => entries.register_iterator(iterator),
+            _ => {}
+        }
+        Ok(iterator)
     }
 
     pub(super) fn get_iterator(
@@ -3015,6 +3021,8 @@ impl<H: Host> Vm<H> {
                 }
                 return vm.async_from_sync_result(p, this, result, true);
             }
+            // Collection iterators skip deleted slots, so they record where they stopped.
+            let mut next_position = index + 1;
             let selected = match kind {
                 kind if kind.is_array_iterator() => {
                     vm.array_iterator_item(p, this, source, kind, index)?
@@ -3050,21 +3058,36 @@ impl<H: Host> Vm<H> {
                             selected
                         }
                     }
-                    (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => {
-                        entries.get(index).map(|(key, _)| (*key, None))
-                    }
-                    (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => {
-                        entries.get(index).map(|(_, value)| (*value, None))
-                    }
-                    (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => {
-                        entries.get(index).map(|(key, value)| (*key, Some(*value)))
-                    }
-                    (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => {
-                        entries.get(index).map(|value| (*value, None))
-                    }
-                    (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => {
-                        entries.get(index).map(|value| (*value, Some(*value)))
-                    }
+                    (IteratorKind::MapKeys, Some(Cell::Map { entries, .. })) => entries
+                        .next_live(index)
+                        .map(|(slot, (key, _))| {
+                            next_position = slot + 1;
+                            (key, None)
+                        }),
+                    (IteratorKind::MapValues, Some(Cell::Map { entries, .. })) => entries
+                        .next_live(index)
+                        .map(|(slot, (_, value))| {
+                            next_position = slot + 1;
+                            (value, None)
+                        }),
+                    (IteratorKind::MapEntries, Some(Cell::Map { entries, .. })) => entries
+                        .next_live(index)
+                        .map(|(slot, (key, value))| {
+                            next_position = slot + 1;
+                            (key, Some(value))
+                        }),
+                    (IteratorKind::SetValues, Some(Cell::Set { entries, .. })) => entries
+                        .next_live(index)
+                        .map(|(slot, value)| {
+                            next_position = slot + 1;
+                            (value, None)
+                        }),
+                    (IteratorKind::SetEntries, Some(Cell::Set { entries, .. })) => entries
+                        .next_live(index)
+                        .map(|(slot, value)| {
+                            next_position = slot + 1;
+                            (value, Some(value))
+                        }),
                     _ => None,
                 },
             };
@@ -3084,7 +3107,7 @@ impl<H: Host> Vm<H> {
                         index: low, ext, ..
                     }) = vm.heap.get_mut(this)
                 {
-                    ext.store_position(low, index + 1);
+                    ext.store_position(low, next_position);
                 }
                 vm.iterator_result(value, false)
             } else {

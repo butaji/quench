@@ -796,6 +796,28 @@ fn reused_frames_resolve_captures_from_their_own_environment_state() {
 }
 
 #[test]
+fn collection_iterators_follow_deletes_compaction_and_clear() {
+    // Deletes leave holes and compaction renumbers registered iterators; a `forEach` walk
+    // defers compaction and still visits entries added after a `clear`. Node agrees.
+    let source = "var out = [];\n\
+         var m = new Map(); for (var i = 0; i < 100; i++) m.set(i, i);\n\
+         var it = m.keys(); for (var i = 0; i < 10; i++) it.next();\n\
+         for (var i = 0; i < 90; i++) m.delete(i);\n\
+         out.push(it.next().value, m.size, m.get(95), m.has(5));\n\
+         var walked = []; var w = new Map(); for (var i = 0; i < 50; i++) w.set(i, i);\n\
+         w.forEach(function (v, k) { walked.push(k);\n\
+           if (k === 0) { for (var j = 1; j < 45; j++) w.delete(j); w.set('late', 1); }\n\
+           if (k === 'late') { w.clear(); w.set('after', 2); } });\n\
+         out.push(walked.join(' '), w.size);\n\
+         var s = new Set([0, -0, NaN, NaN, 'k', 'k']); out.push(s.size, s.has(-0), s.has(NaN));\n\
+         var result = out.join();";
+    assert_eq!(
+        global_text(source, "result"),
+        "90,10,95,false,0 45 46 47 48 49 late after,1,3,true,true"
+    );
+}
+
+#[test]
 fn inner_lexical_bindings_shadow_outer_immutable_captures() {
     let source = "'use strict';\n\
          const a = 1;\n\
@@ -9601,5 +9623,61 @@ fn string_repeat_limits_preserve_lazy_utf16_length_and_fractional_counts() {
                 "RangeError:Invalid string length".into()
             ]
         );
+    }
+}
+
+#[test]
+fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() {
+    let source = r#"
+      for (const text of ["\ud800", "\ud801", "\udfff", "a\ud800b", "\ud83d\ude00"]) {
+        const box = new String(text);
+        const log = [];
+        const object = { [Symbol.toPrimitive](hint) { log.push(hint); return text; } };
+        for (const actual of [String(text), box.valueOf(), `${text}`, String(object), `${object}`]) {
+          if (actual !== text) throw Error('UTF-16 coercion changed original units');
+        }
+        if (log.join(',') !== 'string,string') throw Error('coercion hint or count');
+      }
+      if (String(Symbol('x')) !== 'Symbol(x)') throw Error('explicit Symbol conversion');
+      for (const convert of [value => `${value}`, value => new String(value)]) {
+        let caught = false;
+        try { convert(Symbol('x')); } catch (error) { caught = error instanceof TypeError; }
+        if (!caught) throw Error('implicit Symbol conversion accepted');
+      }
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest { source, name: "wtf16-string-coercion.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::specialize(source, "wtf16-string-coercion.js").unwrap(),
+    ] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
+
+#[test]
+fn script_directive_completion_survives_declarations_and_preserves_string_units() {
+    for program in [
+        Engine::compile(crate::ExecutionRequest { source: "", name: "directive-completion.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::specialize("", "directive-completion.js").unwrap(),
+    ] {
+        for (source, expected) in [
+            ("'first'; const x=1;", Some("first")),
+            ("'use strict'; let x;", Some("use strict")),
+            ("'a'; 'b'; var x;", Some("b")),
+            ("'first'; function f(){}", Some("first")),
+            ("'first'; if(false){2}", None),
+            ("'first'; ; debugger;", Some("first")),
+        ] {
+            let mut vm = Vm::new(SilentHost);
+            vm.execute(&program).unwrap();
+            let value = vm.eval_global_script_named(&program, source, false, "directive-completion.js").unwrap();
+            match expected {
+                Some(expected) => assert!(matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.host_string() == expected), "{source}"),
+                None => assert!(value.is_undefined(), "{source}"),
+            }
+        }
+        let mut vm = Vm::new(SilentHost);
+        vm.execute(&program).unwrap();
+        let value = vm.eval_global_script_named(&program, r"'\ud800'; var x;", false, "directive-completion.js").unwrap();
+        assert!(matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.units().wide().as_ref() == [0xd800]));
     }
 }

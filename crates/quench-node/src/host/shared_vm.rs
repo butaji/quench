@@ -9,6 +9,7 @@ pub(crate) use commonjs::source_kind;
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
+        method "nodePrintEvalScript" (1) => crate::shared_run::print_eval_script,
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
         method "gc" (0) => crate::modules::process_shared_vm::collect_garbage,
         method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
@@ -454,6 +455,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "diagnosticsTraceCallback" (1) => crate::modules::diagnostics_channel_shared_vm::trace_callback,
         method "diagnosticsTraceComplete" (4) => crate::modules::diagnostics_channel_shared_vm::trace_complete,
         method "diagnosticsIsPromise" (1) => crate::modules::diagnostics_channel_shared_vm::is_promise,
+        method "perfHooksEntries" (0) => crate::modules::perf_timeline_query::entries,
+        method "perfHooksCompareEntries" (2) => crate::modules::perf_timeline_query::compare,
         method "perfHooksNow" (0) => crate::modules::perf_hooks::now,
         method "dnsLookup" (3) => crate::modules::dns_shared_vm::lookup,
         method "zlibStreamOpen" (4) => crate::modules::zlib_stream_shared_vm::open,
@@ -490,6 +493,12 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         global "setInterval" (1) => crate::modules::timers_shared_vm::set_interval,
         global "clearInterval" (1) => crate::modules::timers_shared_vm::clear_timer,
         method "processGetActiveTimerResources" (0) => crate::modules::timers_shared_vm::active_resources,
+        method "timerPromisifyGet" (0) => crate::modules::timers_shared_vm::promisify_get,
+        method "timerToPrimitive" (1) => crate::modules::timers_shared_vm::to_primitive,
+        method "timerPrimitiveCleanup" (2) => crate::modules::timers_shared_vm::primitive_cleanup,
+        method "timerDispose" (1) => crate::modules::timers_shared_vm::timer_dispose,
+        method "immediateDispose" (1) => crate::modules::timers_shared_vm::immediate_dispose,
+        method "timerClose" (1) => crate::modules::timers_shared_vm::timer_close,
         method "timerRef" (0) => crate::modules::timers_shared_vm::timer_ref,
         method "timerUnref" (0) => crate::modules::timers_shared_vm::timer_unref,
         method "immediateRef" (0) => crate::modules::timers_shared_vm::immediate_ref,
@@ -800,6 +809,7 @@ impl quench_runtime::Host for NodeHost {
             let key = context.string_rooted("gc");
             context.define_data_property_rooted(global, key, gc, true, true, false)?;
         }
+        crate::modules::timers_shared_vm::install_promisify_globals(context)?;
         commonjs::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");

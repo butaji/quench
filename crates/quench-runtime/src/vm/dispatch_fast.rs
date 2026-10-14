@@ -82,7 +82,8 @@ type Ip = *const LaneInstruction;
 /// write this one, take the general path, so the memory view tracks the
 /// register exactly.
 pub(super) struct LaneView {
-    records: Box<[LaneInstruction]>,
+    /// A record's handler may change while the lane runs (`requicken`); its other fields do not.
+    records: Box<[std::cell::UnsafeCell<LaneInstruction>]>,
     /// Per instruction, whether the general loop enters the lane there: the
     /// straight-line lane run from it is long enough to repay the lane's
     /// entry cost, and its record does not read the accumulator. Kept apart
@@ -116,8 +117,18 @@ struct ActivationShape {
 
 impl LaneView {
     pub(super) fn records(&self) -> Ip {
-        self.records.as_ptr()
+        std::cell::UnsafeCell::raw_get(self.records.as_ptr()).cast_const()
     }
+}
+
+/// Switches the record at `ip` to `handler` for the rest of its view's life: a one-way step of
+/// the record's state machine, taken when an execution of the record shows the handler it has
+/// does not fit the site. Every handler a record may switch between computes the same result.
+#[inline(always)]
+fn requicken(ip: Ip, handler: Handler) {
+    // SAFETY: `ip` comes from `LaneView::records`, whose records live in `UnsafeCell`s; the
+    // lane runs on the view's thread, and no reference to the handler field is live.
+    unsafe { (*ip.cast_mut()).handler = handler as *const () };
 }
 
 /// The active frame's registers. Lane instructions never resize registers or
@@ -584,29 +595,39 @@ lane_handler! {
 lane_handler! {
     /// Numbers convert to themselves; other values take the general path.
     fn lane_to_numeric<>(cx, r, ip, i, view) {
-        let Some(number) = r.get(i.b).as_number() else {
+        let value = r.get(i.b);
+        if value.as_number().is_none() {
             return exit(ip);
-        };
-        r.set(i.a, Value::number(number));
+        }
+        r.set(i.a, value);
         next!(cx, r, following(ip), view)
     }
 }
 
 lane_handler! {
-    fn lane_inc_dec<>(cx, r, ip, i, view) {
-        let input = r.get(i.b);
-        let decrement = i.imm() != 0;
-        let value = match input.as_int() {
-            Some(integer) => if decrement { integer.checked_sub(1) } else { integer.checked_add(1) }
-                .map(Value::integer)
-                .unwrap_or_else(|| Value::number(f64::from(integer) + if decrement { -1.0 } else { 1.0 })),
-            None => match input.as_number() {
-                Some(number) => Value::number(number + if decrement { -1.0 } else { 1.0 }),
-                None => return exit(ip),
-            },
+    /// `IncDec` of a Number; other values take the general path. The view derives the
+    /// direction from the record (`specialize_updates`).
+    fn lane_inc_dec<DECREMENT: bool>(cx, r, ip, i, view) {
+        let Some(value) = super::dispatch::number_increment(r.get(i.b), DECREMENT) else {
+            return exit(ip);
         };
         r.set(i.a, value);
         next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// A postfix update of a Number: `ToNumeric` into `a` and the `IncDec` of its result into
+    /// `c` that follows it (`specialize_updates`). Other values take the general path at the
+    /// conversion.
+    fn lane_postfix_update<DECREMENT: bool>(cx, r, ip, i, view) {
+        let value = r.get(i.b);
+        let Some(updated) = super::dispatch::number_increment(value, DECREMENT) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        r.set(i.c, updated);
+        next!(cx, r, following(following(ip)), view)
     }
 }
 
@@ -636,28 +657,36 @@ lane_handler! {
     }
 }
 
-/// `Binary` of operator `OP` on Numbers as `number_binary` computes it: the four arithmetic
-/// operators directly, integer operators directly on integers; `None` for any other value.
-#[inline(always)]
-fn operator_value<H: Host, const OP: u32>(
-    cx: *mut LaneContext<H>,
-    left: Value,
-    right: Value,
-) -> Option<Value> {
-    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
-    if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION) {
-        return super::operations::number_operator::<OP>(left, right).map(|(value, _)| value);
-    }
-    super::operations::integer_operator::<OP>(left, right)
-        .or_else(|| unsafe { vm(cx) }.number_binary(OP, left, right))
+/// Runs `handler` for the record at `ip` as a sibling call: the calling handler's fast path
+/// then keeps no state across a slow path that needs more registers.
+macro_rules! sibling {
+    ($handler:expr, $r:expr, $ip:expr, $view:expr) => {{
+        let view: Carried = $view;
+        return $handler($r, $ip, view.memory.bytes, view.memory.reach, view.integers, view.acc);
+    }};
 }
 
 lane_handler! {
     /// `Binary` of operator `OP` on two registers, its operator and operand kinds resolved
     /// when the view was derived (`specialize_register_operands`): the fields hold the
-    /// operand registers themselves.
+    /// operand registers themselves. Integers take the fast path here, which saves no
+    /// registers; the first other operand switches the record to `lane_operator_numbers`.
     fn lane_operator<OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = operator_value::<H, OP>(cx, r.get(i.b), r.get(i.c)) else {
+        let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), r.get(i.c)) else {
+            requicken(ip, lane_operator_numbers::<H, OP>);
+            sibling!(lane_operator_numbers::<H, OP>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_operator` at a site that has met operands other than two integers: any Numbers,
+    /// through their double values.
+    #[inline(never)]
+    fn lane_operator_numbers<OP: u32>(cx, r, ip, i, view) {
+        let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -668,7 +697,21 @@ lane_handler! {
 lane_handler! {
     /// `lane_operator` whose right operand is a constant, carried in the record.
     fn lane_operator_constant<OP: u32>(cx, r, ip, i, view) {
-        let Some(value) = operator_value::<H, OP>(cx, r.get(i.b), i.constant()) else {
+        let Some(value) = super::operations::integer_operator::<OP>(r.get(i.b), i.constant())
+        else {
+            requicken(ip, lane_operator_constant_numbers::<H, OP>);
+            sibling!(lane_operator_constant_numbers::<H, OP>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_operator_numbers` with a constant right operand.
+    #[inline(never)]
+    fn lane_operator_constant_numbers<OP: u32>(cx, r, ip, i, view) {
+        let Some(value) = super::operations::number_value_operator::<OP>(r.get(i.b), i.constant()) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -695,7 +738,21 @@ lane_handler! {
 lane_handler! {
     /// `lane_get_index` with register base and key, decoded when the view was derived
     /// (`specialize_register_operands`).
+    /// An array whose object is a record runs here, saving no registers; any other base takes
+    /// `lane_get_index_slot`.
     fn lane_get_index_registers<>(cx, r, ip, i, view) {
+        let Some(value) = (unsafe { vm(cx) }).direct_dense_element(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_get_index_slot::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_get_index_registers` past a record array.
+    #[inline(never)]
+    fn lane_get_index_slot<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { vm(cx) }).dense_array_element(r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
@@ -706,7 +763,21 @@ lane_handler! {
 
 lane_handler! {
     /// Replacing a present dense element; any other write takes the general path.
+    /// An array whose object is a record runs here, saving no registers; any other object
+    /// takes `lane_set_index_slot`.
     fn lane_set_index<>(cx, r, ip, i, view) {
+        let (object, key) = (r.get(i.b), r.get(i.c));
+        if !(unsafe { vm(cx) }).try_replace_record_element(object, key, r.get(i.a)) {
+            sibling!(lane_set_index_slot::<H>, r, ip, view)
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_set_index` past a record array.
+    #[inline(never)]
+    fn lane_set_index_slot<>(cx, r, ip, i, view) {
         let (object, key) = (r.get(i.b), r.get(i.c));
         if !(unsafe { vm(cx) }).try_replace_dense_element(object, key, r.get(i.a)) {
             return exit(ip);
@@ -717,7 +788,28 @@ lane_handler! {
 
 lane_handler! {
     /// A capture the frame's environment owns directly; any other read takes the general path.
+    /// A read through the frame's current capture cache runs here, saving no registers; any
+    /// other takes `lane_load_capture_walk`.
     fn lane_load_capture<>(cx, r, ip, i, view) {
+        let imm = i.imm();
+        let value = if ImmediateLayout::capture_depth(imm) == 0 {
+            (unsafe { vm(cx) })
+                .current_function_capture(unsafe { (*cx).frame }, ImmediateLayout::capture_slot(imm))
+        } else {
+            None
+        };
+        let Some(value) = value else {
+            sibling!(lane_load_capture_walk::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_load_capture` past the frame's capture cache.
+    #[inline(never)]
+    fn lane_load_capture_walk<>(cx, r, ip, i, view) {
         let imm = i.imm();
         let Some(value) = (unsafe { vm(cx) }).cached_direct_capture(
             unsafe { (*cx).frame },
@@ -821,6 +913,23 @@ lane_handler! {
     fn lane_jump_binary_false_registers<BACKWARD: bool>(cx, r, ip, i, view) {
         let Some(holds) =
             super::operations::number_relation(u32::from(i.a), r.get(i.b), r.get(i.c))
+        else {
+            return exit(ip);
+        };
+        if !holds {
+            return lane_jump(cx, r, ip, BACKWARD, view, None);
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_jump_binary_false` of a register and an integer constant small enough for the
+    /// record's `c` field, both decoded when the view was derived
+    /// (`specialize_register_operands`).
+    fn lane_jump_binary_false_small<BACKWARD: bool>(cx, r, ip, i, view) {
+        let right = Value::integer(i32::from(i.c as i16));
+        let Some(holds) = super::operations::number_relation(u32::from(i.a), r.get(i.b), right)
         else {
             return exit(ip);
         };
@@ -2647,7 +2756,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::SetField | Op::SetFieldStrict => Some(lane_set_object_field::<H>),
         Op::SetThisField | Op::SetThisFieldStrict => Some(lane_set_this_field::<H>),
         Op::ToNumeric => Some(lane_to_numeric::<H>),
-        Op::IncDec => Some(lane_inc_dec::<H>),
+        Op::IncDec => Some(lane_inc_dec::<H, false>),
         Op::Binary | Op::NumericAdd | Op::NumericMultiply => Some(lane_binary::<H>),
         Op::GetIndex => Some(lane_get_index::<H>),
         Op::SetIndex => Some(lane_set_index::<H>),
@@ -3452,6 +3561,7 @@ fn derive_lane_view<H: Host>(
         }
     }
     specialize_register_operands::<H>(function, constants, &mut records);
+    specialize_updates::<H>(&mut records);
     let mut entries = vec![false; records.len()].into_boxed_slice();
     let mut run = 0usize;
     for pc in (0..records.len()).rev() {
@@ -3469,7 +3579,7 @@ fn derive_lane_view<H: Host>(
         });
     let enters = kind == crate::bytecode::ProgramKind::Wasm || closes_loop(function, &exits);
     LaneView {
-        records,
+        records: records.into_iter().map(std::cell::UnsafeCell::new).collect(),
         entries,
         memory_register,
         activation,
@@ -3480,7 +3590,8 @@ fn derive_lane_view<H: Host>(
 /// Gives each lane record whose operands are registers the handler for that operand shape,
 /// with the decoded registers in its fields, so it decodes no operand kinds: `Binary` of a
 /// specialized operator (`operator_handler`), also with a constant right operand carried in
-/// the record, `GetIndex` and `JumpBinaryFalse`.
+/// the record, `GetIndex` and `JumpBinaryFalse`, also with a small integer constant right
+/// operand carried in the record.
 fn specialize_register_operands<H: Host>(
     function: &Function,
     constants: &[Value],
@@ -3531,19 +3642,73 @@ fn specialize_register_operands<H: Host>(
             record.b = left.payload();
             continue;
         }
+        let backward = record.handler == backward_test;
+        if right_kind == Constant
+            && record.handler != get_index
+            && let Some(small) = constants
+                .get(usize::from(right.payload()))
+                .and_then(|constant| constant.as_int())
+                .and_then(|value| i16::try_from(value).ok())
+        {
+            let handler: Handler = if backward {
+                lane_jump_binary_false_small::<H, true>
+            } else {
+                lane_jump_binary_false_small::<H, false>
+            };
+            record.handler = handler as *const ();
+            record.b = left.payload();
+            record.c = small as u16;
+            continue;
+        }
         if right_kind != Register {
             continue;
         }
         let handler: Handler = if record.handler == get_index {
             lane_get_index_registers::<H>
-        } else if record.handler == forward_test {
-            lane_jump_binary_false_registers::<H, false>
-        } else {
+        } else if backward {
             lane_jump_binary_false_registers::<H, true>
+        } else {
+            lane_jump_binary_false_registers::<H, false>
         };
         record.handler = handler as *const ();
         record.b = left.payload();
         record.c = right.payload();
+    }
+}
+
+/// Gives each `IncDec` record the handler of its direction, and runs each `ToNumeric` whose
+/// result the next record, an `IncDec`, reads as one record (`lane_postfix_update`). The
+/// `IncDec` record stays for jumps that reach it; it reads no accumulator, and neither does
+/// its successor, since it produces none.
+fn specialize_updates<H: Host>(records: &mut [LaneInstruction]) {
+    let to_numeric = lane_to_numeric::<H> as Handler as *const ();
+    let inc_dec = lane_inc_dec::<H, false> as Handler as *const ();
+    for record in records.iter_mut() {
+        if record.handler == inc_dec && record.imm() != 0 {
+            record.handler = lane_inc_dec::<H, true> as Handler as *const ();
+        }
+    }
+    for pc in 0..records.len().saturating_sub(1) {
+        let (conversion, update) = (&records[pc], &records[pc + 1]);
+        let decrement = update.handler == lane_inc_dec::<H, true> as Handler as *const ();
+        if conversion.handler != to_numeric
+            || (update.handler != inc_dec && !decrement)
+            || update.b != conversion.a
+        {
+            continue;
+        }
+        let handler: Handler = if decrement {
+            lane_postfix_update::<H, true>
+        } else {
+            lane_postfix_update::<H, false>
+        };
+        records[pc] = LaneInstruction {
+            handler: handler as *const (),
+            operand: LaneOperand { imm: 0 },
+            a: conversion.a,
+            b: conversion.b,
+            c: update.a,
+        };
     }
 }
 

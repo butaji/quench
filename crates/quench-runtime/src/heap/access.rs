@@ -1,61 +1,50 @@
 use super::{
-    ArrayObject, Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, IteratorKind,
-    Object,
+    ArrayObject, Cell, EnvironmentBindings, EnvironmentSlot, EnvironmentSlots, Heap, Object,
 };
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
 use crate::value_vec::ValueArena;
 
 impl Heap {
-    pub(crate) fn collection_entry_deleted(&mut self, collection: Value, index: usize, map: bool) {
-        for slot in self.slots.iter_mut() {
-            let Some(Cell::Iterator {
-                source,
-                kind,
-                index: cursor,
-                done,
-                ext,
-                ..
-            }) = slot.cell.as_mut()
-            else {
-                continue;
-            };
-            let tracks_map = matches!(
-                kind,
-                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries
-            );
-            let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
-            if *source == collection
-                && !*done
-                && ((map && tracks_map) || (!map && tracks_set))
-                && ext.position(*cursor) > index
-            {
-                let position = ext.position(*cursor) - 1;
-                ext.store_position(cursor, position);
-            }
-        }
-    }
-
-    pub(crate) fn collection_cleared(&mut self, collection: Value, map: bool) {
-        for slot in self.slots.iter_mut() {
-            let Some(Cell::Iterator {
+    /// Moves the positions of `collection`'s running iterators by `move_slot`, keeping only
+    /// the registrations that still name one.
+    pub(crate) fn move_collection_iterators(
+        &mut self,
+        collection: Value,
+        move_slot: impl Fn(usize) -> usize,
+    ) {
+        let registered = match self.get_mut(collection) {
+            Some(Cell::Map { entries, .. }) => entries.take_iterators(),
+            Some(Cell::Set { entries, .. }) => entries.take_iterators(),
+            _ => return,
+        };
+        let mut running = Vec::with_capacity(registered.len());
+        for iterator in registered {
+            if let Some(Cell::Iterator {
                 source,
                 kind,
                 index,
                 done,
+                ext,
                 ..
-            }) = slot.cell.as_mut()
-            else {
-                continue;
-            };
-            let tracks_map = matches!(
-                kind,
-                IteratorKind::MapKeys | IteratorKind::MapValues | IteratorKind::MapEntries
-            );
-            let tracks_set = matches!(kind, IteratorKind::SetValues | IteratorKind::SetEntries);
-            if *source == collection && !*done && ((map && tracks_map) || (!map && tracks_set)) {
-                *index = 0;
+            }) = self.get_mut(iterator)
+                && *source == collection
+                && !*done
+                && kind.is_collection_iterator()
+            {
+                let position = move_slot(ext.position(*index));
+                ext.store_position(index, position);
+                running.push(iterator);
             }
+        }
+        match self.get_mut(collection) {
+            Some(Cell::Map { entries, .. }) => {
+                running.into_iter().for_each(|it| entries.register_iterator(it))
+            }
+            Some(Cell::Set { entries, .. }) => {
+                running.into_iter().for_each(|it| entries.register_iterator(it))
+            }
+            _ => {}
         }
     }
 
@@ -255,14 +244,22 @@ impl Heap {
     }
 
     pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {
-        if let Some(record_id) = value.direct_array_index() {
-            // SAFETY: direct-array Values name live records, retired after weak pruning.
-            return Some(unsafe { self.array_records.get_live(record_id) });
+        if let Some(object) = self.record_array(value) {
+            return Some(object);
         }
         match self.get(value)? {
             Cell::Array { object } => Some(object),
             _ => None,
         }
+    }
+
+    /// The array a direct-array Value names; `None` for any other value, including an array
+    /// in a slot.
+    #[inline(always)]
+    pub(crate) fn record_array(&self, value: Value) -> Option<&ArrayObject> {
+        let record_id = value.direct_array_index()?;
+        // SAFETY: direct-array Values name live records, retired after weak pruning.
+        Some(unsafe { self.array_records.get_live(record_id) })
     }
 
     /// An array's dense element backing, whether it lives in a record or a slot.
@@ -277,10 +274,17 @@ impl Heap {
         self.array_mut(value).map(ArrayObject::elements_mut)
     }
 
+    /// `record_array`, mutably.
+    #[inline(always)]
+    pub(crate) fn record_array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
+        let record_id = value.direct_array_index()?;
+        // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
+        Some(unsafe { self.array_records.get_live_mut(record_id) })
+    }
+
     pub(crate) fn array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
-        if let Some(record_id) = value.direct_array_index() {
-            // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.array_records.get_live_mut(record_id) });
+        if value.direct_array_index().is_some() {
+            return self.record_array_mut(value);
         }
         match self.get_mut(value)? {
             Cell::Array { object } => Some(object),

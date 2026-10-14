@@ -792,19 +792,20 @@ impl<H: Host> Vm<H> {
                         let Some(Cell::Map { entries, .. }) = self.heap.get(this) else {
                             unreachable!("receiver validated above")
                         };
-                        Ok(entries[index].1)
+                        Ok(entries.value_at(index))
                     }
                     Native::MapSet => {
                         let key = args.first().copied().unwrap_or(Value::UNDEFINED);
                         let value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
                         let index = self.map_entry_index(this, key);
+                        let key_hash = self.same_value_zero_hash(key);
                         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
                             unreachable!("receiver validated above")
                         };
                         if let Some(index) = index {
-                            entries[index].1 = value;
+                            entries.set_value(index, value);
                         } else {
-                            entries.push((key, value));
+                            entries.push((key, value), key_hash);
                         }
                         Ok(this)
                     }
@@ -826,19 +827,22 @@ impl<H: Host> Vm<H> {
                         let Some(index) = self.map_entry_index(this, key) else {
                             return Ok(Value::FALSE);
                         };
-                        self.heap.collection_entry_deleted(this, index, true);
+                        let key_hash = self.same_value_zero_hash(key);
                         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
                             unreachable!("receiver validated above")
                         };
-                        entries.remove(index);
+                        if let Some(compaction) = entries.remove(index, key_hash) {
+                            self.heap
+                                .move_collection_iterators(this, |slot| compaction.new_slot(slot));
+                        }
                         Ok(Value::TRUE)
                     }
                     Native::MapClear => {
-                        self.heap.collection_cleared(this, true);
                         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
                             unreachable!("receiver validated above")
                         };
                         entries.clear();
+                        self.heap.move_collection_iterators(this, |_| 0);
                         Ok(Value::UNDEFINED)
                     }
                     Native::MapKeys => self.collection_iterator(this, IteratorKind::MapKeys),
@@ -853,34 +857,11 @@ impl<H: Host> Vm<H> {
                             ));
                         }
                         let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                        let mut index = 0;
-                        while let Some((key, value)) =
-                            self.heap.get(this).and_then(|cell| match cell {
-                                Cell::Map { entries, .. } => entries.get(index).copied(),
-                                _ => None,
-                            })
-                        {
-                            self.call_value(p, callback, this_arg, &[value, key, this])?;
-                            let Some(position) = self.map_entry_index(this, key) else {
-                                continue;
-                            };
-                            let current_at_index =
-                                self.heap.get(this).is_some_and(|cell| match cell {
-                                    Cell::Map { entries, .. } => {
-                                        entries.get(index).is_some_and(|(current, _)| {
-                                            self.same_value_zero(*current, key)
-                                        })
-                                    }
-                                    _ => false,
-                                });
-                            index = if position == index && current_at_index {
-                                index + 1
-                            } else if position > index {
-                                index
-                            } else {
-                                position
-                            };
-                        }
+                        self.walk_collection(this, |vm, key, value| {
+                            let value = value.unwrap_or(Value::UNDEFINED);
+                            vm.call_value(p, callback, this_arg, &[value, key, this])?;
+                            Ok(true)
+                        })?;
                         Ok(Value::UNDEFINED)
                     }
                     _ => unreachable!("Map native dispatch is exhaustive"),
@@ -907,7 +888,7 @@ impl<H: Host> Vm<H> {
                 };
                 if let Some(index) = self.map_entry_index(this, key) {
                     if let Some(Cell::Map { entries, .. }) = self.heap.get(this) {
-                        return Ok(entries[index].1);
+                        return Ok(entries.value_at(index));
                     }
                 }
                 let value = match native {
@@ -919,19 +900,20 @@ impl<H: Host> Vm<H> {
                             self.call_value(p, callback, Value::UNDEFINED, &[canonical_key])?;
                         if let Some(index) = self.map_entry_index(this, key) {
                             if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) {
-                                entries[index].1 = computed;
+                                entries.set_value(index, computed);
                             }
                         }
                         computed
                     }
                     _ => unreachable!("Map get-or-insert dispatch is exhaustive"),
                 };
+                let key_hash = self.same_value_zero_hash(key);
                 if let Some(index) = self.map_entry_index(this, key) {
                     if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) {
-                        entries[index].1 = value;
+                        entries.set_value(index, value);
                     }
                 } else if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) {
-                    entries.push((key, value));
+                    entries.push((key, value), key_hash);
                 }
                 Ok(value)
             }
@@ -945,6 +927,7 @@ impl<H: Host> Vm<H> {
                 }
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
                 let exists = self.set_entry_index(this, value).is_some();
+                let value_hash = self.same_value_zero_hash(value);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(self.type_error(
                         p,
@@ -952,7 +935,7 @@ impl<H: Host> Vm<H> {
                     ));
                 };
                 if !exists {
-                    entries.push(value);
+                    entries.push(value, value_hash);
                 }
                 Ok(this)
             }
@@ -985,14 +968,17 @@ impl<H: Host> Vm<H> {
                 let Some(index) = self.set_entry_index(this, value) else {
                     return Ok(Value::FALSE);
                 };
-                self.heap.collection_entry_deleted(this, index, false);
+                let value_hash = self.same_value_zero_hash(value);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(self.type_error(
                         p,
                         "Set.prototype.delete called on incompatible receiver".into(),
                     ));
                 };
-                entries.remove(index);
+                if let Some(compaction) = entries.remove(index, value_hash) {
+                    self.heap
+                        .move_collection_iterators(this, |slot| compaction.new_slot(slot));
+                }
                 Ok(Value::TRUE)
             }
             Native::SetClear => {
@@ -1002,7 +988,6 @@ impl<H: Host> Vm<H> {
                         "Set.prototype.clear called on incompatible receiver".into(),
                     ));
                 }
-                self.heap.collection_cleared(this, false);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(self.type_error(
                         p,
@@ -1010,6 +995,7 @@ impl<H: Host> Vm<H> {
                     ));
                 };
                 entries.clear();
+                self.heap.move_collection_iterators(this, |_| 0);
                 Ok(Value::UNDEFINED)
             }
             Native::SetKeys | Native::SetValues => {
@@ -1042,17 +1028,10 @@ impl<H: Host> Vm<H> {
                     return Err(self.type_error(p, "callback is not callable".into()));
                 }
                 let this_arg = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let mut index = 0;
-                while let Some(value) = self.heap.get(this).and_then(|cell| match cell {
-                    Cell::Set { entries, .. } => entries.get(index).copied(),
-                    _ => None,
-                }) {
-                    self.call_value(p, callback, this_arg, &[value, value, this])?;
-                    let Some(position) = self.set_entry_index(this, value) else {
-                        continue;
-                    };
-                    index = position + 1;
-                }
+                self.walk_collection(this, |vm, value, _| {
+                    vm.call_value(p, callback, this_arg, &[value, value, this])?;
+                    Ok(true)
+                })?;
                 Ok(Value::UNDEFINED)
             }
             Native::SetDifference
@@ -1260,26 +1239,96 @@ impl<H: Host> Vm<H> {
             _ => Err(JsError("invalid collection native".into())),
         }
     }
+    /// Visits a Map's or Set's live entries in order, as `forEach` does: entries added during
+    /// the walk are visited and entries deleted before their turn are not. `visit` receives
+    /// a Map entry's key and value or a Set value and `None`, and returns whether to go on.
+    pub(super) fn walk_collection(
+        &mut self,
+        collection: Value,
+        mut visit: impl FnMut(&mut Self, Value, Option<Value>) -> Result<bool, JsError>,
+    ) -> Result<(), JsError> {
+        self.set_collection_walk(collection, true);
+        let mut slot = 0;
+        let result = loop {
+            let next = match self.heap.get(collection) {
+                Some(Cell::Map { entries, .. }) => entries
+                    .next_live(slot)
+                    .map(|(found, (key, value))| (found, key, Some(value))),
+                Some(Cell::Set { entries, .. }) => entries
+                    .next_live(slot)
+                    .map(|(found, value)| (found, value, None)),
+                _ => None,
+            };
+            let Some((found, key, value)) = next else {
+                break Ok(());
+            };
+            slot = found + 1;
+            match visit(self, key, value) {
+                Ok(true) => {}
+                outcome => break outcome.map(drop),
+            }
+        };
+        self.set_collection_walk(collection, false);
+        result
+    }
+
+    fn set_collection_walk(&mut self, collection: Value, active: bool) {
+        match self.heap.get_mut(collection) {
+            Some(Cell::Map { entries, .. }) if active => entries.begin_walk(),
+            Some(Cell::Map { entries, .. }) => entries.end_walk(),
+            Some(Cell::Set { entries, .. }) if active => entries.begin_walk(),
+            Some(Cell::Set { entries, .. }) => entries.end_walk(),
+            _ => {}
+        }
+    }
+
     pub(super) fn map_entry_index(&self, map: Value, key: Value) -> Option<usize> {
         let Some(Cell::Map { entries, .. }) = self.heap.get(map) else {
             return None;
         };
-        entries
-            .iter()
-            .position(|(candidate, _)| self.same_value_zero(*candidate, key))
+        entries.position(
+            self.same_value_zero_hash(key),
+            |candidate| self.same_value_zero_hash(candidate),
+            |candidate| self.same_value_zero(candidate, key),
+        )
     }
-    fn set_entry_index(&self, set: Value, value: Value) -> Option<usize> {
+    pub(super) fn set_entry_index(&self, set: Value, value: Value) -> Option<usize> {
         let Some(Cell::Set { entries, .. }) = self.heap.get(set) else {
             return None;
         };
-        entries
-            .iter()
-            .position(|candidate| self.same_value_zero(*candidate, value))
+        entries.position(
+            self.same_value_zero_hash(value),
+            |candidate| self.same_value_zero_hash(candidate),
+            |candidate| self.same_value_zero(candidate, value),
+        )
     }
     pub(super) fn same_value_zero(&self, left: Value, right: Value) -> bool {
         self.strict_equal(left, right)
             || (left.as_number().is_some_and(f64::is_nan)
                 && right.as_number().is_some_and(f64::is_nan))
+    }
+    /// A hash under which SameValueZero-equal keys agree: numbers by value with both zeros
+    /// and every NaN as one, strings and BigInts by content, everything else by identity.
+    pub(super) fn same_value_zero_hash(&self, key: Value) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        if let Some(number) = key.as_number() {
+            let number = if number == 0.0 {
+                0.0
+            } else if number.is_nan() {
+                f64::NAN
+            } else {
+                number
+            };
+            number.to_bits().hash(&mut hasher);
+        } else {
+            match self.heap.get(key) {
+                Some(Cell::String(text)) => text.hash(&mut hasher),
+                Some(Cell::BigInt(digits)) => digits.hash(&mut hasher),
+                _ => key.hash(&mut hasher),
+            }
+        }
+        hasher.finish()
     }
     fn validate_weak_map_receiver(
         &mut self,
