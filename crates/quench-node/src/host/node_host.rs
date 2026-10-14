@@ -98,7 +98,11 @@ pub(crate) struct SharedNodeState {
     pub(crate) child_processes: std::collections::HashMap<u64, SharedChildProcess>,
     pub(crate) net_socket_constructor: Option<quench_runtime::RootId>,
     pub(crate) net_handle_owner_symbol: Option<quench_runtime::RootId>,
+    pub(crate) net_server_on_connection: Option<quench_runtime::RootId>,
+    pub(crate) net_handle_onclose_symbol: Option<quench_runtime::RootId>,
     pub(crate) net_socket_option_keys: Option<quench_runtime::RootId>,
+    pub(crate) net_handle_identities: Vec<(quench_runtime::HostWeakRoot, u64)>,
+    pub(crate) net_handle_close_callbacks: std::collections::HashMap<u64, quench_runtime::RootId>,
 }
 
 pub(crate) struct NetSocket {
@@ -167,7 +171,11 @@ impl SharedNodeState {
         self.timer_handle_api = None;
         self.net_socket_constructor = None;
         self.net_handle_owner_symbol = None;
+        self.net_server_on_connection = None;
+        self.net_handle_onclose_symbol = None;
         self.net_socket_option_keys = None;
+        self.net_handle_identities.clear();
+        self.net_handle_close_callbacks.clear();
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
         self.crypto_engines = crate::modules::crypto_engine_shared_vm::State::default();
         self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
@@ -234,7 +242,11 @@ impl SharedNodeState {
             child_processes: std::collections::HashMap::new(),
             net_socket_constructor: None,
             net_handle_owner_symbol: None,
+            net_server_on_connection: None,
+            net_handle_onclose_symbol: None,
             net_socket_option_keys: None,
+            net_handle_identities: Vec::new(),
+            net_handle_close_callbacks: std::collections::HashMap::new(),
         }
     }
 }
