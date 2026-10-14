@@ -1357,6 +1357,16 @@ impl Function {
             })
     }
 
+    /// Whether the body enters a `with` statement, whose by-name loads may denote
+    /// any enclosing function's binding. `is_with_enter` recognizes the atom id of
+    /// [`WITH_ENTER_BINDING`] in the owning program's atom table.
+    pub(crate) fn contains_with_statement(&self, is_with_enter: impl Fn(usize) -> bool) -> bool {
+        self.instructions().any(|instruction| {
+            matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
+                && usize::try_from(instruction.atom_index()).is_ok_and(&is_with_enter)
+        })
+    }
+
     /// Whether neither this function nor any enclosing one has dynamic scope access or
     /// contains a `with` statement. The compiler then resolved every lexical binding the body
     /// names, so a by-name load in it can only denote a global binding.
@@ -1367,11 +1377,8 @@ impl Function {
     ) -> bool {
         *self.static_name_scope.get_or_init(|| {
             !self.has_dynamic_scope_access()
-                && !self.instructions().any(|instruction| {
-                    matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
-                        && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
-                            atom < atoms.len() && &atoms[atom] == WITH_ENTER_BINDING
-                        })
+                && !self.contains_with_statement(|atom| {
+                    atom < atoms.len() && &atoms[atom] == WITH_ENTER_BINDING
                 })
                 && self.parent.is_none_or(|parent| {
                     functions

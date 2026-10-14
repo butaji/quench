@@ -280,6 +280,10 @@ impl<H: Host> Vm<H> {
         self.set_named_constant(program, prototype, "length", Value::number(0.0))?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((realm, Native::String), prototype);
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,
@@ -454,6 +458,7 @@ impl<H: Host> Vm<H> {
                     native,
                     Native::StringToUpperCase | Native::StringToLocaleUpperCase
                 );
+                let units = receiver.units();
                 let text = if matches!(
                     native,
                     Native::StringToLocaleUpperCase | Native::StringToLocaleLowerCase
@@ -463,13 +468,13 @@ impl<H: Host> Vm<H> {
                         .into_iter()
                         .next()
                         .unwrap_or_else(|| "en-US".into());
-                    quench_intl::locale_case(receiver.host_string(), &locale, upper)
+                    map_case(units, |text| quench_intl::locale_case(text, &locale, upper))
                 } else if upper {
-                    receiver.host_string().to_uppercase()
+                    map_case(units, str::to_uppercase)
                 } else {
-                    receiver.host_string().to_lowercase()
+                    map_case(units, str::to_lowercase)
                 };
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                Ok(self.heap.alloc(Cell::String(text)))
             }
             Native::StringLocaleCompare => {
                 let other = self.to_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
@@ -797,4 +802,35 @@ impl<H: Host> Vm<H> {
             })
         })
     }
+}
+
+/// Applies a full case mapping to each well-formed run of `units`. A lone
+/// surrogate has no case mapping and is not cased, so it maps to itself and
+/// leaves the surrounding runs' casing contexts unchanged.
+fn map_case(units: &[u16], map: impl Fn(&str) -> String) -> JsString {
+    let mut output = Vec::with_capacity(units.len());
+    let flush = |run: &[u16], output: &mut Vec<u16>| {
+        let text = String::from_utf16(run).expect("runs between lone surrogates are well formed");
+        output.extend(map(&text).encode_utf16());
+    };
+    let mut start = 0;
+    let mut index = 0;
+    while let Some(&unit) = units.get(index) {
+        let paired = crate::unicode::is_high_surrogate(unit)
+            && units
+                .get(index + 1)
+                .is_some_and(|low| crate::unicode::is_low_surrogate(*low));
+        if paired {
+            index += 2;
+        } else if crate::unicode::is_surrogate(u32::from(unit)) {
+            flush(&units[start..index], &mut output);
+            output.push(unit);
+            index += 1;
+            start = index;
+        } else {
+            index += 1;
+        }
+    }
+    flush(&units[start..], &mut output);
+    JsString::from_units(&output)
 }

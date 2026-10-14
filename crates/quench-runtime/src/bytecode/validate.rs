@@ -448,7 +448,8 @@ impl ResidualProgram {
         if self.register_roots.len() > u32::MAX as usize {
             return Err("register root table is too large".into());
         }
-        let selective_capture_scope_unsafe = selective_capture_scope_unsafe(&self.functions);
+        let selective_capture_scope_unsafe =
+            selective_capture_scope_unsafe(&self.functions, &self.atoms);
         for (index, function) in self.functions.iter().enumerate() {
             if function.code.is_empty() || !super::control_flow::is_bounded(function) {
                 return Err(format!("function {index} can fall off its code"));
@@ -931,7 +932,12 @@ impl ResidualProgram {
     }
 }
 
-fn selective_capture_scope_unsafe(functions: &[super::Function]) -> Vec<bool> {
+fn selective_capture_scope_unsafe(
+    functions: &[super::Function],
+    atoms: &super::AtomTable,
+) -> Vec<bool> {
+    let is_with_enter =
+        |atom: usize| atom < atoms.len() && &atoms[atom] == super::WITH_ENTER_BINDING;
     let mut inherited_dynamic_scope = vec![false; functions.len()];
     for (id, function) in functions.iter().enumerate() {
         if let Some(parent) = function.parent.map(|parent| parent as usize) {
@@ -941,7 +947,10 @@ fn selective_capture_scope_unsafe(functions: &[super::Function]) -> Vec<bool> {
     }
     let mut unsafe_layout = vec![false; functions.len()];
     for (id, function) in functions.iter().enumerate() {
-        if !has_dynamic_scope_access(function) && !inherited_dynamic_scope[id] {
+        if !has_dynamic_scope_access(function)
+            && !inherited_dynamic_scope[id]
+            && !function.contains_with_statement(is_with_enter)
+        {
             continue;
         }
         let mut current = Some(id);
