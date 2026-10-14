@@ -188,7 +188,6 @@ pub(crate) fn poll(
                                 root: accepted,
                                 encoding: None,
                                 parent_server: Some(listener),
-                                connection_event_pending: true,
                                 write_callbacks: std::collections::VecDeque::new(),
                             },
                         );
@@ -294,11 +293,12 @@ pub(crate) fn poll(
                 });
                 if let Some((root, _encoding)) = net_socket {
                     let chunk = buffer_from_bytes(runtime, &bytes)?;
-                    queue_net_method(runtime, shared_state, root, "push", &[chunk])?;
+                    queue_net_method_completion(runtime, shared_state, root, "push", &[chunk], Some(NetDelivery::Data(socket, bytes.len())))?;
                     runtime.release_root(chunk);
                     progressed = true;
                     continue;
                 }
+                net_shared_vm::release_delivery(&mut shared_state.borrow_mut().tcp, socket);
                 if shared_state.borrow().http.connections.contains_key(&socket) {
                     let dispatch = {
                         let mut host = shared_state.borrow_mut();
@@ -577,9 +577,8 @@ pub(crate) fn poll(
                 };
                 if let Some(root) = net_root {
                     let eof = runtime.root(Value::NULL);
-                    queue_net_method(runtime, shared_state, root, "push", &[eof])?;
+                    queue_net_method_completion(runtime, shared_state, root, "push", &[eof], Some(NetDelivery::Eof))?;
                     runtime.release_root(eof);
-                    runtime.host_mut().net_pending_ends.push(socket);
                     progressed = true;
                     continue;
                 }
@@ -1289,7 +1288,7 @@ fn queue_connection_event(
         receiver,
         "emit",
         &event_args,
-        Some(socket),
+        Some(NetDelivery::Connection(socket)),
     );
     runtime.release_root(event);
     result
@@ -1304,13 +1303,14 @@ fn queue_net_method(
 ) -> Result<(), String> {
     queue_net_method_completion(runtime, shared_state, receiver, method, args, None)
 }
+enum NetDelivery { Connection(u64), Data(u64, usize), Eof }
 fn queue_net_method_completion(
     runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
     receiver: RootId,
     method: &str,
     args: &[RootId],
-    completion: Option<u64>,
+    completion: Option<NetDelivery>,
 ) -> Result<(), String> {
     let key = runtime.string_rooted(method);
     let mut callback = runtime
@@ -1324,11 +1324,22 @@ fn queue_net_method_completion(
     );
     let mut retained_args =
         Vec::with_capacity(args.len() + if completion.is_some() { 2 } else { 0 });
-    if let Some(socket) = completion {
+    if let Some(completion) = completion {
         retained_args.push(callback);
-        retained_args.push(runtime.root(Value::number(socket as f64)));
+        let operation = match completion {
+            NetDelivery::Connection(socket) => {
+                retained_args.push(runtime.root(Value::number(socket as f64)));
+                "netDeliverConnection"
+            }
+            NetDelivery::Data(socket, length) => {
+                retained_args.push(runtime.root(Value::number(socket as f64)));
+                retained_args.push(runtime.root(Value::number(length as f64)));
+                "netDeliverData"
+            }
+            NetDelivery::Eof => "netDeliverEof",
+        };
         callback = runtime
-            .host_function(crate::host::shared_vm::operation("netDeliverConnection"))
+            .host_function(crate::host::shared_vm::operation(operation))
             .map_err(|error| error.to_string())?;
     }
     for arg in args {
