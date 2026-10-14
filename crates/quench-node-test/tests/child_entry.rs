@@ -1814,6 +1814,84 @@ fn extensionless_entries_use_the_package_module_scope() {
 }
 
 #[test]
+fn imported_strict_terminal_calls_preserve_local_exception_handlers() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("library.mjs"), r#"
+function bad() { throw Error('marker'); }
+export function caught() { try { return bad(); } catch (error) { return error.message; } }
+export function viaParameter(fn) { try { return fn(); } catch (error) { return error.message; } }
+export function nested() { try { return bad(); } catch { try { return bad(); } catch { return null; } } }
+export function finalized(events) { try { return bad(); } catch { return 42; } finally { events.push('finally'); } }
+export { bad };
+"#).unwrap();
+    let entry = directory.path().join("entry.mjs");
+    std::fs::write(&entry, r#"
+import { caught, viaParameter, nested, finalized, bad } from './library.mjs';
+const events=[];
+console.log(JSON.stringify([caught(),viaParameter(bad),nested(),finalized(events),events]));
+"#).unwrap();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.arg(&entry);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, b"[\"marker\",\"marker\",null,42,[\"finally\"]]\n");
+        assert!(result.stderr.is_empty());
+    }
+}
+
+#[test]
+fn structured_clone_preserves_array_elements_holes_and_aliases() {
+    compare_node_stream_source(r#"
+const assert=require('node:assert');
+assert.deepStrictEqual(structuredClone([2]),[2]);
+const shared={answer:42}, source=[]; source.length=5000;
+source[1]=shared; source[4096]=shared; source.extra=shared; source.self=source;
+let reads=0;
+Object.defineProperty(source,'3',{enumerable:true,get(){reads++;delete source[4];return shared}});
+source[4]='deleted by getter';
+Object.defineProperty(source,'5',{value:'hidden',enumerable:false});
+source[Symbol('hidden')]='symbol';
+const prototype=Object.create(Array.prototype);
+Object.defineProperty(prototype,'0',{get(){throw Error('inherited index was read')}});
+Object.setPrototypeOf(source,prototype);
+const clone=structuredClone(source);
+assert.strictEqual(reads,1); assert.strictEqual(clone.length,5000);
+assert.strictEqual(Object.getPrototypeOf(clone),Array.prototype);
+for(const index of [0,4,5,4999]) assert.strictEqual(Object.hasOwn(clone,index),false);
+assert.strictEqual(clone[1],clone[3]); assert.strictEqual(clone[1],clone[4096]);
+assert.strictEqual(clone[1],clone.extra); assert.strictEqual(clone.self,clone);
+assert.notStrictEqual(clone[1],shared);
+assert.deepStrictEqual(Object.getOwnPropertyDescriptor(clone,'1'),{value:clone[1],writable:true,enumerable:true,configurable:true});
+console.log(JSON.stringify([Object.keys(clone),clone.length,clone[1],reads]));
+"#);
+}
+
+#[test]
+fn console_formats_module_values_without_a_global_require() {
+    let directory = tempfile::tempdir().unwrap();
+    let entry = directory.path().join("entry.mjs");
+    std::fs::write(&entry, r#"
+import util from 'node:util';
+console.log(null,undefined,42);
+console.log('%s:%d:%j','answer',42,{value:null});
+util.format=()=>{throw Error('public formatter replacement was used')};
+util.formatWithOptions=util.format;
+console.log(null,undefined);
+"#).unwrap();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.arg(&entry);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, b"null undefined 42\nanswer:42:{\"value\":null}\nnull undefined\n");
+        assert!(result.stderr.is_empty());
+    }
+}
+
+#[test]
 fn json_import_attributes_parse_the_original_payload() {
     compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');

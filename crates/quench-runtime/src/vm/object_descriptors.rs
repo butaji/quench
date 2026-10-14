@@ -458,7 +458,7 @@ impl<H: Host> Vm<H> {
 
     /// An own property of a non-Proxy object as its value and attributes,
     /// without allocating a descriptor object. `key` is a property key.
-    fn ordinary_own_property(
+    pub(super) fn ordinary_own_property(
         &mut self,
         p: &ResidualProgram,
         target: Value,
