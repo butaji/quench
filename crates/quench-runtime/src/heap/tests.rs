@@ -168,7 +168,9 @@ fn gc_headroom_factors_scale_live_cells_without_overflow() {
     assert_eq!(gc_allocation_headroom(0), MINIMUM_GC_ALLOCATION_HEADROOM);
     assert_eq!(
         gc_allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS - 1),
-        MINIMUM_GC_ALLOCATION_HEADROOM.max(LARGE_HEAP_MINIMUM_LIVE_CELLS - 1)
+        SMALL_HEAP_GC_HEADROOM
+            .allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS - 1)
+            .max(MINIMUM_GC_ALLOCATION_HEADROOM)
     );
     assert_eq!(
         gc_allocation_headroom(live),
