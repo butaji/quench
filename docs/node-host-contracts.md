@@ -452,6 +452,21 @@ Complete sweeps use frozen sibling binaries and retain every case outcome,
 binary/source revisions, inventory identity, deadlines and resource counters.
 Their results belong in `evidence/`; work status belongs in Linear.
 
+## Lazy web globals
+
+`URL`/`URLSearchParams`, `TextDecoder`/`TextEncoder`, the web-stream family and
+the web-API group (`Blob`, `Headers`, `Request`, `Response`) are lazy data
+properties of the global object, as in Node, and the runtime's `Temporal` is one
+too. A group's polyfill runs once, under the startup intrinsics, when script
+first reads one of its globals or asks for its descriptor; until then each name
+sits at its bootstrap position. Every observation is a writable, non-enumerable,
+configurable data property: `Object.getOwnPropertyDescriptor`, partial
+`Object.defineProperty`, `freeze` and `seal` materialize the group first, while
+`Object.keys`, `hasOwnProperty` and enumeration read only the attributes.
+Assignment or deletion before materialization needs no value; the group's later
+initialization keeps the script's value or absence. A polyfill runs as a block,
+so its declarations never become global lexical bindings.
+
 ## Buffer string construction byte projection
 
 `Buffer.from(string, encoding)` obtains encoded bytes from the shared Rust
