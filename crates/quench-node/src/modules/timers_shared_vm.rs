@@ -104,6 +104,11 @@ const PROMISE_INTERVAL_FACTORY: &str = quench_js_check::checked_js!(
 #[derive(Clone, Copy)]
 pub(crate) struct TimerHandleApi {
     pub(crate) refed_key: RootId,
+    pub(crate) async_id_key: RootId,
+    pub(crate) primitive_key: RootId,
+    pub(crate) primitive_registry: RootId,
+    pub(crate) primitive_cleanup: RootId,
+    pub(crate) delete_property: RootId,
     pub(crate) timeout_prototype: RootId,
     pub(crate) immediate_prototype: RootId,
 }
@@ -638,6 +643,10 @@ fn schedule_timer(
     }
     let async_id =
         crate::modules::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
+    let async_id_value = context.number(async_id as f64);
+    context.define_data_property_rooted(handle, api.async_id_key, async_id_value, true, true, true)?;
+    let primitive = context.boolean(false);
+    context.define_data_property_rooted(handle, api.primitive_key, primitive, true, true, true)?;
     crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Timeout", async_id)?;
     let callback = context.retain(callback)?;
     let receiver = context.retain(handle)?;
@@ -802,10 +811,23 @@ fn timer_handle_api(
         return Ok(api);
     }
     let refed_key = context.symbol_rooted(Some(TIMER_REFED));
+    let async_id_key = context.symbol_rooted(Some("asyncId"));
+    let primitive_key = context.symbol_rooted(Some("kHasPrimitive"));
+    // This is Node's primitive alias registry, not an activity projection.
+    let primitive_registry = context.null_object_rooted()?;
+    let primitive_cleanup = context.host_function(crate::host::shared_vm::operation("timerPrimitiveCleanup"))?;
+    let global = context.global_root()?;
+    let reflect = property(context, global, "Reflect")?;
+    let delete_property = property(context, reflect, "deleteProperty")?;
     let timeout_prototype = timer_handle_prototype(context, "Timeout", "timerHasRef")?;
     let immediate_prototype = timer_handle_prototype(context, "Immediate", "immediateHasRef")?;
     let api = TimerHandleApi {
         refed_key: context.retain(refed_key)?,
+        async_id_key: context.retain(async_id_key)?,
+        primitive_key: context.retain(primitive_key)?,
+        primitive_registry: context.retain(primitive_registry)?,
+        primitive_cleanup: context.retain(primitive_cleanup)?,
+        delete_property: context.retain(delete_property)?,
         timeout_prototype: context.retain(timeout_prototype)?,
         immediate_prototype: context.retain(immediate_prototype)?,
     };
@@ -899,6 +921,10 @@ fn timer_handle_prototype(
         let operation = context.host_function(crate::host::shared_vm::operation("timerClose"))?;
         let method = context.call_rooted(factory, undefined, &[operation])?;
         install(context, prototype, "close", method)?;
+        let operation = context.host_function(crate::host::shared_vm::operation("timerToPrimitive"))?;
+        let method = context.call_rooted(factory, undefined, &[operation])?;
+        let key = property(context, symbol, "toPrimitive")?;
+        context.define_data_property_rooted(prototype, key, method, true, true, true)?;
     }
     Ok(prototype)
 }
@@ -1055,10 +1081,20 @@ pub(crate) fn clear_timer(
     if context.rooted_value(handle).is_some_and(|value| value.is_null() || value.is_undefined()) {
         return Ok(context.undefined());
     }
+    let handle = if context.rooted_value(handle).is_some_and(|value| value.as_number().is_some()) || context.string_text(handle)?.is_some() {
+        let api = timer_handle_api(context)?;
+        let handle = context.get_property_rooted(api.primitive_registry, handle)?;
+        if context.rooted_value(handle).is_some_and(|value| value.is_undefined()) {
+            return Ok(context.undefined());
+        }
+        handle
+    } else { handle };
     let id = timer_id(context, handle)?;
     if let Some(id) = id {
         let destroyed = context.boolean(true);
         install(context, handle, TIMER_DESTROYED, destroyed)?;
+        let undefined = context.undefined();
+        primitive_cleanup(context, undefined, &[handle])?;
         let callback = context
             .host_mut()
             .shared_state()
@@ -1173,6 +1209,8 @@ pub(crate) fn timer_close(context: &mut NativeContext<'_, NodeHost>, receiver: R
 
 /// Public timer functions defer the promise export lookup, preserving its identity and hooks.
 pub(crate) fn install_promisify_globals(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    // Capture the intrinsic deletion operation before guest code can replace Reflect.
+    timer_handle_api(context)?;
     let global = context.global_root()?;
     let symbol = property(context, global, "Symbol")?;
     let registry = property(context, symbol, "for")?;
@@ -1198,4 +1236,38 @@ pub(crate) fn promisify_get(context: &mut NativeContext<'_, NodeHost>, _: RootId
     let name = context.host_function_data()?;
     let module = crate::host::shared_vm::commonjs::timers_promises_module(context)?;
     context.get_property_rooted(module, name)
+}
+
+/// Node registers the original receiver only on its first primitive conversion.
+pub(crate) fn to_primitive(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let handle = args[0];
+    let api = timer_handle_api(context)?;
+    let id = context.get_property_rooted(handle, api.async_id_key)?;
+    let known = context.get_property_rooted(handle, api.primitive_key)?;
+    if !context.truthy_rooted(known)? {
+        let yes = context.boolean(true);
+        if !context.set_property_rooted(handle, api.primitive_key, yes, handle)? {
+            let error = context.type_error_rooted("Cannot assign to read only timer primitive registration")?;
+            return Err(context.throw(error));
+        }
+        context.set_property_rooted(api.primitive_registry, id, handle, api.primitive_registry)?;
+    }
+    Ok(id)
+}
+
+/// Remove the primitive alias at real cancellation/completion. A firing timer
+/// supplies the identity read before its callback, matching Node's snapshot.
+pub(crate) fn primitive_cleanup(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let handle = args[0];
+    let api = timer_handle_api(context)?;
+    let known = context.get_property_rooted(handle, api.primitive_key)?;
+    if context.truthy_rooted(known)? {
+        let id = match args.get(1).copied() {
+            Some(id) => id,
+            None => context.get_property_rooted(handle, api.async_id_key)?,
+        };
+        let undefined = context.undefined();
+        context.call_rooted(api.delete_property, undefined, &[api.primitive_registry, id])?;
+    }
+    Ok(context.undefined())
 }

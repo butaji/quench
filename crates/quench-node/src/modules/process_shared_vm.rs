@@ -2047,7 +2047,11 @@ fn drain_checkpoint(
         if let Some(timer) = due {
             let _span =
                 crate::modules::trace_state::EnvironmentSpan::enter(&shared_state, "RunTimers");
-            let callback_result = invoke_timer_callback(runtime, program, &timer.callback);
+            let api = shared_state.borrow().timer_handle_api.expect("queued timer handle API");
+            let (primitive_id, callback_result) = match runtime.get_property_rooted(timer.callback.receiver, api.async_id_key) {
+                Ok(id) => (Some(id), invoke_timer_callback(runtime, program, &timer.callback)),
+                Err(error) => (None, route_callback_failure(runtime, program, error)),
+            };
 
             if callback_result.is_err() {
                 shared_state
@@ -2060,10 +2064,23 @@ fn drain_checkpoint(
                 .scheduler
                 .complete_shared_timer(timer, std::time::Instant::now());
             if let Some(callback) = released {
-                let settled = mark_timer_destroyed(runtime, callback.receiver);
+                let settled = mark_timer_destroyed(runtime, callback.receiver).and_then(|()| {
+                    let undefined = runtime.root(Value::UNDEFINED);
+                    let args = [callback.receiver, primitive_id.unwrap_or(undefined)];
+                    let args = if primitive_id.is_some() { &args[..] } else { &args[..1] };
+                    let result = runtime.call_rooted(api.primitive_cleanup, undefined, args);
+                    runtime.release_root(undefined);
+                    result.map(|result| { runtime.release_root(result); })
+                });
                 release_callback(runtime, callback);
-                if let Err(error) = settled { route_callback_failure(runtime, program, error)?; }
+                if let Err(error) = settled {
+                    if let Some(id) = primitive_id { runtime.release_root(id); }
+                    route_callback_failure(runtime, program, error)?;
+                    callback_result?;
+                    continue;
+                }
             }
+            if let Some(id) = primitive_id { runtime.release_root(id); }
             callback_result?;
             continue;
         }
