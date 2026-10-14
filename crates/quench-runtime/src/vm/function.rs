@@ -46,7 +46,9 @@ impl<H: Host> Vm<H> {
             .text
             .get(span.start as usize..span.end as usize)?;
         let source = self.heap.alloc(Cell::String(text.into()));
-        self.programs.cache_function_source(program, id, source).or(Some(source))
+        self.programs
+            .cache_function_source(program, id, source)
+            .or(Some(source))
     }
 
     pub(super) fn function_caller_is_restricted(&self, function: Value) -> bool {

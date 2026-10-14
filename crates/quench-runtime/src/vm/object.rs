@@ -829,52 +829,6 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    /// A monomorphic own-shape hit for an ordinary object. A site is only populated after the
-    /// atom and a non-dictionary receiver shape passed `shape_property_lookup_cell`, and an
-    /// ordinary object is eligible whenever those hold, so this hit needs no further
-    /// eligibility probe.
-    #[inline(always)]
-    fn own_shape_field_hit(
-        &self,
-        p: &ResidualProgram,
-        object: Value,
-        site: u16,
-    ) -> Option<FieldCacheHit> {
-        if !(self.specialized && p.specialized) {
-            return None;
-        }
-        let Some(receiver) = self.heap.object(object) else {
-            return None;
-        };
-        if receiver.is_module_namespace() {
-            return None;
-        }
-        self.cached_field_value(self.field_cache_index(site), receiver)
-    }
-
-    /// The value `get_field_cached` reads on a field cache hit, without
-    /// side effects; `None` when it would take any other path.
-    #[inline(always)]
-    pub(super) fn field_cache_hit(
-        &self,
-        p: &ResidualProgram,
-        object: Value,
-        atom: Atom,
-        site: u16,
-    ) -> Option<Value> {
-        if let Some(hit) = self.own_shape_field_hit(p, object, site) {
-            return Some(hit.value);
-        }
-        if !(self.specialized && p.specialized) {
-            return None;
-        }
-        let receiver = self.shape_property_lookup(object, atom)?;
-        let site = self.field_cache_index(site);
-        self.cached_field_value(site, receiver)
-            .or_else(|| self.cached_holder_field_value(site, receiver, atom))
-            .map(|hit| hit.value)
-    }
-
     #[inline(always)]
     fn cached_field_value(&self, site: usize, receiver: &Object) -> Option<FieldCacheHit> {
         let receiver_shape = receiver.shape();

@@ -3037,7 +3037,9 @@ impl<H: Host> Vm<H> {
                                 };
                                 if element == index {
                                     let value = vm.heap.alloc(Cell::String(
-                                        super::wtf16::JsString::from_unit_run(units.slice(offset..end)),
+                                        super::wtf16::JsString::from_unit_run(
+                                            units.slice(offset..end),
+                                        ),
                                     ));
                                     selected = Some((value, None));
                                     break;

@@ -22,6 +22,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,
         method "processExitCodeSet" (1) => crate::modules::process_shared_vm::exit_code_set,
         method "processExit" (1) => crate::modules::process_shared_vm::exit,
+        method "reallyExit" (1) => crate::modules::process_shared_vm::really_exit,
         method "processStreamWrite" (1) => crate::modules::process_shared_vm::stream_write,
         method "processOpenStdin" (0) => crate::modules::process_stdin_shared_vm::open,
         method "processStdin" (0) => crate::modules::process_stdin_shared_vm::get,
@@ -198,6 +199,22 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netServerOnConnection" (3) => crate::modules::net_server_admission::on_connection,
         method "netSocketCreateHandle" (1) => crate::modules::net_reference_shared_vm::create_socket_handle,
         method "netHandleClose" (0) => crate::modules::net_reference_shared_vm::close,
+        method "netHandleReadStart" (0) => crate::modules::net_reference_shared_vm::read_start,
+        method "netHandleReadStop" (0) => crate::modules::net_reference_shared_vm::read_stop,
+        method "netSocketPeerName" (1) => crate::modules::net_socket_address::peer,
+        method "netSocketLocalName" (1) => crate::modules::net_socket_address::local,
+        method "netSocketEndpointView" (1) => crate::modules::net_socket_address::view,
+        method "netSocketRead" (2) => crate::modules::net_socket_read::read,
+        method "netSocketReadAfterConnect" (0) => crate::modules::net_socket_read::read_after_connect,
+        method "netSocketInitializeRead" (2) => crate::modules::net_socket_read::initialize,
+        method "netParentReadingGet" (0) => crate::modules::net_socket_read::parent_reading_get,
+        method "netParentReadingSet" (1) => crate::modules::net_socket_read::parent_reading_set,
+        method "streamShouldResumeData" (1) => crate::modules::stream_shared_vm::should_resume_data,
+        method "streamIsPaused" (1) => crate::modules::stream_shared_vm::is_paused,
+        method "streamSetFlowing" (2) => crate::modules::stream_shared_vm::set_flowing,
+        method "streamPipeStart" (2) => crate::modules::stream_pipe_shared_vm::start,
+        method "streamListenerRemoved" (3) => crate::modules::stream_shared_vm::listener_removed,
+        method "streamUpdateReadableListening" (1) => crate::modules::stream_shared_vm::update_readable_listening,
         method "netHandleCloseComplete" (0) => crate::modules::net_reference_shared_vm::close_complete,
         method "netHandleGetSockName" (0) => crate::modules::net_reference_shared_vm::get_sock_name,
         method "netHandleGetPeerName" (0) => crate::modules::net_reference_shared_vm::get_peer_name,
@@ -274,6 +291,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpServerClose" (0) => crate::modules::http_shared_vm::server_close,
         method "httpAgentCreate" (1) => crate::modules::http_shared_vm::agent_create,
         method "httpAgentDestroy" (1) => crate::modules::http_shared_vm::agent_destroy,
+        method "getName" (0) => crate::modules::http_shared_vm::agent_get_name,
+        method "_resolveFilename" (4) => commonjs::resolve_from_parent,
         method "httpRequestCreate" (2) => crate::modules::http_shared_vm::request_create,
         method "httpRequestNormalizeUrl" (1) => crate::modules::http_shared_vm::request_normalize_url,
         method "httpRequestWrite" (3) => crate::modules::http_shared_vm::request_write,
@@ -412,6 +431,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoSign" (6) => crate::modules::crypto_shared_vm::sign,
         method "cryptoVerify" (7) => crate::modules::crypto_shared_vm::verify,
         method "cryptoRandomBytes" (1) => crate::modules::crypto_shared_vm::random_bytes,
+        method "get crypto" (0) => crate::modules::crypto_shared_vm::global_crypto,
         method "cryptoPbkdf2" (5) => crate::modules::crypto_shared_vm::pbkdf2,
         method "cryptoScrypt" (7) => crate::modules::crypto_shared_vm::scrypt,
         method "cryptoCipherProcess" (10) => crate::modules::crypto_shared_vm::cipher_process,
@@ -469,6 +489,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         global "clearTimeout" (1) => crate::modules::timers_shared_vm::clear_timer,
         global "setInterval" (1) => crate::modules::timers_shared_vm::set_interval,
         global "clearInterval" (1) => crate::modules::timers_shared_vm::clear_timer,
+        method "processGetActiveTimerResources" (0) => crate::modules::timers_shared_vm::active_resources,
         method "timerRef" (0) => crate::modules::timers_shared_vm::timer_ref,
         method "timerUnref" (0) => crate::modules::timers_shared_vm::timer_unref,
         method "immediateRef" (0) => crate::modules::timers_shared_vm::immediate_ref,
@@ -612,7 +633,7 @@ impl quench_runtime::Host for NodeHost {
         }
         let name = path.to_string_lossy().into_owned();
         let source = if extension == "json" {
-            format!("export default {};", String::from_utf8_lossy(&bytes))
+            String::from_utf8_lossy(&bytes).into_owned()
         } else {
             let kind = Self::source_kind(&path)?;
             if kind == quench_runtime::SourceKind::Module {
@@ -624,10 +645,7 @@ impl quench_runtime::Host for NodeHost {
                     "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
                 );
                 source.push_str("export { __quenchModule as 'module.exports' };\n");
-                for (index, export) in commonjs_exports::names(&String::from_utf8_lossy(&bytes))
-                    .into_iter()
-                    .enumerate()
-                {
+                for (index, export) in commonjs_exports::names(&path, &String::from_utf8_lossy(&bytes)).into_iter().enumerate() {
                     let local = format!("__quenchExport{index}");
                     source.push_str("const ");
                     source.push_str(&local);

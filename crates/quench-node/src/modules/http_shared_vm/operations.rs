@@ -1,6 +1,6 @@
 use crate::host::NodeHost;
 use crate::modules::net_shared_vm;
-use quench_runtime::{NativeContext, RootId, RootedError, Value};
+use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError, Value};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 
 type Context<'a> = NativeContext<'a, NodeHost>;
@@ -264,6 +264,17 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
             response_factory,
         ],
     )?;
+    let key = context.string_rooted("Agent");
+    let agent = context.get_property_rooted(module, key)?;
+    let key = context.string_rooted("prototype");
+    let prototype = context.get_property_rooted(agent, key)?;
+    let native = context.host_function(crate::host::shared_vm::operation("getName"))?;
+    let wrapper = context.evaluate_script_rooted(
+        "native => function getName(options = undefined) { return native(options); }",
+        "node:http/agent-get-name.js",
+    )?;
+    let get_name = context.call_rooted(wrapper, undefined, &[native])?;
+    set(context, prototype, "getName", get_name)?;
     let methods = crate::modules::http_protocol::HTTP_METHODS
         .iter()
         .map(|method| context.string_rooted(method))
@@ -577,6 +588,53 @@ pub(crate) fn agent_create(
         .agent_id()
         .map_err(RootedError::host)?;
     Ok(context.number(id as f64))
+}
+
+/// Node's pooling key, preserving property read order and guest coercions.
+pub(crate) fn agent_get_name(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let options = match args.first().copied() {
+        Some(value) if !context.rooted_value(value).is_some_and(Value::is_undefined) => value,
+        _ => context.null_object_rooted()?,
+    };
+    let get = |context: &mut Context<'_>, name: &str| {
+        let key = context.string_rooted(name);
+        context.get_property_rooted(options, key)
+    };
+    let host = get(context, "host")?;
+    let mut name = if context.truthy_rooted(host)? { host } else { context.string_rooted("localhost") };
+    for property in ["port", "localAddress"] {
+        let colon = context.string_rooted(":");
+        name = context.arithmetic_rooted(NativeArithmetic::Add, name, colon)?;
+        let value = get(context, property)?;
+        if context.truthy_rooted(value)? {
+            let value = get(context, property)?;
+            name = context.arithmetic_rooted(NativeArithmetic::Add, name, value)?;
+        }
+    }
+    let family = get(context, "family")?;
+    let ipv4 = context.rooted_value(family).and_then(Value::as_number) == Some(4.0);
+    let ipv6 = if ipv4 { false } else {
+        let family = get(context, "family")?;
+        context.rooted_value(family).and_then(Value::as_number) == Some(6.0)
+    };
+    if ipv4 || ipv6 {
+        let family = get(context, "family")?;
+        let text = context.to_string(family)?;
+        let suffix = context.string_rooted(&format!(":{text}"));
+        name = context.arithmetic_rooted(NativeArithmetic::Add, name, suffix)?;
+    }
+    let socket = get(context, "socketPath")?;
+    if context.truthy_rooted(socket)? {
+        let socket = get(context, "socketPath")?;
+        let text = context.to_string(socket)?;
+        let suffix = context.string_rooted(&format!(":{text}"));
+        name = context.arithmetic_rooted(NativeArithmetic::Add, name, suffix)?;
+    }
+    Ok(name)
 }
 
 pub(crate) fn agent_destroy(

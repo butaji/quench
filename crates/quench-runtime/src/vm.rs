@@ -209,6 +209,9 @@ pub(super) struct Frame {
 #[derive(Clone, Copy)]
 pub(super) struct CaptureCache {
     env: Value,
+    /// Whether `env` is the frame's own environment, which the walk steps past; a
+    /// pooled frame can later run a closure whose parent is that same environment.
+    captured: bool,
     epoch: u64,
     slots: *const crate::heap::EnvironmentSlots,
     /// The program of a root environment, whose projected slots are read elsewhere
@@ -220,6 +223,7 @@ impl Default for CaptureCache {
     fn default() -> Self {
         Self {
             env: Value::NULL,
+            captured: false,
             epoch: 0,
             slots: std::ptr::null(),
             root: None,
@@ -1107,7 +1111,12 @@ impl<H: Host> Vm<H> {
         self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
         // Natives are shared by every realm and allocate from these fields, so the fields
         // follow the active realm: a native called from a realm builds that realm's objects.
-        for native in [Native::Object, Native::Function, Native::Array, Native::String] {
+        for native in [
+            Native::Object,
+            Native::Function,
+            Native::Array,
+            Native::String,
+        ] {
             if let Some(&prototype) = self
                 .realm
                 .intrinsics
