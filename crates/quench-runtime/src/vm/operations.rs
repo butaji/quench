@@ -432,6 +432,13 @@ impl<H: Host> Vm<H> {
         if native.is_object_static() {
             return self.call_object_native(p, native, args);
         }
+        if native == Native::LazyDataProperty {
+            return self.lazy_data_property_access(p, this, args);
+        }
+        if native == Native::TemporalInitialize {
+            self.install_temporal(p)?;
+            return Ok(Value::UNDEFINED);
+        }
         if native == Native::ProxyRevoke {
             let callee = self
                 .active_native_callable()
@@ -470,8 +477,8 @@ impl<H: Host> Vm<H> {
             }
             Native::ToString => {
                 let value = args.first().copied().unwrap_or(Value::UNDEFINED);
-                let value = self.to_string(p, value)?;
-                Ok(self.heap.alloc(Cell::String(value.into())))
+                let value = self.coerce_js_string(p, value)?;
+                Ok(self.heap.alloc(Cell::String(value)))
             }
             Native::ProxyRevocable => self.proxy_revocable(p, args),
             Native::ArrayBuffer | Native::SharedArrayBuffer => {
@@ -937,11 +944,11 @@ impl<H: Host> Vm<H> {
             Native::String => {
                 let argument = self.string_constructor_argument(args);
                 let text = if let Some(Cell::Symbol(description)) = self.heap.get(argument) {
-                    format!("Symbol({})", description.as_deref().unwrap_or(""))
+                    JsString::from(format!("Symbol({})", description.as_deref().unwrap_or("")))
                 } else {
-                    self.to_string(p, argument)?
+                    self.coerce_js_string(p, argument)?
                 };
-                Ok(self.heap.alloc(Cell::String(text.into())))
+                Ok(self.heap.alloc(Cell::String(text)))
             }
             Native::Symbol => self.call_symbol_constructor(p, args),
             Native::SymbolToString

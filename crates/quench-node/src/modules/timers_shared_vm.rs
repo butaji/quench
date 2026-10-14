@@ -3,6 +3,7 @@ use crate::modules::shared_event_loop::SharedCallback;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::time::Duration;
 
+pub(crate) const TIMER_DESTROYED: &str = "_destroyed";
 const TIMER_ID: &str = "\0quench:shared-timer-id";
 const TIMER_REFED: &str = "refed";
 const PROMISE_STATE: &str = "\0quench:timer-promise-state";
@@ -582,6 +583,8 @@ fn schedule_timer(
         .ok_or_else(|| RootedError::host("shared timer identifier space exhausted"))?;
     let api = timer_handle_api(context)?;
     let handle = context.object_rooted()?;
+    let live = context.boolean(false);
+    install(context, handle, TIMER_DESTROYED, live)?;
     let id_value = context.string_rooted(&id.to_string());
     let id_key = context.string_rooted(TIMER_ID);
     if !context.set_property_rooted(handle, id_key, id_value, handle)? {
@@ -843,6 +846,23 @@ fn timer_handle_prototype(
             "cannot name {owner}.prototype.hasRef"
         )));
     }
+    let operation = context.host_function(crate::host::shared_vm::operation(
+        if owner == "Timeout" { "timerDispose" } else { "immediateDispose" }
+    ))?;
+    let factory = context.evaluate_script_rooted(quench_js_check::checked_js!(
+        "operation=>function(){'use strict';return operation(this);}"
+    ), "node:timers/dispose-facade.js")?;
+    let undefined = context.undefined();
+    let method = context.call_rooted(factory, undefined, &[operation])?;
+    let global = context.global_root()?;
+    let symbol = property(context, global, "Symbol")?;
+    let key = property(context, symbol, "dispose")?;
+    context.define_data_property_rooted(prototype, key, method, true, true, true)?;
+    if owner == "Timeout" {
+        let operation = context.host_function(crate::host::shared_vm::operation("timerClose"))?;
+        let method = context.call_rooted(factory, undefined, &[operation])?;
+        install(context, prototype, "close", method)?;
+    }
     Ok(prototype)
 }
 
@@ -908,6 +928,8 @@ pub(crate) fn set_immediate(
         .ok_or_else(|| RootedError::host("shared Immediate identifier space exhausted"))?;
     let api = timer_handle_api(context)?;
     let handle = context.object_rooted()?;
+    let live = context.boolean(false);
+    install(context, handle, TIMER_DESTROYED, live)?;
     if !context.set_prototype_rooted(handle, api.immediate_prototype)? {
         return Err(RootedError::host("cannot install Immediate prototype"));
     }
@@ -954,6 +976,8 @@ pub(crate) fn clear_immediate(
     };
     let id = queued_guest_immediate_id(context, handle)?;
     if let Some(id) = id {
+        let destroyed = context.boolean(true);
+        install(context, handle, TIMER_DESTROYED, destroyed)?;
         let api = timer_handle_api(context)?;
         let refed = context.get_property_rooted(handle, api.refed_key)?;
         let was_refed = context.truthy_rooted(refed)?;
@@ -996,6 +1020,8 @@ pub(crate) fn clear_timer(
     }
     let id = timer_id(context, handle)?;
     if let Some(id) = id {
+        let destroyed = context.boolean(true);
+        install(context, handle, TIMER_DESTROYED, destroyed)?;
         let callback = context
             .host_mut()
             .shared_state()
@@ -1095,4 +1121,15 @@ pub(crate) fn active_resources(context: &mut NativeContext<'_, NodeHost>, _: Roo
         for _ in 0..count { resources.push(context.string_rooted(name)); }
     }
     context.array_rooted(&resources)
+}
+
+pub(crate) fn timer_dispose(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    clear_timer(context, receiver, args)
+}
+pub(crate) fn immediate_dispose(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    clear_immediate(context, receiver, args)
+}
+pub(crate) fn timer_close(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    clear_timer(context, receiver, args)?;
+    Ok(args[0])
 }
