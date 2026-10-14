@@ -797,7 +797,6 @@ impl quench_runtime::Host for NodeHost {
             context.define_data_property_rooted(global, key, gc, true, true, false)?;
         }
         commonjs::initialize(context)?;
-        crate::modules::crypto_shared_vm::install_global(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_commonjs");
         Ok(())

@@ -116,6 +116,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     set(context, global, "\0quench:require", bootstrap_require)?;
     context.release_root(bootstrap_require);
     install_performance_global(context)?;
+    crate::modules::crypto_shared_vm::install_global(context)?;
     let node_primordials = context
         .host_mut()
         .node_library_root
