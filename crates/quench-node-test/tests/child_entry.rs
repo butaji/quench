@@ -5983,3 +5983,22 @@ const server=net.createServer(socket=>socket.unref()).listen(0,()=>{
 process.on('exit',()=>console.log(JSON.stringify(output)));
 "#);
 }
+
+#[test]
+fn tls_wrapped_parent_and_tls_handle_share_original_reading_view() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),tls=require('tls'),fs=require('fs');const output=[];
+const root='/workspace/work/node-fixtures/test/fixtures/keys/';
+const server=tls.createServer({key:fs.readFileSync(root+'agent1-key.pem'),cert:fs.readFileSync(root+'agent1-cert.pem')}).listen(0,()=>{
+ const plain=net.connect(server.address().port,()=>{
+  const secure=tls.connect({socket:plain,rejectUnauthorized:false},()=>{
+   const parent=plain._handle,handle=secure._handle,descriptor=Object.getOwnPropertyDescriptor(parent,'reading');
+   output.push([typeof descriptor.get,typeof descriptor.set,parent.reading===handle.reading]);
+   handle.reading=false;output.push(parent.reading);parent.reading=true;output.push(handle.reading);
+   secure.destroy();server.close(()=>console.log(JSON.stringify(output)));
+  });
+ });
+});
+"#);
+}

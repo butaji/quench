@@ -25,6 +25,7 @@ pub(crate) fn module(
         ("isPaused", "streamIsPaused"),
         ("setFlowing", "streamSetFlowing"),
         ("pipeStart", "streamPipeStart"),
+        ("listenerRemoved", "streamListenerRemoved"),
     ] {
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         set(context, dependencies, name, function)?;
@@ -433,6 +434,54 @@ pub(crate) fn set_flowing(context: &mut NativeContext<'_, NodeHost>, _: RootId, 
         };
         let key = context.string_rooted("flowing");
         context.set_property_rooted(args[0], key, value, args[0])?;
+    }
+    Ok(context.undefined())
+}
+
+
+pub(crate) fn listener_removed(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let readable = context.string_rooted("readable");
+    let removed = context.strict_equal_rooted(args[1], readable)?;
+    let all = context.truthy_rooted(args[2])?;
+    let undefined_name = context.rooted_value(args[1]).is_some_and(|value| value.is_undefined());
+    if removed || (all && undefined_name) {
+        let callback = context.host_function(crate::host::shared_vm::operation("streamUpdateReadableListening"))?;
+        let undefined = context.undefined();
+        super::shared_event_loop::queue_next_tick(context, callback, undefined, &[args[0]])?;
+    }
+    Ok(context.undefined())
+}
+pub(crate) fn update_readable_listening(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let stream = args[0];
+    let state = get(context, stream, "_readableState")?;
+    if !context.truthy_rooted(state)? { return Ok(context.undefined()); }
+    let method = get(context, stream, "listenerCount")?;
+    let name = context.string_rooted("readable");
+    let count = context.call_rooted(method, stream, &[name])?;
+    let zero = context.number(0.0);
+    let listening = context.greater_than_rooted(count, zero)?;
+    let key = context.string_rooted("readableListening");
+    let value = context.boolean(listening);
+    context.set_property_rooted(state, key, value, state)?;
+    let paused = get(context, state, "paused")?;
+    let no = context.boolean(false);
+    let scheduled = get(context, state, "resumeScheduled")?;
+    if context.strict_equal_rooted(paused, no)? && context.truthy_rooted(scheduled)? {
+        let yes = context.boolean(true);
+        let key = context.string_rooted("flowing");
+        context.set_property_rooted(state, key, yes, state)?;
+    } else {
+        let method = get(context, stream, "listenerCount")?;
+        let name = context.string_rooted("data");
+        let count = context.call_rooted(method, stream, &[name])?;
+        if context.greater_than_rooted(count, zero)? {
+            let resume = get(context, stream, "resume")?;
+            context.call_rooted(resume, stream, &[])?;
+        } else if !listening {
+            let key = context.string_rooted("flowing");
+            let null = context.null();
+            context.set_property_rooted(state, key, null, state)?;
+        }
     }
     Ok(context.undefined())
 }
