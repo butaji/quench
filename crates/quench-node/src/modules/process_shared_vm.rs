@@ -95,7 +95,11 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     #[cfg(target_os = "linux")]
     {
         let signals = super::os_shared_vm::signal_constants(context)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_process_before_kill_util");
         let util = crate::host::shared_vm::commonjs::util_module(context)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_process_kill_util");
         let key = context.string_rooted("inspect");
         let inspect = context.get_property_rooted(util, key)?;
         let data = context.array_rooted(&[process, signals, inspect])?;
@@ -1480,10 +1484,7 @@ pub(crate) fn get_active_network_resources(
     let active_sockets = state
         .net_sockets
         .iter()
-        .filter(|(id, socket)| {
-            !socket.connection_event_pending
-                && crate::modules::net_shared_vm::socket_has_ref(&state.tcp, **id) == Some(true)
-        })
+        .filter(|(id, _)| crate::modules::net_shared_vm::socket_has_ref(&state.tcp, **id) == Some(true))
         .count()
         + state
             .net_closing_sockets
@@ -1495,7 +1496,7 @@ pub(crate) fn get_active_network_resources(
     let active_servers = state
         .net_servers
         .keys()
-        .filter(|id| crate::modules::net_shared_vm::listener_resource_active(&state.tcp, **id))
+        .filter(|id| crate::modules::net_shared_vm::listener_has_ref(&state.tcp, **id) == Some(true))
         .count();
     let mut resources = Vec::with_capacity(active_sockets + active_servers);
     for _ in 0..active_sockets {
