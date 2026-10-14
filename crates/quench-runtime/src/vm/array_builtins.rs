@@ -116,6 +116,7 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(array, "Array")?;
         self.set_builtin_value_named(array, "prototype", prototype)?;
         self.set_builtin_value_named(prototype, "constructor", array)?;
+        self.set_builtin_value_named(array, "length", Value::number(ARRAY_CONSTRUCTOR_LENGTH))?;
         let length = self.intern_atom("length");
         self.set_property_attributes(
             array,
@@ -182,7 +183,8 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        self.set_named(program, global, "Array", array)
+        self.install_array_unscopables(prototype)?;
+        self.set_builtin_value_named(global, "Array", array)
     }
 
     pub(super) fn install_array_species(&mut self) -> Result<(), JsError> {
@@ -206,7 +208,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    pub(super) fn install_array_unscopables(&mut self) -> Result<(), JsError> {
+    pub(super) fn install_array_unscopables(&mut self, array_proto: Value) -> Result<(), JsError> {
         let unscopables = self
             .heap
             .alloc(Cell::Object(Self::empty_object(Value::NULL)));
@@ -232,9 +234,9 @@ impl<H: Host> Vm<H> {
             self.set_property(unscopables, atom, Value::TRUE)?;
         }
         let symbol = self.well_known_symbols.get("unscopables").copied().unwrap();
-        self.set_symbol_property(self.array_proto, symbol, unscopables)?;
+        self.set_symbol_property(array_proto, symbol, unscopables)?;
         self.set_property_attributes(
-            self.array_proto,
+            array_proto,
             PropertyKey::symbol(symbol),
             PropertyAttributes {
                 writable: false,

@@ -43,7 +43,10 @@ fn coded_error_prototype(
         .borrow()
         .node_error_api
         .as_ref()
-        .and_then(|api| api.prototypes.get(&(code, class, ErrorPresentation::Direct)))
+        .and_then(|api| {
+            api.prototypes
+                .get(&(code, class, ErrorPresentation::Direct))
+        })
         .copied()
     {
         return Ok(prototype);

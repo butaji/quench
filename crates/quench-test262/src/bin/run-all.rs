@@ -1,4 +1,4 @@
-use quench_test262::reporting::{classify_outcome, normalize_failure};
+use quench_test262::reporting::{case_outcome, normalize_failure};
 use std::{
     collections::{BTreeMap, HashSet},
     env, fs,
@@ -17,6 +17,7 @@ use quench_test262::ratchet::{
     relative_test_path as report_path, PassSet, DEFAULT_RATCHET, RATCHET_ENGINE,
     RATCHET_SCHEMA_VERSION,
 };
+use quench_test262::waivers::{Adjudication, Waivers};
 use quench_test262::{
     discover_js_files, resolve_stages, HarnessCache, ResolvedStage, StageReport, Test262Runner,
     Test262RuntimeHost, TestOutcome,
@@ -95,29 +96,46 @@ fn run() -> ExitCode {
         Ok(timeout) => Duration::from_millis(timeout),
         Err(error) => return fail(error),
     };
+    let waivers = match Waivers::pinned() {
+        Ok(waivers) => waivers,
+        Err(error) => return fail(error),
+    };
     let outcomes = match run_parallel_cases(&executable, &root, &files, timeout) {
         Ok(outcomes) => outcomes,
         Err(error) => return fail(error),
     };
-    let report = collect_report(&files, &outcomes);
+    let test_root = root.join("test");
+    let report = collect_report(&files, &outcomes, &waivers, &test_root);
     let full_inventory = env::var_os("TEST262_BATCH_SIZE").is_none();
-    let ratchet = match update_ratchet(&root, &files, &outcomes, timeout, full_inventory) {
+    let ratchet = match update_ratchet(&root, &files, &outcomes, &report, timeout, full_inventory) {
         Ok(ratchet) => ratchet,
         Err(error) => return fail(error),
     };
     if let Err(error) = write_report(
-        &report, discovered, &root, &stages, &files, &outcomes, &ratchet, timeout,
+        &report, discovered, &root, &stages, &files, &outcomes, &waivers, &ratchet, timeout,
     ) {
         return fail(error);
     }
     println!(
-        "passed={} failed={} total={} discovered={discovered} ratchet={}",
-        report.passed, report.failed, report.total, ratchet.verdict
+        "passed={} waived={} failed={} total={} discovered={discovered} ratchet={}",
+        report.passed,
+        report.waived,
+        report.failures.len(),
+        report.total,
+        ratchet.verdict
     );
+    for (path, reason) in &report.failures {
+        if waivers.group(&report_path(path, &test_root)).is_some() {
+            eprintln!(
+                "waiver mismatch {}: {reason}",
+                report_path(path, &test_root)
+            );
+        }
+    }
     if !ratchet.regressions.is_empty() {
         eprintln!("ratchet regressions={}", ratchet.regressions.len());
     }
-    if report.failed == 0 && report.total == files.len() && ratchet.regressions.is_empty() {
+    if report.failures.is_empty() && report.total == files.len() && ratchet.regressions.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
@@ -176,16 +194,25 @@ fn run_parallel_cases(
         .collect()
 }
 
-fn collect_report(files: &[PathBuf], outcomes: &[Result<(), String>]) -> StageReport {
+/// Raw counts plus the outcomes the run rejects after Node waivers.
+fn collect_report(
+    files: &[PathBuf],
+    outcomes: &[Result<(), String>],
+    waivers: &Waivers,
+    test_root: &Path,
+) -> StageReport {
     let mut report = StageReport::default();
     for (path, outcome) in files.iter().zip(outcomes) {
         report.total += 1;
-        match outcome {
-            Ok(()) => report.passed += 1,
-            Err(reason) => {
-                report.failed += 1;
-                report.failures.push((path.clone(), reason.clone()));
-            }
+        if outcome.is_ok() {
+            report.passed += 1;
+        } else {
+            report.failed += 1;
+        }
+        match waivers.adjudicate(&report_path(path, test_root), outcome) {
+            Adjudication::Pass => {}
+            Adjudication::Waived(_) => report.waived += 1,
+            Adjudication::Failed(reason) => report.failures.push((path.clone(), reason)),
         }
     }
     report
@@ -222,10 +249,13 @@ fn run_case_entry() -> ExitCode {
         .unwrap_or_else(|| PathBuf::from("tests/test262"));
     let mut runner = Test262Runner::new(Test262RuntimeHost::default());
     let mut harness = HarnessCache::new(root.join("harness"));
+    // The bare failure is the case outcome, as run-stages' worker reports it.
     match runner.run_file_with_cache(path, &mut harness) {
         Ok(TestOutcome::Pass) => ExitCode::SUCCESS,
-        Ok(TestOutcome::Fail { reason }) => fail(reason),
-        Err(error) => fail(error),
+        Ok(TestOutcome::Fail { reason: failure }) | Err(failure) => {
+            eprintln!("{failure}");
+            ExitCode::from(1)
+        }
     }
 }
 
@@ -322,6 +352,7 @@ fn write_report(
     stages: &[ResolvedStage],
     files: &[PathBuf],
     outcomes: &[Result<(), String>],
+    waivers: &Waivers,
     ratchet: &RatchetResult,
     timeout: Duration,
 ) -> Result<(), String> {
@@ -348,25 +379,12 @@ fn write_report(
             let counts = stage_counts.entry(stage.clone()).or_default();
             counts.0 += 1;
             match outcome {
-                Ok(()) => {
-                    counts.1 += 1;
-                    serde_json::json!({
-                        "path": report_path(path, &test_root),
-                        "stage": stage,
-                        "outcome": "pass",
-                    })
-                }
-                Err(reason) => {
-                    let family = normalize_failure(reason);
-                    *counts.2.entry(family).or_default() += 1;
-                    serde_json::json!({
-                        "path": report_path(path, &test_root),
-                        "stage": stage,
-                        "outcome": classify_outcome(reason),
-                        "reason": reason,
-                    })
-                }
+                Ok(()) => counts.1 += 1,
+                Err(reason) => *counts.2.entry(normalize_failure(reason)).or_default() += 1,
             }
+            let relative = report_path(path, &test_root);
+            let waiver = waivers.adjudicate(&relative, outcome).waiver();
+            case_outcome(relative, stage, outcome, waiver)
         })
         .collect::<Vec<_>>();
     let mut families = BTreeMap::<String, usize>::new();
@@ -411,6 +429,7 @@ fn write_report(
         "total": report.total,
         "passed": report.passed,
         "failed": report.failed,
+        "waived": report.waived,
         "failures": failures,
         "families": families,
         "metadata_families": metadata_families,
@@ -478,20 +497,33 @@ fn update_ratchet(
     root: &Path,
     files: &[PathBuf],
     outcomes: &[Result<(), String>],
+    report: &StageReport,
     timeout: Duration,
     full_inventory: bool,
 ) -> Result<RatchetResult, String> {
     let path = env::var_os("TEST262_RATCHET")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(DEFAULT_RATCHET));
-    update_ratchet_at(&path, root, files, outcomes, timeout, full_inventory)
+    let accepted = report.failures.is_empty();
+    update_ratchet_at(
+        &path,
+        root,
+        files,
+        outcomes,
+        accepted,
+        timeout,
+        full_inventory,
+    )
 }
 
+/// `accepted` says every outcome passed or failed exactly as its Node waiver
+/// records; a clean run freezes only the observed passes.
 fn update_ratchet_at(
     path: &Path,
     root: &Path,
     files: &[PathBuf],
     outcomes: &[Result<(), String>],
+    accepted: bool,
     timeout: Duration,
     full_inventory: bool,
 ) -> Result<RatchetResult, String> {
@@ -515,8 +547,7 @@ fn update_ratchet_at(
             regressions = baseline.regressions(&current_passes, |_| true);
         }
     }
-    let clean =
-        outcomes.len() == files.len() && outcomes.iter().all(Result::is_ok) && !files.is_empty();
+    let clean = outcomes.len() == files.len() && accepted && !files.is_empty();
     if regressions.is_empty() && clean {
         let mut passes = current_passes.into_iter().collect::<Vec<_>>();
         passes.sort();
@@ -598,6 +629,7 @@ fn fail(error: String) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quench_test262::reporting::classify_outcome;
 
     #[test]
     fn failure_families_normalize_values_and_numbers() {
@@ -681,8 +713,16 @@ mod tests {
         let files = [root.join("test/a.js"), root.join("test/b.js")];
         let timeout = Duration::from_millis(900_000);
 
-        let first =
-            update_ratchet_at(&baseline, &root, &files, &[Ok(()), Ok(())], timeout, true).unwrap();
+        let first = update_ratchet_at(
+            &baseline,
+            &root,
+            &files,
+            &[Ok(()), Ok(())],
+            true,
+            timeout,
+            true,
+        )
+        .unwrap();
         assert_eq!(first.verdict, "baseline_created");
         assert!(first.regressions.is_empty());
         let mut saved: serde_json::Value =
@@ -691,7 +731,7 @@ mod tests {
         fs::write(&baseline, format!("{saved}\n")).unwrap();
 
         let truncated =
-            update_ratchet_at(&baseline, &root, &files, &[Ok(())], timeout, true).unwrap();
+            update_ratchet_at(&baseline, &root, &files, &[Ok(())], true, timeout, true).unwrap();
         assert_eq!(truncated.verdict, "incomplete");
         assert!(truncated.regressions.is_empty());
 
@@ -701,6 +741,7 @@ mod tests {
             &root,
             &[files[0].clone(), files[1].clone(), added_file],
             &[Ok(()), Ok(()), Err("new test failed".into())],
+            false,
             timeout,
             true,
         )
@@ -716,6 +757,7 @@ mod tests {
             &root,
             &files,
             &[Ok(()), Err("expected failure".into())],
+            false,
             timeout,
             true,
         )
@@ -726,6 +768,51 @@ mod tests {
         let contents = fs::read_to_string(&baseline).unwrap();
         let saved: serde_json::Value = serde_json::from_str(&contents).unwrap();
         assert_eq!(saved["passes"], serde_json::json!(["a.js", "b.js"]));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn accepted_waived_failures_freeze_only_observed_passes() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = env::temp_dir().join(format!("quench-test262-waived-{unique}"));
+        let baseline = directory.join("ratchet.json");
+        let root = directory.join("suite");
+        let files = [root.join("test/a.js"), root.join("test/waived.js")];
+        let waivers = Waivers::from_json(&serde_json::json!({
+            "schema":1,"engine":"quench","groups":[{"id":"node","reason":"Node agrees",
+            "cases":[{"path":"waived.js","failure":"FAIL: as Node"}]}]
+        }))
+        .unwrap();
+        let test_root = root.join("test");
+        let outcomes = [Ok(()), Err("FAIL: as Node".to_owned())];
+        let report = collect_report(&files, &outcomes, &waivers, &test_root);
+        assert_eq!((report.passed, report.failed, report.waived), (1, 1, 1));
+        assert!(report.failures.is_empty());
+        let timeout = Duration::from_millis(900_000);
+        let created = update_ratchet_at(
+            &baseline,
+            &root,
+            &files,
+            &outcomes,
+            report.failures.is_empty(),
+            timeout,
+            true,
+        )
+        .unwrap();
+        assert_eq!(created.verdict, "baseline_created");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(&baseline).unwrap()).unwrap();
+        assert_eq!(saved["passes"], serde_json::json!(["a.js"]));
+
+        let drifted = [Ok(()), Err("FAIL: different".to_owned())];
+        let report = collect_report(&files, &drifted, &waivers, &test_root);
+        assert_eq!(report.failures.len(), 1);
+        let stale = [Ok(()), Ok(())];
+        let report = collect_report(&files, &stale, &waivers, &test_root);
+        assert!(report.failures[0].1.contains("now passes"));
         fs::remove_dir_all(directory).unwrap();
     }
 }

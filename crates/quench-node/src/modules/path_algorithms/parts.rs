@@ -127,8 +127,7 @@ pub(crate) fn parse_str(path: &str, windows: bool) -> PathParts {
             start_part
         };
         let dot = start_dot.filter(|dot| {
-            pre_dot_state != 0
-                && !(pre_dot_state == 1 && *dot == end - 1 && *dot == start_part + 1)
+            pre_dot_state != 0 && !(pre_dot_state == 1 && *dot == end - 1 && *dot == start_part + 1)
         });
         if let Some(dot) = dot {
             parts.name = chars[start..dot].iter().collect();

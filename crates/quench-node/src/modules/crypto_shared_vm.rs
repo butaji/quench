@@ -8,7 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative) => {
+    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   const kHandle = Symbol.for("quench.internal.crypto.kHandle");
@@ -1894,14 +1894,15 @@ pub(crate) fn module(
     let hmac = context.host_function(crate::host::shared_vm::operation("cryptoHmac"))?;
     let sign = context.host_function(crate::host::shared_vm::operation("cryptoSign"))?;
     let verify = context.host_function(crate::host::shared_vm::operation("cryptoVerify"))?;
-    let random_bytes = context
-        .host_function(crate::host::shared_vm::operation("cryptoRandomBytes"))?;
+    let random_bytes =
+        context.host_function(crate::host::shared_vm::operation("cryptoRandomBytes"))?;
     let pbkdf2 = context.host_function(crate::host::shared_vm::operation("cryptoPbkdf2"))?;
     let scrypt = context.host_function(crate::host::shared_vm::operation("cryptoScrypt"))?;
     let cipher_process =
         context.host_function(crate::host::shared_vm::operation("cryptoCipherProcess"))?;
-    let generate_rsa_key_pair = context
-        .host_function(crate::host::shared_vm::operation("cryptoGenerateRsaKeyPair"))?;
+    let generate_rsa_key_pair = context.host_function(crate::host::shared_vm::operation(
+        "cryptoGenerateRsaKeyPair",
+    ))?;
     let rsa_crypt = context.host_function(crate::host::shared_vm::operation("cryptoRsaCrypt"))?;
     let set_engine = context.host_function(crate::host::shared_vm::operation("cryptoSetEngine"))?;
     let ecdh = context.host_function(crate::host::shared_vm::operation("cryptoEcdh"))?;
@@ -1935,11 +1936,14 @@ fn private_key_from_pem(
     passphrase: &[u8],
 ) -> Result<openssl::pkey::PKey<openssl::pkey::Private>, openssl::error::ErrorStack> {
     if passphrase.is_empty() {
-        openssl::pkey::PKey::private_key_from_pem(pem)
-            .or_else(|_| openssl::rsa::Rsa::private_key_from_pem(pem).and_then(openssl::pkey::PKey::from_rsa))
+        openssl::pkey::PKey::private_key_from_pem(pem).or_else(|_| {
+            openssl::rsa::Rsa::private_key_from_pem(pem).and_then(openssl::pkey::PKey::from_rsa)
+        })
     } else {
-        openssl::pkey::PKey::private_key_from_pem_passphrase(pem, passphrase)
-            .or_else(|_| openssl::rsa::Rsa::private_key_from_pem_passphrase(pem, passphrase).and_then(openssl::pkey::PKey::from_rsa))
+        openssl::pkey::PKey::private_key_from_pem_passphrase(pem, passphrase).or_else(|_| {
+            openssl::rsa::Rsa::private_key_from_pem_passphrase(pem, passphrase)
+                .and_then(openssl::pkey::PKey::from_rsa)
+        })
     }
 }
 
@@ -1970,8 +1974,10 @@ fn public_key_from_data(
     } else if format == "der" {
         openssl::pkey::PKey::public_key_from_der(data)
     } else {
-        openssl::pkey::PKey::public_key_from_pem(data)
-            .or_else(|_| openssl::rsa::Rsa::public_key_from_pem_pkcs1(data).and_then(openssl::pkey::PKey::from_rsa))
+        openssl::pkey::PKey::public_key_from_pem(data).or_else(|_| {
+            openssl::rsa::Rsa::public_key_from_pem_pkcs1(data)
+                .and_then(openssl::pkey::PKey::from_rsa)
+        })
     }
 }
 
@@ -1980,27 +1986,42 @@ pub(crate) fn generate_rsa_key_pair(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let bits = args.get(0)
+    let bits = args
+        .get(0)
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_number())
-        .filter(|value| value.is_finite() && *value >= 512.0 && *value <= 16384.0 && value.fract() == 0.0)
+        .filter(|value| {
+            value.is_finite() && *value >= 512.0 && *value <= 16384.0 && value.fract() == 0.0
+        })
         .ok_or_else(|| RootedError::host("RSA modulus length is invalid"))? as u32;
-    let exponent = args.get(1)
+    let exponent = args
+        .get(1)
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_number())
-        .filter(|value| value.is_finite() && *value >= 3.0 && *value <= u32::MAX as f64 && value.fract() == 0.0)
+        .filter(|value| {
+            value.is_finite() && *value >= 3.0 && *value <= u32::MAX as f64 && value.fract() == 0.0
+        })
         .unwrap_or(65537.0) as u32;
-    let cipher_name = args.get(2).copied()
+    let cipher_name = args
+        .get(2)
+        .copied()
         .and_then(|root| context.string_text(root).ok().flatten())
         .unwrap_or_default();
-    let passphrase = args.get(3).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
+    let passphrase = args
+        .get(3)
+        .copied()
+        .map(|root| byte_array(context, root))
+        .transpose()?
+        .unwrap_or_default();
     let public_exponent = openssl::bn::BigNum::from_u32(exponent)
         .map_err(|error| RootedError::host(error.to_string()))?;
     let rsa = openssl::rsa::Rsa::generate_with_e(bits, &public_exponent)
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let public_pkcs1_pem = rsa.public_key_to_pem_pkcs1()
+    let public_pkcs1_pem = rsa
+        .public_key_to_pem_pkcs1()
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let private_pkcs1_pem = rsa.private_key_to_pem()
+    let private_pkcs1_pem = rsa
+        .private_key_to_pem()
         .map_err(|error| RootedError::host(error.to_string()))?;
     let encrypted_private_pem = if cipher_name.is_empty() {
         private_pkcs1_pem.clone()
@@ -2015,29 +2036,62 @@ pub(crate) fn generate_rsa_key_pair(
         rsa.private_key_to_pem_passphrase(cipher, &passphrase)
             .map_err(|error| RootedError::host(error.to_string()))?
     };
-    let public_pkcs1_der = rsa.public_key_to_der_pkcs1()
+    let public_pkcs1_der = rsa
+        .public_key_to_der_pkcs1()
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let private_pkcs1_der = rsa.private_key_to_der()
+    let private_pkcs1_der = rsa
+        .private_key_to_der()
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let key = openssl::pkey::PKey::from_rsa(rsa)
+    let key =
+        openssl::pkey::PKey::from_rsa(rsa).map_err(|error| RootedError::host(error.to_string()))?;
+    let private_pem = key
+        .private_key_to_pem_pkcs8()
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let private_pem = key.private_key_to_pem_pkcs8()
+    let public_pem = key
+        .public_key_to_pem()
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let public_pem = key.public_key_to_pem()
+    let private_der = key
+        .private_key_to_der()
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let private_der = key.private_key_to_der()
+    let public_der = key
+        .public_key_to_der()
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let public_der = key.public_key_to_der()
-        .map_err(|error| RootedError::host(error.to_string()))?;
-    let private_values = private_pem.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
-    let public_values = public_pem.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
-    let public_pkcs1_values = public_pkcs1_pem.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
-    let private_pkcs1_values = private_pkcs1_pem.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
-    let public_pkcs1_der_values = public_pkcs1_der.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
-    let private_pkcs1_der_values = private_pkcs1_der.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
-    let encrypted_private_values = encrypted_private_pem.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
-    let private_der_values = private_der.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
-    let public_der_values = public_der.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let private_values = private_pem
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
+    let public_values = public_pem
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
+    let public_pkcs1_values = public_pkcs1_pem
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
+    let private_pkcs1_values = private_pkcs1_pem
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
+    let public_pkcs1_der_values = public_pkcs1_der
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
+    let private_pkcs1_der_values = private_pkcs1_der
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
+    let encrypted_private_values = encrypted_private_pem
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
+    let private_der_values = private_der
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
+    let public_der_values = public_der
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
     let private = context.array_rooted(&private_values)?;
     let public = context.array_rooted(&public_values)?;
     let public_pkcs1 = context.array_rooted(&public_pkcs1_values)?;
@@ -2047,7 +2101,17 @@ pub(crate) fn generate_rsa_key_pair(
     let encrypted_private = context.array_rooted(&encrypted_private_values)?;
     let private_der = context.array_rooted(&private_der_values)?;
     let public_der = context.array_rooted(&public_der_values)?;
-    context.array_rooted(&[private, public, private_der, public_der, public_pkcs1, private_pkcs1, public_pkcs1_der, private_pkcs1_der, encrypted_private])
+    context.array_rooted(&[
+        private,
+        public,
+        private_der,
+        public_der,
+        public_pkcs1,
+        private_pkcs1,
+        public_pkcs1_der,
+        private_pkcs1_der,
+        encrypted_private,
+    ])
 }
 
 pub(crate) fn rsa_crypt(
@@ -2055,20 +2119,46 @@ pub(crate) fn rsa_crypt(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let decrypt = args.get(0)
+    let decrypt = args
+        .get(0)
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-    let private = args.get(1)
+    let private = args
+        .get(1)
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-    let key_bytes = byte_array(context, *args.get(2).ok_or_else(|| RootedError::host("RSA key is missing"))?)?;
-    let input = byte_array(context, *args.get(3).ok_or_else(|| RootedError::host("RSA input is missing"))?)?;
-    let passphrase = args.get(4).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
-    let format = args.get(5).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "pem".to_owned());
-    let key_type = args.get(6).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "spki".to_owned());
-    let padding = args.get(7)
+    let key_bytes = byte_array(
+        context,
+        *args
+            .get(2)
+            .ok_or_else(|| RootedError::host("RSA key is missing"))?,
+    )?;
+    let input = byte_array(
+        context,
+        *args
+            .get(3)
+            .ok_or_else(|| RootedError::host("RSA input is missing"))?,
+    )?;
+    let passphrase = args
+        .get(4)
+        .copied()
+        .map(|root| byte_array(context, root))
+        .transpose()?
+        .unwrap_or_default();
+    let format = args
+        .get(5)
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .unwrap_or_else(|| "pem".to_owned());
+    let key_type = args
+        .get(6)
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .unwrap_or_else(|| "spki".to_owned());
+    let padding = args
+        .get(7)
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_number())
         .unwrap_or(1.0) as i32;
@@ -2082,10 +2172,18 @@ pub(crate) fn rsa_crypt(
             .map_err(|error| RootedError::host(error.to_string()))?;
         let mut operation = openssl::encrypt::Decrypter::new(&key)
             .map_err(|error| RootedError::host(error.to_string()))?;
-        operation.set_rsa_padding(padding)
+        operation
+            .set_rsa_padding(padding)
             .map_err(|error| RootedError::host(error.to_string()))?;
-        let mut output = vec![0; operation.decrypt_len(&input).map_err(|error| RootedError::host(error.to_string()))?];
-        let length = operation.decrypt(&input, &mut output).map_err(|error| RootedError::host(error.to_string()))?;
+        let mut output = vec![
+            0;
+            operation
+                .decrypt_len(&input)
+                .map_err(|error| RootedError::host(error.to_string()))?
+        ];
+        let length = operation
+            .decrypt(&input, &mut output)
+            .map_err(|error| RootedError::host(error.to_string()))?;
         output.truncate(length);
         output
     } else if private {
@@ -2093,19 +2191,29 @@ pub(crate) fn rsa_crypt(
             .map_err(|error| RootedError::host(error.to_string()))?;
         let mut operation = openssl::encrypt::Encrypter::new(&key)
             .map_err(|error| RootedError::host(error.to_string()))?;
-        operation.set_rsa_padding(padding)
+        operation
+            .set_rsa_padding(padding)
             .map_err(|error| RootedError::host(error.to_string()))?;
-        let mut output = vec![0; operation.encrypt_len(&input).map_err(|error| RootedError::host(error.to_string()))?];
-        let length = operation.encrypt(&input, &mut output).map_err(|error| RootedError::host(error.to_string()))?;
+        let mut output = vec![
+            0;
+            operation
+                .encrypt_len(&input)
+                .map_err(|error| RootedError::host(error.to_string()))?
+        ];
+        let length = operation
+            .encrypt(&input, &mut output)
+            .map_err(|error| RootedError::host(error.to_string()))?;
         output.truncate(length);
         output
     } else {
         let key = match public_key_from_data(&key_bytes, &format, &key_type) {
             Ok(key) => key,
             Err(_) => {
-                let private_key = private_key_from_data(&key_bytes, &passphrase, &format, &key_type)
-                    .map_err(|error| RootedError::host(error.to_string()))?;
-                let public_pem = private_key.public_key_to_pem()
+                let private_key =
+                    private_key_from_data(&key_bytes, &passphrase, &format, &key_type)
+                        .map_err(|error| RootedError::host(error.to_string()))?;
+                let public_pem = private_key
+                    .public_key_to_pem()
                     .map_err(|error| RootedError::host(error.to_string()))?;
                 openssl::pkey::PKey::public_key_from_pem(&public_pem)
                     .map_err(|error| RootedError::host(error.to_string()))?
@@ -2113,14 +2221,25 @@ pub(crate) fn rsa_crypt(
         };
         let mut operation = openssl::encrypt::Encrypter::new(&key)
             .map_err(|error| RootedError::host(error.to_string()))?;
-        operation.set_rsa_padding(padding)
+        operation
+            .set_rsa_padding(padding)
             .map_err(|error| RootedError::host(error.to_string()))?;
-        let mut output = vec![0; operation.encrypt_len(&input).map_err(|error| RootedError::host(error.to_string()))?];
-        let length = operation.encrypt(&input, &mut output).map_err(|error| RootedError::host(error.to_string()))?;
+        let mut output = vec![
+            0;
+            operation
+                .encrypt_len(&input)
+                .map_err(|error| RootedError::host(error.to_string()))?
+        ];
+        let length = operation
+            .encrypt(&input, &mut output)
+            .map_err(|error| RootedError::host(error.to_string()))?;
         output.truncate(length);
         output
     };
-    let values = output.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let values = output
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
     context.array_rooted(&values)
 }
 
@@ -2147,21 +2266,32 @@ pub(crate) fn ecdh(
     };
     let group = openssl::ec::EcGroup::from_curve_name(nid)
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let mut ctx = openssl::bn::BigNumContext::new()
-        .map_err(|error| RootedError::host(error.to_string()))?;
+    let mut ctx =
+        openssl::bn::BigNumContext::new().map_err(|error| RootedError::host(error.to_string()))?;
     let format = text_arg(context, 4, "uncompressed");
     let form = match format.as_str() {
         "compressed" => openssl::ec::PointConversionForm::COMPRESSED,
         "hybrid" => openssl::ec::PointConversionForm::HYBRID,
         _ => openssl::ec::PointConversionForm::UNCOMPRESSED,
     };
-    let private_bytes = args.get(2).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
-    let public_bytes = args.get(3).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
+    let private_bytes = args
+        .get(2)
+        .copied()
+        .map(|root| byte_array(context, root))
+        .transpose()?
+        .unwrap_or_default();
+    let public_bytes = args
+        .get(3)
+        .copied()
+        .map(|root| byte_array(context, root))
+        .transpose()?
+        .unwrap_or_default();
     let point_bytes = |point: &openssl::ec::EcPointRef,
                        group: &openssl::ec::EcGroupRef,
                        ctx: &mut openssl::bn::BigNumContextRef,
                        form| {
-        point.to_bytes(group, form, ctx)
+        point
+            .to_bytes(group, form, ctx)
             .map_err(|error| RootedError::host(error.to_string()))
     };
     let output = match action.as_str() {
@@ -2170,8 +2300,14 @@ pub(crate) fn ecdh(
                 .map_err(|error| RootedError::host(error.to_string()))?;
             let private = key.private_key().to_vec();
             let public = point_bytes(key.public_key(), &group, &mut ctx, form)?;
-            let private = private.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
-            let public = public.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+            let private = private
+                .iter()
+                .map(|byte| context.number(f64::from(*byte)))
+                .collect::<Vec<_>>();
+            let public = public
+                .iter()
+                .map(|byte| context.number(f64::from(*byte)))
+                .collect::<Vec<_>>();
             let private = context.array_rooted(&private)?;
             let public = context.array_rooted(&public)?;
             return context.array_rooted(&[private, public]);
@@ -2182,34 +2318,47 @@ pub(crate) fn ecdh(
                     .map_err(|error| RootedError::host(error.to_string()))?;
                 let mut order = openssl::bn::BigNum::new()
                     .map_err(|error| RootedError::host(error.to_string()))?;
-                group.order(&mut order, &mut ctx)
+                group
+                    .order(&mut order, &mut ctx)
                     .map_err(|error| RootedError::host(error.to_string()))?;
                 if private.num_bits() == 0 || private.ucmp(&order) != std::cmp::Ordering::Less {
-                    return Err(RootedError::host("Private key is not valid for specified curve"));
+                    return Err(RootedError::host(
+                        "Private key is not valid for specified curve",
+                    ));
                 }
                 Some(private)
-            } else { None };
+            } else {
+                None
+            };
             let public = if action == "public" || action == "format" || action == "secret" {
                 let point = openssl::ec::EcPoint::from_bytes(&group, &public_bytes, &mut ctx)
                     .map_err(|error| RootedError::host(error.to_string()))?;
-                if !point.is_on_curve(&group, &mut ctx)
-                    .map_err(|error| RootedError::host(error.to_string()))? {
-                    return Err(RootedError::host("Public key is not valid for specified curve"));
+                if !point
+                    .is_on_curve(&group, &mut ctx)
+                    .map_err(|error| RootedError::host(error.to_string()))?
+                {
+                    return Err(RootedError::host(
+                        "Public key is not valid for specified curve",
+                    ));
                 }
                 Some(point)
-            } else { None };
+            } else {
+                None
+            };
             if action == "secret" {
                 let private = private.as_ref().expect("private scalar parsed");
                 let public = public.as_ref().expect("public point parsed");
                 let private_point = {
                     let mut point = openssl::ec::EcPoint::new(&group)
                         .map_err(|error| RootedError::host(error.to_string()))?;
-                    point.mul_generator2(&group, private, &mut ctx)
+                    point
+                        .mul_generator2(&group, private, &mut ctx)
                         .map_err(|error| RootedError::host(error.to_string()))?;
                     point
                 };
-                let private_key = openssl::ec::EcKey::from_private_components(&group, private, &private_point)
-                    .map_err(|error| RootedError::host(error.to_string()))?;
+                let private_key =
+                    openssl::ec::EcKey::from_private_components(&group, private, &private_point)
+                        .map_err(|error| RootedError::host(error.to_string()))?;
                 let public_key = openssl::ec::EcKey::from_public_key(&group, public)
                     .map_err(|error| RootedError::host(error.to_string()))?;
                 let private_key = openssl::pkey::PKey::from_ec_key(private_key)
@@ -2218,15 +2367,18 @@ pub(crate) fn ecdh(
                     .map_err(|error| RootedError::host(error.to_string()))?;
                 let mut deriver = openssl::derive::Deriver::new(&private_key)
                     .map_err(|error| RootedError::host(error.to_string()))?;
-                deriver.set_peer(&public_key)
+                deriver
+                    .set_peer(&public_key)
                     .map_err(|error| RootedError::host(error.to_string()))?;
-                deriver.derive_to_vec()
+                deriver
+                    .derive_to_vec()
                     .map_err(|error| RootedError::host(error.to_string()))?
             } else {
                 let point = if let Some(private) = private.as_ref() {
                     let mut point = openssl::ec::EcPoint::new(&group)
                         .map_err(|error| RootedError::host(error.to_string()))?;
-                    point.mul_generator2(&group, private, &mut ctx)
+                    point
+                        .mul_generator2(&group, private, &mut ctx)
                         .map_err(|error| RootedError::host(error.to_string()))?;
                     point
                 } else {
@@ -2238,20 +2390,34 @@ pub(crate) fn ecdh(
                     let private = private.expect("private scalar parsed");
                     let key = openssl::ec::EcKey::from_private_components(&group, &private, &point)
                         .map_err(|error| RootedError::host(error.to_string()))?;
-                    key.check_key().map_err(|error| RootedError::host(error.to_string()))?;
+                    key.check_key()
+                        .map_err(|error| RootedError::host(error.to_string()))?;
                     let private = key.private_key().to_vec();
                     let public = point_bytes(key.public_key(), &group, &mut ctx, form)?;
-                    let private = private.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
-                    let public = public.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+                    let private = private
+                        .iter()
+                        .map(|byte| context.number(f64::from(*byte)))
+                        .collect::<Vec<_>>();
+                    let public = public
+                        .iter()
+                        .map(|byte| context.number(f64::from(*byte)))
+                        .collect::<Vec<_>>();
                     let private = context.array_rooted(&private)?;
                     let public = context.array_rooted(&public)?;
                     return context.array_rooted(&[private, public]);
                 }
             }
         }
-        _ => return Err(RootedError::host(format!("Unknown ECDH operation: {action}"))),
+        _ => {
+            return Err(RootedError::host(format!(
+                "Unknown ECDH operation: {action}"
+            )))
+        }
     };
-    let values = output.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let values = output
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
     context.array_rooted(&values)
 }
 
@@ -2260,15 +2426,30 @@ pub(crate) fn random_bytes(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let Some(size) = args.first().copied().and_then(|size| context.rooted_value(size)).and_then(|value| value.as_number()) else {
-        return Err(type_error(context, "The \"size\" argument must be of type number" )?);
+    let Some(size) = args
+        .first()
+        .copied()
+        .and_then(|size| context.rooted_value(size))
+        .and_then(|value| value.as_number())
+    else {
+        return Err(type_error(
+            context,
+            "The \"size\" argument must be of type number",
+        )?);
     };
     if !size.is_finite() || size < 0.0 || size.fract() != 0.0 || size > 16_777_216.0 {
-        return Err(type_error(context, "The \"size\" argument must be a non-negative integer" )?);
+        return Err(type_error(
+            context,
+            "The \"size\" argument must be a non-negative integer",
+        )?);
     }
     let mut bytes = vec![0_u8; size as usize];
-    openssl::rand::rand_bytes(&mut bytes).map_err(|_| RootedError::host("crypto random generation failed"))?;
-    let values = bytes.into_iter().map(|byte| context.number(f64::from(byte))).collect::<Vec<_>>();
+    openssl::rand::rand_bytes(&mut bytes)
+        .map_err(|_| RootedError::host("crypto random generation failed"))?;
+    let values = bytes
+        .into_iter()
+        .map(|byte| context.number(f64::from(byte)))
+        .collect::<Vec<_>>();
     context.array_rooted(&values)
 }
 
@@ -2285,16 +2466,22 @@ pub(crate) fn pbkdf2(
         .get(1)
         .copied()
         .ok_or_else(|| RootedError::host("crypto PBKDF2 salt is missing"))?;
-    let iterations = args.get(2).copied()
+    let iterations = args
+        .get(2)
+        .copied()
         .and_then(|root| context.rooted_value(root))
         .and_then(|value| value.as_number())
         .filter(|value| value.is_finite() && *value >= 1.0 && value.fract() == 0.0)
-        .ok_or_else(|| RootedError::host("crypto PBKDF2 iterations are invalid"))? as usize;
-    let key_length = args.get(3).copied()
+        .ok_or_else(|| RootedError::host("crypto PBKDF2 iterations are invalid"))?
+        as usize;
+    let key_length = args
+        .get(3)
+        .copied()
         .and_then(|root| context.rooted_value(root))
         .and_then(|value| value.as_number())
         .filter(|value| value.is_finite() && *value >= 0.0 && value.fract() == 0.0)
-        .ok_or_else(|| RootedError::host("crypto PBKDF2 key length is invalid"))? as usize;
+        .ok_or_else(|| RootedError::host("crypto PBKDF2 key length is invalid"))?
+        as usize;
     let digest_name = args
         .get(4)
         .copied()
@@ -2319,8 +2506,18 @@ pub(crate) fn scrypt(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let password = byte_array(context, *args.first().ok_or_else(|| RootedError::host("scrypt password missing"))?)?;
-    let salt = byte_array(context, *args.get(1).ok_or_else(|| RootedError::host("scrypt salt missing"))?)?;
+    let password = byte_array(
+        context,
+        *args
+            .first()
+            .ok_or_else(|| RootedError::host("scrypt password missing"))?,
+    )?;
+    let salt = byte_array(
+        context,
+        *args
+            .get(1)
+            .ok_or_else(|| RootedError::host("scrypt salt missing"))?,
+    )?;
     let number = |index: usize, name: &str| -> Result<u64, RootedError> {
         args.get(index)
             .and_then(|root| context.rooted_value(*root))
@@ -2365,20 +2562,26 @@ pub(crate) fn cipher_process(
         "chacha20-poly1305" => openssl::symm::Cipher::chacha20_poly1305(),
         "des-ede3-cbc" => openssl::symm::Cipher::des_ede3_cbc(),
         _ => {
-        return Err(RootedError::host(format!("Unknown cipher: {algorithm}")));
+            return Err(RootedError::host(format!("Unknown cipher: {algorithm}")));
         }
     };
     let key = byte_array(
         context,
-        *args.get(1).ok_or_else(|| RootedError::host("cipher key is missing"))?,
+        *args
+            .get(1)
+            .ok_or_else(|| RootedError::host("cipher key is missing"))?,
     )?;
     let iv = byte_array(
         context,
-        *args.get(2).ok_or_else(|| RootedError::host("cipher IV is missing"))?,
+        *args
+            .get(2)
+            .ok_or_else(|| RootedError::host("cipher IV is missing"))?,
     )?;
     let input = byte_array(
         context,
-        *args.get(3).ok_or_else(|| RootedError::host("cipher input is missing"))?,
+        *args
+            .get(3)
+            .ok_or_else(|| RootedError::host("cipher input is missing"))?,
     )?;
     let final_block = args
         .get(4)
@@ -2390,14 +2593,26 @@ pub(crate) fn cipher_process(
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_bool())
         .unwrap_or(false);
-    let aad = args.get(6).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
-    let auth_tag = args.get(7).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
-    let auth_tag_length = args.get(8)
+    let aad = args
+        .get(6)
+        .copied()
+        .map(|root| byte_array(context, root))
+        .transpose()?
+        .unwrap_or_default();
+    let auth_tag = args
+        .get(7)
+        .copied()
+        .map(|root| byte_array(context, root))
+        .transpose()?
+        .unwrap_or_default();
+    let auth_tag_length = args
+        .get(8)
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_number())
         .filter(|length| length.is_finite() && *length >= 0.0 && length.fract() == 0.0)
         .unwrap_or(16.0) as usize;
-    let auto_padding = args.get(9)
+    let auto_padding = args
+        .get(9)
         .and_then(|root| context.rooted_value(*root))
         .and_then(|value| value.as_bool())
         .unwrap_or(true);
@@ -2408,13 +2623,19 @@ pub(crate) fn cipher_process(
     } else {
         openssl::symm::Mode::Encrypt
     };
-    let iv = if cipher.iv_len() == Some(0) { None } else { Some(iv.as_slice()) };
+    let iv = if cipher.iv_len() == Some(0) {
+        None
+    } else {
+        Some(iv.as_slice())
+    };
     let mut crypter = openssl::symm::Crypter::new(cipher, mode, &key, iv)
         .map_err(|error| RootedError::host(error.to_string()))?;
     crypter.pad(auto_padding);
     if is_aead {
         if !aad.is_empty() {
-            crypter.aad_update(&aad).map_err(|error| RootedError::host(error.to_string()))?;
+            crypter
+                .aad_update(&aad)
+                .map_err(|error| RootedError::host(error.to_string()))?;
         }
     }
     let mut output = vec![0; input.len() + cipher.block_size()];
@@ -2423,7 +2644,9 @@ pub(crate) fn cipher_process(
         .map_err(|error| RootedError::host(error.to_string()))?;
     if final_block {
         if is_aead && decrypt {
-            crypter.set_tag(&auth_tag).map_err(|error| RootedError::host(error.to_string()))?;
+            crypter
+                .set_tag(&auth_tag)
+                .map_err(|error| RootedError::host(error.to_string()))?;
         }
         written += crypter
             .finalize(&mut output[written..])
@@ -2437,8 +2660,13 @@ pub(crate) fn cipher_process(
     let output_array = context.array_rooted(&output_values)?;
     let tag_array = if is_aead && final_block && !decrypt {
         let mut tag = vec![0; auth_tag_length];
-        crypter.get_tag(&mut tag).map_err(|error| RootedError::host(error.to_string()))?;
-        let values = tag.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+        crypter
+            .get_tag(&mut tag)
+            .map_err(|error| RootedError::host(error.to_string()))?;
+        let values = tag
+            .iter()
+            .map(|byte| context.number(f64::from(*byte)))
+            .collect::<Vec<_>>();
         context.array_rooted(&values)?
     } else {
         context.array_rooted(&[])?
@@ -2454,11 +2682,16 @@ pub(crate) fn hash(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let algorithm = args.first().copied()
+    let algorithm = args
+        .first()
+        .copied()
         .and_then(|root| context.string_text(root).ok().flatten())
         .ok_or_else(|| RootedError::host("crypto hash algorithm is not a string"))?;
     let Some(input) = args.get(1).copied() else {
-        return Err(type_error(context, "The hash input must be an array of bytes")?);
+        return Err(type_error(
+            context,
+            "The hash input must be an array of bytes",
+        )?);
     };
     let bytes = byte_array(context, input)?;
     let output_length = args
@@ -2476,10 +2709,12 @@ pub(crate) fn hash(
             };
             let mut hasher = openssl::hash::Hasher::new(algorithm)
                 .map_err(|_| RootedError::host("crypto digest initialization failed"))?;
-            hasher.update(&bytes)
+            hasher
+                .update(&bytes)
                 .map_err(|_| RootedError::host("crypto digest update failed"))?;
             let mut output = vec![0; output_length];
-            hasher.finish_xof(&mut output)
+            hasher
+                .finish_xof(&mut output)
                 .map_err(|_| RootedError::host("crypto digest failed"))?;
             output
         }
@@ -2504,12 +2739,18 @@ pub(crate) fn hmac(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let algorithm = args.first().copied()
+    let algorithm = args
+        .first()
+        .copied()
         .and_then(|root| context.string_text(root).ok().flatten())
         .ok_or_else(|| RootedError::host("crypto HMAC algorithm is not a string"))?;
-    let key_root = args.get(1).copied()
+    let key_root = args
+        .get(1)
+        .copied()
         .ok_or_else(|| RootedError::host("crypto HMAC key is missing"))?;
-    let input_root = args.get(2).copied()
+    let input_root = args
+        .get(2)
+        .copied()
         .ok_or_else(|| RootedError::host("crypto HMAC input is missing"))?;
     let key = byte_array(context, key_root)?;
     let input = byte_array(context, input_root)?;
@@ -2518,15 +2759,25 @@ pub(crate) fn hmac(
     // OpenSSL rejects a zero-length HMAC key. A single zero byte has the same
     // block-padded HMAC key representation as an empty key.
     let openssl_key = if key.is_empty() { vec![0] } else { key };
-    let key = openssl::pkey::PKey::hmac(&openssl_key)
-        .map_err(|error| RootedError::host(format!("crypto HMAC key is invalid ({} bytes): {error}", openssl_key.len())))?;
-    let mut signer = openssl::sign::Signer::new(digest, &key)
-        .map_err(|error| RootedError::host(format!("crypto HMAC initialization failed: {error}")))?;
-    signer.update(&input)
+    let key = openssl::pkey::PKey::hmac(&openssl_key).map_err(|error| {
+        RootedError::host(format!(
+            "crypto HMAC key is invalid ({} bytes): {error}",
+            openssl_key.len()
+        ))
+    })?;
+    let mut signer = openssl::sign::Signer::new(digest, &key).map_err(|error| {
+        RootedError::host(format!("crypto HMAC initialization failed: {error}"))
+    })?;
+    signer
+        .update(&input)
         .map_err(|_| RootedError::host("crypto HMAC update failed"))?;
-    let output = signer.sign_to_vec()
+    let output = signer
+        .sign_to_vec()
         .map_err(|_| RootedError::host("crypto HMAC failed"))?;
-    let values = output.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let values = output
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
     context.array_rooted(&values)
 }
 
@@ -2535,21 +2786,52 @@ pub(crate) fn verify(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let algorithm = args.first().copied()
+    let algorithm = args
+        .first()
+        .copied()
         .and_then(|root| context.string_text(root).ok().flatten())
         .ok_or_else(|| RootedError::host("crypto verification algorithm is not a string"))?;
-    let input = byte_array(context, *args.get(1).ok_or_else(|| RootedError::host("crypto verification input is missing"))?)?;
-    let key_bytes = byte_array(context, *args.get(2).ok_or_else(|| RootedError::host("crypto public key is missing"))?)?;
-    let signature = byte_array(context, *args.get(3).ok_or_else(|| RootedError::host("crypto signature is missing"))?)?;
-    let passphrase = args.get(4).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
-    let format = args.get(5).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "pem".to_owned());
-    let key_type = args.get(6).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "spki".to_owned());
+    let input = byte_array(
+        context,
+        *args
+            .get(1)
+            .ok_or_else(|| RootedError::host("crypto verification input is missing"))?,
+    )?;
+    let key_bytes = byte_array(
+        context,
+        *args
+            .get(2)
+            .ok_or_else(|| RootedError::host("crypto public key is missing"))?,
+    )?;
+    let signature = byte_array(
+        context,
+        *args
+            .get(3)
+            .ok_or_else(|| RootedError::host("crypto signature is missing"))?,
+    )?;
+    let passphrase = args
+        .get(4)
+        .copied()
+        .map(|root| byte_array(context, root))
+        .transpose()?
+        .unwrap_or_default();
+    let format = args
+        .get(5)
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .unwrap_or_else(|| "pem".to_owned());
+    let key_type = args
+        .get(6)
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .unwrap_or_else(|| "spki".to_owned());
     let key = match public_key_from_data(&key_bytes, &format, &key_type) {
         Ok(key) => key,
         Err(_) => {
             let private_key = private_key_from_data(&key_bytes, &passphrase, &format, &key_type);
             if let Ok(private) = private_key {
-                let public = private.public_key_to_pem()
+                let public = private
+                    .public_key_to_pem()
                     .map_err(|error| RootedError::host(error.to_string()))?;
                 openssl::pkey::PKey::public_key_from_pem(&public)
                     .map_err(|error| RootedError::host(error.to_string()))?
@@ -2564,9 +2846,11 @@ pub(crate) fn verify(
         .ok_or_else(|| RootedError::host("Digest method not supported"))?;
     let mut verifier = openssl::sign::Verifier::new(digest, &key)
         .map_err(|error| RootedError::host(error.to_string()))?;
-    verifier.update(&input)
+    verifier
+        .update(&input)
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let result = verifier.verify(&signature)
+    let result = verifier
+        .verify(&signature)
         .map_err(|error| RootedError::host(error.to_string()))?;
     Ok(context.boolean(result))
 }
@@ -2576,29 +2860,53 @@ pub(crate) fn sign(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let algorithm = args.first().copied()
+    let algorithm = args
+        .first()
+        .copied()
         .and_then(|root| context.string_text(root).ok().flatten())
         .ok_or_else(|| RootedError::host("crypto signature algorithm is not a string"))?;
-    let input_root = args.get(1).copied()
+    let input_root = args
+        .get(1)
+        .copied()
         .ok_or_else(|| RootedError::host("crypto signature input is missing"))?;
-    let key_root = args.get(2).copied()
+    let key_root = args
+        .get(2)
+        .copied()
         .ok_or_else(|| RootedError::host("crypto private key is missing"))?;
     let input = byte_array(context, input_root)?;
     let key_bytes = byte_array(context, key_root)?;
-    let passphrase = args.get(3).copied().map(|root| byte_array(context, root)).transpose()?.unwrap_or_default();
-    let format = args.get(4).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "pem".to_owned());
-    let key_type = args.get(5).copied().and_then(|root| context.string_text(root).ok().flatten()).unwrap_or_else(|| "pkcs8".to_owned());
+    let passphrase = args
+        .get(3)
+        .copied()
+        .map(|root| byte_array(context, root))
+        .transpose()?
+        .unwrap_or_default();
+    let format = args
+        .get(4)
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .unwrap_or_else(|| "pem".to_owned());
+    let key_type = args
+        .get(5)
+        .copied()
+        .and_then(|root| context.string_text(root).ok().flatten())
+        .unwrap_or_else(|| "pkcs8".to_owned());
     let key = private_key_from_data(&key_bytes, &passphrase, &format, &key_type)
         .map_err(|error| RootedError::host(error.to_string()))?;
     let digest = openssl::hash::MessageDigest::from_name(&algorithm)
         .ok_or_else(|| RootedError::host("Digest method not supported"))?;
     let mut signer = openssl::sign::Signer::new(digest, &key)
         .map_err(|error| RootedError::host(error.to_string()))?;
-    signer.update(&input)
+    signer
+        .update(&input)
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let output = signer.sign_to_vec()
+    let output = signer
+        .sign_to_vec()
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let values = output.iter().map(|byte| context.number(f64::from(*byte))).collect::<Vec<_>>();
+    let values = output
+        .iter()
+        .map(|byte| context.number(f64::from(*byte)))
+        .collect::<Vec<_>>();
     context.array_rooted(&values)
 }
 
@@ -2610,14 +2918,17 @@ fn byte_array(
         return Ok(bytes);
     }
     let length = get(context, root, "length")?;
-    let length = context.rooted_value(length)
+    let length = context
+        .rooted_value(length)
         .and_then(|value| value.as_number())
         .filter(|length| length.is_finite() && *length >= 0.0 && length.fract() == 0.0)
-        .ok_or_else(|| RootedError::host("crypto byte input is not array-like"))? as usize;
+        .ok_or_else(|| RootedError::host("crypto byte input is not array-like"))?
+        as usize;
     let mut bytes = Vec::with_capacity(length);
     for index in 0..length {
         let value = get(context, root, &index.to_string())?;
-        let byte = context.rooted_value(value)
+        let byte = context
+            .rooted_value(value)
             .and_then(|value| value.as_number())
             .filter(|byte| byte.is_finite() && *byte >= 0.0 && *byte <= f64::from(u8::MAX))
             .ok_or_else(|| RootedError::host("crypto byte input contained an invalid value"))?;
@@ -2645,7 +2956,9 @@ fn set(
     if context.set_property_rooted(object, key, value, object)? {
         Ok(())
     } else {
-        Err(RootedError::host(format!("cannot install crypto property {name}")))
+        Err(RootedError::host(format!(
+            "cannot install crypto property {name}"
+        )))
     }
 }
 

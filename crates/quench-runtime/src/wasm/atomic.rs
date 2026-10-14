@@ -280,7 +280,9 @@ mod tests {
 
     #[test]
     fn atomic_accesses_preserve_critical_sections_and_cross_memory_order() {
-        let shared = Arc::new(SharedMemory::new(crate::wasm::memory::LinearBytes::heap(vec![0; std::mem::size_of::<i32>()])));
+        let shared = Arc::new(SharedMemory::new(crate::wasm::memory::LinearBytes::heap(
+            vec![0; std::mem::size_of::<i32>()],
+        )));
         let memory = MemoryStorage::Shared(shared.clone());
         let mut observed = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..4)
@@ -312,8 +314,12 @@ mod tests {
                 .unwrap(),
             Some(WasmValue::I32(400))
         );
-        let first = Arc::new(SharedMemory::new(crate::wasm::memory::LinearBytes::heap(vec![0; std::mem::size_of::<i32>()])));
-        let second = Arc::new(SharedMemory::new(crate::wasm::memory::LinearBytes::heap(vec![0; std::mem::size_of::<i32>()])));
+        let first = Arc::new(SharedMemory::new(crate::wasm::memory::LinearBytes::heap(
+            vec![0; std::mem::size_of::<i32>()],
+        )));
+        let second = Arc::new(SharedMemory::new(crate::wasm::memory::LinearBytes::heap(
+            vec![0; std::mem::size_of::<i32>()],
+        )));
         let epoch = std::sync::Barrier::new(3);
         let results = std::thread::scope(|scope| {
             let handles: Vec<_> = [(&first, &second), (&second, &first)]
