@@ -6361,3 +6361,24 @@ process.emitWarning=()=>{throw marker;};try{setTimeout(noop,Infinity);}catch(err
 let fired=false;process.emitWarning=()=>{};setTimeout(()=>{fired=true;},2147483648);setTimeout(()=>{out.push(fired);console.log(JSON.stringify(out));},30);
 "#);
 }
+
+#[test]
+fn native_timer_refresh_reactivates_original_slots_and_repeat_transitions_like_node() {
+    compare_node_stream_source(r#"
+"use strict";
+const assert=require('assert'),out=[],fired=[];
+const cleared=setTimeout(()=>fired.push('cleared'),1);clearTimeout(cleared);out.push(cleared.refresh()===cleared,cleared._idleTimeout,cleared._onTimeout);
+const replaced=setTimeout(()=>assert.fail('old callback invoked'),1,'old');replaced._timerArgs=['new'];replaced._onTimeout=function(arg){out.push(this===replaced,arg);};
+let count=0,oldId;
+const timer=setTimeout(function(arg){
+ count++;out.push(['phase',count,this===timer,arg,timer._destroyed]);
+ if(count===1){out.push(timer.refresh()===timer);}
+ if(count===2){process.nextTick(()=>{out.push(['completed',timer._destroyed,typeof timer._onTimeout]);const key=Object.getOwnPropertySymbols(timer).find(s=>s.description==='asyncId');oldId=timer[key];let assigned;const marker={};Object.defineProperty(timer,key,{configurable:true,get(){throw marker;},set(value){assigned=value;}});out.push(timer.refresh()===timer,assigned!==oldId,timer._destroyed);Object.defineProperty(timer,key,{configurable:true,writable:true,enumerable:true,value:assigned});});}
+ if(count===3){clearTimeout(timer);out.push(['cancel',timer._destroyed,timer._idleTimeout,timer._onTimeout]);}
+},1,'value');
+const unref=setTimeout(()=>fired.push('unref'),1);unref.unref();out.push(unref.refresh()===unref,unref.hasRef());
+let switched=0;const switchTimer=setTimeout(()=>{switched++;if(switched===1){switchTimer._repeat=1;}else{clearInterval(switchTimer);}},1);
+const d=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer),'refresh');out.push([d.value.name,d.value.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(d.value,'prototype')]);
+setTimeout(()=>{out.push(['end',count,switched,fired,timer._destroyed,typeof timer._onTimeout]);console.log(JSON.stringify(out));},30);
+"#);
+}
