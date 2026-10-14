@@ -66,7 +66,7 @@ fn append_shape_roots(shapes: &[Shape], shape: u32, roots: &mut Vec<Value>) {
 struct ParallelShapeTrace<'a> {
     shapes: *const Shape,
     shape_count: usize,
-    rooted_shapes: &'a [AtomicU64],
+    marked_shapes: &'a [AtomicU64],
     owned_roots: &'a FxHashMap<Value, Vec<Value>>,
     _shape_borrow: std::marker::PhantomData<&'a [Shape]>,
 }
@@ -80,6 +80,22 @@ unsafe impl Send for ParallelShapeTrace<'_> {}
 unsafe impl Sync for ParallelShapeTrace<'_> {}
 
 impl ParallelShapeTrace<'_> {
+    /// The mark callback sees every reachable object's shape, including shapes
+    /// without symbol or accessor roots. Sweep needs no per-object shape list.
+    /// Read the bitmap only after the mark workers have joined.
+    fn live_shapes(&self) -> Vec<u32> {
+        let mut shapes = Vec::new();
+        for (word_index, word) in self.marked_shapes.iter().enumerate() {
+            let mut marked = word.load(Ordering::Relaxed);
+            while marked != 0 {
+                let bit = marked.trailing_zeros() as usize;
+                shapes.push((word_index * u64::BITS as usize + bit) as u32);
+                marked &= marked - 1;
+            }
+        }
+        shapes
+    }
+
     fn append(&self, trace_kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>) {
         let shape_index = shape as usize;
         debug_assert!(shape_index < self.shape_count);
@@ -92,8 +108,9 @@ impl ParallelShapeTrace<'_> {
             if shapes[shape_index].may_have_gc_roots {
                 append_shape_roots(shapes, shape, roots);
             }
-        } else if shapes[shape_index].may_have_gc_roots
-            && self.rooted_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0
+        } else if self.marked_shapes[word].load(Ordering::Relaxed) & mask == 0
+            && self.marked_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0
+            && shapes[shape_index].may_have_gc_roots
         {
             append_shape_roots(shapes, shape, roots);
         }
@@ -588,13 +605,13 @@ impl<H: Host> Vm<H> {
         }
         let shape_count = self.shapes.len();
         let shape_word_count = shape_count.div_ceil(u64::BITS as usize);
-        let rooted_shape_bits = (0..shape_word_count)
+        let marked_shape_bits = (0..shape_word_count)
             .map(|_| AtomicU64::new(0))
             .collect::<Vec<_>>();
         let shape_trace = ParallelShapeTrace {
             shapes: self.shapes.as_ptr(),
             shape_count,
-            rooted_shapes: &rooted_shape_bits,
+            marked_shapes: &marked_shape_bits,
             owned_roots: &owned_roots,
             _shape_borrow: std::marker::PhantomData,
         };
@@ -602,7 +619,7 @@ impl<H: Host> Vm<H> {
             |trace_kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>| {
                 shape_trace.append(trace_kind, owner, shape, roots);
             };
-        let (finalization_jobs, live_shapes) = self.heap.collect_with_object_roots(
+        let finalization_jobs = self.heap.collect_with_object_roots(
             roots,
             |trace_kind, owner, shape, roots| {
                 shape_trace.append(trace_kind, owner, shape, roots);
@@ -610,6 +627,7 @@ impl<H: Host> Vm<H> {
             Some(&parallel_object_roots),
             full,
         );
+        let live_shapes = shape_trace.live_shapes();
         // Heap weak fields are pruned during collection. Prune the VM-owned
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.
