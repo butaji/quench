@@ -235,3 +235,26 @@ fn constructor_source_anchor_survives_argument_move_coalescing() {
         program.validate().unwrap();
     }
 }
+
+#[test]
+fn completion_capturing_host_scripts_keep_script_declarations() {
+    // A strict host script (vm.runInContext, $262.evalScript) declares global bindings; only
+    // eval code keeps a strict body's declarations local.
+    let source = "'use strict'; function f() {} var v = 1;";
+    let script =
+        Engine::specialize_script_with_atom_prefix(source, "host.js", &NoAtomPrefix).unwrap();
+    assert_eq!(script.kind, crate::bytecode::ProgramKind::Script);
+    assert!(!script.root_variables_are_local());
+    let eval = Engine::specialize_eval_with_context(
+        source,
+        "eval.js",
+        &NoAtomPrefix,
+        false,
+        EvalContext::default(),
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert_eq!(eval.kind, crate::bytecode::ProgramKind::Eval);
+    assert!(eval.root_variables_are_local());
+}

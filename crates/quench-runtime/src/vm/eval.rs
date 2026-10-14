@@ -42,14 +42,10 @@ impl<H: Host> Vm<H> {
         if let Some(expression) = crate::Engine::eval_single_expression(source) {
             return self.eval_compiled_expression_named(p, expression, false, source_name);
         }
-        let residual = match crate::Engine::specialize_eval_with_context(
+        let residual = match crate::Engine::specialize_script_with_atom_prefix(
             source,
             source_name,
             &*self,
-            false,
-            crate::compile::EvalContext::default(),
-            &[],
-            &[],
         ) {
             Ok(residual) => residual,
             Err(diagnostics) => {
