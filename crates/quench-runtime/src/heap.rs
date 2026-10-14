@@ -196,7 +196,6 @@ impl<'slots> ParallelSweepSlab<'slots> {
             if Heap::marked(marks, index) {
                 result.live += 1;
                 if let Some(object) = cell.object() {
-                    result.live_shapes.push(object.shape());
                     if object.properties().has_compact_range() {
                         result
                             .property_owners
@@ -230,7 +229,6 @@ impl<'slots> ParallelSweepSlab<'slots> {
 struct ParallelSweepResult {
     slab: u32,
     live: usize,
-    live_shapes: Vec<u32>,
     property_owners: Vec<u64>,
     free_slots: FreeSlotBitmap,
     released_properties: Vec<ValueVec>,
@@ -243,7 +241,6 @@ struct ParallelSweepResult {
 #[derive(Default)]
 struct SweepOutput {
     live: usize,
-    live_shapes: Vec<u32>,
     property_owners: Vec<u64>,
     freed_cells: usize,
     swept_slots: usize,
@@ -1056,7 +1053,6 @@ impl Heap {
     #[cfg(test)]
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
         self.collect_with_object_roots(roots, |_, _, _, _| {}, None, true)
-            .0
     }
     /// Whether a collection requested as `full` traces and sweeps the whole heap.
     /// Direct records do not yet carry a generation. A full trace is the
@@ -1071,7 +1067,7 @@ impl Heap {
         mut object_roots: impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
         full: bool,
-    ) -> (Vec<(Value, Value)>, Vec<u32>) {
+    ) -> Vec<(Value, Value)> {
         let full = self.collection_is_full(full);
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
         self.collection_state = if full {
@@ -1189,7 +1185,6 @@ impl Heap {
         };
         let SweepOutput {
             mut live,
-            mut live_shapes,
             property_owners,
             freed_cells,
             swept_slots,
@@ -1210,7 +1205,6 @@ impl Heap {
             let properties = &mut self.properties;
             let (object_live, object_freed) = self.object_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, object) => {
-                    live_shapes.push(object.shape());
                     if object.properties().has_compact_range() {
                         direct_property_owners.push((
                             object.properties().start_offset(),
@@ -1229,7 +1223,6 @@ impl Heap {
             let mut dead_arrays = Vec::new();
             let (array_live, array_freed) = self.array_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, array) => {
-                    live_shapes.push(array.shape());
                     if array.properties().has_compact_range() {
                         direct_property_owners.push((
                             array.properties().start_offset(),
@@ -1326,7 +1319,7 @@ impl Heap {
         self.collection_state = CollectionState::Idle;
         #[cfg(feature = "profile-memory")]
         self.memory_profile.collection_finished();
-        (finalization_jobs, live_shapes)
+        finalization_jobs
     }
     fn sweep_full_parallel(&mut self, pool: &ThreadPool) -> SweepOutput {
         self.collection_state = CollectionState::Sweeping;
@@ -1353,7 +1346,6 @@ impl Heap {
                 let ParallelSweepResult {
                     slab,
                     live,
-                    live_shapes,
                     property_owners,
                     free_slots,
                     released_properties,
@@ -1384,7 +1376,6 @@ impl Heap {
                     cell.drop_on_owner();
                 }
                 output.live += live;
-                output.live_shapes.extend(live_shapes);
                 output.property_owners.extend(property_owners);
                 output.freed_cells += freed_cells;
                 output.swept_slots += swept_slots;
@@ -1396,7 +1387,6 @@ impl Heap {
 
     fn sweep_serial(&mut self, full: bool) -> SweepOutput {
         let mut live = 0;
-        let mut live_shapes = Vec::new();
         let mut freed_cells = 0;
         let mut swept_slots = 0;
         let properties = &mut self.properties;
@@ -1443,7 +1433,6 @@ impl Heap {
                         if Self::marked(&self.marks, index) {
                             live += 1;
                             if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
-                                live_shapes.push(object.shape());
                                 if properties.has_compact_range(object.properties()) {
                                     property_owners_for_sweep.push(pack_offset_owner(
                                         object.properties().start_offset(),
@@ -1484,7 +1473,6 @@ impl Heap {
         }
         SweepOutput {
             live,
-            live_shapes,
             property_owners: property_owners_for_sweep,
             freed_cells,
             swept_slots,
