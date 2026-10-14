@@ -9,6 +9,7 @@ pub(crate) use commonjs::source_kind;
 
 pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
     quench_runtime::host_functions![
+        method "nodePrintEvalScript" (1) => crate::shared_run::print_eval_script,
         method "callbackify" (1) => crate::modules::util_callbackify_shared_vm::callbackify,
         method "gc" (0) => crate::modules::process_shared_vm::collect_garbage,
         method "utilCallbackified" (2) => crate::modules::util_callbackify_shared_vm::callbackified,
