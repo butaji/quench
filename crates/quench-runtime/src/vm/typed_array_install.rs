@@ -1,5 +1,17 @@
 use super::*;
 
+/// Uint8Array's own base64 and hex methods, installed in every realm.
+pub(super) const UINT8_ARRAY_PROTOTYPE_METHODS: &[(&str, Native)] = &[
+    ("setFromBase64", Native::Uint8ArraySetFromBase64),
+    ("setFromHex", Native::Uint8ArraySetFromHex),
+    ("toBase64", Native::Uint8ArrayToBase64),
+    ("toHex", Native::Uint8ArrayToHex),
+];
+pub(super) const UINT8_ARRAY_STATIC_METHODS: &[(&str, Native)] = &[
+    ("fromBase64", Native::Uint8ArrayFromBase64),
+    ("fromHex", Native::Uint8ArrayFromHex),
+];
+
 pub(super) const TYPED_ARRAY_INSTALLS: &[(TypedArrayKind, Native, &str)] = &[
     (TypedArrayKind::Uint8, Native::Uint8Array, "Uint8Array"),
     (
@@ -113,6 +125,14 @@ impl<H: Host> Vm<H> {
                 },
             );
             self.set_builtin_value_named(prototype, "constructor", constructor)?;
+            if kind == TypedArrayKind::Uint8 {
+                for &(name, native) in UINT8_ARRAY_PROTOTYPE_METHODS {
+                    self.set_realm_builtin_named(program, prototype, name, native, Some(global))?;
+                }
+                for &(name, native) in UINT8_ARRAY_STATIC_METHODS {
+                    self.set_realm_builtin_named(program, constructor, name, native, Some(global))?;
+                }
+            }
             let width = Value::number(kind.width() as f64);
             self.set_named_constant(program, constructor, "BYTES_PER_ELEMENT", width)?;
             self.set_named_constant(program, prototype, "BYTES_PER_ELEMENT", width)?;

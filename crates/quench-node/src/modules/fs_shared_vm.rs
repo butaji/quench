@@ -2823,9 +2823,9 @@ pub(crate) fn read_file_sync(
     match bytes {
         Ok(bytes) => {
             match encoding.as_deref() {
-                None | Some("buffer") => buffer_from_bytes(context, &bytes),
+                None | Some("buffer") => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
                 Some(encoding) => {
-                    let buffer = buffer_from_bytes(context, &bytes)?;
+                    let buffer = crate::modules::buffer_shared_vm::from_bytes(context, &bytes)?;
                     let to_string = get(context, buffer, "toString")?;
                     let encoding = context.string_rooted(encoding);
                     context.call_rooted(to_string, buffer, &[encoding])
@@ -2906,7 +2906,7 @@ pub(crate) fn read_stream_read(
         (result, path)
     };
     match result {
-        Ok(Some(bytes)) => buffer_from_bytes(context, &bytes),
+        Ok(Some(bytes)) => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
         Ok(None) => Ok(context.null()),
         Err(error) => Err(stream_io_error(context, error, "read", &path)?),
     }
@@ -2925,21 +2925,6 @@ pub(crate) fn read_stream_close(
         .fs
         .close_read_stream(fd);
     Ok(context.undefined())
-}
-
-fn buffer_from_bytes(
-    context: &mut NativeContext<'_, NodeHost>,
-    bytes: &[u8],
-) -> Result<RootId, RootedError> {
-    let global = context.global_root()?;
-    let buffer = get(context, global, "Buffer")?;
-    let from = get(context, buffer, "from")?;
-    let values = bytes
-        .iter()
-        .map(|byte| context.number(f64::from(*byte)))
-        .collect::<Vec<_>>();
-    let values = context.array_rooted(&values)?;
-    context.call_rooted(from, buffer, &[values])
 }
 
 const READ_STREAM_CHUNK_LIMIT: usize = 64 * 1024;

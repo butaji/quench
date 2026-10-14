@@ -1,10 +1,32 @@
+use std::cell::UnsafeCell;
+use std::fmt;
 use std::ops::Index;
 use std::rc::Rc;
 
+/// A program's atom names, indexed by atom id.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct AtomTable {
-    text: Rc<str>,
-    ends: Rc<[u32]>,
+    names: AtomNames,
+}
+
+#[derive(Clone, Debug)]
+enum AtomNames {
+    /// Names packed into one text, with each name's end offset.
+    Packed { text: Rc<str>, ends: Rc<[u32]> },
+    /// The first `len` names of a VM's atom sequence, whose ids the program shares.
+    Shared {
+        sequence: Rc<AtomSequence>,
+        len: usize,
+    },
+}
+
+impl Default for AtomNames {
+    fn default() -> Self {
+        Self::Packed {
+            text: Rc::from(""),
+            ends: Rc::from([]),
+        }
+    }
 }
 
 impl AtomTable {
@@ -21,13 +43,26 @@ impl AtomTable {
 
     pub(crate) fn new(text: String, ends: Vec<u32>) -> Self {
         Self {
-            text: Rc::from(text),
-            ends: Rc::from(ends),
+            names: AtomNames::Packed {
+                text: Rc::from(text),
+                ends: Rc::from(ends),
+            },
+        }
+    }
+
+    /// The first `len` names of `sequence`, for a program whose atom ids are the VM's.
+    pub(crate) fn shared(sequence: Rc<AtomSequence>, len: usize) -> Self {
+        assert!(len <= sequence.len(), "a shared atom prefix lies within its sequence");
+        Self {
+            names: AtomNames::Shared { sequence, len },
         }
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.ends.len()
+        match &self.names {
+            AtomNames::Packed { ends, .. } => ends.len(),
+            AtomNames::Shared { len, .. } => *len,
+        }
     }
 
     pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = &str> {
@@ -39,11 +74,71 @@ impl Index<usize> for AtomTable {
     type Output = str;
 
     fn index(&self, index: usize) -> &Self::Output {
-        let end = self.ends[index] as usize;
-        let start = index
-            .checked_sub(1)
-            .map_or(0, |previous| self.ends[previous] as usize);
-        &self.text[start..end]
+        match &self.names {
+            AtomNames::Packed { text, ends } => {
+                let end = ends[index] as usize;
+                let start = index
+                    .checked_sub(1)
+                    .map_or(0, |previous| ends[previous] as usize);
+                &text[start..end]
+            }
+            AtomNames::Shared { sequence, len } => {
+                assert!(index < *len, "atom {index} lies outside the program's prefix");
+                sequence.name(index)
+            }
+        }
+    }
+}
+
+/// A VM's atom names in id order, shared by every program whose atoms are a prefix of them.
+/// The base never changes and appended names are never removed or replaced, so a name
+/// borrowed from the sequence stays valid as long as the sequence does.
+pub(crate) struct AtomSequence {
+    base: AtomTable,
+    /// Names after `base`. Only `append` mutates it, and no reference into the vector
+    /// itself escapes: `name` returns text owned by an element's `Rc`.
+    appended: UnsafeCell<Vec<Rc<str>>>,
+}
+
+impl AtomSequence {
+    pub(crate) fn new(base: AtomTable) -> Self {
+        Self {
+            base,
+            appended: UnsafeCell::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        // SAFETY: `appended` is borrowed only within this sequence's methods, none of which
+        // re-enters another, so no mutable borrow is live here.
+        self.base.len() + unsafe { (*self.appended.get()).len() }
+    }
+
+    pub(crate) fn append(&self, name: Rc<str>) {
+        // SAFETY: as in `len`; the vector may reallocate, but names handed out point into
+        // the elements' `Rc` allocations, which never move.
+        unsafe { (*self.appended.get()).push(name) };
+    }
+
+    fn name(&self, index: usize) -> &str {
+        let Some(appended) = index.checked_sub(self.base.len()) else {
+            return &self.base[index];
+        };
+        // SAFETY: as in `len`. The element is never removed, so its allocation, and the text
+        // returned from it, lives as long as `self`.
+        let appended_names: &Vec<Rc<str>> = unsafe { &*self.appended.get() };
+        let element = &appended_names[appended];
+        let name: *const str = &**element;
+        unsafe { &*name }
+    }
+}
+
+impl fmt::Debug for AtomSequence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AtomSequence")
+            .field("len", &self.len())
+            .finish()
     }
 }
 
@@ -58,5 +153,19 @@ mod tests {
         assert_eq!(table.iter().collect::<Vec<_>>(), ["alpha", "", "λ"]);
         let cloned = table.clone();
         assert_eq!(&cloned[2], "λ");
+    }
+
+    #[test]
+    fn shared_prefixes_keep_names_across_appends() {
+        let sequence = Rc::new(AtomSequence::new(AtomTable::from_rcs(&[Rc::from("base")])));
+        sequence.append(Rc::from("first"));
+        let prefix = AtomTable::shared(sequence.clone(), 2);
+        let first = &prefix[1];
+        for index in 0..64 {
+            sequence.append(Rc::from(format!("later{index}")));
+        }
+        assert_eq!(first, "first");
+        assert_eq!(prefix.iter().collect::<Vec<_>>(), ["base", "first"]);
+        assert_eq!(&AtomTable::shared(sequence, 66)[65], "later63");
     }
 }

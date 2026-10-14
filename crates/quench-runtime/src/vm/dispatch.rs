@@ -1144,7 +1144,7 @@ impl<H: Host> Vm<H> {
                         [callee, this].into_iter().chain(args.iter().copied()),
                         |vm| {
                             vm.set_active_program(program_id);
-                            vm.realm.globals = realm;
+                            vm.switch_realm_global(realm);
                             vm.prepare_user_tail(
                                 &program,
                                 f,

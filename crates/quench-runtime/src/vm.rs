@@ -923,6 +923,9 @@ pub(crate) struct Vm<H> {
     /// them without formatting and hashing the decimal text.
     array_index_atoms: FxHashMap<u32, Atom>,
     dynamic_atoms: Vec<JsString>,
+    /// Every atom name in id order (`atom_text`, then `dynamic_atoms`), shared by the dynamic
+    /// and module programs whose atoms are a prefix of the VM's.
+    atom_sequence: Rc<crate::bytecode::AtomSequence>,
     // The last string matched by a RegExp, prepared once for repeated matching.
     regexp_subject: Option<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
@@ -988,11 +991,20 @@ struct IteratorRealmPrototypes {
     async_generator: Value,
 }
 impl<H: Host> Vm<H> {
+    /// Makes `global`'s realm current, carrying each realm's global lexical
+    /// scope with it; returns the previous realm's global.
+    #[inline]
     pub(super) fn switch_realm_global(&mut self, global: Value) -> Value {
         let previous = self.realm.globals;
-        if previous == global {
-            return previous;
+        if previous != global {
+            self.swap_realm_global(previous, global);
         }
+        previous
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn swap_realm_global(&mut self, previous: Value, global: Value) {
         self.realm.global_lexical_states.insert(
             previous,
             GlobalLexicalState {
@@ -1012,7 +1024,6 @@ impl<H: Host> Vm<H> {
         self.realm.global_lexical_declarations = state.declarations;
         self.realm.global_lexical_bindings = state.bindings;
         self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
-        previous
     }
 
     pub(crate) fn root(&mut self, value: Value) -> RootId {
@@ -1560,6 +1571,7 @@ impl<H: Host> Vm<H> {
         self.shapes.truncate(1);
         self.transitions.clear();
         self.atom_text = program.atoms.clone();
+        self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
         self.atom_collisions.clear();
         self.array_index_atoms.clear();
@@ -1664,7 +1676,7 @@ impl<H: Host> Vm<H> {
         }
     }
     pub(super) fn store_module_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
-        self.intern_program_atoms(&program);
+        let program = self.intern_program_atoms(program);
         let id = self.programs.insert_module(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
@@ -1672,7 +1684,7 @@ impl<H: Host> Vm<H> {
         Some(id)
     }
     pub(super) fn store_dynamic_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
-        self.intern_program_atoms(&program);
+        let program = self.intern_program_atoms(program);
         let id = self.programs.insert(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
@@ -1762,12 +1774,27 @@ impl<H: Host> Vm<H> {
     pub(super) fn object_cache_index(&self, site: usize) -> usize {
         self.active_cache_layout().object_base + site
     }
-    fn intern_program_atoms(&mut self, program: &ResidualProgram) {
+    /// Interns the atoms `program` adds to the VM's; its atom ids are the VM's, so it then reads
+    /// every name through the shared sequence instead of keeping its own copy.
+    fn intern_program_atoms(&mut self, mut program: ResidualProgram) -> ResidualProgram {
         let first_new_atom = self.atom_text.len() + self.dynamic_atoms.len();
         for (index, name) in program.atoms.iter().enumerate().skip(first_new_atom) {
             let atom = self.intern_atom(name);
             debug_assert_eq!(atom as usize, index);
         }
+        debug_assert!(
+            program
+                .atoms
+                .iter()
+                .enumerate()
+                .all(|(atom, name)| self.atom_name(atom as u32) == name),
+            "a dynamic program's atoms are a prefix of the VM's"
+        );
+        program.atoms = crate::bytecode::AtomTable::shared(
+            self.atom_sequence.clone(),
+            program.atoms.len(),
+        );
+        program
     }
     fn call_value(
         &mut self,
@@ -1859,7 +1886,7 @@ impl<H: Host> Vm<H> {
                     Some(Cell::Function { object, .. }) => object.realm,
                     _ => self.realm.globals,
                 };
-                let current_global = std::mem::replace(&mut self.realm.globals, realm);
+                let current_global = self.switch_realm_global(realm);
                 let result = if program
                     .functions
                     .get(id as usize)
@@ -1878,7 +1905,7 @@ impl<H: Host> Vm<H> {
                     )
                 };
                 self.set_active_program(active_program);
-                self.realm.globals = current_global;
+                self.switch_realm_global(current_global);
                 result
             }
         }
@@ -1915,7 +1942,7 @@ impl<H: Host> Vm<H> {
             self.type_error(p, "function belongs to an unavailable program".into())
         })?;
         let previous_program = self.replace_active_program(program_id);
-        let previous_global = std::mem::replace(&mut self.realm.globals, realm);
+        let previous_global = self.switch_realm_global(realm);
         let outcome = self.call_user_construct_frame(
             &program,
             id,
@@ -1924,7 +1951,7 @@ impl<H: Host> Vm<H> {
             CallContext::user_function(id, callee),
         );
         self.set_active_program(previous_program);
-        self.realm.globals = previous_global;
+        self.switch_realm_global(previous_global);
         match outcome? {
             FrameOutcome::ConstructComplete { value, this } => Ok((value, this)),
             _ => Err(JsError(
