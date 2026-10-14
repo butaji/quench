@@ -388,8 +388,7 @@ impl ProgramStore {
     }
 
     pub(crate) fn is_module(&self, id: ProgramId) -> bool {
-        self.entry(id)
-            .is_some_and(|entry| entry.module)
+        self.entry(id).is_some_and(|entry| entry.module)
     }
 
     pub(crate) fn set_module_environment(&mut self, id: ProgramId, environment: Value) {
@@ -427,8 +426,7 @@ impl ProgramStore {
     }
 
     pub(crate) fn module_imports(&self, id: ProgramId) -> &[(u16, ModuleImport)] {
-        self.entry(id)
-            .map_or(&[], |entry| &entry.module_imports)
+        self.entry(id).map_or(&[], |entry| &entry.module_imports)
     }
 
     pub(crate) fn module_import(&self, id: ProgramId, slot: u16) -> Option<ModuleImport> {
@@ -446,8 +444,7 @@ impl ProgramStore {
     }
 
     pub(crate) fn get(&self, id: ProgramId) -> Option<Rc<ResidualProgram>> {
-        self.entry(id)
-            .map(|entry| entry.residual.clone())
+        self.entry(id).map(|entry| entry.residual.clone())
     }
 
     pub(crate) fn set_constants(&mut self, id: ProgramId, constants: Vec<Value>) {
@@ -555,11 +552,7 @@ impl ProgramStore {
         id: ProgramId,
         site: usize,
     ) -> Option<Result<Rc<quench_regexp::Regex>, Rc<str>>> {
-        self.entry(id)?
-            .regexp_literals
-            .get(site)?
-            .as_ref()
-            .cloned()
+        self.entry(id)?.regexp_literals.get(site)?.as_ref().cloned()
     }
 
     pub(crate) fn cache_regexp_literal_matcher(

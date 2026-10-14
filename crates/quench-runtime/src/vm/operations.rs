@@ -13,9 +13,10 @@ const ODD_INTEGER_PARITY: f64 = 1.0;
 /// The comparison operators occupy the binary operator discriminants up to this one.
 const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
 
-/// A comparison operator applied to two numbers.
+/// A comparison operator applied to two numbers, or to two integers, which compare as the
+/// numbers they denote.
 #[inline(always)]
-fn number_comparison(op: u32, a: f64, b: f64) -> bool {
+fn number_comparison<T: PartialOrd>(op: u32, a: T, b: T) -> bool {
     const EQUALITY: u32 = BinaryOperator::Equality as u32;
     const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
     const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
@@ -54,26 +55,19 @@ const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] 
     BinaryOperator::BitwiseAnd,
 ];
 
-/// Binary operator immediates up to this one are equality and relational
-/// comparisons, in `integer_relation` order.
-const LAST_RELATIONAL_OPERATOR: u32 = 7;
-
-/// The integer fast path of an equality or relational operator.
+/// A comparison operator on two Numbers, comparing integers as integers; `None` for any
+/// other operator or value.
 #[inline(always)]
-pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {
-    if op > LAST_RELATIONAL_OPERATOR {
+pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool> {
+    if op > LAST_COMPARISON_OPERATOR {
         return None;
     }
-    let (a, b) = Value::int_pair(left, right)?;
-    Some(match op {
-        0 | 2 => a == b,
-        1 | 3 => a != b,
-        4 => a < b,
-        5 => a <= b,
-        6 => a > b,
-        7 => a >= b,
-        _ => unreachable!("relational operator range"),
-    })
+    if let Some((a, b)) = Value::int_pair(left, right) {
+        return Some(number_comparison(op, a, b));
+    }
+    // Equality, strict equality and the relational operators agree with IEEE 754
+    // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
+    Some(number_comparison(op, left.as_number()?, right.as_number()?))
 }
 
 #[inline(always)]
@@ -145,6 +139,55 @@ fn numeric_integer_subtract_result(left: i32, right: i32) -> Value {
 
 /// An arithmetic operator on two Numbers: `integer` when both are integers, else `number` on
 /// their IEEE 754 values.
+pub(super) const ADDITION: u32 = BinaryOperator::Addition as u32;
+pub(super) const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
+pub(super) const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
+pub(super) const DIVISION: u32 = BinaryOperator::Division as u32;
+
+/// One of the four arithmetic operators `OP` on Numbers, with the path it took; `None` for a
+/// non-Number operand. Shared by `number_binary` and the lane's operator-specialized records.
+#[inline(always)]
+pub(super) fn number_operator<const OP: u32>(
+    left: Value,
+    right: Value,
+) -> Option<(Value, crate::profile::BinaryValuePath)> {
+    match OP {
+        ADDITION => number_arithmetic(left, right, numeric_integer_add_result, |l, r| l + r),
+        SUBTRACTION => {
+            number_arithmetic(left, right, numeric_integer_subtract_result, |l, r| l - r)
+        }
+        MULTIPLICATION => {
+            number_arithmetic(left, right, numeric_integer_multiply_result, |l, r| l * r)
+        }
+        // `Value::number` keeps an exact quotient an integer, which is all the integer case
+        // would add.
+        DIVISION => {
+            let (left, right) = Value::number_pair(left, right)?;
+            Some((
+                Value::number(left / right),
+                crate::profile::BinaryValuePath::NumberFastPath,
+            ))
+        }
+        _ => None,
+    }
+}
+
+pub(super) const REMAINDER: u32 = BinaryOperator::Remainder as u32;
+pub(super) const SHIFT_LEFT: u32 = BinaryOperator::ShiftLeft as u32;
+pub(super) const SHIFT_RIGHT: u32 = BinaryOperator::ShiftRight as u32;
+pub(super) const SHIFT_RIGHT_ZERO_FILL: u32 = BinaryOperator::ShiftRightZeroFill as u32;
+pub(super) const BITWISE_OR: u32 = BinaryOperator::BitwiseOR as u32;
+pub(super) const BITWISE_XOR: u32 = BinaryOperator::BitwiseXOR as u32;
+pub(super) const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
+
+/// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;
+/// `None` otherwise, leaving other Numbers to `number_binary`.
+#[inline(always)]
+pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+    let (left, right) = Value::int_pair(left, right)?;
+    numeric_integer_result(numeric_binary_operator(OP)?, left, right)
+}
+
 #[inline(always)]
 fn number_arithmetic(
     left: Value,
@@ -638,7 +681,9 @@ impl<H: Host> Vm<H> {
                     self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let receiver = self.box_object_or_type_error(p, this)?;
                 let found = match self.own_property_enumerable(p, receiver, key_value)? {
-                    Some(enumerable) => native == Native::ObjectPrototypeHasOwnProperty || enumerable,
+                    Some(enumerable) => {
+                        native == Native::ObjectPrototypeHasOwnProperty || enumerable
+                    }
                     None => false,
                 };
                 Ok(if found { Value::TRUE } else { Value::FALSE })
@@ -1225,27 +1270,11 @@ impl<H: Host> Vm<H> {
     /// immediate directly; the rest go through the operator table.
     #[inline(always)]
     pub(super) fn number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
-        const ADDITION: u32 = BinaryOperator::Addition as u32;
-        const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
-        const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
-        const DIVISION: u32 = BinaryOperator::Division as u32;
         let (value, path) = match op {
-            ADDITION => number_arithmetic(left, right, numeric_integer_add_result, |l, r| l + r)?,
-            SUBTRACTION => {
-                number_arithmetic(left, right, numeric_integer_subtract_result, |l, r| l - r)?
-            }
-            MULTIPLICATION => {
-                number_arithmetic(left, right, numeric_integer_multiply_result, |l, r| l * r)?
-            }
-            // `Value::number` keeps an exact quotient an integer, which is all the integer
-            // case would add.
-            DIVISION => {
-                let (left, right) = Value::number_pair(left, right)?;
-                (
-                    Value::number(left / right),
-                    crate::profile::BinaryValuePath::NumberFastPath,
-                )
-            }
+            ADDITION => number_operator::<ADDITION>(left, right)?,
+            SUBTRACTION => number_operator::<SUBTRACTION>(left, right)?,
+            MULTIPLICATION => number_operator::<MULTIPLICATION>(left, right)?,
+            DIVISION => number_operator::<DIVISION>(left, right)?,
             _ => return self.tabled_number_binary(op, left, right),
         };
         self.record_binary_value_path(op, left, right, path);
@@ -1612,7 +1641,7 @@ impl<H: Host> Vm<H> {
                 right,
                 crate::profile::BinaryValuePath::IntegerFastPath,
             );
-            return Some(number_comparison(op, f64::from(a), f64::from(b)));
+            return Some(number_comparison(op, a, b));
         }
         // Equality, strict equality and the relational operators agree with IEEE 754
         // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.

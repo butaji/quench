@@ -121,31 +121,6 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       return new Buffer(value, encoding, length);
     }
 
-    static alloc(size, fill = 0, encoding) {
-      if (typeof size !== "number") {
-        throw codedTypeError('The "size" argument must be of type number', "ERR_INVALID_ARG_TYPE");
-      }
-      if (!Number.isFinite(size) || size < 0 || size > 0x7fffffff) {
-        const error = new RangeError("The value of \"size\" is out of range");
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
-      }
-      const result = new Buffer(Math.trunc(size));
-      if (typeof fill === "string") {
-        const pattern = Buffer.from(fill, encoding);
-        if (pattern.length === 1) {
-          Uint8Array.prototype.fill.call(result, pattern[0]);
-        } else if (pattern.length > 1) {
-          for (let index = 0; index < result.length; index++) {
-            result[index] = pattern[index % pattern.length];
-          }
-        }
-      } else {
-        result.fill(fill);
-      }
-      return result;
-    }
-
     static allocUnsafe(size) {
       return Buffer.alloc(size);
     }
@@ -626,6 +601,32 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
   Buffer.prototype.latin1Write = legacyWrite("latin1");
   Buffer.prototype.utf8Write = legacyWrite("utf8");
 
+  // Node's alloc is an ordinary constructible function, including its arity.
+  Buffer.alloc = function alloc(size, fill, encoding) {
+    if (typeof size !== "number") {
+      throw codedTypeError('The "size" argument must be of type number', "ERR_INVALID_ARG_TYPE");
+    }
+    if (!Number.isFinite(size) || size < 0 || size > 0x7fffffff) {
+      const error = new RangeError("The value of \"size\" is out of range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const result = new Buffer(Math.trunc(size));
+    if (typeof fill === "string") {
+      const pattern = Buffer.from(fill, encoding);
+      if (pattern.length === 1) {
+        Uint8Array.prototype.fill.call(result, pattern[0]);
+      } else if (pattern.length > 1) {
+        for (let index = 0; index < result.length; index++) {
+          result[index] = pattern[index % pattern.length];
+        }
+      }
+    } else {
+      result.fill(fill === undefined ? 0 : fill);
+    }
+    return result;
+  };
+
   // Node exposes Buffer's static API as enumerable own properties. Packages
   // such as safer-buffer derive their constructor view with `for...in`.
   for (const name of Object.getOwnPropertyNames(Buffer)) {
@@ -691,23 +692,42 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     Ok(module)
 }
 
-pub(crate) fn install_global(
-    context: &mut NativeContext<'_, NodeHost>,
-    module: RootId,
-) -> Result<(), RootedError> {
-    let constructor = get(context, module, "Buffer")?;
+/// Installs `globalThis.Buffer` as Node's accessor pair (non-enumerable getter `get` and
+/// setter `set` over one binding) and the canonical `NodeBuffer` alias. The `buffer` module is
+/// built on the first read of either, not at start-up.
+pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let load = context.host_function(crate::host::shared_vm::operation("bufferConstructor"))?;
     let installer = context.evaluate_script_rooted(
-        "(value) => Object.defineProperty(globalThis, 'Buffer', { value, writable: true, configurable: true })",
+        r#"(load) => {
+  let _Buffer;
+  let assigned = false;
+  Object.defineProperty(globalThis, "Buffer", {
+    get() { return assigned ? _Buffer : load(); },
+    set(value) { assigned = true; _Buffer = value; },
+    enumerable: false,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "NodeBuffer", {
+    get: load,
+    enumerable: false,
+    configurable: true,
+  });
+}"#,
         "node:buffer/install-global.js",
     )?;
     let undefined = context.undefined();
-    context.call_rooted(installer, undefined, &[constructor])?;
-    let global = context.global_root()?;
-    let key = context.string_rooted("NodeBuffer");
-    if !context.define_data_property_rooted(global, key, constructor, false, false, true)? {
-        return Err(RootedError::host("cannot install canonical Node Buffer alias"));
-    }
+    context.call_rooted(installer, undefined, &[load])?;
     Ok(())
+}
+
+/// The `buffer` module's `Buffer`, building the module on first use.
+pub(crate) fn constructor(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = crate::host::shared_vm::commonjs::buffer_module(context)?;
+    get(context, module, "Buffer")
 }
 
 pub(crate) fn install_blob_export(

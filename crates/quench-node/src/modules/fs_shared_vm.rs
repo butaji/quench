@@ -1823,18 +1823,7 @@ const ASYNC_STAT_API: &str = r#"(statSync) => {
   };
 }"#;
 
-pub(crate) const BIGINT_STATS_API: &str = r#"(stats, options) => {
-  if (stats === undefined || options?.bigint !== true) return stats;
-  for (const name of ['dev', 'ino', 'mode', 'nlink', 'uid', 'gid', 'rdev', 'size', 'blksize', 'blocks', 'atimeMs', 'mtimeMs', 'ctimeMs', 'birthtimeMs']) {
-    stats[name] = BigInt(Math.trunc(stats[name]));
-  }
-  for (const name of ['atime', 'mtime', 'ctime', 'birthtime']) {
-    stats[`${name}Ns`] = BigInt(Math.trunc(Number(stats[`${name}Ms`]) * 1000000));
-  }
-  return stats;
-}"#;
-
-const STAT_SYNC_API: &str = r#"(hostStatSync, decorateStats) => function wrappedStatSync(path, options) {
+const STAT_SYNC_API: &str = r#"(hostStatSync) => function wrappedStatSync(path, options) {
   if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
     const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
     error.code = 'ERR_INVALID_ARG_TYPE';
@@ -1842,7 +1831,7 @@ const STAT_SYNC_API: &str = r#"(hostStatSync, decorateStats) => function wrapped
   }
   if (Buffer.isBuffer(path)) path = path.toString();
   else if (path instanceof URL) path = decodeURIComponent(path.pathname);
-  try { return decorateStats(hostStatSync(path), options); }
+  try { return hostStatSync(path, options); }
   catch (error) {
     if (options?.throwIfNoEntry === false && error?.code === 'ENOENT') return undefined;
     throw error;
@@ -2162,13 +2151,11 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     set(context, module, "readFile", read_file_async)?;
     let stat_host = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
-    let decorate_bigint_stats =
-        context.evaluate_script_rooted(BIGINT_STATS_API, "node:fs/shared-bigint-stats.js")?;
     let stat_factory =
         context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-stat-sync.js")?;
     let undefined = context.undefined();
     let stat_sync =
-        context.call_rooted(stat_factory, undefined, &[stat_host, decorate_bigint_stats])?;
+        context.call_rooted(stat_factory, undefined, &[stat_host])?;
     set(context, module, "statSync", stat_sync)?;
     let statfs_host = context.host_function(crate::host::shared_vm::operation("fsStatfsSync"))?;
     let statfs_factory =
@@ -2212,7 +2199,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let lstat_sync = context.call_rooted(
         lstat_factory,
         undefined,
-        &[lstat_host, decorate_bigint_stats],
+        &[lstat_host],
     )?;
     set(context, module, "lstatSync", lstat_sync)?;
     let lstat_factory =
@@ -2792,12 +2779,10 @@ pub(crate) fn read_file_sync(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let path = args
-        .first()
-        .copied()
-        .map(|path| context.to_string(path))
-        .transpose()?
-        .unwrap_or_else(|| "undefined".to_owned());
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
+    let undefined = context.undefined();
+    let input = crate::modules::url_shared_vm::to_path_if_file_url(context, undefined, &[input])?;
+    let path = context.to_string(input)?;
     let path = resolve_shared_path(context, path);
     let (encoding, flag) = if let Some(options) = args.get(1).copied().filter(|options| {
         context

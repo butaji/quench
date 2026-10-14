@@ -921,8 +921,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .environment_clones
             .iter()
             .zip(&self.environment_clone_scopes)
-            .position(|(existing, existing_scopes)| *existing == slots && *existing_scopes == scopes)
-        {
+            .position(|(existing, existing_scopes)| {
+                *existing == slots && *existing_scopes == scopes
+            }) {
             index
         } else {
             self.push_environment_clone(slots, scopes)
