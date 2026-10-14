@@ -11,12 +11,13 @@ const MIN_QUALIFYING_ROUNDS: usize = 11;
 const BOOTSTRAP_REPLICATES: usize = 100_000;
 const BOOTSTRAP_INTERVAL_LEVEL: f64 = 0.95;
 const BOOTSTRAP_BASE_SEED: u64 = 0x51A7_BEEF_CAFE_2C31;
-const ENGINES: &[&str] = &["quench", "quickjs", "bun", "node"];
-const COMPARATORS: &[&str] = &["quickjs", "bun", "node"];
+const QUENCH: &str = "quench";
 
 #[derive(Deserialize)]
 struct SuiteInput {
     schema: u32,
+    #[serde(default)]
+    suite: crate::Suite,
     rounds_requested: usize,
     timeout_ms: u64,
     source_revision: String,
@@ -195,11 +196,12 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         .map_err(|error| format!("cannot resolve analyzer executable: {error}"))?;
     let quench_bench_binary = artifact_input(&binary_path)?;
     let mut fixtures = BTreeMap::new();
-    for name in crate::FIXTURES {
+    let engines = input.suite.engine_names();
+    for name in input.suite.fixture_names() {
         let (fixture_path, fixture) = find_fixture(&input.fixtures, name)?;
         fixtures.insert(
             (*name).to_string(),
-            analyze_fixture(fixture_path, fixture, input.rounds_requested)?,
+            analyze_fixture(fixture_path, fixture, input.rounds_requested, engines)?,
         );
     }
     let qualified = fixtures.values().all(|fixture| fixture.qualified);
@@ -208,7 +210,7 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         .pinned_revision
         .clone()
         .ok_or_else(|| "benchmark corpus has no pinned revision".to_string())?;
-    let engine_provenance = ENGINES
+    let engine_provenance = engines
         .iter()
         .map(|name| {
             input
@@ -341,19 +343,22 @@ fn validate_suite(input: &SuiteInput) -> Result<(), String> {
         .iter()
         .map(|engine| engine.name.as_str())
         .collect::<BTreeSet<_>>();
-    let expected = ENGINES.iter().copied().collect::<BTreeSet<_>>();
-    if engines != expected || input.engines.len() != ENGINES.len() {
-        return Err(
-            "benchmark report does not contain exactly the four required engines".to_string(),
-        );
+    let required = input.suite.engine_names();
+    let expected = required.iter().copied().collect::<BTreeSet<_>>();
+    if engines != expected || input.engines.len() != required.len() {
+        return Err(format!(
+            "benchmark report does not contain exactly the required engines: {}",
+            required.join(", ")
+        ));
     }
     for engine in &input.engines {
         validate_engine(engine)?;
     }
-    if input.fixtures.len() != crate::FIXTURES.len() {
-        return Err(
-            "benchmark report does not contain exactly the eight required fixtures".to_string(),
-        );
+    if input.fixtures.len() != input.suite.fixture_names().len() {
+        return Err(format!(
+            "benchmark report does not contain exactly the {} required fixtures",
+            input.suite.fixture_names().len()
+        ));
     }
     let suite_input_paths = input
         .suite_inputs
@@ -460,6 +465,7 @@ fn analyze_fixture(
     path: &str,
     fixture: &FixtureInput,
     requested_rounds: usize,
+    engines: &[&str],
 ) -> Result<FixtureAnalysis, String> {
     if !fixture.valid || !fixture.output_equal {
         return Err(format!("{path} is invalid or its engine outputs differ"));
@@ -477,7 +483,7 @@ fn analyze_fixture(
         ));
     }
 
-    let mut samples = ENGINES
+    let mut samples = engines
         .iter()
         .map(|engine| {
             (
@@ -494,11 +500,11 @@ fn analyze_fixture(
         if round.round != index {
             return Err(format!("{path} has noncontiguous round identities"));
         }
-        let expected_order = ENGINES
+        let expected_order = engines
             .iter()
             .cycle()
-            .skip(index % ENGINES.len())
-            .take(ENGINES.len())
+            .skip(index % engines.len())
+            .take(engines.len())
             .copied()
             .map(str::to_string)
             .collect::<Vec<_>>();
@@ -507,11 +513,11 @@ fn analyze_fixture(
                 "{path} round {index} did not use the recorded rotating order"
             ));
         }
-        if round.samples.len() != ENGINES.len() {
+        if round.samples.len() != engines.len() {
             return Err(format!("{path} round {index} is missing an engine sample"));
         }
         let mut raw_samples = BTreeMap::new();
-        for engine in ENGINES {
+        for engine in engines {
             let sample = round
                 .samples
                 .get(*engine)
@@ -560,9 +566,9 @@ fn analyze_fixture(
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let quench = samples.get("quench").expect("quench samples");
+    let quench = samples.get(QUENCH).expect("quench samples");
     let mut comparisons = BTreeMap::new();
-    for comparator in COMPARATORS {
+    for comparator in engines.iter().filter(|engine| **engine != QUENCH) {
         let reference = samples.get(*comparator).expect("comparator samples");
         let score = analyze_metric(path, comparator, "score", &quench.scores, &reference.scores);
         let max_rss = analyze_metric(
