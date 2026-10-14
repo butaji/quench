@@ -5745,3 +5745,21 @@ const server=net.createServer(s=>s.end()).listen(0,()=>{
 });
 "#);
 }
+
+#[test]
+fn net_server_uses_original_event_emitter_protocol() {
+    compare_node_stream_source(r#"
+const net=require('net'),{EventEmitter}=require('events');const output=[];
+const server=net.createServer();
+output.push(['inherit',Object.getPrototypeOf(net.Server)===EventEmitter,Object.getPrototypeOf(net.Server.prototype)===EventEmitter.prototype,server instanceof EventEmitter]);
+output.push(['empty',server.emit('unknown'),server.eventNames(),server.getMaxListeners()]);
+const original={};try{server.emit('error',original);}catch(error){output.push(['error identity',error===original,error.code]);}
+const events=[];server.on('newListener',(type,callback)=>events.push(['add',type,callback.name]));
+function callback(){events.push(['callback',this===server]);}
+server.once('value',callback);server.prependListener('value',function first(){events.push(['first',this===server]);});
+output.push(['raw',server.listeners('value')[1]===callback,server.rawListeners('value')[1].listener===callback]);
+output.push(['emit',server.emit('value'),server.emit('value')]);server.removeAllListeners('value');
+output.push(['events',events]);
+console.log(JSON.stringify(output));
+"#);
+}
