@@ -16,6 +16,36 @@ impl Host for SilentHost {
     }
 }
 
+#[test]
+fn strict_terminal_calls_preserve_catch_and_finally_handlers() {
+    let source = r#"
+      'use strict';
+      function bad() { throw 17; }
+      function caught() { try { return bad(); } catch (error) { return error + 1; } }
+      function nested() {
+        try { return bad(); }
+        catch (error) { try { return bad(); } catch (inner) { return inner + error; } }
+      }
+      const events = [];
+      function finalized() {
+        try { return bad(); }
+        catch (error) { return error + 2; }
+        finally { events.push('finally'); }
+      }
+      function nativeError() { try { return JSON.parse(']'); } catch (error) { return error.name; } }
+      function protectedCall(fn) { try { return fn(); } catch (error) { return error + 3; } }
+      print(JSON.stringify([caught(), nested(), finalized(), nativeError(), protectedCall(bad), events]));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "strict-terminal-handlers.js").unwrap();
+    vm.execute(&program).unwrap();
+    assert_eq!(
+        output.borrow().as_slice(),
+        [r#"[18,34,19,"SyntaxError",20,["finally"]]"#]
+    );
+}
+
 struct RecordingHost(Rc<RefCell<Vec<String>>>);
 
 impl Host for RecordingHost {
