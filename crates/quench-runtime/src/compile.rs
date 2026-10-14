@@ -1593,6 +1593,8 @@ struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
     source_line_starts: Vec<usize>,
+    /// The source is ASCII, so a column (in UTF-16 units) is a byte distance.
+    source_is_ascii: bool,
     source_position_cursor: SourcePositionCursor,
     mode: SpecializationMode,
     root_strict: bool,
@@ -1800,10 +1802,12 @@ impl<'a> Compiler<'a> {
             text.match_indices('\n')
                 .map(|(index, _)| index.saturating_add(1)),
         );
+        let source_is_ascii = text.is_ascii();
         Self {
             source,
             text,
             source_line_starts,
+            source_is_ascii,
             source_position_cursor: SourcePositionCursor {
                 offset: 0,
                 line: 1,
@@ -1836,6 +1840,20 @@ impl<'a> Compiler<'a> {
 
     fn source_position(&mut self, offset: u32) -> SourcePosition {
         let offset = (offset as usize).min(self.text.len());
+        if self.source_is_ascii {
+            // Every character is one byte and one UTF-16 unit: the column is the distance
+            // from the line start, found by search instead of a scan of the line.
+            let line_index = self
+                .source_line_starts
+                .partition_point(|start| *start <= offset)
+                .saturating_sub(1);
+            let column = offset - self.source_line_starts[line_index] + 1;
+            return SourcePosition {
+                pc: 0,
+                line: u32::try_from(line_index + 1).unwrap_or(u32::MAX),
+                column: u32::try_from(column).unwrap_or(u32::MAX),
+            };
+        }
         let mut cursor = self.source_position_cursor;
         if offset >= cursor.offset {
             for character in self.text[cursor.offset..offset].chars() {
