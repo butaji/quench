@@ -482,6 +482,15 @@ impl JsString {
         }
     }
 
+    /// Bytes of flat units this string holds; a rope owns only its node until it flattens.
+    pub(crate) fn flat_unit_bytes(&self) -> usize {
+        match self.inner.flat.get().map(FlatUnits::view) {
+            Some(Units::Ascii(bytes)) => bytes.len(),
+            Some(Units::Wide(units)) => std::mem::size_of_val(units),
+            None => 0,
+        }
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.inner.length
     }
