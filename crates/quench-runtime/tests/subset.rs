@@ -319,3 +319,33 @@ fn throw_preserves_identity_without_hooks_and_retains_source_through_binary() {
         );
     }
 }
+
+#[test]
+fn with_body_names_reach_enclosing_function_vars() {
+    assert_eq!(
+        output(
+            "function f(o) { var x = 42; function inner(o) { with (o) { return x; } } return inner(o); } print(f({})); print(f({ x: 7 }));"
+        ),
+        ["42", "7"]
+    );
+}
+
+#[test]
+fn direct_eval_expressions_resolve_caller_bindings() {
+    assert_eq!(
+        output(
+            "function local() { var q = 2; return eval('typeof q'); } print(local()); function declared() { eval('var C = function () { this.a = 1; }'); return eval('new C().a'); } print(declared()); function nested() { return eval(\"eval('var r = 2;'); typeof r\"); } print(nested());"
+        ),
+        ["number", "1", "number"]
+    );
+}
+
+#[test]
+fn direct_eval_binary_split_respects_looser_operators() {
+    assert_eq!(
+        output(
+            "function f() { var q = 2; return [eval(\"q === 2 ? 'y' : 'n'\"), eval(\"q === 2, 'last'\"), eval(\"null ?? q === 2\")].join(); } print(f());"
+        ),
+        ["y,last,true"]
+    );
+}

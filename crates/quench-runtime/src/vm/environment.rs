@@ -1835,8 +1835,7 @@ impl<H: Host> Vm<H> {
             && !self.realm.global_lexical_bindings.contains_key(&atom)
             && self.frames.last().is_some_and(|frame| {
                 frame.function != super::ROOT_FUNCTION_ID
-                    && (p.kind == crate::bytecode::ProgramKind::Script
-                        || self.programs.runs_in_global_scope(frame.program))
+                    && self.programs.runs_in_global_scope(frame.program)
                     && p.functions
                         .get(frame.function as usize)
                         .is_some_and(|function| {
