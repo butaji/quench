@@ -48,6 +48,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processUmask" (0) => crate::modules::process_shared_vm::umask,
         method "processKillNative" (2) => crate::modules::process_shared_vm::kill_native,
         method "processKill" (2) => crate::modules::process_shared_vm::kill,
+        method "bufferConstructor" (0) => crate::modules::buffer_shared_vm::constructor,
         method "processRawDebug" (0) => crate::modules::process_shared_vm::raw_debug,
         method "processLoadEnvFile" (1) => crate::modules::process_shared_vm::load_env_file,
         method "processSetEnv" (2) => crate::modules::process_shared_vm::set_env,
