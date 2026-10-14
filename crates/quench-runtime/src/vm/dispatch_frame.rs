@@ -1077,7 +1077,7 @@ impl<H: Host> Vm<H> {
             self.run_general_loop::<STOPS>(p, frame, stop_pc, initial_error, allow_inline_calls);
         self.active_registers = caller_registers;
         self.set_active_program(previous_program);
-        self.realm.globals = previous_global;
+        self.switch_realm_global(previous_global);
         outcome
     }
 

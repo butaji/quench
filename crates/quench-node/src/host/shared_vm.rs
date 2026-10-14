@@ -144,6 +144,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "throws" (3) => crate::modules::assert_shared_vm::throws,
         method "doesNotThrow" (2) => crate::modules::assert_shared_vm::does_not_throw,
         method "ifError" (1) => crate::modules::assert_shared_vm::if_error,
+        method "vmCreateRealm" (0) => crate::modules::vm_shared_vm::create_realm,
+        method "vmEvaluateScript" (3) => crate::modules::vm_shared_vm::evaluate_script,
         method "pathJoin" (0) => crate::modules::path_shared_vm::join_operation,
         method "pathResolve" (0) => crate::modules::path_shared_vm::resolve_operation,
         method "pathRelative" (2) => crate::modules::path_shared_vm::relative_operation,

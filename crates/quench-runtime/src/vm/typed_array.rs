@@ -1,5 +1,6 @@
 use super::typed_array_install::TYPED_ARRAY_CALLBACK_METHODS;
 use super::typed_array_install::TYPED_ARRAY_INSTALLS;
+use super::typed_array_install::{UINT8_ARRAY_PROTOTYPE_METHODS, UINT8_ARRAY_STATIC_METHODS};
 use super::*;
 impl<H: Host> Vm<H> {
     pub(super) fn maybe_call_typed_array_native(
@@ -100,12 +101,7 @@ impl<H: Host> Vm<H> {
         ] {
             self.set_builtin_named(program, self.typed_array_proto, name, native)?;
         }
-        for (name, native) in [
-            ("setFromBase64", Native::Uint8ArraySetFromBase64),
-            ("setFromHex", Native::Uint8ArraySetFromHex),
-            ("toBase64", Native::Uint8ArrayToBase64),
-            ("toHex", Native::Uint8ArrayToHex),
-        ] {
+        for &(name, native) in UINT8_ARRAY_PROTOTYPE_METHODS {
             self.set_builtin_named(program, self.uint8_array_proto, name, native)?;
         }
         for &(name, native, _) in TYPED_ARRAY_CALLBACK_METHODS {
@@ -161,10 +157,7 @@ impl<H: Host> Vm<H> {
             );
         }
         self.global(program, "Uint8Array", uint8_array)?;
-        for (name, native) in [
-            ("fromBase64", Native::Uint8ArrayFromBase64),
-            ("fromHex", Native::Uint8ArrayFromHex),
-        ] {
+        for &(name, native) in UINT8_ARRAY_STATIC_METHODS {
             self.set_builtin_named(program, uint8_array, name, native)?;
         }
         self.realm.intrinsics.builtin_prototypes.insert(

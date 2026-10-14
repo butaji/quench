@@ -46,6 +46,21 @@ impl<H: Host> Vm<H> {
             .collect()
     }
 
+    /// The engine-internal names an object owns, hidden from every key enumeration.
+    pub(super) fn internal_named_keys(&self, object: Value) -> Vec<Atom> {
+        let Some(data) = self.object_data(object) else {
+            return Vec::new();
+        };
+        self.ordered_shape(data)
+            .into_iter()
+            .filter(|(atom, slot)| {
+                self.heap.property_get(data, *slot).is_some()
+                    && self.atom_name(*atom).starts_with(INTERNAL_PROPERTY_PREFIX)
+            })
+            .map(|(atom, _)| atom)
+            .collect()
+    }
+
     pub(super) fn ordinary_own_key_values(
         &mut self,
         object: Value,
