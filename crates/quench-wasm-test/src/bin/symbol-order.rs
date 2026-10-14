@@ -101,11 +101,15 @@ fn run_phase(profiles: &[String]) -> Result<Vec<String>, String> {
         return Ok(Vec::new());
     };
     let mut order = executed(first)?;
-    let mut counts: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
+    let mut counts: std::collections::HashMap<String, (usize, usize)> =
+        std::collections::HashMap::new();
     for profile in rest {
         for name in executed(profile)? {
             let next = counts.len();
-            counts.entry(stable_name(&name).to_owned()).or_insert((0, next)).0 += 1;
+            counts
+                .entry(stable_name(&name).to_owned())
+                .or_insert((0, next))
+                .0 += 1;
         }
     }
     let mut ranked: Vec<_> = counts.into_iter().collect();
