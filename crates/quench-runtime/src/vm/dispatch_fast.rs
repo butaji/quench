@@ -753,7 +753,21 @@ lane_handler! {
 lane_handler! {
     /// `lane_get_index` with register base and key, decoded when the view was derived
     /// (`specialize_register_operands`).
+    /// An array whose object is a record runs here, saving no registers; any other base takes
+    /// `lane_get_index_slot`.
     fn lane_get_index_registers<>(cx, r, ip, i, view) {
+        let Some(value) = (unsafe { vm(cx) }).direct_dense_element(r.get(i.b), r.get(i.c)) else {
+            sibling!(lane_get_index_slot::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_get_index_registers` past a record array.
+    #[inline(never)]
+    fn lane_get_index_slot<>(cx, r, ip, i, view) {
         let Some(value) = (unsafe { vm(cx) }).dense_array_element(r.get(i.b), r.get(i.c)) else {
             return exit(ip);
         };
@@ -764,7 +778,21 @@ lane_handler! {
 
 lane_handler! {
     /// Replacing a present dense element; any other write takes the general path.
+    /// An array whose object is a record runs here, saving no registers; any other object
+    /// takes `lane_set_index_slot`.
     fn lane_set_index<>(cx, r, ip, i, view) {
+        let (object, key) = (r.get(i.b), r.get(i.c));
+        if !(unsafe { vm(cx) }).try_replace_record_element(object, key, r.get(i.a)) {
+            sibling!(lane_set_index_slot::<H>, r, ip, view)
+        }
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_set_index` past a record array.
+    #[inline(never)]
+    fn lane_set_index_slot<>(cx, r, ip, i, view) {
         let (object, key) = (r.get(i.b), r.get(i.c));
         if !(unsafe { vm(cx) }).try_replace_dense_element(object, key, r.get(i.a)) {
             return exit(ip);
