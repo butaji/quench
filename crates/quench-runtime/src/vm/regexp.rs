@@ -1,5 +1,6 @@
 use super::*;
 use super::wtf16::FlatUnits;
+use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
@@ -808,27 +809,29 @@ impl<H: Host> Vm<H> {
         flags: &str,
     ) -> Result<Value, JsError> {
         let subject = self.regexp_subject(input);
-        let mut matches = Vec::new();
-        if flags.contains('g') {
-            self.store_regexp_last_index(p, receiver, Value::number(0.0))?;
-            let sticky = flags.contains('y');
-            let unicode = flags.contains('u') || flags.contains('v');
-            let mut search_start = 0;
-            while let Some(found) = matcher.find_in_subject(&subject, search_start).next() {
-                if sticky && found.range.start != search_start {
-                    break;
-                }
-                search_start = if found.range.is_empty() {
-                    advance_string_index_units(input.units(), found.range.end, unicode)
-                } else {
-                    found.range.end
-                };
-                matches.push(found);
+        if let FastReplacement::Template(template) = replacement {
+            if !template.units().iter().any(|unit| unit == u16::from(b'$')) {
+                return self.regexp_replace_with_literal(
+                    p, receiver, input, &subject, template, matcher, flags,
+                );
             }
-            self.store_regexp_last_index(p, receiver, Value::number(0.0))?;
-        } else if let Some(found) = matcher.find_in_subject(&subject, 0).next() {
-            matches.push(found);
         }
+        let matches = if flags.contains('g') {
+            self.regexp_global_matches(
+                p,
+                receiver,
+                input,
+                flags,
+                |start| matcher.find_in_subject(&subject, start).next(),
+                |found| found.range.clone(),
+            )?
+        } else {
+            matcher
+                .find_in_subject(&subject, 0)
+                .next()
+                .into_iter()
+                .collect()
+        };
         if let Some(last) = matches.last() {
             self.record_regexp_legacy_match(receiver, input.clone(), last.clone())?;
         }
@@ -873,6 +876,90 @@ impl<H: Host> Vm<H> {
             output.append_slice(input, next_source..position);
             output.append(&text);
             next_source = found.range.end;
+        }
+        output.append_slice(input, next_source..input.units().len());
+        let output = self.string_build_result(p, output.finish())?;
+        Ok(self.heap.alloc(Cell::String(output)))
+    }
+
+    /// Every match of a global builtin exec loop from index 0, as RegExpBuiltinExec leaves
+    /// them: lastIndex reset before and after, sticky matches contiguous, and an empty
+    /// match advancing the search by one string index.
+    fn regexp_global_matches<T>(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        input: &JsString,
+        flags: &str,
+        mut find: impl FnMut(usize) -> Option<T>,
+        range: impl Fn(&T) -> Range<usize>,
+    ) -> Result<Vec<T>, JsError> {
+        self.store_regexp_last_index(p, receiver, Value::number(0.0))?;
+        let sticky = flags.contains('y');
+        let unicode = flags.contains('u') || flags.contains('v');
+        let mut matches = Vec::new();
+        let mut search_start = 0;
+        while let Some(found) = find(search_start) {
+            let found_range = range(&found);
+            if sticky && found_range.start != search_start {
+                break;
+            }
+            search_start = if found_range.is_empty() {
+                advance_string_index_units(input.units(), found_range.end, unicode)
+            } else {
+                found_range.end
+            };
+            matches.push(found);
+        }
+        self.store_regexp_last_index(p, receiver, Value::number(0.0))?;
+        Ok(matches)
+    }
+
+    /// `regexp_symbol_replace_fast` for a template without `$`: GetSubstitution returns the
+    /// template itself, so no match's captures are observable except the last one's, which
+    /// the legacy statics record. A global replace therefore finds match ranges only and
+    /// recaptures the last match, which a search from its start finds again.
+    #[allow(clippy::too_many_arguments)]
+    fn regexp_replace_with_literal(
+        &mut self,
+        p: &ResidualProgram,
+        receiver: Value,
+        input: &JsString,
+        subject: &quench_regexp::Subject,
+        template: &JsString,
+        matcher: &quench_regexp::Regex,
+        flags: &str,
+    ) -> Result<Value, JsError> {
+        let (ranges, last) = if flags.contains('g') {
+            let ranges = self.regexp_global_matches(
+                p,
+                receiver,
+                input,
+                flags,
+                |start| matcher.find_range_in_subject(subject, start),
+                Range::clone,
+            )?;
+            let last = ranges
+                .last()
+                .and_then(|range| matcher.find_in_subject(subject, range.start).next());
+            (ranges, last)
+        } else {
+            let found = matcher.find_in_subject(subject, 0).next();
+            (
+                found.iter().map(|found| found.range.clone()).collect(),
+                found,
+            )
+        };
+        let Some(last) = last else {
+            return Ok(self.heap.alloc(Cell::String(input.clone())));
+        };
+        self.record_regexp_legacy_match(receiver, input.clone(), last)?;
+        let mut output = super::wtf16::JsStringBuilder::default();
+        let mut next_source = 0;
+        for range in ranges {
+            output.append_slice(input, next_source..range.start);
+            output.append(template);
+            next_source = range.end;
         }
         output.append_slice(input, next_source..input.units().len());
         let output = self.string_build_result(p, output.finish())?;
@@ -2159,7 +2246,7 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn regexp_groups_object(
         &mut self,
-        named: &[(String, Option<std::ops::Range<usize>>)],
+        named: &[(String, Option<Range<usize>>)],
         input: super::wtf16::Units<'_>,
     ) -> Result<Value, JsError> {
         if named.is_empty() {
@@ -2182,7 +2269,7 @@ impl<H: Host> Vm<H> {
     fn regexp_indices_array(
         &mut self,
         matched: &quench_regexp::Match,
-        named: &[(String, Option<std::ops::Range<usize>>)],
+        named: &[(String, Option<Range<usize>>)],
     ) -> Result<Value, JsError> {
         let ranges = std::iter::once(Some(matched.range.clone()))
             .chain(matched.captures.iter().cloned())
@@ -2215,7 +2302,7 @@ impl<H: Host> Vm<H> {
         Ok(indices)
     }
 
-    fn regexp_index_pair(&mut self, range: Option<std::ops::Range<usize>>) -> Value {
+    fn regexp_index_pair(&mut self, range: Option<Range<usize>>) -> Value {
         let Some(range) = range else {
             return Value::UNDEFINED;
         };
@@ -2401,8 +2488,8 @@ fn regexp_to_integer_or_infinity(value: f64) -> f64 {
 
 pub(super) fn regexp_named_capture_ranges(
     matched: &quench_regexp::Match,
-) -> Vec<(String, Option<std::ops::Range<usize>>)> {
-    let mut groups: Vec<(String, Option<std::ops::Range<usize>>)> = Vec::new();
+) -> Vec<(String, Option<Range<usize>>)> {
+    let mut groups: Vec<(String, Option<Range<usize>>)> = Vec::new();
     for (name, range) in matched.named_groups() {
         if let Some((_, existing)) = groups.iter_mut().find(|(known, _)| known == name) {
             if existing.is_none() {

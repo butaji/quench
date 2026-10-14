@@ -2,15 +2,15 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
+pub(crate) mod certificate;
 pub(crate) mod configuration;
 pub(crate) mod contexts;
 pub(crate) mod discovery;
-pub(crate) mod identity;
-pub(crate) mod socket;
-pub(crate) mod sessions;
-pub(crate) mod certificate;
-pub(crate) mod server;
 pub(crate) mod facade;
+pub(crate) mod identity;
+pub(crate) mod server;
+pub(crate) mod sessions;
+pub(crate) mod socket;
 
 // Node's default TLS policy, from src/node_constants.h DEFAULT_CIPHER_LIST_CORE.
 const DEFAULT_CIPHER_LIST: &str = concat!(
@@ -50,11 +50,17 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let factory = context.evaluate_script_rooted(TLS_FACTORY, "node:tls/shared.js")?;
     let undefined = context.undefined();
     let api = facade::install(context)?;
-    let patterns = context.evaluate_script_rooted(quench_js_check::checked_js!("({trailingDot:()=>/[.]$/,upperCase:()=>/[A-Z]/g})"), "node:tls/identity-patterns.js")?;
+    let patterns = context.evaluate_script_rooted(
+        quench_js_check::checked_js!("({trailingDot:()=>/[.]$/,upperCase:()=>/[A-Z]/g})"),
+        "node:tls/identity-patterns.js",
+    )?;
     let patterns_key = context.string_rooted("identityPatterns");
     context.define_data_property_rooted(api, patterns_key, patterns, false, false, false)?;
     let lower = context.host_function(crate::host::shared_vm::operation("tlsLowercaseName"))?;
-    let lower_factory = context.evaluate_script_rooted(quench_js_check::checked_js!("(lower)=>function toLowerCase(c){return lower(c);}"), "node:tls/lowercase-facade.js")?;
+    let lower_factory = context.evaluate_script_rooted(
+        quench_js_check::checked_js!("(lower)=>function toLowerCase(c){return lower(c);}"),
+        "node:tls/lowercase-facade.js",
+    )?;
     let lower_callback = context.call_rooted(lower_factory, undefined, &[lower])?;
     let lower_key = context.string_rooted("identityLowercase");
     context.define_data_property_rooted(api, lower_key, lower_callback, false, false, false)?;
@@ -67,27 +73,61 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let key = context.string_rooted("contextConstructor");
     context.define_data_property_rooted(api, key, constructor, true, true, true)?;
     let ciphers = context.host_function(crate::host::shared_vm::operation("tlsGetCiphers"))?;
-    let identity = context.host_function(crate::host::shared_vm::operation("tlsCheckServerIdentity"))?;
-    let connect=context.host_function(crate::host::shared_vm::operation("tlsSocketConnect"))?;
-    let construct=context.host_function(crate::host::shared_vm::operation("tlsSocketConstruct"))?;
-    let info=context.host_function(crate::host::shared_vm::operation("tlsSocketInfo"))?;
-    let start=context.host_function(crate::host::shared_vm::operation("tlsSocketStart"))?;
-    let create_server=context.host_function(crate::host::shared_vm::operation("tlsServerCreate"))?;
-    let construct_server=context.host_function(crate::host::shared_vm::operation("tlsServerConstruct"))?;
-    let server_context=context.host_function(crate::host::shared_vm::operation("tlsServerSetContext"))?;
-    let error=context.host_function(crate::host::shared_vm::operation("tlsSocketError"))?;
-    let release=context.host_function(crate::host::shared_vm::operation("tlsSocketReleaseControl"))?;
-    let module = context.call_rooted(factory, undefined, &[api,ciphers,identity,connect,construct,info,start,create_server,construct_server,server_context,error,release])?;
-    let tls_key=context.string_rooted("TLSSocket");let tls=context.get_property_rooted(module,tls_key)?;
-    let socket_key=context.string_rooted("Socket");let base=context.get_property_rooted(net,socket_key)?;
-    let key=context.string_rooted("prototype");let tls_proto=context.get_property_rooted(tls,key)?;
-    let base_proto=context.get_property_rooted(base,key)?;
-    context.set_prototype_rooted(tls_proto,base_proto)?;context.set_prototype_rooted(tls,base)?;
-    let key=context.string_rooted("socketConstructor");context.define_data_property_rooted(api,key,tls,false,false,false)?;
-    let server_key=context.string_rooted("Server");let server=context.get_property_rooted(module,server_key)?;let base_server=context.get_property_rooted(net,server_key)?;
-    let key=context.string_rooted("prototype");let server_proto=context.get_property_rooted(server,key)?;let base_proto=context.get_property_rooted(base_server,key)?;
-    context.set_prototype_rooted(server_proto,base_proto)?;context.set_prototype_rooted(server,base_server)?;
-    let key=context.string_rooted("serverConstructor");context.define_data_property_rooted(api,key,server,false,false,false)?;
+    let identity =
+        context.host_function(crate::host::shared_vm::operation("tlsCheckServerIdentity"))?;
+    let connect = context.host_function(crate::host::shared_vm::operation("tlsSocketConnect"))?;
+    let construct =
+        context.host_function(crate::host::shared_vm::operation("tlsSocketConstruct"))?;
+    let info = context.host_function(crate::host::shared_vm::operation("tlsSocketInfo"))?;
+    let start = context.host_function(crate::host::shared_vm::operation("tlsSocketStart"))?;
+    let create_server =
+        context.host_function(crate::host::shared_vm::operation("tlsServerCreate"))?;
+    let construct_server =
+        context.host_function(crate::host::shared_vm::operation("tlsServerConstruct"))?;
+    let server_context =
+        context.host_function(crate::host::shared_vm::operation("tlsServerSetContext"))?;
+    let error = context.host_function(crate::host::shared_vm::operation("tlsSocketError"))?;
+    let release =
+        context.host_function(crate::host::shared_vm::operation("tlsSocketReleaseControl"))?;
+    let module = context.call_rooted(
+        factory,
+        undefined,
+        &[
+            api,
+            ciphers,
+            identity,
+            connect,
+            construct,
+            info,
+            start,
+            create_server,
+            construct_server,
+            server_context,
+            error,
+            release,
+        ],
+    )?;
+    let tls_key = context.string_rooted("TLSSocket");
+    let tls = context.get_property_rooted(module, tls_key)?;
+    let socket_key = context.string_rooted("Socket");
+    let base = context.get_property_rooted(net, socket_key)?;
+    let key = context.string_rooted("prototype");
+    let tls_proto = context.get_property_rooted(tls, key)?;
+    let base_proto = context.get_property_rooted(base, key)?;
+    context.set_prototype_rooted(tls_proto, base_proto)?;
+    context.set_prototype_rooted(tls, base)?;
+    let key = context.string_rooted("socketConstructor");
+    context.define_data_property_rooted(api, key, tls, false, false, false)?;
+    let server_key = context.string_rooted("Server");
+    let server = context.get_property_rooted(module, server_key)?;
+    let base_server = context.get_property_rooted(net, server_key)?;
+    let key = context.string_rooted("prototype");
+    let server_proto = context.get_property_rooted(server, key)?;
+    let base_proto = context.get_property_rooted(base_server, key)?;
+    context.set_prototype_rooted(server_proto, base_proto)?;
+    context.set_prototype_rooted(server, base_server)?;
+    let key = context.string_rooted("serverConstructor");
+    context.define_data_property_rooted(api, key, server, false, false, false)?;
     for (name, text) in [
         ("DEFAULT_MIN_VERSION", "TLSv1.2"),
         ("DEFAULT_MAX_VERSION", "TLSv1.3"),
@@ -177,7 +217,10 @@ fn pfx_bytes(
         .ok_or_else(|| operation_error(context, "Unable to load PFX certificate"))
 }
 
-pub(crate) fn operation_error(context: &mut NativeContext<'_, NodeHost>, message: &str) -> RootedError {
+pub(crate) fn operation_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    message: &str,
+) -> RootedError {
     match context.error_rooted(message) {
         Ok(error) => {
             let key = context.string_rooted("code");

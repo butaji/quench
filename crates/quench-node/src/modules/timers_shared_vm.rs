@@ -160,10 +160,8 @@ pub(crate) fn promises_module(
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, module, name, function)?;
     }
-    let factory = context.evaluate_script_rooted(
-        PROMISE_INTERVAL_FACTORY,
-        "node:timers/promises/interval.js",
-    )?;
+    let factory = context
+        .evaluate_script_rooted(PROMISE_INTERVAL_FACTORY, "node:timers/promises/interval.js")?;
     let global = context.global_root()?;
     let schedule = property(context, global, "setInterval")?;
     let cancel = property(context, global, "clearInterval")?;
@@ -598,9 +596,8 @@ fn schedule_timer(
             "cannot initialize Timeout reference state",
         ));
     }
-    let async_id = crate::modules::async_hooks_shared_vm::create_context(
-        &context.host_mut().shared_state(),
-    );
+    let async_id =
+        crate::modules::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
     crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Timeout", async_id)?;
     let callback = context.retain(callback)?;
     let receiver = context.retain(handle)?;
@@ -920,9 +917,8 @@ pub(crate) fn set_immediate(
             "cannot initialize Immediate reference state",
         ));
     }
-    let async_id = crate::modules::async_hooks_shared_vm::create_context(
-        &context.host_mut().shared_state(),
-    );
+    let async_id =
+        crate::modules::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
     crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Immediate", async_id)?;
     let callback = context.retain(callback)?;
     let receiver = context.retain(handle)?;

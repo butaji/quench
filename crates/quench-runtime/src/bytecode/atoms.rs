@@ -54,7 +54,10 @@ impl AtomTable {
 
     /// The first `len` names of `sequence`, for a program whose atom ids are the VM's.
     pub(crate) fn shared(sequence: Rc<AtomSequence>, len: usize) -> Self {
-        assert!(len <= sequence.len(), "a shared atom prefix lies within its sequence");
+        assert!(
+            len <= sequence.len(),
+            "a shared atom prefix lies within its sequence"
+        );
         Self {
             names: AtomNames::Shared { sequence, len },
         }
@@ -97,7 +100,10 @@ impl Index<usize> for AtomTable {
                 &text[start..end]
             }
             AtomNames::Shared { sequence, len } => {
-                assert!(index < *len, "atom {index} lies outside the program's prefix");
+                assert!(
+                    index < *len,
+                    "atom {index} lies outside the program's prefix"
+                );
                 sequence.name(index)
             }
             AtomNames::Extended(parts) => {

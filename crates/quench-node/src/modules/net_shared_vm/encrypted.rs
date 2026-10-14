@@ -8,15 +8,23 @@ struct BufferedRaw {
 }
 impl Read for BufferedRaw {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        if self.received.is_empty() { return self.raw.read(bytes); }
+        if self.received.is_empty() {
+            return self.raw.read(bytes);
+        }
         let count = bytes.len().min(self.received.len());
-        for byte in &mut bytes[..count] { *byte = self.received.pop_front().unwrap(); }
+        for byte in &mut bytes[..count] {
+            *byte = self.received.pop_front().unwrap();
+        }
         Ok(count)
     }
 }
 impl Write for BufferedRaw {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> { self.raw.write(bytes) }
-    fn flush(&mut self) -> io::Result<()> { self.raw.flush() }
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.raw.write(bytes)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.raw.flush()
+    }
 }
 #[derive(Clone, Copy)]
 pub(crate) enum Role {
@@ -56,8 +64,18 @@ impl EncryptedStream {
             );
         }
         Ok(Self {
-            stream: SslStream::new(ssl, BufferedRaw { raw: stream, received: Default::default() })?,
-            phase: if started { Phase::Handshaking(role) } else { Phase::Dormant(role) },
+            stream: SslStream::new(
+                ssl,
+                BufferedRaw {
+                    raw: stream,
+                    received: Default::default(),
+                },
+            )?,
+            phase: if started {
+                Phase::Handshaking(role)
+            } else {
+                Phase::Dormant(role)
+            },
             write_end: None,
         })
     }
@@ -67,12 +85,16 @@ impl EncryptedStream {
     pub(crate) fn ssl(&self) -> &openssl::ssl::SslRef {
         self.stream.ssl()
     }
-    pub(crate) fn receive(&mut self, bytes: &[u8]) { self.stream.get_mut().received.extend(bytes); }
+    pub(crate) fn receive(&mut self, bytes: &[u8]) {
+        self.stream.get_mut().received.extend(bytes);
+    }
     pub(crate) fn ready(&self) -> bool {
         matches!(self.phase, Phase::Ready)
     }
     pub(crate) fn start(&mut self) {
-        if let Phase::Dormant(role) = self.phase { self.phase = Phase::Handshaking(role); }
+        if let Phase::Dormant(role) = self.phase {
+            self.phase = Phase::Handshaking(role);
+        }
     }
     pub(crate) fn authorize(&mut self) {
         if matches!(self.phase, Phase::AwaitAuthorization) {
@@ -103,8 +125,13 @@ impl EncryptedStream {
             // Node's TLSWrap forwards physical EOF after handshake as stream
             // EOF. OpenSSL's socket BIO reports that same empty-error EOF as
             // SSL_ERROR_SYSCALL; preserve real syscall/SSL failures separately.
-            Err(error) if error.code() == ErrorCode::SYSCALL
-                && error.io_error().is_none() && error.ssl_error().is_none() => Ok(0),
+            Err(error)
+                if error.code() == ErrorCode::SYSCALL
+                    && error.io_error().is_none()
+                    && error.ssl_error().is_none() =>
+            {
+                Ok(0)
+            }
             Err(error) => Err(io_error(error)),
         }
     }
