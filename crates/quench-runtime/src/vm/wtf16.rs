@@ -302,6 +302,10 @@ impl JsStringInner {
     }
 }
 
+/// A concatenation this short is copied flat instead of becoming a rope: a rope node and the
+/// halves it keeps alive cost more than the copied units.
+const FLAT_CONCAT_MAX_UNITS: usize = 256;
+
 /// Flat UTF-16 strings retain the existing Node-compatible length policy.
 /// V8's public String::kMaxLength on the supported 64-bit host is this limit;
 /// Node exposes it as buffer.constants.MAX_STRING_LENGTH.
@@ -533,6 +537,15 @@ impl JsString {
             return;
         }
         if text.inner.length == 0 {
+            return;
+        }
+        if self.inner.length + text.inner.length <= FLAT_CONCAT_MAX_UNITS {
+            let mut flat = JsStringBuilder::default();
+            flat.append(self);
+            flat.append(text);
+            *self = flat
+                .finish()
+                .expect("a short concatenation is within the string length limit");
             return;
         }
         self.inner = Rc::new(JsStringInner::concat(
