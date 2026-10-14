@@ -145,6 +145,39 @@ fn numeric_integer_subtract_result(left: i32, right: i32) -> Value {
 
 /// An arithmetic operator on two Numbers: `integer` when both are integers, else `number` on
 /// their IEEE 754 values.
+pub(super) const ADDITION: u32 = BinaryOperator::Addition as u32;
+pub(super) const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
+pub(super) const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
+pub(super) const DIVISION: u32 = BinaryOperator::Division as u32;
+
+/// One of the four arithmetic operators `OP` on Numbers, with the path it took; `None` for a
+/// non-Number operand. Shared by `number_binary` and the lane's operator-specialized records.
+#[inline(always)]
+pub(super) fn number_operator<const OP: u32>(
+    left: Value,
+    right: Value,
+) -> Option<(Value, crate::profile::BinaryValuePath)> {
+    match OP {
+        ADDITION => number_arithmetic(left, right, numeric_integer_add_result, |l, r| l + r),
+        SUBTRACTION => {
+            number_arithmetic(left, right, numeric_integer_subtract_result, |l, r| l - r)
+        }
+        MULTIPLICATION => {
+            number_arithmetic(left, right, numeric_integer_multiply_result, |l, r| l * r)
+        }
+        // `Value::number` keeps an exact quotient an integer, which is all the integer case
+        // would add.
+        DIVISION => {
+            let (left, right) = Value::number_pair(left, right)?;
+            Some((
+                Value::number(left / right),
+                crate::profile::BinaryValuePath::NumberFastPath,
+            ))
+        }
+        _ => None,
+    }
+}
+
 #[inline(always)]
 fn number_arithmetic(
     left: Value,
@@ -1236,27 +1269,11 @@ impl<H: Host> Vm<H> {
     /// immediate directly; the rest go through the operator table.
     #[inline(always)]
     pub(super) fn number_binary(&mut self, op: u32, left: Value, right: Value) -> Option<Value> {
-        const ADDITION: u32 = BinaryOperator::Addition as u32;
-        const SUBTRACTION: u32 = BinaryOperator::Subtraction as u32;
-        const MULTIPLICATION: u32 = BinaryOperator::Multiplication as u32;
-        const DIVISION: u32 = BinaryOperator::Division as u32;
         let (value, path) = match op {
-            ADDITION => number_arithmetic(left, right, numeric_integer_add_result, |l, r| l + r)?,
-            SUBTRACTION => {
-                number_arithmetic(left, right, numeric_integer_subtract_result, |l, r| l - r)?
-            }
-            MULTIPLICATION => {
-                number_arithmetic(left, right, numeric_integer_multiply_result, |l, r| l * r)?
-            }
-            // `Value::number` keeps an exact quotient an integer, which is all the integer
-            // case would add.
-            DIVISION => {
-                let (left, right) = Value::number_pair(left, right)?;
-                (
-                    Value::number(left / right),
-                    crate::profile::BinaryValuePath::NumberFastPath,
-                )
-            }
+            ADDITION => number_operator::<ADDITION>(left, right)?,
+            SUBTRACTION => number_operator::<SUBTRACTION>(left, right)?,
+            MULTIPLICATION => number_operator::<MULTIPLICATION>(left, right)?,
+            DIVISION => number_operator::<DIVISION>(left, right)?,
             _ => return self.tabled_number_binary(op, left, right),
         };
         self.record_binary_value_path(op, left, right, path);
