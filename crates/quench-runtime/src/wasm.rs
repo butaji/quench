@@ -872,7 +872,7 @@ impl Engine {
                 global_function_atoms: vec![],
                 global_annex_b_var_atoms: vec![],
                 global_immutable_atoms: vec![],
-                name_bindings: vec![],
+                name_bindings: Default::default(),
                 binding_sites: vec![],
                 source_positions: vec![],
                 environment_clones: vec![],

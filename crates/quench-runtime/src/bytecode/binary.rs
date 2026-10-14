@@ -221,7 +221,7 @@ pub(super) fn write_program(
             out.u32(*atom);
         }
         out.u32(function.name_bindings.len() as u32);
-        for binding in &function.name_bindings {
+        for binding in function.name_bindings.iter() {
             write_eval_binding(&mut out, binding);
         }
         out.u32(function.environment_clones.len() as u32);
@@ -683,7 +683,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             selective_capture_slots,
             inherited_with_scope,
             environment_clones,
-            name_bindings,
+            name_bindings: name_bindings.into(),
             lexical_atoms,
             global_lexical_atoms,
             global_var_atoms,
