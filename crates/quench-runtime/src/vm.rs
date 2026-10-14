@@ -98,6 +98,7 @@ mod intl_plural_rules;
 mod intl_relative;
 mod intl_segmenter;
 mod iterator_list;
+mod lazy_data_property;
 mod local_time;
 mod property_definition;
 use group_by::GroupByKind;
