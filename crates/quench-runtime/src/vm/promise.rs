@@ -3620,13 +3620,10 @@ impl<H: Host> Vm<H> {
         exports: Vec<(String, String)>,
         active: &mut ActiveModuleExports,
     ) -> Result<Vec<(String, StaticModuleValue)>, JsError> {
-        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
-            .map(|atom| self.atom_name(atom as u32).to_owned())
-            .collect::<Vec<_>>();
         let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
             &module.source,
             &module.name,
-            &atom_prefix,
+            &*self,
         )
         .map_err(|diagnostics| {
             if diagnostics
@@ -3858,13 +3855,10 @@ impl<H: Host> Vm<H> {
         let Some(link_plan) = plan.link_plan else {
             return Ok(false);
         };
-        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
-            .map(|atom| self.atom_name(atom as u32).to_owned())
-            .collect::<Vec<_>>();
         let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
             &module.source,
             &module.name,
-            &atom_prefix,
+            &*self,
         )
         .map_err(|diagnostics| {
             if diagnostics

@@ -1,10 +1,11 @@
+use super::wtf16::Units;
 use super::wtf16::JsString;
 use super::*;
 use std::hash::Hasher;
 
 impl<H: Host> Vm<H> {
-    pub(super) fn atom_hash_units(units: &[u16]) -> u64 {
-        Self::atom_hash_utf16(units.len(), units.iter().copied())
+    pub(super) fn atom_hash_units(units: Units<'_>) -> u64 {
+        Self::atom_hash_utf16(units.len(), units.iter())
     }
 
     pub(super) fn atom_hash_str(text: &str) -> u64 {
@@ -25,11 +26,10 @@ impl<H: Host> Vm<H> {
         if index < self.atom_text.len() {
             self.atom_text[index].encode_utf16().eq(text.encode_utf16())
         } else {
-            self.dynamic_atoms[index - self.atom_text.len()]
-                .units()
-                .iter()
-                .copied()
-                .eq(text.encode_utf16())
+            match self.dynamic_atoms[index - self.atom_text.len()].units() {
+                Units::Ascii(bytes) => bytes == text.as_bytes(),
+                units => units.iter().eq(text.encode_utf16()),
+            }
         }
     }
 
@@ -63,14 +63,42 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    pub(super) fn atom_units_equal(&self, atom: Atom, units: &[u16]) -> bool {
+    pub(super) fn atom_units_equal(&self, atom: Atom, units: Units<'_>) -> bool {
         let index = atom as usize;
         if index < self.atom_text.len() {
-            self.atom_text[index]
-                .encode_utf16()
-                .eq(units.iter().copied())
+            match units {
+                Units::Ascii(bytes) => self.atom_text[index].as_bytes() == bytes,
+                units => self.atom_text[index].encode_utf16().eq(units.iter()),
+            }
         } else {
             self.dynamic_atoms[index - self.atom_text.len()].units() == units
         }
+    }
+}
+
+/// Programs compiled at run time extend the VM's atoms in place: their prefix ids are the
+/// VM's, read through the shared sequence instead of copied.
+impl<H: Host> crate::compile::AtomPrefix for Vm<H> {
+    fn len(&self) -> usize {
+        self.atom_text.len() + self.dynamic_atoms.len()
+    }
+
+    fn name(&self, atom: Atom) -> &str {
+        self.atom_name(atom)
+    }
+
+    fn find(&self, name: &str) -> Option<Atom> {
+        self.lookup_atom(name)
+    }
+
+    fn table(&self) -> crate::bytecode::AtomTable {
+        crate::bytecode::AtomTable::shared(
+            self.atom_sequence.clone(),
+            crate::compile::AtomPrefix::len(self),
+        )
+    }
+
+    fn specialized(&self) -> bool {
+        self.specialized
     }
 }

@@ -169,7 +169,7 @@ fn gc_headroom_factors_scale_live_cells_without_overflow() {
     );
     assert_eq!(
         gc_allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS),
-        65_536
+        32_768
     );
 }
 
