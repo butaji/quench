@@ -506,12 +506,46 @@ impl<H: Host> Vm<H> {
         if let Some(slot) = function.self_binding_slot {
             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
         }
+        let forwards_arguments = function.call_plan(atoms).forwards_arguments;
         if let Some(slot) = function.arguments_slot {
-            frame.locals[usize::from(slot)] =
-                self.activation_arguments_object(function, context, args)?;
+            frame.locals[usize::from(slot)] = if forwards_arguments {
+                Value::UNMATERIALIZED_ARGUMENTS
+            } else {
+                self.activation_arguments_object(function, context, args)?
+            };
         }
         self.initialize_frame_invocation(atoms, frame, function, context, args);
+        if forwards_arguments {
+            // The frame keeps every argument for the object it may still materialize; legacy
+            // reflection reads the same values, since such a frame reflects no parameter.
+            debug_assert_eq!(frame.reflected_parameters, 0);
+            frame.original_arguments.clear();
+            frame.original_arguments.extend_from_slice(args);
+        }
         Ok(())
+    }
+
+    /// The `arguments` object of activation `f`, whose binding holds
+    /// `UNMATERIALIZED_ARGUMENTS`: made from the values the frame kept, as on entry, and
+    /// bound so that every later read finds the same object.
+    #[inline(never)]
+    pub(super) fn materialize_activation_arguments(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+    ) -> Result<Value, JsError> {
+        let frame = &self.frames[f];
+        let function = &p.functions[frame.function as usize];
+        let slot = usize::from(
+            function
+                .arguments_slot
+                .expect("only an `arguments` binding is unmaterialized"),
+        );
+        let context = frame.context;
+        let args = frame.original_arguments.clone();
+        let arguments = self.activation_arguments_object(function, context, &args)?;
+        self.frames[f].locals[slot] = arguments;
+        Ok(arguments)
     }
 
     /// Copies a program root activation's module import bindings into its locals or, for a
