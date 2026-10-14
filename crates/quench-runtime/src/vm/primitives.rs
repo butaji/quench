@@ -377,19 +377,20 @@ impl<H: Host> Vm<H> {
                     return Err(JsError("string method receiver is not a string".into()));
                 };
                 let count = self.to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                if count.is_infinite() || count < 0.0 {
-                    return Err(self.range_error(p, "invalid string repeat count".into()));
+                if count.is_infinite() || count.trunc() < 0.0 {
+                    let count = self.to_string(p, Value::number(count))?;
+                    return Err(self.range_error(p, format!("Invalid count value: {count}")));
                 }
                 let count = if count.is_nan() {
                     0
                 } else {
                     count.trunc() as usize
                 };
-                let Some(size) = receiver.units().len().checked_mul(count) else {
-                    return Err(self.range_error(p, "string repeat count is too large".into()));
+                let Some(size) = receiver.len().checked_mul(count) else {
+                    return Err(self.range_error(p, "Invalid string length".into()));
                 };
-                if size > 64 * 1024 * 1024 {
-                    return Err(self.range_error(p, "string repeat count is too large".into()));
+                if size > super::wtf16::MAX_STRING_UNITS {
+                    return Err(self.range_error(p, "Invalid string length".into()));
                 }
                 Ok(self.heap.alloc(Cell::String(receiver.repeat(count))))
             }

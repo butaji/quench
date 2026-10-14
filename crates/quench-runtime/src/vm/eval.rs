@@ -950,6 +950,9 @@ impl<H: Host> Vm<H> {
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
+        if self.direct_eval {
+            self.programs.mark_caller_scope(program_id);
+        }
         let residual = self
             .programs
             .get(program_id)
@@ -1466,6 +1469,12 @@ fn find_unquoted_operator(expression: &str) -> Option<(&str, &str, &str)> {
             '\'' | '"' | '`' => quote = Some(character),
             '(' | '[' | '{' => nesting = nesting.saturating_add(1),
             ')' | ']' | '}' => nesting = nesting.saturating_sub(1),
+            // Conditional, coalescing, comma and arrow forms bind more loosely
+            // than every binary operator split here; such an expression is not
+            // a binary expression at its top level.
+            '?' | ',' | '=' if nesting == 0 && binds_below_binary_operators(expression, index) => {
+                return None;
+            }
             _ if nesting == 0 => {
                 let Some((operator, precedence)) = eval_operator_at(expression, index, character)
                 else {
@@ -1499,6 +1508,24 @@ fn find_unquoted_operator(expression: &str) -> Option<(&str, &str, &str)> {
         operator,
         &expression[index + operator.len()..],
     ))
+}
+
+/// Whether the top-level token at `index` is `?` (conditional or `??`, not an
+/// optional chain `?.`), `,`, or an arrow `=>`.
+fn binds_below_binary_operators(expression: &str, index: usize) -> bool {
+    let suffix = &expression[index..];
+    match suffix.as_bytes()[0] {
+        b'?' => {
+            !suffix.starts_with("?.")
+                || suffix
+                    .as_bytes()
+                    .get(2)
+                    .is_some_and(|next| next.is_ascii_digit())
+        }
+        b',' => true,
+        b'=' => suffix.starts_with("=>"),
+        _ => false,
+    }
 }
 
 fn eval_operator_at(
