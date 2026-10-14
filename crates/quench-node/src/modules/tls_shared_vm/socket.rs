@@ -8,6 +8,14 @@ pub(crate) fn owner(
     context: &mut NativeContext<'_, NodeHost>,
     socket: RootId,
 ) -> Result<u64, RootedError> {
+    if let Some(id) = physical_owner(context, socket)? { return Ok(id); }
+    let error = context.type_error_rooted("TLS socket has no native transport")?;
+    Err(context.throw(error))
+}
+fn physical_owner(
+    context: &mut NativeContext<'_, NodeHost>,
+    socket: RootId,
+) -> Result<Option<u64>, RootedError> {
     let shared = context.host_mut().shared_state();
     let sockets = shared
         .borrow()
@@ -17,20 +25,20 @@ pub(crate) fn owner(
         .collect::<Vec<_>>();
     for (id, candidate) in sockets {
         if context.strict_equal_rooted(candidate, socket)? {
-            return Ok(id);
+            return Ok(Some(id));
         }
     }
-    let error = context.type_error_rooted("TLS socket has no native transport")?;
-    Err(context.throw(error))
+    Ok(None)
 }
-pub(crate) fn upgrade(
+fn create_session(
     context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let socket = owner(context, args[0])?;
-    let index = super::contexts::owner(context, args[1])?;
-    let server = context.truthy_rooted(args[2])?;
+    socket: RootId,
+    configuration: RootId,
+    is_server: RootId,
+    options: RootId,
+) -> Result<(), RootedError> {
+    let index = super::contexts::owner(context, configuration)?;
+    let server = context.truthy_rooted(is_server)?;
     let shared = context.host_mut().shared_state();
     let ssl = {
         let mut state = shared.borrow_mut();
@@ -41,7 +49,7 @@ pub(crate) fn upgrade(
     }
     .map_err(|error| super::super::crypto_error_shared_vm::decorated(context, error))?;
     let mut ssl = ssl;
-    if let Some(options) = args.get(3).copied() {
+    {
         let servername = get(context, options, "servername")?;
         if context.truthy_rooted(servername)? {
             let servername = context.to_string(servername)?;
@@ -53,7 +61,6 @@ pub(crate) fn upgrade(
     }
     // Node records certificate verification failures and authorizes after secure.
     let mode = if server {
-        let options = args.get(3).copied().unwrap_or_else(|| context.undefined());
         let request = get(context, options, "requestCert")?;
         if context.truthy_rooted(request)? {
             let reject = get(context, options, "rejectUnauthorized")?;
@@ -74,8 +81,26 @@ pub(crate) fn upgrade(
     } else {
         super::super::net_shared_vm::encrypted::Role::Client
     };
+    super::sessions::register(context, socket, ssl, role)
+}
+pub(crate) fn upgrade(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let root = args.first().copied().unwrap_or(receiver);
+    let Some(socket) = physical_owner(context, root)? else { return Ok(context.undefined()); };
+    let index = super::sessions::owner(context, root)?;
+    let shared = context.host_mut().shared_state();
+    if !super::super::net_shared_vm::is_connected(&shared.borrow().tcp, socket) { return Ok(context.undefined()); }
+    let pending = {
+        let mut state = shared.borrow_mut();
+        let session = &mut state.tls_contexts.sessions.entries[index];
+        session.pending.take().map(|pending| (pending.ssl, pending.role, pending.start_requested))
+    };
+    let Some((ssl, role, started)) = pending else { return Ok(context.undefined()); };
     let result =
-        super::super::net_shared_vm::encrypt(&mut shared.borrow_mut().tcp, socket, ssl, role);
+        super::super::net_shared_vm::encrypt(&mut shared.borrow_mut().tcp, socket, ssl, role, started);
     result.map_err(|error| match error {
         super::super::net_shared_vm::EncryptError::OpenSsl(error) => {
             super::super::crypto_error_shared_vm::decorated(context, error)
@@ -104,7 +129,8 @@ pub(crate) fn info(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let socket = owner(context, args[0])?;
+    let socket = physical_owner(context, args[0])?;
+    let session = super::sessions::owner(context, args[0])?;
     let name = context.to_string(args[1])?;
     let shared = context.host_mut().shared_state();
     enum Info {
@@ -115,7 +141,9 @@ pub(crate) fn info(
     }
     let value = {
         let state = shared.borrow();
-        let Some(ssl) = super::super::net_shared_vm::tls_info(&state.tcp, socket) else {
+        let ssl = socket.and_then(|id| super::super::net_shared_vm::tls_info(&state.tcp, id))
+            .or_else(|| state.tls_contexts.sessions.entries[session].pending.as_ref().map(|pending| pending.ssl.as_ref()));
+        let Some(ssl) = ssl else {
             return Ok(context.null());
         };
         match name.as_str() {
@@ -135,7 +163,8 @@ pub(crate) fn info(
     match value {
         Info::Text(text) => Ok(context.string_rooted(&text)),
         Info::Bool(value) => Ok(context.boolean(value)),
-        Info::Missing | Info::Certificate(None) => Ok(context.null()),
+        Info::Missing => Ok(context.null()),
+        Info::Certificate(None) => context.object_rooted(),
         Info::Certificate(Some(cert)) => super::certificate::legacy(context, &cert),
     }
 }
@@ -226,6 +255,10 @@ pub(crate) fn construct(
         set(context, socket, name, value)?;
     }
     set(context, socket, "_tlsOptions", options)?;
+    set(context, socket, "_controlReleased", false_value)?;
+    let error = context.string_rooted("error");
+    let listener = get(context, socket, "_tlsError")?;
+    method(context, socket, "on", &[error, listener])?;
     let secure_context = get(context, options, "secureContext")?;
     let secure_context = if context.truthy_rooted(secure_context)? {
         secure_context
@@ -234,6 +267,9 @@ pub(crate) fn construct(
         method(context, module, "createSecureContext", &[options])?
     };
     set(context, options, "secureContext", secure_context)?;
+    let inner = get(context, secure_context, "context")?;
+    let is_server = get(context, options, "isServer")?;
+    create_session(context, socket, inner, is_server, options)?;
     if context.truthy_rooted(wrapped)? {
         let id = owner(context, wrapped)?;
         let shared = context.host_mut().shared_state();
@@ -257,7 +293,53 @@ pub(crate) fn construct(
     let secure = context.string_rooted("secure");
     let callback = context.host_function(crate::host::shared_vm::operation("tlsSocketSecure"))?;
     method(context, socket, "on", &[secure, callback])?;
+    let connect = context.string_rooted("connect");
+    let callback = context.host_function(crate::host::shared_vm::operation("tlsSocketUpgrade"))?;
+    method(context, socket, "once", &[connect, callback])?;
+    if context.truthy_rooted(wrapped)? {
+        let id = owner(context, socket)?;
+        let connected = super::super::net_shared_vm::is_connected(
+            &context.host_mut().shared_state().borrow().tcp, id);
+        if connected {
+            let undefined = context.undefined();
+            upgrade(context, undefined, &[socket])?;
+        }
+    }
+    if context.truthy_rooted(is_server)? {
+        let undefined = context.undefined();
+        start(context, undefined, &[socket])?;
+    }
+    let global = context.global_root()?;
+    let process = get(context, global, "process")?;
+    let init = context.host_function(crate::host::shared_vm::operation("tlsSocketInitRead"))?;
+    method(context, process, "nextTick", &[init, socket, wrapped])?;
     Ok(socket)
+}
+pub(crate) fn init_read(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = args[0];
+    let handle = get(context, socket, "_handle")?;
+    if !context.truthy_rooted(handle)? { return Ok(context.undefined()); }
+    let wrapped = args[1];
+    if context.truthy_rooted(wrapped)? {
+        let length = get(context, wrapped, "readableLength")?;
+        if context.truthy_rooted(length)? {
+            loop {
+                let chunk = method(context, wrapped, "read", &[])?;
+                if context.rooted_value(chunk).is_some_and(|value| value.is_null()) { break; }
+                let bytes = context.view_bytes_rooted(chunk)
+                    .ok_or_else(|| RootedError::host("TLS buffered input is not a byte view"))?;
+                let id = owner(context, socket)?;
+                super::super::net_shared_vm::receive_tls(&mut context.host_mut().shared_state().borrow_mut().tcp, id, &bytes);
+            }
+        }
+    }
+    let zero = context.number(0.0);
+    method(context, socket, "read", &[zero])?;
+    Ok(context.undefined())
 }
 pub(crate) fn connect(
     context: &mut NativeContext<'_, NodeHost>,
@@ -311,6 +393,8 @@ pub(crate) fn connect(
     let constructor = get(context, api, "socketConstructor")?;
     let wrapped = get(context, options, "socket")?;
     let socket = context.construct_rooted(constructor, constructor, &[wrapped, options])?;
+    super::sessions::set_purpose(context, socket, super::sessions::Purpose::ClientConnect)?;
+    method(context, socket, "_releaseControl", &[])?;
     if let Some(callback) = args.last().copied() {
         if context.is_callable_rooted(callback)? {
             let event = context.string_rooted("secureConnect");
@@ -320,11 +404,8 @@ pub(crate) fn connect(
     if context.truthy_rooted(wrapped)? {
         start(context, undefined, &[socket])?;
     } else {
-        let event = context.string_rooted("connect");
-        let callback =
-            context.host_function(crate::host::shared_vm::operation("tlsSocketStart"))?;
-        method(context, socket, "once", &[event, callback])?;
         method(context, socket, "connect", &[options])?;
+        start(context, undefined, &[socket])?;
     }
     Ok(socket)
 }
@@ -334,12 +415,15 @@ pub(crate) fn start(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let socket = args.first().copied().unwrap_or(receiver);
-    let options = get(context, socket, "_tlsOptions")?;
-    let secure_context = get(context, options, "secureContext")?;
-    let inner = get(context, secure_context, "context")?;
-    let server = get(context, options, "isServer")?;
+    let index = super::sessions::owner(context, socket)?;
+    if let Some(pending) = context.host_mut().shared_state().borrow_mut().tls_contexts.sessions.entries[index].pending.as_mut() {
+        pending.start_requested = true;
+    }
     let undefined = context.undefined();
-    upgrade(context, undefined, &[socket, inner, server, options])?;
+    upgrade(context, undefined, &[socket])?;
+    if let Some(id) = physical_owner(context, socket)? {
+        super::super::net_shared_vm::start_tls(&mut context.host_mut().shared_state().borrow_mut().tcp, id);
+    }
     let handle = get(context, socket, "_handle")?;
     set(context, socket, "ssl", handle)?;
     Ok(context.undefined())
@@ -423,7 +507,9 @@ pub(crate) fn secure(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = owner(context, socket)?;
+    let session = super::sessions::owner(context, socket)?;
     let shared = context.host_mut().shared_state();
+    let purpose = shared.borrow().tls_contexts.sessions.entries[session].purpose;
     let (result, reason, peer, reused, servername, alpn) = {
         let state = shared.borrow();
         let ssl = super::super::net_shared_vm::tls_info(&state.tcp, id)
@@ -444,8 +530,13 @@ pub(crate) fn secure(
         )
     };
     let options = get(context, socket, "_tlsOptions")?;
-    let is_server = get(context, options, "isServer")?;
-    if context.truthy_rooted(is_server)? {
+    if matches!(purpose, super::sessions::Purpose::Direct) {
+        let yes = context.boolean(true);
+        set(context, socket, "_secureEstablished", yes)?;
+        super::super::net_shared_vm::authorize(&mut shared.borrow_mut().tcp, id);
+        return Ok(context.undefined());
+    }
+    if matches!(purpose, super::sessions::Purpose::Server) {
         let request = get(context, options, "requestCert")?;
         if context.truthy_rooted(request)? {
             let failure = if peer.is_none() {
@@ -479,7 +570,10 @@ pub(crate) fn secure(
         super::super::net_shared_vm::authorize(&mut shared.borrow_mut().tcp, id);
         let server = get(context, options, "server")?;
         let event = context.string_rooted("secureConnection");
-        method(context, server, "emit", &[event, socket])?;
+        let released = method(context, socket, "_releaseControl", &[])?;
+        if context.truthy_rooted(released)? {
+            method(context, server, "emit", &[event, socket])?;
+        }
         return Ok(context.undefined());
     }
     let error = if result != openssl_sys::X509_V_OK {
@@ -545,6 +639,33 @@ pub(crate) fn secure(
     Ok(context.undefined())
 }
 
+pub(crate) fn tls_error(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = args[0];
+    let error = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let event = context.string_rooted("_tlsError");
+    method(context, socket, "emit", &[event, error])?;
+    let released = get(context, socket, "_controlReleased")?;
+    Ok(if context.truthy_rooted(released)? { error } else { context.null() })
+}
+pub(crate) fn release_control(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = args[0];
+    let released = get(context, socket, "_controlReleased")?;
+    if context.truthy_rooted(released)? { return Ok(context.boolean(false)); }
+    let yes = context.boolean(true);
+    set(context, socket, "_controlReleased", yes)?;
+    let error = context.string_rooted("error");
+    let callback = get(context, socket, "_tlsError")?;
+    method(context, socket, "removeListener", &[error, callback])?;
+    Ok(yes)
+}
 pub(crate) fn transport_error(
     context: &mut NativeContext<'_, NodeHost>,
     socket: RootId,

@@ -370,11 +370,13 @@ Original connection callbacks finish before any stream IO. Handshake completion
 waits for authorization before application IO; client verification invokes the
 original hostname callback after native chain verification.
 
-Connection delivery clears the accepted endpoint's pending state in its native
-completion operation, including when the original callback throws. Resource
-reporting derives reference state from the transport owner and includes sockets
-awaiting native close completion. The general scheduler does not infer socket
-lifecycle transitions from callback argument positions.
+Connection and data delivery release their transport gates in native completion
+operations, including when the original callback throws. Each read delivers its
+bytes before another physical read, so callbacks can destroy or otherwise change
+the socket before more input is consumed. Resource reporting derives reference
+state from the transport owner, including accepted sockets inside connection
+callbacks and handles awaiting native close completion. The general scheduler
+does not infer socket lifecycle transitions from callback argument positions.
 
 SSL writes retain their retry extent while queued data appends. Readiness returns
 to the event loop; native SSL errors keep their typed payload and shared error
@@ -382,6 +384,23 @@ projection. TLS close_notify becomes readable EOF. Duplex data/end/finish owns
 destruction so coalesced payload and EOF drain before close. HTTP endpoints keep
 their explicit EOF policy. Temporary native SSL error stacks are consumed by
 queued guest callbacks and cleared at cleanup.
+
+TLSSocket construction owns a real SSL session before a physical connection
+exists. A weak VM identity owns the pending session; the SSL object transfers
+once into the canonical stream when connected. Direct clients explicitly start
+the handshake with `_start`; direct servers start automatically. Direct sockets
+emit `secure` without helper authorization or `secureConnect`, while client and
+server helpers retain their distinct authorization policies. Native weak-owner
+pruning and exit cleanup release unused pending sessions.
+
+Wrapping an existing socket transfers its unread buffered bytes to that same
+SSL input owner at next-tick initialization. Socket byte accounting observes
+native data delivery without adding a data listener that forces readable flow.
+Physical read EOF pushes null and reads zero, matching Node's stream-base path.
+Duplex half-close follows readable-end emission and defers its finalizer;
+incoming EOF does not independently shut down writes. Empty-error native SSL
+syscall EOF becomes stream EOF after handshake; real syscall and SSL failures
+retain their error projection.
 
 Independent Node peers verify encryption in both directions, exact binary data,
 class/protocol state, trusted CA/hostname success, untrusted-chain rejection,
