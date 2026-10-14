@@ -248,6 +248,18 @@ impl<H: Host> Vm<H> {
         self.set_index_slow(p, object, key, value, strict)
     }
 
+    /// `dense_array_element` of an array whose object is a record; `None` for any other base.
+    #[inline(always)]
+    pub(super) fn direct_dense_element(&self, base: Value, key: Value) -> Option<Value> {
+        let index = usize::try_from(key.as_int()?).ok()?;
+        self.heap
+            .record_array(base)?
+            .elements()
+            .get(index)
+            .copied()
+            .filter(|value| !value.is_deleted())
+    }
+
     /// The present dense element `base[key]` for a non-negative integer key: a data property.
     #[inline(always)]
     pub(super) fn dense_array_element(&self, base: Value, key: Value) -> Option<Value> {
@@ -273,17 +285,49 @@ impl<H: Host> Vm<H> {
         key: Value,
         value: Value,
     ) -> bool {
+        self.try_replace_element_of::<true>(object, key, value, crate::heap::Heap::array_mut)
+    }
+
+    /// `try_replace_dense_element` of an array whose object is a record and whose elements no
+    /// other array shares; `false` for any other object, so the write calls nothing.
+    #[inline(always)]
+    pub(super) fn try_replace_record_element(
+        &mut self,
+        object: Value,
+        key: Value,
+        value: Value,
+    ) -> bool {
+        self.try_replace_element_of::<false>(
+            object,
+            key,
+            value,
+            crate::heap::Heap::record_array_mut,
+        )
+    }
+
+    /// `try_replace_dense_element` of the array `array` finds for `object`; with `DETACH`, also
+    /// of shared elements, which the write first copies.
+    #[inline(always)]
+    fn try_replace_element_of<const DETACH: bool>(
+        &mut self,
+        object: Value,
+        key: Value,
+        value: Value,
+        array: fn(&mut crate::heap::Heap, Value) -> Option<&mut crate::heap::ArrayObject>,
+    ) -> bool {
         let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
             return false;
         };
-        let Some(array) = self.heap.array_mut(object) else {
+        let Some(array) = array(&mut self.heap, object) else {
             return false;
         };
         if array.has_indexed_descriptors() || array.is_frozen() || array.arguments_map().is_some() {
             return false;
         }
         let elements = array.elements_mut();
-        if !elements.get(index).is_some_and(|value| !value.is_deleted()) {
+        if !elements.get(index).is_some_and(|value| !value.is_deleted())
+            || (!DETACH && Rc::strong_count(elements) != 1)
+        {
             return false;
         }
         #[cfg(feature = "profile-aggregate")]
