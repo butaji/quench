@@ -1091,13 +1091,28 @@ impl<H: Host> Vm<H> {
     }
     fn insert_dynamic_atom(&mut self, name: JsString, hash: u64) -> Atom {
         let atom = (self.atom_text.len() + self.dynamic_atoms.len()) as Atom;
+        self.record_array_index_atom(name.host_string(), atom);
         self.dynamic_atoms.push(name);
         self.atom_classes.push(Default::default());
-        self.index_atom(hash, atom);
+        self.index_atom_hash(hash, atom);
         self.profile.dynamic_atom();
         atom
     }
-    pub(super) fn index_atom(&mut self, hash: u64, atom: Atom) {
+    /// Makes `atom`, spelled `name`, findable by its text and, for a canonical array index,
+    /// by that index.
+    pub(super) fn index_atom(&mut self, hash: u64, atom: Atom, name: &str) {
+        self.record_array_index_atom(name, atom);
+        self.index_atom_hash(hash, atom);
+    }
+
+    fn record_array_index_atom(&mut self, name: &str, atom: Atom) {
+        if let Some(index) = super::object_static::array_index(name) {
+            // The first atom with a text is the one text lookup finds.
+            self.array_index_atoms.entry(index).or_insert(atom);
+        }
+    }
+
+    fn index_atom_hash(&mut self, hash: u64, atom: Atom) {
         if let std::collections::hash_map::Entry::Vacant(entry) = self.atoms.entry(hash) {
             entry.insert(atom);
         } else {

@@ -682,10 +682,11 @@ impl<H: Host> Vm<H> {
         frame.context = context;
         frame.original_arguments.clear();
         frame.reflected_parameters = 0;
-        if context.callable().is_none() || function.has_restricted_legacy_caller_access() {
+        let plan = function.call_plan(atoms);
+        if context.callable().is_none() || !plan.legacy_reflection {
             return;
         }
-        let reflected = if function.reflects_live_parameters(atoms) {
+        let reflected = if plan.live_parameters {
             args.len().min(usize::from(function.params))
         } else {
             0
@@ -1432,9 +1433,15 @@ impl<H: Host> Vm<H> {
                         debug_assert_eq!(frame, pending.caller + 1);
                         let completed_frame = self.frames.pop().unwrap();
                         self.finish_frame_scopes(&completed_frame);
-                        // In-loop pushes never enter a script root, the only activation that
-                        // publishes global lexical bindings.
-                        debug_assert_ne!(completed_frame.function, super::ROOT_FUNCTION_ID);
+                        // JavaScript in-loop pushes exclude the script root. Wasm calls
+                        // share this return path and may enter defined function zero.
+                        debug_assert!(
+                            completed_frame.function != super::ROOT_FUNCTION_ID
+                                || self.programs.wasm_function_signature(
+                                    completed_frame.program,
+                                    completed_frame.function,
+                                ).is_some()
+                        );
                         self.pool_frame(completed_frame);
                         frame = pending.caller;
                         self.active_registers = self.frames[frame].registers.as_mut_ptr();
