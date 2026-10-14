@@ -26,6 +26,12 @@ per_program_timeout=10
 # Each curriculum program runs this many times so interpreter loops, not the startup paths
 # the many Node fixtures share, dominate the profile (3 repeats measured 3-7% less Score).
 curriculum_repeats=20
+# A curriculum program runs its micro workload (`microRun`) once at load, a few milliseconds
+# against a startup the Node fixtures already train; a driver keeps calling it for this long
+# in the same process, so each program's interpreter paths, not startup, carry its weight.
+# Training with only the single load-time call left the PGO build slower than a plain build
+# on NavierStokes, Crypto, Richards and Splay.
+curriculum_budget_ms=1500
 
 host="$(rustc -vV | sed -n 's/^host: //p')"
 llvm_profdata="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-profdata"
@@ -62,10 +68,20 @@ instrumented="$instrumented_dir/$profile/quench-node"
 
 # A fixed pool of profiles merged in place as programs exit keeps the raw data small.
 export LLVM_PROFILE_FILE="$data_dir/quench-%4m.profraw"
-for program in quench-bench/deegen-curriculum/*.js quench-bench/property-get.js; do
-    for _ in $(seq "$curriculum_repeats"); do
-        run_limited "$instrumented" "$program" >/dev/null 2>&1 || true
-    done
+drivers_dir="$target_dir/pgo-curriculum"
+rm -rf "$drivers_dir"
+mkdir -p "$drivers_dir"
+for program in quench-bench/deegen-curriculum/*.js; do
+    driver="$drivers_dir/$(basename "$program")"
+    {
+        cat "$program"
+        printf '\nconst trainingEnd = Date.now() + %d;\nwhile (Date.now() < trainingEnd) microRun();\n' \
+            "$curriculum_budget_ms"
+    } >"$driver"
+    run_limited "$instrumented" "$driver" >/dev/null 2>&1 || true
+done
+for _ in $(seq "$curriculum_repeats"); do
+    run_limited "$instrumented" quench-bench/property-get.js >/dev/null 2>&1 || true
 done
 while IFS= read -r fixture; do
     (cd "$(dirname "$fixture")" && run_limited "$instrumented" "$(basename "$fixture")" \
