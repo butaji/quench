@@ -225,8 +225,7 @@ impl<H: Host> Vm<H> {
         loop {
             let next = match self.heap.get(current) {
                 Some(Cell::Proxy { .. }) => return None,
-                Some(cell) => cell.object().map_or(Value::NULL, |object| object.proto()),
-                None => Value::NULL,
+                _ => self.heap.object(current).map_or(Value::NULL, |object| object.proto()),
             };
             if next.is_null() {
                 return Some(false);

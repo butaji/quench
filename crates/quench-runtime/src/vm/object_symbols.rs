@@ -46,13 +46,43 @@ impl<H: Host> Vm<H> {
             .collect()
     }
 
-    fn ordinary_own_key_values(&mut self, object: Value) -> Vec<Value> {
-        let mut values = self.indexed_name_keys(object).unwrap_or_default();
+    /// The engine-internal names an object owns, hidden from every key enumeration.
+    pub(super) fn internal_named_keys(&self, object: Value) -> Vec<Atom> {
+        let Some(data) = self.object_data(object) else {
+            return Vec::new();
+        };
+        self.ordered_shape(data)
+            .into_iter()
+            .filter(|(atom, slot)| {
+                self.heap.property_get(data, *slot).is_some()
+                    && self.atom_name(*atom).starts_with(INTERNAL_PROPERTY_PREFIX)
+            })
+            .map(|(atom, _)| atom)
+            .collect()
+    }
+
+    pub(super) fn ordinary_own_key_values(
+        &mut self,
+        object: Value,
+        include_indices: bool,
+    ) -> Vec<Value> {
+        let mut values = if include_indices {
+            self.indexed_name_keys(object).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let Some(data) = self.object_data(object) else {
             return values;
         };
         let shape = data.shape();
-        let strings = self.own_named_keys(object);
+        let strings = self
+            .own_named_keys(object)
+            .into_iter()
+            .filter(|atom| {
+                include_indices
+                    || super::object_static::array_index(self.atom_name(*atom)).is_none()
+            })
+            .collect::<Vec<_>>();
         let symbols = self
             .shape_keys(shape)
             .iter()
@@ -180,21 +210,15 @@ impl<H: Host> Vm<H> {
         object: Value,
     ) -> Result<Vec<Value>, JsError> {
         let keys = self.object_own_keys(p, object)?;
-        Ok(match self.heap.get(keys) {
-            Some(Cell::Array {
-                object: array_object,
-            }) => {
-                let elements = array_object.elements();
-                elements
+        Ok(self.heap.array_elements(keys).map_or_else(Vec::new, |elements| {
+            elements
                 .iter()
                 .copied()
                 .filter(|key| {
                     !matches!(self.heap.get(*key), Some(Cell::String(name)) if name.host_string().starts_with("\0quench:"))
                 })
                 .collect()
-            }
-            _ => Vec::new(),
-        })
+        }))
     }
 
     pub(super) fn same_property_key(&self, left: Value, right: Value) -> bool {
@@ -212,15 +236,10 @@ impl<H: Host> Vm<H> {
         source: Value,
         exclusions: Value,
     ) -> Result<(), JsError> {
-        let excluded = match self.heap.get(exclusions) {
-            Some(Cell::Array {
-                object: array_object,
-            }) => {
-                let elements = array_object.elements();
-                elements.as_ref().clone()
-            }
-            _ => Vec::new(),
-        };
+        let excluded = self
+            .heap
+            .array_elements(exclusions)
+            .map_or_else(Vec::new, |elements| elements.as_ref().clone());
         self.copy_enumerable_properties(
             p,
             target,
@@ -430,7 +449,7 @@ impl<H: Host> Vm<H> {
         }
         let target = self.box_object(object)?;
         self.evaluate_deferred_namespace_for_key(p, target, None)?;
-        let values = self.ordinary_own_key_values(target);
+        let values = self.ordinary_own_key_values(target, true);
         Ok(self.own_keys_array(values))
     }
 }

@@ -43,6 +43,61 @@ pub fn report_allocator_memory(phase: &str) {
     }
 }
 
+#[cfg(all(target_os = "linux", target_env = "gnu", feature = "profile-memory"))]
+pub fn report_allocator_memory(phase: &str) {
+    #[repr(C)]
+    struct MallInfo2 {
+        arena: usize,
+        ordblks: usize,
+        smblks: usize,
+        hblks: usize,
+        hblkhd: usize,
+        usmblks: usize,
+        fsmblks: usize,
+        uordblks: usize,
+        fordblks: usize,
+        keepcost: usize,
+    }
+
+    unsafe extern "C" {
+        fn mallinfo2() -> MallInfo2;
+    }
+
+    fn smaps_rollup_kilobytes(field: &str) -> Option<usize> {
+        let contents = std::fs::read_to_string("/proc/self/smaps_rollup").ok()?;
+        let line = contents.lines().find(|line| line.starts_with(field))?;
+        let kilobytes = line.split_whitespace().nth(1)?.parse::<usize>().ok()?;
+        Some(kilobytes * 1024)
+    }
+
+    // SAFETY: mallinfo2 returns glibc allocator counters for the current process.
+    let malloc = unsafe { mallinfo2() };
+    let rss_bytes = smaps_rollup_kilobytes("Rss:");
+    let anonymous_bytes = smaps_rollup_kilobytes("Anonymous:");
+    let private_dirty_bytes = smaps_rollup_kilobytes("Private_Dirty:");
+    eprintln!(
+        "{{\"kind\":\"quench-allocator-memory\",\"phase\":\"{phase}\",\"arena_bytes\":{},\"free_chunks\":{},\"small_free_chunks\":{},\"mapped_chunks\":{},\"mapped_bytes\":{},\"max_in_use_bytes\":{},\"small_free_bytes\":{},\"in_use_bytes\":{},\"free_bytes\":{},\"releasable_bytes\":{},\"rss_bytes\":{},\"anonymous_bytes\":{},\"private_dirty_bytes\":{}}}",
+        malloc.arena,
+        malloc.ordblks,
+        malloc.smblks,
+        malloc.hblks,
+        malloc.hblkhd,
+        malloc.usmblks,
+        malloc.fsmblks,
+        malloc.uordblks,
+        malloc.fordblks,
+        malloc.keepcost,
+        json_bytes(rss_bytes),
+        json_bytes(anonymous_bytes),
+        json_bytes(private_dirty_bytes),
+    );
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu", feature = "profile-memory"))]
+fn json_bytes(bytes: Option<usize>) -> String {
+    bytes.map_or_else(|| "null".to_string(), |bytes| bytes.to_string())
+}
+
 #[cfg(target_os = "macos")]
 #[repr(C)]
 #[derive(Default)]
@@ -64,5 +119,8 @@ struct TimeValue {
     microseconds: i32,
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(
+    target_os = "macos",
+    all(target_os = "linux", target_env = "gnu", feature = "profile-memory")
+)))]
 pub fn report_allocator_memory(_: &str) {}

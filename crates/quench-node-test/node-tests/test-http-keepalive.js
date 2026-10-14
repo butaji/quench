@@ -18,11 +18,13 @@ server.listen(0, '127.0.0.1', () => {
   client.setEncoding('utf8');
 
   function consume() {
-    const m = buf.match(
-      /^HTTP\/1\.1 200 OK\r\nContent-Length: (\d+)\r\nConnection: keep-alive\r\n\r\n/
-    );
+    const m = buf.match(/^HTTP\/1\.1 200 OK\r\n([\s\S]*?)\r\n\r\n/);
     if (!m) return;
-    const len = +m[1];
+    const length = m[1].match(/(?:^|\r\n)Content-Length: (\d+)/i);
+    const connection = m[1].match(/(?:^|\r\n)Connection: ([^\r\n]+)/i);
+    assert.ok(length, 'response Content-Length header');
+    assert.ok(connection && connection[1].toLowerCase() === 'keep-alive', 'response keep-alive header');
+    const len = +length[1];
     const headLen = m[0].length;
     if (buf.length < headLen + len) return;
     bodies.push(buf.slice(headLen, headLen + len));

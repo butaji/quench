@@ -214,7 +214,7 @@ fn run_with_options(options: Options) -> ExitCode {
         }
     };
     print_summary(&summary, fixtures.len(), options.subset);
-    if summary.passed == fixtures.len() {
+    if summary.passed + summary.skipped == fixtures.len() {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)

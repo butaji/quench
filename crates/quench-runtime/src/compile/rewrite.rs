@@ -37,7 +37,7 @@ fusion_recipes! {
     ConstantLeft: [LoadConst, Binary] =>
         |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
             let result = first.result_register();
-            let constant = Operand::constant(first.constant_index() as u32);
+            let constant = Operand::constant(first.constant_index() as u32)?;
             if second.operand_b().register_index() != Some(result) { return None; }
             second.set_operand_b(constant);
             if second.operand_c().register_index() == Some(result) {
@@ -48,7 +48,7 @@ fusion_recipes! {
     ConstantRight: [LoadConst, Binary] =>
         |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
             if second.operand_c().register_index() != Some(first.result_register()) { return None; }
-            second.set_operand_c(Operand::constant(first.constant_index() as u32));
+            second.set_operand_c(Operand::constant(first.constant_index() as u32)?);
             Some(second)
         };
     StoreLoadLocal: [StoreLocal, LoadLocal] =>
@@ -652,7 +652,12 @@ fn relocate_source_positions(
             continue;
         };
         let location = (position.line, position.column);
-        if previous_location == Some(location) {
+        // Call anchors are observable even when their location matches a
+        // preceding Move that a later pass may remove.
+        if previous_location == Some(location)
+            && old_code[anchor].op().control_flow_layout()
+                != crate::bytecode::ControlFlowLayout::Call
+        {
             continue;
         }
         relocated.push(crate::bytecode::SourcePosition {
@@ -686,7 +691,7 @@ mod tests {
             Op::Binary,
             7,
             Operand::register(2).0,
-            Operand::constant(3).0,
+            Operand::constant(3).unwrap().0,
             6,
         );
         let branch = Instr::new(Op::JumpFalse, 7, 0, 0, 41);
@@ -960,7 +965,7 @@ mod tests {
             Instr::new(
                 Op::Binary,
                 2,
-                Operand::constant(1).0,
+                Operand::constant(1).unwrap().0,
                 Operand::local(0).0,
                 8,
             ),
@@ -968,7 +973,7 @@ mod tests {
                 Op::Binary,
                 3,
                 Operand::register(2).0,
-                Operand::constant(2).0,
+                Operand::constant(2).unwrap().0,
                 8,
             ),
             Instr::new(Op::MakeObject2, 4, 1, 3, 0),

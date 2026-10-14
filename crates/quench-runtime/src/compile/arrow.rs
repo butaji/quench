@@ -169,6 +169,8 @@ impl Compiler<'_> {
             handlers: function.handlers,
             register_root_offset: u32::MAX,
             undefined_register,
+            parameter_registers: None,
+            initial_register: Default::default(),
         };
         self.functions[id as usize] = Some(result);
         id

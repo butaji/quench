@@ -159,13 +159,9 @@ impl<H: Host> Vm<H> {
                         .unwrap_or(Value::UNDEFINED),
                 };
                 let result = self.heap.root_value(result_root).unwrap();
-                let Some(Cell::Array {
-                    object: array_object,
-                }) = self.heap.get_mut(result)
-                else {
+                let Some(elements) = self.heap.array_elements_mut(result) else {
                     unreachable!("fresh copy target remains an array");
                 };
-                let elements = array_object.elements_mut();
                 Rc::make_mut(elements).push(value);
             }
             Ok(self.heap.root_value(result_root).unwrap())

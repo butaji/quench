@@ -303,13 +303,36 @@ impl<H: Host> Vm<H> {
             let length = memory.byte_length().ok_or_else(|| {
                 JsError::validation("Wasm memory allocation exceeds host address space".into())
             })?;
-            let mut bytes = Vec::new();
-            bytes
-                .try_reserve_exact(length)
-                .map_err(|_| JsError::validation("Wasm memory allocation failed".into()))?;
-            bytes.resize(length, 0);
+            // An unshared memory32 lives in a guarded reservation in both
+            // modes: its pages commit as they are first touched, and growth
+            // never copies. Compiled code also relies on the guard in place
+            // of bounds checks, and on the memory repeating above 2^32 to
+            // form i32 sums in 64 bits; the interpreter forms no addresses
+            // that way, so its memory stays private anonymous pages. The
+            // guard covers exactly the bytes past the memory's length only
+            // when every length is a whole number of host pages.
+            let wraps = self.execution_mode == super::ExecutionMode::Compiled;
+            let guarded = (!memory.ty.shared
+                && !memory.ty.memory64
+                && (memory.ty.page_size() as usize).is_multiple_of(crate::wasm::memory::HOST_PAGE))
+            .then(|| crate::wasm::memory::LinearBytes::reserved(length, wraps))
+            .flatten();
+            let bytes = match guarded {
+                Some(bytes) => bytes,
+                None => {
+                    let mut bytes = Vec::new();
+                    bytes
+                        .try_reserve_exact(length)
+                        .map_err(|_| JsError::validation("Wasm memory allocation failed".into()))?;
+                    bytes.resize(length, 0);
+                    crate::wasm::memory::LinearBytes::heap(bytes)
+                }
+            };
             values.push(self.heap.alloc(Cell::WasmMemory {
-                bytes: std::sync::Arc::new(crate::wasm::memory::MemoryStorage::new(bytes)),
+                bytes: std::rc::Rc::new(crate::wasm::memory::MemoryStorage::new(
+                    bytes,
+                    memory.ty.shared,
+                )),
                 ty: Box::new(memory.ty),
             }));
         }
@@ -1008,6 +1031,126 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// An i32 operator on a validated i32 register and an i32 right operand.
+    #[inline(always)]
+    pub(super) fn wasm_i32_binary(
+        &mut self,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+        operator: crate::wasm::integer::I32BinaryOperator,
+        right: i32,
+    ) -> Result<(), JsError> {
+        let left = self.read(f, i.register_b()).wasm_bits32() as i32;
+        let value = operator
+            .evaluate(left, right)
+            .map_err(JsError::wasm_trap_error)?;
+        self.write(f, i.result_register(), Value::integer(value));
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(super) fn wasm_i32_jump(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+        pc: &mut usize,
+        comparison: crate::wasm::integer::I32BinaryOperator,
+    ) -> Result<(), JsError> {
+        let left = self.read(f, i.register_a()).wasm_bits32() as i32;
+        let right = self.read(f, i.register_b()).wasm_bits32() as i32;
+        let taken = comparison
+            .evaluate(left, right)
+            .map_err(JsError::wasm_trap_error)?
+            != 0;
+        self.wasm_jump(p, f, i, pc, taken);
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(super) fn wasm_i32_constant_jump(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+        pc: &mut usize,
+        comparison: crate::wasm::integer::I32BinaryOperator,
+    ) -> Result<(), JsError> {
+        let left = self.read(f, i.register_a()).wasm_bits32() as i32;
+        let right = i32::from(i.b() as i16);
+        let taken = comparison
+            .evaluate(left, right)
+            .map_err(JsError::wasm_trap_error)?
+            != 0;
+        self.wasm_jump(p, f, i, pc, taken);
+        Ok(())
+    }
+
+    /// Take a Wasm conditional jump. Backward edges are collection safepoints,
+    /// like the unconditional `Jump` that closes every loop iteration.
+    #[inline(always)]
+    pub(super) fn wasm_jump(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+        pc: &mut usize,
+        taken: bool,
+    ) {
+        if taken {
+            let target = i.jump_target() as usize;
+            let backward = target < *pc;
+            *pc = target;
+            if backward {
+                self.frames[f].pc = target;
+                self.maybe_collect(p);
+            }
+        }
+    }
+
+    /// Memory32 effective address of a direct access: the i32 operand plus
+    /// the static offset, computed without overflow in the 64-bit domain.
+    #[inline(always)]
+    fn wasm_direct_address(
+        &self,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+    ) -> Result<u64, JsError> {
+        let address = Self::wasm_u32_operand(self.read(f, i.register_c()))?;
+        Ok(u64::from(address) + u64::from(i.imm()))
+    }
+
+    #[inline(always)]
+    pub(super) fn wasm_direct_load(
+        &mut self,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+    ) -> Result<(), JsError> {
+        let operator = crate::wasm::memory::MemoryLoad::from_direct_op(i.op())
+            .expect("validated direct load opcode");
+        let address = self.wasm_direct_address(f, i)?;
+        let memory = self.read(f, i.register_b());
+        let value = operator
+            .read(&self.wasm_memory_bytes(memory)?, address)
+            .map_err(JsError::wasm_trap_error)?;
+        let value = self.encode_wasm_value(value);
+        self.write(f, i.result_register(), value);
+        Ok(())
+    }
+
+    #[inline(always)]
+    pub(super) fn wasm_direct_store(
+        &mut self,
+        f: usize,
+        i: crate::bytecode::WideInstruction,
+    ) -> Result<(), JsError> {
+        let operator = crate::wasm::memory::MemoryStore::from_direct_op(i.op())
+            .expect("validated direct store opcode");
+        let address = self.wasm_direct_address(f, i)?;
+        let memory = self.read(f, i.register_b());
+        self.wasm_memory_store(memory, address, operator, self.read(f, i.register_a()))
+    }
+
     pub(super) fn wasm_memory_store(
         &mut self,
         memory: Value,
@@ -1119,11 +1262,9 @@ impl<H: Host> Vm<H> {
             return Ok(None);
         };
         let before = bytes.capacity();
-        let extra = length - bytes.len();
-        if bytes.try_reserve_exact(extra).is_err() {
+        if !bytes.grow_to(length) {
             return Ok(None);
         }
-        bytes.resize(length, 0);
         let after = bytes.capacity();
         drop(bytes);
         self.heap.adjust_external_bytes(before, after);
@@ -1133,7 +1274,7 @@ impl<H: Host> Vm<H> {
     fn register_wasm_program(&mut self, module: &crate::WasmModule) -> Result<ProgramId, JsError> {
         let program = &module.program;
         if self.programs.len() == 0 {
-            self.initialize_shared(program)?;
+            self.initialize_shared(program, super::builtins::RealmScope::Core)?;
         }
         let id = if let Some(id) = self.programs.find_shared(program) {
             id
@@ -1209,7 +1350,9 @@ impl<H: Host> Vm<H> {
             .map(|value| self.encode_wasm_value(value))
             .collect::<Vec<_>>();
         let previous = self.replace_active_program(id);
+        let compiled = defined.and_then(|index| self.run_compiled(id, environment, index, &args));
         let result = match (defined, imported) {
+            _ if compiled.is_some() => compiled.expect("checked"),
             (Some(index), _) => self.call_user(
                 program,
                 index,
@@ -1222,6 +1365,12 @@ impl<H: Host> Vm<H> {
             _ => unreachable!("validated Wasm function target"),
         };
         self.set_active_program(previous);
+        #[cfg(feature = "profile-aggregate")]
+        if !self.profile.report_dispatch_census_if_enabled(id.raw())
+            && let Some(code) = self.programs.get(id)
+        {
+            self.profile.report(&self.heap, id.raw(), &code);
+        }
         result
     }
 
@@ -1249,13 +1398,9 @@ impl<H: Host> Vm<H> {
                 .decode_wasm_value_in(result, *ty, declarations)
                 .map(|value| vec![value]),
             types => {
-                let Some(Cell::Array {
-                    object: array_object,
-                }) = self.heap.get(result)
-                else {
+                let Some(elements) = self.heap.array_elements(result) else {
                     return Err(JsError::validation("invalid Wasm result bundle".into()));
                 };
-                let elements = array_object.elements();
                 if elements.len() != types.len() {
                     return Err(JsError::validation("Wasm result count mismatch".into()));
                 }
@@ -1301,9 +1446,25 @@ impl<H: Host> Vm<H> {
         }
         match value.bits().expect("numeric Wasm slot") {
             crate::wasm::ScalarBits::Bits32(bits) => Value::integer(bits as i32),
-            crate::wasm::ScalarBits::Bits64(bits) => self.heap.alloc(Cell::WasmBits64(bits)),
+            crate::wasm::ScalarBits::Bits64(bits) => self.encode_bits64(bits),
             crate::wasm::ScalarBits::Bits128(bits) => self.heap.alloc(Cell::WasmV128(bits)),
         }
+    }
+
+    /// A 64-bit Wasm payload as a slot value: in place unless it falls in
+    /// the tag space (`Value::from_bits64`).
+    #[inline(always)]
+    pub(crate) fn encode_bits64(&mut self, bits: u64) -> Value {
+        Value::from_bits64(bits).unwrap_or_else(|| self.heap.alloc(Cell::WasmBits64(bits)))
+    }
+
+    /// The 64-bit Wasm payload of a slot value typed i64 or f64.
+    #[inline(always)]
+    pub(crate) fn decode_bits64(&self, value: Value) -> Option<u64> {
+        value.bits64().or_else(|| match self.heap.get(value) {
+            Some(Cell::WasmBits64(bits)) => Some(*bits),
+            _ => None,
+        })
     }
 
     pub(crate) fn decode_wasm_value(
@@ -1424,8 +1585,8 @@ impl<H: Host> Vm<H> {
         }
         let bits = if let Some(bits) = value.as_int() {
             Some(crate::wasm::ScalarBits::Bits32(bits as u32))
-        } else if let Some(Cell::WasmBits64(bits)) = self.heap.get(value) {
-            Some(crate::wasm::ScalarBits::Bits64(*bits))
+        } else if let Some(bits) = self.decode_bits64(value) {
+            Some(crate::wasm::ScalarBits::Bits64(bits))
         } else if let Some(Cell::WasmV128(bits)) = self.heap.get(value) {
             Some(crate::wasm::ScalarBits::Bits128(*bits))
         } else {
@@ -1518,7 +1679,7 @@ mod tests {
         vm.release_root(owner.environment);
         vm.release_root(first.environment);
         vm.collect_now(imported.residual());
-        assert!(vm.heap.get(owner_env).is_none());
+        assert!(!vm.heap.is_live(owner_env));
         assert_eq!(vm.wasm_tag(&second, 0).unwrap(), tag);
         assert!(matches!(
             vm.heap.get(tag),
@@ -1532,7 +1693,7 @@ mod tests {
         assert_eq!(vm.heap.root_count_for_test(), roots);
         vm.release_root(second.environment);
         vm.collect_now(imported.residual());
-        assert!(vm.heap.get(tag).is_none());
+        assert!(!vm.heap.is_live(tag));
     }
 
     #[test]
@@ -1612,7 +1773,7 @@ mod tests {
             vm.release_root(owner.environment);
             vm.release_root(first.environment);
             vm.collect_now(imported.residual());
-            assert!(vm.heap.get(owner_env).is_none());
+            assert!(!vm.heap.is_live(owner_env));
             assert!(matches!(
                 vm.heap.get(memory),
                 Some(Cell::WasmMemory { ty, .. }) if ty.maximum == Some(3)
@@ -1640,7 +1801,7 @@ mod tests {
             assert_eq!(vm.heap.root_count_for_test(), roots);
             vm.release_root(second.environment);
             vm.collect_now(imported.residual());
-            assert!(vm.heap.get(memory).is_none());
+            assert!(!vm.heap.is_live(memory));
         }
     }
 
@@ -1977,7 +2138,7 @@ mod tests {
         assert!(vm.release_root(first.environment));
         assert!(vm.release_root(handle));
         vm.collect_now(importer.residual());
-        assert!(vm.heap.get(owner_env).is_some());
+        assert!(vm.heap.is_live(owner_env));
         assert_eq!(
             vm.invoke_wasm(&second, 0, &[]).unwrap(),
             Some(WasmValue::I64(i64::MAX))
@@ -2068,8 +2229,8 @@ mod tests {
         );
         assert!(vm.release_root(third.environment));
         vm.collect_now(importer.residual());
-        assert!(vm.heap.get(owner_env).is_none());
-        assert!(vm.heap.get(function).is_none());
+        assert!(!vm.heap.is_live(owner_env));
+        assert!(!vm.heap.is_live(function));
     }
 
     #[test]
@@ -2120,8 +2281,8 @@ mod tests {
         assert!(vm.release_root(handle));
         assert!(vm.release_root(first.environment));
         vm.collect_now(importer.residual());
-        assert!(vm.heap.get(first_env).is_none());
-        assert!(vm.heap.get(payload).is_some());
+        assert!(!vm.heap.is_live(first_env));
+        assert!(vm.heap.is_live(payload));
         assert_eq!(
             vm.wasm_global(&second, 0).unwrap(),
             crate::WasmValue::ExternRef(payload)
@@ -2133,8 +2294,8 @@ mod tests {
             )));
         vm.wasm_global_store(binding, replacement).unwrap();
         vm.collect_now(importer.residual());
-        assert!(vm.heap.get(payload).is_none());
-        assert!(vm.heap.get(replacement).is_some());
+        assert!(!vm.heap.is_live(payload));
+        assert!(vm.heap.is_live(replacement));
         let third_handle = vm.root(vm.wasm_global_binding(&second, 0).unwrap());
         let third = vm
             .instantiate_wasm_module_with_imports(&importer, &[third_handle])
@@ -2156,8 +2317,8 @@ mod tests {
         assert_eq!(vm.heap.root_count_for_test(), roots);
         assert!(vm.release_root(third.environment));
         vm.collect_now(importer.residual());
-        assert!(vm.heap.get(binding).is_none());
-        assert!(vm.heap.get(replacement).is_none());
+        assert!(!vm.heap.is_live(binding));
+        assert!(!vm.heap.is_live(replacement));
     }
 
     #[test]
@@ -2458,8 +2619,8 @@ mod tests {
             !vm.heap.should_collect(),
             "instantiation is a collection boundary"
         );
-        assert!(vm.heap.get(first_memory).is_some());
-        assert!(vm.heap.get(second_memory).is_some());
+        assert!(vm.heap.is_live(first_memory));
+        assert!(vm.heap.is_live(second_memory));
         assert!(vm.release_root(third.environment));
         assert!(
             vm.execute_wasm(&module.function(0).unwrap(), &[crate::WasmValue::I64(0)])
@@ -2501,8 +2662,8 @@ mod tests {
                 .is_err()
         );
         vm.collect_now(module.residual());
-        assert!(vm.heap.get(first_memory).is_none());
-        assert!(vm.heap.get(second_memory).is_some());
+        assert!(!vm.heap.is_live(first_memory));
+        assert!(vm.heap.is_live(second_memory));
         assert!(vm.frames.is_empty());
     }
 
@@ -2669,6 +2830,50 @@ mod tests {
         assert_eq!(vm.execute_wasm_i32(&function, &[7]).unwrap(), Some(7));
         assert_eq!(vm.active_program, ProgramId::MAIN);
         assert_eq!(vm.programs.len(), 2);
+    }
+
+    #[test]
+    fn counted_loop_steps_once_when_its_safepoint_leaves_the_lane() {
+        // loop: count += 1; n -= 1 (local.tee) ; br_if loop. The step and test
+        // lower to one fused counter-jump, whose safepoint may hand the jump to
+        // the general path; the step must still apply exactly once.
+        let function = crate::Engine::lower_wasm_i32_function(
+            "counted-loop-safepoint",
+            1,
+            1,
+            true,
+            [
+                Operator::Loop {
+                    blockty: wasmparser::BlockType::Empty,
+                },
+                Operator::LocalGet { local_index: 1 },
+                Operator::I32Const { value: 1 },
+                Operator::I32Add,
+                Operator::LocalSet { local_index: 1 },
+                Operator::LocalGet { local_index: 0 },
+                Operator::I32Const { value: -1 },
+                Operator::I32Add,
+                Operator::LocalTee { local_index: 0 },
+                Operator::BrIf { relative_depth: 0 },
+                Operator::End,
+                Operator::LocalGet { local_index: 1 },
+                Operator::End,
+            ]
+            .into_iter()
+            .map(Ok),
+        )
+        .unwrap();
+        assert!(
+            function
+                .residual()
+                .disassemble()
+                .contains("WasmI32AddImmediateJumpNonZero")
+        );
+        let mut vm = Vm::new(crate::SystemHost);
+        let script = crate::Engine::specialize("void 0", "counted-loop-host.js").unwrap();
+        vm.execute(&script).unwrap();
+        vm.heap.make_collection_due_for_test();
+        assert_eq!(vm.execute_wasm_i32(&function, &[5]).unwrap(), Some(5));
     }
 
     #[test]

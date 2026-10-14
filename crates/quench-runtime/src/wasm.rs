@@ -25,6 +25,7 @@ pub(crate) const INDEX_GROW_FAILURE: i64 = -1;
 
 pub use memory::{WasmData, WasmDataMode, WasmMemory};
 mod control;
+mod inline;
 mod scalar;
 mod types;
 pub use types::WasmTypes;
@@ -39,7 +40,7 @@ pub(crate) mod conversion;
 pub(crate) mod float;
 pub(crate) mod i31;
 pub(crate) mod integer;
-mod numeric;
+pub(crate) mod numeric;
 pub(crate) mod reference;
 use control::{Control, Reachability};
 use conversion::ScalarConversionOperator;
@@ -562,6 +563,41 @@ impl Engine {
     where
         I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
     {
+        Self::lower_wasm_module_for(
+            crate::ExecutionMode::Interpreted,
+            name,
+            bodies,
+            types,
+            globals,
+            memories,
+            data,
+            tables,
+            elements,
+            imports,
+            tags,
+        )
+    }
+
+    /// Lower a module for the execution mode that will run it: the residual
+    /// shape (which calls are inlined) follows the mode's cost of a call;
+    /// its meaning does not.
+    #[allow(clippy::too_many_arguments)]
+    pub fn lower_wasm_module_for<'a, I>(
+        mode: crate::ExecutionMode,
+        name: &str,
+        bodies: impl IntoIterator<Item = WasmFunctionBody<I>>,
+        types: &WasmTypes,
+        globals: &[WasmGlobal],
+        memories: &[WasmMemory],
+        data: &[WasmData],
+        tables: &[WasmTable],
+        elements: &[WasmElement],
+        imports: &[WasmFunctionImport],
+        tags: &[WasmTag],
+    ) -> Result<WasmModule, Diagnostic>
+    where
+        I: IntoIterator<Item = Result<Operator<'a>, BinaryReaderError>>,
+    {
         if tables
             .iter()
             .any(|table| !table::supported_table(&table.ty, types))
@@ -685,6 +721,23 @@ impl Engine {
         }
         let mut constants = vec![Constant::Number(0.0), Constant::Undefined];
         let mut functions = Vec::with_capacity(bodies.len());
+        let bodies = bodies
+            .into_iter()
+            .map(|(locals, operators)| {
+                // Reserve to the source's bound instead of doubling: a large
+                // body's untouched capacity stays unmapped, and no grow copies
+                // the whole body while the old buffer is still live.
+                let operators = operators.into_iter();
+                let mut collected = Vec::with_capacity(operators.size_hint().1.unwrap_or(0));
+                for operator in operators {
+                    collected
+                        .push(operator.map_err(|e| Diagnostic::unsupported(name, e.to_string()))?);
+                }
+                Ok((locals, collected))
+            })
+            .collect::<Result<Vec<_>, Diagnostic>>()?;
+        let bodies = inline::inline_leaf_calls(bodies, &signature_pool, inline::leaf_budget(mode))
+            .ok_or_else(|| Diagnostic::unsupported(name, "too many Wasm locals"))?;
         for (index, (locals, operators)) in bodies.into_iter().enumerate() {
             let index = u32::try_from(index)
                 .map_err(|_| Diagnostic::unsupported(name, "too many Wasm functions"))?;
@@ -698,10 +751,39 @@ impl Engine {
                 .checked_add(locals.len())
                 .and_then(|count| u16::try_from(count).ok())
                 .ok_or_else(|| error("too many Wasm locals"))?;
+            // Instance bindings the body uses get registers loaded once per call.
+            let mut reserved: Register = 0;
+            let mut reserve = |used: bool| {
+                let register = used.then_some(reserved);
+                reserved += Register::from(used);
+                register
+            };
+            let memory_registers: Vec<_> = memory::direct_access_memories(memories, &operators)
+                .into_iter()
+                .map(&mut reserve)
+                .collect();
+            let global_registers: Vec<_> = accessed_globals(globals.len(), &operators)
+                .into_iter()
+                .map(&mut reserve)
+                .collect();
+            let local_base = (usize::from(reserved) + usize::from(local_count)
+                <= MAX_REGISTER_LOCALS)
+                .then_some(reserved);
+            if local_base.is_some() {
+                reserved += local_count;
+            }
             let mut lowering = Lowering {
+                fusion_floor: 0,
                 name,
                 locals: local_count,
+                temporary_base: if local_base.is_some() { 0 } else { local_count },
                 temporary_locals: 0,
+                memory_registers,
+                global_registers,
+                local_base,
+                aliases: Vec::new(),
+                producer: None,
+                previous: None,
                 code: Vec::new(),
                 wide: Vec::new(),
                 constants,
@@ -713,30 +795,40 @@ impl Engine {
                 elements,
                 tags,
                 handlers: vec![],
-                depth: 0,
-                registers: 1,
-                controls: vec![Control::function(results)],
+                depth: reserved,
+                // The function base register always exists: it carries a void result.
+                registers: reserved + 1,
+                controls: vec![Control::function(reserved, results)],
                 path: Reachability::Live,
             };
             // Defaultable locals get residual defaults; others remain uninitialized.
             // The frontend proves assignment before non-defaultable local reads.
-            for (index, ty) in locals.into_iter().enumerate() {
-                if ty.is_defaultable() {
-                    match ty {
-                        wasmparser::ValType::Ref(_) => {
-                            let constant = lowering.append_constant(Constant::Null)?;
-                            lowering.emit(Op::LoadConst, 0, 0, 0, constant)?;
-                        }
-                        _ => lowering
-                            .load_zero(0, WasmType::from_wasm(ty).expect("numeric local type"))?,
+            if let Some(base) = local_base {
+                lowering.fill_register_locals(base, params, &locals, &operators)?;
+            } else {
+                for (index, ty) in locals.into_iter().enumerate() {
+                    if ty.is_defaultable() {
+                        let slot = usize::from(params) + index;
+                        lowering.load_default(0, ty)?;
+                        lowering.emit(Op::StoreLocal, 0, 0, 0, slot as u32)?;
                     }
-                    let slot = usize::from(params) + index;
-                    lowering.emit(Op::StoreLocal, 0, 0, 0, slot as u32)?;
                 }
             }
+            let global_slots = lowering.global_registers.iter().copied().enumerate();
+            let memory_slots = lowering
+                .memory_registers
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(memory, register)| (lowering.globals.len() + memory, register));
+            let bindings: Vec<_> = global_slots
+                .chain(memory_slots)
+                .filter_map(|(slot, register)| Some((slot, register?)))
+                .collect();
+            for (slot, register) in bindings {
+                lowering.emit(Op::WasmInstanceBinding, register, 0, 0, slot as u32)?;
+            }
             for operator in operators {
-                let operator =
-                    operator.map_err(|e| Diagnostic::unsupported(name, e.to_string()))?;
                 if lowering.controls.is_empty() {
                     return Err(error("operators after Wasm function end"));
                 }
@@ -768,7 +860,7 @@ impl Engine {
                 arguments_slot: None,
                 simple_parameters: true,
                 strict: true,
-                locals: lowering.locals + lowering.temporary_locals,
+                locals: lowering.temporary_base + lowering.temporary_locals,
                 local_atoms: vec![],
                 environment_atoms: vec![],
                 selective_capture_slots: None,
@@ -797,6 +889,8 @@ impl Engine {
                 handlers: lowering.handlers,
                 register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
                 undefined_register: None,
+                parameter_registers: lowering.local_base,
+                initial_register: crate::bytecode::InitialRegister::I32Zero,
             };
             functions.push(function);
             constants = lowering.constants;
@@ -809,6 +903,7 @@ impl Engine {
             module_imports: vec![],
             module_link_plan: None,
             source_name: name.into(),
+            source: None,
             atoms: AtomTable::default(),
             constants,
             functions,
@@ -973,12 +1068,6 @@ mod tests {
     #[test]
     fn residual_validation_rejects_unknown_wasm_numeric_selectors() {
         for (operator, opcode, ty, result_type) in [
-            (
-                Operator::I32Add,
-                Op::WasmI32Binary,
-                WasmType::I32,
-                WasmType::I32,
-            ),
             (
                 Operator::I32Eqz,
                 Op::WasmI32Unary,
@@ -1253,6 +1342,9 @@ mod tests {
 }
 
 struct Lowering<'a> {
+    /// Instructions from here on follow the last label, so a later
+    /// instruction may fuse into them without a jump landing between.
+    fusion_floor: usize,
     signatures: &'a mut WasmSignatures,
     globals: &'a [WasmGlobal],
     memories: &'a [WasmMemory],
@@ -1263,7 +1355,23 @@ struct Lowering<'a> {
     handlers: Vec<crate::bytecode::Handler>,
     name: &'a str,
     locals: u16,
+    // Frame slots for exception payloads and saved block inputs start here:
+    // after the Wasm locals, or at zero when those live in registers.
+    temporary_base: u16,
     temporary_locals: u16,
+    // Prologue-loaded binding register per memory used by direct accesses.
+    memory_registers: Vec<Option<Register>>,
+    // Prologue-loaded binding register per global the body reads or writes.
+    global_registers: Vec<Option<Register>>,
+    // First register of the Wasm locals when they live in frame registers.
+    local_base: Option<Register>,
+    // Operand-stack positions whose value is still a local register or a
+    // constant, by position; materialized only when a reader needs the slot.
+    aliases: Vec<Option<Alias>>,
+    // The instruction this operator emitted for the operand-stack top.
+    producer: Option<(usize, Register)>,
+    // `producer` as left by the previous operator.
+    previous: Option<(usize, Register)>,
     code: Vec<Instr>,
     wide: Vec<WideInstruction>,
     constants: Vec<Constant>,
@@ -1271,6 +1379,94 @@ struct Lowering<'a> {
     registers: u16,
     controls: Vec<Control>,
     path: Reachability,
+}
+
+/// An operand-stack value not yet copied into its position's register.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Alias {
+    Local(Register),
+    I32(i32),
+}
+
+/// Declared locals whose first textual use is a `local.set`/`local.tee` at
+/// function-body nesting: straight-line body code runs in order, so every read
+/// of such a local follows that write.
+fn first_use_assigns(params: u16, declared: usize, operators: &[Operator<'_>]) -> Vec<bool> {
+    let mut assigned = vec![false; declared];
+    let mut seen = vec![false; declared];
+    let mut nesting = 0_usize;
+    for operator in operators {
+        match operator {
+            Operator::Block { .. }
+            | Operator::Loop { .. }
+            | Operator::If { .. }
+            | Operator::Try { .. }
+            | Operator::TryTable { .. } => nesting += 1,
+            Operator::End | Operator::Delegate { .. } => nesting = nesting.saturating_sub(1),
+            Operator::LocalGet { local_index }
+            | Operator::LocalSet { local_index }
+            | Operator::LocalTee { local_index } => {
+                let Some(index) = (*local_index as usize).checked_sub(usize::from(params)) else {
+                    continue;
+                };
+                if index < declared && !seen[index] {
+                    seen[index] = true;
+                    assigned[index] =
+                        nesting == 0 && !matches!(operator, Operator::LocalGet { .. });
+                }
+            }
+            _ => {}
+        }
+    }
+    assigned
+}
+
+/// Globals the body reads or writes, by global index.
+fn accessed_globals(count: usize, operators: &[Operator<'_>]) -> Vec<bool> {
+    let mut used = vec![false; count];
+    for operator in operators {
+        if let Operator::GlobalGet { global_index } | Operator::GlobalSet { global_index } =
+            operator
+            && let Some(global) = used.get_mut(*global_index as usize)
+        {
+            *global = true;
+        }
+    }
+    used
+}
+
+/// Locals live in frame registers while the whole register file stays small.
+const MAX_REGISTER_LOCALS: usize = 4096;
+
+/// How a scalar numeric operator lowers: i32 binary operators name their own
+/// opcode; the remaining families carry their operator as a selector.
+enum NumericLowering {
+    I32Binary(I32BinaryOperator),
+    Selector(Op, u32),
+}
+
+fn numeric_operator(operator: &Operator<'_>) -> Option<NumericLowering> {
+    I32BinaryOperator::from_wasm(operator)
+        .map(NumericLowering::I32Binary)
+        .or_else(|| {
+            selector_numeric_operator(operator)
+                .map(|(op, selector)| NumericLowering::Selector(op, selector))
+        })
+}
+
+fn selector_numeric_operator(operator: &Operator<'_>) -> Option<(Op, u32)> {
+    I32UnaryOperator::from_wasm(operator)
+        .map(|op| (Op::WasmI32Unary, op as u32))
+        .or_else(|| I64BinaryOperator::from_wasm(operator).map(|op| (Op::WasmI64Binary, op as u32)))
+        .or_else(|| I64UnaryOperator::from_wasm(operator).map(|op| (Op::WasmI64Unary, op as u32)))
+        .or_else(|| {
+            ScalarConversionOperator::from_wasm(operator)
+                .map(|op| (Op::WasmScalarConvert, op as u32))
+        })
+        .or_else(|| F32BinaryOperator::from_wasm(operator).map(|op| (Op::WasmF32Binary, op as u32)))
+        .or_else(|| F32UnaryOperator::from_wasm(operator).map(|op| (Op::WasmF32Unary, op as u32)))
+        .or_else(|| F64BinaryOperator::from_wasm(operator).map(|op| (Op::WasmF64Binary, op as u32)))
+        .or_else(|| F64UnaryOperator::from_wasm(operator).map(|op| (Op::WasmF64Unary, op as u32)))
 }
 
 enum WasmCallTarget {
@@ -1313,10 +1509,42 @@ impl Lowering<'_> {
             .checked_add(1)
             .ok_or_else(|| Diagnostic::unsupported(self.name, "Wasm operand stack too large"))?;
         self.registers = self.registers.max(self.depth);
+        if let Some(alias) = self.aliases.get_mut(usize::from(register)) {
+            *alias = None;
+        }
         Ok(register)
     }
 
+    /// Pop the operand register an operator reads: a local register while the
+    /// position still aliases that local, otherwise the position's own register.
     fn pop(&mut self) -> Result<Register, Diagnostic> {
+        let position = self.pop_position()?;
+        match self.take_alias(position) {
+            Some(Alias::Local(local)) => Ok(local),
+            Some(Alias::I32(value)) => {
+                self.load_i32(position, value)?;
+                Ok(position)
+            }
+            None => Ok(position),
+        }
+    }
+
+    fn take_alias(&mut self, position: Register) -> Option<Alias> {
+        self.aliases
+            .get_mut(usize::from(position))
+            .and_then(Option::take)
+    }
+
+    /// The constant on the operand-stack top, while it is still unmaterialized.
+    fn top_i32_constant(&self) -> Option<i32> {
+        let top = usize::from(self.depth.checked_sub(1)?);
+        match self.aliases.get(top) {
+            Some(Some(Alias::I32(value))) if self.depth > self.control_base() => Some(*value),
+            _ => None,
+        }
+    }
+
+    fn pop_position(&mut self) -> Result<Register, Diagnostic> {
         if self.depth <= self.control_base() {
             return Err(Diagnostic::unsupported(
                 self.name,
@@ -1330,26 +1558,267 @@ impl Lowering<'_> {
         Ok(self.depth)
     }
 
-    fn load_i32(&mut self, result: Register, value: i32) -> Result<(), Diagnostic> {
-        self.load_scalar(result, WasmValue::I32(value))
+    /// Copy every aliased operand-stack position into its own register, so
+    /// operators that address positions directly observe ordinary values.
+    fn materialize_aliases(&mut self) -> Result<(), Diagnostic> {
+        self.aliases.truncate(usize::from(self.depth));
+        for position in 0..self.aliases.len() {
+            match self.aliases[position].take() {
+                Some(Alias::Local(local)) => {
+                    self.emit(Op::Move, position as Register, local, 0, 0)?
+                }
+                Some(Alias::I32(value)) => self.load_i32(position as Register, value)?,
+                None => {}
+            }
+        }
+        Ok(())
     }
 
-    fn load_zero(&mut self, result: Register, ty: WasmType) -> Result<(), Diagnostic> {
-        if matches!(ty, WasmType::FUNCREF | WasmType::EXTERNREF) {
-            return self.load_scalar(result, ty.default_value().unwrap());
+    /// Operators that address the operand stack only through push/pop, so an
+    /// aliased operand may be read directly from its local register.
+    fn reads_aliases(&self, operator: &Operator<'_>) -> bool {
+        matches!(
+            operator,
+            Operator::LocalGet { .. }
+                | Operator::LocalSet { .. }
+                | Operator::LocalTee { .. }
+                | Operator::Drop
+                | Operator::Nop
+                | Operator::I32Const { .. }
+                | Operator::I64Const { .. }
+                | Operator::F32Const { .. }
+                | Operator::F64Const { .. }
+                | Operator::If { .. }
+                | Operator::BrIf { .. }
+                | Operator::BrTable { .. }
+                | Operator::Select
+                | Operator::TypedSelect { .. }
+        ) || matches!(
+            operator,
+            Operator::GlobalGet { global_index } | Operator::GlobalSet { global_index }
+                if matches!(self.global_registers.get(*global_index as usize), Some(Some(_)))
+        ) || (numeric_operator(operator).is_some() && !integer::wide_integer(operator))
+            || memory::direct_access(operator).is_some_and(|(_, memarg)| {
+                matches!(
+                    self.memory_registers.get(memarg.memory as usize),
+                    Some(Some(_))
+                )
+            })
+    }
+
+    /// Materialize positions that alias `local` before the local is overwritten.
+    fn materialize_local_aliases(&mut self, local: Register) -> Result<(), Diagnostic> {
+        for position in 0..usize::from(self.depth).min(self.aliases.len()) {
+            if self.aliases[position] == Some(Alias::Local(local)) {
+                self.aliases[position] = None;
+                self.emit(Op::Move, position as Register, local, 0, 0)?;
+            }
         }
-        if matches!(ty, WasmType::I32 | WasmType::F32) {
-            return self.emit(Op::LoadConst, result, 0, 0, ZERO_LOCAL_CONSTANT);
+        Ok(())
+    }
+
+    fn push_alias(&mut self, alias: Alias) -> Result<(), Diagnostic> {
+        let position = usize::from(self.push()?);
+        if self.aliases.len() <= position {
+            self.aliases.resize(position + 1, None);
         }
-        if matches!(ty, WasmType::I64 | WasmType::F64)
-            && let Some(index) = self
-                .constants
-                .iter()
-                .position(|constant| matches!(constant, Constant::WasmBits64(0)))
+        self.aliases[position] = Some(alias);
+        Ok(())
+    }
+
+    /// Record that the last emitted instruction wrote the operand-stack top.
+    fn produced(&mut self, result: Register) {
+        self.producer = Some((self.code.len() - 1, result));
+    }
+
+    /// The previous operator's last instruction, when it alone wrote `value`
+    /// and nothing has been emitted since: it may be rewritten in place.
+    pub(super) fn previous_producer(&self, value: Register) -> Option<usize> {
+        self.previous
+            .filter(|(pc, result)| *result == value && pc + 1 == self.code.len())
+            .map(|(pc, _)| pc)
+    }
+
+    pub(super) fn instruction(&self, pc: usize) -> WideInstruction {
+        if self.code[pc].is_wide() {
+            self.wide[self.code[pc].wide_index()]
+        } else {
+            self.code[pc].as_wide()
+        }
+    }
+
+    /// Write `value` into `local`: redirect its producer when it was the
+    /// immediately preceding instruction, otherwise copy it.
+    fn store_register_local(&mut self, local: Register) -> Result<(), Diagnostic> {
+        if let Some(value) = self.top_i32_constant() {
+            let position = self.pop_position()?;
+            self.take_alias(position);
+            self.materialize_local_aliases(local)?;
+            return self.load_i32(local, value);
+        }
+        let value = self.pop()?;
+        let emitted = self.code.len();
+        self.materialize_local_aliases(local)?;
+        if value == local {
+            return Ok(());
+        }
+        if self.code.len() == emitted
+            && let Some(pc) = self.previous_producer(value)
         {
-            return self.emit(Op::LoadConst, result, 0, 0, index as u32);
+            let mut instruction = self.instruction(pc);
+            instruction.set_result_register(local);
+            self.code.pop();
+            return self.emit(
+                instruction.op(),
+                instruction.a(),
+                instruction.b(),
+                instruction.c(),
+                instruction.imm(),
+            );
         }
-        self.load_scalar(result, ty.default_value().unwrap())
+        self.emit(Op::Move, local, value, 0, 0)
+    }
+
+    /// An i32 operator in its first-class form; a constant right operand
+    /// becomes the immediate.
+    /// The last emitted instruction, when no label lies at or after it and
+    /// the next instruction may therefore replace it.
+    pub(super) fn fusable_last(&self) -> Option<(usize, crate::bytecode::WideInstruction)> {
+        let pc = self.code.len().checked_sub(1)?;
+        (pc >= self.fusion_floor).then(|| (pc, self.instruction(pc)))
+    }
+
+    /// Whether `register` holds a Wasm local rather than an operand-stack value.
+    fn is_local_register(&self, register: Register) -> bool {
+        self.local_base
+            .is_some_and(|base| (base..base + self.locals).contains(&register))
+    }
+
+    /// The shift of `(x >>> k) & m` when it was emitted last and its result
+    /// is the stack value the mask consumes: its source and amount.
+    fn take_bit_field_shift(&mut self, shifted: Register) -> Option<(Register, u16)> {
+        let (_, shift) = self.fusable_last()?;
+        if shift.op() != I32BinaryOperator::ShiftRightUnsigned.immediate_op()
+            || shift.a() != shifted
+            || self.is_local_register(shifted)
+        {
+            return None;
+        }
+        // Wasm takes shift amounts modulo the width; others keep two operators.
+        let amount = u16::try_from(shift.imm())
+            .ok()
+            .filter(|amount| u32::from(*amount) < i32::BITS)?;
+        self.code.pop();
+        Some((shift.b(), amount))
+    }
+
+    fn i32_binary(&mut self, operator: I32BinaryOperator) -> Result<(), Diagnostic> {
+        let (op, right, immediate) = match self.top_i32_constant() {
+            Some(value) => {
+                let position = self.pop_position()?;
+                self.take_alias(position);
+                (operator.immediate_op(), 0, value as u32)
+            }
+            None => (operator.register_op(), self.pop()?, 0),
+        };
+        let left = self.pop()?;
+        let result = self.push()?;
+        let bit_field = (op == I32BinaryOperator::And.immediate_op())
+            .then(|| self.take_bit_field_shift(left))
+            .flatten();
+        match bit_field {
+            Some((source, amount)) => self.emit(
+                Op::WasmI32ShiftRightUnsignedAndImmediate,
+                result,
+                source,
+                amount,
+                immediate,
+            )?,
+            None => self.emit(op, result, left, right, immediate)?,
+        }
+        self.produced(result);
+        Ok(())
+    }
+
+    /// Load a defaultable local type's default value.
+    fn load_default(
+        &mut self,
+        result: Register,
+        ty: wasmparser::ValType,
+    ) -> Result<(), Diagnostic> {
+        let constant = self.default_constant(ty)?;
+        self.emit(Op::LoadConst, result, 0, 0, constant)
+    }
+
+    fn default_constant(&mut self, ty: wasmparser::ValType) -> Result<u32, Diagnostic> {
+        let constant = match ty {
+            wasmparser::ValType::Ref(_) => Constant::Null,
+            wasmparser::ValType::I32 | wasmparser::ValType::F32 => return Ok(ZERO_LOCAL_CONSTANT),
+            ty => WasmType::from_wasm(ty)
+                .and_then(|ty| ty.default_value())
+                .and_then(|value| value.constant())
+                .ok_or_else(|| Diagnostic::unsupported(self.name, "non-defaultable Wasm local"))?,
+        };
+        let existing = self
+            .constants
+            .iter()
+            .position(|known| match (known, &constant) {
+                (Constant::Null, Constant::Null) => true,
+                (Constant::WasmBits64(known), Constant::WasmBits64(value)) => known == value,
+                (Constant::WasmV128(known), Constant::WasmV128(value)) => known == value,
+                _ => false,
+            });
+        Ok(match existing {
+            Some(index) => index as u32,
+            None => self.append_constant(constant)?,
+        })
+    }
+
+    /// Give register locals their defaults with one fill per run of locals that
+    /// share a default. A local whose first use is an unconditional top-level
+    /// `local.set` or `local.tee` is always written before it is read.
+    fn fill_register_locals(
+        &mut self,
+        base: Register,
+        params: u16,
+        locals: &[wasmparser::ValType],
+        operators: &[Operator<'_>],
+    ) -> Result<(), Diagnostic> {
+        let assigned_first = first_use_assigns(params, locals.len(), operators);
+        let mut run: Option<(Register, u16, u32)> = None;
+        for (index, ty) in locals.iter().copied().enumerate() {
+            let register = base + params + index as Register;
+            // Activations start every register at i32 zero (see
+            // `InitialRegister`), which is already the i32 and f32 default.
+            let starts_at_default =
+                matches!(ty, wasmparser::ValType::I32 | wasmparser::ValType::F32);
+            let constant = if ty.is_defaultable() && !assigned_first[index] && !starts_at_default {
+                Some(self.default_constant(ty)?)
+            } else {
+                None
+            };
+            match (run, constant) {
+                (Some((start, count, value)), Some(constant))
+                    if value == constant && start + count == register =>
+                {
+                    run = Some((start, count + 1, value));
+                }
+                (_, constant) => {
+                    if let Some((start, count, value)) = run {
+                        self.emit(Op::WasmFillRegisters, 0, start, count, value)?;
+                    }
+                    run = constant.map(|constant| (register, 1, constant));
+                }
+            }
+        }
+        if let Some((start, count, value)) = run {
+            self.emit(Op::WasmFillRegisters, 0, start, count, value)?;
+        }
+        Ok(())
+    }
+
+    fn load_i32(&mut self, result: Register, value: i32) -> Result<(), Diagnostic> {
+        self.load_scalar(result, WasmValue::I32(value))
     }
 
     fn append_constant(&mut self, value: Constant) -> Result<u32, Diagnostic> {
@@ -1439,7 +1908,13 @@ impl Lowering<'_> {
     }
 
     fn operator(&mut self, operator: Operator<'_>) -> Result<(), Diagnostic> {
+        self.previous = self.producer.take();
+        if !self.reads_aliases(&operator) {
+            self.materialize_aliases()?;
+        }
         if self.control_operator(&operator)? {
+            // Control operators bind labels at the current position.
+            self.fusion_floor = self.code.len();
             return Ok(());
         }
         if self.element_operator(&operator)? {
@@ -1464,38 +1939,14 @@ impl Lowering<'_> {
             }
             return Ok(());
         }
-        let numeric = I32BinaryOperator::from_wasm(&operator)
-            .map(|op| (Op::WasmI32Binary, op as u32))
-            .or_else(|| {
-                I32UnaryOperator::from_wasm(&operator).map(|op| (Op::WasmI32Unary, op as u32))
-            })
-            .or_else(|| {
-                I64BinaryOperator::from_wasm(&operator).map(|op| (Op::WasmI64Binary, op as u32))
-            })
-            .or_else(|| {
-                I64UnaryOperator::from_wasm(&operator).map(|op| (Op::WasmI64Unary, op as u32))
-            });
-        let numeric = numeric.or_else(|| {
-            ScalarConversionOperator::from_wasm(&operator)
-                .map(|op| (Op::WasmScalarConvert, op as u32))
-        });
-        let numeric = numeric
-            .or_else(|| {
-                F32BinaryOperator::from_wasm(&operator).map(|op| (Op::WasmF32Binary, op as u32))
-            })
-            .or_else(|| {
-                F32UnaryOperator::from_wasm(&operator).map(|op| (Op::WasmF32Unary, op as u32))
-            })
-            .or_else(|| {
-                F64BinaryOperator::from_wasm(&operator).map(|op| (Op::WasmF64Binary, op as u32))
-            })
-            .or_else(|| {
-                F64UnaryOperator::from_wasm(&operator).map(|op| (Op::WasmF64Unary, op as u32))
-            });
-        if let Some((op, selector)) = numeric {
+        if let Some(numeric) = numeric_operator(&operator) {
             if self.path == Reachability::Dead {
                 return Ok(());
             }
+            let (op, selector) = match numeric {
+                NumericLowering::I32Binary(operator) => return self.i32_binary(operator),
+                NumericLowering::Selector(op, selector) => (op, selector),
+            };
             let right = if op
                 .field_layout(crate::bytecode::InstructionField::C)
                 .is_register_field()
@@ -1506,11 +1957,18 @@ impl Lowering<'_> {
             };
             let left = self.pop()?;
             let result = self.push()?;
-            return self.emit(op, result, left, right, selector);
+            self.emit(op, result, left, right, selector)?;
+            self.produced(result);
+            return Ok(());
         }
         match operator {
-            Operator::I32Const { .. }
-            | Operator::I64Const { .. }
+            Operator::I32Const { value } => {
+                if self.path == Reachability::Live {
+                    self.push_alias(Alias::I32(value))?;
+                }
+                Ok(())
+            }
+            Operator::I64Const { .. }
             | Operator::F32Const { .. }
             | Operator::F64Const { .. }
             | Operator::V128Const { .. } => {
@@ -1519,7 +1977,6 @@ impl Lowering<'_> {
                 }
                 let result = self.push()?;
                 let value = match operator {
-                    Operator::I32Const { value } => WasmValue::I32(value),
                     Operator::I64Const { value } => WasmValue::I64(value),
                     Operator::F32Const { value } => WasmValue::F32(value.bits()),
                     Operator::F64Const { value } => WasmValue::F64(value.bits()),
@@ -1542,6 +1999,16 @@ impl Lowering<'_> {
                     ));
                 }
                 if self.path == Reachability::Dead {
+                    return Ok(());
+                }
+                if let Some(&Some(binding)) = self.global_registers.get(global_index as usize) {
+                    if write {
+                        let value = self.pop()?;
+                        return self.emit(Op::WasmGlobalSet, value, binding, 0, 0);
+                    }
+                    let result = self.push()?;
+                    self.emit(Op::WasmGlobalGet, result, binding, 0, 0)?;
+                    self.produced(result);
                     return Ok(());
                 }
                 let register = if write { self.pop()? } else { self.push()? };
@@ -1575,6 +2042,16 @@ impl Lowering<'_> {
                     ));
                 }
                 if self.path == Reachability::Dead {
+                    return Ok(());
+                }
+                if let Some(base) = self.local_base {
+                    let local = base + local_index as Register;
+                    if !matches!(operator, Operator::LocalGet { .. }) {
+                        self.store_register_local(local)?;
+                    }
+                    if !matches!(operator, Operator::LocalSet { .. }) {
+                        self.push_alias(Alias::Local(local))?;
+                    }
                     return Ok(());
                 }
                 let (op, register) = match operator {

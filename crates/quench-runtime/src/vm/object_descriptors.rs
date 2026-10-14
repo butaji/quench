@@ -351,26 +351,6 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    fn own_data_descriptor(
-        &mut self,
-        value: Value,
-        writable: bool,
-        enumerable: bool,
-        configurable: bool,
-    ) -> Result<Value, JsError> {
-        self.property_descriptor_object(
-            value,
-            PropertyAttributes {
-                writable,
-                enumerable,
-                configurable,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        )
-    }
-
     fn property_descriptor_object(
         &mut self,
         value: Value,
@@ -451,114 +431,142 @@ impl<H: Host> Vm<H> {
             if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
                 return self.proxy_own_property_descriptor(p, target, key);
             }
-            if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
-                let Some(value) = self.symbol_property(target, key) else {
-                    return Ok(Value::UNDEFINED);
-                };
-                let attributes = self
-                    .property_attributes(target, PropertyKey::symbol(key))
-                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-                return self.property_descriptor_object(value, attributes);
+            match self.ordinary_own_property(p, target, key)? {
+                Some((value, attributes)) => self.property_descriptor_object(value, attributes),
+                None => Ok(Value::UNDEFINED),
             }
-            let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
-                unreachable!("ToPropertyKey returns a string or symbol")
-            };
-            let atom = self.intern_js_atom(&key);
-            self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
-            let target = self.heap.root_value(source).unwrap();
-            if atom == self.length_atom
-                && let Some(length) = self.own_array_length(target)
-            {
-                let length_attributes = self
-                    .property_attributes(target, PropertyKey::string(self.length_atom))
-                    .expect("array length has attributes");
-                return self.property_descriptor_object(
-                    Value::number(length as f64),
-                    PropertyAttributes {
-                        enumerable: false,
-                        ..length_attributes
-                    },
-                );
-            }
-            if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
-                match Self::typed_array_index_key(key.host_string()) {
-                    TypedArrayIndexKey::Index(index)
-                        if self
-                            .typed_array_length(target)
-                            .is_some_and(|length| index < length) =>
-                    {
-                        let value = self
-                            .typed_array_get(target, index)
-                            .unwrap_or(Value::UNDEFINED);
-                        return self.own_data_descriptor(value, true, true, true);
-                    }
-                    TypedArrayIndexKey::Invalid | TypedArrayIndexKey::Index(_) => {
-                        return Ok(Value::UNDEFINED);
-                    }
-                    TypedArrayIndexKey::NotCanonical => {}
-                }
-            }
-            if let Some(index) =
-                super::object_static::array_index(key.host_string()).map(|index| index as usize)
-            {
-                let atom = self.intern_js_atom(&key);
-                let attributes = self
-                    .property_attributes(target, PropertyKey::string(atom))
-                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-                if attributes.accessor {
-                    return self.property_descriptor_object(Value::UNDEFINED, attributes);
-                }
-                let value = match self.heap.get(target) {
-                    Some(Cell::Array {
-                        object: array_object,
-                    }) => {
-                        let elements = array_object.elements();
-                        elements
-                            .get(index)
-                            .copied()
-                            .filter(|value| !value.is_deleted())
-                    }
-                    _ => None,
-                }
-                .or_else(|| {
-                    self.heap
-                        .sparse_get(target, index)
-                        .filter(|value| !value.is_deleted())
-                });
-                if let Some(value) = value {
-                    return self.property_descriptor_object(value, attributes);
-                }
-            }
-            let value = if self
-                .object_data(target)
-                .is_some_and(Object::is_module_namespace)
-            {
-                self.module_namespace_value(p, target, atom)?
-            } else {
-                self.own_property(target, atom)
-            };
-            let Some(value) = value else {
-                return Ok(Value::UNDEFINED);
-            };
-            let attributes = self
-                .property_attributes(target, PropertyKey::string(atom))
-                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
-            let writable = self
-                .object_data(target)
-                .is_some_and(Object::is_module_namespace)
-                || attributes.writable;
-            self.property_descriptor_object(
-                value,
-                PropertyAttributes {
-                    writable,
-                    ..attributes
-                },
-            )
         })();
         for root in [Some(source), Some(input), key_root].into_iter().flatten() {
             self.heap.release_root(root);
         }
         outcome
+    }
+
+    /// An own property of a non-Proxy object as its value and attributes,
+    /// without allocating a descriptor object. `key` is a property key.
+    fn ordinary_own_property(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: Value,
+    ) -> Result<Option<(Value, PropertyAttributes)>, JsError> {
+        if matches!(self.heap.get(key), Some(Cell::Symbol(_))) {
+            let Some(value) = self.symbol_property(target, key) else {
+                return Ok(None);
+            };
+            let attributes = self
+                .property_attributes(target, PropertyKey::symbol(key))
+                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+            return Ok(Some((value, attributes)));
+        }
+        let Some(Cell::String(key)) = self.heap.get(key).cloned() else {
+            unreachable!("ToPropertyKey returns a string or symbol")
+        };
+        let atom = self.intern_js_atom(&key);
+        self.evaluate_deferred_namespace_for_key(p, target, Some(PropertyKey::string(atom)))?;
+        if atom == self.length_atom
+            && let Some(length) = self.own_array_length(target)
+        {
+            let length_attributes = self
+                .property_attributes(target, PropertyKey::string(self.length_atom))
+                .expect("array length has attributes");
+            return Ok(Some((
+                Value::number(length as f64),
+                PropertyAttributes {
+                    enumerable: false,
+                    ..length_attributes
+                },
+            )));
+        }
+        if matches!(self.heap.get(target), Some(Cell::TypedArray { .. })) {
+            match Self::typed_array_index_key(key.host_string()) {
+                TypedArrayIndexKey::Index(index)
+                    if self
+                        .typed_array_length(target)
+                        .is_some_and(|length| index < length) =>
+                {
+                    let value = self
+                        .typed_array_get(target, index)
+                        .unwrap_or(Value::UNDEFINED);
+                    return Ok(Some((value, DEFAULT_PROPERTY_ATTRIBUTES)));
+                }
+                TypedArrayIndexKey::Invalid | TypedArrayIndexKey::Index(_) => {
+                    return Ok(None);
+                }
+                TypedArrayIndexKey::NotCanonical => {}
+            }
+        }
+        if let Some(index) =
+            super::object_static::array_index(key.host_string()).map(|index| index as usize)
+        {
+            let atom = self.intern_js_atom(&key);
+            let attributes = self
+                .property_attributes(target, PropertyKey::string(atom))
+                .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+            if attributes.accessor {
+                return Ok(Some((Value::UNDEFINED, attributes)));
+            }
+            let value = self
+                .heap
+                .array_elements(target)
+                .and_then(|elements| {
+                    elements
+                        .get(index)
+                        .copied()
+                        .filter(|value| !value.is_deleted())
+                })
+                .or_else(|| {
+                    self.heap
+                        .sparse_get(target, index)
+                        .filter(|value| !value.is_deleted())
+                });
+            if let Some(value) = value {
+                return Ok(Some((value, attributes)));
+            }
+        }
+        let value = if self
+            .object_data(target)
+            .is_some_and(Object::is_module_namespace)
+        {
+            self.module_namespace_value(p, target, atom)?
+        } else {
+            self.own_property(target, atom)
+        };
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        let attributes = self
+            .property_attributes(target, PropertyKey::string(atom))
+            .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES);
+        let writable = self
+            .object_data(target)
+            .is_some_and(Object::is_module_namespace)
+            || attributes.writable;
+        Ok(Some((
+            value,
+            PropertyAttributes {
+                writable,
+                ..attributes
+            },
+        )))
+    }
+
+    /// Whether `key` is an own enumerable property of `target`; `None` when it
+    /// is not an own property. Proxies answer through their traps.
+    pub(super) fn own_property_enumerable(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        key: Value,
+    ) -> Result<Option<bool>, JsError> {
+        if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
+            let descriptor = self.object_get_own_property_descriptor(p, &[target, key])?;
+            return Ok((!descriptor.is_undefined())
+                .then(|| self.descriptor_flag(descriptor, "enumerable")));
+        }
+        Ok(self
+            .ordinary_own_property(p, target, key)?
+            .map(|(_, attributes)| attributes.enumerable))
     }
 
     fn proxy_own_property_descriptor(

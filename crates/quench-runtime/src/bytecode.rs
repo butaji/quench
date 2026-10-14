@@ -13,11 +13,12 @@ mod atoms;
 mod control_flow;
 mod instruction;
 mod numeric_ops;
-pub(crate) use atoms::AtomTable;
+pub(crate) use atoms::{AtomSequence, AtomTable};
 
 /// Infix of the compiler's hidden atom for a named function expression's own binding:
 /// `{name}{SELF_BINDING_MARKER}{function id}`.
 pub(crate) const SELF_BINDING_MARKER: &str = "\0quench:self-binding:";
+pub(crate) use control_flow::branch_table_entries;
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
@@ -90,12 +91,34 @@ pub(crate) enum ResultLayout {
     NumericReturnable,
 }
 
+/// The value an activation's registers start with. Wasm functions start at
+/// i32 zero, the default of i32 and f32 locals, so those locals need no
+/// prologue fill; both values are non-references, which collection skips.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum InitialRegister {
+    #[default]
+    Undefined,
+    I32Zero,
+}
+
+impl InitialRegister {
+    pub(crate) fn value(self) -> crate::Value {
+        match self {
+            Self::Undefined => crate::Value::UNDEFINED,
+            Self::I32Zero => crate::Value::integer(0),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ControlFlowLayout {
     Fallthrough,
     Call,
     Jump,
     ConditionalJump,
+    /// Continues at one of the `Jump` entries that follow the instruction;
+    /// the immediate counts the cases before the final default entry.
+    BranchTable,
     Terminal,
 }
 
@@ -122,6 +145,8 @@ pub(crate) enum FieldLayout {
     Operand,
     NumericIndexOperand,
     BinaryOperator,
+    /// A 16-bit two's-complement operand carried in the instruction.
+    SignedConstant,
 }
 
 impl FieldLayout {
@@ -196,8 +221,10 @@ pub(crate) enum ImmediateRole {
     WasmSimdOperator,
     WasmMemoryLoadOperator,
     WasmMemoryStoreOperator,
+    WasmMemoryOffset,
+    WasmInstanceSlot,
     WasmAtomicOperator,
-    WasmI32BinaryOperator,
+    WasmI32Immediate,
     WasmI32UnaryOperator,
     WasmI31Operator,
     WasmExternalConversion,
@@ -216,6 +243,7 @@ pub(crate) enum ImmediateRole {
     TemplateSiteIndex,
     RegExpLiteralSiteIndex,
     JumpTarget,
+    BranchTableCases,
     MethodSiteIndex,
     ObjectSiteIndex,
     SuperinstructionIndex,
@@ -591,7 +619,86 @@ opcodes!(
     ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
-    WasmI32Binary => Effect::THROWS; layout Scalar; meaning WasmI32BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Add => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Subtract => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Multiply => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32DivideSigned => Effect::THROWS; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32DivideUnsigned => Effect::THROWS; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32RemainderSigned => Effect::THROWS; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32RemainderUnsigned => Effect::THROWS; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32And => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Or => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Xor => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32ShiftLeft => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32ShiftRightSigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32ShiftRightUnsigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32RotateLeft => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32RotateRight => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Equal => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32NotEqual => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32LessSigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32LessUnsigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32GreaterSigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32GreaterUnsigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32LessEqualSigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32LessEqualUnsigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32GreaterEqualSigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32GreaterEqualUnsigned => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32AddImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32SubtractImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32MultiplyImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32DivideSignedImmediate => Effect::THROWS; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32DivideUnsignedImmediate => Effect::THROWS; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32RemainderSignedImmediate => Effect::THROWS; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32RemainderUnsignedImmediate => Effect::THROWS; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32AndImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32OrImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32XorImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32ShiftLeftImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32ShiftRightSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32ShiftRightUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32RotateLeftImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32RotateRightImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32EqualImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32NotEqualImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32LessSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32LessUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32GreaterSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32GreaterUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32LessEqualSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32LessEqualUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32GreaterEqualSignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    WasmI32GreaterEqualUnsignedImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, Unused),
+    // `(b >>> c) & imm`: a bit-field extraction fused from its two operators.
+    WasmI32ShiftRightUnsignedAndImmediate => Effect::PURE; layout Scalar; meaning WasmI32Immediate, @ Register, @ fields(ResultRegister, Register, SignedConstant),
+    // `a = b + c`, then jump when `a` is nonzero: a counted loop's step and test.
+    WasmI32AddImmediateJumpNonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(ResultRegister, Register, SignedConstant),
+    WasmInstanceBinding => Effect::READS_HEAP; layout Scalar; meaning WasmInstanceSlot, @ Register, @ fields(ResultRegister, Unused, Unused),
+    WasmFillRegisters => Effect::PURE; layout Scalar; meaning ConstantIndex, @ Register, @ fields(Unused, RegisterWindowBase, RegisterCount),
+    WasmSelect => Effect::PURE; layout RegisterPair, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmJumpI32Zero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
+    WasmJumpI32NonZero => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
+    WasmBranchTable => Effect::CONTROL; layout Scalar; meaning BranchTableCases; flow BranchTable, @ Register, @ fields(Register, Unused, Unused),
+    WasmJumpI32Equal => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
+    WasmJumpI32NotEqual => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
+    WasmJumpI32LessSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
+    WasmJumpI32LessUnsigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
+    WasmJumpI32GreaterSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
+    WasmJumpI32GreaterUnsigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
+    WasmJumpI32LessEqualSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
+    WasmJumpI32LessEqualUnsigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
+    WasmJumpI32GreaterEqualSigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
+    WasmJumpI32GreaterEqualUnsigned => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Register, Unused),
+    WasmJumpI32EqualImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32NotEqualImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32LessSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32LessUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32GreaterSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32GreaterUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32LessEqualSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32LessEqualUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32GreaterEqualSignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
+    WasmJumpI32GreaterEqualUnsignedImmediate => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, SignedConstant, Unused),
     WasmI32Unary => Effect::PURE; layout Scalar; meaning WasmI32UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmI64Binary => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmI64BinaryOperator, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI64Unary => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning WasmI64UnaryOperator, @ Register, @ fields(ResultRegister, Register, Unused),
@@ -618,6 +725,29 @@ opcodes!(
     WasmMemoryAddress => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning ConstantIndex, @ Register, @ fields(ResultRegister, Register, Register),
     WasmMemoryLoad => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryLoadOperator, @ Register, @ fields(ResultRegister, Register, Register),
     WasmMemoryStore => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryStoreOperator, @ Register, @ fields(Register, Register, Register),
+    WasmI32Load => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI64Load => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmF32Load => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmF64Load => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Load8S => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Load8U => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Load16S => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Load16U => Effect::READS_HEAP.union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI64Load8S => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI64Load8U => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI64Load16S => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI64Load16U => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI64Load32S => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI64Load32U => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(ResultRegister, Register, Register),
+    WasmI32Store => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(Register, Register, Register),
+    WasmI64Store => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(Register, Register, Register),
+    WasmF32Store => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(Register, Register, Register),
+    WasmF64Store => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(Register, Register, Register),
+    WasmI32Store8 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(Register, Register, Register),
+    WasmI32Store16 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(Register, Register, Register),
+    WasmI64Store8 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(Register, Register, Register),
+    WasmI64Store16 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(Register, Register, Register),
+    WasmI64Store32 => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmMemoryOffset, @ Register, @ fields(Register, Register, Register),
     WasmMemorySize => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
     WasmMemoryGrow => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
     WasmUnreachable => Effect::THROWS.union(Effect::CONTROL); layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Unused, Unused, Unused),
@@ -892,6 +1022,11 @@ pub struct Function {
     /// A register that holds `undefined` for the whole activation, set at frame entry and
     /// never written by code: the receiver of plain calls.
     pub(crate) undefined_register: Option<Register>,
+    /// First register of the parameters when the body keeps its locals in
+    /// registers; activation then writes arguments there, not into locals.
+    pub(crate) parameter_registers: Option<u16>,
+    /// The value every register holds when an activation starts.
+    pub(crate) initial_register: InitialRegister,
 }
 
 /// Call-setup facts derived once per function from its static layout, so an activation reads
@@ -973,6 +1108,15 @@ impl Function {
 
     pub(crate) fn arguments_are_mapped(&self) -> bool {
         !self.is_arrow && !self.strict && self.simple_parameters
+    }
+
+    /// Parameters an activation binds into frame locals.
+    pub(crate) const fn local_parameter_count(&self) -> u16 {
+        if self.parameter_registers.is_some() {
+            0
+        } else {
+            self.params
+        }
     }
 
     pub(crate) fn plain_local_context_is_safe(&self) -> bool {
@@ -1563,9 +1707,13 @@ impl Operand {
         Self(((OperandKind::Register as u16) << Self::TAG_SHIFT) | value)
     }
 
-    pub(crate) fn constant(value: u32) -> Self {
-        debug_assert!(value <= u32::from(Self::PAYLOAD_MASK));
-        Self(((OperandKind::Constant as u16) << Self::TAG_SHIFT) | value as u16)
+    /// A constant-pool operand, when the pool index fits the operand payload;
+    /// larger programs load the constant into a register instead.
+    pub(crate) fn constant(index: u32) -> Option<Self> {
+        u16::try_from(index)
+            .ok()
+            .filter(|index| *index <= Self::PAYLOAD_MASK)
+            .map(|index| Self(((OperandKind::Constant as u16) << Self::TAG_SHIFT) | index))
     }
 
     pub(crate) fn local(slot: u16) -> Self {
@@ -1768,6 +1916,32 @@ impl ProgramKind {
     }
 }
 
+/// Compiler source snapshot and wrapper origin, retained for diagnostics.
+#[derive(Clone, Debug)]
+pub(crate) struct ProgramSource {
+    pub(crate) text: std::sync::Arc<str>,
+    pub(crate) line_offset: u32,
+    pub(crate) column_offset: u32,
+}
+
+impl ProgramSource {
+    pub(crate) fn source_line(&self, line: u32) -> Option<&str> {
+        let compiled_line = line.checked_add(self.line_offset)?.checked_sub(1)?;
+        let text = self.text.lines().nth(compiled_line as usize)?;
+        if line != 1 {
+            return Some(text);
+        }
+        let mut offset = 0;
+        for (byte, character) in text.char_indices() {
+            if offset == self.column_offset {
+                return Some(&text[byte..]);
+            }
+            offset += character.len_utf16() as u32;
+        }
+        (offset == self.column_offset).then_some("")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ResidualProgram {
     pub(crate) specialized: bool,
@@ -1776,6 +1950,7 @@ pub struct ResidualProgram {
     pub(crate) module_imports: Vec<ModuleImportBinding>,
     pub(crate) module_link_plan: Option<ModuleLinkPlan>,
     pub(crate) source_name: String,
+    pub(crate) source: Option<ProgramSource>,
     pub(crate) atoms: AtomTable,
     pub(crate) constants: Vec<Constant>,
     pub(crate) functions: Vec<Function>,
@@ -1806,7 +1981,29 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16) 
 }
 
 impl ResidualProgram {
-    pub const FORMAT_VERSION: u8 = 87;
+    pub(crate) fn source_position(&self, function: u32, pc: u32) -> Option<SourcePosition> {
+        let positions = &self.functions.get(function as usize)?.source_positions;
+        let mut position = *positions.get(
+            positions
+                .partition_point(|position| position.pc <= pc)
+                .checked_sub(1)?,
+        )?;
+        if let Some(source) = &self.source {
+            position.line = position
+                .line
+                .checked_sub(source.line_offset)
+                .filter(|line| *line > 0)?;
+            if position.line == 1 {
+                position.column = position
+                    .column
+                    .checked_sub(source.column_offset)
+                    .filter(|column| *column > 0)?;
+            }
+        }
+        Some(position)
+    }
+
+    pub const FORMAT_VERSION: u8 = 88;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
@@ -1821,6 +2018,15 @@ impl ResidualProgram {
         self.is_module()
             || (self.kind == ProgramKind::Eval
                 && self.functions.first().is_some_and(|root| root.strict))
+    }
+
+    /// The root function's slots project no global var or global lexical binding, so each
+    /// slot of its environment is the binding itself.
+    pub(crate) fn root_slots_are_bindings(&self) -> bool {
+        self.functions.first().is_some_and(|root| {
+            (self.root_variables_are_local() || root.global_var_atoms.is_empty())
+                && (self.kind != ProgramKind::Script || root.global_lexical_atoms.is_empty())
+        })
     }
 
     pub fn function_count(&self) -> usize {

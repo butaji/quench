@@ -22,23 +22,17 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn array_value_at(&self, array: Value, index: usize) -> Value {
-        let value = match self.heap.get(array) {
-            Some(Cell::Array {
-                object: array_object,
-            }) => {
-                let elements = array_object.elements();
-                elements
-                    .get(index)
-                    .copied()
-                    .filter(|value| !value.is_deleted())
-                    .or_else(|| {
-                        self.heap
-                            .sparse_get(array, index)
-                            .filter(|value| !value.is_deleted())
-                    })
-            }
-            _ => None,
-        };
+        let value = self.heap.array_elements(array).and_then(|elements| {
+            elements
+                .get(index)
+                .copied()
+                .filter(|value| !value.is_deleted())
+                .or_else(|| {
+                    self.heap
+                        .sparse_get(array, index)
+                        .filter(|value| !value.is_deleted())
+                })
+        });
         value.unwrap_or(Value::UNDEFINED)
     }
 
@@ -92,6 +86,32 @@ impl<H: Host> Vm<H> {
         if length == 0 {
             self.set_array_like_length(p, object, 0)?;
             return Ok(Value::UNDEFINED);
+        }
+        // Every index is an ordinary own data element, so shifting cannot
+        // consult prototype getters/setters or run guest code. Exceptional
+        // descriptors, holes, mapped arguments and integrity states use the
+        // same ordered property algorithm below.
+        let dense = self.heap.sparse_length(object).is_none()
+            && self.heap.array(object).is_some_and(|data| {
+                let elements = data.elements();
+                data.is_extensible()
+                    && !data.is_arguments_object()
+                    && !data.has_indexed_descriptors()
+                    && elements.len() == length
+                    && elements.iter().all(|value| !value.is_deleted())
+            });
+        let writable_length = self
+            .property_attributes(
+                object,
+                super::property_key::PropertyKey::string(self.length_atom),
+            )
+            .is_some_and(|attributes| attributes.writable);
+        if dense && writable_length {
+            let elements = self
+                .heap
+                .array_elements_mut(object)
+                .expect("dense array guard");
+            return Ok(super::index::mutable_array_elements(elements).remove(0));
         }
         let first = self.get_index(p, object, Value::number(0.0))?;
         for index in 1..length {
@@ -351,7 +371,7 @@ impl<H: Host> Vm<H> {
     /// index no atom names cannot key any named property). `None` leaves every other
     /// receiver to the generic algorithm.
     fn array_push_dense(&mut self, this: Value, args: &[Value]) -> Option<Value> {
-        let Some(Cell::Array { object }) = self.heap.get(this) else {
+        let Some(object) = self.heap.array(this) else {
             return None;
         };
         if object.has_indexed_descriptors()
@@ -380,7 +400,7 @@ impl<H: Host> Vm<H> {
                 return None;
             }
         }
-        let Some(Cell::Array { object }) = self.heap.get_mut(this) else {
+        let Some(object) = self.heap.array_mut(this) else {
             unreachable!("matched an array above");
         };
         super::index::mutable_array_elements(object.elements_mut()).extend_from_slice(args);
@@ -448,7 +468,7 @@ impl<H: Host> Vm<H> {
         length: usize,
     ) -> Result<(), JsError> {
         let atom = self.intern_atom("length");
-        if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+        if self.heap.array(object).is_some()
             && !self
                 .object_data(object)
                 .is_some_and(Object::is_arguments_object)
@@ -552,15 +572,10 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn is_array(&mut self, p: &ResidualProgram, value: Value) -> Result<bool, JsError> {
+        if let Some(object) = self.heap.array(value) {
+            return Ok(!object.is_arguments_object());
+        }
         match self.heap.get(value) {
-            Some(Cell::Array { .. })
-                if self
-                    .object_data(value)
-                    .is_some_and(Object::is_arguments_object) =>
-            {
-                Ok(false)
-            }
-            Some(Cell::Array { .. }) => Ok(true),
             Some(Cell::Proxy { handler, .. }) if handler.is_null() => {
                 Err(self.type_error(p, "revoked proxy".into()))
             }

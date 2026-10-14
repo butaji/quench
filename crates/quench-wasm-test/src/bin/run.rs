@@ -49,8 +49,13 @@ fn run() -> Result<bool, String> {
     let mut args = env::args_os().skip(1);
     let mut report_path = PathBuf::from("target/iteration/wasm-shared-report.json");
     let mut paths = Vec::new();
+    let mut jit = false;
     while let Some(arg) = args.next() {
-        if arg == "--report" {
+        if arg == "-jit" || arg == "--jit" {
+            jit = true;
+        } else if arg == "-no-jit" || arg == "--no-jit" {
+            jit = false;
+        } else if arg == "--report" {
             report_path = args
                 .next()
                 .map(PathBuf::from)
@@ -112,6 +117,10 @@ fn run() -> Result<bool, String> {
         let stderr = fs::File::create(&stderr_path).map_err(|error| error.to_string())?;
         let started = Instant::now();
         let mut child = Command::new(env::current_exe().map_err(|error| error.to_string())?)
+            .env(
+                quench_wasm::EXECUTION_MODE_VARIABLE,
+                if jit { "jit" } else { "no-jit" },
+            )
             .arg("--worker")
             .arg(&file)
             .arg(&worker_report)

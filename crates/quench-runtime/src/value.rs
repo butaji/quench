@@ -9,17 +9,38 @@ const TAG_HEAP: u64 = 0x7ffc_0000_0000_0000;
 const TAG_INT: u64 = 0x7ffd_0000_0000_0000;
 const TAG_DELETED: u64 = 0x7ffe_0000_0000_0000;
 const CANONICAL_NAN: u64 = 0x7ff8_0000_0000_0000;
-/// The tag occupies the bits above the 48-bit payload.
+/// The tags occupy one contiguous range of tag-field values, so a tag test
+/// is one range comparison.
+const FIRST_TAG: u64 = TAG_UNDEFINED;
+/// The tag field's position: above the payload.
 const TAG_SHIFT: u32 = PAYLOAD_MASK.count_ones();
-/// The tags are consecutive, from `TAG_UNDEFINED` through `TAG_DELETED`.
-const TAG_COUNT: u64 = ((TAG_DELETED - TAG_UNDEFINED) >> TAG_SHIFT) + 1;
-const _: () = assert!(TAG_MASK == !PAYLOAD_MASK);
-const _: () = assert!(
-    (TAG_NULL - TAG_UNDEFINED) >> TAG_SHIFT == 1
-        && (TAG_BOOL - TAG_UNDEFINED) >> TAG_SHIFT == 2
-        && (TAG_HEAP - TAG_UNDEFINED) >> TAG_SHIFT == 3
-        && (TAG_INT - TAG_UNDEFINED) >> TAG_SHIFT == 4
-);
+const LAST_TAG: u64 = TAG_DELETED;
+const _: () = {
+    let tags = [
+        TAG_UNDEFINED,
+        TAG_NULL,
+        TAG_BOOL,
+        TAG_HEAP,
+        TAG_INT,
+        TAG_DELETED,
+    ];
+    let step = 1 << TAG_SHIFT;
+    let mut index = 1;
+    while index < tags.len() {
+        assert!(tags[index] == tags[index - 1] + step);
+        index += 1;
+    }
+    assert!(tags[0] == FIRST_TAG && tags[tags.len() - 1] == LAST_TAG);
+};
+const DIRECT_OBJECT_HANDLE_BIT: u64 = 1 << 47;
+const DIRECT_ARRAY_HANDLE_BIT: u64 = 1 << 46;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HeapReference {
+    LegacySlot(u32),
+    ObjectRecord(u32),
+    ArrayRecord(u32),
+}
 
 /// `value` truncated toward zero when it fits `i32`; any other result is some `i32` whose
 /// conversion back differs from `value`. x86-64 truncates directly (out-of-range and NaN
@@ -64,6 +85,25 @@ impl ProfileKind {
 #[repr(transparent)]
 pub struct Value(u64);
 
+/// The integer tag as a value. Interpreter code that keeps it in a machine
+/// register (passing it along like any other argument) encodes an integer
+/// with one bitwise or instead of first materializing the tag constant.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub(crate) struct IntegerEncoding(u64);
+
+/// The tag bits an encoded i32 carries; compiled code encodes in place.
+pub(crate) const INTEGER_TAG_BITS: u64 = TAG_INT;
+
+impl IntegerEncoding {
+    pub(crate) const TAG: Self = Self(TAG_INT);
+
+    #[inline(always)]
+    pub(crate) fn encode(self, value: i32) -> Value {
+        Value(self.0 | u64::from(value as u32))
+    }
+}
+
 impl Value {
     pub const UNDEFINED: Self = Self(TAG_UNDEFINED);
     pub const NULL: Self = Self(TAG_NULL);
@@ -92,12 +132,60 @@ impl Value {
 
     #[inline(always)]
     pub(crate) fn integer(value: i32) -> Self {
-        Self(TAG_INT | u64::from(value as u32))
+        IntegerEncoding::TAG.encode(value)
+    }
+
+    /// A 64-bit Wasm payload held in place. Every payload outside the tag
+    /// space already reads as an untagged value, so only tag-space payloads
+    /// need a heap box (`Cell::WasmBits64`); a static Wasm type tells the
+    /// two encodings of a slot apart from its 32-bit integer encoding.
+    #[inline(always)]
+    pub(crate) fn from_bits64(bits: u64) -> Option<Self> {
+        let value = Self(bits);
+        (!value.is_tagged()).then_some(value)
+    }
+
+    /// The 64-bit Wasm payload a value holds in place.
+    #[inline(always)]
+    pub(crate) fn bits64(self) -> Option<u64> {
+        (!self.is_tagged()).then_some(self.0)
     }
 
     #[inline(always)]
     pub(crate) fn as_int(self) -> Option<i32> {
         ((self.0 & TAG_MASK) == TAG_INT).then_some(self.0 as u32 as i32)
+    }
+
+    /// The bits of a slot whose Wasm type is statically f64, for an operator
+    /// whose result depends on a NaN operand only through being a NaN (float
+    /// arithmetic and comparison). A boxed payload's bits are a quiet NaN, so
+    /// such an operator sees a NaN exactly where the payload is one.
+    #[inline(always)]
+    pub(crate) const fn float_bits64(self) -> u64 {
+        self.0
+    }
+
+    /// A float arithmetic result held in place. A NaN whose bits fall in the
+    /// tag space becomes the canonical NaN: arithmetic may produce any
+    /// arithmetic NaN, and the canonical one is.
+    #[inline(always)]
+    pub(crate) fn from_float_bits64(bits: u64) -> Self {
+        let value = Self(bits);
+        if value.is_tagged() {
+            // Only a NaN whose payload collides with a tag: a predicted
+            // branch keeps the check off the result's dependency chain,
+            // where a conditional move would lengthen every float chain.
+            std::hint::cold_path();
+            Self(CANONICAL_NAN)
+        } else {
+            value
+        }
+    }
+
+    /// The 32-bit payload of a slot whose Wasm type is statically i32 or f32.
+    #[inline(always)]
+    pub(crate) const fn wasm_bits32(self) -> u32 {
+        self.0 as u32
     }
 
     #[inline(always)]
@@ -108,6 +196,16 @@ impl Value {
 
     pub(crate) fn heap(index: u32) -> Self {
         Self(TAG_HEAP | u64::from(index))
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_object(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_OBJECT_HANDLE_BIT | u64::from(index))
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_array(index: u32) -> Self {
+        Self(TAG_HEAP | DIRECT_ARRAY_HANDLE_BIT | u64::from(index))
     }
 
     /// The Number this value holds. Doubles are tested first: arithmetic that reaches this
@@ -136,6 +234,46 @@ impl Value {
         ((self.0 & TAG_MASK) == TAG_HEAP).then_some((self.0 & PAYLOAD_MASK) as u32)
     }
 
+    #[inline(always)]
+    pub(crate) fn heap_reference(self) -> Option<HeapReference> {
+        if self.0 & TAG_MASK != TAG_HEAP {
+            return None;
+        }
+        let index = self.0 as u32;
+        Some(
+            match self.0 & (DIRECT_OBJECT_HANDLE_BIT | DIRECT_ARRAY_HANDLE_BIT) {
+                0 => HeapReference::LegacySlot(index),
+                DIRECT_OBJECT_HANDLE_BIT => HeapReference::ObjectRecord(index),
+                DIRECT_ARRAY_HANDLE_BIT => HeapReference::ArrayRecord(index),
+                _ => return None,
+            },
+        )
+    }
+
+    #[inline(always)]
+    pub(crate) fn legacy_heap_index(self) -> Option<u32> {
+        match self.heap_reference()? {
+            HeapReference::LegacySlot(index) => Some(index),
+            HeapReference::ObjectRecord(_) | HeapReference::ArrayRecord(_) => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_object_index(self) -> Option<u32> {
+        match self.heap_reference()? {
+            HeapReference::ObjectRecord(index) => Some(index),
+            HeapReference::LegacySlot(_) | HeapReference::ArrayRecord(_) => None,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn direct_array_index(self) -> Option<u32> {
+        match self.heap_reference()? {
+            HeapReference::ArrayRecord(index) => Some(index),
+            HeapReference::LegacySlot(_) | HeapReference::ObjectRecord(_) => None,
+        }
+    }
+
     pub fn is_undefined(self) -> bool {
         self.0 == TAG_UNDEFINED
     }
@@ -154,7 +292,10 @@ impl Value {
 
     #[inline(always)]
     fn is_tagged(self) -> bool {
-        (self.0 >> TAG_SHIFT).wrapping_sub(TAG_UNDEFINED >> TAG_SHIFT) < TAG_COUNT
+        // The tag field, shifted down, compared as one small range.
+        let field = (self.0 >> TAG_SHIFT) as u32;
+        field.wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32)
+            <= ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32
     }
 
     #[cfg(feature = "profile-aggregate")]
@@ -217,6 +358,26 @@ mod tests {
         }
         assert_eq!(Value::TRUE.as_bool(), Some(true));
         assert_eq!(Value::heap(42).heap_index(), Some(42));
+        assert_eq!(
+            Value::heap(42).heap_reference(),
+            Some(super::HeapReference::LegacySlot(42))
+        );
+        let direct_object = Value::direct_object(42);
+        assert_eq!(direct_object.heap_index(), Some(42));
+        assert_eq!(direct_object.direct_object_index(), Some(42));
+        assert_eq!(
+            direct_object.heap_reference(),
+            Some(super::HeapReference::ObjectRecord(42))
+        );
+        assert_ne!(direct_object, Value::heap(42));
+        let direct_array = Value::direct_array(42);
+        assert_eq!(direct_array.heap_index(), Some(42));
+        assert_eq!(direct_array.direct_array_index(), Some(42));
+        assert_eq!(
+            direct_array.heap_reference(),
+            Some(super::HeapReference::ArrayRecord(42))
+        );
+        assert_ne!(direct_array, direct_object);
         assert_eq!(
             Value::int_pair(Value::integer(-2), Value::integer(3)),
             Some((-2, 3))
