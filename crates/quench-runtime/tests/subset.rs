@@ -359,3 +359,13 @@ fn case_mapping_preserves_lone_surrogates() {
         ["41,d800,42,dc00,1f600,3a3", "61,d800,62,dc00,1f600,3c3"]
     );
 }
+
+#[test]
+fn nested_class_in_computed_key_keeps_outer_private_names() {
+    assert_eq!(
+        output(
+            "let read; class A { static #x = 42; static [(class {}, read = () => A.#x, 'k')] = 1; } print(read()); for (let i = 0; i < 2; i++) { let f; class B { static #y = i; static [(class {}, f = () => B.#y, 'k')]; } print(f()); }"
+        ),
+        ["42", "0", "1"]
+    );
+}

@@ -491,7 +491,7 @@ impl<H: Host> Vm<H> {
                                 .alloc(Cell::String(JsString::from_units(&[unit]))));
                         }
                         if atom == self.length_atom {
-                            return Ok(Value::number(v.units().len() as f64));
+                            return Ok(Value::number(v.len() as f64));
                         }
                         let prototype = self
                             .primitive_prototype(object)
