@@ -843,6 +843,8 @@ pub(crate) struct Vm<H> {
     object_proto: Value,
     function_proto: Value,
     array_proto: Value,
+    /// %String.prototype% of the current realm; primitive string property
+    /// reads use it directly, so realm switches re-derive it.
     string_proto: Value,
     array_buffer_proto: Value,
     shared_array_buffer_proto: Value,
@@ -1024,6 +1026,14 @@ impl<H: Host> Vm<H> {
         self.realm.global_lexical_declarations = state.declarations;
         self.realm.global_lexical_bindings = state.bindings;
         self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
+        if let Some(&prototype) = self
+            .realm
+            .intrinsics
+            .builtin_prototypes
+            .get(&(global, Native::String))
+        {
+            self.string_proto = prototype;
+        }
     }
 
     pub(crate) fn root(&mut self, value: Value) -> RootId {
