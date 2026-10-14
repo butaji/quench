@@ -222,7 +222,7 @@ impl FunctionCompiler<'_, '_> {
                     Some(self.function_id),
                     FunctionOptions {
                         defaults: None,
-                        source_text: self.owner.source_text(class.span),
+                        source_span: self.owner.source_span(class.span),
                         name_binding: None,
                         async_function: false,
                         generator: false,
@@ -979,9 +979,9 @@ impl Compiler<'_> {
             parent,
             FunctionOptions {
                 defaults: Some(&method.value.params),
-                source_text: source_span.and_then(|span| {
+                source_span: source_span.and_then(|span| {
                     class_method_source_span(self.text, span, method.key.span().start)
-                        .and_then(|span| self.source_text(span))
+                        .and_then(|span| self.source_span(span))
                 }),
                 name_binding: None,
                 async_function: method.value.r#async,
@@ -1019,7 +1019,7 @@ impl Compiler<'_> {
             parent,
             FunctionOptions {
                 defaults: None,
-                source_text: None,
+                source_span: None,
                 name_binding: None,
                 async_function: false,
                 generator: false,

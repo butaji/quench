@@ -455,7 +455,7 @@ impl FunctionCompiler<'_, '_> {
             &scopes,
             Some(self.function_id),
             FunctionOptions {
-                source_text: self.owner.source_text(value.span),
+                source_span: self.owner.source_span(value.span),
                 defaults: Some(&value.params),
                 name_binding,
                 async_function: value.r#async,

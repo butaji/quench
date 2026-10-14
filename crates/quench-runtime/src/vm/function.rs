@@ -19,6 +19,36 @@ impl<H: Host> Vm<H> {
         self.set_property(function, source_atom, source)
     }
 
+    /// The source text `Function.prototype.toString` reports for `function`: one recorded for
+    /// it (a dynamic function's synthesized source), otherwise its definition's range of the
+    /// program source, made a string on first request and shared by every closure of it.
+    pub(super) fn function_source_value(&mut self, function: Value) -> Option<Value> {
+        let source_atom = self.intern_atom("\0quench:function-source");
+        if let Some(source) = self.own_property(function, source_atom) {
+            return Some(source);
+        }
+        let Some(Cell::Function {
+            kind: FunctionKind::User(program, id) | FunctionKind::NumericUser(program, id),
+            ..
+        }) = self.heap.get(function)
+        else {
+            return None;
+        };
+        let (program, id) = (*program, *id);
+        if let Some(source) = self.programs.function_source(program, id) {
+            return Some(source);
+        }
+        let residual = self.programs.residual(program)?;
+        let span = residual.functions.get(id as usize)?.source_span?;
+        let text = residual
+            .source
+            .as_ref()?
+            .text
+            .get(span.start as usize..span.end as usize)?;
+        let source = self.heap.alloc(Cell::String(text.into()));
+        self.programs.cache_function_source(program, id, source).or(Some(source))
+    }
+
     pub(super) fn function_caller_is_restricted(&self, function: Value) -> bool {
         match self.heap.get(function) {
             Some(Cell::Function {
