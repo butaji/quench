@@ -208,6 +208,8 @@ pub(super) struct Frame {
 #[derive(Clone, Copy)]
 pub(super) struct CaptureCache {
     env: Value,
+    /// Whether `env` was the frame's own environment, which depth-0 captures skip.
+    captured: bool,
     epoch: u64,
     slots: *const crate::heap::EnvironmentSlots,
     /// The program of a root environment, whose projected slots are read elsewhere
@@ -219,6 +221,7 @@ impl Default for CaptureCache {
     fn default() -> Self {
         Self {
             env: Value::NULL,
+            captured: false,
             epoch: 0,
             slots: std::ptr::null(),
             root: None,
