@@ -775,7 +775,28 @@ lane_handler! {
 
 lane_handler! {
     /// A capture the frame's environment owns directly; any other read takes the general path.
+    /// A read through the frame's current capture cache runs here, saving no registers; any
+    /// other takes `lane_load_capture_walk`.
     fn lane_load_capture<>(cx, r, ip, i, view) {
+        let imm = i.imm();
+        let value = if ImmediateLayout::capture_depth(imm) == 0 {
+            (unsafe { vm(cx) })
+                .current_function_capture(unsafe { (*cx).frame }, ImmediateLayout::capture_slot(imm))
+        } else {
+            None
+        };
+        let Some(value) = value else {
+            sibling!(lane_load_capture_walk::<H>, r, ip, view)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_load_capture` past the frame's capture cache.
+    #[inline(never)]
+    fn lane_load_capture_walk<>(cx, r, ip, i, view) {
         let imm = i.imm();
         let Some(value) = (unsafe { vm(cx) }).cached_direct_capture(
             unsafe { (*cx).frame },
