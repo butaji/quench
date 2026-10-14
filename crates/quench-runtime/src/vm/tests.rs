@@ -9603,3 +9603,30 @@ fn string_repeat_limits_preserve_lazy_utf16_length_and_fractional_counts() {
         );
     }
 }
+
+#[test]
+fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() {
+    let source = r#"
+      for (const text of ["\ud800", "\ud801", "\udfff", "a\ud800b", "\ud83d\ude00"]) {
+        const box = new String(text);
+        const log = [];
+        const object = { [Symbol.toPrimitive](hint) { log.push(hint); return text; } };
+        for (const actual of [String(text), box.valueOf(), `${text}`, String(object), `${object}`]) {
+          if (actual !== text) throw Error('UTF-16 coercion changed original units');
+        }
+        if (log.join(',') !== 'string,string') throw Error('coercion hint or count');
+      }
+      if (String(Symbol('x')) !== 'Symbol(x)') throw Error('explicit Symbol conversion');
+      for (const convert of [value => `${value}`, value => new String(value)]) {
+        let caught = false;
+        try { convert(Symbol('x')); } catch (error) { caught = error instanceof TypeError; }
+        if (!caught) throw Error('implicit Symbol conversion accepted');
+      }
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest { source, name: "wtf16-string-coercion.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::specialize(source, "wtf16-string-coercion.js").unwrap(),
+    ] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
