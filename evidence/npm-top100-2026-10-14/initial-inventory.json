@@ -1,0 +1,5018 @@
+{
+  "captured_at": "2026-10-14T11:50:55.411920+00:00",
+  "metric": "published npmleaderboard most-downloaded snapshot",
+  "candidate_source": "https://www.npmleaderboard.org/api/packages?sortBy=downloads&dependsOn=&keywords=",
+  "scope": "The source returns exactly 100 packages. Download totals use varying historical windows (source dates retained per package). Fresh npm downloads/search APIs returned HTTP 429; this inventory is provisional, not a verified current registry-wide top 100.",
+  "oracle": "Node v26.11.1",
+  "packages": [
+    {
+      "name": "semver",
+      "version": "7.8.5",
+      "source_downloads": {
+        "total": 2757276191,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-08",
+            "downloads": 536758684
+          },
+          {
+            "week_ending": "2026-02-15",
+            "downloads": 550965168
+          },
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 556061792
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 602447850
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 615600250
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 648391142
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 646528764
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 657931122
+          }
+        ]
+      },
+      "source_updated": "2026-03-30T07:01:49.426Z",
+      "integrity": "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==",
+      "tarball": "https://registry.npmjs.org/semver/-/semver-7.8.5.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/npm/node-semver.git",
+        "type": "git"
+      },
+      "rank": 1
+    },
+    {
+      "name": "minimatch",
+      "version": "10.2.6",
+      "source_downloads": {
+        "total": 2650264870,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 590558335
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 513355845
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 647633610
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 667137039
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 637696988
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 619958375
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 501352322
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 672619082
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:11:32.178Z",
+      "integrity": "sha512-vpLQEs+VLCr1nU0BXS07maYoFwlDAH0gngQuuttxIwutDFEMHq2blX+8vpgxDdK3J1PwjCJiep77OitTZ4Ll1A==",
+      "tarball": "https://registry.npmjs.org/minimatch/-/minimatch-10.2.6.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+ssh://git@github.com/isaacs/minimatch.git",
+        "type": "git"
+      },
+      "rank": 2
+    },
+    {
+      "name": "debug",
+      "version": "4.4.3",
+      "source_downloads": {
+        "total": 2539331980,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 532691311
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 553428755
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 559671041
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 580951162
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 534563253
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 612590916
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 628556634
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 600475916
+          }
+        ]
+      },
+      "source_updated": "2026-06-01T10:51:03.837Z",
+      "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
+      "tarball": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git://github.com/debug-js/debug.git",
+        "type": "git"
+      },
+      "rank": 3
+    },
+    {
+      "name": "brace-expansion",
+      "version": "5.0.12",
+      "source_downloads": {
+        "total": 2435285013,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 579965668
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 548420896
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 540353370
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 438937186
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 590467594
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 542944343
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 605073596
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 606656605
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:11:22.179Z",
+      "integrity": "sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==",
+      "tarball": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.12.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/juliangruber/brace-expansion.git",
+        "type": "git"
+      },
+      "rank": 4
+    },
+    {
+      "name": "ansi-regex",
+      "version": "6.4.0",
+      "source_downloads": {
+        "total": 2194908219,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 469835563
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 406599115
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 510791881
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 553197344
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 495018362
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 481431505
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 480957660
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 507745002
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:02:59.392Z",
+      "integrity": "sha512-KzTVk2tCWAHtYrvvvaP8bJKJq2pVinhLcGEQdtLIYPbmNGNyYe8QwNaTUYQp2J7/vIsUKt5QCqAfUkYyG9DkOw==",
+      "tarball": "https://registry.npmjs.org/ansi-regex/-/ansi-regex-6.4.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/chalk/ansi-regex.git",
+        "type": "git"
+      },
+      "rank": 5
+    },
+    {
+      "name": "supports-color",
+      "version": "11.0.0",
+      "source_downloads": {
+        "total": 1914926428,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 413638886
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 366041355
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 452181907
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 459117770
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 445967191
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 426714548
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 420045049
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 464958004
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:04:32.414Z",
+      "integrity": "sha512-/zyImLdxhdygBIaVX0xTlQhKaCDLCrm665aqHk8xqK/Pa6k61fL6gwQGQq1k31yNyz6x55PppQgF2DMyPQa5xw==",
+      "tarball": "https://registry.npmjs.org/supports-color/-/supports-color-11.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/chalk/supports-color.git",
+        "type": "git"
+      },
+      "rank": 6
+    },
+    {
+      "name": "ms",
+      "version": "2.1.3",
+      "source_downloads": {
+        "total": 1873206415,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 395779232
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 414339363
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 417959896
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 432282376
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 433272364
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 378416056
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 478894239
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 465602689
+          }
+        ]
+      },
+      "source_updated": "2026-06-01T10:34:34.232Z",
+      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+      "tarball": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/vercel/ms.git",
+        "type": "git"
+      },
+      "rank": 7
+    },
+    {
+      "name": "ansi-styles",
+      "version": "7.0.0",
+      "source_downloads": {
+        "total": 1770769131,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 401904384
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 408782963
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 398459798
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 402028854
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 406680653
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 414641178
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 456472178
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 410730015
+          }
+        ]
+      },
+      "source_updated": "2025-11-03T05:36:57.216Z",
+      "integrity": "sha512-kKvt3m4uwzqL0wlkPd09CmljPJGOZZ4D0fP65sqFSvPkMRKhNi+74MgIJ5QxE6SxqB4t4KyUFGg8+n5zjo6hew==",
+      "tarball": "https://registry.npmjs.org/ansi-styles/-/ansi-styles-7.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/chalk/ansi-styles.git",
+        "type": "git"
+      },
+      "rank": 8
+    },
+    {
+      "name": "chalk",
+      "version": "6.0.1",
+      "source_downloads": {
+        "total": 1764513262,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 410875773
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 412738790
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 413497547
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 419951352
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 439430040
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 439494222
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 408603950
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 352646418
+          }
+        ]
+      },
+      "source_updated": "2026-06-08T09:30:31.773Z",
+      "integrity": "sha512-/Ce6KNm3vIbWdMlNna6RVIZ/ICQxnJxCicet5LBKK9ZffBkqzDw0xh9EiKSljdRtiIQ1S1z4YgcscUUGzNCWrA==",
+      "tarball": "https://registry.npmjs.org/chalk/-/chalk-6.0.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/chalk/chalk.git",
+        "type": "git"
+      },
+      "rank": 9
+    },
+    {
+      "name": "emoji-regex",
+      "version": "11.0.0",
+      "source_downloads": {
+        "total": 1753375141,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 330789285
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 311015228
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 408374710
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 392696924
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 402239797
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 427097238
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 457206553
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 415637565
+          }
+        ]
+      },
+      "source_updated": "2026-06-29T09:33:37.637Z",
+      "integrity": "sha512-2qQtc7syPcJmvF7BfKxBvwgvhzDth6u3q23+Jr4JOQUcmMGgmj7B4/ePZ2DmOhrrb77S8kMNHq2kilVASysfqA==",
+      "tarball": "https://registry.npmjs.org/emoji-regex/-/emoji-regex-11.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/mathiasbynens/emoji-regex.git",
+        "type": "git"
+      },
+      "rank": 10
+    },
+    {
+      "name": "wrap-ansi",
+      "version": "10.0.2",
+      "source_downloads": {
+        "total": 1667678721,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 382512866
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 401889611
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 381643741
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 331068732
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 420573941
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 442159559
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 411512678
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 397889831
+          }
+        ]
+      },
+      "source_updated": "2026-07-06T09:09:39.975Z",
+      "integrity": "sha512-6OLRNZqRntVGBm26ghZ5eZhCuWWyOkRCSn8XsOIuq5stpCE/tjLbdozd93naILZig0lmD8ANfRwnhn0DLeXGlg==",
+      "tarball": "https://registry.npmjs.org/wrap-ansi/-/wrap-ansi-10.0.2.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/chalk/wrap-ansi.git",
+        "type": "git"
+      },
+      "rank": 11
+    },
+    {
+      "name": "lru-cache",
+      "version": "11.5.3",
+      "source_downloads": {
+        "total": 1594120234,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-15",
+            "downloads": 318168179
+          },
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 327234342
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 356850537
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 366291975
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 385693477
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 386855368
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 405136388
+          },
+          {
+            "week_ending": "2026-04-05",
+            "downloads": 386492290
+          }
+        ]
+      },
+      "source_updated": "2026-04-06T07:00:44.389Z",
+      "integrity": "sha512-U4N8FgzmWxc8k1VH8Kr6lQg18U7Fjvby6wXHVRX/ZZ7IwWbRMgrRbP0Wrb5q5NVinryp4SQampHKdvtecItxUg==",
+      "tarball": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.5.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+ssh://git@github.com/isaacs/node-lru-cache.git",
+        "type": "git"
+      },
+      "rank": 12
+    },
+    {
+      "name": "tslib",
+      "version": "2.8.1",
+      "source_downloads": {
+        "total": 1591649008,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 386332352
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 388555327
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 388800060
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 371382717
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 299710031
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 410468744
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 419393902
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 423357440
+          }
+        ]
+      },
+      "source_updated": "2026-08-03T08:33:34.182Z",
+      "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==",
+      "tarball": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/Microsoft/tslib.git",
+        "type": "git"
+      },
+      "rank": 13
+    },
+    {
+      "name": "picomatch",
+      "version": "4.0.7",
+      "source_downloads": {
+        "total": 1588809050,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 323026531
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 341988919
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 358763167
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 351840416
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 360750819
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 377818553
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 390249825
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 358147738
+          }
+        ]
+      },
+      "source_updated": "2026-06-01T10:42:38.159Z",
+      "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+      "tarball": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/micromatch/picomatch.git",
+        "type": "git"
+      },
+      "rank": 14
+    },
+    {
+      "name": "glob",
+      "version": "13.0.6",
+      "source_downloads": {
+        "total": 1470826574,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 344886536
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 296860347
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 378391197
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 392079963
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 304368622
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 353250829
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 287422424
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 381046994
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:05:33.956Z",
+      "integrity": "sha512-Wjlyrolmm8uDpm/ogGyXZXb1Z+Ca2B8NbJwqBVg0axK9GbBeoS7yGV6vjXnYdGm6X53iehEuxxbyiKp8QmN4Vw==",
+      "tarball": "https://registry.npmjs.org/glob/-/glob-13.0.6.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+ssh://git@github.com/isaacs/node-glob.git",
+        "type": "git"
+      },
+      "rank": 15
+    },
+    {
+      "name": "minipass",
+      "version": "7.1.3",
+      "source_downloads": {
+        "total": 1453055286,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 417914088
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 336315483
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 335438314
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 352842873
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 336019037
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 264034723
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 247372547
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 242590094
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:13:04.128Z",
+      "integrity": "sha512-tEBHqDnIoM/1rXME1zgka9g6Q2lcoCkxHLuc7ODJ5BxbP5d4c2Z5cGgtXAku59200Cx7diuHTOYfSBD8n6mm8A==",
+      "tarball": "https://registry.npmjs.org/minipass/-/minipass-7.1.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/isaacs/minipass.git",
+        "type": "git"
+      },
+      "rank": 16
+    },
+    {
+      "name": "type-fest",
+      "version": "5.10.0",
+      "source_downloads": {
+        "total": 1336360812,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 326629731
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 325356090
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 305988915
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 274559041
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 340596488
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 343579310
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 334927769
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 315865005
+          }
+        ]
+      },
+      "source_updated": "2026-07-06T09:07:10.242Z",
+      "integrity": "sha512-NoSdpq/WEiAg5sjmBkmV/hfxv6HJH4NqPNrqjtSO5CwRmpsDfaf4begxW34KdJykH/l1yHtwBWQkCRdoXO8mPA==",
+      "tarball": "https://registry.npmjs.org/type-fest/-/type-fest-5.10.0.tgz",
+      "types_only": true,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/type-fest.git",
+        "type": "git"
+      },
+      "rank": 17
+    },
+    {
+      "name": "color-name",
+      "version": "2.1.1",
+      "source_downloads": {
+        "total": 1309221019,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 264344627
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 283129819
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 285629342
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 286043000
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 296151360
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 311382224
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 320281889
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 302250135
+          }
+        ]
+      },
+      "source_updated": "2026-06-01T10:51:33.980Z",
+      "integrity": "sha512-p2FdgwVx1a9yWBHP2wI0VgShkDpgN4kZISkxdNipGBJWpa5G6b04OINlVWCyJj0JmfvcPrgqt95E9k8yvaOJFg==",
+      "tarball": "https://registry.npmjs.org/color-name/-/color-name-2.1.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/colorjs/color-name.git",
+        "type": "git"
+      },
+      "rank": 18
+    },
+    {
+      "name": "strip-ansi",
+      "version": "7.2.0",
+      "source_downloads": {
+        "total": 1284925253,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 286980918
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 292596281
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 286934436
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 290752632
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 290950111
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 303700675
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 324018578
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 304570930
+          }
+        ]
+      },
+      "source_updated": "2025-11-03T05:47:38.406Z",
+      "integrity": "sha512-yDPMNjp4WyfYBkHnjIRLfca1i6KMyGCtsVgoKe/z1+6vukgaENdgGBZt+ZmKPc4gavvEZ5OgHfHdrazhgNyG7w==",
+      "tarball": "https://registry.npmjs.org/strip-ansi/-/strip-ansi-7.2.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/chalk/strip-ansi.git",
+        "type": "git"
+      },
+      "rank": 19
+    },
+    {
+      "name": "balanced-match",
+      "version": "4.0.4",
+      "source_downloads": {
+        "total": 1270763944,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 230063979
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 253733802
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 265003627
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 265199308
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 278594470
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 299952628
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 318528260
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 305499298
+          }
+        ]
+      },
+      "source_updated": "2026-06-01T10:43:49.346Z",
+      "integrity": "sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==",
+      "tarball": "https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git://github.com/juliangruber/balanced-match.git",
+        "type": "git"
+      },
+      "rank": 20
+    },
+    {
+      "name": "p-limit",
+      "version": "7.3.3",
+      "source_downloads": {
+        "total": 1218207368,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 257921406
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 230776516
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 283362702
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 288317889
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 281171195
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 271701867
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 269193457
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 300089452
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:10:51.374Z",
+      "integrity": "sha512-SKgVvDU5TNIxQ4r30U75BNLC6a+6GOEjngrk/ysM5+Zu3oJuk1SC5ApzIzY/7PjCEjoVPMWJ0zho/4QUiEB7TQ==",
+      "tarball": "https://registry.npmjs.org/p-limit/-/p-limit-7.3.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/p-limit.git",
+        "type": "git"
+      },
+      "rank": 21
+    },
+    {
+      "name": "glob-parent",
+      "version": "6.0.2",
+      "source_downloads": {
+        "total": 1206087900,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 265017072
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 269752964
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 284294610
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 286582245
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 267616010
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 235178066
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 294719431
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 300557950
+          }
+        ]
+      },
+      "source_updated": "2026-06-22T10:47:08.382Z",
+      "integrity": "sha512-XxwI8EOhVQgWp6iDL+3b0r86f4d6AX6zSU55HfB4ydCEuXLXc5FcYeOu+nnGftS4TEju/11rt4KJPTMgbfmv4A==",
+      "tarball": "https://registry.npmjs.org/glob-parent/-/glob-parent-6.0.2.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/gulpjs/glob-parent.git",
+        "type": "git"
+      },
+      "rank": 22
+    },
+    {
+      "name": "p-locate",
+      "version": "7.0.0",
+      "source_downloads": {
+        "total": 1179347153,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 233151539
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 217173588
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 264366253
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 250116532
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 265299769
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 275066803
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 279709899
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 272613693
+          }
+        ]
+      },
+      "source_updated": "2026-06-29T09:34:03.203Z",
+      "integrity": "sha512-FRPW2lT1b/B8/CNkCOZ/Xl4mz52CWzwb+/dLa0GcCrH7u7djFf36VftuRJ5w/eCr1YXtbTGPuGoEDVSk14EwNQ==",
+      "tarball": "https://registry.npmjs.org/p-locate/-/p-locate-7.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/p-locate.git",
+        "type": "git"
+      },
+      "rank": 23
+    },
+    {
+      "name": "has-flag",
+      "version": "5.0.1",
+      "source_downloads": {
+        "total": 1165857864,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 290827909
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 295915388
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 238656376
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 276212089
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 169174825
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 299052587
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 305149292
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 311628210
+          }
+        ]
+      },
+      "source_updated": "2026-08-03T08:30:20.386Z",
+      "integrity": "sha512-CsNUt5x9LUdx6hnk/E2SZLsDyvfqANZSUq4+D3D8RzDJ2M+HDTIkF60ibS1vHaK55vzgiZw1bEPFG9yH7l33wA==",
+      "tarball": "https://registry.npmjs.org/has-flag/-/has-flag-5.0.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/has-flag.git",
+        "type": "git"
+      },
+      "rank": 24
+    },
+    {
+      "name": "iconv-lite",
+      "version": "0.7.3",
+      "source_downloads": {
+        "total": 1145526733,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 279656288
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 260816722
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 250159293
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 208548766
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 275623968
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 272255599
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 278417598
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 277054556
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:12:49.854Z",
+      "integrity": "sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==",
+      "tarball": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.7.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/pillarjs/iconv-lite.git",
+        "type": "git"
+      },
+      "rank": 25
+    },
+    {
+      "name": "entities",
+      "version": "8.1.0",
+      "source_downloads": {
+        "total": 1121538436,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 275720942
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 264943044
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 238062783
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 231939295
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 257003334
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 261981614
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 270002121
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 273974169
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:13:52.696Z",
+      "integrity": "sha512-kxL7msIffSuh9aaFAMD7rxAIuTRMAHMeBtgHW2yUdWw732ZNh4MehkF2gdjvtdmikkaIP9bFDDJOPlsvm7avrA==",
+      "tarball": "https://registry.npmjs.org/entities/-/entities-8.1.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/fb55/entities.git",
+        "type": "git"
+      },
+      "rank": 26
+    },
+    {
+      "name": "uuid",
+      "version": "14.0.3",
+      "source_downloads": {
+        "total": 1110470937,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 274233384
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 276201384
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 270785745
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 251400197
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 243792245
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 267352912
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 272313920
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 278649657
+          }
+        ]
+      },
+      "source_updated": "2026-08-03T08:30:14.085Z",
+      "integrity": "sha512-Sc5u1VVln93y1Xnz4R+CunOZc7R9LUcTmhj7Rc7Eg3HVcf7rVn2FOoa812fe0W8p3jD7xeoGSYbfqCGGH2B6xw==",
+      "tarball": "https://registry.npmjs.org/uuid/-/uuid-14.0.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/uuidjs/uuid.git",
+        "type": "git"
+      },
+      "rank": 27
+    },
+    {
+      "name": "json-schema-traverse",
+      "version": "1.0.0",
+      "source_downloads": {
+        "total": 1095321134,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 232193866
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 236036587
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 241881148
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 245259190
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 258173069
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 258640568
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 243236426
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 168431367
+          }
+        ]
+      },
+      "source_updated": "2026-06-08T09:32:45.892Z",
+      "integrity": "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==",
+      "tarball": "https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/epoberezkin/json-schema-traverse.git",
+        "type": "git"
+      },
+      "rank": 28
+    },
+    {
+      "name": "string-width",
+      "version": "8.3.0",
+      "source_downloads": {
+        "total": 1083129111,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 237887651
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 241356457
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 239887747
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 243085361
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 246153188
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 256268132
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 272505856
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 256904140
+          }
+        ]
+      },
+      "source_updated": "2025-11-03T05:41:45.087Z",
+      "integrity": "sha512-ZbmZM0JCihQN91dWnxoipT2KOEyHqEyfRXUyjuRhW8b/xnqPDoq4gWEVApTVa9db2wN8mmoikgFBbjh71+cGeQ==",
+      "tarball": "https://registry.npmjs.org/string-width/-/string-width-8.3.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/string-width.git",
+        "type": "git"
+      },
+      "rank": 29
+    },
+    {
+      "name": "escape-string-regexp",
+      "version": "5.0.0",
+      "source_downloads": {
+        "total": 1076009817,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 207128976
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 226084464
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 235909668
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 247072602
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 242504887
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 258095575
+          },
+          {
+            "week_ending": "2026-04-05",
+            "downloads": 246597786
+          },
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 248935936
+          }
+        ]
+      },
+      "source_updated": "2026-04-13T07:21:00.755Z",
+      "integrity": "sha512-/veY75JbMK4j1yjvuUxuVsiS/hr/4iHs9FTT6cgTexxdE0Ly/glccBAkloH/DofkjRbZU3bnoj38mOmhkZ0lHw==",
+      "tarball": "https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-5.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/escape-string-regexp.git",
+        "type": "git"
+      },
+      "rank": 30
+    },
+    {
+      "name": "globals",
+      "version": "17.13.0",
+      "source_downloads": {
+        "total": 1070902287,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 244304410
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 198166513
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 229894475
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 186292528
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 250780263
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 257523869
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 262498347
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 262605501
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:13:53.656Z",
+      "integrity": "sha512-RwMTC61u7hrG3ZJMkZQOK4JLJrKS8QtoTii63EmWvFXHqycY9FObBJQCbsLxSO8kjKhWE5kV1GC+Vb1g3RI0Zg==",
+      "tarball": "https://registry.npmjs.org/globals/-/globals-17.13.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/globals.git",
+        "type": "git"
+      },
+      "rank": 31
+    },
+    {
+      "name": "is-fullwidth-code-point",
+      "version": "5.1.0",
+      "source_downloads": {
+        "total": 1045721788,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 259181478
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 270365044
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 252675366
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 243053194
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 242421762
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 261257885
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 254505800
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 255438446
+          }
+        ]
+      },
+      "source_updated": "2026-08-03T08:28:32.012Z",
+      "integrity": "sha512-5XHYaSyiqADb4RnZ1Bdad6cPp8Toise4TzEjcOYDHZkTCbKgiUl7WTUCpNWHuxmDt91wnsZBc9xinNzopv3JMQ==",
+      "tarball": "https://registry.npmjs.org/is-fullwidth-code-point/-/is-fullwidth-code-point-5.1.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/is-fullwidth-code-point.git",
+        "type": "git"
+      },
+      "rank": 32
+    },
+    {
+      "name": "argparse",
+      "version": "3.0.2",
+      "source_downloads": {
+        "total": 1045649908,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 233814965
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 227719733
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 218635394
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 216038633
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 240483461
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 245800985
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 251175268
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 253461852
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:13:11.630Z",
+      "integrity": "sha512-mFdDM6WqWKraGLsVb+C9CahPnzTXOefAOLq3jYcca2YZ8bEWpr++Tzj+zSaKW9+X9L5uSxcm1AZ3Y6aZJ09OhQ==",
+      "tarball": "https://registry.npmjs.org/argparse/-/argparse-3.0.2.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/nodeca/argparse.git",
+        "type": "git"
+      },
+      "rank": 33
+    },
+    {
+      "name": "ignore",
+      "version": "7.0.12",
+      "source_downloads": {
+        "total": 1035996209,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 201291738
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 227337350
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 234298377
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 230878784
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 235736211
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 247177089
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 248485045
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 233279014
+          }
+        ]
+      },
+      "source_updated": "2026-06-01T10:42:39.534Z",
+      "integrity": "sha512-/8UvqAPU9DGTI9k4mxtf49U37Isfwr8Uts96+SBHIkFxPJnHS0Ew4f00sM4Scd8V8EjM0jUNtVDdv1kPdt35lg==",
+      "tarball": "https://registry.npmjs.org/ignore/-/ignore-7.0.12.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/kaelzhang/node-ignore.git",
+        "type": "git"
+      },
+      "rank": 34
+    },
+    {
+      "name": "which",
+      "version": "7.0.0",
+      "source_downloads": {
+        "total": 977221406,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-08",
+            "downloads": 208927267
+          },
+          {
+            "week_ending": "2026-02-15",
+            "downloads": 187304452
+          },
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 180640547
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 200427854
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 223763232
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 228284818
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 236323310
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 222566211
+          }
+        ]
+      },
+      "source_updated": "2026-03-30T07:02:27.457Z",
+      "integrity": "sha512-RancgH2dmbLdHl6LRhEqvklWMgl/Hdnun0Y90KhBOLkMefg8Qa7/Zel8Sm+8HEcP6DEjzsWzpkuBQEZok58isA==",
+      "tarball": "https://registry.npmjs.org/which/-/which-7.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/npm/node-which.git",
+        "type": "git"
+      },
+      "rank": 35
+    },
+    {
+      "name": "esbuild",
+      "version": "0.28.2",
+      "source_downloads": {
+        "total": 967363225,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 236847527
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 241803639
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 224484309
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 200590005
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 244543775
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 243988517
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 237969557
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 237262772
+          }
+        ]
+      },
+      "source_updated": "2026-07-06T09:07:14.540Z",
+      "integrity": "sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==",
+      "tarball": "https://registry.npmjs.org/esbuild/-/esbuild-0.28.2.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/evanw/esbuild.git",
+        "type": "git"
+      },
+      "rank": 36
+    },
+    {
+      "name": "isexe",
+      "version": "4.0.0",
+      "source_downloads": {
+        "total": 964187103,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 170667449
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 193223112
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 200369687
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 200921353
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 206708723
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 221943538
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 246740931
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 241201201
+          }
+        ]
+      },
+      "source_updated": "2026-06-01T10:42:01.910Z",
+      "integrity": "sha512-FFUtZMpoZ8RqHS3XeXEmHWLA4thH+ZxCv2lOiPIn1Xc7CxrqhWzNSDzD+/chS/zbYezmiwWLdQC09JdQKmthOw==",
+      "tarball": "https://registry.npmjs.org/isexe/-/isexe-4.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/isaacs/isexe.git",
+        "type": "git"
+      },
+      "rank": 37
+    },
+    {
+      "name": "js-yaml",
+      "version": "5.4.3",
+      "source_downloads": {
+        "total": 952993246,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 196749400
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 214249561
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 217115348
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 217121449
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 223875316
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 233391353
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 232469435
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 217853534
+          }
+        ]
+      },
+      "source_updated": "2026-06-01T10:42:01.759Z",
+      "integrity": "sha512-yzzNtgczwgoVHNigCyKTXcQJU4Y8t/ikU4UxXW0BvrLfHTGWZhsNcOT2s/a7vn81/4KqVnNmHjaUEPlvWnNwVw==",
+      "tarball": "https://registry.npmjs.org/js-yaml/-/js-yaml-5.4.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/nodeca/js-yaml.git",
+        "type": "git"
+      },
+      "rank": 38
+    },
+    {
+      "name": "resolve",
+      "version": "1.22.13",
+      "source_downloads": {
+        "total": 923915482,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 207148111
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 210637205
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 222502764
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 222980145
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 209455191
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 183191631
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 228565221
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 232824815
+          }
+        ]
+      },
+      "source_updated": "2026-06-22T10:46:18.399Z",
+      "integrity": "sha512-Dj/cW9zBV2aRj6XzCxuGIs3ESZKv02jixne3q6jFZYZ3/Tg09gHHviSMDL4kObh9pqSahdRHEnDoaP2gn8YLhA==",
+      "tarball": "https://registry.npmjs.org/resolve/-/resolve-1.22.13.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+ssh://git@github.com/browserify/resolve.git",
+        "type": "git"
+      },
+      "rank": 39
+    },
+    {
+      "name": "mime-types",
+      "version": "3.0.2",
+      "source_downloads": {
+        "total": 914156135,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 190968165
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 179689098
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 203071222
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 209489197
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 199003660
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 209033107
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 216332292
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 221851018
+          }
+        ]
+      },
+      "source_updated": "2026-06-22T10:46:54.428Z",
+      "integrity": "sha512-Lbgzdk0h4juoQ9fCKXW4by0UJqj+nOOrI9MJ1sSj4nI8aI2eo1qmvQEie4VD1glsS250n15LsWsYtCugiStS5A==",
+      "tarball": "https://registry.npmjs.org/mime-types/-/mime-types-3.0.2.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/jshttp/mime-types.git",
+        "type": "git"
+      },
+      "rank": 40
+    },
+    {
+      "name": "nanoid",
+      "version": "6.0.2",
+      "source_downloads": {
+        "total": 911934622,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 177187064
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 157537898
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 165441854
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 216769910
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 220754184
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 228633869
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 178053087
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 229525837
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:04:06.785Z",
+      "integrity": "sha512-hIvVOb9Qr1p/9CNNLOe0OlWvgx/ziTsVwKN/GDSsuArN2K0wDiafP3s0SWmsm7o2BdnyS8Z9Z64NFBUbn6ziBg==",
+      "tarball": "https://registry.npmjs.org/nanoid/-/nanoid-6.0.2.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/ai/nanoid.git",
+        "type": "git"
+      },
+      "rank": 41
+    },
+    {
+      "name": "yargs-parser",
+      "version": "22.0.0",
+      "source_downloads": {
+        "total": 908372803,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 213894084
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 222181496
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 214913560
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 205599220
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 203333813
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 228109438
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 234554720
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 242841049
+          }
+        ]
+      },
+      "source_updated": "2026-08-03T08:32:36.875Z",
+      "integrity": "sha512-rwu/ClNdSMpkSrUb+d6BRsSkLUq1fmfsY6TOpYzTwvwkg1/NRG85KBy3kq++A8LKQwX6lsu+aWad+2khvuXrqw==",
+      "tarball": "https://registry.npmjs.org/yargs-parser/-/yargs-parser-22.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/yargs/yargs-parser.git",
+        "type": "git"
+      },
+      "rank": 42
+    },
+    {
+      "name": "source-map",
+      "version": "0.8.0",
+      "source_downloads": {
+        "total": 890684167,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 203254681
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 204223458
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 203401465
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 206353601
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 208039477
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 213934474
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 239138039
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 207412259
+          }
+        ]
+      },
+      "source_updated": "2025-11-03T05:28:52.807Z",
+      "integrity": "sha512-d8EqvL+k/SOXCreS/SUzg2ciyHqBBLcN/yuRjFsbvVhHTE2pgei7oAhmPM7kWFbkX6OSMQfUq4KbkF3au9lhYQ==",
+      "tarball": "https://registry.npmjs.org/source-map/-/source-map-0.8.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+ssh://git@github.com/mozilla/source-map.git",
+        "type": "git"
+      },
+      "rank": 43
+    },
+    {
+      "name": "string_decoder",
+      "version": "1.3.0",
+      "source_downloads": {
+        "total": 888103897,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 206743099
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 217132076
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 218092474
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 208656979
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 183788797
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 229637731
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 233009894
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 227185552
+          }
+        ]
+      },
+      "source_updated": "2026-06-29T09:30:33.359Z",
+      "integrity": "sha512-hkRX8U1WjJFd8LsDJ2yQ/wWWxaopEsABU1XfkM8A+j0+85JAGppt16cr1Whg6KIbb4okU6Mql6BOj+uup/wKeA==",
+      "tarball": "https://registry.npmjs.org/string_decoder/-/string_decoder-1.3.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git://github.com/nodejs/string_decoder.git",
+        "type": "git"
+      },
+      "rank": 44
+    },
+    {
+      "name": "color-convert",
+      "version": "3.1.3",
+      "source_downloads": {
+        "total": 875493558,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 204655732
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 206423019
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 204071194
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 206718173
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 209986067
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 211189492
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 202874243
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 208750137
+          }
+        ]
+      },
+      "source_updated": "2025-11-03T05:42:41.787Z",
+      "integrity": "sha512-fasDH2ont2GqF5HpyO4w0+BcewlhHEZOFn9c1ckZdHpJ56Qb7MHhH/IcJZbBGgvdtwdwNbLvxiBEdg336iA9Sg==",
+      "tarball": "https://registry.npmjs.org/color-convert/-/color-convert-3.1.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/Qix-/color-convert.git",
+        "type": "git"
+      },
+      "rank": 45
+    },
+    {
+      "name": "estraverse",
+      "version": "5.3.0",
+      "source_downloads": {
+        "total": 859346334,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 203488242
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 208835790
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 203752136
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 196357371
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 158630745
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 216279765
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 220099917
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 224804962
+          }
+        ]
+      },
+      "source_updated": "2026-08-03T08:30:43.559Z",
+      "integrity": "sha512-MMdARuVEQziNTeJD8DgMqmhwR11BRQ/cBP+pLtYdSTnf3MIO8fFeiINEbX36ZdNlfU/7A9f3gUw49B3oQsvwBA==",
+      "tarball": "https://registry.npmjs.org/estraverse/-/estraverse-5.3.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+ssh://git@github.com/estools/estraverse.git",
+        "type": "git"
+      },
+      "rank": 46
+    },
+    {
+      "name": "https-proxy-agent",
+      "version": "9.1.0",
+      "source_downloads": {
+        "total": 839166979,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 171219202
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 185755697
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 206895003
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 201903976
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 137503818
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 226737244
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 244928850
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 222654154
+          }
+        ]
+      },
+      "source_updated": "2026-06-29T09:34:41.421Z",
+      "integrity": "sha512-ag87y7cJJ9/3+GxFr8Oy4O5faDsGRGnBGsJj/YjOSsSx/5eadKLYTMPlzuR6obgoCDDm0abAAZitXXQkMOPSpA==",
+      "tarball": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-9.1.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/TooTallNate/proxy-agents.git",
+        "type": "git",
+        "directory": "packages/https-proxy-agent"
+      },
+      "rank": 47
+    },
+    {
+      "name": "@babel/helper-validator-identifier",
+      "version": "8.0.6",
+      "source_downloads": {
+        "total": 819817503,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 164056974
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 174577432
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 184096159
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 188874858
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 186467498
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 185485161
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 183670764
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 207867631
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:05:36.453Z",
+      "integrity": "sha512-HYx0YmuchRxRSpnjvcNffnPS8DCauKNmnumIuHG3jnQAVewRA7kfJGwF13ayEpSZs7s4R/oBH4eppuXcAQd5JQ==",
+      "tarball": "https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-8.0.6.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-helper-validator-identifier"
+      },
+      "rank": 48
+    },
+    {
+      "name": "json5",
+      "version": "2.2.3",
+      "source_downloads": {
+        "total": 819017025,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 193666605
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 198846980
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 191688554
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 186379602
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 150637258
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 210812223
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 214882515
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 220781460
+          }
+        ]
+      },
+      "source_updated": "2026-08-03T08:33:43.948Z",
+      "integrity": "sha512-XmOWe7eyHYH14cLdVPoyg+GOH3rYX++KpzrylJwSW98t3Nk+U8XOl8FWKOgwtzdb8lXGf6zYwDUzeHMWfxasyg==",
+      "tarball": "https://registry.npmjs.org/json5/-/json5-2.2.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/json5/json5.git",
+        "type": "git"
+      },
+      "rank": 49
+    },
+    {
+      "name": "react-is",
+      "version": "19.3.0",
+      "source_downloads": {
+        "total": 814091899,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 288935517
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 255790721
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 318572749
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 323735856
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 315154605
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 305283610
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 246943024
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 333975552
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:11:51.487Z",
+      "integrity": "sha512-UpMYezM4v5/18F28aC66AEsjXIgE02kyEMH6yLdgLXu/UTfa1Ntwck/nNLrbqJsEXW7gPb0coNO9FQse9WTovA==",
+      "tarball": "https://registry.npmjs.org/react-is/-/react-is-19.3.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/react/react.git",
+        "type": "git",
+        "directory": "packages/react-is"
+      },
+      "rank": 50
+    },
+    {
+      "name": "readdirp",
+      "version": "5.1.1",
+      "source_downloads": {
+        "total": 811064095,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 184790264
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 182718828
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 183265360
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 181928813
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 194409978
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 192544765
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 195362456
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 197718550
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:13:41.563Z",
+      "integrity": "sha512-Kko+Y5XQ6fM+Ce3dq3m9YGxnacYZYl9cA1wZjaF3Vbry2L3i1qVg8+CAgNPsXRArPMUMCaOR7oa9Nqntc43JKA==",
+      "tarball": "https://registry.npmjs.org/readdirp/-/readdirp-5.1.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/paulmillr/readdirp.git",
+        "type": "git"
+      },
+      "rank": 51
+    },
+    {
+      "name": "commander",
+      "version": "15.0.0",
+      "source_downloads": {
+        "total": 809290869,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-11-23",
+            "downloads": 244540127
+          },
+          {
+            "week_ending": "2025-11-30",
+            "downloads": 238701876
+          },
+          {
+            "week_ending": "2025-12-07",
+            "downloads": 256955221
+          },
+          {
+            "week_ending": "2025-12-14",
+            "downloads": 250609021
+          },
+          {
+            "week_ending": "2025-12-21",
+            "downloads": 237671866
+          },
+          {
+            "week_ending": "2025-12-28",
+            "downloads": 136306659
+          },
+          {
+            "week_ending": "2026-01-04",
+            "downloads": 127388568
+          },
+          {
+            "week_ending": "2026-01-11",
+            "downloads": 226492248
+          }
+        ]
+      },
+      "source_updated": "2026-01-12T05:41:20.301Z",
+      "integrity": "sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==",
+      "tarball": "https://registry.npmjs.org/commander/-/commander-15.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/tj/commander.js.git",
+        "type": "git"
+      },
+      "rank": 52
+    },
+    {
+      "name": "js-tokens",
+      "version": "10.0.0",
+      "source_downloads": {
+        "total": 808370960,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 155389339
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 189698742
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 179140127
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 160509029
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 199439061
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 201865275
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 197780702
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 194580818
+          }
+        ]
+      },
+      "source_updated": "2026-07-06T09:08:05.253Z",
+      "integrity": "sha512-lM/UBzQmfJRo9ABXbPWemivdCW8V2G8FHaHdypQaIy523snUjog0W71ayWXTjiR+ixeMyVHN2XcpnTd/liPg/Q==",
+      "tarball": "https://registry.npmjs.org/js-tokens/-/js-tokens-10.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/lydell/js-tokens.git",
+        "type": "git"
+      },
+      "rank": 53
+    },
+    {
+      "name": "shebang-regex",
+      "version": "4.0.0",
+      "source_downloads": {
+        "total": 800870978,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 173212166
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 152742209
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 197448013
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 189955230
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 129407792
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 207049091
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 219085428
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 211986031
+          }
+        ]
+      },
+      "source_updated": "2026-06-29T09:31:43.959Z",
+      "integrity": "sha512-YSKeSljCliLkWidW84GWL1HCguI0iEqhnBOLhrVXw/fN9he9ngekCy8zqJ1jXTPYmJ3Xkf3gLuNDVHQWdRqinw==",
+      "tarball": "https://registry.npmjs.org/shebang-regex/-/shebang-regex-4.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/shebang-regex.git",
+        "type": "git"
+      },
+      "rank": 54
+    },
+    {
+      "name": "fs-extra",
+      "version": "11.4.1",
+      "source_downloads": {
+        "total": 800342322,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 176006984
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 159049896
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 191506671
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 197581389
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 191654452
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 180851784
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 181889588
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 200021128
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:07:56.716Z",
+      "integrity": "sha512-KYAb4c9BJQI6QqGKthV68OHe0badztdXJWKo0WtBA9IuCFPTKvE5ZdUBglP833aMjhaSPNO4A5j/EkzZtGlKjA==",
+      "tarball": "https://registry.npmjs.org/fs-extra/-/fs-extra-11.4.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/jprichardson/node-fs-extra.git",
+        "type": "git"
+      },
+      "rank": 55
+    },
+    {
+      "name": "readable-stream",
+      "version": "4.8.0",
+      "source_downloads": {
+        "total": 776802112,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 188253093
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 187696170
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 188274269
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 189391003
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 191208655
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 195759079
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 173029794
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 195822508
+          }
+        ]
+      },
+      "source_updated": "2025-11-03T05:30:34.803Z",
+      "integrity": "sha512-2jhTTU3Eilp/2DMT71gbcoqC35eQHasMJH0RHkYxwlxIv3+FR6Y5xAFZIwEGLxKkjZYEFlsiMNIdwUqjK2lLHQ==",
+      "tarball": "https://registry.npmjs.org/readable-stream/-/readable-stream-4.8.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/nodejs/readable-stream.git",
+        "type": "git"
+      },
+      "rank": 56
+    },
+    {
+      "name": "punycode",
+      "version": "2.3.1",
+      "source_downloads": {
+        "total": 762108082,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 183149273
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 182208028
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 171290074
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 182132058
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 189621167
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 191691797
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 156974541
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 181432807
+          }
+        ]
+      },
+      "source_updated": "2026-07-06T09:10:13.383Z",
+      "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
+      "tarball": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/mathiasbynens/punycode.js.git",
+        "type": "git"
+      },
+      "rank": 57
+    },
+    {
+      "name": "tr46",
+      "version": "7.0.0",
+      "source_downloads": {
+        "total": 759899586,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 161655130
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 144919532
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 179209709
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 182946754
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 179042079
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 173287042
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 173249635
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 193227044
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:09:31.831Z",
+      "integrity": "sha512-BcDSDW+SIGWVOns1Zm6Yg91q9AEj7eaID0QDY9oIqJD1A8dscNwMcl9Sms2DeuWCNov1X0/oXanHGYQBSLwZsg==",
+      "tarball": "https://registry.npmjs.org/tr46/-/tr46-7.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/jsdom/tr46.git",
+        "type": "git"
+      },
+      "rank": 58
+    },
+    {
+      "name": "find-up",
+      "version": "8.0.0",
+      "source_downloads": {
+        "total": 757007820,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 167416827
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 169004777
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 168270010
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 170912138
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 172686609
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 176663675
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 198822297
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 173708119
+          }
+        ]
+      },
+      "source_updated": "2025-11-03T05:36:56.974Z",
+      "integrity": "sha512-JGG8pvDi2C+JxidYdIwQDyS/CgcrIdh18cvgxcBge3wSHRQOrooMD3GlFBcmMJAN9M42SAZjDp5zv1dglJjwww==",
+      "tarball": "https://registry.npmjs.org/find-up/-/find-up-8.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/find-up.git",
+        "type": "git"
+      },
+      "rank": 59
+    },
+    {
+      "name": "webidl-conversions",
+      "version": "8.0.1",
+      "source_downloads": {
+        "total": 755364431,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 185688044
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 190099044
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 185279992
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 179522532
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 179174057
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 199717344
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 204520648
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 210312786
+          }
+        ]
+      },
+      "source_updated": "2026-08-03T08:33:42.902Z",
+      "integrity": "sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==",
+      "tarball": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-8.0.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/jsdom/webidl-conversions.git",
+        "type": "git"
+      },
+      "rank": 60
+    },
+    {
+      "name": "path-exists",
+      "version": "5.0.0",
+      "source_downloads": {
+        "total": 754131906,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 157258167
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 172608787
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 176120235
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 180441275
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 167432314
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 157516396
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 191772865
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 179981864
+          }
+        ]
+      },
+      "source_updated": "2026-06-01T10:46:07.345Z",
+      "integrity": "sha512-RjhtfwJOxzcFmNOi6ltcbcu4Iu+FL3zEj83dk4kAS+fVpTxXLO1b38RvJgT/0QwvV/L3aY9TAnyv0EOqW4GoMQ==",
+      "tarball": "https://registry.npmjs.org/path-exists/-/path-exists-5.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/path-exists.git",
+        "type": "git"
+      },
+      "rank": 61
+    },
+    {
+      "name": "graceful-fs",
+      "version": "4.2.11",
+      "source_downloads": {
+        "total": 753124224,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 192791921
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 178887979
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 174839428
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 144549567
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 192669545
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 186430466
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 187103983
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 187750933
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:14:29.943Z",
+      "integrity": "sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==",
+      "tarball": "https://registry.npmjs.org/graceful-fs/-/graceful-fs-4.2.11.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/isaacs/node-graceful-fs.git",
+        "type": "git"
+      },
+      "rank": 62
+    },
+    {
+      "name": "eslint-scope",
+      "version": "9.1.2",
+      "source_downloads": {
+        "total": 750861788,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 146080877
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 179681074
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 167977063
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 178893043
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 185426714
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 190498702
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 153943840
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 179786199
+          }
+        ]
+      },
+      "source_updated": "2026-07-06T09:09:40.295Z",
+      "integrity": "sha512-xS90H51cKw0jltxmvmHy2Iai1LIqrfbw57b79w/J7MfvDfkIkFZ+kj6zC3BjtUwh150HsSSdxXZcsuv72miDFQ==",
+      "tarball": "https://registry.npmjs.org/eslint-scope/-/eslint-scope-9.1.2.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/eslint/js.git",
+        "type": "git",
+        "directory": "packages/eslint-scope"
+      },
+      "rank": 63
+    },
+    {
+      "name": "yargs",
+      "version": "18.2.0",
+      "source_downloads": {
+        "total": 748062728,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 149304198
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 163184260
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 171520686
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 178758366
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 174137372
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 176383058
+          },
+          {
+            "week_ending": "2026-04-05",
+            "downloads": 166942319
+          },
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 167217371
+          }
+        ]
+      },
+      "source_updated": "2026-04-13T07:19:52.261Z",
+      "integrity": "sha512-9OpKOLeaoNFecEp7P6iYbzze/5CqWoH7N3SMs/6y1XF4nMvFMspEGZzJ6uFi9MmQwXhyzqYoSEKO3tvA3Z/o2w==",
+      "tarball": "https://registry.npmjs.org/yargs/-/yargs-18.2.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/yargs/yargs.git",
+        "type": "git"
+      },
+      "rank": 64
+    },
+    {
+      "name": "cross-spawn",
+      "version": "7.0.6",
+      "source_downloads": {
+        "total": 747861516,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-08",
+            "downloads": 164514370
+          },
+          {
+            "week_ending": "2026-02-15",
+            "downloads": 139667467
+          },
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 133943258
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 150218946
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 171639426
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 174859216
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 183543553
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 168973167
+          }
+        ]
+      },
+      "source_updated": "2026-03-30T07:02:47.191Z",
+      "integrity": "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==",
+      "tarball": "https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+ssh://git@github.com/moxystudio/node-cross-spawn.git",
+        "type": "git"
+      },
+      "rank": 65
+    },
+    {
+      "name": "statuses",
+      "version": "2.0.2",
+      "source_downloads": {
+        "total": 746582128,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 160549732
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 159284877
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 153697763
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 151268559
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 170146360
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 175869169
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 182509039
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 180256203
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:13:11.784Z",
+      "integrity": "sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==",
+      "tarball": "https://registry.npmjs.org/statuses/-/statuses-2.0.2.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/jshttp/statuses.git",
+        "type": "git"
+      },
+      "rank": 66
+    },
+    {
+      "name": "whatwg-url",
+      "version": "17.3.0",
+      "source_downloads": {
+        "total": 736699138,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 142345446
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 173869312
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 165074858
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 147935700
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 182613446
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 186450622
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 182257124
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 176247578
+          }
+        ]
+      },
+      "source_updated": "2026-07-06T09:08:56.579Z",
+      "integrity": "sha512-KwOAJrpf+GTgBvcBQJcP38sMF0DsQKdwtG+TxM2pW44P6E5k0hDbWrDmyuJDIF0Uef0aQq0ZoJs+5oI+k8ddhg==",
+      "tarball": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-17.3.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/jsdom/whatwg-url.git",
+        "type": "git"
+      },
+      "rank": 67
+    },
+    {
+      "name": "fast-deep-equal",
+      "version": "3.1.3",
+      "source_downloads": {
+        "total": 733465877,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 152641896
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 161454761
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 168586452
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 171209771
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 169024880
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 164750710
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 162918629
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 184290409
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:09:31.959Z",
+      "integrity": "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==",
+      "tarball": "https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/epoberezkin/fast-deep-equal.git",
+        "type": "git"
+      },
+      "rank": 68
+    },
+    {
+      "name": "locate-path",
+      "version": "8.0.0",
+      "source_downloads": {
+        "total": 721029318,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 159988425
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 161422945
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 160704796
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 162819371
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 164847434
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 168234810
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 188223439
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 166336684
+          }
+        ]
+      },
+      "source_updated": "2025-11-03T05:40:49.434Z",
+      "integrity": "sha512-XT9ewWAC43tiAV7xDAPflMkG0qOPn2QjHqlgX8FOqmWa/rxnyYDulF9T0F7tRy1u+TVTmK/M//6VIOye+2zDXg==",
+      "tarball": "https://registry.npmjs.org/locate-path/-/locate-path-8.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/locate-path.git",
+        "type": "git"
+      },
+      "rank": 69
+    },
+    {
+      "name": "is-number",
+      "version": "7.0.0",
+      "source_downloads": {
+        "total": 718531784,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 170836192
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 168111197
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 161539677
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 159276403
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 169709564
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 165480742
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 168517913
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 168686673
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:14:22.386Z",
+      "integrity": "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==",
+      "tarball": "https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/jonschlinkert/is-number.git",
+        "type": "git"
+      },
+      "rank": 70
+    },
+    {
+      "name": "get-stream",
+      "version": "9.0.1",
+      "source_downloads": {
+        "total": 714591872,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 154148256
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 160067794
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 161565073
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 163005377
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 166913418
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 175153699
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 174219785
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 163727329
+          }
+        ]
+      },
+      "source_updated": "2026-06-01T10:42:26.657Z",
+      "integrity": "sha512-kVCxPF3vQM/N0B1PmoqVUqgHP+EeVjmZSQn+1oCRPxd2P21P2F19lIgbR3HBosbB1PUhOAoctJnfEn2GbN2eZA==",
+      "tarball": "https://registry.npmjs.org/get-stream/-/get-stream-9.0.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/get-stream.git",
+        "type": "git"
+      },
+      "rank": 71
+    },
+    {
+      "name": "yaml",
+      "version": "2.9.1",
+      "source_downloads": {
+        "total": 709639874,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 124182530
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 153348607
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 145321394
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 128296051
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 163917382
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 171423336
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 179578279
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 167011242
+          }
+        ]
+      },
+      "source_updated": "2026-07-06T09:09:24.021Z",
+      "integrity": "sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==",
+      "tarball": "https://registry.npmjs.org/yaml/-/yaml-2.9.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/eemeli/yaml.git",
+        "type": "git"
+      },
+      "rank": 72
+    },
+    {
+      "name": "path-scurry",
+      "version": "2.0.2",
+      "source_downloads": {
+        "total": 708082045,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 181761816
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 166366378
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 162294608
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 163934743
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 174055745
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 167640874
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 168873416
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 170333141
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:14:41.447Z",
+      "integrity": "sha512-3O/iVVsJAPsOnpwWIeD+d6z/7PmqApyQePUtCndjatj/9I5LylHvt5qluFaBT3I5h3r1ejfR056c+FCv+NnNXg==",
+      "tarball": "https://registry.npmjs.org/path-scurry/-/path-scurry-2.0.2.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/isaacs/path-scurry.git",
+        "type": "git"
+      },
+      "rank": 73
+    },
+    {
+      "name": "@babel/parser",
+      "version": "8.0.7",
+      "source_downloads": {
+        "total": 706352977,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 148140252
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 153240791
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 159935858
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 155255690
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 163444085
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 175401820
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 177765878
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 172188770
+          }
+        ]
+      },
+      "source_updated": "2026-06-01T10:29:25.250Z",
+      "integrity": "sha512-UkDwEbPO1px2JQSrdh4qIgaH1JgG7GO/pFeJkpxhDxIETkT/QvGpnigXIw75ViHYPtIgKITmVUJqLjiO+JuWjA==",
+      "tarball": "https://registry.npmjs.org/@babel/parser/-/parser-8.0.7.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-parser"
+      },
+      "rank": 74
+    },
+    {
+      "name": "browserslist",
+      "version": "4.29.3",
+      "source_downloads": {
+        "total": 702341836,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 150780362
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 134055039
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 164116111
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 166498550
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 164044548
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 159313370
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 159482713
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 178210715
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:03:32.809Z",
+      "integrity": "sha512-1R4kiYKXGViqEN0CnoDrXc1StD9niAwu+j2dukWzrD4bJgsD4lDmEp0CRbc6E/vYJIfTHwPmwyaKtVSudICdPA==",
+      "tarball": "https://registry.npmjs.org/browserslist/-/browserslist-4.29.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/browserslist/browserslist.git",
+        "type": "git"
+      },
+      "rank": 75
+    },
+    {
+      "name": "@babel/helper-string-parser",
+      "version": "8.0.6",
+      "source_downloads": {
+        "total": 699738581,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 137946839
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 123994530
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 155111338
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 159678463
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 157990341
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 158974705
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 157769741
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 179164378
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:10:02.611Z",
+      "integrity": "sha512-+6HYEBnsDRZHJtUTAEfMQd0zMDqdFHS7C+5vAsEZqBUr3vEMWOWlHJ0Jz1gS8jJIlCvLsuA6ivmeoqzH936YcA==",
+      "tarball": "https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-8.0.6.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-helper-string-parser"
+      },
+      "rank": 76
+    },
+    {
+      "name": "camelcase",
+      "version": "10.0.0",
+      "source_downloads": {
+        "total": 694721063,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 165686796
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 160721952
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 152648862
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 151547098
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 167147058
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 160374002
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 177901611
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 147370670
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:13:46.459Z",
+      "integrity": "sha512-p1wew5BGDCONz/5R+xHF6ByqXQM2V+5r4e+FdlFUeROawuMPimdDOFLw5k2QSqp1rm5h2QAglToqJyvnsl3ArQ==",
+      "tarball": "https://registry.npmjs.org/camelcase/-/camelcase-10.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/camelcase.git",
+        "type": "git"
+      },
+      "rank": 77
+    },
+    {
+      "name": "yallist",
+      "version": "5.0.0",
+      "source_downloads": {
+        "total": 692916241,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 157114244
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 157420748
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 156756156
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 158883606
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 160123189
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 162667277
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 174236181
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 162827571
+          }
+        ]
+      },
+      "source_updated": "2025-11-03T05:35:18.428Z",
+      "integrity": "sha512-YgvUTfwqyc7UXVMrB+SImsVYSmTS8X/tSrtdNZMImM+n7+QTriRXyXim0mBrTXNeqzVF0KWGgHPeiyViFFrNDw==",
+      "tarball": "https://registry.npmjs.org/yallist/-/yallist-5.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/isaacs/yallist.git",
+        "type": "git"
+      },
+      "rank": 78
+    },
+    {
+      "name": "@babel/template",
+      "version": "8.0.0",
+      "source_downloads": {
+        "total": 689361219,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 157161795
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 155344651
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 153234388
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 123038668
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 169599755
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 173988303
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 178326088
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 180554119
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:14:12.333Z",
+      "integrity": "sha512-eAD0QW/AlbamBbw0FeGiwasbCVPq5ncW0HNVyLP3B9czqLyh4gvw+5JTSNt6le9+ziAU7mqDZsKTHf3jTb4chQ==",
+      "tarball": "https://registry.npmjs.org/@babel/template/-/template-8.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "https://github.com/babel/babel.git",
+        "type": "git",
+        "directory": "packages/babel-template"
+      },
+      "rank": 79
+    },
+    {
+      "name": "cookie",
+      "version": "2.0.1",
+      "source_downloads": {
+        "total": 688774755,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 167173530
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 170450001
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 158442658
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 134357504
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 164490369
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 166302762
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 162671821
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 157577236
+          }
+        ]
+      },
+      "source_updated": "2026-07-06T09:07:21.805Z",
+      "integrity": "sha512-yuToqVvRrj6pfDXREyQAAv8SkAEk/8GS3jQRTiUMm66TVtBYmqQeoEjL2Lmq8Rpo6271vH76InTChTitEAm65w==",
+      "tarball": "https://registry.npmjs.org/cookie/-/cookie-2.0.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/jshttp/cookie.git",
+        "type": "git"
+      },
+      "rank": 80
+    },
+    {
+      "name": "agent-base",
+      "version": "9.0.0",
+      "source_downloads": {
+        "total": 687138143,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 135627995
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 151595861
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 157614634
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 167920286
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 168111470
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 167349207
+          },
+          {
+            "week_ending": "2026-04-05",
+            "downloads": 158282361
+          },
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 159319294
+          }
+        ]
+      },
+      "source_updated": "2026-04-13T07:22:19.142Z",
+      "integrity": "sha512-TQf59BsZnytt8GdJKLPfUZ54g/iaUL2OWDSFCCvMOhsHduDQxO8xC4PNeyIkVcA5KwL2phPSv0douC0fgWzmnA==",
+      "tarball": "https://registry.npmjs.org/agent-base/-/agent-base-9.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/TooTallNate/proxy-agents.git",
+        "type": "git",
+        "directory": "packages/agent-base"
+      },
+      "rank": 81
+    },
+    {
+      "name": "safe-buffer",
+      "version": "5.2.1",
+      "source_downloads": {
+        "total": 686329873,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 154064131
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 154597692
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 153968709
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 154997308
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 157939445
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 161614088
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 174124006
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 160273439
+          }
+        ]
+      },
+      "source_updated": "2025-11-03T05:44:34.971Z",
+      "integrity": "sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ==",
+      "tarball": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git://github.com/feross/safe-buffer.git",
+        "type": "git"
+      },
+      "rank": 82
+    },
+    {
+      "name": "qs",
+      "version": "6.16.0",
+      "source_downloads": {
+        "total": 681784363,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 156744129
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 133490644
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 166652070
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 167414989
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 165873447
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 161644064
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 126164115
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 171022646
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:06:03.511Z",
+      "integrity": "sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==",
+      "tarball": "https://registry.npmjs.org/qs/-/qs-6.16.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/ljharb/qs.git",
+        "type": "git"
+      },
+      "rank": 83
+    },
+    {
+      "name": "fill-range",
+      "version": "7.1.1",
+      "source_downloads": {
+        "total": 674425612,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 164689263
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 134925513
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 156231560
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 153500565
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 163336487
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 159056169
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 162378815
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 162845548
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:12:42.744Z",
+      "integrity": "sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg==",
+      "tarball": "https://registry.npmjs.org/fill-range/-/fill-range-7.1.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/jonschlinkert/fill-range.git",
+        "type": "git"
+      },
+      "rank": 84
+    },
+    {
+      "name": "path-to-regexp",
+      "version": "8.4.2",
+      "source_downloads": {
+        "total": 667705073,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 169832080
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 180945907
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 185600162
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 171515109
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 116053337
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 181418377
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 181319808
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 149884244
+          }
+        ]
+      },
+      "source_updated": "2026-06-29T09:30:53.785Z",
+      "integrity": "sha512-qRcuIdP69NPm4qbACK+aDogI5CBDMi1jKe0ry5rSQJz8JVLsC7jV8XpiJjGRLLol3N+R5ihGYcrPLTno6pAdBA==",
+      "tarball": "https://registry.npmjs.org/path-to-regexp/-/path-to-regexp-8.4.2.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/pillarjs/path-to-regexp.git",
+        "type": "git"
+      },
+      "rank": 85
+    },
+    {
+      "name": "lodash",
+      "version": "4.18.1",
+      "source_downloads": {
+        "total": 658106324,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 161341623
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 159927293
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 130261729
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 152425085
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 120645159
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 162695875
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 162846729
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 166304956
+          }
+        ]
+      },
+      "source_updated": "2026-08-03T08:29:21.089Z",
+      "integrity": "sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==",
+      "tarball": "https://registry.npmjs.org/lodash/-/lodash-4.18.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/lodash/lodash.git",
+        "type": "git"
+      },
+      "rank": 86
+    },
+    {
+      "name": "universalify",
+      "version": "2.0.1",
+      "source_downloads": {
+        "total": 657406567,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 153318280
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 149048829
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 141546694
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 141566586
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 156271267
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 157582250
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 160516378
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 161018752
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:12:50.044Z",
+      "integrity": "sha512-gptHNQghINnc/vTGIk0SOFGFNXw7JVrlRUtConJRlvaw6DuX0wO5Jeko9sWrMBhh+PsYAZ7oXAiOnf/UKogyiw==",
+      "tarball": "https://registry.npmjs.org/universalify/-/universalify-2.0.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/RyanZim/universalify.git",
+        "type": "git"
+      },
+      "rank": 87
+    },
+    {
+      "name": "form-data",
+      "version": "4.0.6",
+      "source_downloads": {
+        "total": 657362382,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 149536864
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 152132585
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 155971368
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 156803657
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 146310302
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 127192843
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 162875582
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 175115892
+          }
+        ]
+      },
+      "source_updated": "2026-06-22T10:47:30.211Z",
+      "integrity": "sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==",
+      "tarball": "https://registry.npmjs.org/form-data/-/form-data-4.0.6.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git://github.com/form-data/form-data.git",
+        "type": "git"
+      },
+      "rank": 88
+    },
+    {
+      "name": "jiti",
+      "version": "2.7.0",
+      "source_downloads": {
+        "total": 655976495,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 116884379
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 144670275
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 139095385
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 126115826
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 154482859
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 159502746
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 157170616
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 161571371
+          }
+        ]
+      },
+      "source_updated": "2026-07-06T09:07:14.375Z",
+      "integrity": "sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==",
+      "tarball": "https://registry.npmjs.org/jiti/-/jiti-2.7.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/unjs/jiti.git",
+        "type": "git"
+      },
+      "rank": 89
+    },
+    {
+      "name": "@radix-ui/react-primitive",
+      "version": "2.2.0",
+      "source_downloads": {
+        "total": 654667295,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 138432646
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 134079603
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 156188042
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 150746072
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 142134785
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 153476628
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 143395827
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 189568442
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:03:15.000Z",
+      "integrity": "sha512-HCTSPMNqv55Qk0IX4geJbpyXazmqulcimwuyjxTkKi29v+QZbG2Zho9BnbBq4YS2PF+KlNb2CXoLz66uUmblkg==",
+      "tarball": "https://registry.npmjs.org/@radix-ui/react-primitive/-/react-primitive-2.2.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/radix-ui/primitives.git",
+        "type": "git",
+        "directory": "packages/react/primitive"
+      },
+      "rank": 90
+    },
+    {
+      "name": "onetime",
+      "version": "8.0.0",
+      "source_downloads": {
+        "total": 654519396,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 129748966
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 120211195
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 148050537
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 138982343
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 147816232
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 155088958
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 157730285
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 153498046
+          }
+        ]
+      },
+      "source_updated": "2026-06-29T09:34:15.642Z",
+      "integrity": "sha512-ODz2CnF+9043eG3exS38Efor4ekggmKvIydHaXWr1n9mXA5Afn8BdSsvVpa5AhBWricxhdBMfyeG3Yo3SB+VWA==",
+      "tarball": "https://registry.npmjs.org/onetime/-/onetime-8.0.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/onetime.git",
+        "type": "git"
+      },
+      "rank": 91
+    },
+    {
+      "name": "node-releases",
+      "version": "2.0.58",
+      "source_downloads": {
+        "total": 646644768,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 132792457
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 145196305
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 149933081
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 144182025
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 145568036
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 153713671
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 156311077
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 147465849
+          }
+        ]
+      },
+      "source_updated": "2026-06-01T10:48:33.777Z",
+      "integrity": "sha512-BdiKAgbfRlvfMq/XzO/AF9NPmaA8a+YpLAyAFTVFBj3gARrAIfWvNq7Q7NE4se3KgFu0KkrvQMxTS0XVnsGzHg==",
+      "tarball": "https://registry.npmjs.org/node-releases/-/node-releases-2.0.58.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/chicoxyzzy/node-releases.git",
+        "type": "git"
+      },
+      "rank": 92
+    },
+    {
+      "name": "ajv",
+      "version": "8.20.0",
+      "source_downloads": {
+        "total": 645187585,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 152592614
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 152943336
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 151410853
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 151753055
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 155853051
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 157944195
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 140527842
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 159676014
+          }
+        ]
+      },
+      "source_updated": "2025-11-03T05:30:29.729Z",
+      "integrity": "sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==",
+      "tarball": "https://registry.npmjs.org/ajv/-/ajv-8.20.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/ajv-validator/ajv.git",
+        "type": "git"
+      },
+      "rank": 93
+    },
+    {
+      "name": "is-glob",
+      "version": "4.0.3",
+      "source_downloads": {
+        "total": 644519841,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 150805913
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 159292539
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 159578401
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 150231912
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 132579300
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 166655129
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 169135982
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 165121743
+          }
+        ]
+      },
+      "source_updated": "2026-06-29T09:33:51.156Z",
+      "integrity": "sha512-xelSayHH36ZgE7ZWhli7pW34hNbNl8Ojv5KVmkJD4hBdD3th8Tfk9vYasLM+mXWOZhFkgZfxhLSnrwRr4elSSg==",
+      "tarball": "https://registry.npmjs.org/is-glob/-/is-glob-4.0.3.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/micromatch/is-glob.git",
+        "type": "git"
+      },
+      "rank": 94
+    },
+    {
+      "name": "escalade",
+      "version": "3.2.0",
+      "source_downloads": {
+        "total": 637499497,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 146890760
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 153859287
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 156045767
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 147561047
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 131528917
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 162690657
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 168232850
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 164174499
+          }
+        ]
+      },
+      "source_updated": "2026-06-29T09:29:54.171Z",
+      "integrity": "sha512-WUj2qlxaQtO4g6Pq5c29GTcWGDyd8itL8zTlipgECz3JesAiiOKotd8JU6otB3PACgG6xkJUyVhboMS+bje/jA==",
+      "tarball": "https://registry.npmjs.org/escalade/-/escalade-3.2.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/lukeed/escalade.git",
+        "type": "git"
+      },
+      "rank": 95
+    },
+    {
+      "name": "update-browserslist-db",
+      "version": "1.3.4",
+      "source_downloads": {
+        "total": 636417919,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 136712796
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 143893937
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 148611191
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 150510673
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 144865821
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 141484272
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 139694945
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 157229343
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:05:05.298Z",
+      "integrity": "sha512-t8wonIOdQyOjtPd2VktlBu6QjTVTks6v8bSi7kd0r2Vll8TK1JYDZtRRdbmCHOAMphkZgrzK+L+vXK4pyZ8t4A==",
+      "tarball": "https://registry.npmjs.org/update-browserslist-db/-/update-browserslist-db-1.3.4.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/browserslist/update-db.git",
+        "type": "git"
+      },
+      "rank": 96
+    },
+    {
+      "name": "yocto-queue",
+      "version": "1.2.2",
+      "source_downloads": {
+        "total": 630094918,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 137798369
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 141393821
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 141681538
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 147778887
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 155851384
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 157224729
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 146867106
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 102341529
+          }
+        ]
+      },
+      "source_updated": "2026-06-08T09:30:39.107Z",
+      "integrity": "sha512-4LCcse/U2MHZ63HAJVE+v71o7yOdIe4cZ70Wpf8D/IyjDKYQLV5GD46B+hSTjJsvV5PztjvHoU580EftxjDZFQ==",
+      "tarball": "https://registry.npmjs.org/yocto-queue/-/yocto-queue-1.2.2.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/sindresorhus/yocto-queue.git",
+        "type": "git"
+      },
+      "rank": 97
+    },
+    {
+      "name": "to-regex-range",
+      "version": "5.0.1",
+      "source_downloads": {
+        "total": 629496614,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 141018764
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 98073763
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 128024881
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 156972176
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 128906850
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 149452433
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 119874065
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 156105484
+          }
+        ]
+      },
+      "source_updated": "2026-07-20T08:05:02.437Z",
+      "integrity": "sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ==",
+      "tarball": "https://registry.npmjs.org/to-regex-range/-/to-regex-range-5.0.1.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/micromatch/to-regex-range.git",
+        "type": "git"
+      },
+      "rank": 98
+    },
+    {
+      "name": "fast-json-stable-stringify",
+      "version": "2.1.0",
+      "source_downloads": {
+        "total": 622402782,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 136592551
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 134213284
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 130692940
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 128848719
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 143593628
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 145804224
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 149661920
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 152041077
+          }
+        ]
+      },
+      "source_updated": "2026-08-10T06:12:14.078Z",
+      "integrity": "sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==",
+      "tarball": "https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git://github.com/epoberezkin/fast-json-stable-stringify.git",
+        "type": "git"
+      },
+      "rank": 99
+    },
+    {
+      "name": "get-intrinsic",
+      "version": "1.3.0",
+      "source_downloads": {
+        "total": 619552401,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 145764059
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 150830387
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 157368763
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 147367140
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 125992315
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 154539794
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 157379880
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 156893965
+          }
+        ]
+      },
+      "source_updated": "2026-06-29T09:32:11.823Z",
+      "integrity": "sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==",
+      "tarball": "https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz",
+      "types_only": false,
+      "repository": {
+        "url": "git+https://github.com/ljharb/get-intrinsic.git",
+        "type": "git"
+      },
+      "rank": 100
+    }
+  ]
+}
