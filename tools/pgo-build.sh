@@ -31,7 +31,7 @@ curriculum_repeats=20
 # in the same process, so each program's interpreter paths, not startup, carry its weight.
 # Training with only the single load-time call left the PGO build slower than a plain build
 # on NavierStokes, Crypto, Richards and Splay.
-curriculum_budget_ms=1500
+curriculum_budget_ms=6000
 
 host="$(rustc -vV | sed -n 's/^host: //p')"
 llvm_profdata="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-profdata"
