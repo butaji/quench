@@ -8,15 +8,15 @@ pub(super) enum EnumerableOwnPropertyKind {
 
 impl<H: Host> Vm<H> {
     pub(super) fn indexed_name_keys(&mut self, object: Value) -> Option<Vec<Value>> {
-        let (indices, array_length) = match self.heap.get(object) {
-            Some(Cell::Array { .. }) => (
+        let (indices, array_length) = if self.heap.array(object).is_some() {
+            (
                 self.array_present_indices(object),
                 self.own_array_length(object).is_some(),
-            ),
-            Some(Cell::TypedArray { .. }) => {
-                ((0..self.typed_array_length(object)?).collect(), false)
-            }
-            _ => return None,
+            )
+        } else if matches!(self.heap.get(object), Some(Cell::TypedArray { .. })) {
+            ((0..self.typed_array_length(object)?).collect(), false)
+        } else {
+            return None;
         };
         let mut keys = indices
             .into_iter()
@@ -49,11 +49,12 @@ impl<H: Host> Vm<H> {
                 if !matches!(self.heap.get(property), Some(Cell::String(_))) {
                     continue;
                 }
-                let descriptor = self.object_get_own_property_descriptor(
+                let enumerable = self.own_property_enumerable(
                     p,
-                    &[self.heap.root_value(object).unwrap(), property],
+                    self.heap.root_value(object).unwrap(),
+                    property,
                 )?;
-                if descriptor.is_undefined() || !self.descriptor_flag(descriptor, "enumerable") {
+                if enumerable != Some(true) {
                     continue;
                 }
                 let item = match kind {

@@ -370,6 +370,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 .source_positions
                 .last()
                 .is_none_or(|position| position.line != line || position.column != column)
+                // Calls expose their own source position. An argument Move carrying
+                // the same compressed position may disappear during rewriting.
+                || op.control_flow_layout() == crate::bytecode::ControlFlowLayout::Call
             {
                 self.source_positions.push(crate::bytecode::SourcePosition {
                     pc: u32::try_from(self.code.len() - 1).unwrap_or(u32::MAX),

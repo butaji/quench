@@ -1,0 +1,132 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 3280cc690..90a2840e1 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -109,6 +109,7 @@ pub(crate) enum FieldLayout {
+     RegisterWindowBase,
+     RegisterCount,
+     FieldBase,
++    LocalSlot,
+     CacheSiteIndex,
+     FieldLookupCacheSiteIndex,
+     WideIndexChunk,
+@@ -548,6 +549,7 @@ opcodes!(
+     Yield => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     YieldStar => READ_THROW.union(Effect::CONTROL); layout RegisterPair, @ RegisterReadWrite, @ fields(ResultRegister, Register, ReadWriteRegister),
+     GetField => READ_THROW; layout Scalar; meaning FieldLookup, @ ReturnableAndThis, @ fields(ResultRegister, FieldBase, FieldLookupCacheSiteIndex),
++    GetFieldLocal => READ_THROW; layout Scalar; meaning AtomIndex, @ Returnable, @ fields(ResultRegister, LocalSlot, CacheSiteIndex),
+     GetIndex => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, NumericIndexOperand, NumericIndexOperand),
+     ToPropertyKey => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+     ToNumeric => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Unused),
+@@ -1365,7 +1367,7 @@ fn local_loads_in_bounds(code: &[Instr], wide: &[WideInstruction], locals: u16)
+ }
+ 
+ impl ResidualProgram {
+-    pub const FORMAT_VERSION: u8 = 80;
++    pub const FORMAT_VERSION: u8 = 81;
+     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
+         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
+         const FORMAT_VERSION_SHIFT: u32 = 16;
+diff --git a/crates/quench-runtime/src/bytecode/disassemble.rs b/crates/quench-runtime/src/bytecode/disassemble.rs
+index 2a9fe6cc1..0564e9ee8 100644
+--- a/crates/quench-runtime/src/bytecode/disassemble.rs
++++ b/crates/quench-runtime/src/bytecode/disassemble.rs
+@@ -87,6 +87,7 @@ fn write_field(
+         | FieldLayout::ReadWriteRegister
+         | FieldLayout::OptionalRegister
+         | FieldLayout::FunctionIndex
++        | FieldLayout::LocalSlot
+         | FieldLayout::ElementCount
+         | FieldLayout::CacheSiteIndex
+         | FieldLayout::WideIndexChunk
+@@ -143,6 +144,9 @@ fn write_scalar_field(
+         (InstructionField::B, FieldLayout::FunctionIndex) => {
+             write!(output, " b=function:{}", instruction.known_function_index())
+         }
++        (InstructionField::B, FieldLayout::LocalSlot) => {
++            write!(output, " local={}", instruction.field_value(field))
++        }
+         (InstructionField::B, FieldLayout::ElementCount) => {
+             write!(output, " elements={}", instruction.element_count())
+         }
+diff --git a/crates/quench-runtime/src/bytecode/instruction.rs b/crates/quench-runtime/src/bytecode/instruction.rs
+index d9b56a2b6..08547713c 100644
+--- a/crates/quench-runtime/src/bytecode/instruction.rs
++++ b/crates/quench-runtime/src/bytecode/instruction.rs
+@@ -561,6 +561,15 @@ macro_rules! layout_accessors {
+                 self.imm() as usize
+             }
+ 
++            #[allow(dead_code)]
++            pub(crate) fn local_field_slot(self) -> usize {
++                debug_assert_eq!(
++                    self.op().field_layout(InstructionField::B),
++                    FieldLayout::LocalSlot
++                );
++                self.b() as usize
++            }
++
+             #[allow(dead_code)]
+             pub(crate) fn jump_target(self) -> u32 {
+                 debug_assert_eq!(self.op().immediate_role(), ImmediateRole::JumpTarget);
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index 88d59cb98..f5fec6664 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -137,6 +137,7 @@ fn field_domains_in_bounds(instruction: super::WideInstruction, bounds: Validati
+                 .optional_register_b()
+                 .is_none_or(|register| register_in_bounds(register, bounds.registers, 0)),
+             FieldLayout::CacheSiteIndex => cache_in_bounds(value, bounds.cache_sites),
++            FieldLayout::LocalSlot => value < bounds.locals,
+             FieldLayout::FieldLookupCacheSiteIndex => true,
+             FieldLayout::BooleanFlag => instruction.boolean_field(field).is_some(),
+             FieldLayout::FunctionIndex => usize::from(value) < bounds.functions,
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 34e683ffd..cdaa391e9 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -65,6 +65,23 @@ fusion_recipes! {
+         first.set_result_register(second.result_register());
+         Some(first)
+     };
++    LoadLocalGetField: [LoadLocalPlain, GetField] =>
++        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
++            if first.numeric_local_store_target().is_some() || second.writes_current_this() {
++                return None;
++            }
++            let crate::bytecode::FieldLookup::Atom { atom, base, cache_site } =
++                second.field_lookup()? else { return None; };
++            if base.register_index() != Some(first.result_register()) { return None; }
++            let local = u16::try_from(first.local_slot()).ok()?;
++            Instr::try_new(
++                Op::GetFieldLocal,
++                second.a(),
++                local,
++                cache_site,
++                atom,
++            )
++        };
+     BinaryJumpFalse: [Binary, JumpFalse] =>
+         |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+             if first.result_register() != second.register_a() { return None; }
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 6ad924d39..20896487c 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -442,6 +442,16 @@ impl<H: Host> Vm<H> {
+                 }
+                 self.write(f, i.result_register(), v);
+             }
++            Op::GetFieldLocal => {
++                // SAFETY: residual validation bounds the encoded local slot by
++                // Function.locals, and activation setup sizes locals accordingly.
++                let base = unsafe { self.read_validated_local(f, i.local_field_slot()) };
++                let value = self.get_field_cached(p, base, i.atom_index(), i.cache_site_index())?;
++                if i.returns_from_frame() {
++                    return Ok(StepResult::Return(value));
++                }
++                self.write(f, i.result_register(), value);
++            }
+             Op::GetIndex => {
+                 #[cfg(feature = "profile-aggregate")]
+                 self.profile.index_dispatch(false, false);

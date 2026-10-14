@@ -1,0 +1,60 @@
+{
+  "experiment": "fuse LoadLocalPlain -> Binary using a validated direct local read",
+  "baseline_sha256": "07bd8382c10039f933c9462db39ad107168133e14acaaccbfa2618704475f6c6",
+  "candidate_sha256": "67d710aea65bde6012b04fab90825e98d43e9cf631845b60e3516afd2d058717",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 390.0,
+      "candidate_score": 393.0,
+      "score_delta": 3.0,
+      "baseline_rss_bytes": 42835968,
+      "candidate_rss_bytes": 42115072,
+      "rss_delta_bytes": -720896,
+      "baseline_wall_ns": 23781390867,
+      "candidate_wall_ns": 23720958537
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 388.0,
+      "candidate_score": 396.0,
+      "score_delta": 8.0,
+      "baseline_rss_bytes": 42639360,
+      "candidate_rss_bytes": 42311680,
+      "rss_delta_bytes": -327680,
+      "baseline_wall_ns": 23962936627,
+      "candidate_wall_ns": 24138769460
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 397.0,
+      "candidate_score": 395.0,
+      "score_delta": -2.0,
+      "baseline_rss_bytes": 42704896,
+      "candidate_rss_bytes": 42311680,
+      "rss_delta_bytes": -393216,
+      "baseline_wall_ns": 23630071851,
+      "candidate_wall_ns": 23832938725
+    }
+  ],
+  "valid": true
+}

@@ -1,0 +1,150 @@
+diff --git a/crates/quench-runtime/src/bytecode.rs b/crates/quench-runtime/src/bytecode.rs
+index 315d451f8..cbf66cf84 100644
+--- a/crates/quench-runtime/src/bytecode.rs
++++ b/crates/quench-runtime/src/bytecode.rs
+@@ -575,6 +575,8 @@ opcodes!(
+     Construct => CALL_EFFECT; layout ConstructCountAndFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, ConstructArguments),
+     Jump => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow Jump, @ Register, @ fields(Unused, Unused, Unused),
+     JumpFalse => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
++    // The branch edge retains B, so liveness must keep its incoming value.
++    JumpFalseLoadLocalSkip => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, ReadWriteRegister, LocalSlot),
+     JumpBinaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(BinaryOperator, Operand, Operand),
+     JumpUnaryFalse => READ_THROW.union(Effect::CONTROL); layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(UnaryOperator, Operand, Unused),
+     Return => Effect::CONTROL; layout Scalar; meaning Unused; flow Terminal, @ Register, @ fields(Register, Unused, Unused),
+diff --git a/crates/quench-runtime/src/bytecode/validate.rs b/crates/quench-runtime/src/bytecode/validate.rs
+index 7378d54b3..53d8d924e 100644
+--- a/crates/quench-runtime/src/bytecode/validate.rs
++++ b/crates/quench-runtime/src/bytecode/validate.rs
+@@ -625,6 +625,16 @@ impl ResidualProgram {
+                         "function {index} has an unproven plain-local operation"
+                     ));
+                 }
++                if instruction.op() == super::Op::JumpFalseLoadLocalSkip
++                    && !plain_local_slots
++                        .get(usize::from(instruction.c()))
++                        .copied()
++                        .unwrap_or(false)
++                {
++                    return Err(format!(
++                        "function {index} has an unproven plain-local operation"
++                    ));
++                }
+                 if instruction.op() == super::Op::CopyLocalPlain
+                     && !plain_local_slots
+                         .get(instruction.copy_local_source_slot())
+diff --git a/crates/quench-runtime/src/compile.rs b/crates/quench-runtime/src/compile.rs
+index c58cd5045..9347f1ba9 100644
+--- a/crates/quench-runtime/src/compile.rs
++++ b/crates/quench-runtime/src/compile.rs
+@@ -2169,6 +2169,9 @@ impl<'a> Compiler<'a> {
+                 );
+                 numeric::apply_plain_local_stores(function, live.as_deref());
+             }
++            if self.mode == SpecializationMode::Enabled {
++                rewrite::apply_branch_local_fusion(function);
++            }
+         }
+         let register_roots = liveness::derive(
+             &mut functions,
+diff --git a/crates/quench-runtime/src/compile/liveness.rs b/crates/quench-runtime/src/compile/liveness.rs
+index 6cacb13b0..1c6718bb5 100644
+--- a/crates/quench-runtime/src/compile/liveness.rs
++++ b/crates/quench-runtime/src/compile/liveness.rs
+@@ -56,7 +56,12 @@ pub(super) fn analyze(
+ }
+ 
+ pub(super) fn live_out(function: &Function, live: &[u64], pc: usize, instruction: Instr) -> u64 {
+-    let fallthrough = live.get(pc + 1).copied().unwrap_or(0);
++    let fallthrough_pc = if instruction.op() == crate::bytecode::Op::JumpFalseLoadLocalSkip {
++        pc + 2
++    } else {
++        pc + 1
++    };
++    let fallthrough = live.get(fallthrough_pc).copied().unwrap_or(0);
+     let normal = match instruction.op().control_flow_layout() {
+         ControlFlowLayout::Jump => live[instruction.jump_target() as usize],
+         ControlFlowLayout::ConditionalJump => {
+diff --git a/crates/quench-runtime/src/compile/rewrite.rs b/crates/quench-runtime/src/compile/rewrite.rs
+index 44e54a12a..9fd23d26f 100644
+--- a/crates/quench-runtime/src/compile/rewrite.rs
++++ b/crates/quench-runtime/src/compile/rewrite.rs
+@@ -256,6 +256,41 @@ fn rewrite_super_window(
+     changed
+ }
+ 
++pub(super) fn apply_branch_local_fusion(function: &mut BcFunction) {
++    rewrite_branch_local_window(function);
++}
++
++fn rewrite_branch_local_window(function: &mut BcFunction) -> bool {
++    let mut changed = false;
++    for index in 0..function.code.len().saturating_sub(1) {
++        let branch = function.code[index];
++        let local = function.code[index + 1];
++        if branch.op() != Op::JumpFalse
++            || local.op() != Op::LoadLocalPlain
++            || branch.result_flags() != 0
++            || local.result_flags() != 0
++            || local.numeric_local_store_target().is_some()
++        {
++            continue;
++        }
++        let Ok(slot) = u16::try_from(local.local_slot()) else {
++            continue;
++        };
++        let Some(fused) = Instr::try_new(
++            Op::JumpFalseLoadLocalSkip,
++            branch.register_a(),
++            local.result_register(),
++            slot,
++            branch.jump_target(),
++        ) else {
++            continue;
++        };
++        function.code[index] = fused;
++        changed = true;
++    }
++    changed
++}
++
+ fn fuse_const_array_object2(
+     window: &[Instr],
+     superinstructions: &mut Vec<Superinstruction>,
+@@ -297,6 +332,11 @@ pub(super) fn protected_positions(
+             protected[instruction.jump_target() as usize] = true;
+         }
+     }
++    for (pc, instruction) in code.iter().enumerate() {
++        if instruction.op() == Op::JumpFalseLoadLocalSkip && pc + 2 <= code.len() {
++            protected[pc + 2] = true;
++        }
++    }
+     for handler in handlers {
+         protected[handler.start as usize] = true;
+         protected[handler.end as usize] = true;
+diff --git a/crates/quench-runtime/src/vm/dispatch.rs b/crates/quench-runtime/src/vm/dispatch.rs
+index 46ba9a381..62dd89950 100644
+--- a/crates/quench-runtime/src/vm/dispatch.rs
++++ b/crates/quench-runtime/src/vm/dispatch.rs
+@@ -1508,6 +1508,21 @@ impl<H: Host> Vm<H> {
+                     *pc = i.jump_target() as usize;
+                 }
+             }
++            Op::JumpFalseLoadLocalSkip => {
++                let value = self.read(f, i.register_a());
++                let truthy = self.truthy(value);
++                #[cfg(feature = "profile-aggregate")]
++                self.profile
++                    .branch_value(value.profile_kind() as usize, truthy);
++                if truthy {
++                    // SAFETY: validation proves C names a plain-local slot.
++                    let local = unsafe { self.read_validated_local(f, usize::from(i.c())) };
++                    self.write(f, i.register_b(), local);
++                    *pc += 1;
++                } else {
++                    *pc = i.jump_target() as usize;
++                }
++            }
+             Op::JumpBinaryFalse => {
+                 let operator = i.binary_operator_field();
+                 let left_operand = i.operand_b();

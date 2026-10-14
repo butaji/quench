@@ -54,6 +54,28 @@ const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] 
     BinaryOperator::BitwiseAnd,
 ];
 
+/// Binary operator immediates up to this one are equality and relational
+/// comparisons, in `integer_relation` order.
+const LAST_RELATIONAL_OPERATOR: u32 = 7;
+
+/// The integer fast path of an equality or relational operator.
+#[inline(always)]
+pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {
+    if op > LAST_RELATIONAL_OPERATOR {
+        return None;
+    }
+    let (a, b) = Value::int_pair(left, right)?;
+    Some(match op {
+        0 | 2 => a == b,
+        1 | 3 => a != b,
+        4 => a < b,
+        5 => a <= b,
+        6 => a > b,
+        7 => a >= b,
+        _ => unreachable!("relational operator range"),
+    })
+}
+
 #[inline(always)]
 fn numeric_binary_operator(immediate: u32) -> Option<BinaryOperator> {
     let index = immediate.checked_sub(FIRST_NUMERIC_BINARY_OPERATOR)? as usize;
@@ -1451,10 +1473,16 @@ impl<H: Host> Vm<H> {
         right: Value,
     ) -> Result<Value, JsError> {
         let Some(Cell::BigInt(left)) = self.heap.get(left) else {
-            return Err(self.type_error(p, "Cannot mix BigInt and other types".into()));
+            return Err(self.type_error(
+                p,
+                "Cannot mix BigInt and other types, use explicit conversions".into(),
+            ));
         };
         let Some(Cell::BigInt(right)) = self.heap.get(right) else {
-            return Err(self.type_error(p, "Cannot mix BigInt and other types".into()));
+            return Err(self.type_error(
+                p,
+                "Cannot mix BigInt and other types, use explicit conversions".into(),
+            ));
         };
         let result = match op {
             8 => crate::bigint::binary(left, right, |a, b| Ok(a + b)),
@@ -1608,6 +1636,37 @@ impl<H: Host> Vm<H> {
         );
         Some(number_comparison(op, a, b))
     }
+
+    /// Shared numeric update after ToNumeric, used by bytecode and native hosts.
+    pub(super) fn numeric_update(
+        &mut self,
+        p: &ResidualProgram,
+        input: Value,
+        decrement: bool,
+    ) -> Result<Value, JsError> {
+        let delta = if decrement { -1.0 } else { 1.0 };
+        if matches!(self.heap.get(input), Some(Cell::BigInt(_))) {
+            let one = self.heap.alloc(Cell::BigInt("1".into()));
+            let operator = if decrement {
+                BinaryOperator::Subtraction
+            } else {
+                BinaryOperator::Addition
+            };
+            self.binary(p, operator as u32, input, one)
+        } else if let Some(integer) = input.as_int() {
+            let next = if decrement {
+                integer.checked_sub(1)
+            } else {
+                integer.checked_add(1)
+            };
+            Ok(next
+                .map(Value::integer)
+                .unwrap_or_else(|| Value::number(f64::from(integer) + delta)))
+        } else {
+            Ok(Value::number(self.to_number(p, input)? + delta))
+        }
+    }
+
     /// `==`, `!=`, `===` or `!==` of non-number operands when no conversion can decide it:
     /// equal bits are the same value; distinct strict operands differ unless both carry
     /// contents (strings, BigInts); a loose null or undefined equals only null, undefined and

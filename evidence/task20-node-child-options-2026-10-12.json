@@ -1,0 +1,649 @@
+{
+  "scope": "Common child option snapshots/validation, kernel uid/gid/session effects, disposal/shell options, actual errno, immutable signals and loaded-image OpenSSL linkage fact",
+  "source_commit": "1063aa864311f503e8ac433ef33a7254a18b0872",
+  "build_profile": "iteration",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "checks": {
+    "node_oracles": 100,
+    "shared_runtime": 550,
+    "framework_core": 43
+  },
+  "scopes": {
+    "child": {
+      "counts": {
+        "fail": 22,
+        "timeout": 3,
+        "pass": 85,
+        "skip": 2
+      },
+      "inventory_hash": "a3a03b5546a7e293",
+      "jobs": 4,
+      "timeout_secs": 30,
+      "results": [
+        {
+          "fixture": "test-child-process-advanced-serialization-host-objects.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-child-process-advanced-serialization-largebuffer.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-child-process-advanced-serialization-splitted-length-field.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-advanced-serialization.js",
+          "status": "fail",
+          "reason_excerpt": "unhandled Promise rejection was not handled"
+        },
+        {
+          "fixture": "test-child-process-bad-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-can-write-to-stdout.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-constructor.js",
+          "status": "fail",
+          "reason_excerpt": "node:child_process/shared.js:7\n      this.pid = started.pid ?? undefined;\n                 ^\n\nTypeError: cannot read properties of undefined\n    at node:child_process/shared.js:7:18\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-constructor.js:10:17\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-cwd.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-default-options.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-destroy.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-detached.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-child-process-dgram-reuseport.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-disconnect.js",
+          "status": "timeout"
+        },
+        {
+          "fixture": "test-child-process-double-pipe.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-env.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-abortcontroller-promisified.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-any-shells-windows.js",
+          "status": "skip",
+          "stdout": {
+            "bytes": 39,
+            "sha256": "c3ad13d539cc27a90240d0d56d4f9fc09099f942d18e9fad8aee503493041b4d",
+            "excerpt": "1..0 # Skipped: Windows specific test.\n"
+          }
+        },
+        {
+          "fixture": "test-child-process-exec-cwd.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-env.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-kill-throws.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-std-encoding.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-stdout-stderr-data-string.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exec-timeout-expire.js",
+          "status": "pass",
+          "stdout": {
+            "bytes": 20,
+            "sha256": "6c8ce96362c73dafeb3b3ac4ca69fae48d51795cd3ffbe69ca77685ea5d49e64",
+            "excerpt": "[stdout] \n[stderr] \n"
+          }
+        },
+        {
+          "fixture": "test-child-process-exec-timeout-kill.js",
+          "status": "pass",
+          "stdout": {
+            "bytes": 20,
+            "sha256": "6c8ce96362c73dafeb3b3ac4ca69fae48d51795cd3ffbe69ca77685ea5d49e64",
+            "excerpt": "[stdout] \n[stderr] \n"
+          }
+        },
+        {
+          "fixture": "test-child-process-exec-timeout-not-expired.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execFile-promisified-abortController.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execfile-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execfile.js",
+          "status": "pass",
+          "stderr": {
+            "bytes": 190,
+            "sha256": "269b8867a3873d555bc13e95545414ae9e8fb7e6edf100dae57b8e603ab916f0",
+            "excerpt": "(node:128145) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.\n"
+          }
+        },
+        {
+          "fixture": "test-child-process-execfilesync-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-execsync-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-exit-code.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-flush-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-abort-signal.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-advanced-header-serialization.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-and-spawn.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-args.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-close.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-closed-channel-segfault.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-detached.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-dgram.js",
+          "status": "fail",
+          "reason_excerpt": "node:dgram/bootstrap.js:645\n  for (const callback of listeners[event] || []) callback.apply(socket, args);\n  ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-dgram.js:68:5\n    at node:dgram/bootstrap.js:645:50\n    at node:dgram/bootstrap.js:986:31\n    at node:dgram/bootstrap.js:125:24\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-fork-exec-argv.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-exec-path.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-getconnections.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-getconnections.js:71:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-fork-net-server.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-net-server.js:116:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0",
+          "stdout": {
+            "bytes": 174,
+            "sha256": "00dd3c09f343a5d870c3f1d632df9e69124615f512cbb920eb8be9142f2ae1c5",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> at least 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-net-server.js:63:19\n"
+          }
+        },
+        {
+          "fixture": "test-child-process-fork-net-socket.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-net-socket.js:65:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-fork-net.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-net.js:103:9\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-fork-no-shell.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-ref.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-ref2.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-stdio-string-variant.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-stdio.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-stdio.js:53\n  child.stdio[4].write(buf);\n  ^\n\nTypeError: cannot read properties of null\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-stdio.js:53:3\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-fork-timeout-kill-signal.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork-url.mjs",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-fork3.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-http-socket-leak.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/lib/internal/timers.js:184\ntimeoutInfo[0] = 0;\n^\n\nTypeError: cannot set properties of undefined\n    at /workspace/work/node-fixtures/lib/internal/timers.js:184:18\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-http-socket-leak.js:21:22\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-internal.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-ipc-next-tick.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-ipc.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-kill.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-net-reuseport.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-no-deprecation.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-pipe-dataflow.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-pipe-dataflow.js:43\n  cat.stdout._handle.readStart = common.mustNotCall();\n  ^\n\nTypeError: cannot set properties of undefined\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-pipe-dataflow.js:43:34\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-promisified.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-prototype-tampering.mjs",
+          "status": "fail",
+          "reason_excerpt": "AssertionError: Unexpected global(s) found: cwd"
+        },
+        {
+          "fixture": "test-child-process-recv-handle.js",
+          "status": "fail",
+          "reason_excerpt": "TypeError: cannot read properties of null",
+          "stderr": {
+            "bytes": 405,
+            "sha256": "5a337e3fc863d2b0c992a197644f912857ed8fbdb2b6ea542df5ac24abd603ad",
+            "excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-recv-handle.js:63\n  process[kChannelHandle].readStop();  // Make messages batch up.\n  ^\n\nTypeError: cannot read properties of undefined\n    at worker (/workspace/work/node-fixtures/test/parallel/test-child-process-recv-handle.js:63:3)\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-recv-handle.js:32:3\n\nNode.js v22.0.0\n"
+          }
+        },
+        {
+          "fixture": "test-child-process-reject-null-bytes.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-send-after-close.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-send-cb.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-send-keep-open.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-send-keep-open.js:35:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-send-returns-boolean.js",
+          "status": "fail",
+          "reason_excerpt": "node:net/module.js:179\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-send-returns-boolean.js:44:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:173:123\n    at node:net/module.js:179:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-send-type-error.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-send-type-error.js:8\n  assert.throws(() => {\n  ^\n\nAssertionError [ERR_ASSERTION]: Missing expected exception.\n    at node:assert/AssertionError.js:3:5\n    at fail (/workspace/work/node-fixtures/test/parallel/test-child-process-send-type-error.js:8:3)\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-send-type-error.js:23:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-send-utf8.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-server-close.js",
+          "status": "fail",
+          "reason_excerpt": "AssertionError: Expected values to be strictly equal",
+          "stderr": {
+            "bytes": 406,
+            "sha256": "8c07cb75194311f4f38bcc4a3fd2a9fdd671f783064d3ac7f4f099eaa39ba64b",
+            "excerpt": "node:net/module.js:19\n      error.code = 'ERR_SOCKET_BAD_PORT'; throw error;\n                                          ^\n\nRangeError: Port should be >= 0 and < 65536. Received test/.tmp.127865-d51380d83dc338b5/node-test.128544.sock\n    at node:net/module.js:18:21\n    at node:net/module.js:194:14\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-server-close.js:27:16\n\nNode.js v22.0.0\n"
+          }
+        },
+        {
+          "fixture": "test-child-process-set-blocking.js",
+          "status": "pass",
+          "stdout": {
+            "bytes": 100001,
+            "sha256": "7f4564600a590e1437e6b5293eb193dc556242c29d5ce9f55cfad0abbe792bbd",
+            "excerpt": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+          }
+        },
+        {
+          "fixture": "test-child-process-silent.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-args.mjs",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-argv0.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-controller.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-error.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-event.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-shell.js",
+          "status": "pass",
+          "stderr": {
+            "bytes": 190,
+            "sha256": "6cee9eb590d0cbe303f77de353e45325bee56166237fc8b55f594317c3b34088",
+            "excerpt": "(node:128603) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.\n"
+          }
+        },
+        {
+          "fixture": "test-child-process-spawn-timeout-kill-signal.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-typeerror.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawn-windows-batch-file.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-args.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-env.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-input.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-kill-signal.js",
+          "status": "fail",
+          "stdout": {
+            "bytes": 1401,
+            "sha256": "32d7295dc82d102daa44aa14a9cf65100ef4ec5ad47403b5c39d6db61a3c2d5d",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-kill-signal.js:38:36\nMismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at spawn (/workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-kill-signal.js:16:30)\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-kill-signal.js:38:19\nMismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-kill-signal.js:47:36\nMismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at spawn (/workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-kill-signal.js:16:30)\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-kill-signal.js:47:19\nMismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /work"
+          }
+        },
+        {
+          "fixture": "test-child-process-spawnsync-maxbuf.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-non-string-args.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-shell.js",
+          "status": "fail",
+          "stdout": {
+            "bytes": 1818,
+            "sha256": "b5515a6e14efe4e0d899fe4fd7d966e0779cdcadf10f32c2736732e4ffe7eeff",
+            "excerpt": "Mismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-shell.js:28:24\nMismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at test (/workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-shell.js:69:28)\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-shell.js:85:3\nMismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at test (/workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-shell.js:69:28)\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-shell.js:88:3\nMismatched %s function calls. Expected %s, actual %d. <anonymous> exactly 1 0\n    at test (/workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-shell.js:69:28)\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-spawnsync-shell.js:91:3\nMismatched %s function calls."
+          },
+          "stderr": {
+            "bytes": 190,
+            "sha256": "2f7b300cb29398a5b2eaf24075b942e25088226dd4319f1029d7c6ef70f60f67",
+            "excerpt": "(node:128957) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities, as the arguments are not escaped, only concatenated.\n"
+          }
+        },
+        {
+          "fixture": "test-child-process-spawnsync-timeout.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync-validation-errors.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-spawnsync.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdin-ipc.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdin.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdin.js:38\nassert.strictEqual(cat.stdin.readable, false);\n^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-stdin.js:38:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-stdio-big-write-end.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio-inherit.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio-merge-stdouts-into-cat.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio-overlapped.js",
+          "status": "skip",
+          "stdout": {
+            "bytes": 59,
+            "sha256": "f9ea13fffbf6454746c99c34cb85af58a11f12108b3e22a7f294a74064979de0",
+            "excerpt": "1..0 # Skipped: overlapped-checker binary is not available\n"
+          }
+        },
+        {
+          "fixture": "test-child-process-stdio-reuse-readable-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdio.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdout-flush-exit.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdout-flush.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-stdout-ipc.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-uid-gid.js",
+          "status": "pass"
+        },
+        {
+          "fixture": "test-child-process-validate-stdio.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-validate-stdio.js:11\nassert.throws(() => getValidStdio('foo'), expectedError);\n^\n\nAssertionError [ERR_ASSERTION]: The error did not match the expected object.\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-validate-stdio.js:11:1\n\nNode.js v22.0.0"
+        },
+        {
+          "fixture": "test-child-process-windows-hide.js",
+          "status": "fail",
+          "reason_excerpt": "/workspace/work/node-fixtures/test/parallel/test-child-process-windows-hide.js:24\n  assert.strictEqual(spy.mock.calls.length, 1);\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-windows-hide.js:24:3\n    at node:test/shared.js:41:63\n    at node:test/shared.js:44:63\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-windows-hide.js:16:1\n\nNode.js v22.0.0"
+        }
+      ],
+      "raw_sha256": "7190751cc57b529f72ead2f3cd61d8933705893ea86e99652ba3c14f82c667b2"
+    },
+    "signals": {
+      "counts": {
+        "pass": 1
+      },
+      "inventory_hash": "72b161b034155e47",
+      "jobs": 1,
+      "timeout_secs": 30,
+      "results": [
+        {
+          "fixture": "test-os-constants-signals.js",
+          "status": "pass"
+        }
+      ],
+      "raw_sha256": "cf63d1b484a645a813deca7eb8af877a4e9edebc3aa3ced399ec8a751ef29d25"
+    },
+    "strace": {
+      "counts": {
+        "skip": 1
+      },
+      "inventory_hash": "6f3aa041a3e96d4d",
+      "jobs": 1,
+      "timeout_secs": 30,
+      "results": [
+        {
+          "fixture": "test-strace-openat-openssl.js",
+          "status": "skip",
+          "stdout": {
+            "bytes": 61,
+            "sha256": "34c2e30449a3fb22b6eb86a672aea2055e6ffa8b87038985a5c2076a7f491198",
+            "excerpt": "1..0 # Skipped: external shared openssl may open other files\n"
+          }
+        }
+      ],
+      "raw_sha256": "5cb97e01cd00cdc306b09e7fe0803c0cbf1c4f18cb382bb5f9126eff20f176a8"
+    }
+  },
+  "comparison": "Five child gains/no pass losses vs 80-pass source f95d073d6; restores full-sweep signal-record loss. Strace skip now reflects verified shared OpenSSL linkage rather than the former null success-error bug.",
+  "binary_sha256": {
+    "target/iteration/quench-node": "726572f376deb41d9191a803b08e4726513abb31039ce19b7cf1a336fea240af",
+    "target/iteration/run-parallel": "d17c9b16d289d45389ee313773d872212f5567afe2677a425946c5273f3667a8"
+  },
+  "log_sha256": {
+    "work/child-options-final-oracles.log": "99ea3104a16bdb9883547544a97290520e7304d2d2743344cb21cf16b67a7efe",
+    "work/child-options-runtime.log": "39bc8fa234e0e462eaea9f4f10dab05423b6bc38485a180ea4da4228612180a1",
+    "work/child-options-final-framework.log": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8"
+  },
+  "richards_diagnostic": {
+    "suite": "stock V8-v7 Richards; exact base.js + richards.js + existing repository RUNNER",
+    "qualification": "One diagnostic round; iteration build, two engines only. No matched production or aggregate performance claim.",
+    "platform": "linux-x86_64",
+    "cpu_max": "400000 100000",
+    "memory_max": "17179869184",
+    "results": [
+      {
+        "engine": "quench-iteration",
+        "argv": [
+          "target/iteration/quench-node"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 2.602246685000864,
+        "peak_rss_kib": 117580,
+        "stdout": "__quenchBenchResult: Richards: 155\n----\nScore: 155\n",
+        "stderr": ""
+      },
+      {
+        "engine": "node27-jitless",
+        "argv": [
+          "work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+          "--jitless"
+        ],
+        "exit_code": 0,
+        "timed_out": false,
+        "elapsed_seconds": 2.2018867369988584,
+        "peak_rss_kib": 70316,
+        "stdout": "__quenchBenchResult: Richards: 1799\n----\nScore: 1799\n",
+        "stderr": ""
+      }
+    ]
+  },
+  "qualifications": [
+    "Final child scope and final 100-oracle/framework checks include disposal and synchronous shell corrections. Shared runtime 550 passed after canonical non-extensibility API addition and was unchanged by final Node-only corrections.",
+    "The one-case signals and strace scopes precede final Node-only disposal/shell corrections; neither changes OS signal integrity/linkage facts, also verified by final oracles.",
+    "Focused scopes overlapped the independent shared-runtime test build; no complete sweep or diagnostic overlapped builds/guest scopes.",
+    "Argument snapshot/coercion phases, AbortSignal validation, complete internal mutable child-process routing, extra sync stdio channels and advanced V8 IPC codec remain incomplete.",
+    "Signal/linkage/credential checks are qualified on Linux x86_64. Unix pre-exec credential setup is implemented; other platform behavior retains prior paths where described in contracts.",
+    "Richards is one iteration diagnostic with two engines, no matched production or aggregate speed claim.",
+    "Latest complete sweep source f95d073d6 remains 1327 pass / 685 skip / 2599 fail / 116 timeout / 0 crash of 4727; these focus gains do not establish a new complete total. All-case goal remains open."
+  ]
+}

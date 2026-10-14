@@ -1,6 +1,85 @@
 use super::Slot;
 
 pub(super) const SLOTS_PER_SLAB: usize = 2_048;
+const FREE_SLOT_WORD_BITS: usize = u64::BITS as usize;
+const FREE_SLOT_WORDS: usize = SLOTS_PER_SLAB.div_ceil(FREE_SLOT_WORD_BITS);
+
+const _: () = assert!(SLOTS_PER_SLAB <= u16::MAX as usize);
+const _: () = assert!(FREE_SLOT_WORDS <= u32::BITS as usize);
+
+#[derive(Default)]
+pub(super) struct FreeSlotBitmap {
+    words: [u64; FREE_SLOT_WORDS],
+    nonempty_words: u32,
+    free_count: u16,
+}
+
+impl FreeSlotBitmap {
+    pub(super) fn insert(&mut self, offset: usize) {
+        debug_assert!(offset < SLOTS_PER_SLAB);
+        let word_index = offset / FREE_SLOT_WORD_BITS;
+        let mask = 1_u64 << (offset % FREE_SLOT_WORD_BITS);
+        let word = &mut self.words[word_index];
+        debug_assert_eq!(*word & mask, 0, "free slot inserted twice");
+        if *word == 0 {
+            self.nonempty_words |= 1_u32 << word_index;
+        }
+        *word |= mask;
+        self.free_count += 1;
+        debug_assert!(self.free_count as usize <= SLOTS_PER_SLAB);
+    }
+
+    pub(super) fn pop(&mut self) -> Option<u16> {
+        let nonempty_words = self.nonempty_words;
+        if nonempty_words == 0 {
+            debug_assert_eq!(self.free_count, 0);
+            return None;
+        }
+
+        let word_index = (u32::BITS - 1 - nonempty_words.leading_zeros()) as usize;
+        let word = self.words[word_index];
+        debug_assert_ne!(word, 0);
+        let bit_index = (u64::BITS - 1 - word.leading_zeros()) as usize;
+        let mask = 1_u64 << bit_index;
+        let remaining = word & !mask;
+        self.words[word_index] = remaining;
+        if remaining == 0 {
+            self.nonempty_words &= !(1_u32 << word_index);
+        }
+        self.free_count -= 1;
+
+        let offset = word_index * FREE_SLOT_WORD_BITS + bit_index;
+        debug_assert!(offset < SLOTS_PER_SLAB);
+        Some(offset as u16)
+    }
+
+    pub(super) const fn len(&self) -> usize {
+        self.free_count as usize
+    }
+
+    pub(super) const fn is_empty(&self) -> bool {
+        self.nonempty_words == 0
+    }
+
+    pub(super) fn merge(&mut self, other: &Self) {
+        debug_assert!(
+            self.words
+                .iter()
+                .zip(other.words.iter())
+                .all(|(left, right)| left & right == 0)
+        );
+        for (word_index, (left, right)) in self.words.iter_mut().zip(other.words.iter()).enumerate()
+        {
+            if *right == 0 {
+                continue;
+            }
+            *left |= *right;
+            self.nonempty_words |= 1_u32 << word_index;
+        }
+        self.free_count += other.free_count;
+        debug_assert!(self.free_count as usize <= SLOTS_PER_SLAB);
+    }
+}
 
 /// The heap's cell slots. On Unix one address range reserved for every cell the heap may
 /// hold keeps slots contiguous and in place, so a slot is one offset from the base; the
@@ -138,11 +217,6 @@ impl SlotArena {
         (index < self.len).then(|| unsafe { &mut *self.base().add(index) })
     }
 
-    pub(super) fn get(&self, index: usize) -> Option<&Slot> {
-        // SAFETY: as for `get_mut`.
-        (index < self.len).then(|| unsafe { &*self.base().add(index) })
-    }
-
     pub(super) unsafe fn get_unchecked(&self, index: usize) -> &Slot {
         debug_assert!(index < self.len);
         // SAFETY: the caller proves the index is below `len`.
@@ -155,7 +229,7 @@ impl SlotArena {
         unsafe { &mut *self.base().add(index) }
     }
 
-    #[cfg(any(test, feature = "profile-memory"))]
+    #[cfg(any(debug_assertions, test, feature = "profile-memory"))]
     fn occupied(&self) -> &[Slot] {
         // SAFETY: the first `len` slots are initialized and accessible.
         unsafe { std::slice::from_raw_parts(self.base(), self.len) }
@@ -166,9 +240,31 @@ impl SlotArena {
         unsafe { std::slice::from_raw_parts_mut(self.base(), self.len) }
     }
 
-    #[cfg(any(test, feature = "profile-memory"))]
+    #[cfg(any(debug_assertions, test, feature = "profile-memory"))]
     pub(super) fn iter(&self) -> impl Iterator<Item = &Slot> {
         self.occupied().iter()
+    }
+
+    /// Pages of the occupied range whose slots are all empty.
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn fully_empty_page_count(&self, page_size: usize) -> usize {
+        let slots = self.occupied();
+        let start = slots.as_ptr() as usize;
+        let end = start + std::mem::size_of_val(slots);
+        let slot_size = std::mem::size_of::<Slot>();
+        let mut page_start = start.div_ceil(page_size) * page_size;
+        let mut empty_pages = 0;
+        while let Some(page_end) = page_start.checked_add(page_size)
+            && page_end <= end
+        {
+            let first = (page_start - start) / slot_size;
+            let last = (page_end - start).div_ceil(slot_size);
+            if slots[first..last].iter().all(|slot| slot.cell.is_none()) {
+                empty_pages += 1;
+            }
+            page_start = page_end;
+        }
+        empty_pages
     }
 
     pub(super) fn iter_mut(&mut self) -> impl Iterator<Item = &mut Slot> {
@@ -233,10 +329,6 @@ impl SlotArena {
         (index < self.len).then(|| &mut self.slabs[index / SLOTS_PER_SLAB][index % SLOTS_PER_SLAB])
     }
 
-    pub(super) fn get(&self, index: usize) -> Option<&Slot> {
-        (index < self.len).then(|| &self.slabs[index / SLOTS_PER_SLAB][index % SLOTS_PER_SLAB])
-    }
-
     pub(super) unsafe fn get_unchecked(&self, index: usize) -> &Slot {
         debug_assert!(index < self.len);
         // SAFETY: the caller proves the flat index is live; every slab has the
@@ -259,7 +351,7 @@ impl SlotArena {
         }
     }
 
-    #[cfg(any(test, feature = "profile-memory"))]
+    #[cfg(any(debug_assertions, test, feature = "profile-memory"))]
     pub(super) fn iter(&self) -> impl Iterator<Item = &Slot> {
         self.slabs
             .iter()
@@ -275,6 +367,33 @@ impl SlotArena {
             .take(len)
     }
 
+    #[cfg(feature = "profile-memory")]
+    pub(super) fn fully_empty_page_count(&self, page_size: usize) -> usize {
+        self.slabs
+            .iter()
+            .map(|slab| {
+                let slab_start = slab.as_ptr() as usize;
+                let slab_end = slab_start + slab.len() * std::mem::size_of::<Slot>();
+                let mut page_start = slab_start.div_ceil(page_size) * page_size;
+                let mut empty_pages = 0;
+                while let Some(page_end) = page_start.checked_add(page_size)
+                    && page_end <= slab_end
+                {
+                    let first_slot = (page_start - slab_start) / std::mem::size_of::<Slot>();
+                    let end_slot = (page_end - slab_start).div_ceil(std::mem::size_of::<Slot>());
+                    if slab[first_slot..end_slot]
+                        .iter()
+                        .all(|slot| slot.cell.is_none())
+                    {
+                        empty_pages += 1;
+                    }
+                    page_start = page_end;
+                }
+                empty_pages
+            })
+            .sum()
+    }
+
     /// Occupied slots grouped by slab, each with the flat index of its first
     /// slot, so whole-heap passes run a plain loop per slab.
     pub(super) fn slabs_mut(&mut self) -> impl Iterator<Item = (usize, &mut [Slot])> {
@@ -285,7 +404,6 @@ impl SlotArena {
             (base, &mut slots[..occupied])
         })
     }
-
     pub(super) fn clear(&mut self) {
         self.slabs.clear();
         self.len = 0;
@@ -300,80 +418,40 @@ impl SlotArena {
     }
 }
 
-/// The empty slots below the arena length, one bit each. Allocation takes the lowest set bit
-/// at or after a cursor that freeing moves back, so reuse runs forward through memory and the
-/// set costs a bit per slot instead of an index per free slot.
-#[derive(Default)]
-pub(super) struct FreeSlots {
-    bits: Vec<u64>,
-    /// No word before this one has a set bit.
-    cursor: usize,
-    count: usize,
-}
+#[cfg(test)]
+mod tests {
+    use super::{FreeSlotBitmap, SLOTS_PER_SLAB};
 
-impl FreeSlots {
-    pub(super) const fn len(&self) -> usize {
-        self.count
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.bits.clear();
-        self.cursor = 0;
-        self.count = 0;
-    }
-
-    /// Makes room for every slot below `slots`.
-    pub(super) fn cover(&mut self, slots: usize) {
-        let words = slots.div_ceil(u64::BITS as usize);
-        if self.bits.len() < words {
-            self.bits.resize(words, 0);
+    #[test]
+    fn free_slot_bitmap_pops_offsets_in_stack_order() {
+        let mut free = FreeSlotBitmap::default();
+        let offsets = [0, 63, 64, 1023, 1024, SLOTS_PER_SLAB - 1];
+        for offset in offsets {
+            free.insert(offset);
         }
-    }
 
-    pub(super) fn insert(&mut self, index: usize) {
-        let word = index / u64::BITS as usize;
-        self.cover(index + 1);
-        let bit = 1 << (index % u64::BITS as usize);
-        debug_assert_eq!(self.bits[word] & bit, 0, "slot freed twice");
-        self.bits[word] |= bit;
-        self.count += 1;
-        self.cursor = self.cursor.min(word);
-    }
-
-    /// Records `count` slots whose bits were set through `atomic_bits`.
-    pub(super) fn add_inserted(&mut self, count: usize) {
-        self.count += count;
-        self.cursor = 0;
-    }
-
-    /// The bitmap as atomics, for workers that set bits in disjoint words.
-    pub(super) fn atomic_bits(&mut self) -> &[std::sync::atomic::AtomicU64] {
-        // SAFETY: `AtomicU64` has `u64`'s size and alignment; the exclusive borrow keeps any
-        // plain access out while the atomic view lives.
-        unsafe {
-            &*(std::ptr::from_mut::<[u64]>(self.bits.as_mut_slice())
-                as *const [std::sync::atomic::AtomicU64])
+        assert_eq!(free.len(), offsets.len());
+        for offset in offsets.into_iter().rev() {
+            assert_eq!(free.pop(), Some(offset as u16));
         }
+        assert!(free.is_empty());
+        assert_eq!(free.pop(), None);
     }
 
-    pub(super) fn pop(&mut self) -> Option<usize> {
-        if self.count == 0 {
-            return None;
-        }
-        while let Some(&word) = self.bits.get(self.cursor) {
-            if word != 0 {
-                let bit = word.trailing_zeros() as usize;
-                self.bits[self.cursor] = word & (word - 1);
-                self.count -= 1;
-                return Some(self.cursor * u64::BITS as usize + bit);
-            }
-            self.cursor += 1;
-        }
-        unreachable!("free slot count exceeds the set bits")
-    }
+    #[test]
+    fn free_slot_bitmap_merges_disjoint_sweep_results() {
+        let mut early = FreeSlotBitmap::default();
+        early.insert(0);
+        early.insert(64);
 
-    #[cfg(feature = "profile-memory")]
-    pub(super) fn memory_bytes(&self) -> usize {
-        self.bits.capacity() * size_of::<u64>()
+        let mut late = FreeSlotBitmap::default();
+        late.insert(SLOTS_PER_SLAB - 1);
+
+        early.merge(&late);
+        assert_eq!(early.len(), 3);
+        assert_eq!(early.pop(), Some((SLOTS_PER_SLAB - 1) as u16));
+        assert_eq!(early.pop(), Some(64));
+        assert_eq!(early.pop(), Some(0));
+        assert!(early.is_empty());
     }
 }

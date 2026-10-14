@@ -523,9 +523,10 @@ impl<H: Host> Vm<H> {
                         .ok_or_else(|| vm.type_error(p, "invalid bound function".into()))?;
                     let bound_args = vm
                         .own_property(env, args_atom)
-                        .and_then(|value| match vm.heap.get(value) {
-                            Some(Cell::Array { object: array_object }) => { let elements = array_object.elements(); Some(elements.as_ref().clone()) },
-                            _ => None,
+                        .and_then(|value| {
+                            vm.heap
+                                .array_elements(value)
+                                .map(|elements| elements.as_ref().clone())
                         })
                         .unwrap_or_default();
                     let mut arguments = bound_args;

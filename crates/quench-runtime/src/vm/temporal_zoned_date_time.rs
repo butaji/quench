@@ -1238,17 +1238,17 @@ impl<H: Host> Vm<H> {
             calendar.to_string(),
         );
         let partial = args.first().copied().unwrap_or(Value::UNDEFINED);
-        let is_plain_time = matches!(
-            self.heap.get(partial),
-            Some(Cell::Object(object)) if object.proto() == self.temporal_plain_time_proto
-        );
+        let is_plain_time = self
+            .heap
+            .object_record(partial)
+            .is_some_and(|object| object.proto() == self.temporal_plain_time_proto);
         if !self.is_object_like(partial)
+            || self.heap.array(partial).is_some()
             || is_plain_time
             || matches!(
                 self.heap.get(partial),
                 Some(
-                    Cell::Array { .. }
-                        | Cell::TemporalPlainDate { .. }
+                    Cell::TemporalPlainDate { .. }
                         | Cell::TemporalPlainDateTime { .. }
                         | Cell::TemporalPlainMonthDay { .. }
                         | Cell::TemporalPlainYearMonth { .. }
@@ -1292,10 +1292,8 @@ impl<H: Host> Vm<H> {
                 FieldValue::Undefined
             } else if matches!(name, "monthCode" | "offset" | "era") {
                 if name == "offset"
-                    && !matches!(
-                        self.heap.get(value),
-                        Some(Cell::String(_) | Cell::Object(_))
-                    )
+                    && !matches!(self.heap.get(value), Some(Cell::String(_)))
+                    && self.heap.object_record(value).is_none()
                 {
                     return Err(self.type_error(p, "Invalid offset".into()));
                 }
@@ -1937,6 +1935,9 @@ impl<H: Host> Vm<H> {
         value: Value,
         options: Value,
     ) -> Result<ZonedDateTimeRecord, JsError> {
+        if self.heap.object_record(value).is_some() {
+            return self.temporal_zoned_date_time_property_bag(p, value, options);
+        }
         match self.heap.get(value).cloned() {
             Some(Cell::TemporalZonedDateTime {
                 instant, calendar, ..
@@ -1957,7 +1958,7 @@ impl<H: Host> Vm<H> {
                 resolve_zoned_date_time_string(parsed, &options.offset, &options.disambiguation)
                     .ok_or_else(|| self.range_error(p, "Invalid ZonedDateTime".into()))
             }
-            Some(Cell::Object(_)) | Some(Cell::Function { .. }) | Some(Cell::Proxy { .. }) => {
+            Some(Cell::Function { .. } | Cell::Proxy { .. }) => {
                 self.temporal_zoned_date_time_property_bag(p, value, options)
             }
             _ => Err(self.type_error(p, "Invalid ZonedDateTime value".into())),

@@ -1,0 +1,54 @@
+{
+  "source_base": "aea2c5445",
+  "fixture": "Splay fixed work, 300 runs after Setup",
+  "collections": 16,
+  "allocation_clock": 3338889,
+  "freed_records": 1990134,
+  "freed_records_allocated_since_previous_collection": 827210,
+  "recent_freed_record_share": 0.415655428227446,
+  "freed_managed_bytes": 101823724,
+  "freed_managed_bytes_allocated_since_previous_collection": 41933436,
+  "recent_freed_managed_byte_share": 0.41182382997502626,
+  "by_kind": [
+    {
+      "kind": "object",
+      "recently_allocated_freed_managed_bytes": 12936840,
+      "recently_allocated_freed_count": 539035
+    },
+    {
+      "kind": "array",
+      "recently_allocated_freed_managed_bytes": 22231288,
+      "recently_allocated_freed_count": 213874
+    },
+    {
+      "kind": "iterator",
+      "recently_allocated_freed_managed_bytes": 2368,
+      "recently_allocated_freed_count": 74
+    },
+    {
+      "kind": "function",
+      "recently_allocated_freed_managed_bytes": 7280,
+      "recently_allocated_freed_count": 130
+    },
+    {
+      "kind": "environment",
+      "recently_allocated_freed_managed_bytes": 29664,
+      "recently_allocated_freed_count": 20
+    },
+    {
+      "kind": "string",
+      "recently_allocated_freed_managed_bytes": 6714336,
+      "recently_allocated_freed_count": 73812
+    },
+    {
+      "kind": "regexp",
+      "recently_allocated_freed_managed_bytes": 11660,
+      "recently_allocated_freed_count": 265
+    }
+  ],
+  "profiler": "quench-node --features profile-memory; counts include direct Object/ArrayObject record size or legacy Cell size plus profiled payload bytes",
+  "binary_sha256": "2b2ef10cf5ebace4254f8a78cbcacb9d9fde9e4593de59506f74ad9c4743752e",
+  "fixture_sha256": "ac9c33765fb2968c78c1f116563913f575451d84826ea8a7bdf79a791bb3f345",
+  "host": "Linux x86_64, kernel 6.18.44; cgroup CPU quota 4 CPUs, memory limit 16 GiB",
+  "decision": "41.18% exceeds the 20% gate; test G-09 under the lower-max-RSS at equal-or-better-wall rule. No production policy or performance claim is changed."
+}

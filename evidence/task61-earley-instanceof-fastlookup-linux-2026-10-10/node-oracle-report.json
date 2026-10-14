@@ -1,0 +1,25 @@
+{
+  "node_version": "v24.19.0",
+  "node_sha256": "bc17c508ffeed0ec622934f9b7fa72f8e78da65350e63c3eceb56fa688aa5e12",
+  "oracle_sha256": "85dc58a49989d3228be2476530d6dd9e3401a1737f664ecaaf5b41df8d649469",
+  "baseline_sha256": "e46537823eb25a37cf5646af793e6873ceaeff1069fb878a96813cae3a86ab32",
+  "candidate_sha256": "22bb387daa39427cbd5fcef8f012b64037002fca54f5589cd3d12cb612608873",
+  "node": {
+    "exit_code": 0,
+    "stdout": "[[\"ordinary_true\",\"return\",true],[\"ordinary_false\",\"return\",false],[\"primitive_left\",\"return\",false],[\"invalid_rhs\",\"throw\",\"TypeError\",\"Right-hand side of 'instanceof' is not an object\"],[\"null_rhs\",\"throw\",\"TypeError\",\"Right-hand side of 'instanceof' is not an object\"],[\"custom_true\",\"return\",true],[\"custom_false\",\"return\",false],[\"custom_call_count\",2],[\"hasinstance_getter\"],[\"getter_custom\",\"return\",true],[\"noncallable_hasinstance\",\"throw\",\"TypeError\",\"number 7 is not a function\"],[\"custom_function_prototype_true\",\"return\",true],[\"custom_function_prototype_false\",\"return\",false],[\"custom_function_prototype_log\",[true,false]],[\"proxy_ctor_instance\",\"return\",true],[\"proxy_log\",[\"Symbol(Symbol.hasInstance)\",\"prototype\"]],[\"proxy_get_hasinstance\"],[\"proxy_default_method\",\"return\",true],[\"bound_instance\",\"return\",true],[\"bound_noninstance\",\"return\",false]]\n",
+    "stderr": ""
+  },
+  "baseline": {
+    "exit_code": 0,
+    "stdout": "[[\"ordinary_true\",\"return\",true],[\"ordinary_false\",\"return\",false],[\"primitive_left\",\"return\",false],[\"invalid_rhs\",\"throw\",\"TypeError\",\"right-hand side of 'instanceof' is not an object\"],[\"null_rhs\",\"throw\",\"TypeError\",\"right-hand side of 'instanceof' is not an object\"],[\"custom_true\",\"return\",true],[\"custom_false\",\"return\",false],[\"custom_call_count\",2],[\"hasinstance_getter\"],[\"getter_custom\",\"return\",true],[\"noncallable_hasinstance\",\"throw\",\"TypeError\",\"@@hasInstance is not callable\"],[\"custom_function_prototype_true\",\"return\",true],[\"custom_function_prototype_false\",\"return\",false],[\"custom_function_prototype_log\",[true,false]],[\"proxy_ctor_instance\",\"return\",true],[\"proxy_log\",[\"Symbol(Symbol.hasInstance)\",\"prototype\"]],[\"proxy_get_hasinstance\"],[\"proxy_default_method\",\"return\",true],[\"bound_instance\",\"return\",true],[\"bound_noninstance\",\"return\",false]]\n",
+    "stderr": ""
+  },
+  "candidate": {
+    "exit_code": 0,
+    "stdout": "[[\"ordinary_true\",\"return\",true],[\"ordinary_false\",\"return\",false],[\"primitive_left\",\"return\",false],[\"invalid_rhs\",\"throw\",\"TypeError\",\"right-hand side of 'instanceof' is not an object\"],[\"null_rhs\",\"throw\",\"TypeError\",\"right-hand side of 'instanceof' is not an object\"],[\"custom_true\",\"return\",true],[\"custom_false\",\"return\",false],[\"custom_call_count\",2],[\"hasinstance_getter\"],[\"getter_custom\",\"return\",true],[\"noncallable_hasinstance\",\"throw\",\"TypeError\",\"@@hasInstance is not callable\"],[\"custom_function_prototype_true\",\"return\",true],[\"custom_function_prototype_false\",\"return\",false],[\"custom_function_prototype_log\",[true,false]],[\"proxy_ctor_instance\",\"return\",true],[\"proxy_log\",[\"Symbol(Symbol.hasInstance)\",\"prototype\"]],[\"proxy_get_hasinstance\"],[\"proxy_default_method\",\"return\",true],[\"bound_instance\",\"return\",true],[\"bound_noninstance\",\"return\",false]]\n",
+    "stderr": ""
+  },
+  "same_outcomes_and_traces_as_node": true,
+  "exact_node_output": false,
+  "candidate_matches_baseline": true
+}

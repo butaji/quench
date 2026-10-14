@@ -31,7 +31,7 @@ impl<H: Host> Vm<H> {
                 &[],
             )
             .map_err(|error| JsError::validation(error.to_string()))?;
-            self.initialize_shared(&bootstrap.program)?;
+            self.initialize_shared(&bootstrap.program, super::builtins::RealmScope::Core)?;
         }
         let length = signature.params.len();
         let environment = self.heap.alloc(Cell::WasmHostFunction {
@@ -412,7 +412,7 @@ mod tests {
         assert_eq!(vm.wasm_function(&instance, 0).unwrap(), function);
         assert!(vm.release_root(function_root));
         vm.collect_now(module.residual());
-        assert!(vm.heap.get(descriptor).is_some());
+        assert!(vm.heap.is_live(descriptor));
         let payload = vm
             .heap
             .alloc(Cell::Object(Vm::<EchoHost>::empty_object(Value::NULL)));
@@ -487,7 +487,7 @@ mod tests {
         assert!(vm.release_root(instance.environment));
         vm.collect_now(module.residual());
         for value in [payload, function, descriptor] {
-            assert!(vm.heap.get(value).is_none());
+            assert!(!vm.heap.is_live(value));
         }
     }
 }

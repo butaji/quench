@@ -67,9 +67,7 @@ impl<H: Host> Vm<H> {
         if let Some(index) = self.array_index_key(key) {
             let index = index as usize;
             // Accessor indices are stored as holes, so a present dense element is a data property.
-            if let Some(Cell::Array {
-                object: array_object,
-            }) = self.heap.get(object)
+            if let Some(array_object) = self.heap.array(object)
                 && let Some(value) = array_object
                     .elements()
                     .get(index)
@@ -88,7 +86,7 @@ impl<H: Host> Vm<H> {
             {
                 return self.get_property(p, object, atom);
             }
-            if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            if self.heap.array(object).is_some()
                 && let Some(value) = self
                     .heap
                     .sparse_get(object, index)
@@ -159,7 +157,7 @@ impl<H: Host> Vm<H> {
             let index = index as usize;
             // Descriptors, accessors and frozen state are the only things that make replacing a
             // present dense element differ from a plain store, and a plain array has none.
-            if let Some(Cell::Array { object: data }) = self.heap.get(object)
+            if let Some(data) = self.heap.array(object)
                 && !data.has_indexed_descriptors()
                 && !data.is_frozen()
                 && data
@@ -178,7 +176,7 @@ impl<H: Host> Vm<H> {
                 }
                 return self.set_property_with_program(p, object, atom, value);
             }
-            if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            if self.heap.array(object).is_some()
                 && !self.has_own_array_index(object, index)
                 && self.set_inherited_index_accessor(p, object, index, value, strict)?
             {
@@ -194,10 +192,7 @@ impl<H: Host> Vm<H> {
                     Ok(())
                 };
             }
-            if let Some(Cell::Array {
-                object: array_object,
-            }) = self.heap.get(object)
-            {
+            if let Some(array_object) = self.heap.array(object) {
                 let elements = array_object.elements();
                 let existing = index < elements.len()
                     && elements.get(index).is_some_and(|value| !value.is_deleted())
@@ -234,7 +229,7 @@ impl<H: Host> Vm<H> {
             if self.typed_array_set(p, object, index, value)? {
                 return Ok(());
             }
-            if matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            if self.heap.array(object).is_some()
                 && !self.has_own_array_index(object, index)
                 && self.lookup_array_index_atom(index).is_none()
                 && !self.prototype_chain_has_indexed_set_exotic(object)
@@ -242,11 +237,9 @@ impl<H: Host> Vm<H> {
             {
                 return Ok(());
             }
-            let replaces = matches!(
-                self.heap.get(object),
-                Some(Cell::Array { object: array_object })
-                    if array_object.elements().get(index).is_some_and(|value| !value.is_deleted())
-            );
+            let replaces = self.heap.array_elements(object).is_some_and(|elements| {
+                elements.get(index).is_some_and(|value| !value.is_deleted())
+            });
             if replaces {
                 self.replace_dense_element(object, index, value);
                 return Ok(());
@@ -259,7 +252,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn dense_array_element(&self, base: Value, key: Value) -> Option<Value> {
         let index = usize::try_from(key.as_int()?).ok()?;
-        let Some(Cell::Array { object }) = self.heap.get(base) else {
+        let Some(object) = self.heap.array(base) else {
             return None;
         };
         object
@@ -274,7 +267,7 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn replaceable_dense_index(&self, object: Value, key: Value) -> Option<usize> {
         let index = usize::try_from(key.as_int()?).ok()?;
-        let Some(Cell::Array { object: data }) = self.heap.get(object) else {
+        let Some(data) = self.heap.array(object) else {
             return None;
         };
         (!data.has_indexed_descriptors()
@@ -289,10 +282,7 @@ impl<H: Host> Vm<H> {
     /// Overwrites a present dense array element after every guard has passed.
     #[inline(always)]
     pub(super) fn replace_dense_element(&mut self, object: Value, index: usize, value: Value) {
-        let Some(Cell::Array {
-            object: array_object,
-        }) = self.heap.get_mut(object)
-        else {
+        let Some(array_object) = self.heap.array_mut(object) else {
             unreachable!("dense element replacement requires an array")
         };
         // Only a mapped arguments object mirrors its elements into parameter bindings.
@@ -331,9 +321,7 @@ impl<H: Host> Vm<H> {
                 Err(self.type_error(p, "cannot assign symbol property".into()))
             };
         }
-        if matches!(self.heap.get(object), Some(Cell::Array { .. }))
-            && self.prototype_chain_contains_proxy(object)
-        {
+        if self.heap.array(object).is_some() && self.prototype_chain_contains_proxy(object) {
             let key = self.coerce_js_string(p, key)?;
             let atom = self.intern_js_atom(&key);
             return self.set_property_with_program(p, object, atom, value);
@@ -341,7 +329,7 @@ impl<H: Host> Vm<H> {
 
         let key = self.coerce_js_string(p, key)?;
         if let Some(index) = super::object_static::array_index(key.host_string())
-            && matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            && self.heap.array(object).is_some()
             && !self.has_own_array_index(object, index as usize)
             && self.prototype_chain_has_typed_array(object)
         {
@@ -349,7 +337,7 @@ impl<H: Host> Vm<H> {
             return self.set_property_with_program_mode(p, object, atom, value, strict);
         }
         if let Some(index) = super::object_static::array_index(key.host_string())
-            && matches!(self.heap.get(object), Some(Cell::Array { .. }))
+            && self.heap.array(object).is_some()
         {
             if self
                 .array_descriptor(object, index as usize)
@@ -421,10 +409,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
-        let Some(Cell::Array {
-            object: array_object,
-        }) = self.heap.get(object)
-        else {
+        let Some(array_object) = self.heap.array(object) else {
             return false;
         };
         let elements = array_object.elements();
@@ -433,10 +418,7 @@ impl<H: Host> Vm<H> {
         }
         let dense_len = elements.len();
         if index < dense_len {
-            let Some(Cell::Array {
-                object: array_object,
-            }) = self.heap.get_mut(object)
-            else {
+            let Some(array_object) = self.heap.array_mut(object) else {
                 unreachable!()
             };
             let elements = array_object.elements_mut();
@@ -450,10 +432,7 @@ impl<H: Host> Vm<H> {
         let sparse = self.array_index_uses_sparse_storage(object, index, dense_len);
         if sparse {
             self.heap.sparse_set(object, index, value);
-        } else if let Some(Cell::Array {
-            object: array_object,
-        }) = self.heap.get_mut(object)
-        {
+        } else if let Some(array_object) = self.heap.array_mut(object) {
             let elements = array_object.elements_mut();
             #[cfg(feature = "profile-aggregate")]
             self.profile
@@ -495,10 +474,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         index: usize,
     ) -> Result<(), JsError> {
-        let Some(Cell::Array {
-            object: array_object,
-        }) = self.heap.get(object)
-        else {
+        let Some(array_object) = self.heap.array(object) else {
             return Err(JsError("array receiver is not array".into()));
         };
         let elements = array_object.elements();
@@ -540,10 +516,7 @@ mod tests {
             ),
         });
         assert!(vm.set_array_element(array, 1_000_000, Value::TRUE));
-        let Some(Cell::Array {
-            object: array_object,
-        }) = vm.heap.get(array)
-        else {
+        let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
         };
         let elements = array_object.elements();
@@ -557,10 +530,7 @@ mod tests {
         let mut vm = Vm::new(SilentHost);
         let array = vm.array_create(&program, 16_900).unwrap();
 
-        let Some(Cell::Array {
-            object: array_object,
-        }) = vm.heap.get(array)
-        else {
+        let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
         };
         let elements = array_object.elements();
@@ -569,10 +539,7 @@ mod tests {
         assert_eq!(vm.heap.sparse_length(array), None);
 
         assert!(vm.set_array_element(array, 16_899, Value::TRUE));
-        let Some(Cell::Array {
-            object: array_object,
-        }) = vm.heap.get(array)
-        else {
+        let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
         };
         let elements = array_object.elements();
@@ -593,10 +560,7 @@ mod tests {
 
         assert!(vm.set_array_element(array, 2_048, Value::TRUE));
 
-        let Some(Cell::Array {
-            object: array_object,
-        }) = vm.heap.get(array)
-        else {
+        let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
         };
         let elements = array_object.elements();
@@ -621,10 +585,7 @@ mod tests {
 
         vm.heap.sparse_set_length(array, 16_900);
 
-        let Some(Cell::Array {
-            object: array_object,
-        }) = vm.heap.get(array)
-        else {
+        let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
         };
         let elements = array_object.elements();
@@ -676,10 +637,7 @@ mod tests {
 
         assert_eq!(vm.delete_array_index(array, 1023), Value::TRUE);
 
-        let Some(Cell::Array {
-            object: array_object,
-        }) = vm.heap.get(array)
-        else {
+        let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
         };
         let elements = array_object.elements();

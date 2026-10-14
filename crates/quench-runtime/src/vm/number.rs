@@ -74,6 +74,7 @@ fn fixed_decimal(number: f64, digits: usize) -> String {
 impl<H: Host> Vm<H> {
     pub(super) fn install_number(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let number = self.native_value(Native::Number);
+        self.set_builtin_function_name(number, "Number")?;
         let prototype = self.object();
         self.set_builtin_value_named(number, "prototype", prototype)?;
         let prototype_key = self.prototype_atom();
@@ -103,7 +104,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.set_builtin_named(program, prototype, "constructor", Native::Number)?;
+        self.set_builtin_value_named(prototype, "constructor", number)?;
         self.set_builtin_named(program, prototype, "toString", Native::NumberString)?;
         self.set_builtin_named(program, prototype, "valueOf", Native::NumberValueOf)?;
         self.set_builtin_named(
@@ -120,7 +121,6 @@ impl<H: Host> Vm<H> {
             Native::NumberExponential,
         )?;
         self.set_builtin_named(program, prototype, "toPrecision", Native::NumberPrecision)?;
-        self.set_builtin_function_name(number, "Number")?;
         for (name, native) in [
             ("isNaN", Native::NumberIsNaN),
             ("isFinite", Native::NumberIsFinite),

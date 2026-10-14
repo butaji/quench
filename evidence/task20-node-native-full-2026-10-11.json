@@ -1,0 +1,54 @@
+{
+  "scope": "Frozen full parallel inventory after native util and assertion work",
+  "runtime_commit": "f5f8bd6ac2d1d331b5bfb81f948977df67f8aab1",
+  "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "inventory_hash": "1e51ca4121020d14",
+  "timeout_secs": 10,
+  "jobs": 4,
+  "counts": {
+    "timeout": 134,
+    "fail": 2773,
+    "pass": 1139,
+    "skip": 678,
+    "crash": 3
+  },
+  "changes_from_library_sweep": [
+    {
+      "fixture": "test-assert-typedarray-deepequal.js",
+      "before": "timeout",
+      "after": "pass"
+    },
+    {
+      "fixture": "test-http-chunk-problem.js",
+      "before": "timeout",
+      "after": "fail"
+    },
+    {
+      "fixture": "test-net-bytes-written-large.js",
+      "before": "fail",
+      "after": "timeout"
+    },
+    {
+      "fixture": "test-util-isDeepStrictEqual.js",
+      "before": "fail",
+      "after": "pass"
+    },
+    {
+      "fixture": "test-util-parse-env.js",
+      "before": "fail",
+      "after": "pass"
+    },
+    {
+      "fixture": "test-util-stripvtcontrolcharacters.js",
+      "before": "fail",
+      "after": "pass"
+    }
+  ],
+  "raw_results": "work/parallel-native.json",
+  "binary_hashes": "work/sweep-native-binaries.sha256",
+  "memory_before": "work/sweep-native-memory-before.txt",
+  "memory_after": "work/sweep-native-memory-after.txt",
+  "performance_claim": false,
+  "goal_complete": false
+}

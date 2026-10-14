@@ -185,6 +185,12 @@ impl<H: Host> Vm<H> {
             return Err(self.reference_error(p, "this binding is unavailable".into()));
         }
         for index in 0..=frame {
+            // An ordinary activation's receiver is authoritative even when it
+            // omits unobservable lexical-this bindings. Only activations that
+            // resolve this through an environment can inherit super()'s update.
+            if self.frames[index].fixed_this {
+                continue;
+            }
             if let Some(value) = self.dynamic_binding(index, atom) {
                 self.frames[index].this = value;
             }
@@ -1397,22 +1403,43 @@ impl<H: Host> Vm<H> {
     }
 
     /// The capture read when every layer on the walk belongs to a function, so no with-object
-    /// or lexical-this wrapper is skipped, and the binding is an initialized slot its non-root
-    /// environment owns. One cell read per layer; anything else is `None`.
+    /// or lexical-this wrapper is skipped, and the binding is an initialized slot its
+    /// environment owns: a non-root slot, or a root slot no projection reads through. One cell
+    /// read per layer; anything else is `None`.
     #[inline(always)]
     pub(super) fn direct_capture(&self, frame: usize, depth: u16, slot: u16) -> Option<Value> {
-        self.direct_capture_slots(frame, depth)?
+        let (slots, root) = self.direct_capture_slots(frame, depth)?;
+        self.owned_capture(slots, root, slot)
+    }
+
+    /// `slot` of a capture walk's environment when the environment owns the binding: any slot
+    /// of a non-root function's environment; of a root environment (`root` names its program),
+    /// only a slot no projection reads through.
+    #[inline(always)]
+    fn owned_capture(
+        &self,
+        slots: &crate::heap::EnvironmentSlots,
+        root: Option<Option<u32>>,
+        slot: u16,
+    ) -> Option<Value> {
+        if let Some(program) = root
+            && !self.root_environment_slot_is_binding(program, slot)
+        {
+            return None;
+        }
+        slots
             .owned(usize::from(slot))
             .filter(|value| !value.is_deleted())
     }
 
-    /// The slots a direct capture at `depth` reads: the walk from the frame's environment
-    /// (past its own, once captured) when every layer belongs to a non-root function.
+    /// The slots a direct capture at `depth` reads, and the program of a root environment
+    /// (`owned_capture`): the walk from the frame's environment (past its own, once captured)
+    /// when every layer belongs to a function.
     fn direct_capture_slots(
         &self,
         frame: usize,
         depth: u16,
-    ) -> Option<&crate::heap::EnvironmentSlots> {
+    ) -> Option<(&crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
         let frame = &self.frames[frame];
         let mut cell = self.heap.get(frame.env)?;
         if frame.captured {
@@ -1427,6 +1454,7 @@ impl<H: Host> Vm<H> {
                 parent,
                 function,
                 slots,
+                scope,
                 ..
             } = cell
             else {
@@ -1436,10 +1464,10 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             if remaining == 0 {
-                if *function == super::ROOT_FUNCTION_ID {
-                    return None;
-                }
-                return Some(slots);
+                return Some((
+                    slots,
+                    (*function == super::ROOT_FUNCTION_ID).then_some(scope.program),
+                ));
             }
             remaining -= 1;
             cell = self.heap.get(*parent)?;
@@ -1461,25 +1489,24 @@ impl<H: Host> Vm<H> {
         }
         let epoch = self.heap.collection_epoch();
         let cache = &self.frames[frame].capture_cache;
-        let slots = if cache.env == self.frames[frame].env
+        let (slots, root) = if cache.env == self.frames[frame].env
             && cache.epoch == epoch
             && !cache.slots.is_null()
         {
-            cache.slots
+            (cache.slots, cache.root)
         } else {
-            let slots: *const crate::heap::EnvironmentSlots =
-                self.direct_capture_slots(frame, 0)?;
+            let (slots, root) = self.direct_capture_slots(frame, 0)?;
+            let slots: *const crate::heap::EnvironmentSlots = slots;
             self.frames[frame].capture_cache = CaptureCache {
                 env: self.frames[frame].env,
                 epoch,
                 slots,
+                root,
             };
-            slots
+            (slots, root)
         };
         // SAFETY: see above; the pointer was taken from the frame's current environment.
-        unsafe { &*slots }
-            .owned(usize::from(slot))
-            .filter(|value| !value.is_deleted())
+        self.owned_capture(unsafe { &*slots }, root, slot)
     }
 
     #[cold]
@@ -1505,15 +1532,29 @@ impl<H: Host> Vm<H> {
         slot: u16,
     ) -> Result<Value, JsError> {
         // Global var, global lexical and module-import projections exist only for a program's
-        // root function, so any other initialized environment slot is the binding itself.
-        if let Some(Cell::Environment { function, .. }) = self.heap.get(env)
-            && *function != super::ROOT_FUNCTION_ID
+        // root function, so any other initialized environment slot, and a root slot of a
+        // program without projections, is the binding itself.
+        if let Some(Cell::Environment {
+            function, scope, ..
+        }) = self.heap.get(env)
+            && (*function != super::ROOT_FUNCTION_ID
+                || self.root_environment_slot_is_binding(scope.program, slot))
             && let Some(value) = self.heap.environment_slot(env, usize::from(slot))
             && !value.is_deleted()
         {
             return Ok(value);
         }
         self.load_projected_environment_binding(p, env, slot)
+    }
+
+    /// Whether `slot` of a root environment owned by `program` (the active program when
+    /// `None`) is the binding itself rather than a projection.
+    #[inline(always)]
+    fn root_environment_slot_is_binding(&self, program: Option<u32>, slot: u16) -> bool {
+        self.programs.root_slot_is_binding(
+            program.map_or(self.active_program, super::ProgramId::from_raw),
+            slot,
+        )
     }
 
     /// Reads a root-function projection (global var, global lexical or module import) or
@@ -2174,7 +2215,7 @@ impl<H: Host> Vm<H> {
         }
         // Each script/eval activation has its own local layout. The global
         // object owns the binding; refresh every active projection in this realm.
-        for frame in &mut self.frames {
+        for frame in self.frames.iter_mut() {
             if frame.function != super::ROOT_FUNCTION_ID || frame.this != object {
                 continue;
             }

@@ -144,6 +144,214 @@ for (
   });
 }
 /* quench:web-api:start */
+if (typeof globalThis.URLSearchParams !== "function") {
+  const decodeFormComponent = (value) => {
+    try {
+      return decodeURIComponent(value.replace(/\+/g, " "));
+    } catch (_) {
+      // Form decoding is forgiving: malformed percent escapes are retained.
+      return value.replace(/\+/g, " ").replace(/%([0-9a-f]{2})/gi, (_, hex) =>
+        String.fromCharCode(parseInt(hex, 16)));
+    }
+  };
+  const encodeFormComponent = (value) => encodeURIComponent(value)
+    .replace(/[!'()~]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
+    .replace(/%20/g, "+");
+  const asUSVString = (value) => {
+    if (typeof value === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+    const text = String(value);
+    let result = "";
+    for (let index = 0; index < text.length; index++) {
+      const unit = text.charCodeAt(index);
+      if (unit >= 0xD800 && unit <= 0xDBFF) {
+        const next = text.charCodeAt(index + 1);
+        if (next >= 0xDC00 && next <= 0xDFFF) result += text[index] + text[++index];
+        else result += "\uFFFD";
+      } else if (unit >= 0xDC00 && unit <= 0xDFFF) result += "\uFFFD";
+      else result += text[index];
+    }
+    return result;
+  };
+  const checkThis = (receiver) => {
+    if (!receiver || !Array.isArray(receiver._pairs)) {
+      throw Object.assign(new TypeError('Value of "this" must be of type URLSearchParams'), { code: "ERR_INVALID_THIS" });
+    }
+  };
+  const requireArgs = (args, count, names) => {
+    if (args.length < count) {
+      throw Object.assign(new TypeError(`The ${names} argument${count > 1 ? "s" : ""} must be specified`), { code: "ERR_MISSING_ARGS" });
+    }
+  };
+  const tupleError = () => Object.assign(
+    new TypeError("Each query pair must be an iterable [name, value] tuple"),
+    { code: "ERR_INVALID_TUPLE" },
+  );
+  const iterableError = () => Object.assign(
+    new TypeError("Query pairs must be iterable"),
+    { code: "ERR_ARG_NOT_ITERABLE" },
+  );
+  class URLSearchParams {
+    constructor(init = undefined) {
+      this._pairs = [];
+      if (init === undefined) return;
+      if (typeof init === "string") {
+        const query = init.startsWith("?") ? init.slice(1) : init;
+        for (const part of query.split("&")) {
+          if (part === "") continue;
+          const equals = part.indexOf("=");
+          this._pairs.push([
+            decodeFormComponent(equals < 0 ? part : part.slice(0, equals)),
+            decodeFormComponent(equals < 0 ? "" : part.slice(equals + 1)),
+          ]);
+        }
+        return;
+      }
+      if (init !== null && (typeof init === "object" || typeof init === "function")) {
+        const iterator = init[Symbol.iterator];
+        if (iterator !== undefined && iterator !== null) {
+          if (typeof iterator !== "function") throw iterableError();
+          for (const pair of init) {
+            if (pair === null || pair === undefined) throw tupleError();
+            let pairIterator;
+            try { pairIterator = pair[Symbol.iterator]; } catch (_) { throw tupleError(); }
+            if (typeof pairIterator !== "function") throw tupleError();
+            const values = [...pair];
+            if (values.length !== 2) throw tupleError();
+            this._pairs.push([asUSVString(values[0]), asUSVString(values[1])]);
+          }
+          return;
+        }
+        if (iterator !== undefined && iterator !== null) throw iterableError();
+        for (const name of Reflect.ownKeys(init)) {
+          if (typeof name === "symbol") throw new TypeError("Cannot convert a Symbol value to a string");
+          if (Object.prototype.propertyIsEnumerable.call(init, name)) this._pairs.push([name, asUSVString(init[name])]);
+        }
+        return;
+      }
+      const text = asUSVString(init);
+      if (text !== "") this._pairs.push([text, ""]);
+    }
+    get size() { checkThis(this); return this._pairs.length; }
+    append(name, value) {
+      checkThis(this); requireArgs(arguments, 2, '"name" and "value"');
+      this._pairs.push([asUSVString(name), asUSVString(value)]);
+      this._onchange?.();
+    }
+    delete(name, value) {
+      checkThis(this); requireArgs(arguments, 1, '"name"');
+      name = asUSVString(name);
+      const hasValue = arguments.length > 1;
+      value = hasValue ? asUSVString(value) : undefined;
+      this._pairs = this._pairs.filter((pair) => pair[0] !== name || (hasValue && pair[1] !== value));
+      this._onchange?.();
+    }
+    get(name) {
+      checkThis(this); requireArgs(arguments, 1, '"name"');
+      name = asUSVString(name);
+      const pair = this._pairs.find((item) => item[0] === name);
+      return pair === undefined ? null : pair[1];
+    }
+    getAll(name) {
+      checkThis(this); requireArgs(arguments, 1, '"name"');
+      name = asUSVString(name);
+      return this._pairs.filter((item) => item[0] === name).map((item) => item[1]);
+    }
+    has(name, value) {
+      checkThis(this); requireArgs(arguments, 1, '"name"');
+      name = asUSVString(name);
+      if (arguments.length > 1) {
+        value = asUSVString(value);
+        return this._pairs.some((item) => item[0] === name && item[1] === value);
+      }
+      return this._pairs.some((item) => item[0] === name);
+    }
+    set(name, value) {
+      checkThis(this); requireArgs(arguments, 2, '"name" and "value"');
+      name = asUSVString(name);
+      value = asUSVString(value);
+      let found = false;
+      const next = [];
+      for (const pair of this._pairs) {
+        if (pair[0] !== name) next.push(pair);
+        else if (!found) { next.push([name, value]); found = true; }
+      }
+      if (!found) next.push([name, value]);
+      this._pairs = next;
+      this._onchange?.();
+    }
+    sort() {
+      checkThis(this);
+      this._pairs = this._pairs.map((pair, index) => ({ pair, index }))
+        .sort((a, b) => a.pair[0] < b.pair[0] ? -1 : a.pair[0] > b.pair[0] ? 1 : a.index - b.index)
+        .map((item) => item.pair);
+      this._onchange?.();
+    }
+    entries() { checkThis(this); return makeIterator(this._pairs, 0); }
+    keys() { checkThis(this); return makeIterator(this._pairs, 1); }
+    values() { checkThis(this); return makeIterator(this._pairs, 2); }
+    forEach(callback, thisArg = undefined) {
+      checkThis(this);
+      if (typeof callback !== "function") {
+        throw Object.assign(new TypeError("The \"callbackFn\" argument must be of type function"), { code: "ERR_INVALID_ARG_TYPE" });
+      }
+      for (const [name, value] of this._pairs.slice()) callback.call(thisArg, value, name, this);
+    }
+    toString() {
+      checkThis(this);
+      return this._pairs.map(([name, value]) => `${encodeFormComponent(name)}=${encodeFormComponent(value)}`).join("&");
+    }
+  }
+  const URLSearchParamsIteratorPrototype = Object.create(Object.prototype);
+  Object.defineProperty(URLSearchParamsIteratorPrototype, Symbol.toStringTag, {
+    value: "URLSearchParams Iterator",
+  });
+  const makeIterator = (pairs, kind) => {
+    let index = 0;
+    const iterator = {
+      next() {
+        if (this !== iterator) throw Object.assign(new TypeError('Value of "this" must be of type URLSearchParamsIterator'), { code: "ERR_INVALID_THIS" });
+        if (index >= pairs.length) return { value: undefined, done: true };
+        const pair = pairs[index++];
+        return { value: kind === 0 ? pair.slice() : pair[kind - 1], done: false };
+      },
+      [Symbol.iterator]() { return this; },
+      [Symbol.for("nodejs.util.inspect.custom")](depth, options) {
+        if (depth < 0) return "[Object]";
+        const values = pairs.slice(index).map((pair) => {
+          const value = kind === 0 ? pair : pair[kind - 1];
+          return kind === 0 ? `[ '${value[0]}', '${value[1]}' ]` : `'${value}'`;
+        });
+        if (values.length === 0) return "URLSearchParams Iterator {  }";
+        const flat = `URLSearchParams Iterator { ${values.join(", ")} }`;
+        if (flat.length <= (options?.breakLength ?? 80)) return flat;
+        return `URLSearchParams Iterator {\n  ${values.join(",\n  ")} }`;
+      },
+    };
+    Object.setPrototypeOf(iterator, URLSearchParamsIteratorPrototype);
+    return iterator;
+  };
+  Object.defineProperty(URLSearchParams.prototype, "entries", { enumerable: true });
+  Object.defineProperty(URLSearchParams.prototype, "keys", { enumerable: true });
+  Object.defineProperty(URLSearchParams.prototype, "values", { enumerable: true });
+  URLSearchParams.prototype[Symbol.iterator] = URLSearchParams.prototype.entries;
+  Object.defineProperty(URLSearchParams.prototype, "size", { enumerable: true, configurable: true });
+  Object.defineProperty(URLSearchParams.prototype, Symbol.toStringTag, { value: "URLSearchParams" });
+  Object.defineProperty(URLSearchParams.prototype, Symbol.for("nodejs.util.inspect.custom"), {
+    configurable: true,
+    value(depth, options) {
+      checkThis(this);
+      if (depth < 0) return "[Object]";
+      if (this._pairs.length === 0) return "URLSearchParams {}";
+      const values = this._pairs.map(([name, value]) => `'${name}' => '${value}'`);
+      const flat = `URLSearchParams { ${values.join(", ")} }`;
+      if (flat.length <= (options?.breakLength ?? 80)) return flat;
+      return `URLSearchParams {\n  ${values.join(",\n  ")} }`;
+    },
+  });
+  Object.defineProperty(globalThis, "URLSearchParams", {
+    configurable: true, enumerable: false, writable: true, value: URLSearchParams,
+  });
+}
 if (typeof globalThis.Blob !== "function" ||
     typeof globalThis.Blob.prototype?.arrayBuffer !== "function") {
   if (typeof globalThis.ReadableStream !== "function") {

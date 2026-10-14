@@ -1,0 +1,2014 @@
+{
+  "schema": 5,
+  "created_unix_ns": 1791937178769520883,
+  "rounds_requested": 5,
+  "timeout_ms": 300000,
+  "source_revision": "f71a0ee24d6ef51933c19dfeff0b9d33ca524899",
+  "source_dirty": false,
+  "corpus": {
+    "pinned_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_revision": "64e1860c736c1b899708f4cd646721bc71e53d8b",
+    "checkout_clean": true,
+    "fixture_set_matches": false
+  },
+  "host": {
+    "uname": "Linux vm 6.18.44-fc-v114 #1 SMP PREEMPT_DYNAMIC @0 x86_64 x86_64 x86_64 GNU/Linux",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.0\nLLVM version: 23.1.1",
+    "model": null,
+    "memory_bytes": 16874930176,
+    "memory_limit_bytes": null,
+    "cpu_quota": null,
+    "logical_cpus": 4,
+    "process_metrics_backend": "Linux wait4 rusage"
+  },
+  "engines": [
+    {
+      "name": "quench",
+      "executable": "/home/user/quench/target/production/quench-node",
+      "executable_sha256": "f3c66a167468a38b9def88518e067427518384bb1d42460d62b5ed01cca8fa6a",
+      "version": "Quench shared-VM interpreter build; package 0.1.0",
+      "argv": [],
+      "environment": {
+        "HOME": "/root",
+        "PATH": "/root/engines/node-v26.10.0-linux-x64/bin:/root/.bun/bin:/nix/var/nix/profiles/default/bin:/root/.local/bin:/root/.cargo/bin:/usr/local/go/bin:/opt/node22/bin:/opt/maven/bin:/opt/gradle/bin:/opt/rbenv/bin:/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/home/user/quench/target/production/quench-node"
+      ],
+      "jit_proof": "the measured shared VM executes interpreter bytecode; no guest JIT path is enabled"
+    },
+    {
+      "name": "quickjs",
+      "executable": "/root/engines/qjs-src/quickjs-2026-06-04/qjs",
+      "executable_sha256": "ac7b5958febb731f6d34e7db869fd8b8dc949dd45f785a98b148b798c220139e",
+      "version": "QuickJS version 2026-06-04",
+      "argv": [],
+      "environment": {
+        "HOME": "/root",
+        "PATH": "/root/engines/node-v26.10.0-linux-x64/bin:/root/.bun/bin:/nix/var/nix/profiles/default/bin:/root/.local/bin:/root/.cargo/bin:/usr/local/go/bin:/opt/node22/bin:/opt/maven/bin:/opt/gradle/bin:/opt/rbenv/bin:/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "interpreter",
+      "jit_proof_command": [
+        "/root/engines/qjs-src/quickjs-2026-06-04/qjs",
+        "--version"
+      ],
+      "jit_proof": "QuickJS qjs executes bytecode in its interpreter; binary version and SHA-256 are recorded"
+    },
+    {
+      "name": "bun",
+      "executable": "/root/.bun/bin/bun",
+      "executable_sha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c",
+      "version": "1.4.2",
+      "argv": [],
+      "environment": {
+        "BUN_JSC_useJIT": "0",
+        "HOME": "/root",
+        "PATH": "/root/engines/node-v26.10.0-linux-x64/bin:/root/.bun/bin:/nix/var/nix/profiles/default/bin:/root/.local/bin:/root/.cargo/bin:/usr/local/go/bin:/opt/node22/bin:/opt/maven/bin:/opt/gradle/bin:/opt/rbenv/bin:/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "BUN_JSC_useJIT=0",
+        "BUN_JSC_dumpOptions=1",
+        "/root/.bun/bin/bun",
+        "-e",
+        "console.log(Bun.version)"
+      ],
+      "jit_proof": "command succeeded and reported \"useJIT=false\": 1.4.2\n\nModified JSC options:\n   dumpOptions=1 (default: 0)\n   useJIT=false (default: true)"
+    },
+    {
+      "name": "node",
+      "executable": "/root/engines/node-v26.10.0-linux-x64/bin/node",
+      "executable_sha256": "ab9c8eecf9f82d6693cdc3accced17034065c8d96213b0aa76a7e803d20ae1da",
+      "version": "v26.10.0",
+      "argv": [
+        "--jitless"
+      ],
+      "environment": {
+        "HOME": "/root",
+        "PATH": "/root/engines/node-v26.10.0-linux-x64/bin:/root/.bun/bin:/nix/var/nix/profiles/default/bin:/root/.local/bin:/root/.cargo/bin:/usr/local/go/bin:/opt/node22/bin:/opt/maven/bin:/opt/gradle/bin:/opt/rbenv/bin:/root/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      },
+      "inherits_environment": false,
+      "jit_mode": "disabled-and-probed",
+      "jit_proof_command": [
+        "/root/engines/node-v26.10.0-linux-x64/bin/node",
+        "--jitless",
+        "-e",
+        "console.log(process.execArgv.includes('--jitless'))"
+      ],
+      "jit_proof": "command succeeded and reported \"true\": true"
+    }
+  ],
+  "suite_inputs": [
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/base.js",
+      "size_bytes": 9351,
+      "modified_unix_ns": 1791936905773852376,
+      "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/crypto.js",
+      "size_bytes": 48043,
+      "modified_unix_ns": 1791936905774205571,
+      "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+      "size_bytes": 25653,
+      "modified_unix_ns": 1791936905774426698,
+      "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/earley-boyer.js",
+      "size_bytes": 195205,
+      "modified_unix_ns": 1791936905774426698,
+      "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/navier-stokes.js",
+      "size_bytes": 12690,
+      "modified_unix_ns": 1791936905774426698,
+      "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/raytrace.js",
+      "size_bytes": 27996,
+      "modified_unix_ns": 1791936905774426698,
+      "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/regexp.js",
+      "size_bytes": 111299,
+      "modified_unix_ns": 1791936905775868061,
+      "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/richards.js",
+      "size_bytes": 15776,
+      "modified_unix_ns": 1791936905775868061,
+      "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+    },
+    {
+      "path": "quench-bench/js-engine-benchmark/v8-v7/splay.js",
+      "size_bytes": 10746,
+      "modified_unix_ns": 1791936905775868061,
+      "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+    }
+  ],
+  "fixtures": {
+    "quench-bench/js-engine-benchmark/v8-v7/deltablue.js": {
+      "source": {
+        "path": "quench-bench/js-engine-benchmark/v8-v7/deltablue.js",
+        "size_bytes": 25653,
+        "modified_unix_ns": 1791936905774426698,
+        "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+      },
+      "valid": true,
+      "output_equal": true,
+      "summaries": {
+        "bun": {
+          "median_score": 1300.0,
+          "median_max_rss_bytes": 31604736,
+          "valid_samples": 5
+        },
+        "node": {
+          "median_score": 1764.0,
+          "median_max_rss_bytes": 50315264,
+          "valid_samples": 5
+        },
+        "quench": {
+          "median_score": 231.0,
+          "median_max_rss_bytes": 46243840,
+          "valid_samples": 5
+        },
+        "quickjs": {
+          "median_score": 901.0,
+          "median_max_rss_bytes": 3887104,
+          "valid_samples": 5
+        }
+      },
+      "rounds": [
+        {
+          "round": 0,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2016221534,
+              "peak_rss_bytes": 31899648,
+              "score": 1305.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12251,
+              "page_reclaims": 12251,
+              "involuntary_context_switches": 6,
+              "host_before": {
+                "captured_unix_ns": 1791937183238582331,
+                "load_average": {
+                  "one_minute": 1.23,
+                  "five_minutes": 1.4,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937185259099893,
+                "load_average": {
+                  "one_minute": 1.21,
+                  "five_minutes": 1.39,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 1305\n----\nScore: 1305\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2039325244,
+              "peak_rss_bytes": 50434048,
+              "score": 1775.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 4004,
+              "page_reclaims": 4004,
+              "involuntary_context_switches": 3,
+              "host_before": {
+                "captured_unix_ns": 1791937185263026933,
+                "load_average": {
+                  "one_minute": 1.21,
+                  "five_minutes": 1.39,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.1,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937187306820208,
+                "load_average": {
+                  "one_minute": 1.21,
+                  "five_minutes": 1.39,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 1775\n----\nScore: 1775\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2234015879,
+              "peak_rss_bytes": 46247936,
+              "score": 243.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8063,
+              "page_reclaims": 8063,
+              "involuntary_context_switches": 3,
+              "host_before": {
+                "captured_unix_ns": 1791937178970133045,
+                "load_average": {
+                  "one_minute": 1.23,
+                  "five_minutes": 1.4,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  },
+                  {
+                    "pid": 3,
+                    "cpu_percent": 0.0,
+                    "command": "pool_workqueue_release"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937181208232678,
+                "load_average": {
+                  "one_minute": 1.23,
+                  "five_minutes": 1.4,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 243\n----\nScore: 243\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2015640762,
+              "peak_rss_bytes": 3686400,
+              "score": 901.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 405,
+              "page_reclaims": 405,
+              "involuntary_context_switches": 7,
+              "host_before": {
+                "captured_unix_ns": 1791937181212138829,
+                "load_average": {
+                  "one_minute": 1.23,
+                  "five_minutes": 1.4,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 0.9,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937183234501315,
+                "load_average": {
+                  "one_minute": 1.23,
+                  "five_minutes": 1.4,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.0,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 901\n----\nScore: 901\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 1,
+          "execution_order": [
+            "quickjs",
+            "bun",
+            "node",
+            "quench"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2012692586,
+              "peak_rss_bytes": 31223808,
+              "score": 1371.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12774,
+              "page_reclaims": 12774,
+              "involuntary_context_switches": 6,
+              "host_before": {
+                "captured_unix_ns": 1791937189333382309,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.38,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937191350407782,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.38,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 1371\n----\nScore: 1371\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2037501239,
+              "peak_rss_bytes": 50245632,
+              "score": 1640.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 4011,
+              "page_reclaims": 4011,
+              "involuntary_context_switches": 4,
+              "host_before": {
+                "captured_unix_ns": 1791937191354526584,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.38,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937193396138781,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.38,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 1640\n----\nScore: 1640\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2214031845,
+              "peak_rss_bytes": 46039040,
+              "score": 231.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8063,
+              "page_reclaims": 8063,
+              "involuntary_context_switches": 6,
+              "host_before": {
+                "captured_unix_ns": 1791937193401570676,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.38,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937195619601405,
+                "load_average": {
+                  "one_minute": 1.18,
+                  "five_minutes": 1.38,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 231\n----\nScore: 231\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2014147702,
+              "peak_rss_bytes": 3887104,
+              "score": 908.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 482,
+              "page_reclaims": 482,
+              "involuntary_context_switches": 3,
+              "host_before": {
+                "captured_unix_ns": 1791937187310708711,
+                "load_average": {
+                  "one_minute": 1.21,
+                  "five_minutes": 1.39,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937189329476011,
+                "load_average": {
+                  "one_minute": 1.19,
+                  "five_minutes": 1.38,
+                  "fifteen_minutes": 0.67
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.4,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 908\n----\nScore: 908\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 2,
+          "execution_order": [
+            "bun",
+            "node",
+            "quench",
+            "quickjs"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2011947315,
+              "peak_rss_bytes": 31604736,
+              "score": 1188.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12095,
+              "page_reclaims": 12095,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937195623334860,
+                "load_average": {
+                  "one_minute": 1.18,
+                  "five_minutes": 1.38,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937197639715382,
+                "load_average": {
+                  "one_minute": 1.18,
+                  "five_minutes": 1.38,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 1188\n----\nScore: 1188\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2038815450,
+              "peak_rss_bytes": 50315264,
+              "score": 1764.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 4011,
+              "page_reclaims": 4011,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937197643461714,
+                "load_average": {
+                  "one_minute": 1.18,
+                  "five_minutes": 1.38,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.6,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.5,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937199686723075,
+                "load_average": {
+                  "one_minute": 1.16,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 1764\n----\nScore: 1764\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2199559315,
+              "peak_rss_bytes": 46059520,
+              "score": 243.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8062,
+              "page_reclaims": 8062,
+              "involuntary_context_switches": 8,
+              "host_before": {
+                "captured_unix_ns": 1791937199691691270,
+                "load_average": {
+                  "one_minute": 1.16,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937201895576748,
+                "load_average": {
+                  "one_minute": 1.16,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 243\n----\nScore: 243\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2008875964,
+              "peak_rss_bytes": 3735552,
+              "score": 925.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 403,
+              "page_reclaims": 403,
+              "involuntary_context_switches": 6,
+              "host_before": {
+                "captured_unix_ns": 1791937201899796937,
+                "load_average": {
+                  "one_minute": 1.16,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937203912838499,
+                "load_average": {
+                  "one_minute": 1.15,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 925\n----\nScore: 925\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 3,
+          "execution_order": [
+            "node",
+            "quench",
+            "quickjs",
+            "bun"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2014504081,
+              "peak_rss_bytes": 31617024,
+              "score": 1300.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 13044,
+              "page_reclaims": 13044,
+              "involuntary_context_switches": 23,
+              "host_before": {
+                "captured_unix_ns": 1791937210255204030,
+                "load_average": {
+                  "one_minute": 1.14,
+                  "five_minutes": 1.36,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937212273955888,
+                "load_average": {
+                  "one_minute": 1.14,
+                  "five_minutes": 1.36,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 1300\n----\nScore: 1300\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2038801182,
+              "peak_rss_bytes": 50307072,
+              "score": 1660.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 4003,
+              "page_reclaims": 4003,
+              "involuntary_context_switches": 3,
+              "host_before": {
+                "captured_unix_ns": 1791937203916529763,
+                "load_average": {
+                  "one_minute": 1.15,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937205960342446,
+                "load_average": {
+                  "one_minute": 1.15,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 1660\n----\nScore: 1660\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2256648240,
+              "peak_rss_bytes": 46243840,
+              "score": 217.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8065,
+              "page_reclaims": 8065,
+              "involuntary_context_switches": 4,
+              "host_before": {
+                "captured_unix_ns": 1791937205966703702,
+                "load_average": {
+                  "one_minute": 1.15,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937208227698796,
+                "load_average": {
+                  "one_minute": 1.15,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 217\n----\nScore: 217\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2014920697,
+              "peak_rss_bytes": 3944448,
+              "score": 855.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 468,
+              "page_reclaims": 468,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937208231757062,
+                "load_average": {
+                  "one_minute": 1.15,
+                  "five_minutes": 1.37,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937210251187175,
+                "load_average": {
+                  "one_minute": 1.14,
+                  "five_minutes": 1.36,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 855\n----\nScore: 855\n",
+              "stderr": ""
+            }
+          }
+        },
+        {
+          "round": 4,
+          "execution_order": [
+            "quench",
+            "quickjs",
+            "bun",
+            "node"
+          ],
+          "samples": {
+            "bun": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2016040124,
+              "peak_rss_bytes": 31240192,
+              "score": 1247.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 12580,
+              "page_reclaims": 12580,
+              "involuntary_context_switches": 8,
+              "host_before": {
+                "captured_unix_ns": 1791937216519196057,
+                "load_average": {
+                  "one_minute": 1.13,
+                  "five_minutes": 1.35,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937218539478133,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.35,
+                  "fifteen_minutes": 0.69
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 1247\n----\nScore: 1247\n",
+              "stderr": ""
+            },
+            "node": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2051796716,
+              "peak_rss_bytes": 50495488,
+              "score": 1833.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 4006,
+              "page_reclaims": 4006,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937218543628437,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.35,
+                  "fifteen_minutes": 0.69
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937220601584975,
+                "load_average": {
+                  "one_minute": 1.12,
+                  "five_minutes": 1.35,
+                  "fifteen_minutes": 0.69
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 1833\n----\nScore: 1833\n",
+              "stderr": ""
+            },
+            "quench": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2217460421,
+              "peak_rss_bytes": 46247936,
+              "score": 219.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 8064,
+              "page_reclaims": 8064,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937212278012702,
+                "load_average": {
+                  "one_minute": 1.14,
+                  "five_minutes": 1.36,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.6,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937214499760689,
+                "load_average": {
+                  "one_minute": 1.13,
+                  "five_minutes": 1.35,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 219\n----\nScore: 219\n",
+              "stderr": ""
+            },
+            "quickjs": {
+              "status": 0,
+              "timed_out": false,
+              "wall_ns": 2005647708,
+              "peak_rss_bytes": 3932160,
+              "score": 845.0,
+              "instructions": null,
+              "cycles": null,
+              "page_faults": 382,
+              "page_reclaims": 382,
+              "involuntary_context_switches": 5,
+              "host_before": {
+                "captured_unix_ns": 1791937214503496889,
+                "load_average": {
+                  "one_minute": 1.13,
+                  "five_minutes": 1.35,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "host_after": {
+                "captured_unix_ns": 1791937216513528342,
+                "load_average": {
+                  "one_minute": 1.13,
+                  "five_minutes": 1.35,
+                  "fifteen_minutes": 0.68
+                },
+                "load_average_error": null,
+                "top_cpu_consumers": [
+                  {
+                    "pid": 88,
+                    "cpu_percent": 2.5,
+                    "command": "claude"
+                  },
+                  {
+                    "pid": 4443,
+                    "cpu_percent": 1.7,
+                    "command": "quench-bench"
+                  },
+                  {
+                    "pid": 1,
+                    "cpu_percent": 0.1,
+                    "command": "process_api"
+                  },
+                  {
+                    "pid": 105,
+                    "cpu_percent": 0.1,
+                    "command": "environment-man"
+                  },
+                  {
+                    "pid": 2,
+                    "cpu_percent": 0.0,
+                    "command": "kthreadd"
+                  }
+                ],
+                "process_list_error": null
+              },
+              "stdout": "__quenchBenchResult: DeltaBlue: 845\n----\nScore: 845\n",
+              "stderr": ""
+            }
+          }
+        }
+      ]
+    }
+  },
+  "complete": true,
+  "qualification_ready": false
+}

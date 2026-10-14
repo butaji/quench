@@ -1,0 +1,13 @@
+diff --git a/crates/quench-runtime/src/heap.rs b/crates/quench-runtime/src/heap.rs
+--- a/crates/quench-runtime/src/heap.rs
++++ b/crates/quench-runtime/src/heap.rs
+@@ -684,6 +684,9 @@ impl Heap {
+                         {
+                             swept_slots += 1;
+                         }
++                        if slot.cell.is_none() {
++                            continue;
++                        }
+                         if Self::marked(&self.marks, index) {
+                             live += 1;
+                             if let Some(object) = slot.cell.as_ref().and_then(Cell::object)

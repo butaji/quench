@@ -1,0 +1,60 @@
+{
+  "experiment": "fuse captured right operand into EarleyBoyer instanceof binary operation",
+  "fixture_sha256": "aa379c1d54f5d13de32ebf2b50729d0cbc64bb23de5e524256c7b2270213cc0b",
+  "baseline_sha256": "e46537823eb25a37cf5646af793e6873ceaeff1069fb878a96813cae3a86ab32",
+  "candidate_sha256": "bfbb777dd6a901c2265e93c020739f892c91a25f4664d1c9ff4a42c22105245d",
+  "source_revision": "999e85bbece5dc41563665fa0a2fb306a10c8eaa",
+  "pairs": [
+    {
+      "pair": 1,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 418.0,
+      "candidate_score": 379.0,
+      "score_delta": -39.0,
+      "baseline_rss_bytes": 41779200,
+      "candidate_rss_bytes": 47583232,
+      "rss_delta_bytes": 5804032,
+      "baseline_wall_ns": 21946451740,
+      "candidate_wall_ns": 23879395405
+    },
+    {
+      "pair": 2,
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 416.0,
+      "candidate_score": 386.0,
+      "score_delta": -30.0,
+      "baseline_rss_bytes": 41840640,
+      "candidate_rss_bytes": 47628288,
+      "rss_delta_bytes": 5787648,
+      "baseline_wall_ns": 22177101746,
+      "candidate_wall_ns": 23298871930
+    },
+    {
+      "pair": 3,
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "valid": true,
+      "output_equal": true,
+      "baseline_score": 408.0,
+      "candidate_score": 387.0,
+      "score_delta": -21.0,
+      "baseline_rss_bytes": 41594880,
+      "candidate_rss_bytes": 48185344,
+      "rss_delta_bytes": 6590464,
+      "baseline_wall_ns": 22709952007,
+      "candidate_wall_ns": 23629372104
+    }
+  ]
+}

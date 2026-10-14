@@ -1,0 +1,33 @@
+{
+  "scope": "Rust intrinsic builtin comparison and native partialDeepStrictEqual; full compatibility remains unfinished",
+  "node_oracle": "v24.19.0",
+  "validation": "All 6 child-entry tests pass; comparison oracle covers 35 pairs across 6 modes and 7 partial subsets, builtin brands/payloads, signed zero, NaN, cycles, keys and prototypes.",
+  "assert_subset": {
+    "before": {
+      "pass": 4,
+      "fail": 9,
+      "timeout": 1
+    },
+    "after": {
+      "pass": 5,
+      "fail": 9,
+      "timeout": 0
+    },
+    "total": 14,
+    "timeout_secs": 10,
+    "jobs": 2,
+    "inventory_hash": "8ea2039d6ae15ebb",
+    "new_pass": "test-assert-typedarray-deepequal.js"
+  },
+  "latest_frozen_full_sweep": {
+    "runtime_commit": "9b41cfb4e",
+    "pass": 1135,
+    "skip": 678,
+    "fail": 2776,
+    "timeout": 135,
+    "crash": 3,
+    "total": 4727,
+    "inventory_hash": "1e51ca4121020d14"
+  },
+  "performance_claim": false
+}

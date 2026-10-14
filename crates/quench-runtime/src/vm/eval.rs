@@ -28,15 +28,26 @@ impl<H: Host> Vm<H> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         let source = self.to_string(p, source)?;
         let source_name = format!("<evalScript:{}>", self.programs.len());
-        if let Some(expression) = crate::Engine::eval_single_expression(&source) {
-            return self.eval_compiled_expression_named(p, expression, false, &source_name);
+        self.eval_script_source(p, &source, &source_name)
+    }
+
+    /// Evaluates `source` as a global Script of the active realm: its
+    /// top-level lexical declarations join the realm's global lexical scope.
+    pub(super) fn eval_script_source(
+        &mut self,
+        p: &ResidualProgram,
+        source: &str,
+        source_name: &str,
+    ) -> Result<Value, JsError> {
+        if let Some(expression) = crate::Engine::eval_single_expression(source) {
+            return self.eval_compiled_expression_named(p, expression, false, source_name);
         }
         let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
             .map(|atom| self.atom_name(atom as u32).to_owned())
             .collect::<Vec<_>>();
         let residual = match crate::Engine::specialize_eval_with_context(
-            &source,
-            &source_name,
+            source,
+            source_name,
             &atom_prefix,
             false,
             crate::compile::EvalContext::default(),
@@ -277,6 +288,15 @@ impl<H: Host> Vm<H> {
         source: &str,
         name: &str,
     ) -> Result<Value, JsError> {
+        self.evaluate_embedding_specialized_script_with_origin(source, name, None)
+    }
+
+    pub(crate) fn evaluate_embedding_specialized_script_with_origin(
+        &mut self,
+        source: &str,
+        name: &str,
+        origin: Option<(u32, u32)>,
+    ) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
         let atom_count = self.atom_text.len() + self.dynamic_atoms.len();
         let mut atom_prefix = Vec::with_capacity(atom_count);
@@ -290,7 +310,7 @@ impl<H: Host> Vm<H> {
                 unindexable_prefix_atoms.push(atom);
             }
         }
-        let residual = crate::Engine::specialize_script_with_atom_prefix(
+        let mut residual = crate::Engine::specialize_script_with_atom_prefix(
             source,
             name,
             &atom_prefix,
@@ -309,10 +329,27 @@ impl<H: Host> Vm<H> {
             self.syntax_error_result(&program, &message)
                 .expect_err("specialized host-script syntax errors must throw")
         })?;
+        if let (Some(source), Some((line_offset, column_offset))) = (&mut residual.source, origin) {
+            source.line_offset = line_offset;
+            source.column_offset = column_offset;
+        }
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(&program, "dynamic program store is full".into()));
         };
         self.run_global_eval_program(&program, program_id)
+    }
+
+    /// Evaluates host source as a global Script of the active realm.
+    pub(crate) fn evaluate_embedding_global_script(
+        &mut self,
+        source: &str,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        let program = self.embedding_program()?;
+        let direct_eval = std::mem::replace(&mut self.direct_eval, false);
+        let result = self.eval_script_source(&program, source, name);
+        self.direct_eval = direct_eval;
+        result
     }
 
     fn run_global_eval_program(
@@ -924,10 +961,12 @@ impl<H: Host> Vm<H> {
             .find(|(_, function)| function.parent == Some(super::ROOT_FUNCTION_ID))
             .map(|(id, _)| id as u32)
             .ok_or_else(|| self.type_error(p, "dynamic eval body is unavailable".into()))?;
-        let this = self
-            .frames
-            .last()
-            .map_or(self.realm.globals, |frame| frame.this);
+        // Only direct eval inherits its caller's `this`; indirect eval and
+        // Scripts evaluate with the realm's global object.
+        let this = match self.frames.last() {
+            Some(frame) if self.direct_eval => frame.this,
+            _ => self.realm.globals,
+        };
         let mut parent_environment = if self.direct_eval {
             let root_scope = self
                 .frames

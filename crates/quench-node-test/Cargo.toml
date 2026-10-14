@@ -13,3 +13,6 @@ sha2 = "0.10"
 tempfile = "3"
 wait-timeout = "0.2.1"
 quench-node = { path = "../quench-node" }
+
+[dev-dependencies]
+openssl = "0.10"

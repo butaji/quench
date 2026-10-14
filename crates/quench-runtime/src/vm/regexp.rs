@@ -1489,13 +1489,9 @@ impl<H: Host> Vm<H> {
                     loop {
                         let result = vm.regexp_exec_value(p, receiver, input_value)?;
                         if result.is_null() {
-                            let Some(Cell::Array {
-                                object: array_object,
-                            }) = vm.heap.get(array)
-                            else {
+                            let Some(elements) = vm.heap.array_elements(array) else {
                                 unreachable!("match owns its fresh result array");
                             };
-                            let elements = array_object.elements();
                             return Ok(if elements.is_empty() {
                                 Value::NULL
                             } else {

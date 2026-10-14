@@ -6,9 +6,7 @@ use quench_runtime::{NativeContext, RootId, RootedError, Value};
 use std::net::{IpAddr, ToSocketAddrs};
 
 const DNS_LOOKUP_PORT: u16 = 0;
-const ANY_FAMILY: u8 = 0;
-const IPV4_FAMILY: u8 = 4;
-const IPV6_FAMILY: u8 = 6;
+use super::net_config::{ANY_FAMILY, IPV4_FAMILY, IPV6_FAMILY};
 const DNS_SYSCALL: &str = "getaddrinfo";
 const NOT_FOUND_CODE: &str = "ENOTFOUND";
 

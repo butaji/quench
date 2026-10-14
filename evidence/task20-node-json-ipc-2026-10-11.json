@@ -1,0 +1,1136 @@
+{
+  "recorded_at": "2026-10-11T23:10:56.276898+00:00",
+  "base_commit": "fa69ae48a66e7c1c179cad9943e78009e7b9d7f1",
+  "scope": "Default JSON IPC transport and lifecycle, fork projection onto spawn, shared CommonJS CLI entry resolution, Unix filesystem descriptor namespace and inherited IO, and stdio pipe destination lifetime.",
+  "oracle": "v27.0.0-nightly20260819c79868f102",
+  "fixture_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "host": {
+    "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+    "cpu.max": "400000 100000",
+    "memory.max": "17179869184"
+  },
+  "changes": [
+    "Capture intrinsic JSON parse/stringify before guest hooks; frame JSON as UTF-8 lines on real Unix duplex sockets.",
+    "Own the transport in Open/Disconnecting/Closed phases; close descriptors on transition, queue callback/message/disconnect jobs on the canonical asynchronous dispatcher, and derive automatic child-process channel references from actual message/disconnect listeners.",
+    "Match Node small/large UTF-8 write completion timing and libuv socket buffer capacities; native policy stays in Rust and ordinary functions/Control class are thin existing bridges.",
+    "Fork clones options, forces shell false, defaults IPC and inherited/silent stdio, applies execPath/execArgv and removes inherited eval arguments with actual JavaScript strict equality.",
+    "Reuse one CommonJS resolver for entry files/directories and require resolution.",
+    "Unix fs-owned descriptors use their actual OS numbers; checked temporary duplicates allow inherited descriptor read/write/sync without transferring ownership. Non-Unix descriptor allocation remains unchanged.",
+    "Rust determines whether Readable.pipe ends its destination; stdout/stderr stay open and source close shares the existing unpipe cleanup."
+  ],
+  "validation": {
+    "child_entry": {
+      "passed": 44,
+      "failed": 0,
+      "artifact": {
+        "path": "work/ipc-retain-all-oracles.log",
+        "sha256": "8554703511c5c7981a10601c4bf17431a71856b5a5c767bf07d1172d12936c27",
+        "summary": ""
+      }
+    },
+    "expanded_ipc_oracle": [
+      "180 KB Unicode frame, primitive/type errors and circular values",
+      "captured JSON builtins bypass guest replacements, serialization toJSON hook ordering",
+      "callback versus nextTick order, disconnect/closed-send errors, public function/Control descriptor shapes"
+    ],
+    "filesystem_oracle": "Positioned read/write, inherited stdin FD read, direct stdout FD write, close and file metadata match Node.",
+    "entry_oracle": "Extensionless .js entry and package main.cjs directory entry match Node.",
+    "pipe_oracle": "Stdout/stderr stay open; end option getter captured once and later option mutation does not change EOF policy; ordinary destination is not destroyed by source close.",
+    "focused": [
+      {
+        "path": "work/ipc-retained-fork-group.json",
+        "sha256": "eb87162c7bccbc7880c29e8387535d4a9082b008fb5cd2f054872739a353e96d",
+        "results": {
+          "schema_version": 2,
+          "inventory_hash": "d582c4f05a53b987",
+          "timeout_secs": 20,
+          "jobs": 2,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "fa69ae48a66e7c1c179cad9943e78009e7b9d7f1",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64",
+          "results": [
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-abort-signal.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-advanced-header-serialization.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-and-spawn.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-args.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-close.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-closed-channel-segfault.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-detached.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-dgram.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "node:dgram/bootstrap.js:645\n  for (const callback of listeners[event] || []) callback.apply(socket, args);\n  ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-dgram.js:68:5\n    at node:dgram/bootstrap.js:645:50\n    at node:dgram/bootstrap.js:986:31\n    at node:dgram/bootstrap.js:125:24\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-exec-argv.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-exec-path.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-getconnections.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "node:net/module.js:177\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-getconnections.js:71:5\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:177:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-net-server.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "node:net/module.js:177\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-net-server.js:116:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:177:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [
+                    77,
+                    105,
+                    115,
+                    109,
+                    97,
+                    116,
+                    99,
+                    104,
+                    101,
+                    100,
+                    32,
+                    37,
+                    115,
+                    32,
+                    102,
+                    117,
+                    110,
+                    99,
+                    116,
+                    105,
+                    111,
+                    110,
+                    32,
+                    99,
+                    97,
+                    108,
+                    108,
+                    115,
+                    46,
+                    32,
+                    69,
+                    120,
+                    112,
+                    101,
+                    99,
+                    116,
+                    101,
+                    100,
+                    32,
+                    37,
+                    115,
+                    44,
+                    32,
+                    97,
+                    99,
+                    116,
+                    117,
+                    97,
+                    108,
+                    32,
+                    37,
+                    100,
+                    46,
+                    32,
+                    60,
+                    97,
+                    110,
+                    111,
+                    110,
+                    121,
+                    109,
+                    111,
+                    117,
+                    115,
+                    62,
+                    32,
+                    97,
+                    116,
+                    32,
+                    108,
+                    101,
+                    97,
+                    115,
+                    116,
+                    32,
+                    49,
+                    32,
+                    48,
+                    10,
+                    32,
+                    32,
+                    32,
+                    32,
+                    97,
+                    116,
+                    32,
+                    47,
+                    119,
+                    111,
+                    114,
+                    107,
+                    115,
+                    112,
+                    97,
+                    99,
+                    101,
+                    47,
+                    119,
+                    111,
+                    114,
+                    107,
+                    47,
+                    110,
+                    111,
+                    100,
+                    101,
+                    45,
+                    102,
+                    105,
+                    120,
+                    116,
+                    117,
+                    114,
+                    101,
+                    115,
+                    47,
+                    116,
+                    101,
+                    115,
+                    116,
+                    47,
+                    112,
+                    97,
+                    114,
+                    97,
+                    108,
+                    108,
+                    101,
+                    108,
+                    47,
+                    116,
+                    101,
+                    115,
+                    116,
+                    45,
+                    99,
+                    104,
+                    105,
+                    108,
+                    100,
+                    45,
+                    112,
+                    114,
+                    111,
+                    99,
+                    101,
+                    115,
+                    115,
+                    45,
+                    102,
+                    111,
+                    114,
+                    107,
+                    45,
+                    110,
+                    101,
+                    116,
+                    45,
+                    115,
+                    101,
+                    114,
+                    118,
+                    101,
+                    114,
+                    46,
+                    106,
+                    115,
+                    58,
+                    54,
+                    51,
+                    58,
+                    49,
+                    57,
+                    10
+                  ],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-net-socket.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "node:net/module.js:177\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-net-socket.js:65:7\n    at /workspace/work/node-fixtures/test/common/index.js:511:12\n    at node:net/module.js:177:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [
+                    77,
+                    105,
+                    115,
+                    109,
+                    97,
+                    116,
+                    99,
+                    104,
+                    101,
+                    100,
+                    32,
+                    37,
+                    115,
+                    32,
+                    102,
+                    117,
+                    110,
+                    99,
+                    116,
+                    105,
+                    111,
+                    110,
+                    32,
+                    99,
+                    97,
+                    108,
+                    108,
+                    115,
+                    46,
+                    32,
+                    69,
+                    120,
+                    112,
+                    101,
+                    99,
+                    116,
+                    101,
+                    100,
+                    32,
+                    37,
+                    115,
+                    44,
+                    32,
+                    97,
+                    99,
+                    116,
+                    117,
+                    97,
+                    108,
+                    32,
+                    37,
+                    100,
+                    46,
+                    32,
+                    60,
+                    97,
+                    110,
+                    111,
+                    110,
+                    121,
+                    109,
+                    111,
+                    117,
+                    115,
+                    62,
+                    32,
+                    101,
+                    120,
+                    97,
+                    99,
+                    116,
+                    108,
+                    121,
+                    32,
+                    49,
+                    32,
+                    48,
+                    10,
+                    32,
+                    32,
+                    32,
+                    32,
+                    97,
+                    116,
+                    32,
+                    47,
+                    119,
+                    111,
+                    114,
+                    107,
+                    115,
+                    112,
+                    97,
+                    99,
+                    101,
+                    47,
+                    119,
+                    111,
+                    114,
+                    107,
+                    47,
+                    110,
+                    111,
+                    100,
+                    101,
+                    45,
+                    102,
+                    105,
+                    120,
+                    116,
+                    117,
+                    114,
+                    101,
+                    115,
+                    47,
+                    116,
+                    101,
+                    115,
+                    116,
+                    47,
+                    112,
+                    97,
+                    114,
+                    97,
+                    108,
+                    108,
+                    101,
+                    108,
+                    47,
+                    116,
+                    101,
+                    115,
+                    116,
+                    45,
+                    99,
+                    104,
+                    105,
+                    108,
+                    100,
+                    45,
+                    112,
+                    114,
+                    111,
+                    99,
+                    101,
+                    115,
+                    115,
+                    45,
+                    102,
+                    111,
+                    114,
+                    107,
+                    45,
+                    110,
+                    101,
+                    116,
+                    45,
+                    115,
+                    111,
+                    99,
+                    107,
+                    101,
+                    116,
+                    46,
+                    106,
+                    115,
+                    58,
+                    51,
+                    52,
+                    58,
+                    50,
+                    48,
+                    10
+                  ],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-net.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "node:net/module.js:177\n  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };\n                                                     ^\n\nError: This handle type cannot be sent\n    at node:child_process/ipc-surface.js:11:65\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-net.js:103:9\n    at node:net/module.js:177:118\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-no-shell.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-ref.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-ref2.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-stdio-string-variant.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-stdio.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-stdio.js:53\n  child.stdio[4].write(buf);\n  ^\n\nTypeError: cannot read properties of null\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-stdio.js:53:3\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-timeout-kill-signal.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-timeout-kill-signal.js:46\n  assert.strictEqual(listenerCount(signal, 'abort'), 1);\n  ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal\n    at node:assert/AssertionError.js:3:5\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-fork-timeout-kill-signal.js:46:3\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork-url.mjs",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-fork3.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "path": "work/ipc-retained-stdio-group.json",
+        "sha256": "4dd40c2c2403e6008a7ef2eb26c5cfb501d8bdaf2ef8bc950323b279e74d7468",
+        "results": {
+          "schema_version": 2,
+          "inventory_hash": "7c73ed6da4f575b9",
+          "timeout_secs": 20,
+          "jobs": 2,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "fa69ae48a66e7c1c179cad9943e78009e7b9d7f1",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64",
+          "results": [
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-big-write-end.js",
+              "status": "timeout",
+              "observation": {
+                "Ok": {
+                  "exit_code": null,
+                  "signal": 9,
+                  "timed_out": true,
+                  "worker": null,
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-inherit.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "node:stream/shared.js:1219\n        if (!options || options.end !== false) dest.end();\n                                               ^\n\nTypeError: value is not callable\n    at node:stream/shared.js:1219:48\n    at node:stream/shared.js:80:22\n    at node:bootstrap/event-emitter.js:127:24\n    at emit (node:bootstrap/event-emitter.js:125:5)\n    at completeReadableEnd (node:stream/shared.js:546:5)\n    at node:stream/shared.js:663:13\n    at process.processTicksAndRejections (native)\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-merge-stdouts-into-cat.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "node:child_process/shared.js:170\n    return new ChildProcess(file, args, spawnNative(file, args, options), options);\n                                        ^\n\nTypeError: The argument 'stdio' is invalid. Received { _emitter: { _events: { error: [Function: onError] }, captureRejections: false }, _listenerWrappers: [], _events: {}, _eventsCount: 0, _writableState: { objectMode: false, writable: undefined, decodeStrings: true, defaultEncoding: 'utf8', highWaterMark: 65536, buffered: 0, needDrain: false, drainPending: false, bufferedRequestCount: 0, pending: [], writing: false, ending: false, ended: false, finished: false, errored: null, errorEmitted: false, corked: 0, prefinished: false, finishScheduled: false, final: [Function: final], endCallbacks: [], autoDestroy: true, destroyed: false, getBuffer: [Function (anonymous)] }, writable: true, writableAborted: false, _write: [Function: write] }\n    at node:child_process/shared.js:170:41\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-stdio-merge-stdouts-into-cat.js:10:12\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-overlapped.js",
+              "status": "skip",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "guestexit",
+                    "code": 0
+                  },
+                  "stdout": [
+                    49,
+                    46,
+                    46,
+                    48,
+                    32,
+                    35,
+                    32,
+                    83,
+                    107,
+                    105,
+                    112,
+                    112,
+                    101,
+                    100,
+                    58,
+                    32,
+                    111,
+                    118,
+                    101,
+                    114,
+                    108,
+                    97,
+                    112,
+                    112,
+                    101,
+                    100,
+                    45,
+                    99,
+                    104,
+                    101,
+                    99,
+                    107,
+                    101,
+                    114,
+                    32,
+                    98,
+                    105,
+                    110,
+                    97,
+                    114,
+                    121,
+                    32,
+                    105,
+                    115,
+                    32,
+                    110,
+                    111,
+                    116,
+                    32,
+                    97,
+                    118,
+                    97,
+                    105,
+                    108,
+                    97,
+                    98,
+                    108,
+                    101,
+                    10
+                  ],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-reuse-readable-stdio.js",
+              "status": "fail",
+              "observation": {
+                "Ok": {
+                  "exit_code": 1,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "fail",
+                    "reason": "node:child_process/shared.js:170\n    return new ChildProcess(file, args, spawnNative(file, args, options), options);\n                                        ^\n\nTypeError: The argument 'stdio' is invalid. Received { _emitter: { _events: { error: [Function: onError], prefinish: [Function (anonymous)], end: [Function (anonymous)], close: [Function (anonymous)] }, captureRejections: false }, _listenerWrappers: [ { name: 'prefinish', fn: [Function (anonymous)], wrapper: [Function (anonymous)] }, { name: 'end', fn: [Function (anonymous)], wrapper: [Function (anonymous)] }, { name: 'close', fn: [Function (anonymous)], wrapper: [Function (anonymous)] } ], _events: { prefinish: [Function (anonymous)], end: [Function (anonymous)], close: [Function (anonymous)] }, _eventsCount: 3, _readableState: { objectMode: false, highWaterMark: 65536, buffer: [], bufferIndex: 0, length: [Getter], sync: false, flowing: null, flowScheduled: false, reading: false, readableListening: false, needReadable: false, readingMore: true, readingMoreScheduled: false, resumeScheduled: false, resumeEventPending: false, readRequests: 0, ended: false, endEmitted: false, endScheduled: false, emittedReadable: false, errorEmitted: false, errored: null, closeEmitted: false, encoding: null, decoder: null, awaitDrainWriters: null, pipes: [], pipeListeners: [], autoDestroy: true, defaultEncoding: 'utf8' }, readable: true, readableDidRead: false, destroyed: false, closed: false, readableAborted: false, _isDuplex: true, _writableState: { objectMode: false, writable: undefined, decodeStrings: true, defaultEncoding: 'utf8', highWaterMark: 65536, buffered: 0, needDrain: false, drainPending: false, bufferedRequestCount: 0, pending: [], writing: false, ending: false, ended: false, finished: false, errored: null, errorEmitted: false, corked: 0, prefinished: false, finishScheduled: false, final: null, endCallbacks: [], autoDestroy: true, destroyed: false, getBuffer: [Function (anonymous)] }, writable: true, writableAborted: false, allowHalfOpen: true, _isTransform: true, _transformBackpressure: null, _passThrough: true, _passThroughRead: false, _transform: [Function (anonymous)] }\n    at node:child_process/shared.js:170:41\n    at /workspace/work/node-fixtures/test/parallel/test-child-process-stdio-reuse-readable-stdio.js:17:12\n\nNode.js v22.0.0"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            },
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "path": "work/ipc-retained-stdio-inherit.json",
+        "sha256": "cc441822f14df071cbead48516667547ce1de1497c5dc6ffff5888332f919ed8",
+        "results": {
+          "schema_version": 2,
+          "inventory_hash": "fb841cfde8ebcf10",
+          "timeout_secs": 20,
+          "jobs": 1,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "fa69ae48a66e7c1c179cad9943e78009e7b9d7f1",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64",
+          "results": [
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdio-inherit.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "path": "work/ipc-retained-stdout-ipc.json",
+        "sha256": "30f1d264c2bf0dd37a4d50bfd62911645207f33047e9f0ac7992f9236c444c49",
+        "results": {
+          "schema_version": 2,
+          "inventory_hash": "ad650beaf89297c3",
+          "timeout_secs": 20,
+          "jobs": 1,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "fa69ae48a66e7c1c179cad9943e78009e7b9d7f1",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64",
+          "results": [
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-stdout-ipc.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "path": "work/ipc-retained-nexttick.json",
+        "sha256": "690528cd798160681df28a6572bca4df6ff6c7225c18e7412b6e293ed653b565",
+        "results": {
+          "schema_version": 2,
+          "inventory_hash": "7a545a988bfbaffa",
+          "timeout_secs": 20,
+          "jobs": 1,
+          "node_version": "v27.0.0-nightly20260819c79868f102",
+          "runtime_commit": "fa69ae48a66e7c1c179cad9943e78009e7b9d7f1",
+          "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+          "platform": "linux-x86_64",
+          "results": [
+            {
+              "fixture": "/workspace/work/node-fixtures/test/parallel/test-child-process-ipc-next-tick.js",
+              "status": "pass",
+              "observation": {
+                "Ok": {
+                  "exit_code": 0,
+                  "signal": null,
+                  "timed_out": false,
+                  "worker": {
+                    "outcome": "pass"
+                  },
+                  "stdout": [],
+                  "stderr": []
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "framework_core": {
+      "passed": 43,
+      "failed": 0,
+      "artifact": {
+        "path": "work/ipc-retained-framework-core.log",
+        "sha256": "b41881f94821125815bc87efbbbd7d26b13fd072686394014795864fa55f2ae8",
+        "summary": "parallel: pass=43 skip=0 fail=0 timeout=0 crash=0 unclassified=0 total=43"
+      }
+    },
+    "framework_scenarios": [
+      {
+        "scenario": "express",
+        "observations": [
+          {
+            "executable": "/workspace/quench/work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+            "exit_code": 0,
+            "stdout": "statuses 200,200,200,200,404\n",
+            "stderr": ""
+          },
+          {
+            "executable": "/workspace/quench/work/ipc-retained-bin/quench-node",
+            "exit_code": 0,
+            "stdout": "statuses 200,200,200,200,404\n",
+            "stderr": ""
+          }
+        ]
+      },
+      {
+        "scenario": "koa",
+        "observations": [
+          {
+            "executable": "/workspace/quench/work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+            "exit_code": 0,
+            "stdout": "statuses 200,200,200,200,404\n",
+            "stderr": ""
+          },
+          {
+            "executable": "/workspace/quench/work/ipc-retained-bin/quench-node",
+            "exit_code": 0,
+            "stdout": "statuses 200,200,200,200,404\n",
+            "stderr": ""
+          }
+        ]
+      },
+      {
+        "scenario": "fastify",
+        "observations": [
+          {
+            "executable": "/workspace/quench/work/node-v27.0.0-nightly20260819c79868f102-linux-x64/bin/node",
+            "exit_code": 0,
+            "stdout": "statuses 200,200,200,200,404\n",
+            "stderr": ""
+          },
+          {
+            "executable": "/workspace/quench/work/ipc-retained-bin/quench-node",
+            "exit_code": 0,
+            "stdout": "statuses 200,200,200,200,404\n",
+            "stderr": ""
+          }
+        ]
+      }
+    ]
+  },
+  "fork_delta_from_retained_full": {
+    "gained_passes": [
+      "test-child-process-fork-args.js",
+      "test-child-process-fork-close.js",
+      "test-child-process-fork-exec-argv.js",
+      "test-child-process-fork-exec-path.js",
+      "test-child-process-fork-no-shell.js",
+      "test-child-process-fork-ref.js",
+      "test-child-process-fork-ref2.js",
+      "test-child-process-fork-stdio-string-variant.js",
+      "test-child-process-fork-url.mjs",
+      "test-child-process-fork.js"
+    ],
+    "lost_passes": []
+  },
+  "qualifications": [
+    "No full parallel/ sweep of this checkpoint yet; the full goal remains unmet.",
+    "Focused fork/framework artifacts were frozen before the final IPC descriptor-close and pipe cleanup refinements; 44/44 oracle validation and the focused stdio-inherit/stdout-IPC/nexttick runs cover final source.",
+    "Advanced V8 IPC serialization, handle transfer, complete public receiver mutation/control refCounted behavior, and exact transport errno errors remain unsupported/partial. Passing the advanced-header fixture does not claim advanced serialization support.",
+    "Extra non-IPC stdio pipes/stream reuse and asynchronous child stdin backpressure remain missing. Fs close ownership of imported non-fs descriptors and partial IO semantics remain incomplete.",
+    "No speed claim; cgroup memory events stayed at oom=176, oom_kill=46."
+  ]
+}
