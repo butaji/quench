@@ -111,7 +111,6 @@ impl Compiler<'_> {
             }
         }
         let name_bindings = function.name_bindings();
-        let name_bindings = function.owner.intern_name_bindings(name_bindings);
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
         let result = BcFunction {
