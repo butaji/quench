@@ -637,21 +637,11 @@ impl<H: Host> Vm<H> {
                 let key_value =
                     self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let receiver = self.box_object_or_type_error(p, this)?;
-                let descriptor =
-                    self.object_get_own_property_descriptor(p, &[receiver, key_value])?;
-                if descriptor.is_undefined() {
-                    return Ok(Value::FALSE);
-                }
-                if native == Native::ObjectPrototypeHasOwnProperty {
-                    return Ok(Value::TRUE);
-                }
-                let enumerable = self.intern_atom("enumerable");
-                let enumerable_value = self.get_property(p, descriptor, enumerable)?;
-                Ok(if self.truthy(enumerable_value) {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
+                let found = match self.own_property_enumerable(p, receiver, key_value)? {
+                    Some(enumerable) => native == Native::ObjectPrototypeHasOwnProperty || enumerable,
+                    None => false,
+                };
+                Ok(if found { Value::TRUE } else { Value::FALSE })
             }
             Native::ObjectPrototypeLookupGetter | Native::ObjectPrototypeLookupSetter => {
                 self.require_object_coercible(p, this)?;
