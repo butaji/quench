@@ -1,7 +1,7 @@
+use super::records::RECORD_SPACE_CAPACITY;
 use super::root::WeakHandle;
 use crate::bytecode::Atom;
 use crate::value::{HeapReference, Value};
-use super::records::RECORD_SPACE_CAPACITY;
 use crate::value_vec::{
     INLINE_PROPERTY_COUNT, VALUE_VEC_INTEGRITY_BITS, VALUE_VEC_START_BITS, ValueVec,
 };

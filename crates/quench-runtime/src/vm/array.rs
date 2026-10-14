@@ -101,7 +101,10 @@ impl<H: Host> Vm<H> {
                     && elements.iter().all(|value| !value.is_deleted())
             });
         let writable_length = self
-            .property_attributes(object, super::property_key::PropertyKey::string(self.length_atom))
+            .property_attributes(
+                object,
+                super::property_key::PropertyKey::string(self.length_atom),
+            )
             .is_some_and(|attributes| attributes.writable);
         if dense && writable_length {
             let elements = self

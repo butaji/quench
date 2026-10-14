@@ -28,7 +28,12 @@ pub(super) struct RecordSpace<T> {
     reservation_failed: bool,
     blocks: Vec<RecordBlock>,
     next_id: u32,
+    /// Where the downward scan for reusable IDs continues; 0 once none remain below it.
     free_cursor: RecordId,
+    /// The reusable IDs of the occupancy word the scan last reached, starting at
+    /// `free_word_base`; allocation takes them highest first before scanning further.
+    free_word: u64,
+    free_word_base: RecordId,
     live: usize,
 }
 
@@ -41,6 +46,8 @@ impl<T> Default for RecordSpace<T> {
             blocks: Vec::new(),
             next_id: 0,
             free_cursor: 0,
+            free_word: 0,
+            free_word_base: 0,
             live: 0,
         }
     }
@@ -116,10 +123,27 @@ impl<T> RecordSpace<T> {
         if !self.ensure_reserved() {
             return Err(value);
         }
-        let reused = (self.free_cursor != 0)
-            .then(|| self.highest_free_before(self.free_cursor))
-            .flatten();
-        let id = reused.unwrap_or(self.next_id);
+        if self.free_word == 0 && self.free_cursor != 0 {
+            self.load_free_word();
+        }
+        if self.free_word != 0 {
+            let bit = OCCUPANCY_WORD_BITS - 1 - self.free_word.leading_zeros() as usize;
+            self.free_word &= !(1_u64 << bit);
+            let id = self.free_word_base + bit as RecordId;
+            let (block_index, record_index) = Self::split_id(id);
+            let claimed = self.blocks[block_index].claim(record_index);
+            debug_assert!(claimed, "a free-word bit names an unoccupied id");
+            // SAFETY: the occupancy bit claims this previously uninitialized id.
+            unsafe {
+                self.base
+                    .as_ptr()
+                    .add(id as usize)
+                    .write(MaybeUninit::new(value));
+            };
+            self.live += 1;
+            return Ok(id);
+        }
+        let id = self.next_id;
         if id as usize >= RECORD_SPACE_CAPACITY {
             return Err(value);
         }
@@ -137,14 +161,26 @@ impl<T> RecordSpace<T> {
                 .add(id as usize)
                 .write(MaybeUninit::new(value));
         };
-        if let Some(reused_id) = reused {
-            self.free_cursor = reused_id;
-        } else {
-            self.free_cursor = 0;
-            self.next_id += 1;
-        }
+        self.next_id += 1;
         self.live += 1;
         Ok(id)
+    }
+
+    /// Loads the occupancy word holding the highest reusable ID below `free_cursor` and moves
+    /// the cursor to that word's start, or to 0 when no reusable ID remains.
+    #[inline(never)]
+    fn load_free_word(&mut self) {
+        let Some(id) = self.highest_free_before(self.free_cursor) else {
+            self.free_cursor = 0;
+            return;
+        };
+        let (block_index, record_index) = Self::split_id(id);
+        let word_index = record_index / OCCUPANCY_WORD_BITS;
+        let bit = record_index % OCCUPANCY_WORD_BITS;
+        let below_and_at = u64::MAX >> (OCCUPANCY_WORD_BITS - 1 - bit);
+        self.free_word = !self.blocks[block_index].occupied[word_index] & below_and_at;
+        self.free_word_base = id - bit as RecordId;
+        self.free_cursor = self.free_word_base;
     }
 
     fn ensure_reserved(&mut self) -> bool {
@@ -172,6 +208,7 @@ impl<T> RecordSpace<T> {
     /// # Safety
     /// `id` must come from a live direct Value of this record family. Sweep removes the
     /// record only after all weak owners have been pruned.
+    #[inline(always)]
     pub(super) unsafe fn get_live(&self, id: RecordId) -> &T {
         debug_assert!(
             self.is_occupied(id),
@@ -184,6 +221,7 @@ impl<T> RecordSpace<T> {
     /// # Safety
     /// `id` must come from a live direct Value of this record family, and
     /// the caller must have exclusive access to the heap.
+    #[inline(always)]
     pub(super) unsafe fn get_live_mut(&mut self, id: RecordId) -> &mut T {
         debug_assert!(
             self.is_occupied(id),
@@ -201,6 +239,7 @@ impl<T> RecordSpace<T> {
         self.blocks[block_index].marked[record_index / OCCUPANCY_WORD_BITS] &=
             !(1_u64 << (record_index % OCCUPANCY_WORD_BITS));
         self.free_cursor = self.next_id;
+        self.free_word = 0;
         self.live -= 1;
         // SAFETY: release cleared the bit and this id was initialized exactly once.
         unsafe { self.base.as_ptr().add(id as usize).read().assume_init() }
@@ -239,9 +278,11 @@ impl<T> RecordSpace<T> {
     pub(super) fn restore_marks(&mut self, marks: &[u64]) {
         let expected_len = self.blocks.len() * (RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS);
         assert_eq!(marks.len(), expected_len);
-        for (block, block_marks) in self.blocks.iter_mut().zip(marks.chunks_exact(
-            RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS,
-        )) {
+        for (block, block_marks) in self
+            .blocks
+            .iter_mut()
+            .zip(marks.chunks_exact(RECORDS_PER_BLOCK / OCCUPANCY_WORD_BITS))
+        {
             block.marked.copy_from_slice(block_marks);
         }
     }
@@ -300,6 +341,7 @@ impl<T> RecordSpace<T> {
         } else {
             0
         };
+        self.free_word = 0;
         (live_count, freed_count)
     }
 
