@@ -691,23 +691,42 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     Ok(module)
 }
 
-pub(crate) fn install_global(
-    context: &mut NativeContext<'_, NodeHost>,
-    module: RootId,
-) -> Result<(), RootedError> {
-    let constructor = get(context, module, "Buffer")?;
+/// Installs `globalThis.Buffer` as Node's accessor pair (non-enumerable getter `get` and
+/// setter `set` over one binding) and the canonical `NodeBuffer` alias. The `buffer` module is
+/// built on the first read of either, not at start-up.
+pub(crate) fn install_global(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let load = context.host_function(crate::host::shared_vm::operation("bufferConstructor"))?;
     let installer = context.evaluate_script_rooted(
-        "(value) => Object.defineProperty(globalThis, 'Buffer', { value, writable: true, configurable: true })",
+        r#"(load) => {
+  let _Buffer;
+  let assigned = false;
+  Object.defineProperty(globalThis, "Buffer", {
+    get() { return assigned ? _Buffer : load(); },
+    set(value) { assigned = true; _Buffer = value; },
+    enumerable: false,
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "NodeBuffer", {
+    get: load,
+    enumerable: false,
+    configurable: true,
+  });
+}"#,
         "node:buffer/install-global.js",
     )?;
     let undefined = context.undefined();
-    context.call_rooted(installer, undefined, &[constructor])?;
-    let global = context.global_root()?;
-    let key = context.string_rooted("NodeBuffer");
-    if !context.define_data_property_rooted(global, key, constructor, false, false, true)? {
-        return Err(RootedError::host("cannot install canonical Node Buffer alias"));
-    }
+    context.call_rooted(installer, undefined, &[load])?;
     Ok(())
+}
+
+/// The `buffer` module's `Buffer`, building the module on first use.
+pub(crate) fn constructor(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let module = crate::host::shared_vm::commonjs::buffer_module(context)?;
+    get(context, module, "Buffer")
 }
 
 pub(crate) fn install_blob_export(
