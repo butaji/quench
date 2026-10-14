@@ -708,11 +708,9 @@ lane_handler! {
     /// Replacing a present dense element; any other write takes the general path.
     fn lane_set_index<>(cx, r, ip, i, view) {
         let (object, key) = (r.get(i.b), r.get(i.c));
-        let vm = unsafe { vm(cx) };
-        let Some(index) = vm.replaceable_dense_index(object, key) else {
+        if !(unsafe { vm(cx) }).try_replace_dense_element(object, key, r.get(i.a)) {
             return exit(ip);
-        };
-        vm.replace_dense_element(object, index, r.get(i.a));
+        }
         next!(cx, r, following(ip), view)
     }
 }
