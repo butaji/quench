@@ -215,7 +215,10 @@ mod tests {
             .iter()
             .map(|ability| ability.name)
             .collect::<Vec<_>>();
-        assert_eq!(post_bootstrap, vec!["process-surface-00", "module-surface-06"]);
+        assert_eq!(
+            post_bootstrap,
+            vec!["process-surface-00", "module-surface-06"]
+        );
     }
 
     #[test]

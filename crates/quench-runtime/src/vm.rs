@@ -15,8 +15,8 @@ use crate::bytecode::{
 use crate::heap::CellKind;
 use crate::heap::{
     CallSiteLocation, CallSiteRecord, Cell, FunctionKind, GcTraceKind, Heap, IteratorConsumer,
-    IteratorHelper,
-    IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind, WeakHandle,
+    IteratorHelper, IteratorKind, Native, Object, ProxyKind, RootId, StackData, TypedArrayKind,
+    WeakHandle,
 };
 use crate::host::{CapabilityId, Host, HostContext};
 use crate::profile::Profile;
@@ -190,6 +190,7 @@ pub(super) struct Frame {
     dynamic_bindings: Vec<(Atom, Value)>,
     captured: bool,
     registers: Vec<Value>,
+    capture_cache: CaptureCache,
     /// How many leading register slots hold values, whatever the current length: below it a
     /// root-mapped activation can take the file without rewriting it.
     initialized_registers: usize,
@@ -202,6 +203,29 @@ pub(super) struct Frame {
     /// frames `this` is authoritative and the binding lookup can be skipped.
     fixed_this: bool,
 }
+/// A frame's innermost capture slots, valid for `env` until the collection after `epoch`
+/// (`Vm::cached_direct_capture`).
+#[derive(Clone, Copy)]
+pub(super) struct CaptureCache {
+    env: Value,
+    epoch: u64,
+    slots: *const crate::heap::EnvironmentSlots,
+    /// The program of a root environment, whose projected slots are read elsewhere
+    /// (`owned_capture`); `None` for a function's environment.
+    root: Option<Option<u32>>,
+}
+
+impl Default for CaptureCache {
+    fn default() -> Self {
+        Self {
+            env: Value::NULL,
+            epoch: 0,
+            slots: std::ptr::null(),
+            root: None,
+        }
+    }
+}
+
 impl Frame {
     fn empty(program: ProgramId, with_base: usize) -> Self {
         Self {
@@ -219,6 +243,7 @@ impl Frame {
             captured: false,
             registers: vec![],
             initialized_registers: 0,
+            capture_cache: CaptureCache::default(),
             active_iterators: vec![],
             with_objects: Vec::new(),
             with_base,
@@ -275,14 +300,14 @@ impl Frame {
             }
             self.registers.set_len(count);
         }
-        self.initialized_registers = count;
+        self.initialized_registers = self.initialized_registers.max(count);
     }
 
     #[inline(always)]
     fn prepare_registers(&mut self, count: u16, initial: crate::bytecode::InitialRegister) {
         self.registers.clear();
         self.registers.resize(usize::from(count), initial.value());
-        self.initialized_registers = usize::from(count);
+        self.initialized_registers = self.initialized_registers.max(usize::from(count));
     }
 
     /// Sizes the register file for `function`. Compiled code writes every register before
@@ -583,7 +608,40 @@ struct ProgramCacheLayout {
     field_base: usize,
     method_base: usize,
     object_base: usize,
+    /// The field cache index of the program's shared overflow site, when its sites
+    /// outnumber the 16-bit site space (`SHARED_UNCACHED_SITE`); nothing is cached there.
+    shared_uncached_field: Option<usize>,
 }
+
+impl ProgramCacheLayout {
+    fn shared_uncached_field(field_base: usize, program: &ResidualProgram) -> Option<usize> {
+        (program.cache_sites > crate::bytecode::SHARED_UNCACHED_SITE)
+            .then(|| field_base + usize::from(crate::bytecode::SHARED_UNCACHED_SITE))
+    }
+}
+/// Entries of the in-loop call target cache, indexed by the callee's heap index.
+const CALL_TARGET_CACHE_SIZE: usize = 64;
+const _: () = assert!(CALL_TARGET_CACHE_SIZE.is_power_of_two());
+/// A user function the dispatch loop may push in place (`Vm::in_loop_call_target`), valid
+/// for `callee` in `realm` until the collection after `epoch`: until then the callee's index
+/// names the same function cell, whose kind, environment and realm never change.
+#[derive(Clone, Copy)]
+struct InLoopCallTarget {
+    callee: Value,
+    epoch: u64,
+    realm: Value,
+    program: ProgramId,
+    function: u32,
+    env: Value,
+}
+const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
+    callee: Value::UNDEFINED,
+    epoch: 0,
+    realm: Value::UNDEFINED,
+    program: ProgramId::MAIN,
+    function: 0,
+    env: Value::UNDEFINED,
+};
 const STRING_CONCAT_CACHE_SIZE: usize = 64;
 #[derive(Clone, Copy)]
 struct StringConcatCache {
@@ -903,6 +961,9 @@ pub(crate) struct Vm<H> {
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
     natives: Vec<(Native, Value)>,
+    /// The function values in `natives`. One native serves every realm, so it runs in the
+    /// realm of its caller rather than switching to the creator's.
+    shared_natives: FxHashSet<Value>,
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
     frame_pool: Vec<Box<Frame>>,
@@ -953,6 +1014,7 @@ pub(crate) struct Vm<H> {
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
+    call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     field_caches: Vec<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
@@ -1042,13 +1104,28 @@ impl<H: Host> Vm<H> {
         self.realm.global_lexical_declarations = state.declarations;
         self.realm.global_lexical_bindings = state.bindings;
         self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
-        if let Some(&prototype) = self
-            .realm
-            .intrinsics
-            .builtin_prototypes
-            .get(&(global, Native::String))
-        {
-            self.string_proto = prototype;
+        // Natives are shared by every realm and allocate from these fields, so the fields
+        // follow the active realm: a native called from a realm builds that realm's objects.
+        for native in [Native::Object, Native::Function, Native::Array, Native::String] {
+            if let Some(&prototype) = self
+                .realm
+                .intrinsics
+                .builtin_prototypes
+                .get(&(global, native))
+            {
+                *self.realm_prototype_field(native) = prototype;
+            }
+        }
+    }
+
+    /// The VM field holding the active realm's `native.prototype`.
+    fn realm_prototype_field(&mut self, native: Native) -> &mut Value {
+        match native {
+            Native::Object => &mut self.object_proto,
+            Native::Function => &mut self.function_proto,
+            Native::Array => &mut self.array_proto,
+            Native::String => &mut self.string_proto,
+            _ => unreachable!("only these prototypes follow the active realm"),
         }
     }
 
@@ -1580,6 +1657,7 @@ impl<H: Host> Vm<H> {
         self.realm.intrinsics.arguments_objects.clear();
         self.heap.reset();
         self.natives.clear();
+        self.shared_natives.clear();
         self.frames.clear();
         self.frame_pool.clear();
         self.realm.jobs.clear();
@@ -1611,6 +1689,7 @@ impl<H: Host> Vm<H> {
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
         self.string_concats = None;
+        *self.call_targets = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
         let atom_text = self.atom_text.clone();
         for (id, name) in atom_text.iter().enumerate() {
             self.index_atom(Self::atom_hash_str(name), id as Atom, name);
@@ -1650,8 +1729,10 @@ impl<H: Host> Vm<H> {
         self.regexp_builtin_layout = None;
         self.instanceof_has_instance_holder = Value::NULL;
         self.program_cache_layouts.clear();
-        self.program_cache_layouts
-            .push(ProgramCacheLayout::default());
+        self.program_cache_layouts.push(ProgramCacheLayout {
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program),
+            ..ProgramCacheLayout::default()
+        });
         self.set_active_program(ProgramId::MAIN);
         self.typed_array_proto = Value::NULL;
         self.finalization_registry_proto = Value::NULL;
@@ -1728,6 +1809,10 @@ impl<H: Host> Vm<H> {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
         Self::prime_loop_decoding(program);
         self.program_cache_layouts.push(ProgramCacheLayout {
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(
+                self.field_caches.len(),
+                program,
+            ),
             field_base: self.field_caches.len(),
             method_base: self.method_caches.len(),
             object_base: self.object_shapes.len(),
@@ -1794,6 +1879,11 @@ impl<H: Host> Vm<H> {
     pub(super) fn field_cache_index(&self, site: u16) -> usize {
         self.active_cache_layout().field_base + usize::from(site)
     }
+    /// Whether the active program may record cache entries at `index`: every index but its
+    /// shared overflow site, if it has one.
+    pub(super) fn field_cache_records(&self, index: usize) -> bool {
+        self.active_layout.shared_uncached_field != Some(index)
+    }
     pub(super) fn method_cache_index(&self, site: usize) -> usize {
         self.active_cache_layout().method_base + site
     }
@@ -1816,10 +1906,8 @@ impl<H: Host> Vm<H> {
                 .all(|(atom, name)| self.atom_name(atom as u32) == name),
             "a dynamic program's atoms are a prefix of the VM's"
         );
-        program.atoms = crate::bytecode::AtomTable::shared(
-            self.atom_sequence.clone(),
-            program.atoms.len(),
-        );
+        program.atoms =
+            crate::bytecode::AtomTable::shared(self.atom_sequence.clone(), program.atoms.len());
         program
     }
     fn call_value(

@@ -1423,6 +1423,38 @@ impl<H: Host> Vm<H> {
     /// read per layer; anything else is `None`.
     #[inline(always)]
     pub(super) fn direct_capture(&self, frame: usize, depth: u16, slot: u16) -> Option<Value> {
+        let (slots, root) = self.direct_capture_slots(frame, depth)?;
+        self.owned_capture(slots, root, slot)
+    }
+
+    /// `slot` of a capture walk's environment when the environment owns the binding: any slot
+    /// of a non-root function's environment; of a root environment (`root` names its program),
+    /// only a slot no projection reads through.
+    #[inline(always)]
+    fn owned_capture(
+        &self,
+        slots: &crate::heap::EnvironmentSlots,
+        root: Option<Option<u32>>,
+        slot: u16,
+    ) -> Option<Value> {
+        if let Some(program) = root
+            && !self.root_environment_slot_is_binding(program, slot)
+        {
+            return None;
+        }
+        slots
+            .owned(usize::from(slot))
+            .filter(|value| !value.is_deleted())
+    }
+
+    /// The slots a direct capture at `depth` reads, and the program of a root environment
+    /// (`owned_capture`): the walk from the frame's environment (past its own, once captured)
+    /// when every layer belongs to a function.
+    fn direct_capture_slots(
+        &self,
+        frame: usize,
+        depth: u16,
+    ) -> Option<(&crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
         let frame = &self.frames[frame];
         let mut cell = self.heap.get(frame.env)?;
         if frame.captured {
@@ -1447,18 +1479,49 @@ impl<H: Host> Vm<H> {
                 return None;
             }
             if remaining == 0 {
-                if *function == super::ROOT_FUNCTION_ID
-                    && !self.root_environment_slot_is_binding(scope.program, slot)
-                {
-                    return None;
-                }
-                return slots
-                    .owned(usize::from(slot))
-                    .filter(|value| !value.is_deleted());
+                return Some((
+                    slots,
+                    (*function == super::ROOT_FUNCTION_ID).then_some(scope.program),
+                ));
             }
             remaining -= 1;
             cell = self.heap.get(*parent)?;
         }
+    }
+
+    /// `direct_capture` through the frame's cached innermost slots. The cache names the
+    /// environment and collection it was taken in: while `env` is unchanged and no collection
+    /// has run, that environment's cell is the same live cell, whose slot storage never moves.
+    #[inline(always)]
+    pub(super) fn cached_direct_capture(
+        &mut self,
+        frame: usize,
+        depth: u16,
+        slot: u16,
+    ) -> Option<Value> {
+        if depth != 0 {
+            return self.direct_capture(frame, depth, slot);
+        }
+        let epoch = self.heap.collection_epoch();
+        let cache = &self.frames[frame].capture_cache;
+        let (slots, root) = if cache.env == self.frames[frame].env
+            && cache.epoch == epoch
+            && !cache.slots.is_null()
+        {
+            (cache.slots, cache.root)
+        } else {
+            let (slots, root) = self.direct_capture_slots(frame, 0)?;
+            let slots: *const crate::heap::EnvironmentSlots = slots;
+            self.frames[frame].capture_cache = CaptureCache {
+                env: self.frames[frame].env,
+                epoch,
+                slots,
+                root,
+            };
+            (slots, root)
+        };
+        // SAFETY: see above; the pointer was taken from the frame's current environment.
+        self.owned_capture(unsafe { &*slots }, root, slot)
     }
 
     #[cold]

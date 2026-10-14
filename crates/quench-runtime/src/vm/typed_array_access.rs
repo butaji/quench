@@ -55,7 +55,9 @@ impl<H: Host> Vm<H> {
                     0
                 } else if *length_tracking {
                     match self.heap.get(*buffer) {
-                        Some(Cell::ArrayBuffer { bytes, .. }) => bytes.len().saturating_sub(*offset),
+                        Some(Cell::ArrayBuffer { bytes, .. }) => {
+                            bytes.len().saturating_sub(*offset)
+                        }
                         _ => return None,
                     }
                 } else if self.array_buffer_out_of_bounds(*buffer, *offset, *length) {
@@ -67,7 +69,10 @@ impl<H: Host> Vm<H> {
             }
             _ => return None,
         };
-        let Cell::ArrayBuffer { bytes, detached, .. } = self.heap.get(buffer)? else {
+        let Cell::ArrayBuffer {
+            bytes, detached, ..
+        } = self.heap.get(buffer)?
+        else {
             return None;
         };
         if *detached {
@@ -351,12 +356,19 @@ impl<H: Host> Vm<H> {
             _ => 0.0,
         };
         match kind {
-            TypedArrayKind::Uint8 | TypedArrayKind::Int8 => bytes[0] = Self::uint8_from_value(number),
+            TypedArrayKind::Uint8 | TypedArrayKind::Int8 => {
+                bytes[0] = Self::uint8_from_value(number)
+            }
             TypedArrayKind::Uint8Clamped => bytes[0] = Self::uint8_clamped_from_value(number),
-            TypedArrayKind::Uint16 | TypedArrayKind::Int16 => bytes[..kind.width()].copy_from_slice(&Self::uint16_from_value(number).to_ne_bytes()),
-            TypedArrayKind::Uint32 | TypedArrayKind::Int32 => bytes[..kind.width()].copy_from_slice(&Self::uint32_from_value(number).to_ne_bytes()),
-            TypedArrayKind::Float16 => bytes[..kind.width()].copy_from_slice(&super::number::f64_to_half(number).to_ne_bytes()),
-            TypedArrayKind::Float32 => bytes[..kind.width()].copy_from_slice(&(number as f32).to_ne_bytes()),
+            TypedArrayKind::Uint16 | TypedArrayKind::Int16 => bytes[..kind.width()]
+                .copy_from_slice(&Self::uint16_from_value(number).to_ne_bytes()),
+            TypedArrayKind::Uint32 | TypedArrayKind::Int32 => bytes[..kind.width()]
+                .copy_from_slice(&Self::uint32_from_value(number).to_ne_bytes()),
+            TypedArrayKind::Float16 => bytes[..kind.width()]
+                .copy_from_slice(&super::number::f64_to_half(number).to_ne_bytes()),
+            TypedArrayKind::Float32 => {
+                bytes[..kind.width()].copy_from_slice(&(number as f32).to_ne_bytes())
+            }
             TypedArrayKind::Float64 => bytes.copy_from_slice(&number.to_ne_bytes()),
             TypedArrayKind::BigInt64 | TypedArrayKind::BigUint64 => {
                 let TypedArrayElement::BigInt(value) = value else {

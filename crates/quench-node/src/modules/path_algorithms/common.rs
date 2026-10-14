@@ -20,7 +20,9 @@ pub(crate) fn is_posix_separator(c: char) -> bool {
 pub(crate) fn is_absolute(path: &str, windows: bool) -> bool {
     let bytes = path.as_bytes();
     if windows {
-        bytes.first().is_some_and(|byte| matches!(byte, b'/' | b'\\'))
+        bytes
+            .first()
+            .is_some_and(|byte| matches!(byte, b'/' | b'\\'))
             || (bytes.len() >= 3
                 && bytes[0].is_ascii_alphabetic()
                 && bytes[1] == b':'
