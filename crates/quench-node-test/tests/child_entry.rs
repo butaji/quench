@@ -5714,3 +5714,21 @@ const server=net.createServer(socket=>{console.log(process.getActiveResourcesInf
 server.listen(0,'127.0.0.1',()=>{client=net.connect(server.address().port,'127.0.0.1');client.resume();});
 "#);
 }
+
+#[test]
+fn net_socket_end_listener_and_write_after_fin_match_node() {
+    compare_node_stream_source(r#"
+const net=require('net'); const out=[];
+for(const half of [false,true]){
+ const s=new net.Socket({allowHalfOpen:half}); const original=s.write;
+ out.push([half,s.listenerCount('end'),s.listeners('end').map(f=>[f.name,f.length])]);
+ s.emit('end'); out.push([half,s.write===original,s.write===original?null:s.write.name,s.write.length]); s.destroy();
+}
+const server=net.createServer(s=>s.end()).listen(0,()=>{
+ const client=net.connect(server.address().port,()=>client.end());
+ client.on('error',e=>{out.push(['error',e.code,e.message]);});
+ client.on('end',()=>{out.push(['end',client.writableEnded]);out.push(['return',client.write('x',e=>out.push(['callback',e.code,e.message]))]);out.push(['sync']);});
+ client.on('close',()=>server.close(()=>console.log(JSON.stringify(out))));
+});
+"#);
+}

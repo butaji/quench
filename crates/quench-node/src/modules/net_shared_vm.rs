@@ -25,7 +25,7 @@ const CALLABLE_FACADE: &str = quench_js_check::checked_js!(
 })"#
 );
 
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd) => {
   const listeners = (socket) => socket._listeners;
   class Socket extends Duplex {
     constructor(options = {}) {
@@ -37,7 +37,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
         final(callback) { try { endOperation(this); callback(); } catch (error) { callback(error); } },
         destroy(error, callback) { try { destroyOperation(this, error, callback); } catch (failure) { callback(failure); } },
       });
-      this.allowHalfOpen = false;
+      initEndOperation(this, options, onReadableStreamEnd);
       this._encoding = null;
       this._handle = options.handle || null;
       this._noDelay = Boolean(options.noDelay);
@@ -1241,6 +1241,22 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let socket_options =
         context.host_function(crate::host::shared_vm::operation("netSocketOptions"))?;
     let server_options = context.host_function(crate::host::shared_vm::operation("netServerOptions"))?;
+    let fin = context.host_function_with_data(
+        crate::host::shared_vm::operation("netSocketWriteAfterFin"), duplex,
+    )?;
+    let facade = context.evaluate_script_rooted(quench_js_check::checked_js!(
+        "(operation)=>function writeAfterFIN(chunk,encoding,cb){return operation(this,chunk,encoding,cb);}"
+    ), "node:net/write-after-fin.js")?;
+    let undefined = context.undefined();
+    let fin = context.call_rooted(facade, undefined, &[fin])?;
+    let readable_end = context.host_function_with_data(
+        crate::host::shared_vm::operation("netSocketReadableEnd"), fin,
+    )?;
+    let facade = context.evaluate_script_rooted(quench_js_check::checked_js!(
+        "(operation)=>function onReadableStreamEnd(){return operation(this);}"
+    ), "node:net/readable-end.js")?;
+    let readable_end = context.call_rooted(facade, undefined, &[readable_end])?;
+    let init_end = context.host_function(crate::host::shared_vm::operation("netSocketInitEnd"))?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
@@ -1263,6 +1279,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             unref_timeout,
             socket_options,
             server_options,
+            init_end,
+            readable_end,
         ],
     )?;
     for name in ["Socket", "Stream", "Server", "BlockList", "SocketAddress", "connect", "createConnection", "createServer"] {
@@ -2121,4 +2139,69 @@ pub(crate) fn deliver_connection(
         release_delivery(&mut state.tcp, socket);
     }
     result
+}
+
+pub(crate) fn readable_end(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = args[0];
+    let key = context.string_rooted("allowHalfOpen");
+    let allow = context.get_property_rooted(socket, key)?;
+    if !context.truthy_rooted(allow)? {
+        let replacement = context.host_function_data()?;
+        let key = context.string_rooted("write");
+        context.set_property_rooted(socket, key, replacement, socket)?;
+    }
+    Ok(context.undefined())
+}
+
+pub(crate) fn write_after_fin(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = args[0];
+    let key = context.string_rooted("writableEnded");
+    let ended = context.get_property_rooted(socket, key)?;
+    if !context.truthy_rooted(ended)? {
+        let duplex = context.host_function_data()?;
+        let key = context.string_rooted("prototype");
+        let prototype = context.get_property_rooted(duplex, key)?;
+        let key = context.string_rooted("write");
+        let original = context.get_property_rooted(prototype, key)?;
+        return context.call_rooted(original, socket, &args[1..]);
+    }
+    let callback = if context.is_callable_rooted(args[2])? { args[2] } else { args[3] };
+    let error = context.error_rooted("This socket has been ended by the other party")?;
+    let key = context.string_rooted("code");
+    let code = context.string_rooted("EPIPE");
+    context.define_data_property_rooted(error, key, code, true, true, true)?;
+    if context.is_callable_rooted(callback)? {
+        let receiver = context.undefined();
+        super::shared_event_loop::queue_next_tick(context, callback, receiver, &[error])?;
+    }
+    let key = context.string_rooted("destroy");
+    let destroy = context.get_property_rooted(socket, key)?;
+    context.call_rooted(destroy, socket, &[error])?;
+    Ok(context.boolean(false))
+}
+
+pub(crate) fn initialize_end(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = args[0];
+    let key = context.string_rooted("allowHalfOpen");
+    let allow = context.get_property_rooted(args[1], key)?;
+    let allow = context.truthy_rooted(allow)?;
+    let allow = context.boolean(allow);
+    context.set_property_rooted(socket, key, allow, socket)?;
+    let key = context.string_rooted("on");
+    let on = context.get_property_rooted(socket, key)?;
+    let event = context.string_rooted("end");
+    context.call_rooted(on, socket, &[event, args[2]])?;
+    Ok(context.undefined())
 }
