@@ -366,9 +366,15 @@ pub(crate) struct ProcessControl(Rc<ProcessControlCells>);
 struct ProcessControlCells {
     started: std::time::Instant,
     exit_code: Cell<Option<i32>>,
-    requested_exit_code: Cell<Option<i32>>,
+    requested_exit: Cell<Option<RequestedExit>>,
     exit_emitting: Cell<bool>,
     umask: Cell<u32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RequestedExit {
+    Graceful(i32),
+    Immediate(i32),
 }
 
 impl ProcessControl {
@@ -384,7 +390,7 @@ impl ProcessControl {
         Self(Rc::new(ProcessControlCells {
             started: std::time::Instant::now(),
             exit_code: Cell::new(None),
-            requested_exit_code: Cell::new(None),
+            requested_exit: Cell::new(None),
             exit_emitting: Cell::new(false),
             umask: Cell::new(umask),
         }))
@@ -404,11 +410,22 @@ impl ProcessControl {
 
     pub(crate) fn request_exit(&self, code: i32) {
         self.0.exit_code.set(Some(code));
-        self.0.requested_exit_code.set(Some(code));
+        self.0.requested_exit.set(Some(RequestedExit::Graceful(code)));
+    }
+
+    pub(crate) fn request_really_exit(&self, code: i32) {
+        self.0.exit_code.set(Some(code));
+        self.0.requested_exit.set(Some(RequestedExit::Immediate(code)));
     }
 
     pub(crate) fn requested_exit_code(&self) -> Option<i32> {
-        self.0.requested_exit_code.get()
+        self.0.requested_exit.get().map(|request| match request {
+            RequestedExit::Graceful(code) | RequestedExit::Immediate(code) => code,
+        })
+    }
+
+    pub(crate) fn exit_without_event(&self) -> bool {
+        matches!(self.0.requested_exit.get(), Some(RequestedExit::Immediate(_)))
     }
 
     pub(crate) fn exit_emitting(&self) -> bool {

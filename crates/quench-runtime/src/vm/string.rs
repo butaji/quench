@@ -826,7 +826,7 @@ fn map_case(units: super::wtf16::Units<'_>, map: impl Fn(&str) -> String) -> JsS
     let units = match units {
         super::wtf16::Units::Ascii(bytes) => {
             return JsString::from_str(&map(
-                std::str::from_utf8(bytes).expect("ASCII units are UTF-8"),
+                std::str::from_utf8(bytes).expect("ASCII units are UTF-8")
             ));
         }
         super::wtf16::Units::Wide(units) => units,

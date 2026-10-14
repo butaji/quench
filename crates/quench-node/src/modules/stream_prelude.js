@@ -92,6 +92,7 @@
       }
       if (
         name === "data" && !this.destroyed && this._readableState &&
+        deps.shouldResumeData(this._readableState) &&
         (listenerCountOf(this, "readable") === 0 ||
           this._readableState.pipes.length > 0)
       ) {
@@ -181,13 +182,7 @@
         this._listenerWrappers = wrappers.filter((item) => item !== entry);
       }
       syncEventsView(this);
-      if (
-        name === "data" && this._readableState &&
-        listenerCountOf(this, "data") === 0 &&
-        listenerCountOf(this, "readable") === 0
-      ) {
-        this._readableState.flowing = false;
-      }
+      deps.listenerRemoved(this, name, false);
       return this;
     },
     off(name, fn) {
@@ -201,13 +196,7 @@
           : this._listenerWrappers.filter((entry) => entry.name !== name);
       }
       syncEventsView(this);
-      if (
-        (name === undefined || name === "data") && this._readableState &&
-        listenerCountOf(this, "data") === 0 &&
-        listenerCountOf(this, "readable") === 0
-      ) {
-        this._readableState.flowing = false;
-      }
+      deps.listenerRemoved(this, name, true);
       return this;
     },
     emit(name, ...args) {
@@ -881,6 +870,9 @@
     get readableFlowing() {
       return this._readableState.flowing;
     }
+    set readableFlowing(value) {
+      deps.setFlowing(this._readableState, value);
+    }
 
     get readableErrored() {
       return this._readableState.errored || null;
@@ -891,8 +883,7 @@
     }
 
     isPaused() {
-      // Node: a stream is "paused" only after an explicit pause().
-      return this._readableState.paused === true;
+      return deps.isPaused(this._readableState);
     }
     pause() {
       this._readableState.paused = true;
@@ -1159,9 +1150,35 @@
       if (sourceState.pipes.length > 1 && !sourceState.awaitDrainWriters) {
         sourceState.awaitDrainWriters = new Set();
       }
+      const awaitDrain = () => {
+        const state = sourceState;
+        if (!state.awaitDrainWriters) state.awaitDrainWriters = dest;
+        else if (state.awaitDrainWriters instanceof Set) {
+          state.awaitDrainWriters.add(dest);
+        } else if (state.awaitDrainWriters !== dest) {
+          state.awaitDrainWriters = new Set([state.awaitDrainWriters, dest]);
+        }
+        dest.once("drain", () => {
+          const writers = state.awaitDrainWriters;
+          if (!writers) return;
+          if (writers instanceof Set) writers.delete(dest);
+          else if (writers === dest) state.awaitDrainWriters = null;
+          const drained = !state.awaitDrainWriters ||
+            (state.awaitDrainWriters instanceof Set &&
+              state.awaitDrainWriters.size === 0);
+          if (drained) {
+            state.awaitDrainWriters = null;
+            // A destination that has already ended its readable side cannot
+            // make progress by draining; keep the source paused so a pipe
+            // observes the same backpressure boundary as Node.
+            if (!dest._readableState?.ended && dest.readable !== false) {
+              source.resume();
+            }
+          }
+        });
+      };
       const ondata = (chunk) => {
         if (dest.write(chunk) === false) {
-          const state = source._readableState;
           // A Transform may close its readable side from inside the current
           // write. Node still admits the next queued chunk before applying
           // backpressure, so retain one admission slot at that boundary.
@@ -1171,30 +1188,7 @@
             source.__pipeEndedDestinationProbe = true;
             return;
           }
-          if (!state.awaitDrainWriters) state.awaitDrainWriters = dest;
-          else if (state.awaitDrainWriters instanceof Set) {
-            state.awaitDrainWriters.add(dest);
-          } else if (state.awaitDrainWriters !== dest) {
-            state.awaitDrainWriters = new Set([state.awaitDrainWriters, dest]);
-          }
-          dest.once("drain", () => {
-            const writers = state.awaitDrainWriters;
-            if (!writers) return;
-            if (writers instanceof Set) writers.delete(dest);
-            else if (writers === dest) state.awaitDrainWriters = null;
-            const drained = !state.awaitDrainWriters ||
-              (state.awaitDrainWriters instanceof Set &&
-                state.awaitDrainWriters.size === 0);
-            if (drained) {
-              state.awaitDrainWriters = null;
-              // A destination that has already ended its readable side cannot
-              // make progress by draining; keep the source paused so a pipe
-              // observes the same backpressure boundary as Node.
-              if (!dest._readableState?.ended && dest.readable !== false) {
-                source.resume();
-              }
-            }
-          });
+          awaitDrain();
         }
       };
       let cleanedUp = false;
@@ -1232,6 +1226,7 @@
       dest.on("close", cleanup);
       dest.on("unpipe", onunpipe);
       dest.emit("pipe", source);
+      if (deps.pipeStart(source, dest)) awaitDrain();
       return dest;
     }
 

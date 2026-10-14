@@ -658,10 +658,11 @@ fn loop_clones_reset_bindings_of_scopes_out_of_reach() {
     // The outer loop's next iteration does not share the inner loop's `k`
     // with the clone that last owned it: it resets the slot.
     assert!(plans.iter().any(|plan| !plan.reset.is_empty()));
-    assert!(plans.iter().all(|plan| plan
-        .reset
-        .iter()
-        .all(|slot| plan.fresh.binary_search(slot).is_err())));
+    assert!(plans.iter().all(|plan| {
+        plan.reset
+            .iter()
+            .all(|slot| plan.fresh.binary_search(slot).is_err())
+    }));
 }
 
 #[test]
@@ -695,13 +696,22 @@ fn property_sites_past_the_site_space_share_an_uncached_site() {
     // share one site, which alternately reads `a` and `b` from the same shape.
     let sites = usize::from(u16::MAX) + 64;
     let reads = (0..sites)
-        .map(|index| if index % 2 == 0 { "s += o.a;" } else { "s += o.b;" })
+        .map(|index| {
+            if index % 2 == 0 {
+                "s += o.a;"
+            } else {
+                "s += o.b;"
+            }
+        })
         .collect::<String>();
     let source = format!(
         "var o = {{ a: 1, b: 2 }}; function sum() {{ var s = 0; {reads} return s; }} var total = sum() + sum();"
     );
     let program = Engine::specialize(&source, "site-overflow.js").unwrap();
-    assert_eq!(program.cache_sites, crate::bytecode::SHARED_UNCACHED_SITE + 1);
+    assert_eq!(
+        program.cache_sites,
+        crate::bytecode::SHARED_UNCACHED_SITE + 1
+    );
     let mut vm = Vm::new(SilentHost);
     vm.execute(&program).unwrap();
     let name = vm.intern_atom("total");
@@ -761,7 +771,10 @@ fn legacy_date_strings_parse_like_node() {
         .collect::<Vec<_>>()
         .join(", ");
     let expected = cases.map(|(_, millis)| millis).join(",");
-    assert_eq!(global_text(&format!("var parsed = [{source}].join();"), "parsed"), expected);
+    assert_eq!(
+        global_text(&format!("var parsed = [{source}].join();"), "parsed"),
+        expected
+    );
 }
 
 #[test]
@@ -4302,7 +4315,10 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
 #[test]
 fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
     let mut vm = Vm::new(SilentHost);
-    let mut frame = Box::new(super::Frame::empty(super::program_store::ProgramId::MAIN, 0));
+    let mut frame = Box::new(super::Frame::empty(
+        super::program_store::ProgramId::MAIN,
+        0,
+    ));
     frame.prepare_registers(u16::MAX, crate::bytecode::InitialRegister::I32Zero);
     let prior_capacity = frame.registers.capacity();
     vm.frames.push(frame);
@@ -4313,15 +4329,20 @@ fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
 
     // Exercise register preparation only: a mapped JS activation must grow and
     // initialize the retired buffer, rather than set its length past capacity.
-    let mut program = Engine::specialize("function identity(x) { return x; }", "retired-frame.js")
-        .unwrap();
+    let mut program =
+        Engine::specialize("function identity(x) { return x; }", "retired-frame.js").unwrap();
     let function = &mut program.functions[1];
     function.registers = u16::MAX;
     function.register_root_offset = 0;
     frame.prepare_registers_for(function);
     assert_eq!(frame.registers.len(), usize::from(u16::MAX));
     assert!(frame.registers.capacity() >= frame.registers.len());
-    assert!(frame.registers.iter().all(|value| *value == Value::UNDEFINED));
+    assert!(
+        frame
+            .registers
+            .iter()
+            .all(|value| *value == Value::UNDEFINED)
+    );
 }
 
 #[test]
@@ -9555,19 +9576,30 @@ fn private_host_weak_roots_clear_before_slot_reuse_without_kept_objects() {
 #[test]
 fn string_repeat_limits_preserve_lazy_utf16_length_and_fractional_counts() {
     let limit = super::wtf16::MAX_STRING_UNITS;
-    let source = format!(r#"
+    let source = format!(
+        r#"
       print('x'.repeat({limit}).length);
       print('x'.repeat(70000000).repeat(2).length);
       print('xy'.repeat(-0.5).length);
       print('日'.repeat(3).length);
       try {{ 'x'.repeat({limit} + 1); }}
       catch (error) {{ print(error.name + ':' + error.message); }}
-    "#);
+    "#
+    );
     for compile in [Engine::specialize, Engine::specialize_unspecialized] {
         let program = compile(&source, "string-repeat-limit.js").unwrap();
         let output = Rc::new(RefCell::new(Vec::new()));
         let mut vm = Vm::new(RecordingHost(output.clone()));
         vm.execute(&program).unwrap();
-        assert_eq!(output.borrow().as_slice(), [limit.to_string(), "140000000".into(), "0".into(), "3".into(), "RangeError:Invalid string length".into()]);
+        assert_eq!(
+            output.borrow().as_slice(),
+            [
+                limit.to_string(),
+                "140000000".into(),
+                "0".into(),
+                "3".into(),
+                "RangeError:Invalid string length".into()
+            ]
+        );
     }
 }

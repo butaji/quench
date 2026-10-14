@@ -262,21 +262,37 @@ impl<H: Host> Vm<H> {
             .filter(|value| !value.is_deleted())
     }
 
-    /// The index `key` names when storing to it replaces a present dense element of a plain
-    /// array, the case `set_index_mode` completes with `replace_dense_element`.
+    /// Stores `value` at `key` of `object` when that replaces a present dense element of a
+    /// plain array (no indexed descriptors, not frozen) with no mapped `arguments` to mirror:
+    /// one array lookup serves the guards and the write. `false` leaves the store, unobserved,
+    /// to the general path.
     #[inline(always)]
-    pub(super) fn replaceable_dense_index(&self, object: Value, key: Value) -> Option<usize> {
-        let index = usize::try_from(key.as_int()?).ok()?;
-        let Some(data) = self.heap.array(object) else {
-            return None;
+    pub(super) fn try_replace_dense_element(
+        &mut self,
+        object: Value,
+        key: Value,
+        value: Value,
+    ) -> bool {
+        let Some(index) = key.as_int().and_then(|index| usize::try_from(index).ok()) else {
+            return false;
         };
-        (!data.has_indexed_descriptors()
-            && !data.is_frozen()
-            && data
-                .elements()
-                .get(index)
-                .is_some_and(|value| !value.is_deleted()))
-        .then_some(index)
+        let Some(array) = self.heap.array_mut(object) else {
+            return false;
+        };
+        if array.has_indexed_descriptors() || array.is_frozen() || array.arguments_map().is_some() {
+            return false;
+        }
+        let elements = array.elements_mut();
+        if !elements.get(index).is_some_and(|value| !value.is_deleted()) {
+            return false;
+        }
+        #[cfg(feature = "profile-aggregate")]
+        self.profile
+            .array_write_ownership(Rc::strong_count(elements) != 1);
+        mutable_array_elements(elements)[index] = value;
+        #[cfg(feature = "profile-aggregate")]
+        self.profile.index_set(0);
+        true
     }
 
     /// Overwrites a present dense array element after every guard has passed.
