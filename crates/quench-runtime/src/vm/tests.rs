@@ -765,6 +765,24 @@ fn legacy_date_strings_parse_like_node() {
 }
 
 #[test]
+fn reused_frames_resolve_captures_from_their_own_environment_state() {
+    // `worker` owns an environment (captured), so its depth-0 captures are its parent's. A
+    // later frame running `lookup` sees that same environment as its parent, where depth 0
+    // is the environment itself; a cached resolution must not carry across that change.
+    let source = "'use strict';\n\
+         var result = (() => { var t = 0, i = 'wrong';\n\
+           function trace() {}\n\
+           function worker(first, t, n) {\n\
+             if (first) return lookup();\n\
+             return trace(), lookup();\n\
+             function lookup() { return n; }\n\
+           }\n\
+           return [worker(true, 0, 'own'), worker(false, 0, 'own')].join();\n\
+         })();";
+    assert_eq!(global_text(source, "result"), "own,own");
+}
+
+#[test]
 fn inner_lexical_bindings_shadow_outer_immutable_captures() {
     let source = "'use strict';\n\
          const a = 1;\n\

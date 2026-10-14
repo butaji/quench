@@ -1505,6 +1505,7 @@ impl<H: Host> Vm<H> {
         let epoch = self.heap.collection_epoch();
         let cache = &self.frames[frame].capture_cache;
         let (slots, root) = if cache.env == self.frames[frame].env
+            && cache.captured == self.frames[frame].captured
             && cache.epoch == epoch
             && !cache.slots.is_null()
         {
@@ -1514,6 +1515,7 @@ impl<H: Host> Vm<H> {
             let slots: *const crate::heap::EnvironmentSlots = slots;
             self.frames[frame].capture_cache = CaptureCache {
                 env: self.frames[frame].env,
+                captured: self.frames[frame].captured,
                 epoch,
                 slots,
                 root,
