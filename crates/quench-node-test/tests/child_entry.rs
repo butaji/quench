@@ -6042,3 +6042,33 @@ const server=net.createServer(socket=>socket.end()).listen(0,()=>{
 });
 "#);
 }
+
+#[test]
+fn native_stat_exact_bigint_metadata_matches_node_across_sync_callback_and_promises() {
+    compare_node_stream_source(r#"
+'use strict';
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-stat-exact-')),file=path.join(dir,'file'),link=path.join(dir,'link');
+fs.writeFileSync(file,'abc');fs.symlinkSync(file,link);fs.utimesSync(file,1700000000.999999,1700000001.123456);
+const fd=fs.openSync(file,'r'),out=[];
+function check(label,big,num,exact){
+ for(const key of ['dev','ino','mode','nlink','uid','gid','rdev','size','blksize','blocks']){assert.strictEqual(typeof big[key],'bigint');if(Number.isSafeInteger(num[key]))assert.strictEqual(big[key],BigInt(num[key]));}
+ for(const key of ['atime','mtime','ctime','birthtime']){assert.strictEqual(big[key+'Ns']/1000000n,big[key+'Ms']);assert(Math.abs(num[key+'Ms']-Number(big[key+'Ns']/1000000n))<1.001);}
+ assert.strictEqual(big.isFile(),num.isFile());assert.strictEqual(big.isSymbolicLink(),num.isSymbolicLink());
+ out.push([label,big.isFile(),big.isSymbolicLink(),exact?big.atimeNs.toString():'link',exact?big.mtimeNs.toString():'link']);
+}
+(async()=>{
+ check('statSync',fs.statSync(file,{bigint:true}),fs.statSync(file),true);
+ check('lstatSync',fs.lstatSync(link,{bigint:true}),fs.lstatSync(link),false);
+ check('fstatSync',fs.fstatSync(fd,{bigint:true}),fs.fstatSync(fd),true);
+ for(const [name,arg] of [['stat',file],['lstat',link],['fstat',fd]]){
+  const invoke=options=>new Promise((resolve,reject)=>fs[name](arg,options,(error,stats)=>error?reject(error):resolve(stats)));
+  check(name,await invoke({bigint:true}),await invoke({}),name!=='lstat');
+ }
+ check('promiseStat',await fs.promises.stat(file,{bigint:true}),await fs.promises.stat(file),true);
+ check('promiseLstat',await fs.promises.lstat(link,{bigint:true}),await fs.promises.lstat(link),false);
+ const handle=await fs.promises.open(file,'r');check('handleStat',await handle.stat({bigint:true}),await handle.stat(),true);await handle.close();
+ fs.closeSync(fd);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(out));
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"#);
+}
