@@ -7,6 +7,7 @@ pub(crate) mod contexts;
 pub(crate) mod discovery;
 pub(crate) mod identity;
 pub(crate) mod socket;
+pub(crate) mod sessions;
 pub(crate) mod certificate;
 pub(crate) mod server;
 pub(crate) mod facade;
@@ -22,7 +23,7 @@ const DEFAULT_CIPHER_LIST: &str = concat!(
 );
 
 const TLS_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(contextApi, cipherOperation, identityOperation, connectOperation, constructOperation, infoOperation, startOperation, serverCreateOperation, serverConstructOperation, serverContextOperation) => {
+    r#"(contextApi, cipherOperation, identityOperation, connectOperation, constructOperation, infoOperation, startOperation, serverCreateOperation, serverConstructOperation, serverContextOperation, errorOperation, releaseOperation) => {
       function Server(options, listener) { return serverConstructOperation(this,new.target,options,listener); }
       Server.prototype.setSecureContext=function setSecureContext(options){return serverContextOperation(this,options);};
       function TLSSocket(socket, opts) { return constructOperation(this, new.target, socket, {...opts}); }
@@ -30,6 +31,8 @@ const TLS_FACTORY: &str = quench_js_check::checked_js!(
       TLSSocket.prototype.getPeerCertificate=function getPeerCertificate(detailed){return infoOperation(this,'peerCertificate',detailed);};
       TLSSocket.prototype.isSessionReused=function isSessionReused(){return infoOperation(this,'sessionReused');};
       TLSSocket.prototype._start=function(){return startOperation(this);};
+      TLSSocket.prototype._tlsError=function(err){return errorOperation(this,err);};
+      TLSSocket.prototype._releaseControl=function(){return releaseOperation(this);};
       'use strict';
       return {
       getCiphers: (0, () => cipherOperation()),
@@ -72,7 +75,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let create_server=context.host_function(crate::host::shared_vm::operation("tlsServerCreate"))?;
     let construct_server=context.host_function(crate::host::shared_vm::operation("tlsServerConstruct"))?;
     let server_context=context.host_function(crate::host::shared_vm::operation("tlsServerSetContext"))?;
-    let module = context.call_rooted(factory, undefined, &[api,ciphers,identity,connect,construct,info,start,create_server,construct_server,server_context])?;
+    let error=context.host_function(crate::host::shared_vm::operation("tlsSocketError"))?;
+    let release=context.host_function(crate::host::shared_vm::operation("tlsSocketReleaseControl"))?;
+    let module = context.call_rooted(factory, undefined, &[api,ciphers,identity,connect,construct,info,start,create_server,construct_server,server_context,error,release])?;
     let tls_key=context.string_rooted("TLSSocket");let tls=context.get_property_rooted(module,tls_key)?;
     let socket_key=context.string_rooted("Socket");let base=context.get_property_rooted(net,socket_key)?;
     let key=context.string_rooted("prototype");let tls_proto=context.get_property_rooted(tls,key)?;

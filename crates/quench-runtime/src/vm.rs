@@ -1285,6 +1285,22 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-gc-time")]
         self.report_gc_time_if_enabled();
         #[cfg(feature = "profile-aggregate")]
+        if std::env::var_os("QUENCH_PROFILE_ALL_PROGRAMS").is_some() {
+            for index in 0..self.programs.len() {
+                let id = ProgramId::from_raw(index as u32);
+                if let Some(residual) = self.programs.get(id) {
+                    eprintln!(
+                        "{{\"kind\":\"quench-profile-program\",\"program_id\":{}}}",
+                        id.raw(),
+                    );
+                    self.profile.report(&self.heap, id.raw(), &residual);
+                }
+            }
+            #[cfg(feature = "profile-memory")]
+            self.report_memory_if_enabled("complete");
+            return;
+        }
+        #[cfg(feature = "profile-aggregate")]
         if self
             .profile
             .report_dispatch_census_if_enabled(ProgramId::MAIN.raw())
