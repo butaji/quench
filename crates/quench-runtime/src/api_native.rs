@@ -351,6 +351,16 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Apply shared >=, preserving conversion order, NaN and BigInt semantics.
+    pub fn greater_equal_rooted(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_greater_equal(left, right);
+        result.map_err(|error| self.error(error))
+    }
+
     /// Apply shared bitwise OR, preserving ToNumeric hooks and BigInt errors.
     pub fn bitwise_or_rooted(
         &mut self,
