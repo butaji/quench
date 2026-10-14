@@ -108,7 +108,7 @@ impl<H: Host> Vm<H> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         if let Some(Cell::String(source_text)) = self.heap.get(source).cloned()
             && let Some((pattern_units, flag_units)) =
-                eval_regexp_literal_units(source_text.units())
+                eval_regexp_literal_units(&source_text.units().wide())
         {
             if let (Ok(pattern), Ok(flags)) = (
                 String::from_utf16(&pattern_units),
@@ -126,7 +126,7 @@ impl<H: Host> Vm<H> {
                 .alloc(Cell::String(JsString::from_units(flag_units)));
             return self.construct_regexp_native(p, &[pattern, flags], None);
         }
-        if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(value.units()))
+        if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(&value.units().wide()))
         {
             return Ok(Value::UNDEFINED);
         }
@@ -168,10 +168,15 @@ impl<H: Host> Vm<H> {
         {
             return self.eval_global_script(p, &text, inherited_strict);
         }
-        if self.direct_eval && text.contains('#') {
-            let private_names = self
-                .direct_eval_private_names(p)
-                .map_or_else(Vec::new, |(_, names)| names);
+        // Private names the eval can reference are those of its enclosing classes; without
+        // any, a `#` is in a string, comment or an undeclared name the ordinary paths reject.
+        let private_names = if self.direct_eval && text.contains('#') {
+            self.direct_eval_private_names(p)
+                .map_or_else(Vec::new, |(_, names)| names)
+        } else {
+            Vec::new()
+        };
+        if !private_names.is_empty() {
             let context_source = eval_context_source(&text, &private_names, false);
             if let Some(expression) = crate::Engine::eval_method_expression(&context_source) {
                 return self.eval_compiled_expression(p, expression, inherited_strict);

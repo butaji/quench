@@ -18,6 +18,17 @@ pub(crate) use atoms::{AtomSequence, AtomTable};
 /// Infix of the compiler's hidden atom for a named function expression's own binding:
 /// `{name}{SELF_BINDING_MARKER}{function id}`.
 pub(crate) const SELF_BINDING_MARKER: &str = "\0quench:self-binding:";
+/// Prefix of the compiler's hidden local for a block-scoped binding renamed apart from a
+/// same-named binding of its function: `{BLOCK_BINDING_MARKER}{name}`.
+pub(crate) const BLOCK_BINDING_MARKER: &str = "\0quench:block-binding:";
+
+/// Whether a local named `name` must live in its function's environment whatever its
+/// captures: other hidden bindings (lexical `this`, `new.target`, home objects, private
+/// names, ...) are reached by name, not only through capture slots. A renamed block binding
+/// is reached only through its slot.
+pub(crate) fn local_name_requires_environment(name: &str) -> bool {
+    name.starts_with('\0') && !name.starts_with(BLOCK_BINDING_MARKER)
+}
 pub(crate) use control_flow::branch_table_entries;
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
@@ -947,13 +958,22 @@ fn has_backward_branch(code: &[Instr], wide: &[WideInstruction]) -> bool {
     })
 }
 
+/// A byte range of a program's source text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceSpan {
+    pub start: u32,
+    pub end: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub parent: Option<u32>,
     pub name: Option<Atom>,
     pub is_arrow: bool,
     pub self_binding_slot: Option<u16>,
-    pub source_text: Option<String>,
+    /// The function's source text as a range of the program's `source`, which
+    /// `Function.prototype.toString` reads on demand.
+    pub source_span: Option<SourceSpan>,
     pub params: u16,
     pub length: u16,
     pub parameter_end_pc: u32,
@@ -992,7 +1012,9 @@ pub struct Function {
     pub global_function_atoms: Vec<Atom>,
     pub global_annex_b_var_atoms: Vec<Atom>,
     pub global_immutable_atoms: Vec<Atom>,
-    pub(crate) name_bindings: Vec<EvalBinding>,
+    /// Bindings a dynamic name lookup in this function can see. Functions with the same
+    /// visible bindings share one list (`Compiler::intern_name_bindings`).
+    pub(crate) name_bindings: std::rc::Rc<[EvalBinding]>,
     /// Lexical projections at eval calls and dynamic name operations.
     pub binding_sites: Vec<BindingSite>,
     pub(crate) source_positions: Vec<SourcePosition>,
@@ -1479,7 +1501,7 @@ pub(crate) struct BindingSite {
     pub(crate) bindings: Vec<EvalBinding>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct EvalBinding {
     pub(crate) atom: Atom,
     pub(crate) location: EvalBindingLocation,
@@ -1497,7 +1519,7 @@ impl EvalBinding {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub(crate) enum EvalBindingDeclaration {
     Lexical = 0,
@@ -1514,13 +1536,13 @@ impl EvalBindingDeclaration {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum EvalBindingLocation {
     Local(u16),
     Capture { depth: u16, slot: u16 },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub(crate) enum LexicalBindingKind {
     Mutable = 0,
@@ -1969,7 +1991,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 87;
+    pub const FORMAT_VERSION: u8 = 88;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;

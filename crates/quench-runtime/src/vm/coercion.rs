@@ -30,7 +30,7 @@ impl<H: Host> Vm<H> {
         } else {
             "object"
         };
-        self.heap.alloc(Cell::String(text.into()))
+        self.intern_dynamic_ascii(text)
     }
 
     pub(super) fn to_numeric(

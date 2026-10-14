@@ -498,7 +498,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     Some(self.function_id),
                     FunctionOptions {
                         defaults: Some(&function.params),
-                        source_text: self.owner.source_text(function.span),
+                        source_span: self.owner.source_span(function.span),
                         name_binding: None,
                         async_function: function.r#async,
                         generator: function.generator,
@@ -1161,7 +1161,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             BindingPattern::BindingIdentifier(identifier) => {
                 let atom = self.owner.atom(identifier.name.as_str());
                 scope.entry(atom).or_insert_with(|| {
-                    self.hidden_local(&format!("\0quench:block-binding:{}", identifier.name))
+                    self.hidden_local(&format!(
+                        "{}{}",
+                        crate::bytecode::BLOCK_BINDING_MARKER,
+                        identifier.name
+                    ))
                 });
             }
             BindingPattern::ObjectPattern(pattern) => {
