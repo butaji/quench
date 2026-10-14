@@ -282,6 +282,11 @@ impl<H: Host> Vm<H> {
             _ => self.shapes[parent as usize].dictionary_trigger,
         };
         let parent_may_have_gc_roots = self.shapes[parent as usize].may_have_gc_roots;
+        // The object that grew has moved to the child, so the parent's lookup index usually
+        // serves nobody; an object left on the parent rebuilds it after
+        // `SHAPE_INDEX_LONG_WALKS` long walks. Otherwise every intermediate shape of a growing
+        // wide object (the global object during bootstrap) kept a full index.
+        self.shapes[parent as usize].lookup_index.take();
         self.shapes.push(Shape::child(
             Some(parent),
             transition,

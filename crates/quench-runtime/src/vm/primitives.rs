@@ -77,7 +77,9 @@ impl<H: Host> Vm<H> {
         match native {
             Native::StringRaw => self.string_raw(p, args),
             Native::StringIsWellFormed => {
-                let units = self.string_units(this)?;
+                let text = self.string_receiver_text(this)?;
+                let wide = text.units().wide();
+                let units: &[u16] = &wide;
                 let mut index = 0;
                 while index < units.len() {
                     let unit = units[index];
@@ -97,7 +99,9 @@ impl<H: Host> Vm<H> {
                 Ok(Value::TRUE)
             }
             Native::StringToWellFormed => {
-                let units = self.string_units(this)?;
+                let text = self.string_receiver_text(this)?;
+                let wide = text.units().wide();
+                let units: &[u16] = &wide;
                 let mut well_formed = Vec::with_capacity(units.len());
                 let mut index = 0;
                 while index < units.len() {
@@ -181,7 +185,7 @@ impl<H: Host> Vm<H> {
                 let unit = index
                     .try_into()
                     .ok()
-                    .and_then(|index: usize| text.units().get(index).copied());
+                    .and_then(|index: usize| text.units().get(index));
                 Ok(unit.map_or_else(
                     || Value::number(f64::NAN),
                     |unit| Value::number(unit.into()),
@@ -198,14 +202,15 @@ impl<H: Host> Vm<H> {
                         .alloc(Cell::String(super::wtf16::JsString::from_units(&[]))));
                 };
                 let units = receiver.units();
-                let value = units.get(index).map_or_else(
+                let value = units.get_range(index..index + 1).map_or_else(
                     || super::wtf16::JsString::from_units(&[]),
-                    |unit| super::wtf16::JsString::from_units(std::slice::from_ref(unit)),
+                    super::wtf16::JsString::from_unit_run,
                 );
                 Ok(self.heap.alloc(Cell::String(value)))
             }
             Native::StringSlice => {
-                let units = self.string_units(this)?;
+                let text = self.string_receiver_text(this)?;
+                let units = text.units();
                 let length = units.len() as i64;
                 let normalize = |value: i64| {
                     if value < 0 {
@@ -219,41 +224,22 @@ impl<H: Host> Vm<H> {
                 if start >= end {
                     return self.string_from_units(&[]);
                 }
-                self.string_from_units(&units[start as usize..end as usize])
+                self.string_from_unit_run(units.slice(start as usize..end as usize))
             }
             Native::StringSubstring => {
-                if let Some(length) = self.ascii_string_len(this) {
-                    let length = length as i64;
-                    let mut start = self.argument_integer(p, args, 0, 0)?.clamp(0, length);
-                    let mut end = self.argument_integer(p, args, 1, length)?.clamp(0, length);
-                    if start > end {
-                        std::mem::swap(&mut start, &mut end);
-                    }
-                    return self.ascii_string_slice(this, start as usize, end as usize);
-                }
-                let units = self.string_units(this)?;
+                let text = self.string_receiver_text(this)?;
+                let units = text.units();
                 let length = units.len() as i64;
                 let mut start = self.argument_integer(p, args, 0, 0)?.clamp(0, length);
                 let mut end = self.argument_integer(p, args, 1, length)?.clamp(0, length);
                 if start > end {
                     std::mem::swap(&mut start, &mut end);
                 }
-                self.string_from_units(&units[start as usize..end as usize])
+                self.string_from_unit_run(units.slice(start as usize..end as usize))
             }
             Native::StringSubstr => {
-                if let Some(length) = self.ascii_string_len(this) {
-                    let length = length as i64;
-                    let raw_start = self.argument_integer(p, args, 0, 0)?;
-                    let start = if raw_start < 0 {
-                        (length + raw_start).max(0)
-                    } else {
-                        raw_start.min(length)
-                    };
-                    let count = self.argument_integer(p, args, 1, length - start)?.max(0);
-                    let end = start.saturating_add(count).min(length);
-                    return self.ascii_string_slice(this, start as usize, end as usize);
-                }
-                let units = self.string_units(this)?;
+                let text = self.string_receiver_text(this)?;
+                let units = text.units();
                 let length = units.len() as i64;
                 let raw_start = self.argument_integer(p, args, 0, 0)?;
                 let start = if raw_start < 0 {
@@ -263,7 +249,7 @@ impl<H: Host> Vm<H> {
                 };
                 let count = self.argument_integer(p, args, 1, length - start)?.max(0);
                 let end = start.saturating_add(count).min(length);
-                self.string_from_units(&units[start as usize..end as usize])
+                self.string_from_unit_run(units.slice(start as usize..end as usize))
             }
             Native::StringIncludes | Native::StringStartsWith | Native::StringEndsWith => {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {
@@ -294,11 +280,11 @@ impl<H: Host> Vm<H> {
                         receiver.find_units(search.units(), position).is_some()
                     }
                     Native::StringStartsWith => {
-                        receiver.units()[position..].starts_with(search.units())
+                        receiver.units().slice(position..receiver.units().len()).starts_with(search.units())
                     }
                     Native::StringEndsWith => {
                         let start = position.saturating_sub(search.units().len());
-                        receiver.units()[start..position] == *search.units()
+                        receiver.units().slice(start..position) == search.units()
                     }
                     _ => unreachable!(),
                 };
@@ -346,7 +332,7 @@ impl<H: Host> Vm<H> {
                 } else {
                     units
                         .iter()
-                        .position(|unit| !is_ecma_whitespace(*unit))
+                        .position(|unit| !is_ecma_whitespace(unit))
                         .unwrap_or(units.len())
                 };
                 let end = if native == Native::StringTrimStart {
@@ -354,10 +340,10 @@ impl<H: Host> Vm<H> {
                 } else {
                     units
                         .iter()
-                        .rposition(|unit| !is_ecma_whitespace(*unit))
+                        .rposition(|unit| !is_ecma_whitespace(unit))
                         .map_or(start, |i| i + 1)
                 };
-                self.string_from_units(&units[start..end])
+                self.string_from_unit_run(units.slice(start..end))
             }
             Native::StringMatch | Native::StringSearch => {
                 self.string_match_or_search_native(p, native, this, args)
@@ -420,7 +406,7 @@ impl<H: Host> Vm<H> {
                 let mut padding = Vec::with_capacity(fill_len);
                 while padding.len() < fill_len {
                     let remaining = fill_len - padding.len();
-                    padding.extend(fill_units.iter().copied().take(remaining));
+                    padding.extend(fill_units.iter().take(remaining));
                 }
                 let mut units = Vec::with_capacity(target);
                 if native == Native::StringPadEnd {
@@ -654,38 +640,21 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn string_units(&self, value: Value) -> Result<Vec<u16>, JsError> {
+    /// The receiver string, sharing its units rather than copying them.
+    fn string_receiver_text(&self, value: Value) -> Result<super::wtf16::JsString, JsError> {
         match self.heap.get(value) {
-            Some(Cell::String(text)) => Ok(text.units().to_vec()),
+            Some(Cell::String(text)) => Ok(text.clone()),
             _ => Err(JsError("string method receiver is not a string".into())),
         }
     }
 
-    fn ascii_string_len(&self, value: Value) -> Option<usize> {
-        match self.heap.get(value) {
-            Some(Cell::String(text))
-                if text
-                    .units()
-                    .iter()
-                    .all(|unit| *unit < crate::unicode::ASCII_CODE_UNIT_LIMIT) =>
-            {
-                Some(text.units().len())
-            }
-            _ => None,
-        }
-    }
-
-    fn ascii_string_slice(
+    pub(super) fn string_from_unit_run(
         &mut self,
-        value: Value,
-        start: usize,
-        end: usize,
+        units: super::wtf16::Units<'_>,
     ) -> Result<Value, JsError> {
-        let Some(Cell::String(text)) = self.heap.get(value) else {
-            return Err(JsError("string method receiver is not a string".into()));
-        };
-        let result = text.host_string()[start..end].to_owned();
-        Ok(self.heap.alloc(Cell::String(result.into())))
+        Ok(self
+            .heap
+            .alloc(Cell::String(super::wtf16::JsString::from_unit_run(units))))
     }
 
     pub(super) fn string_from_units(&mut self, units: &[u16]) -> Result<Value, JsError> {

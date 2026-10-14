@@ -875,8 +875,7 @@ impl<H: Host> Vm<H> {
                         "Function.prototype.toString called on incompatible receiver".into(),
                     ));
                 }
-                let source_atom = self.intern_atom("\0quench:function-source");
-                if let Some(source) = self.own_property(this, source_atom) {
+                if let Some(source) = self.function_source_value(this) {
                     return Ok(source);
                 }
                 Ok(self
