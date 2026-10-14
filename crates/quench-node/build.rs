@@ -7,7 +7,11 @@ fn main() {
     let configuration = std::env::var("DEP_OPENSSL_CONF").unwrap_or_default();
     let alternative = std::env::var_os("DEP_OPENSSL_BORINGSSL").is_some()
         || std::env::var_os("DEP_OPENSSL_AWSLC").is_some();
-    if !alternative && !configuration.split(',').any(|option| option == "OPENSSL_NO_ENGINE") {
+    if !alternative
+        && !configuration
+            .split(',')
+            .any(|option| option == "OPENSSL_NO_ENGINE")
+    {
         println!("cargo:rustc-cfg=quench_openssl_engine");
     }
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();

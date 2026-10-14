@@ -472,10 +472,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .host_mut()
         .shared_state()
         .borrow_mut()
-        .util_intrinsics = Some(UtilIntrinsics {
-        module,
-        inspect,
-    });
+        .util_intrinsics = Some(UtilIntrinsics { module, inspect });
     Ok(module)
 }
 
@@ -745,19 +742,33 @@ pub(crate) fn argument_type_description(
 }
 
 /// Numeric ERR_OUT_OF_RANGE input rendering, shared by native validators.
-pub(crate) fn range_error_received(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<String, RootedError> {
+pub(crate) fn range_error_received(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+) -> Result<String, RootedError> {
     let text = context.to_string(value)?;
-    let Some(number) = context.rooted_value(value).and_then(|value| value.as_number()) else { return Ok(text); };
-    if number == 0.0 && number.is_sign_negative() { return Ok("-0".to_owned()); }
+    let Some(number) = context
+        .rooted_value(value)
+        .and_then(|value| value.as_number())
+    else {
+        return Ok(text);
+    };
+    if number == 0.0 && number.is_sign_negative() {
+        return Ok("-0".to_owned());
+    }
     if number.fract() == 0.0 && number.abs() > f64::from(u32::MAX) + 1.0 {
         let start = usize::from(text.starts_with('-'));
         let mut result = String::with_capacity(text.len() + text.len() / 3);
         for (index, character) in text.char_indices() {
-            if index > start && (text.len() - index) % 3 == 0 { result.push('_'); }
+            if index > start && (text.len() - index) % 3 == 0 {
+                result.push('_');
+            }
             result.push(character);
         }
         Ok(result)
-    } else { Ok(text) }
+    } else {
+        Ok(text)
+    }
 }
 
 /// Inspect's depth boundary derives the constructor from prototype descriptors,
