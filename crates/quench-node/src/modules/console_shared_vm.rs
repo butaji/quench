@@ -22,8 +22,15 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let write =
         context.host_function_with_data(crate::host::shared_vm::operation("consoleWrite"), noop)?;
+    let util = crate::host::shared_vm::commonjs::util_module(context)?;
+    let format = get(context, util, "format")?;
+    let format_with_options = get(context, util, "formatWithOptions")?;
     let undefined = context.undefined();
-    let constructor = context.call_rooted(factory, undefined, &[initialize, write])?;
+    let constructor = context.call_rooted(
+        factory,
+        undefined,
+        &[initialize, write, format, format_with_options],
+    )?;
     let prototype = get(context, constructor, "prototype")?;
     super::console_timing_shared_vm::install(context, prototype)?;
     let trace = context.host_function(crate::host::shared_vm::operation("consoleTrace"))?;
