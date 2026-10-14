@@ -293,18 +293,16 @@ impl<H: Host> Vm<H> {
                     if visited_names.contains(&name) {
                         continue;
                     }
-                    let descriptor = self.object_get_own_property_descriptor(
+                    let Some(enumerable) = self.own_property_enumerable(
                         p,
-                        &[
-                            self.heap.root_value(current_root).unwrap(),
-                            self.heap.root_value(*key).unwrap(),
-                        ],
-                    )?;
-                    if descriptor.is_undefined() {
+                        self.heap.root_value(current_root).unwrap(),
+                        self.heap.root_value(*key).unwrap(),
+                    )?
+                    else {
                         continue;
-                    }
+                    };
                     visited_names.insert(name);
-                    if self.descriptor_flag(descriptor, "enumerable") {
+                    if enumerable {
                         keys.push(self.heap.root(self.heap.root_value(*key).unwrap()));
                     }
                 }
