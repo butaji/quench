@@ -503,6 +503,11 @@ impl Heap {
             self.memory_profile = memory_profile::MemoryProfile::default();
         }
     }
+    /// Counts collections; a slot index names the same cell for as long as this is unchanged.
+    #[inline(always)]
+    pub(crate) fn collection_epoch(&self) -> u64 {
+        self.collections
+    }
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
     }

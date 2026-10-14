@@ -931,6 +931,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
         captured: false,
         registers,
         initialized_registers: 65,
+        capture_cache: super::CaptureCache::default(),
         active_iterators: vec![],
         with_objects: Vec::new(),
         with_base: 0,
@@ -4008,6 +4009,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         captured: false,
         registers: vec![Value::heap(11), Value::heap(12)],
         initialized_registers: 0,
+        capture_cache: super::CaptureCache::default(),
         active_iterators: vec![],
         with_objects: vec![Value::heap(16)],
         with_base: 0,
@@ -6263,6 +6265,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 captured: true,
                 registers: vec![register, iterator, Value::FALSE],
                 initialized_registers: 0,
+                capture_cache: super::CaptureCache::default(),
                 active_iterators: vec![super::ActiveIterator {
                     iterator: 1,
                     done: 2,
