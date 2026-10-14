@@ -894,6 +894,17 @@ impl IteratorKind {
             Self::Array | Self::ArrayKeys | Self::ArrayValues | Self::ArrayEntries
         )
     }
+
+    pub(crate) fn is_collection_iterator(self) -> bool {
+        matches!(
+            self,
+            Self::MapKeys
+                | Self::MapValues
+                | Self::MapEntries
+                | Self::SetValues
+                | Self::SetEntries
+        )
+    }
 }
 #[derive(Clone, Debug)]
 pub(crate) enum IteratorHelper {
@@ -1941,11 +1952,11 @@ pub(crate) enum Cell {
     },
     Map {
         object: Box<Object>,
-        entries: Box<Vec<(Value, Value)>>,
+        entries: Box<super::CollectionEntries<(Value, Value)>>,
     },
     Set {
         object: Box<Object>,
-        entries: Box<Vec<Value>>,
+        entries: Box<super::CollectionEntries<Value>>,
     },
     ShadowRealm {
         object: Box<Object>,
