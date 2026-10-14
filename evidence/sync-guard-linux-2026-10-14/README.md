@@ -29,3 +29,7 @@ Base `e3fc15972`, candidate `0736e42b8` (`e3fc15972` + those two commits; not pu
 ## 14:20 UTC: v2-cloud-c2 (3 commits) published, v2-cloud-c (7) held
 
 Base `490a0461f`. Candidate A `6d3cd48a2` (+ `v2-cloud-c2` through `6f2cb3522`): all eight flat or lower, Splay -18.63% per run; published. Candidate B `9ad7d4a7b` (A + `v2-cloud-c` through `3b09e9ea9`): Crypto -38.01%, NavierStokes -46.65%, Splay -12.25% against base but +7.8% against A, Richards +2.12%: held (decision 24). Runtime lib 594/594, quench-regexp 11/11 on B.
+
+## 16:10 UTC: v2-cloud-c through `2b925fb75` (9 commits) still held
+
+Base `053afbcff`, candidate `6f98fda79`: Crypto -54.38%, NavierStokes -49.49%, Richards +2.17%, Splay +7.82% per run.
