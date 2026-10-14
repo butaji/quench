@@ -603,6 +603,52 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
 }
 
 #[test]
+fn loop_clones_reset_bindings_of_scopes_out_of_reach() {
+    let program = Engine::specialize(
+        "function f() { var g; for (let i = 0; i < 2; i++) { for (let k = 0; k < 2; k++) { g = () => k; } g = () => i; } return g; }",
+        "loop-clone-reset.js",
+    )
+    .unwrap();
+    let plans: Vec<_> = program
+        .functions
+        .iter()
+        .flat_map(|function| function.environment_clones.iter())
+        .collect();
+    // The outer loop's next iteration does not share the inner loop's `k`
+    // with the clone that last owned it: it resets the slot.
+    assert!(plans.iter().any(|plan| !plan.reset.is_empty()));
+    assert!(plans.iter().all(|plan| plan
+        .reset
+        .iter()
+        .all(|slot| plan.fresh.binary_search(slot).is_err())));
+}
+
+#[test]
+fn loop_iterations_release_their_environments_and_eval_programs() {
+    let mut vm = Vm::new(SilentHost);
+    let program = Engine::specialize(
+        "var kept = []; function run(n) { for (let i = 0; i < n; i++) { let m; eval('m = (() => { const x = ' + i + '; return () => x; })()'); for (let k = 0; k < 2; k++) {} kept.push(m()); } }",
+        "loop-eval-reclaim.js",
+    )
+    .unwrap();
+    vm.execute(&program).unwrap();
+    let programs_before = vm.programs.live_count();
+    let name = vm.intern_atom("run");
+    let run = vm.own_property(vm.realm.globals, name).unwrap();
+    vm.call_value(&program, run, Value::UNDEFINED, &[Value::number(4.0)])
+        .unwrap();
+    assert!(vm.programs.live_count() > programs_before);
+    // A program survives the first reclamation pass after its insertion.
+    vm.collect_now(&program);
+    vm.collect_now(&program);
+    assert_eq!(vm.programs.live_count(), programs_before);
+    let name = vm.intern_atom("kept");
+    let kept = vm.own_property(vm.realm.globals, name).unwrap();
+    let joined = vm.to_string(&program, kept).unwrap();
+    assert_eq!(&*joined, "0,1,2,3");
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();

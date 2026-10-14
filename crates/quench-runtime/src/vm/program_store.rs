@@ -20,6 +20,11 @@ struct ProgramEntry {
     compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
     /// The environment the program's root body evaluates in.
     scope: ProgramScope,
+    /// Dynamic code (eval, `Function`, host scripts): reclaimed once nothing
+    /// can run it. The main program and modules stay for the realm's life.
+    reclaimable: bool,
+    /// The reclamation pass current at insertion.
+    pass: u64,
 }
 
 /// Where a stored program's root body evaluates, which decides whether its
@@ -68,7 +73,13 @@ impl ProgramId {
 
 #[derive(Default)]
 pub(crate) struct ProgramStore {
-    programs: Vec<ProgramEntry>,
+    /// Indexed by `ProgramId`; a reclaimed program leaves an empty slot, so an
+    /// id never names another program.
+    programs: Vec<Option<ProgramEntry>>,
+    /// Completed reclamation passes; see `reclaim_unreferenced`.
+    reclaim_passes: u64,
+    /// Reclaimable programs inserted since the last reclamation pass.
+    unchecked_reclaimable: usize,
 }
 
 impl ProgramStore {
@@ -76,11 +87,65 @@ impl ProgramStore {
         self.programs.len()
     }
 
+    fn entry(&self, id: ProgramId) -> Option<&ProgramEntry> {
+        self.programs.get(id.index())?.as_ref()
+    }
+
+    fn entry_mut(&mut self, id: ProgramId) -> Option<&mut ProgramEntry> {
+        self.programs.get_mut(id.index())?.as_mut()
+    }
+
+    /// Inserts dynamic code that `reclaim_unreferenced` may later drop.
+    pub(crate) fn insert_reclaimable(&mut self, program: ResidualProgram) -> Option<ProgramId> {
+        let id = self.insert(program)?;
+        if let Some(entry) = self.entry_mut(id) {
+            entry.reclaimable = true;
+        }
+        self.unchecked_reclaimable += 1;
+        Some(id)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_count(&self) -> usize {
+        self.programs.iter().flatten().count()
+    }
+
+    /// Whether reclaimable programs arrived since the last reclamation pass.
+    pub(crate) fn has_unchecked_reclaimable(&self) -> bool {
+        self.unchecked_reclaimable > 0
+    }
+
+    /// Drops every reclaimable program that `referenced` does not mark and that
+    /// predates the previous pass. A program therefore survives the first pass
+    /// after its insertion, while its first closure or frame is still being
+    /// created. Returns the reclaimed ids.
+    pub(crate) fn reclaim_unreferenced(&mut self, referenced: &[bool]) -> Vec<ProgramId> {
+        let previous_pass = self.reclaim_passes;
+        self.reclaim_passes += 1;
+        let mut reclaimed = Vec::new();
+        let mut pending = 0;
+        for (index, slot) in self.programs.iter_mut().enumerate() {
+            let Some(entry) = slot else { continue };
+            if !entry.reclaimable || referenced.get(index).copied().unwrap_or(true) {
+                continue;
+            }
+            if entry.pass >= previous_pass {
+                pending += 1;
+                continue;
+            }
+            *slot = None;
+            reclaimed.extend(ProgramId::from_index(index));
+        }
+        self.unchecked_reclaimable = pending;
+        reclaimed
+    }
+
     pub(crate) fn reset(&mut self, main: Rc<ResidualProgram>) -> ProgramId {
         self.programs.clear();
+        self.unchecked_reclaimable = 0;
         let module = main.is_module();
         let id = self.insert_shared(main).unwrap_or(ProgramId::MAIN);
-        if module && let Some(entry) = self.programs.get_mut(id.index()) {
+        if module && let Some(entry) = self.entry_mut(id) {
             entry.module = true;
         }
         id
@@ -95,20 +160,18 @@ impl ProgramStore {
     }
 
     fn set_scope(&mut self, id: ProgramId, scope: ProgramScope) {
-        if let Some(entry) = self.programs.get_mut(id.index()) {
+        if let Some(entry) = self.entry_mut(id) {
             entry.scope = scope;
         }
     }
 
     /// Whether the program's root body evaluates in the global environment.
     pub(crate) fn runs_in_global_scope(&self, id: ProgramId) -> bool {
-        self.programs
-            .get(id.index())
-            .is_some_and(|entry| match entry.scope {
-                ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
-                ProgramScope::Global => true,
-                ProgramScope::Caller => false,
-            })
+        self.entry(id).is_some_and(|entry| match entry.scope {
+            ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
+            ProgramScope::Global => true,
+            ProgramScope::Caller => false,
+        })
     }
 
     pub(crate) fn insert(&mut self, program: ResidualProgram) -> Option<ProgramId> {
@@ -118,7 +181,11 @@ impl ProgramStore {
     pub(crate) fn find_shared(&self, program: &Rc<ResidualProgram>) -> Option<ProgramId> {
         self.programs
             .iter()
-            .position(|entry| Rc::ptr_eq(&entry.residual, program))
+            .position(|entry| {
+                entry
+                    .as_ref()
+                    .is_some_and(|entry| Rc::ptr_eq(&entry.residual, program))
+            })
             .and_then(ProgramId::from_index)
     }
 
@@ -131,7 +198,7 @@ impl ProgramStore {
             .iter()
             .map(|_| std::cell::OnceCell::new())
             .collect();
-        self.programs.push(ProgramEntry {
+        self.programs.push(Some(ProgramEntry {
             residual: program,
             wasm_signatures: None,
             constants: Vec::new(),
@@ -145,7 +212,9 @@ impl ProgramStore {
             lane_views,
             compiled: None,
             scope: ProgramScope::Own,
-        });
+            reclaimable: false,
+            pass: self.reclaim_passes,
+        }));
         Some(id)
     }
 
@@ -156,7 +225,7 @@ impl ProgramStore {
         id: ProgramId,
         signatures: &Rc<crate::wasm::WasmSignatures>,
     ) -> bool {
-        let Some(entry) = self.programs.get_mut(id.index()) else {
+        let Some(entry) = self.entry_mut(id) else {
             return false;
         };
         if let Some(existing) = &entry.wasm_signatures {
@@ -291,40 +360,40 @@ impl ProgramStore {
         id: ProgramId,
         index: u32,
     ) -> Option<&crate::WasmSignature> {
-        self.programs
-            .get(id.index())?
+        self.entry(id)?
             .wasm_signatures
             .as_ref()?
             .defined_signature(index)
     }
 
     pub(crate) fn wasm_signatures(&self, id: ProgramId) -> Option<&crate::wasm::WasmSignatures> {
-        self.programs.get(id.index())?.wasm_signatures.as_deref()
+        self.entry(id)?.wasm_signatures.as_deref()
     }
 
     pub(crate) fn insert_module(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         let id = self.insert(program)?;
-        self.programs[id.index()].module = true;
+        if let Some(entry) = self.entry_mut(id) {
+            entry.module = true;
+        }
         Some(id)
     }
 
     /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
     /// global lexical or module-import projection reads through it.
     pub(crate) fn root_slot_is_binding(&self, id: ProgramId, slot: u16) -> bool {
-        self.programs.get(id.index()).is_some_and(|entry| {
+        self.entry(id).is_some_and(|entry| {
             entry.residual.root_slots_are_bindings()
                 && !entry.module_imports.iter().any(|(local, _)| *local == slot)
         })
     }
 
     pub(crate) fn is_module(&self, id: ProgramId) -> bool {
-        self.programs
-            .get(id.index())
+        self.entry(id)
             .is_some_and(|entry| entry.module)
     }
 
     pub(crate) fn set_module_environment(&mut self, id: ProgramId, environment: Value) {
-        if let Some(entry) = self.programs.get_mut(id.index())
+        if let Some(entry) = self.entry_mut(id)
             && entry.module
         {
             entry.module_environment = Some(environment);
@@ -332,19 +401,19 @@ impl ProgramStore {
     }
 
     pub(crate) fn module_environment(&self, id: ProgramId) -> Option<Value> {
-        self.programs.get(id.index())?.module_environment
+        self.entry(id)?.module_environment
     }
 
     pub(crate) fn import_meta(&self, id: ProgramId) -> Option<Value> {
-        self.programs.get(id.index())?.import_meta
+        self.entry(id)?.import_meta
     }
 
     pub(crate) fn source_name(&self, id: ProgramId) -> Option<&str> {
-        Some(&self.programs.get(id.index())?.residual.source_name)
+        Some(&self.entry(id)?.residual.source_name)
     }
 
     pub(crate) fn set_import_meta(&mut self, id: ProgramId, value: Value) {
-        if let Some(entry) = self.programs.get_mut(id.index())
+        if let Some(entry) = self.entry_mut(id)
             && entry.module
         {
             entry.import_meta = Some(value);
@@ -352,19 +421,18 @@ impl ProgramStore {
     }
 
     pub(crate) fn set_module_imports(&mut self, id: ProgramId, imports: Vec<(u16, ModuleImport)>) {
-        if let Some(entry) = self.programs.get_mut(id.index()) {
+        if let Some(entry) = self.entry_mut(id) {
             entry.module_imports = imports;
         }
     }
 
     pub(crate) fn module_imports(&self, id: ProgramId) -> &[(u16, ModuleImport)] {
-        self.programs
-            .get(id.index())
+        self.entry(id)
             .map_or(&[], |entry| &entry.module_imports)
     }
 
     pub(crate) fn module_import(&self, id: ProgramId, slot: u16) -> Option<ModuleImport> {
-        self.programs.get(id.index()).and_then(|entry| {
+        self.entry(id).and_then(|entry| {
             entry
                 .module_imports
                 .iter()
@@ -374,17 +442,16 @@ impl ProgramStore {
 
     /// Borrows the residual without the reference-count traffic of `get`.
     pub(crate) fn residual(&self, id: ProgramId) -> Option<&ResidualProgram> {
-        self.programs.get(id.index()).map(|entry| &*entry.residual)
+        self.entry(id).map(|entry| &*entry.residual)
     }
 
     pub(crate) fn get(&self, id: ProgramId) -> Option<Rc<ResidualProgram>> {
-        self.programs
-            .get(id.index())
+        self.entry(id)
             .map(|entry| entry.residual.clone())
     }
 
     pub(crate) fn set_constants(&mut self, id: ProgramId, constants: Vec<Value>) {
-        if let Some(entry) = self.programs.get_mut(id.index()) {
+        if let Some(entry) = self.entry_mut(id) {
             entry.const_arrays = vec![None; constants.len()];
             entry.constants = constants;
             // Lane views carry constants, so they derive from the new set.
@@ -401,7 +468,7 @@ impl ProgramStore {
         &self,
         id: ProgramId,
     ) -> Option<Option<Rc<super::compiled::CompiledProgram>>> {
-        self.programs.get(id.index())?.compiled.clone()
+        self.entry(id)?.compiled.clone()
     }
 
     pub(super) fn set_compiled(
@@ -409,7 +476,7 @@ impl ProgramStore {
         id: ProgramId,
         compiled: Option<Rc<super::compiled::CompiledProgram>>,
     ) {
-        if let Some(entry) = self.programs.get_mut(id.index()) {
+        if let Some(entry) = self.entry_mut(id) {
             entry.compiled = Some(compiled);
         }
     }
@@ -419,7 +486,7 @@ impl ProgramStore {
         &self,
         id: ProgramId,
     ) -> Option<&[std::cell::OnceCell<super::dispatch_fast::LaneView>]> {
-        Some(&self.programs.get(id.index())?.lane_views)
+        Some(&self.entry(id)?.lane_views)
     }
 
     pub(super) fn lane_view(
@@ -432,7 +499,7 @@ impl ProgramStore {
             crate::bytecode::ProgramKind,
         ) -> super::dispatch_fast::LaneView,
     ) -> Option<*const super::dispatch_fast::LaneView> {
-        let entry = self.programs.get(id.index())?;
+        let entry = self.entry(id)?;
         let code = entry.residual.functions.get(function as usize)?;
         let view = entry.lane_views.get(function as usize)?;
         Some(view.get_or_init(|| derive(code, &entry.constants, entry.residual.kind)))
@@ -443,8 +510,7 @@ impl ProgramStore {
     }
 
     pub(crate) fn constants(&self, id: ProgramId) -> &[Value] {
-        self.programs
-            .get(id.index())
+        self.entry(id)
             .map_or(&[], |entry| entry.constants.as_slice())
     }
 
@@ -454,7 +520,7 @@ impl ProgramStore {
         start: usize,
         count: usize,
     ) -> Option<Rc<Vec<Value>>> {
-        let entry = self.programs.get_mut(id.index())?;
+        let entry = self.entry_mut(id)?;
         let end = start.checked_add(count)?;
         let cached = entry.const_arrays.get_mut(start)?;
         if cached.is_none() {
@@ -464,8 +530,7 @@ impl ProgramStore {
     }
 
     pub(crate) fn function_source(&self, id: ProgramId, function: u32) -> Option<Value> {
-        self.programs
-            .get(id.index())?
+        self.entry(id)?
             .function_sources
             .get(function as usize)
             .copied()
@@ -479,8 +544,7 @@ impl ProgramStore {
         source: Value,
     ) -> Option<Value> {
         let cached = self
-            .programs
-            .get_mut(id.index())?
+            .entry_mut(id)?
             .function_sources
             .get_mut(function as usize)?;
         Some(*cached.get_or_insert(source))
@@ -491,8 +555,7 @@ impl ProgramStore {
         id: ProgramId,
         site: usize,
     ) -> Option<Result<Rc<quench_regexp::Regex>, Rc<str>>> {
-        self.programs
-            .get(id.index())?
+        self.entry(id)?
             .regexp_literals
             .get(site)?
             .as_ref()
@@ -505,7 +568,7 @@ impl ProgramStore {
         site: usize,
         matcher: Result<Rc<quench_regexp::Regex>, Rc<str>>,
     ) -> bool {
-        let Some(entry) = self.programs.get_mut(id.index()) else {
+        let Some(entry) = self.entry_mut(id) else {
             return false;
         };
         let Some(cached) = entry.regexp_literals.get_mut(site) else {
@@ -519,7 +582,7 @@ impl ProgramStore {
 
     #[cfg(test)]
     pub(crate) fn compiled_regexp_literal_count(&self, id: ProgramId) -> usize {
-        self.programs.get(id.index()).map_or(0, |entry| {
+        self.entry(id).map_or(0, |entry| {
             entry
                 .regexp_literals
                 .iter()
@@ -529,7 +592,7 @@ impl ProgramStore {
     }
 
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        self.programs.iter().flat_map(|entry| {
+        self.programs.iter().flatten().flat_map(|entry| {
             entry
                 .constants
                 .iter()
