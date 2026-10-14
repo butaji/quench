@@ -1,5 +1,8 @@
 const SCIENTIFIC_NOTATION_MIN_MAGNITUDE: f64 = 1e-6;
 const SCIENTIFIC_NOTATION_MAX_MAGNITUDE: f64 = 1e21;
+/// Below 2^53 every integer is a double, so its shortest round-trip digits are exactly its
+/// decimal digits; above it Number::toString pads the shortest digits with zeros instead.
+const EXACT_INTEGER_MAGNITUDE: f64 = (1u64 << f64::MANTISSA_DIGITS) as f64;
 
 pub(crate) fn format(value: f64) -> String {
     if value.is_nan() {
@@ -17,6 +20,9 @@ pub(crate) fn format(value: f64) -> String {
         return "0".into();
     }
     let magnitude = value.abs();
+    if magnitude < EXACT_INTEGER_MAGNITUDE && value.fract() == 0.0 {
+        return (value as i64).to_string();
+    }
     if magnitude >= SCIENTIFIC_NOTATION_MAX_MAGNITUDE
         || magnitude < SCIENTIFIC_NOTATION_MIN_MAGNITUDE
     {

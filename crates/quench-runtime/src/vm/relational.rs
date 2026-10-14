@@ -53,6 +53,17 @@ impl<H: Host> Vm<H> {
         if !self.is_object_like(object) {
             return Err(self.type_error(p, "right-hand side of 'in' is not an object".into()));
         }
+        // Accessor indices are stored as holes, so a present dense element is an own property.
+        if let Some(index) = self.array_index_key(key)
+            && self.heap.array(object).is_some_and(|array| {
+                array
+                    .elements()
+                    .get(index as usize)
+                    .is_some_and(|value| !value.is_deleted())
+            })
+        {
+            return Ok(true);
+        }
         self.with_call_roots([object, key], |vm| {
             let key = vm.to_property_key(p, key)?;
             vm.has_property_key(p, object, key)
