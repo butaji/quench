@@ -149,9 +149,17 @@ pub(crate) fn poll(
                         .borrow()
                         .net_socket_constructor
                         .ok_or_else(|| "net.Socket constructor is unavailable".to_owned())?;
-                    let accepted = runtime
-                        .construct_rooted(constructor, constructor, &[])
+                    let options_operation = runtime.host_function(crate::host::shared_vm::operation("netServerAcceptedOptions"))
                         .map_err(|error| error.to_string())?;
+                    let undefined = runtime.root(Value::UNDEFINED);
+                    let options = runtime.call_rooted(options_operation, undefined, &[server_root]);
+                    runtime.release_root(options_operation);
+                    runtime.release_root(undefined);
+                    let options = options.map_err(|error| error.to_string())?;
+                    let accepted = runtime
+                        .construct_rooted(constructor, constructor, &[options])
+                        .map_err(|error| error.to_string())?;
+                    runtime.release_root(options);
                     let key = runtime.string_rooted("__quenchNetSocketId");
                     let id = runtime.root(Value::number(socket as f64));
                     if !runtime
@@ -195,7 +203,15 @@ pub(crate) fn poll(
                             server.connections.insert(socket);
                         }
                     }
-                    queue_connection_event(runtime, shared_state, server_root, "connection", &[accepted], socket)?;
+                    let key = runtime.string_rooted("_handle");
+                    let server_handle = runtime.get_property_rooted(server_root, key).map_err(|error| error.to_string())?;
+                    let client_handle = runtime.get_property_rooted(accepted, key).map_err(|error| error.to_string())?;
+                    runtime.release_root(key);
+                    let success = runtime.root(Value::number(0.0));
+                    queue_net_method_completion(runtime, shared_state, server_handle, "onconnection", &[success, client_handle], Some(NetDelivery::Connection(socket)))?;
+                    runtime.release_root(success);
+                    runtime.release_root(client_handle);
+                    runtime.release_root(server_handle);
                     progressed = true;
                 } else {
                     net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
@@ -1288,7 +1304,7 @@ fn queue_connection_event(
         receiver,
         "emit",
         &event_args,
-        Some(NetDelivery::Connection(socket)),
+        Some(NetDelivery::Connect(socket)),
     );
     runtime.release_root(event);
     result
@@ -1303,7 +1319,7 @@ fn queue_net_method(
 ) -> Result<(), String> {
     queue_net_method_completion(runtime, shared_state, receiver, method, args, None)
 }
-enum NetDelivery { Connection(u64), Data(u64, usize), Eof }
+enum NetDelivery { Connection(u64), Connect(u64), Data(u64, usize), Eof }
 fn queue_net_method_completion(
     runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
@@ -1330,6 +1346,10 @@ fn queue_net_method_completion(
             NetDelivery::Connection(socket) => {
                 retained_args.push(runtime.root(Value::number(socket as f64)));
                 "netDeliverConnection"
+            }
+            NetDelivery::Connect(socket) => {
+                retained_args.push(runtime.root(Value::number(socket as f64)));
+                "netDeliverConnect"
             }
             NetDelivery::Data(socket, length) => {
                 retained_args.push(runtime.root(Value::number(socket as f64)));
