@@ -1,0 +1,1597 @@
+{
+  "schema_version": 2,
+  "inventory_hash": "c78efeeaac356de5",
+  "timeout_secs": 30,
+  "jobs": 4,
+  "node_version": "v24.19.0",
+  "runtime_commit": "98246ec1d36e32e45d159492b9401ae645d8fa8c",
+  "tests_node_commit": "55e4ca33f3a6dfe364bd9558b726576a6d1a2fba",
+  "platform": "linux-x86_64",
+  "results": [
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-access-modes.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-append-write.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-bigint-position.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-callback-api.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-copyfile-mode.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-create.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-ctime-update.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-destructuring.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-dir-handle.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fd.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-file-handle.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-flag.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-accessSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-callback-error-paths.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-chmod-callback.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-chmodSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-copyFileSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-createReadStream.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-createWriteStream.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-existsSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-fchmod-callback.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-linkSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-mkdir-callback.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-mkdirSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-mkdtempSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-open-callback.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-openAsBlob.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-openSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-opendir-callback.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-opendirSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-promises-buffer-encoding.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-promises-stat-no-throw.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-promises.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-readFile-callback.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-readFileSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-readdirSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-realpathSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-rename-callback.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-renameSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-rmSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-stat-callback.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-statSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-symlink-callback.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-symlinkSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-truncate-callback.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-truncateSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-watch-dispatch.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-writeFile-callback.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-fs-writeFileSync.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-hardlink-nlink.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-lchown-symlink.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-link.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-memory-file-handle.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-memory-provider-dynamic.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-memory-provider-flags.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-memory-provider.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-mkdir.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-mkdtemp.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-mount-errors.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-mount.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-multi-mount.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-parent-timestamps.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-promises-open.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-promises.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-readdir-symlink-recursive.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-readfile-async.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-readfile-encoding.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-readfile-flag.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-real-provider-handle.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-real-provider-promises.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-real-provider-symlinks.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-real-provider-watch.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-real-provider.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-rename.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-rm-edge-cases.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-rmdir-symlink.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-router.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-stats-bigint.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-stats-helpers.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-stats-ino-dev.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-stream-errors.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-stream-explicit-fd.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-stream-properties.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-stream-validation.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-streams.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-symlinks.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-truncate-negative.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-utimes.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-virtual-file-handle.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-virtual-provider.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-watch-abort-signal.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-watch-directory.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-watch-encoding.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-watch-promises.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-watch-recursive.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-watch.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-watchfile.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs-write-options.js",
+      "status": "pass",
+      "observation": {
+        "Ok": {
+          "exit_code": 0,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "pass"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    },
+    {
+      "fixture": "/tmp/quench-node-fixtures/test/parallel/test-vfs.js",
+      "status": "fail",
+      "observation": {
+        "Ok": {
+          "exit_code": 1,
+          "signal": null,
+          "timed_out": false,
+          "worker": {
+            "outcome": "fail",
+            "reason": "/tmp/quench-node-fixtures/test/parallel/test-vfs.js:20\nassert.strictEqual(Module._stat(directory), 1);\n                   ^\n\nTypeError: value is not callable\n    at /tmp/quench-node-fixtures/test/parallel/test-vfs.js:20:20\n\nNode.js v22.0.0"
+          },
+          "stdout": [],
+          "stderr": []
+        }
+      }
+    }
+  ]
+}
