@@ -62,8 +62,10 @@ start, `quench-bench/deegen-curriculum` and `quench-bench/micros` execute, in fi
 
 Reproduce the order:
 
+The Test262 sample (`train-test262/`) is up to 30 files from each of `test/language/{expressions,statements,function-code}` and `test/built-ins/{Array,String,Object,Function,Math,JSON,Number}`: files without `includes:`, `negative:` or the `module`, `async`, `raw`, `onlyStrict` and `CanBlock` flags, in Python `random.seed(13)` shuffle order, each prefixed with `harness/assert.js` and `harness/sta.js`.
+
 ```sh
-for f in empty.cjs quench-bench/deegen-curriculum/*.js quench-bench/micros/*.js; do
+for f in empty.cjs quench-bench/deegen-curriculum/*.js quench-bench/micros/*.js train-test262/*.js; do
   valgrind --tool=cachegrind --cache-sim=no --demangle=no \
     --cachegrind-out-file=train/$(basename $f).out target/production/quench-node $f
 done

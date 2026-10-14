@@ -1,0 +1,23 @@
+{
+  "scenarios": {
+    "behavior-pass": 248,
+    "declarations-pass": 13,
+    "quench-failed": 38,
+    "oracle-failed": 1
+  },
+  "surface": {
+    "surface-diff": 144,
+    "surface-match-unqualified": 147,
+    "oracle-failed": 9
+  },
+  "coverage": {
+    "discovered_callable_paths": 70236,
+    "behavior_checked_paths": 271,
+    "uncovered_paths": 69965,
+    "qualified": false
+  },
+  "source_commit": "8a1cc805cfaff6b504b2404c4c144179f529a187",
+  "final_source_commit": "83242b53adddc6cc7a1c0b0e63f6ffcdcd0819a6",
+  "binary_identical_after_final_merge": true,
+  "node_version": "v26.11.1"
+}
