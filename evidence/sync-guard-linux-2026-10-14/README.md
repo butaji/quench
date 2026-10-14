@@ -5,3 +5,7 @@ Base `aba295222` (v2-merged before), candidate `7c7e1fb51` (after merging `v2-cl
 ## 08:10 UTC: v2-cloud-c2 publish (guard FAILS on Splay)
 
 Base `84978fd52`, candidate `76ba30d45` (`84978fd52` + `v2-cloud-c2` through `5f8b1273a`, the same commits the lane published as `f1a6589f4`). Result in `guard-84978fd52-vs-76ba30d45.txt`: Splay per-run instructions +16.30% (21,462,869 -> 24,960,732) and Splay startup +198M; the other seven benches within -0.59% to +0.66%. Merge checks passed (runtime lib 588/588, Wasm 67,124/67,124). Cause: `5f8b1273a` sets `LARGE_HEAP_GC_HEADROOM` to 1/2; its own message reports Splay Score 3,100 -> 2,660 (-14%) for max RSS 66.3 -> 54.5 MB, one run each.
+
+## 10:10 UTC: v2-cloud-c2 publish `ca89cdf8f` (guard passes)
+
+Base `728530f4e`, candidate `0a69bf846` (`728530f4e` + `v2-cloud-c2` through `7d60b6eee`; same commits as the lane's publish). `guard-728530f4e-vs-0a69bf846.txt`: all eight flat or lower per run (EarleyBoyer -2.99%, RegExp -2.91%, Splay -0.51%). Merge checks: runtime lib 588/588, Wasm 67,124/67,124. Splay's base of 24.96M instructions per run shows the `5f8b1273a` regression (21.46M before it) is still in `v2-merged`.
