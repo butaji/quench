@@ -1729,14 +1729,19 @@ impl<'a> Compiler<'a> {
             .checked_sub(1)
             .is_some_and(|deepest| u16::try_from(deepest).is_err())
         {
-            self.reject(Span::default(), "eval capture depth exceeds residual encoding");
+            self.reject(
+                Span::default(),
+                "eval capture depth exceeds residual encoding",
+            );
             return None;
         }
         let mut outer: Option<std::rc::Rc<crate::bytecode::CapturedNames>> = None;
         for scope in scopes.iter().rev() {
             let key = (
                 std::rc::Rc::as_ptr(scope) as usize,
-                outer.as_ref().map(|outer| std::rc::Rc::as_ptr(outer) as usize),
+                outer
+                    .as_ref()
+                    .map(|outer| std::rc::Rc::as_ptr(outer) as usize),
             );
             let level = match self.captured_name_scopes.get(&key) {
                 Some((_, level)) => level.clone(),
@@ -2812,9 +2817,7 @@ impl<'a> Compiler<'a> {
         superinstructions: &mut Vec<Superinstruction>,
     ) {
         for function in functions {
-            if function.wide.is_empty() {
-                rewrite::apply(function, method_sites, field_sites, superinstructions);
-            }
+            rewrite::apply(function, method_sites, field_sites, superinstructions);
         }
     }
 
