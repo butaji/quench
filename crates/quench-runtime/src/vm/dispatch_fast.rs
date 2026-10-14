@@ -636,13 +636,39 @@ lane_handler! {
     }
 }
 
+/// `Binary` of operator `OP` on Numbers as `number_binary` computes it: the four arithmetic
+/// operators directly, integer operators directly on integers; `None` for any other value.
+#[inline(always)]
+fn operator_value<H: Host, const OP: u32>(
+    cx: *mut LaneContext<H>,
+    left: Value,
+    right: Value,
+) -> Option<Value> {
+    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
+    if matches!(OP, ADDITION | SUBTRACTION | MULTIPLICATION | DIVISION) {
+        return super::operations::number_operator::<OP>(left, right).map(|(value, _)| value);
+    }
+    super::operations::integer_operator::<OP>(left, right)
+        .or_else(|| unsafe { vm(cx) }.number_binary(OP, left, right))
+}
+
 lane_handler! {
-    /// `Binary` of arithmetic operator `OP` on two registers, its operator and operand
-    /// kinds resolved when the view was derived (`specialize_register_operands`): the fields hold
-    /// the operand registers themselves.
-    fn lane_arith<OP: u32>(cx, r, ip, i, view) {
-        let Some((value, _)) = super::operations::number_operator::<OP>(r.get(i.b), r.get(i.c))
-        else {
+    /// `Binary` of operator `OP` on two registers, its operator and operand kinds resolved
+    /// when the view was derived (`specialize_register_operands`): the fields hold the
+    /// operand registers themselves.
+    fn lane_operator<OP: u32>(cx, r, ip, i, view) {
+        let Some(value) = operator_value::<H, OP>(cx, r.get(i.b), r.get(i.c)) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
+    /// `lane_operator` whose right operand is a constant, carried in the record.
+    fn lane_operator_constant<OP: u32>(cx, r, ip, i, view) {
+        let Some(value) = operator_value::<H, OP>(cx, r.get(i.b), i.constant()) else {
             return exit(ip);
         };
         r.set(i.a, value);
@@ -3427,7 +3453,7 @@ fn derive_lane_view<H: Host>(
             }
         }
     }
-    specialize_register_operands::<H>(function, &mut records);
+    specialize_register_operands::<H>(function, constants, &mut records);
     let mut entries = vec![false; records.len()].into_boxed_slice();
     let mut run = 0usize;
     for pc in (0..records.len()).rev() {
@@ -3453,12 +3479,15 @@ fn derive_lane_view<H: Host>(
     }
 }
 
-/// Gives each lane record whose two operands are registers the handler for that operand
-/// shape, with the decoded registers in its fields, so it decodes no operand kinds: `Binary`
-/// of an arithmetic operator (the handler for that operator), `GetIndex` and
-/// `JumpBinaryFalse`.
-fn specialize_register_operands<H: Host>(function: &Function, records: &mut [LaneInstruction]) {
-    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
+/// Gives each lane record whose operands are registers the handler for that operand shape,
+/// with the decoded registers in its fields, so it decodes no operand kinds: `Binary` of a
+/// specialized operator (`operator_handler`), also with a constant right operand carried in
+/// the record, `GetIndex` and `JumpBinaryFalse`.
+fn specialize_register_operands<H: Host>(
+    function: &Function,
+    constants: &[Value],
+    records: &mut [LaneInstruction],
+) {
     let binary = lane_binary::<H> as Handler as *const ();
     let get_index = lane_get_index::<H> as Handler as *const ();
     let forward_test = lane_jump_binary_false::<H, false> as Handler as *const ();
@@ -3470,34 +3499,88 @@ fn specialize_register_operands<H: Host>(function: &Function, records: &mut [Lan
             continue;
         }
         let (left, right) = (instruction.operand_b(), instruction.operand_c());
-        let (
-            Some(crate::bytecode::OperandKind::Register),
-            Some(crate::bytecode::OperandKind::Register),
-        ) = (left.kind(), right.kind())
-        else {
+        use crate::bytecode::OperandKind::{Constant, Register};
+        let (Some(Register), Some(right_kind)) = (left.kind(), right.kind()) else {
             continue;
         };
+        if record.handler == binary {
+            if instruction.numeric_local_target().is_some() {
+                continue;
+            }
+            let operator = instruction.binary_operator();
+            match right_kind {
+                Register => {
+                    let Some(handler) = operator_handler::<H, false>(operator) else {
+                        continue;
+                    };
+                    record.handler = handler as *const ();
+                    record.c = right.payload();
+                }
+                Constant => {
+                    let (Some(handler), Some(constant)) = (
+                        operator_handler::<H, true>(operator),
+                        constants.get(usize::from(right.payload())),
+                    ) else {
+                        continue;
+                    };
+                    record.handler = handler as *const ();
+                    record.operand = LaneOperand {
+                        constant: *constant,
+                    };
+                }
+                _ => continue,
+            }
+            record.b = left.payload();
+            continue;
+        }
+        if right_kind != Register {
+            continue;
+        }
         let handler: Handler = if record.handler == get_index {
             lane_get_index_registers::<H>
         } else if record.handler == forward_test {
             lane_jump_binary_false_registers::<H, false>
-        } else if record.handler == backward_test {
-            lane_jump_binary_false_registers::<H, true>
-        } else if instruction.numeric_local_target().is_some() {
-            continue;
         } else {
-            match instruction.binary_operator() {
-                ADDITION => lane_arith::<H, ADDITION>,
-                SUBTRACTION => lane_arith::<H, SUBTRACTION>,
-                MULTIPLICATION => lane_arith::<H, MULTIPLICATION>,
-                DIVISION => lane_arith::<H, DIVISION>,
-                _ => continue,
-            }
+            lane_jump_binary_false_registers::<H, true>
         };
         record.handler = handler as *const ();
         record.b = left.payload();
         record.c = right.payload();
     }
+}
+
+/// The handler of a specialized `Binary` operator, with a register or (`CONSTANT`) a constant
+/// right operand.
+fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Handler> {
+    use super::operations::{
+        ADDITION, BITWISE_AND, BITWISE_OR, BITWISE_XOR, DIVISION, MULTIPLICATION, REMAINDER,
+        SHIFT_LEFT, SHIFT_RIGHT, SHIFT_RIGHT_ZERO_FILL, SUBTRACTION,
+    };
+    macro_rules! handler {
+        ($($operator:ident),*) => {
+            match operator {
+                $($operator => Some(if CONSTANT {
+                    lane_operator_constant::<H, $operator> as Handler
+                } else {
+                    lane_operator::<H, $operator> as Handler
+                }),)*
+                _ => None,
+            }
+        };
+    }
+    handler!(
+        ADDITION,
+        SUBTRACTION,
+        MULTIPLICATION,
+        DIVISION,
+        REMAINDER,
+        SHIFT_LEFT,
+        SHIFT_RIGHT,
+        SHIFT_RIGHT_ZERO_FILL,
+        BITWISE_OR,
+        BITWISE_XOR,
+        BITWISE_AND
+    )
 }
 
 /// Whether some loop of `function`, from a backward jump's target through the jump, has no

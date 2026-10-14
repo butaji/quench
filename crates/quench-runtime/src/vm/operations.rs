@@ -178,6 +178,22 @@ pub(super) fn number_operator<const OP: u32>(
     }
 }
 
+pub(super) const REMAINDER: u32 = BinaryOperator::Remainder as u32;
+pub(super) const SHIFT_LEFT: u32 = BinaryOperator::ShiftLeft as u32;
+pub(super) const SHIFT_RIGHT: u32 = BinaryOperator::ShiftRight as u32;
+pub(super) const SHIFT_RIGHT_ZERO_FILL: u32 = BinaryOperator::ShiftRightZeroFill as u32;
+pub(super) const BITWISE_OR: u32 = BinaryOperator::BitwiseOR as u32;
+pub(super) const BITWISE_XOR: u32 = BinaryOperator::BitwiseXOR as u32;
+pub(super) const BITWISE_AND: u32 = BinaryOperator::BitwiseAnd as u32;
+
+/// Integer operator `OP` (`numeric_integer_result`) when both operands are integers;
+/// `None` otherwise, leaving other Numbers to `number_binary`.
+#[inline(always)]
+pub(super) fn integer_operator<const OP: u32>(left: Value, right: Value) -> Option<Value> {
+    let (left, right) = Value::int_pair(left, right)?;
+    numeric_integer_result(numeric_binary_operator(OP)?, left, right)
+}
+
 #[inline(always)]
 fn number_arithmetic(
     left: Value,
@@ -671,7 +687,9 @@ impl<H: Host> Vm<H> {
                     self.to_property_key(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
                 let receiver = self.box_object_or_type_error(p, this)?;
                 let found = match self.own_property_enumerable(p, receiver, key_value)? {
-                    Some(enumerable) => native == Native::ObjectPrototypeHasOwnProperty || enumerable,
+                    Some(enumerable) => {
+                        native == Native::ObjectPrototypeHasOwnProperty || enumerable
+                    }
                     None => false,
                 };
                 Ok(if found { Value::TRUE } else { Value::FALSE })
