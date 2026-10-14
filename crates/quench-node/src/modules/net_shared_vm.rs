@@ -29,7 +29,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
   const listeners = (socket) => socket._listeners;
   class Socket extends Duplex {
     constructor(options = {}) {
-      options = socketOptionsOperation(options, false);
+      options = { ...socketOptionsOperation(options, false) };
       super({
         ...options, autoDestroy: true, allowHalfOpen: true, emitClose: false,
         read() {},
@@ -1245,7 +1245,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         crate::host::shared_vm::operation("netSocketWriteAfterFin"), duplex,
     )?;
     let facade = context.evaluate_script_rooted(quench_js_check::checked_js!(
-        "(operation)=>function writeAfterFIN(chunk,encoding,cb){return operation(this,chunk,encoding,cb);}"
+        "(operation)=>function writeAfterFIN(chunk,encoding,cb){'use strict';return operation(this,chunk,encoding,cb);}"
     ), "node:net/write-after-fin.js")?;
     let undefined = context.undefined();
     let fin = context.call_rooted(facade, undefined, &[fin])?;
@@ -1253,7 +1253,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         crate::host::shared_vm::operation("netSocketReadableEnd"), fin,
     )?;
     let facade = context.evaluate_script_rooted(quench_js_check::checked_js!(
-        "(operation)=>function onReadableStreamEnd(){return operation(this);}"
+        "(operation)=>function onReadableStreamEnd(){'use strict';return operation(this);}"
     ), "node:net/readable-end.js")?;
     let readable_end = context.call_rooted(facade, undefined, &[readable_end])?;
     let init_end = context.host_function(crate::host::shared_vm::operation("netSocketInitEnd"))?;
