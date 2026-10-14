@@ -94,6 +94,19 @@ impl WideInstruction {
         self.c = value;
     }
 
+    /// Wide fields hold any `u16`, so these always succeed.
+    #[allow(dead_code)]
+    pub(crate) fn try_set_b(&mut self, value: u16) -> Option<()> {
+        self.b = value;
+        Some(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn try_set_c(&mut self, value: u16) -> Option<()> {
+        self.c = value;
+        Some(())
+    }
+
     pub(crate) fn set_imm(&mut self, imm: u32) {
         self.imm = imm;
     }
@@ -397,14 +410,16 @@ macro_rules! layout_accessors {
                 Operand(self.b())
             }
 
+            /// Sets operand B, or leaves the instruction unchanged and returns `None` when the
+            /// operand does not fit the field's packed width.
             #[allow(dead_code)]
-            pub(crate) fn set_operand_b(&mut self, operand: Operand) {
+            pub(crate) fn set_operand_b(&mut self, operand: Operand) -> Option<()> {
                 debug_assert!(
                     self.op()
                         .field_layout(InstructionField::B)
                         .is_operand_field()
                 );
-                self.set_b(operand.0);
+                self.try_set_b(operand.0)
             }
 
             #[allow(dead_code)]
@@ -417,14 +432,16 @@ macro_rules! layout_accessors {
                 Operand(self.c())
             }
 
+            /// Sets operand C, or leaves the instruction unchanged and returns `None` when the
+            /// operand does not fit the field's packed width.
             #[allow(dead_code)]
-            pub(crate) fn set_operand_c(&mut self, operand: Operand) {
+            pub(crate) fn set_operand_c(&mut self, operand: Operand) -> Option<()> {
                 debug_assert!(
                     self.op()
                         .field_layout(InstructionField::C)
                         .is_operand_field()
                 );
-                self.set_c(operand.0);
+                self.try_set_c(operand.0)
             }
 
             #[allow(dead_code)]
@@ -861,6 +878,18 @@ impl Instr {
 
     pub(crate) fn set_b(&mut self, value: u16) {
         *self = Self::new(self.op(), self.a(), value, self.c(), self.imm());
+    }
+
+    /// `set_b`, or `None` with the instruction unchanged when `value` does not fit B.
+    pub(crate) fn try_set_b(&mut self, value: u16) -> Option<()> {
+        *self = Self::try_new(self.op(), self.a(), value, self.c(), self.imm())?;
+        Some(())
+    }
+
+    /// `set_c`, or `None` with the instruction unchanged when `value` does not fit C.
+    pub(crate) fn try_set_c(&mut self, value: u16) -> Option<()> {
+        *self = Self::try_new(self.op(), self.a(), self.b(), value, self.imm())?;
+        Some(())
     }
 
     pub(crate) fn set_c(&mut self, value: u16) {

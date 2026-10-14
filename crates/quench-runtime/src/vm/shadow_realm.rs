@@ -91,7 +91,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn set_builtin_function_length(&mut self, function: Value, length: f64) -> Result<(), JsError> {
+    pub(super) fn set_builtin_function_length(&mut self, function: Value, length: f64) -> Result<(), JsError> {
         let atom = self.intern_atom("length");
         if self
             .own_property(function, atom)

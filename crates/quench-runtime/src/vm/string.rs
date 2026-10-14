@@ -320,6 +320,18 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(iterator, "[Symbol.iterator]")?;
         let symbol = self.well_known_symbols["iterator"];
         self.set_symbol_property(prototype, symbol, iterator)?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::symbol(symbol),
+            PropertyAttributes {
+                writable: true,
+                enumerable: false,
+                configurable: true,
+                accessor: false,
+                getter: None,
+                setter: None,
+            },
+        );
         Ok(prototype)
     }
 
