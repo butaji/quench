@@ -159,7 +159,11 @@ fn string_html_method(native: Native) -> Option<&'static StringHtmlMethod> {
         .find(|method| method.native == native)
 }
 
-pub(super) fn rfind_utf16(text: &[u16], search: &[u16], position: usize) -> Option<usize> {
+pub(super) fn rfind_utf16(
+    text: super::wtf16::Units<'_>,
+    search: super::wtf16::Units<'_>,
+    position: usize,
+) -> Option<usize> {
     if search.is_empty() {
         return Some(position.min(text.len()));
     }
@@ -168,7 +172,7 @@ pub(super) fn rfind_utf16(text: &[u16], search: &[u16], position: usize) -> Opti
         .into_iter()
         .flat_map(|end| 0..=end)
         .rev()
-        .find(|index| text[*index..*index + search.len()] == *search)
+        .find(|index| text.slice(*index..*index + search.len()) == search)
 }
 
 impl<H: Host> Vm<H> {
@@ -354,7 +358,7 @@ impl<H: Host> Vm<H> {
             if method.attribute.is_some() {
                 let argument =
                     self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-                for &unit in argument.units() {
+                for unit in argument.units().iter() {
                     if unit == HTML_ATTRIBUTE_QUOTE {
                         units.extend(HTML_QUOTE_ENTITY.encode_utf16());
                     } else {
@@ -363,7 +367,7 @@ impl<H: Host> Vm<H> {
                 }
                 units.extend("\">".encode_utf16());
             }
-            units.extend(receiver.units());
+            receiver.units().extend_into(&mut units);
             units.extend(format!("</{}>", method.tag).encode_utf16());
             Ok(self.heap.alloc(Cell::String(JsString::from_units(&units))))
         })())
@@ -819,7 +823,15 @@ impl<H: Host> Vm<H> {
 /// Applies a full case mapping to each well-formed run of `units`. A lone
 /// surrogate has no case mapping and is not cased, so it maps to itself and
 /// leaves the surrounding runs' casing contexts unchanged.
-fn map_case(units: &[u16], map: impl Fn(&str) -> String) -> JsString {
+fn map_case(units: super::wtf16::Units<'_>, map: impl Fn(&str) -> String) -> JsString {
+    let units = match units {
+        super::wtf16::Units::Ascii(bytes) => {
+            return JsString::from_str(&map(
+                std::str::from_utf8(bytes).expect("ASCII units are UTF-8"),
+            ));
+        }
+        super::wtf16::Units::Wide(units) => units,
+    };
     let mut output = Vec::with_capacity(units.len());
     let flush = |run: &[u16], output: &mut Vec<u16>| {
         let text = String::from_utf16(run).expect("runs between lone surrogates are well formed");

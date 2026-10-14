@@ -805,7 +805,7 @@ impl<H: Host> Vm<H> {
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
-            for (index, unit) in text.units().iter().copied().enumerate() {
+            for (index, unit) in text.units().iter().enumerate() {
                 let key = self.intern_atom(&index.to_string());
                 let character = self
                     .heap

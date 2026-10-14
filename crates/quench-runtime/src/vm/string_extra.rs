@@ -42,7 +42,7 @@ fn append_escape_hex(output: &mut String, value: u16, digit_count: usize) {
 
 pub(super) fn escape(value: &super::wtf16::JsString) -> String {
     let mut output = String::with_capacity(value.units().len());
-    for &unit in value.units() {
+    for unit in value.units().iter() {
         if unit <= ESCAPE_ASCII_MAX && (unit as u8).is_ascii_alphanumeric() {
             output.push(unit as u8 as char);
         } else if unit <= ESCAPE_ASCII_MAX && ESCAPE_UNESCAPED.contains(&(unit as u8)) {
@@ -62,7 +62,8 @@ pub(super) fn escape(value: &super::wtf16::JsString) -> String {
 }
 
 pub(super) fn unescape(value: &super::wtf16::JsString) -> super::wtf16::JsString {
-    let units = value.units();
+    let wide = value.units().wide();
+    let units: &[u16] = &wide;
     let mut output = Vec::with_capacity(units.len());
     let mut index = 0;
     while index < units.len() {
@@ -97,7 +98,8 @@ pub(super) fn encode_uri(
     value: &super::wtf16::JsString,
     component: bool,
 ) -> Result<String, &'static str> {
-    let units = value.units();
+    let wide = value.units().wide();
+    let units: &[u16] = &wide;
     let mut output = String::with_capacity(units.len());
     let mut index = 0;
     while index < units.len() {
@@ -143,7 +145,8 @@ pub(super) fn decode_uri(
     value: &super::wtf16::JsString,
     component: bool,
 ) -> Result<super::wtf16::JsString, &'static str> {
-    let units = value.units();
+    let wide = value.units().wide();
+    let units: &[u16] = &wide;
     let mut output = Vec::with_capacity(units.len());
     let mut index = 0;
     while index < units.len() {

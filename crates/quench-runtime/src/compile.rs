@@ -1582,6 +1582,9 @@ struct Compiler<'a> {
     object_sites: Vec<ObjectSite>,
     regexp_literal_sites: Vec<crate::bytecode::RegExpLiteralSite>,
     superinstructions: Vec<Superinstruction>,
+    /// Distinct `name_bindings` lists: sibling functions that see the same bindings,
+    /// such as every function declared in one module scope, share one list.
+    name_binding_lists: FxHashSet<std::rc::Rc<[crate::bytecode::EvalBinding]>>,
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
@@ -1714,6 +1717,18 @@ impl From<&Constant> for ConstantKey {
 }
 
 impl<'a> Compiler<'a> {
+    fn intern_name_bindings(
+        &mut self,
+        bindings: Vec<crate::bytecode::EvalBinding>,
+    ) -> std::rc::Rc<[crate::bytecode::EvalBinding]> {
+        if let Some(shared) = self.name_binding_lists.get(bindings.as_slice()) {
+            return shared.clone();
+        }
+        let shared: std::rc::Rc<[crate::bytecode::EvalBinding]> = bindings.into();
+        self.name_binding_lists.insert(shared.clone());
+        shared
+    }
+
     fn annex_b_collisions(&self, body: &[Statement<'_>]) -> FxHashSet<u32> {
         let mut collisions = early::annex_b_lexical_collisions(body);
         collisions.extend(self.eval_annex_b_collisions.iter().copied());
@@ -1768,6 +1783,7 @@ impl<'a> Compiler<'a> {
             object_sites: vec![],
             regexp_literal_sites: vec![],
             superinstructions: vec![],
+            name_binding_lists: FxHashSet::default(),
         }
     }
 
@@ -2628,6 +2644,7 @@ impl<'a> Compiler<'a> {
                 .collect()
         });
         let name_bindings = function.name_bindings();
+        let name_bindings = function.owner.intern_name_bindings(name_bindings);
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
         let result = BcFunction {

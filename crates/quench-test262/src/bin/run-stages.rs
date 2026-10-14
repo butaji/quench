@@ -12,6 +12,7 @@ use std::{
 };
 
 use quench_test262::ratchet::{relative_test_path, PassSet, DEFAULT_RATCHET};
+use quench_test262::waivers::{Adjudication, Waivers};
 use quench_test262::{
     discover_js_files, resolve_stages, HarnessCache, Test262Runner, Test262RuntimeHost, TestOutcome,
 };
@@ -91,9 +92,11 @@ fn run() -> Result<(), String> {
     } else {
         None
     };
+    let waivers = Waivers::pinned()?;
     let provenance = run_provenance(&executable, timeout)?;
     let mut total_selected = 0;
     let mut total_passed = 0;
+    let mut total_waived = 0;
     let mut total_failed = 0;
     let mut report_outcomes = Vec::new();
     let mut has_failure = false;
@@ -113,27 +116,38 @@ fn run() -> Result<(), String> {
         total_selected += files.len();
         let mut current_passes = std::collections::HashSet::new();
         let mut passed = 0;
+        let mut waived = 0;
         let mut failed = 0;
         let mut failures = std::collections::HashMap::<String, FailureFamily>::new();
         let mut failure_examples = 0;
         let batch_count = files.len().div_ceil(MAX_CASES_PER_BATCH);
         for (batch_index, batch) in files.chunks(MAX_CASES_PER_BATCH).enumerate() {
             let mut batch_passed = 0;
+            let mut batch_waived = 0;
             let mut batch_failed = 0;
             let outcomes = run_batch(&executable, &args.root, batch, timeout)?;
             for (path, outcome) in batch.iter().zip(outcomes) {
+                let relative = relative_test_path(path, &args.root.join("test"));
+                let adjudication = waivers.adjudicate(&relative, &outcome);
                 report_outcomes.push(quench_test262::reporting::case_outcome(
-                    relative_test_path(path, &args.root.join("test")),
+                    relative.clone(),
                     stage.id.to_string(),
                     &outcome,
+                    adjudication.waiver(),
                 ));
-                match outcome {
-                    Ok(()) => {
+                if outcome.is_ok() {
+                    current_passes.insert(relative);
+                }
+                match adjudication {
+                    Adjudication::Pass => {
                         passed += 1;
                         batch_passed += 1;
-                        current_passes.insert(relative_test_path(path, &args.root.join("test")));
                     }
-                    Err(reason) => {
+                    Adjudication::Waived(_) => {
+                        waived += 1;
+                        batch_waived += 1;
+                    }
+                    Adjudication::Failed(reason) => {
                         failed += 1;
                         batch_failed += 1;
                         let family = quench_test262::reporting::normalize_failure(&reason);
@@ -147,24 +161,27 @@ fn run() -> Result<(), String> {
                 }
             }
             println!(
-                "stage {:>3} batch {:>3}/{:<3} passed={} failed={} total={}",
+                "stage {:>3} batch {:>3}/{:<3} passed={} waived={} failed={} total={}",
                 stage.id,
                 batch_index + 1,
                 batch_count,
                 batch_passed,
+                batch_waived,
                 batch_failed,
                 batch.len()
             );
         }
         println!(
-            "stage {:>3}: {} passed={} failed={} total={}",
+            "stage {:>3}: {} passed={} waived={} failed={} total={}",
             stage.id,
             stage.path,
             passed,
+            waived,
             failed,
-            passed + failed
+            passed + waived + failed
         );
         total_passed += passed;
+        total_waived += waived;
         total_failed += failed;
         write_outcome_report(&report_outcomes, &provenance)?;
         let mut stage_regressed = false;
@@ -209,11 +226,12 @@ fn run() -> Result<(), String> {
         return Err("stage selection discovered no tests".into());
     }
     println!(
-        "stages={} passed={} failed={} total={}",
+        "stages={} passed={} waived={} failed={} total={}",
         selected_stages.len(),
         total_passed,
+        total_waived,
         total_failed,
-        total_passed + total_failed
+        total_passed + total_waived + total_failed
     );
     if has_failure {
         Err("one or more selected stages failed".into())
