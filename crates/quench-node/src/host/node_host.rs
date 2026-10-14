@@ -84,6 +84,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) url_state: Option<quench_runtime::RootId>,
     pub(crate) url_search_params_constructor: Option<quench_runtime::RootId>,
     pub(crate) timer_handle_api: Option<crate::modules::timers_shared_vm::TimerHandleApi>,
+    pub(crate) timer_duration_warnings: crate::modules::timers_shared_vm::TimerDurationWarnings,
     /// Invocation flags supplied by the embedder for this logical process.
     pub(crate) exec_argv: Vec<String>,
     pub(crate) fetch: crate::modules::fetch_shared_vm::FetchState,
@@ -169,6 +170,7 @@ impl SharedNodeState {
         self.url_state = None;
         self.url_search_params_constructor = None;
         self.timer_handle_api = None;
+        self.timer_duration_warnings = Default::default();
         self.net_socket_constructor = None;
         self.net_handle_owner_symbol = None;
         self.net_server_on_connection = None;
@@ -228,6 +230,7 @@ impl SharedNodeState {
             url_state: None,
             url_search_params_constructor: None,
             timer_handle_api: None,
+            timer_duration_warnings: Default::default(),
             exec_argv: Vec::new(),
             fetch: crate::modules::fetch_shared_vm::FetchState::new(),
             diagnostics:

@@ -1,6 +1,6 @@
 use crate::host::NodeHost;
 use crate::modules::shared_event_loop::SharedCallback;
-use quench_runtime::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError};
 use std::time::Duration;
 
 pub(crate) const TIMER_DESTROYED: &str = "_destroyed";
@@ -109,6 +109,7 @@ pub(crate) struct TimerHandleApi {
     pub(crate) primitive_registry: RootId,
     pub(crate) primitive_cleanup: RootId,
     pub(crate) delete_property: RootId,
+    pub(crate) number_string: RootId,
     pub(crate) timeout_prototype: RootId,
     pub(crate) immediate_prototype: RootId,
 }
@@ -672,39 +673,71 @@ fn schedule_timer(
     Ok(handle)
 }
 
-fn timer_delay(
-    context: &mut NativeContext<'_, NodeHost>,
-    delay: Option<RootId>,
-) -> Result<Duration, RootedError> {
-    let Some(delay) = delay else {
-        return Ok(Duration::from_millis(DEFAULT_TIMER_DELAY_MS));
-    };
-    let value = context
-        .rooted_value(delay)
-        .ok_or_else(|| RootedError::host("invalid timer delay root"))?;
-    let numeric = if let Some(number) = value.as_number() {
-        Some(number)
-    } else if let Some(boolean) = value.as_bool() {
-        Some(if boolean { 1.0 } else { 0.0 })
-    } else if value.is_null() {
-        Some(0.0)
-    } else if let Some(text) = context.string_text(delay)? {
-        if text.trim().is_empty() {
-            Some(0.0)
-        } else {
-            text.trim().parse::<f64>().ok()
+#[derive(Default)]
+pub(crate) struct TimerDurationWarnings {
+    negative: bool,
+    not_number: bool,
+}
+
+#[derive(Clone, Copy)]
+enum TimerDurationWarning { Overflow, Negative, NotNumber }
+
+impl TimerDurationWarning {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Overflow => "TimeoutOverflowWarning",
+            Self::Negative => "TimeoutNegativeWarning",
+            Self::NotNumber => "TimeoutNaNWarning",
         }
-    } else if value.is_undefined() {
-        None
-    } else {
-        None
+    }
+    fn detail(self) -> &'static str {
+        match self {
+            Self::Overflow => "does not fit into a 32-bit signed integer.",
+            Self::Negative => "is a negative number.",
+            Self::NotNumber => "is not a number.",
+        }
+    }
+}
+
+fn timer_delay(context: &mut NativeContext<'_, NodeHost>, delay: Option<RootId>) -> Result<Duration, RootedError> {
+    let one = context.number(DEFAULT_TIMER_DELAY_MS as f64);
+    let delay = delay.filter(|value| !context.rooted_value(*value).is_some_and(|value| value.is_undefined()));
+    // Node's `after *= 1`: Core owns conversion hooks, Symbol/BigInt errors and NaN.
+    let numeric = match delay {
+        Some(delay) => context.arithmetic_rooted(NativeArithmetic::Multiply, delay, one)?,
+        None => one,
     };
-    let milliseconds = numeric
-        .filter(|value| value.is_finite())
-        .map(|value| value.max(0.0).trunc() as u64)
-        .unwrap_or(DEFAULT_TIMER_DELAY_MS)
-        .clamp(DEFAULT_TIMER_DELAY_MS, MAX_TIMER_DELAY_MS);
-    Ok(Duration::from_millis(milliseconds))
+    let after = context.rooted_value(numeric).and_then(|value| value.as_number())
+        .ok_or_else(|| RootedError::host("timer multiplication did not return a Number"))?;
+    if after >= DEFAULT_TIMER_DELAY_MS as f64 && after <= MAX_TIMER_DELAY_MS as f64 {
+        return Ok(Duration::from_millis(after.trunc() as u64));
+    }
+    let warning = {
+        let state = context.host_mut().shared_state();
+        let mut state = state.borrow_mut();
+        let warnings = &mut state.timer_duration_warnings;
+        if after > MAX_TIMER_DELAY_MS as f64 { Some(TimerDurationWarning::Overflow) }
+        else if after < 0.0 && !warnings.negative {
+            warnings.negative = true;
+            Some(TimerDurationWarning::Negative)
+        } else if after.is_nan() && !warnings.not_number {
+            warnings.not_number = true;
+            Some(TimerDurationWarning::NotNumber)
+        } else { None }
+    };
+    if let Some(warning) = warning {
+        let api = timer_handle_api(context)?;
+        let undefined = context.undefined();
+        let number = context.call_rooted(api.number_string, undefined, &[numeric])?;
+        let number = context.string_text(number)?.ok_or_else(|| RootedError::host("Number string conversion failed"))?;
+        let message = context.string_rooted(&format!("{number} {}\nTimeout duration was set to 1.", warning.detail()));
+        let kind = context.string_rooted(warning.name());
+        let global = context.global_root()?;
+        let process = property(context, global, "process")?;
+        let emit = property(context, process, "emitWarning")?;
+        context.call_rooted(emit, process, &[message, kind])?;
+    }
+    Ok(Duration::from_millis(DEFAULT_TIMER_DELAY_MS))
 }
 
 pub(crate) fn timer_ref(
@@ -819,6 +852,7 @@ fn timer_handle_api(
     let global = context.global_root()?;
     let reflect = property(context, global, "Reflect")?;
     let delete_property = property(context, reflect, "deleteProperty")?;
+    let number_string = property(context, global, "String")?;
     let timeout_prototype = timer_handle_prototype(context, "Timeout", "timerHasRef")?;
     let immediate_prototype = timer_handle_prototype(context, "Immediate", "immediateHasRef")?;
     let api = TimerHandleApi {
@@ -828,6 +862,7 @@ fn timer_handle_api(
         primitive_registry: context.retain(primitive_registry)?,
         primitive_cleanup: context.retain(primitive_cleanup)?,
         delete_property: context.retain(delete_property)?,
+        number_string: context.retain(number_string)?,
         timeout_prototype: context.retain(timeout_prototype)?,
         immediate_prototype: context.retain(immediate_prototype)?,
     };
