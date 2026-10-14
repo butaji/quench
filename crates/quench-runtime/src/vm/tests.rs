@@ -796,6 +796,28 @@ fn reused_frames_resolve_captures_from_their_own_environment_state() {
 }
 
 #[test]
+fn collection_iterators_follow_deletes_compaction_and_clear() {
+    // Deletes leave holes and compaction renumbers registered iterators; a `forEach` walk
+    // defers compaction and still visits entries added after a `clear`. Node agrees.
+    let source = "var out = [];\n\
+         var m = new Map(); for (var i = 0; i < 100; i++) m.set(i, i);\n\
+         var it = m.keys(); for (var i = 0; i < 10; i++) it.next();\n\
+         for (var i = 0; i < 90; i++) m.delete(i);\n\
+         out.push(it.next().value, m.size, m.get(95), m.has(5));\n\
+         var walked = []; var w = new Map(); for (var i = 0; i < 50; i++) w.set(i, i);\n\
+         w.forEach(function (v, k) { walked.push(k);\n\
+           if (k === 0) { for (var j = 1; j < 45; j++) w.delete(j); w.set('late', 1); }\n\
+           if (k === 'late') { w.clear(); w.set('after', 2); } });\n\
+         out.push(walked.join(' '), w.size);\n\
+         var s = new Set([0, -0, NaN, NaN, 'k', 'k']); out.push(s.size, s.has(-0), s.has(NaN));\n\
+         var result = out.join();";
+    assert_eq!(
+        global_text(source, "result"),
+        "90,10,95,false,0 45 46 47 48 49 late after,1,3,true,true"
+    );
+}
+
+#[test]
 fn inner_lexical_bindings_shadow_outer_immutable_captures() {
     let source = "'use strict';\n\
          const a = 1;\n\

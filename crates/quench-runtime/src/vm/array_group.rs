@@ -45,7 +45,7 @@ impl<H: Host> Vm<H> {
                 .or_else(|| {
                     self.map_entry_index(grouped, key).and_then(|index| {
                         match self.heap.get(grouped) {
-                            Some(Cell::Map { entries, .. }) => Some(entries[index].1),
+                            Some(Cell::Map { entries, .. }) => Some(entries.value_at(index)),
                             _ => None,
                         }
                     })
@@ -65,8 +65,11 @@ impl<H: Host> Vm<H> {
             });
             if let Some(atom) = key_atom {
                 self.set_property(grouped, atom, bucket)?;
-            } else if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(grouped) {
-                entries.push((key, bucket));
+            } else {
+                let key_hash = self.same_value_zero_hash(key);
+                if let Some(Cell::Map { entries, .. }) = self.heap.get_mut(grouped) {
+                    entries.push((key, bucket), key_hash);
+                }
             }
         }
         Ok(grouped)
