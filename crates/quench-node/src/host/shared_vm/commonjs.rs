@@ -1270,8 +1270,11 @@ fn load(
     let result = (|| {
         let bytes =
             std::fs::read(filename).map_err(|error| RootedError::host(error.to_string()))?;
-        let text = String::from_utf8_lossy(&bytes);
-        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+        // The file's text owns the bytes it was read into, so a module's source is held once
+        // until its wrapper is built.
+        let file_text = String::from_utf8(bytes)
+            .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
+        let text = file_text.strip_prefix('\u{feff}').unwrap_or(&file_text);
         match filename
             .extension()
             .and_then(|extension| extension.to_str())
@@ -1298,7 +1301,7 @@ fn load(
                 // symbol for native Hash objects. The compact crypto builtin
                 // uses the global registry to expose the matching handle to
                 // that source module.
-                let source = if filename
+                let source: std::borrow::Cow<'_, str> = if filename
                     .to_string_lossy()
                     .ends_with("/internal/crypto/util.js")
                 {
@@ -1306,8 +1309,9 @@ fn load(
                         "const kHandle = Symbol('kHandle');",
                         "const kHandle = Symbol.for('quench.internal.crypto.kHandle');",
                     )
+                    .into()
                 } else {
-                    text.to_owned()
+                    text.into()
                 };
                 let text = source.strip_prefix('\u{feff}').unwrap_or(&source);
                 let is_primordials = filename
@@ -1323,10 +1327,11 @@ fn load(
                 } else {
                     None
                 };
-                let text = if is_primordials {
+                let text: std::borrow::Cow<'_, str> = if is_primordials {
                     format!("primordials ??= {{}};\n{text}\nmodule.exports = primordials;\n")
+                        .into()
                 } else {
-                    text.to_owned()
+                    text.into()
                 };
                 let exports = get(context, module, "exports")?;
                 let require = get(context, module, "require")?;
@@ -1459,6 +1464,8 @@ const getLinkedBinding = () => ({});
                     format!("(function (exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding) {{ {internal_binding}")
                 } else { format!("{WRAPPER_PREFIX}{internal_binding}") };
                 let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
+                drop(text);
+                drop(source);
                 let line_offset = u32::try_from(
                     prefix.bytes().filter(|byte| *byte == b'\n').count(),
                 )
@@ -1482,6 +1489,10 @@ const getLinkedBinding = () => ({});
                     line_offset,
                     column_offset,
                 )?;
+                // The compiled program keeps its own source; the module body runs inside this
+                // call, so the file text and wrapper are released before it.
+                drop(wrapper_source);
+                drop(file_text);
                 let mut arguments = vec![exports, require, module, name, directory, primordials];
                 if in_node_internal {
                     arguments.push(context.host_function(crate::host::shared_vm::operation("traceInternal"))?);

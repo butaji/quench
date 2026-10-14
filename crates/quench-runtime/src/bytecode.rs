@@ -1012,7 +1012,9 @@ pub struct Function {
     pub global_function_atoms: Vec<Atom>,
     pub global_annex_b_var_atoms: Vec<Atom>,
     pub global_immutable_atoms: Vec<Atom>,
-    pub(crate) name_bindings: Vec<EvalBinding>,
+    /// Bindings a dynamic name lookup in this function can see. Functions with the same
+    /// visible bindings share one list (`Compiler::intern_name_bindings`).
+    pub(crate) name_bindings: std::rc::Rc<[EvalBinding]>,
     /// Lexical projections at eval calls and dynamic name operations.
     pub binding_sites: Vec<BindingSite>,
     pub(crate) source_positions: Vec<SourcePosition>,
@@ -1499,7 +1501,7 @@ pub(crate) struct BindingSite {
     pub(crate) bindings: Vec<EvalBinding>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct EvalBinding {
     pub(crate) atom: Atom,
     pub(crate) location: EvalBindingLocation,
@@ -1517,7 +1519,7 @@ impl EvalBinding {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub(crate) enum EvalBindingDeclaration {
     Lexical = 0,
@@ -1534,13 +1536,13 @@ impl EvalBindingDeclaration {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum EvalBindingLocation {
     Local(u16),
     Capture { depth: u16, slot: u16 },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub(crate) enum LexicalBindingKind {
     Mutable = 0,
