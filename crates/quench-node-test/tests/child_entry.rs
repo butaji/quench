@@ -6099,3 +6099,99 @@ function check(label,big,num,exact){
 })().catch(error=>{console.error(error);process.exitCode=1;});
 "#);
 }
+
+#[test]
+fn native_socket_paused_accept_defers_actual_reads_until_resume() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),assert=require('assert');const out=[];
+const server=net.createServer({pauseOnConnect:true},socket=>{
+ socket.on('data',data=>{out.push(['data',data.toString()]);socket.end();});
+ setTimeout(()=>{
+  out.push(['paused',socket.bytesRead,socket.readableFlowing,socket.isPaused()]);assert.strictEqual(socket.bytesRead,0);socket.resume();
+ },20);
+}).listen(0,()=>{
+ const client=net.connect(server.address().port,()=>client.write('payload'));
+ client.on('close',()=>server.close(()=>console.log(JSON.stringify(out))));
+});
+"#);
+}
+
+#[test]
+fn stream_explicit_flowing_false_prevents_automatic_data_resume() {
+    compare_node_stream_source(r#"
+'use strict';
+const {Readable}=require('stream');const out=[];let reads=0;
+const stream=new Readable({read(){reads++;this.push('x');this.push(null);}});
+stream.readableFlowing=false;stream.on('data',data=>out.push(['data',data.toString()]));
+out.push(['initial',stream.isPaused(),stream.readableFlowing,reads]);
+process.nextTick(()=>{out.push(['tick',stream.isPaused(),stream.readableFlowing,reads]);stream.resume();});
+stream.on('end',()=>{out.push(['end',reads]);console.log(JSON.stringify(out));});
+"#);
+}
+
+#[test]
+fn native_paused_connected_socket_keeps_reference_bit_without_active_loop_work() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),assert=require('assert');const output=[];
+const server=net.createServer(socket=>socket.unref()).listen(0,()=>{
+ const client=net.connect(server.address().port,()=>output.push(['connected',client._handle.hasRef(),client.isPaused()]));client.pause();
+ setTimeout(()=>assert.fail('idle referenced socket kept event loop alive'),100).unref();
+}).unref();
+process.on('exit',()=>console.log(JSON.stringify(output)));
+"#);
+}
+
+#[test]
+fn tls_wrapped_parent_and_tls_handle_share_original_reading_view() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),tls=require('tls'),fs=require('fs');const output=[];
+const root='/workspace/work/node-fixtures/test/fixtures/keys/';
+const server=tls.createServer({key:fs.readFileSync(root+'agent1-key.pem'),cert:fs.readFileSync(root+'agent1-cert.pem')}).listen(0,()=>{
+ const plain=net.connect(server.address().port,()=>{
+  const secure=tls.connect({socket:plain,rejectUnauthorized:false},()=>{
+   const parent=plain._handle,handle=secure._handle,descriptor=Object.getOwnPropertyDescriptor(parent,'reading');
+   output.push([typeof descriptor.get,typeof descriptor.set,parent.reading===handle.reading]);
+   handle.reading=false;output.push(parent.reading);parent.reading=true;output.push(handle.reading);
+   secure.destroy();server.close(()=>console.log(JSON.stringify(output)));
+  });
+ });
+});
+"#);
+}
+
+#[test]
+fn native_socket_endpoint_getters_follow_original_handle_and_cache_like_node() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),assert=require('assert');const out=[];
+for(const name of ['remoteAddress','remoteFamily','remotePort','localAddress','localFamily','localPort']){
+ const d=Object.getOwnPropertyDescriptor(net.Socket.prototype,name);out.push([name,d.enumerable,d.configurable,d.get.name,d.get.length,d.set===undefined,Object.hasOwn(d.get,'prototype')]);
+}
+const socket=new net.Socket(), calls=[];let fail=true;
+const handle={get getpeername(){calls.push('get-peer');return function(o){calls.push(['peer',this===handle,Object.getPrototypeOf(o)===Object.prototype]);o.address='peer';o.family='IPv6';o.port=42;return fail?1:0;};},get getsockname(){calls.push('get-local');return function(o){calls.push(['local',this===handle]);o.address='local';o.family='IPv4';o.port=7;return 1;};}};
+socket._handle=handle;socket.connecting=true;out.push(['connecting',socket.remoteAddress]);socket.connecting=false;
+out.push(['failed',socket.remoteAddress,!!socket._peername]);fail=false;out.push(['success',socket.remotePort,socket.remoteFamily]);socket._handle=null;out.push(['closed',socket.remoteAddress,socket.localAddress]);
+socket._handle=handle;out.push(['local',socket.localAddress,socket.localPort]);socket._handle=null;out.push(['local-after-close',socket.localAddress]);socket._getpeername=()=>({address:'override'});out.push(['override',socket.remoteAddress]);out.push(calls);console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_timer_callbacks_and_resource_projection_match_node() {
+    compare_node_stream_source(r#"
+'use strict';
+const assert=require('assert'),out=[];
+for(const value of [null,undefined,0,false,{},'none']){out.push(['clear',String(value),clearTimeout(value),clearInterval(value),clearImmediate(value)]);}
+const dormant=setTimeout(()=>assert.fail('dormant timer fired'),10000).unref();
+const held=setTimeout(()=>assert.fail('held timer fired'),10000);
+const dormantImmediate=setImmediate(()=>{}).unref();
+out.push(['resources',process.getActiveResourcesInfo().filter(v=>v==='Timeout').length,process.getActiveResourcesInfo().filter(v=>v==='Immediate').length]);clearTimeout(held);clearTimeout(dormant);clearImmediate(dormantImmediate);
+let left=3;const rows=[];
+function record(kind,handle,args){assert.strictEqual(this,handle);rows.push([kind,this===handle,args]);if(--left===0){rows.sort((a,b)=>a[0].localeCompare(b[0]));out.push(rows);console.log(JSON.stringify(out));}}
+const immediate=setImmediate(function(...args){record.call(this,'immediate',immediate,args)},'i',2);
+const timeout=setTimeout(function(...args){const before=process.getActiveResourcesInfo().filter(v=>v==='Timeout').length;clearTimeout(timeout);assert.strictEqual(process.getActiveResourcesInfo().filter(v=>v==='Timeout').length,before-1);record.call(this,'timeout',timeout,args)},1,'t',3);
+const interval=setInterval(function(...args){clearInterval(interval);record.call(this,'interval',interval,args)},1,'r',4);
+"#);
+}

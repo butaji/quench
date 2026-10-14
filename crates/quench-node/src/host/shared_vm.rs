@@ -196,6 +196,22 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netServerOnConnection" (3) => crate::modules::net_server_admission::on_connection,
         method "netSocketCreateHandle" (1) => crate::modules::net_reference_shared_vm::create_socket_handle,
         method "netHandleClose" (0) => crate::modules::net_reference_shared_vm::close,
+        method "netHandleReadStart" (0) => crate::modules::net_reference_shared_vm::read_start,
+        method "netHandleReadStop" (0) => crate::modules::net_reference_shared_vm::read_stop,
+        method "netSocketPeerName" (1) => crate::modules::net_socket_address::peer,
+        method "netSocketLocalName" (1) => crate::modules::net_socket_address::local,
+        method "netSocketEndpointView" (1) => crate::modules::net_socket_address::view,
+        method "netSocketRead" (2) => crate::modules::net_socket_read::read,
+        method "netSocketReadAfterConnect" (0) => crate::modules::net_socket_read::read_after_connect,
+        method "netSocketInitializeRead" (2) => crate::modules::net_socket_read::initialize,
+        method "netParentReadingGet" (0) => crate::modules::net_socket_read::parent_reading_get,
+        method "netParentReadingSet" (1) => crate::modules::net_socket_read::parent_reading_set,
+        method "streamShouldResumeData" (1) => crate::modules::stream_shared_vm::should_resume_data,
+        method "streamIsPaused" (1) => crate::modules::stream_shared_vm::is_paused,
+        method "streamSetFlowing" (2) => crate::modules::stream_shared_vm::set_flowing,
+        method "streamPipeStart" (2) => crate::modules::stream_pipe_shared_vm::start,
+        method "streamListenerRemoved" (3) => crate::modules::stream_shared_vm::listener_removed,
+        method "streamUpdateReadableListening" (1) => crate::modules::stream_shared_vm::update_readable_listening,
         method "netHandleCloseComplete" (0) => crate::modules::net_reference_shared_vm::close_complete,
         method "netHandleGetSockName" (0) => crate::modules::net_reference_shared_vm::get_sock_name,
         method "netHandleGetPeerName" (0) => crate::modules::net_reference_shared_vm::get_peer_name,
@@ -469,6 +485,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         global "clearTimeout" (1) => crate::modules::timers_shared_vm::clear_timer,
         global "setInterval" (1) => crate::modules::timers_shared_vm::set_interval,
         global "clearInterval" (1) => crate::modules::timers_shared_vm::clear_timer,
+        method "processGetActiveTimerResources" (0) => crate::modules::timers_shared_vm::active_resources,
         method "timerRef" (0) => crate::modules::timers_shared_vm::timer_ref,
         method "timerUnref" (0) => crate::modules::timers_shared_vm::timer_unref,
         method "immediateRef" (0) => crate::modules::timers_shared_vm::immediate_ref,
@@ -705,6 +722,7 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        crate::host::resident_pages::release_read_only_pages();
         crate::modules::text_decoder_shared_vm::install_global(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_text_decoder");
@@ -716,6 +734,7 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::process_shared_vm::initialize(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_process");
+        crate::host::resident_pages::release_read_only_pages();
         crate::modules::events_shared_vm::initialize_targets(context)?;
         crate::modules::async_hook_registry_shared_vm::initialize(context)?;
         #[cfg(feature = "profile-memory")]
@@ -758,6 +777,7 @@ impl quench_runtime::Host for NodeHost {
         crate::modules::child_process_ipc_shared_vm::install_process(context, process, emitter)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_event_emitter_polyfill");
+        crate::host::resident_pages::release_read_only_pages();
         let expose_gc = context
             .host_mut()
             .shared_state()
