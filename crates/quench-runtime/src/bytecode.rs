@@ -34,6 +34,10 @@ pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
 pub(crate) const RETURN_REGISTER: Register = 1 << 15;
+/// Property cache sites are 16-bit. A program with more sites than that gives every site
+/// past the range this last one, for which the VM never records a cache entry, so those
+/// sites always take the uncached lookup.
+pub(crate) const SHARED_UNCACHED_SITE: u16 = u16::MAX - 1;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;

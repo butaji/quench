@@ -11,6 +11,9 @@ use oxc_span::{GetSpan, SourceType, Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 use std::{fmt, ops::Range};
+/// The most registers a function's promoted locals may take: half of the register domain,
+/// leaving the other half for the temporaries of any one statement.
+const PROMOTED_LOCAL_REGISTER_BUDGET: Register = crate::bytecode::SET_THIS_REGISTER / 2;
 mod annex_b_targets;
 mod arrow;
 mod atoms;
@@ -2279,11 +2282,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn cache_site(&mut self) -> u16 {
-        let site = self.cache_sites;
-        self.cache_sites = self
-            .cache_sites
-            .checked_add(1)
-            .expect("property cache limit");
+        let site = self.cache_sites.min(crate::bytecode::SHARED_UNCACHED_SITE);
+        self.cache_sites = site + 1;
         site
     }
 
@@ -2518,6 +2518,11 @@ impl<'a> Compiler<'a> {
         } else {
             Vec::new()
         };
+        // Promoted locals take the lowest registers; past half the register domain a
+        // function keeps its locals in frame slots so its temporaries still fit.
+        if promoted_local_slots.len() > usize::from(PROMOTED_LOCAL_REGISTER_BUDGET) {
+            promoted_local_slots.clear();
+        }
         promoted_local_slots.sort_unstable();
         let clobbered_local_slots = promoted_local_slots
             .iter()
