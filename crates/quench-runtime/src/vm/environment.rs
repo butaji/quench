@@ -1490,8 +1490,9 @@ impl<H: Host> Vm<H> {
     }
 
     /// `direct_capture` through the frame's cached innermost slots. The cache names the
-    /// environment and collection it was taken in: while `env` is unchanged and no collection
-    /// has run, that environment's cell is the same live cell, whose slot storage never moves.
+    /// environment, whether it is the frame's own, and the collection it was taken in: while
+    /// all three are unchanged the walk ends at the same live cell, whose slot storage never
+    /// moves.
     #[inline(always)]
     pub(super) fn cached_direct_capture(
         &mut self,
@@ -1505,6 +1506,7 @@ impl<H: Host> Vm<H> {
         let epoch = self.heap.collection_epoch();
         let cache = &self.frames[frame].capture_cache;
         let (slots, root) = if cache.env == self.frames[frame].env
+            && cache.captured == self.frames[frame].captured
             && cache.epoch == epoch
             && !cache.slots.is_null()
         {
@@ -1514,6 +1516,7 @@ impl<H: Host> Vm<H> {
             let slots: *const crate::heap::EnvironmentSlots = slots;
             self.frames[frame].capture_cache = CaptureCache {
                 env: self.frames[frame].env,
+                captured: self.frames[frame].captured,
                 epoch,
                 slots,
                 root,
