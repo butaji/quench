@@ -549,6 +549,7 @@ impl<H: Host> Vm<H> {
             )
             .chain(self.symbol_registry.values().copied())
             .chain(self.well_known_symbols.values().copied())
+            .chain(self.startup_intrinsics.roots())
             .chain(self.frames.iter().flat_map(|frame| {
                 // A missing map means the function uses a register form
                 // the liveness pass cannot represent; keep the safe
