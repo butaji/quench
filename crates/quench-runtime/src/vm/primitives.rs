@@ -224,7 +224,7 @@ impl<H: Host> Vm<H> {
                 if start >= end {
                     return self.string_from_units(&[]);
                 }
-                self.string_from_unit_run(units.slice(start as usize..end as usize))
+                Ok(self.heap.alloc(Cell::String(text.substring(start as usize..end as usize))))
             }
             Native::StringSubstring => {
                 let text = self.string_receiver_text(this)?;
@@ -235,7 +235,7 @@ impl<H: Host> Vm<H> {
                 if start > end {
                     std::mem::swap(&mut start, &mut end);
                 }
-                self.string_from_unit_run(units.slice(start as usize..end as usize))
+                Ok(self.heap.alloc(Cell::String(text.substring(start as usize..end as usize))))
             }
             Native::StringSubstr => {
                 let text = self.string_receiver_text(this)?;
@@ -249,7 +249,7 @@ impl<H: Host> Vm<H> {
                 };
                 let count = self.argument_integer(p, args, 1, length - start)?.max(0);
                 let end = start.saturating_add(count).min(length);
-                self.string_from_unit_run(units.slice(start as usize..end as usize))
+                Ok(self.heap.alloc(Cell::String(text.substring(start as usize..end as usize))))
             }
             Native::StringIncludes | Native::StringStartsWith | Native::StringEndsWith => {
                 let Some(Cell::String(receiver)) = self.heap.get(this).cloned() else {

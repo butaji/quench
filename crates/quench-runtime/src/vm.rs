@@ -945,7 +945,7 @@ pub(crate) struct Vm<H> {
     /// and module programs whose atoms are a prefix of the VM's.
     atom_sequence: Rc<crate::bytecode::AtomSequence>,
     // The last string matched by a RegExp, prepared once for repeated matching.
-    regexp_subject: Option<Rc<quench_regexp::Subject>>,
+    regexp_subject: Option<(JsString, Rc<quench_regexp::Subject>)>,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks atom_text plus dynamic_atoms.
     atom_classes: Vec<std::cell::Cell<u8>>,
