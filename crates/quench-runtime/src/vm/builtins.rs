@@ -875,7 +875,14 @@ impl<H: Host> Vm<H> {
         self.install_promise(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins_before_temporal");
-        self.install_temporal(program)?;
+        // `Temporal` is about as large as every other builtin together and few programs use
+        // it, so it is a lazy data property built on first use.
+        let initializer = self.native_with_env(Native::TemporalInitialize, Value::NULL);
+        let atom = self.intern_atom("Temporal");
+        let key = self.heap.alloc(Cell::String(self.atom_value(atom)));
+        self.with_call_roots([initializer, key], |vm| {
+            vm.define_lazy_data_properties(program, vm.realm.globals, &[key], false, initializer)
+        })?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_temporal");
         Ok(())
