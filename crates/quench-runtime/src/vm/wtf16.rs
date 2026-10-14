@@ -182,10 +182,18 @@ impl JsString {
     }
 
     pub(crate) fn host_string(&self) -> &str {
+        self.host_text()
+    }
+
+    /// The host text `host_string` borrows, shared rather than copied.
+    pub(crate) fn host_name(&self) -> Rc<str> {
+        self.host_text().clone()
+    }
+
+    fn host_text(&self) -> &Rc<str> {
         self.inner
             .host
             .get_or_init(|| Rc::<str>::from(String::from_utf16_lossy(self.units())))
-            .as_ref()
     }
 
     #[cfg(feature = "profile-aggregate")]

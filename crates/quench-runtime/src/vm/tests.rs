@@ -775,6 +775,61 @@ fn accessor_descriptors_share_get_and_set_property_semantics() {
 }
 
 #[test]
+fn record_receivers_cache_virtual_names_and_inherited_fields_like_ordinary_cells() {
+    // Objects built by `new` live in record spaces. Their `size`/`length` reads and fields
+    // inherited two prototypes up must reach the same cache tiers as legacy ordinary cells,
+    // while exotic receivers sharing a site keep their own `length`.
+    let source = r#"
+      function Collection() { this.elms = [1, 2, 3]; }
+      Collection.prototype.size = function () { return this.elms.length; };
+      function Base() {}
+      Base.prototype.kind = "base";
+      function Mid() {}
+      Mid.prototype = new Base();
+      function Leaf() {}
+      Leaf.prototype = new Mid();
+      function readSize(x) { return x.size; }
+      function readLength(x) { return x.length; }
+      function readKind(x) { return x.kind; }
+      var collection = new Collection();
+      var leaf = new Leaf();
+      var holder = { length: "proto-length" };
+      var ordinary = Object.create(holder);
+      var array = [];
+      Object.setPrototypeOf(array, holder);
+      var text = new String("abcd");
+      Object.setPrototypeOf(text, holder);
+      for (var i = 0; i < 3; i++) {
+        print(typeof readSize(collection) + " " + collection.size() + " " + readKind(leaf));
+        print(readLength(ordinary) + " " + readLength(array) + " " + readLength(text));
+      }
+      Base.prototype.kind = "changed";
+      print(readKind(leaf));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "record-virtual-names.js").unwrap();
+    vm.execute(&program).unwrap();
+    let mut expected = Vec::new();
+    for _ in 0..3 {
+        expected.push("function 3 base".to_owned());
+        expected.push("proto-length 0 4".to_owned());
+    }
+    expected.push("changed".to_owned());
+    assert_eq!(*output.borrow(), expected);
+    assert!(
+        vm.field_caches
+            .iter()
+            .any(|cache| cache.holder != NO_FIELD_HOLDER),
+        "a prototype-held `size` read on a record receiver filled a holder entry"
+    );
+    assert!(
+        !vm.inherited_field_caches.is_empty(),
+        "a field two prototypes above a record receiver filled the inherited cache"
+    );
+}
+
+#[test]
 fn dictionary_shapes_fall_back_after_deletion_and_prototype_use() {
     let source = r#"
       var prototype = {
