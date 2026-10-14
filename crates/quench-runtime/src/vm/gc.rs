@@ -524,6 +524,7 @@ impl<H: Host> Vm<H> {
                 .flat_map(Continuation::roots),);
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values().copied());
+        roots.extend(self.startup_intrinsics.roots());
         roots.extend(self.frames.iter().flat_map(|frame| {
             // A missing map means the function uses a register form
             // the liveness pass cannot represent; keep the safe

@@ -1,0 +1,12 @@
+{
+  "vfs": {
+    "inventory_equal": true,
+    "cases": 99,
+    "differences": []
+  },
+  "fs": {
+    "inventory_equal": true,
+    "cases": 19,
+    "differences": []
+  }
+}
