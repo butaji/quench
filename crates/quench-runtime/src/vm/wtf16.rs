@@ -251,14 +251,23 @@ fn flat_units(units: &[u16]) -> FlatUnits {
 /// A string is a rope until its units are first read; flattening then releases the halves, so
 /// the text is held once.
 struct JsStringInner {
-    length: usize,
+    /// Within `MAX_STRING_UNITS`, so a `u32`; with `ascii` it fills one word.
+    length: u32,
     /// Every unit is ASCII; known at construction, before a rope flattens.
     ascii: bool,
     flat: OnceCell<FlatUnits>,
-    /// The concatenated halves, present exactly while `flat` is unset.
-    rope: Cell<Option<(Rc<JsStringInner>, Rc<JsStringInner>)>>,
+    /// The concatenated halves, present exactly while `flat` is unset. They sit behind their
+    /// own pointer so a flat string, the common case, carries one word for them.
+    rope: Cell<Option<Rc<RopeHalves>>>,
     /// The host text of a `Wide` string; an `Ascii` string's units are its host text.
     host: OnceCell<Rc<str>>,
+}
+
+type RopeHalves = (Rc<JsStringInner>, Rc<JsStringInner>);
+
+/// A length in units as stored; every string is within `MAX_STRING_UNITS`.
+fn stored_length(length: usize) -> u32 {
+    u32::try_from(length).expect("a string's length is within MAX_STRING_UNITS")
 }
 
 impl JsStringInner {
@@ -268,7 +277,7 @@ impl JsStringInner {
             FlatUnits::Wide(units) => (units.len(), false),
         };
         Self {
-            length,
+            length: stored_length(length),
             ascii,
             flat: OnceCell::from(units),
             rope: Cell::new(None),
@@ -281,7 +290,7 @@ impl JsStringInner {
             length: left.length.saturating_add(right.length),
             ascii: left.ascii && right.ascii,
             flat: OnceCell::new(),
-            rope: Cell::new(Some((left, right))),
+            rope: Cell::new(Some(Rc::new((left, right)))),
             host: OnceCell::new(),
         }
     }
@@ -294,10 +303,10 @@ impl JsStringInner {
                 visit(units.view());
                 continue;
             }
-            let (left, right) = part.rope.take().expect("an unflattened string is a rope");
-            pending.push(right.clone());
-            pending.push(left.clone());
-            part.rope.set(Some((left, right)));
+            let halves = part.rope.take().expect("an unflattened string is a rope");
+            pending.push(halves.1.clone());
+            pending.push(halves.0.clone());
+            part.rope.set(Some(halves));
         }
     }
 }
@@ -450,7 +459,7 @@ impl JsString {
     pub(crate) fn flat(&self) -> &FlatUnits {
         self.inner.flat.get_or_init(|| {
             let units = if self.inner.ascii {
-                let mut output = String::with_capacity(self.inner.length);
+                let mut output = String::with_capacity(self.len());
                 self.inner.for_each_run(|run| {
                     if let Units::Ascii(bytes) = run {
                         output.push_str(std::str::from_utf8(bytes).expect("ASCII units are UTF-8"));
@@ -458,7 +467,7 @@ impl JsString {
                 });
                 FlatUnits::Ascii(Rc::from(output))
             } else {
-                let mut output = Vec::with_capacity(self.inner.length);
+                let mut output = Vec::with_capacity(self.len());
                 self.inner.for_each_run(|run| run.extend_into(&mut output));
                 FlatUnits::Wide(Rc::from(output))
             };
@@ -496,7 +505,7 @@ impl JsString {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.inner.length
+        self.inner.length as usize
     }
 
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
@@ -539,7 +548,7 @@ impl JsString {
         if text.inner.length == 0 {
             return;
         }
-        if self.inner.length + text.inner.length <= FLAT_CONCAT_MAX_UNITS {
+        if self.len() + text.len() <= FLAT_CONCAT_MAX_UNITS {
             let mut flat = JsStringBuilder::default();
             flat.append(self);
             flat.append(text);
