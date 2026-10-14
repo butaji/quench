@@ -173,13 +173,10 @@ impl<H: Host> Vm<H> {
             );
         };
         let source = source.host_string().to_owned();
-        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
-            .map(|atom| self.atom_name(atom as u32).to_owned())
-            .collect::<Vec<_>>();
         let source_is_invalid = crate::Engine::specialize_eval_with_context(
             &source,
             "<ShadowRealm>",
-            &atom_prefix,
+            &*self,
             false,
             crate::compile::EvalContext::default(),
             &[],
