@@ -1133,3 +1133,32 @@ pub(crate) fn timer_close(context: &mut NativeContext<'_, NodeHost>, receiver: R
     clear_timer(context, receiver, args)?;
     Ok(args[0])
 }
+
+/// Public timer functions defer the promise export lookup, preserving its identity and hooks.
+pub(crate) fn install_promisify_globals(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    let symbol = property(context, global, "Symbol")?;
+    let registry = property(context, symbol, "for")?;
+    let name = context.string_rooted("nodejs.util.promisify.custom");
+    let custom = context.call_rooted(registry, symbol, &[name])?;
+    for name in ["setTimeout", "setImmediate"] {
+        let function = property(context, global, name)?;
+        let name = context.string_rooted(name);
+        let getter = context.host_function_with_data(crate::host::shared_vm::operation("timerPromisifyGet"), name)?;
+        let key = context.string_rooted("name");
+        let value = context.string_rooted("get");
+        context.define_data_property_rooted(getter, key, value, false, false, true)?;
+        let descriptor = context.null_object_rooted()?;
+        install(context, descriptor, "get", getter)?;
+        let yes = context.boolean(true);
+        install(context, descriptor, "enumerable", yes)?;
+        context.define_property_descriptor_rooted(function, custom, descriptor)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn promisify_get(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let name = context.host_function_data()?;
+    let module = crate::host::shared_vm::commonjs::timers_promises_module(context)?;
+    context.get_property_rooted(module, name)
+}
