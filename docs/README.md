@@ -25,8 +25,10 @@ Wasm directive, every upstream Node fixture tagged `framework-core` in
 `parallel.txt`, and the pinned Express, Koa and Fastify scenarios. Direct
 Test262 conflicts follow the local Node-oracle rule recorded in
 the task 20 resolution (git history: `tasks/20.md`); contradicted raw outcomes
-remain visible as explicit waivers and never count as passes. The broader Node
-inventory is diagnostic only.
+remain visible as explicit waivers and never count as passes. The waivers'
+single authority is `crates/quench-test262/node-waivers.json` (see
+[Node waivers](#test262-node-waivers)). The broader Node inventory is
+diagnostic only.
 The two-stage scope and completion rules live in the [Linear project](https://linear.app/todoxapp/project/quench-abb744c79c4e/overview).
 
 The rewrite gate uses Quench's shared runtime. Test262 progress uses affected
@@ -104,9 +106,24 @@ It does not define the Stage A Node gate; profile membership comes from
 runners use isolated child deadlines and preserve stdout/stderr separately from
 case results.
 
+<a id="test262-node-waivers"></a>
+Node waivers list, by group and reason, each pinned case whose raw Quench
+failure the local Node oracle reproduces, with that exact failure. The runners
+compile the manifest in. A waived case keeps its raw outcome in every report,
+tagged with its `waiver` group and counted in `waived`; the runners accept it
+only while it fails with exactly the recorded failure. A waived case that
+passes or fails differently fails the run until the manifest is updated.
+Re-adjudicate the manifest, or triage other cases, against the installed Node:
+
+```sh
+node tools/test262-node-oracle.cjs
+node tools/test262-node-oracle.cjs built-ins/Error/prototype/stack/prop-desc.js
+```
+
 `run-all` writes its full per-test report to
 `target/test262-report.json` and compares a full-inventory run against
-`target/test262-quench-ratchet.json`. A first complete all-pass run freezes the
+`target/test262-quench-ratchet.json`. A first complete run in which every case
+passes or fails as its waiver records freezes the observed passes as the
 baseline; a later lost pass is reported as a regression and fails the command.
 Set `TEST262_REPORT` or `TEST262_RATCHET` to select other paths. A
 `TEST262_BATCH_SIZE` subset still writes its report but does not update or
@@ -123,8 +140,8 @@ TEST262_TEST_TIMEOUT_MS=30000 \
 
 This refuses to overwrite an existing baseline and records
 `basis: user_assumption` and the suite revision, without generating observed
-outcomes. A later complete observed all-pass run replaces that basis with
-`observed`. `run-stages` compares only baseline expectations owned by its
+outcomes. A later complete observed run without rejected outcomes replaces
+that basis with `observed`. `run-stages` compares only baseline expectations owned by its
 selected stages and path filter, including previously expected paths removed
 from discovery. Focused runs never update the baseline. `TEST262_RATCHET`
 selects the same baseline in both runners; an explicitly selected missing or
