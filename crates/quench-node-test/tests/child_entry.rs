@@ -5714,3 +5714,61 @@ const server=net.createServer(socket=>{console.log(process.getActiveResourcesInf
 server.listen(0,'127.0.0.1',()=>{client=net.connect(server.address().port,'127.0.0.1');client.resume();});
 "#);
 }
+
+#[test]
+fn net_socket_end_listener_and_write_after_fin_match_node() {
+    compare_node_stream_source(r#"
+const net=require('net'); const out=[];
+const reads=[];
+const options={get allowHalfOpen(){reads.push('allowHalfOpen');return true;},get noDelay(){reads.push('noDelay');return true;},get extra(){reads.push('extra');return 7;}};
+const copied=new net.Socket(options);out.push(['options',reads,copied.allowHalfOpen]);copied.destroy();
+for(const half of [false,true]){
+ const s=new net.Socket({allowHalfOpen:half}); const original=s.write;
+ out.push([half,s.listenerCount('end'),s.listeners('end').map(f=>[f.name,f.length])]);
+ const listener=s.listeners('end')[0];
+ for(const receiver of [null,undefined]){try{listener.call(receiver);out.push(['receiver','accepted']);}catch(e){out.push(['receiver',e.name]);}}
+ s.emit('end'); out.push([half,s.write===original,s.write===original?null:s.write.name,s.write.length]);
+ if(!half){
+  for(const receiver of [null,undefined]){try{s.write.call(receiver,'x');out.push(['write receiver','accepted']);}catch(e){out.push(['write receiver',e.name]);}}
+  const Duplex=require('stream').Duplex,originalBase=Duplex.prototype.write,marker={};
+  Duplex.prototype.write=function(chunk,encoding,cb){out.push(['delegate',this===s,chunk,encoding,cb]);return marker;};
+  out.push(['delegated return',s.write('x','ascii',null)===marker]);Duplex.prototype.write=originalBase;
+ }
+ s.destroy();
+}
+const server=net.createServer(s=>s.end()).listen(0,()=>{
+ let callbackError;
+ const client=net.connect(server.address().port,()=>client.end());
+ client.on('error',e=>{out.push(['error',e.code,e.message,callbackError===e]);});
+ client.on('end',()=>{out.push(['end',client.writableEnded]);out.push(['return',client.write('x',e=>{callbackError=e;out.push(['callback',e.code,e.message]);})]);out.push(['sync']);});
+ client.on('close',()=>server.close(()=>console.log(JSON.stringify(out))));
+});
+"#);
+}
+
+#[test]
+fn net_server_uses_original_event_emitter_protocol() {
+    compare_node_stream_source(r#"
+const net=require('net'),{EventEmitter}=require('events');const output=[];
+const server=net.createServer();
+output.push(['inherit',Object.getPrototypeOf(net.Server)===EventEmitter,Object.getPrototypeOf(net.Server.prototype)===EventEmitter.prototype,server instanceof EventEmitter]);
+output.push(['empty',server.emit('unknown'),server.eventNames(),server.getMaxListeners()]);
+const original={};try{server.emit('error',original);}catch(error){output.push(['error identity',error===original,error.code]);}
+const events=[];server.on('newListener',(type,callback)=>events.push(['add',type,callback.name]));
+function callback(){events.push(['callback',this===server]);}
+server.once('value',callback);server.prependListener('value',function first(){events.push(['first',this===server]);});
+output.push(['raw',server.listeners('value')[1]===callback,server.rawListeners('value')[1].listener===callback]);
+output.push(['emit',server.emit('value'),server.emit('value')]);server.removeAllListeners('value');
+output.push(['events',events]);
+console.log(JSON.stringify(output));
+"#);
+}
+
+#[test]
+fn net_resource_counts_exclude_undelivered_accepted_wrappers() {
+    compare_node_stream_source(r#"
+const net=require('net'),assert=require('assert');const clients=[],accepted=[];let completed=0;
+const server=net.createServer(socket=>accepted.push(socket)).listen(0,next);
+function next(){const client=net.connect(server.address().port,()=>{if(++completed===8){const count=process.getActiveResourcesInfo().filter(x=>x==='TCPSocketWrap').length;assert.strictEqual(count,clients.length+accepted.length);console.log('resource-count-matches-delivered-wrappers');for(const socket of clients)socket.destroy();for(const socket of accepted)socket.end();server.close();}else next();});clients.push(client);}
+"#);
+}

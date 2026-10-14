@@ -994,11 +994,20 @@ struct IteratorRealmPrototypes {
     async_generator: Value,
 }
 impl<H: Host> Vm<H> {
+    /// Makes `global`'s realm current, carrying each realm's global lexical
+    /// scope with it; returns the previous realm's global.
+    #[inline]
     pub(super) fn switch_realm_global(&mut self, global: Value) -> Value {
         let previous = self.realm.globals;
-        if previous == global {
-            return previous;
+        if previous != global {
+            self.swap_realm_global(previous, global);
         }
+        previous
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn swap_realm_global(&mut self, previous: Value, global: Value) {
         self.realm.global_lexical_states.insert(
             previous,
             GlobalLexicalState {
@@ -1018,7 +1027,6 @@ impl<H: Host> Vm<H> {
         self.realm.global_lexical_declarations = state.declarations;
         self.realm.global_lexical_bindings = state.bindings;
         self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
-        previous
     }
 
     pub(crate) fn root(&mut self, value: Value) -> RootId {
@@ -1881,7 +1889,7 @@ impl<H: Host> Vm<H> {
                     Some(Cell::Function { object, .. }) => object.realm,
                     _ => self.realm.globals,
                 };
-                let current_global = std::mem::replace(&mut self.realm.globals, realm);
+                let current_global = self.switch_realm_global(realm);
                 let result = if program
                     .functions
                     .get(id as usize)
@@ -1900,7 +1908,7 @@ impl<H: Host> Vm<H> {
                     )
                 };
                 self.set_active_program(active_program);
-                self.realm.globals = current_global;
+                self.switch_realm_global(current_global);
                 result
             }
         }
@@ -1937,7 +1945,7 @@ impl<H: Host> Vm<H> {
             self.type_error(p, "function belongs to an unavailable program".into())
         })?;
         let previous_program = self.replace_active_program(program_id);
-        let previous_global = std::mem::replace(&mut self.realm.globals, realm);
+        let previous_global = self.switch_realm_global(realm);
         let outcome = self.call_user_construct_frame(
             &program,
             id,
@@ -1946,7 +1954,7 @@ impl<H: Host> Vm<H> {
             CallContext::user_function(id, callee),
         );
         self.set_active_program(previous_program);
-        self.realm.globals = previous_global;
+        self.switch_realm_global(previous_global);
         match outcome? {
             FrameOutcome::ConstructComplete { value, this } => Ok((value, this)),
             _ => Err(JsError(
