@@ -168,10 +168,15 @@ impl<H: Host> Vm<H> {
         {
             return self.eval_global_script(p, &text, inherited_strict);
         }
-        if self.direct_eval && text.contains('#') {
-            let private_names = self
-                .direct_eval_private_names(p)
-                .map_or_else(Vec::new, |(_, names)| names);
+        // Private names the eval can reference are those of its enclosing classes; without
+        // any, a `#` is in a string, comment or an undeclared name the ordinary paths reject.
+        let private_names = if self.direct_eval && text.contains('#') {
+            self.direct_eval_private_names(p)
+                .map_or_else(Vec::new, |(_, names)| names)
+        } else {
+            Vec::new()
+        };
+        if !private_names.is_empty() {
             let context_source = eval_context_source(&text, &private_names, false);
             if let Some(expression) = crate::Engine::eval_method_expression(&context_source) {
                 return self.eval_compiled_expression(p, expression, inherited_strict);
