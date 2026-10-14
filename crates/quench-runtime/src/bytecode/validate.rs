@@ -448,7 +448,8 @@ impl ResidualProgram {
         if self.register_roots.len() > u32::MAX as usize {
             return Err("register root table is too large".into());
         }
-        let selective_capture_scope_unsafe = selective_capture_scope_unsafe(&self.functions);
+        let selective_capture_scope_unsafe =
+            selective_capture_scope_unsafe(&self.functions, &self.atoms);
         for (index, function) in self.functions.iter().enumerate() {
             if function.code.is_empty() || !super::control_flow::is_bounded(function) {
                 return Err(format!("function {index} can fall off its code"));
@@ -559,7 +560,7 @@ impl ResidualProgram {
                     "function {index} has duplicate or unsorted name bindings"
                 ));
             }
-            for binding in &function.name_bindings {
+            for binding in function.name_bindings.iter() {
                 if !eval_binding_is_valid(binding, function, &self.functions, self.atoms.len()) {
                     return Err(format!("function {index} has an invalid name binding"));
                 }
@@ -601,9 +602,14 @@ impl ResidualProgram {
                 ));
             }
 
-            if function.environment_clones.iter().any(|slots| {
-                slots.iter().any(|slot| *slot >= function.locals)
-                    || slots.windows(2).any(|pair| pair[0] >= pair[1])
+            if function.environment_clones.iter().any(|clone| {
+                [&clone.fresh, &clone.reset].into_iter().any(|slots| {
+                    slots.iter().any(|slot| *slot >= function.locals)
+                        || slots.windows(2).any(|pair| pair[0] >= pair[1])
+                }) || clone
+                    .reset
+                    .iter()
+                    .any(|slot| clone.fresh.binary_search(slot).is_ok())
             }) {
                 return Err(format!(
                     "function {index} has invalid environment clone slots"
@@ -926,7 +932,12 @@ impl ResidualProgram {
     }
 }
 
-fn selective_capture_scope_unsafe(functions: &[super::Function]) -> Vec<bool> {
+fn selective_capture_scope_unsafe(
+    functions: &[super::Function],
+    atoms: &super::AtomTable,
+) -> Vec<bool> {
+    let is_with_enter =
+        |atom: usize| atom < atoms.len() && &atoms[atom] == super::WITH_ENTER_BINDING;
     let mut inherited_dynamic_scope = vec![false; functions.len()];
     for (id, function) in functions.iter().enumerate() {
         if let Some(parent) = function.parent.map(|parent| parent as usize) {
@@ -936,7 +947,10 @@ fn selective_capture_scope_unsafe(functions: &[super::Function]) -> Vec<bool> {
     }
     let mut unsafe_layout = vec![false; functions.len()];
     for (id, function) in functions.iter().enumerate() {
-        if !has_dynamic_scope_access(function) && !inherited_dynamic_scope[id] {
+        if !has_dynamic_scope_access(function)
+            && !inherited_dynamic_scope[id]
+            && !function.contains_with_statement(is_with_enter)
+        {
             continue;
         }
         let mut current = Some(id);
@@ -979,21 +993,9 @@ fn selective_capture_layout_is_eligible(
         .any(|instruction| instruction.op() == super::Op::MakeClosure);
     let local_atoms_are_static = function.local_atoms.len() == usize::from(function.locals)
         && function.local_atoms.iter().all(|atom| {
-            usize::try_from(*atom)
-                .ok()
-                .filter(|atom| *atom < atoms.len())
-                .is_some_and(|atom| !atoms[atom].starts_with('\0'))
-        });
-    let has_unsupported_local_lifecycle = function
-        .code
-        .iter()
-        .filter_map(|packed| instruction_at(function, *packed))
-        .chain(function.wide.iter().copied())
-        .any(|instruction| {
-            matches!(
-                instruction.op(),
-                super::Op::InitializeTdz | super::Op::CloneEnv
-            )
+            usize::try_from(*atom).is_ok_and(|atom| {
+                atom < atoms.len() && !super::local_name_requires_environment(&atoms[atom])
+            })
         });
     let captured = function
         .selective_capture_slots
@@ -1015,11 +1017,7 @@ fn selective_capture_layout_is_eligible(
         && !function.derived_constructor
         && !function.class_field_initializer
         && function.simple_parameters
-        && function.self_binding_slot.is_none()
-        && function.environment_clones.is_empty()
-        && function.lexical_atoms.is_empty()
         && local_atoms_are_static
-        && !has_unsupported_local_lifecycle
         && mapped_arguments_are_captured
 }
 
@@ -1082,17 +1080,19 @@ mod tests {
             },
         ] {
             let mut invalid = program.clone();
-            invalid.functions[owner].name_bindings[0].location = location;
+            std::rc::Rc::make_mut(&mut invalid.functions[owner].name_bindings)[0].location =
+                location;
             assert!(invalid.validate().is_err());
         }
         let mut invalid = program.clone();
-        invalid.functions[owner].name_bindings.reverse();
+        std::rc::Rc::make_mut(&mut invalid.functions[owner].name_bindings).reverse();
         assert!(invalid.validate().is_err());
         let mut invalid = program.clone();
-        invalid.functions[owner].name_bindings[1] = invalid.functions[owner].name_bindings[0];
+        let bindings = std::rc::Rc::make_mut(&mut invalid.functions[owner].name_bindings);
+        bindings[1] = bindings[0];
         assert!(invalid.validate().is_err());
         let mut invalid = program;
-        invalid.functions[owner].name_bindings[0].atom = u32::MAX;
+        std::rc::Rc::make_mut(&mut invalid.functions[owner].name_bindings)[0].atom = u32::MAX;
         assert!(invalid.validate().is_err());
     }
 
@@ -1106,7 +1106,7 @@ mod tests {
         assert!(program.validate().is_ok());
         for slots in [vec![u16::MAX], vec![0, 0], vec![1, 0]] {
             let mut invalid = program.clone();
-            invalid.functions[0].environment_clones[0] = slots;
+            invalid.functions[0].environment_clones[0].fresh = slots;
             assert!(invalid.validate().is_err());
         }
         let mut invalid = program;
@@ -1120,7 +1120,7 @@ mod tests {
             name: None,
             is_arrow: false,
             self_binding_slot: None,
-            source_text: None,
+            source_span: None,
             params: 0,
             length: 0,
             parameter_end_pc: 0,
@@ -1150,7 +1150,7 @@ mod tests {
             global_function_atoms: vec![],
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
-            name_bindings: vec![],
+            name_bindings: Default::default(),
             binding_sites: vec![],
             source_positions: vec![],
             environment_clones: vec![],

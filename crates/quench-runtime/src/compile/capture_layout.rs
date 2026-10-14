@@ -1,20 +1,26 @@
-use std::rc::Rc;
+use super::CompilerAtoms;
 
-use crate::bytecode::{Function, Op};
+use crate::bytecode::{Function, Op, WITH_ENTER_BINDING};
 
-pub(super) fn apply(functions: &mut [Function], atoms: &[Rc<str>]) {
+pub(super) fn apply(functions: &mut [Function], atoms: &CompilerAtoms<'_>) {
     let captured = captured_slots(functions);
-    let dynamic_ancestors = dynamic_scope_ancestors(functions);
+    let dynamic_ancestors = dynamic_scope_ancestors(functions, atoms);
 
     for (id, function) in functions.iter_mut().enumerate() {
         if !has_closure(function) {
             continue;
         }
 
-        let can_split = selective_layout_is_safe(function, id, dynamic_ancestors[id], atoms);
+        let can_split = selective_layout_is_safe(function, id, dynamic_ancestors[id])
+            && function.local_atoms.iter().all(|atom| {
+                !atoms
+                    .get(*atom as usize)
+                    .is_some_and(crate::bytecode::local_name_requires_environment)
+            });
         if can_split {
             function.selective_capture_slots = Some(captured[id].clone());
             rewrite_local_ownership(function, &captured[id]);
+            remove_unobservable_clones(function, &captured[id]);
         } else {
             function.selective_capture_slots = None;
             rewrite_all_locals_to_environment(function);
@@ -68,11 +74,22 @@ fn captured_slots(functions: &[Function]) -> Vec<Vec<u16>> {
     captured
 }
 
-fn dynamic_scope_ancestors(functions: &[Function]) -> Vec<bool> {
+/// Functions enclosing dynamic name resolution, including a `with` body's by-name
+/// loads, which may denote any ancestor's binding and so need every ancestor's
+/// locals in its environment.
+fn dynamic_scope_ancestors(functions: &[Function], atoms: &CompilerAtoms<'_>) -> Vec<bool> {
     let inherited_dynamic_scope = inherited_dynamic_scope(functions);
+    let is_with_enter = |atom: usize| {
+        atoms
+            .get(atom)
+            .is_some_and(|name| name == WITH_ENTER_BINDING)
+    };
     let mut unsafe_layout = vec![false; functions.len()];
     for (id, function) in functions.iter().enumerate() {
-        if !function.has_dynamic_scope_access() && !inherited_dynamic_scope[id] {
+        if !function.has_dynamic_scope_access()
+            && !inherited_dynamic_scope[id]
+            && !function.contains_with_statement(is_with_enter)
+        {
             continue;
         }
         let mut current = Some(id);
@@ -99,7 +116,6 @@ fn selective_layout_is_safe(
     function: &Function,
     id: usize,
     has_dynamic_descendant: bool,
-    atoms: &[Rc<str>],
 ) -> bool {
     id != 0
         && function.parent.is_some()
@@ -110,22 +126,6 @@ fn selective_layout_is_safe(
         && !function.derived_constructor
         && !function.class_field_initializer
         && function.simple_parameters
-        && function.self_binding_slot.is_none()
-        && function.environment_clones.is_empty()
-        && function.lexical_atoms.is_empty()
-        && function.local_atoms.iter().all(|atom| {
-            !atoms
-                .get(*atom as usize)
-                .is_some_and(|name| name.starts_with('\0'))
-        })
-        && function
-            .code
-            .iter()
-            .all(|instruction| !matches!(instruction.op(), Op::InitializeTdz | Op::CloneEnv))
-        && function
-            .wide
-            .iter()
-            .all(|instruction| !matches!(instruction.op(), Op::InitializeTdz | Op::CloneEnv))
         && !function.has_dynamic_scope_access()
 }
 
@@ -154,6 +154,24 @@ fn rewrite_local_ownership(function: &mut Function, captured: &[u16]) {
             } else {
                 Op::StoreEnvLocal
             });
+        }
+    }
+}
+
+/// A per-iteration environment copy is observable only through a closure holding one of its
+/// fresh bindings. When no fresh binding of a clone site is captured, every closure sees the
+/// same binding objects with or without the copy, so the site does nothing.
+fn remove_unobservable_clones(function: &mut Function, captured: &[u16]) {
+    let observable = |plan: &crate::bytecode::EnvironmentClone| {
+        plan.fresh
+            .iter()
+            .any(|slot| captured.binary_search(slot).is_ok())
+    };
+    for instruction in &mut function.code {
+        if instruction.op() == Op::CloneEnv
+            && !observable(&function.environment_clones[instruction.environment_clone_index()])
+        {
+            *instruction = crate::bytecode::Instr::new(Op::Nop, 0, 0, 0, 0);
         }
     }
 }

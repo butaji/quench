@@ -484,14 +484,14 @@ impl<H: Host> Vm<H> {
                     Some(Cell::DataView { object: x, .. }) => object = x.proto(),
                     Some(Cell::String(v)) => {
                         if let Ok(index) = self.atom_name(atom).parse::<usize>()
-                            && let Some(unit) = v.units().get(index).copied()
+                            && let Some(unit) = v.units().get(index)
                         {
                             return Ok(self
                                 .heap
                                 .alloc(Cell::String(JsString::from_units(&[unit]))));
                         }
                         if atom == self.length_atom {
-                            return Ok(Value::number(v.units().len() as f64));
+                            return Ok(Value::number(v.len() as f64));
                         }
                         let prototype = self
                             .primitive_prototype(object)

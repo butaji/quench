@@ -9,3 +9,16 @@ rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6"]
 # host's target configuration.
 [target.aarch64-apple-darwin]
 rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6"]
+
+# x86-64 Linux links OpenSSL statically: the shared libssl/libcrypto pair costs
+# about 1 MiB of resident set in every process at load (relocations and
+# fault-around), crypto used or not, while archive members cost nothing until
+# called. openssl-sys reads these target-prefixed names only for this target, and
+# a variable set in the environment takes precedence.
+[env]
+X86_64_UNKNOWN_LINUX_GNU_OPENSSL_STATIC = "1"
+X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR = "/usr/lib/x86_64-linux-gnu"
+X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR = "/usr/include"
+# The system libcrypto archive includes zlib compression support. Declare its
+# archive dependency explicitly so static OpenSSL links resolve those symbols.
+X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS = "ssl:crypto:z"

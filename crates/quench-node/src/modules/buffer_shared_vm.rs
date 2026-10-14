@@ -702,6 +702,11 @@ pub(crate) fn install_global(
     )?;
     let undefined = context.undefined();
     context.call_rooted(installer, undefined, &[constructor])?;
+    let global = context.global_root()?;
+    let key = context.string_rooted("NodeBuffer");
+    if !context.define_data_property_rooted(global, key, constructor, false, false, true)? {
+        return Err(RootedError::host("cannot install canonical Node Buffer alias"));
+    }
     Ok(())
 }
 

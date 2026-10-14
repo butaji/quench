@@ -66,7 +66,7 @@ fn append_shape_roots(shapes: &[Shape], shape: u32, roots: &mut Vec<Value>) {
 struct ParallelShapeTrace<'a> {
     shapes: *const Shape,
     shape_count: usize,
-    rooted_shapes: &'a [AtomicU64],
+    marked_shapes: &'a [AtomicU64],
     owned_roots: &'a FxHashMap<Value, Vec<Value>>,
     _shape_borrow: std::marker::PhantomData<&'a [Shape]>,
 }
@@ -80,6 +80,22 @@ unsafe impl Send for ParallelShapeTrace<'_> {}
 unsafe impl Sync for ParallelShapeTrace<'_> {}
 
 impl ParallelShapeTrace<'_> {
+    /// The mark callback sees every reachable object's shape, including shapes
+    /// without symbol or accessor roots. Sweep needs no per-object shape list.
+    /// Read the bitmap only after the mark workers have joined.
+    fn live_shapes(&self) -> Vec<u32> {
+        let mut shapes = Vec::new();
+        for (word_index, word) in self.marked_shapes.iter().enumerate() {
+            let mut marked = word.load(Ordering::Relaxed);
+            while marked != 0 {
+                let bit = marked.trailing_zeros() as usize;
+                shapes.push((word_index * u64::BITS as usize + bit) as u32);
+                marked &= marked - 1;
+            }
+        }
+        shapes
+    }
+
     fn append(&self, trace_kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>) {
         let shape_index = shape as usize;
         debug_assert!(shape_index < self.shape_count);
@@ -92,8 +108,9 @@ impl ParallelShapeTrace<'_> {
             if shapes[shape_index].may_have_gc_roots {
                 append_shape_roots(shapes, shape, roots);
             }
-        } else if shapes[shape_index].may_have_gc_roots
-            && self.rooted_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0
+        } else if self.marked_shapes[word].load(Ordering::Relaxed) & mask == 0
+            && self.marked_shapes[word].fetch_or(mask, Ordering::Relaxed) & mask == 0
+            && shapes[shape_index].may_have_gc_roots
         {
             append_shape_roots(shapes, shape, roots);
         }
@@ -197,7 +214,40 @@ impl<H: Host> Vm<H> {
 
     #[cold]
     #[inline(never)]
+    /// Drops dynamic programs that no live function, environment, generator
+    /// or activation can run any more, with their constants and caches. Runs
+    /// after a full collection, when only live cells remain in the heap.
+    fn reclaim_unreferenced_programs(&mut self) {
+        let mut referenced = vec![false; self.programs.len()];
+        let mut reference = |program: ProgramId| {
+            if let Some(slot) = referenced.get_mut(program.raw() as usize) {
+                *slot = true;
+            }
+        };
+        reference(ProgramId::MAIN);
+        reference(self.active_program);
+        self.direct_eval_var_program.into_iter().for_each(&mut reference);
+        self.frames.iter().for_each(|frame| reference(frame.program));
+        self.suspended
+            .iter()
+            .filter_map(|entry| entry.continuation.as_ref())
+            .for_each(|continuation| reference(continuation.program));
+        self.heap
+            .for_each_cell(|cell| cell.program_references(&mut reference));
+        let reclaimed = self.programs.reclaim_unreferenced(&referenced);
+        if reclaimed.is_empty() {
+            return;
+        }
+        let reclaimed = reclaimed.into_iter().collect::<FxHashSet<_>>();
+        self.function_values
+            .retain(|(program, _), _| !reclaimed.contains(program));
+        self.realm
+            .template_objects
+            .retain(|(program, _, _), _| !reclaimed.contains(program));
+    }
+
     pub(super) fn collect_slow(&mut self, _program: &ResidualProgram, full: bool) {
+        let full = self.heap.collection_is_full(full);
         #[cfg(feature = "profile-aggregate")]
         for (index, frame) in self.frames.iter().enumerate() {
             self.profile.gc_frame(
@@ -253,339 +303,278 @@ impl<H: Host> Vm<H> {
                 .flat_map(|(_, edges)| edges.iter().copied())
                 .collect::<Vec<_>>()
         };
-        let roots =
-            self.programs
-                .roots()
-                .chain([
-                    self.realm.globals,
-                    self.object_proto,
-                    self.function_proto,
-                    self.array_proto,
-                    self.array_buffer_proto,
-                    self.shared_array_buffer_proto,
-                    self.array_iterator_proto,
-                    self.typed_array_proto,
-                    self.uint8_array_proto,
-                    self.uint8_clamped_array_proto,
-                    self.uint16_array_proto,
-                    self.uint32_array_proto,
-                    self.int8_array_proto,
-                    self.int16_array_proto,
-                    self.int32_array_proto,
-                    self.bigint64_array_proto,
-                    self.biguint64_array_proto,
-                    self.float16_array_proto,
-                    self.float32_array_proto,
-                    self.float64_array_proto,
-                    self.data_view_proto,
-                    self.map_proto,
-                    self.set_proto,
-                    self.shadow_realm_proto,
-                    self.map_iterator_proto,
-                    self.set_iterator_proto,
-                    self.weak_map_proto,
-                    self.weak_set_proto,
-                    self.weak_ref_proto,
-                    self.finalization_registry_proto,
-                    self.iterator_proto,
-                    self.string_iterator_proto,
-                    self.regexp_string_iterator_proto,
-                    self.generator_proto,
-                    self.iterator_helper_proto,
-                    self.wrap_for_valid_iterator_proto,
-                    self.async_iterator_proto,
-                    self.async_generator_proto,
-                    self.async_from_sync_iterator_proto,
-                    self.regexp_proto,
-                ])
-                .chain(
-                    self.realm
-                        .global_lexical_states
-                        .iter()
-                        .flat_map(|(global, state)| {
-                            std::iter::once(*global).chain(state.bindings.values().copied())
-                        }),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .builtin_prototypes
-                        .iter()
-                        .flat_map(|((realm, _), prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .promise_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(self.realm.intrinsics.error_intrinsics.iter().flat_map(
-                    |(realm, intrinsics)| {
-                        [
-                            *realm,
-                            intrinsics.constructor,
-                            intrinsics.stack_getter,
-                            intrinsics.stack_setter,
-                        ]
-                    },
-                ))
-                .chain(self.realm.intrinsics.regexp_intrinsics.iter().flat_map(
-                    |(realm, intrinsics)| {
-                        [*realm, intrinsics.constructor, intrinsics.prototype]
-                            .into_iter()
-                            .chain(intrinsics.result_template.map(|template| template.anchor))
-                    },
-                ))
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_number_format_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_number_format_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_number_format_fallback_symbols
-                        .iter()
-                        .flat_map(|(realm, symbol)| [*realm, *symbol]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_collator_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_collator_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_plural_rules_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_datetime_format_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_datetime_format_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_datetime_format_fallback_symbols
-                        .iter()
-                        .flat_map(|(realm, symbol)| [*realm, *symbol]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_display_names_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_display_names_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_duration_format_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_duration_format_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_list_format_constructors
-                        .iter()
-                        .flat_map(|(realm, constructor)| [*realm, *constructor]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_list_format_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_relative_time_format_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_segmenter_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_segment_iterator_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_segments_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .intl_locale_prototypes
-                        .iter()
-                        .flat_map(|(realm, prototype)| [*realm, *prototype]),
-                )
-                .chain(self.natives.iter().map(|(_, value)| *value))
-                .chain(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
-                    |(realm, prototypes)| {
-                        [
-                            *realm,
-                            prototypes.helper,
-                            prototypes.wrapper,
-                            prototypes.generator,
-                            prototypes.async_generator,
-                        ]
-                    },
-                ))
-                .chain(self.test262_agent.roots())
-                .chain(
-                    self.realm
-                        .promise
-                        .active_native
-                        .iter()
-                        .map(|activation| activation.callable),
-                )
-                .chain(
-                    self.realm
-                        .promise
-                        .rejection_notifications
-                        .iter()
-                        .map(|notification| match notification {
-                            super::promise::RejectionNotification::Unhandled(promise)
-                            | super::promise::RejectionNotification::Handled(promise) => *promise,
-                        }),
-                )
-                .chain(
-                    self.realm
-                        .promise
-                        .modules
-                        .values()
-                        .flat_map(ModuleRecord::roots),
-                )
-                .chain(self.realm.promise.module_sources.values().copied())
-                .chain(
-                    self.realm
-                        .promise
-                        .dynamic_import_jobs
-                        .iter()
-                        .flat_map(|job| job.promises.iter().copied()),
-                )
-                .chain(self.realm.jobs.iter().flat_map(|job| {
-                    std::iter::once(job.callback)
-                        .chain(std::iter::once(job.this))
-                        .chain(job.args.iter().copied())
-                }))
-                .chain(self.realm.template_objects.values().copied())
-                .chain(
-                    self.realm
-                        .intrinsics
-                        .arguments_objects
-                        .iter()
-                        .flat_map(|((global, _), template)| [*global, template.anchor]),
-                )
-                .chain(self.with_stack.iter().copied())
-                .chain(std::iter::once(self.instanceof_has_instance_holder))
-                .chain(self.active_call_roots.iter().copied())
-                .chain(
-                    self.suspended
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(slot, entry)| {
-                            let continuation = entry.continuation.as_ref()?;
-                            let id = super::activation::ContinuationId {
-                                slot: slot as u32,
-                                generation: entry.generation,
-                            };
-                            (!attached_continuations.contains(&id)).then_some(continuation)
-                        })
-                        .flat_map(Continuation::roots),
-                )
-                .chain(self.symbol_registry.values().copied())
-                .chain(self.well_known_symbols.values().copied())
-                .chain(self.frames.iter().flat_map(|frame| {
-                    // A missing map means the function uses a register form
-                    // the liveness pass cannot represent; keep the safe
-                    // conservative scan for that activation.
-                    let register_mask = self.programs.get(frame.program).and_then(|program| {
-                        let function = program.functions.get(frame.function as usize)?;
-                        (function.register_root_offset != crate::bytecode::NO_REGISTER_ROOT_MAP)
-                            .then(|| {
-                                program
-                                    .register_roots
-                                    .get(function.register_root_offset as usize + frame.pc)
+        // Roots are gathered source by source: a single iterator chain over
+        // every source costs each root a step through every nesting level.
+        let mut roots = Vec::new();
+        self.programs.extend_roots(&mut roots);
+        roots.extend([
+            self.realm.globals,
+            self.object_proto,
+            self.function_proto,
+            self.array_proto,
+            self.array_buffer_proto,
+            self.shared_array_buffer_proto,
+            self.array_iterator_proto,
+            self.typed_array_proto,
+            self.uint8_array_proto,
+            self.uint8_clamped_array_proto,
+            self.uint16_array_proto,
+            self.uint32_array_proto,
+            self.int8_array_proto,
+            self.int16_array_proto,
+            self.int32_array_proto,
+            self.bigint64_array_proto,
+            self.biguint64_array_proto,
+            self.float16_array_proto,
+            self.float32_array_proto,
+            self.float64_array_proto,
+            self.data_view_proto,
+            self.map_proto,
+            self.set_proto,
+            self.shadow_realm_proto,
+            self.map_iterator_proto,
+            self.set_iterator_proto,
+            self.weak_map_proto,
+            self.weak_set_proto,
+            self.weak_ref_proto,
+            self.finalization_registry_proto,
+            self.iterator_proto,
+            self.string_iterator_proto,
+            self.regexp_string_iterator_proto,
+            self.generator_proto,
+            self.iterator_helper_proto,
+            self.wrap_for_valid_iterator_proto,
+            self.async_iterator_proto,
+            self.async_generator_proto,
+            self.async_from_sync_iterator_proto,
+            self.regexp_proto,
+        ]);
+        roots.extend(self.realm
+                .global_lexical_states
+                .iter()
+                .flat_map(|(global, state)| {
+                    std::iter::once(*global).chain(state.bindings.values().copied())
+                }),);
+        roots.extend(self.realm
+                .intrinsics
+                .builtin_prototypes
+                .iter()
+                .flat_map(|((realm, _), prototype)| [*realm, *prototype]),);
+        roots.extend(self.realm
+                .intrinsics
+                .promise_constructors
+                .iter()
+                .flat_map(|(realm, constructor)| [*realm, *constructor]),);
+        roots.extend(self.realm.intrinsics.error_intrinsics.iter().flat_map(
+            |(realm, intrinsics)| {
+                [*realm, intrinsics.constructor, intrinsics.stack_getter, intrinsics.stack_setter]
+            },
+        ));
+        roots.extend(self.realm.intrinsics.regexp_intrinsics.iter().flat_map(
+            |(realm, intrinsics)| {
+                [*realm, intrinsics.constructor, intrinsics.prototype]
+                    .into_iter()
+                    .chain(intrinsics.result_template.map(|template| template.anchor))
+            },
+        ));
+        roots.extend(self.realm
+                .intrinsics
+                .intl_number_format_constructors
+                .iter()
+                .flat_map(|(realm, constructor)| [*realm, *constructor]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_number_format_prototypes
+                .iter()
+                .flat_map(|(realm, prototype)| [*realm, *prototype]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_number_format_fallback_symbols
+                .iter()
+                .flat_map(|(realm, symbol)| [*realm, *symbol]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_collator_constructors
+                .iter()
+                .flat_map(|(realm, constructor)| [*realm, *constructor]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_collator_prototypes
+                .iter()
+                .flat_map(|(realm, prototype)| [*realm, *prototype]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_plural_rules_prototypes
+                .iter()
+                .flat_map(|(realm, prototype)| [*realm, *prototype]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_datetime_format_constructors
+                .iter()
+                .flat_map(|(realm, constructor)| [*realm, *constructor]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_datetime_format_prototypes
+                .iter()
+                .flat_map(|(realm, prototype)| [*realm, *prototype]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_datetime_format_fallback_symbols
+                .iter()
+                .flat_map(|(realm, symbol)| [*realm, *symbol]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_display_names_constructors
+                .iter()
+                .flat_map(|(realm, constructor)| [*realm, *constructor]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_display_names_prototypes
+                .iter()
+                .flat_map(|(realm, prototype)| [*realm, *prototype]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_duration_format_constructors
+                .iter()
+                .flat_map(|(realm, constructor)| [*realm, *constructor]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_duration_format_prototypes
+                .iter()
+                .flat_map(|(realm, prototype)| [*realm, *prototype]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_list_format_constructors
+                .iter()
+                .flat_map(|(realm, constructor)| [*realm, *constructor]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_list_format_prototypes
+                .iter()
+                .flat_map(|(realm, prototype)| [*realm, *prototype]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_relative_time_format_prototypes
+                .iter()
+                .flat_map(|(realm, prototype)| [*realm, *prototype]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_segmenter_prototypes
+                .iter()
+                .flat_map(|(realm, prototype)| [*realm, *prototype]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_segment_iterator_prototypes
+                .iter()
+                .flat_map(|(realm, prototype)| [*realm, *prototype]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_segments_prototypes
+                .iter()
+                .flat_map(|(realm, prototype)| [*realm, *prototype]),);
+        roots.extend(self.realm
+                .intrinsics
+                .intl_locale_prototypes
+                .iter()
+                .flat_map(|(realm, prototype)| [*realm, *prototype]),);
+        roots.extend(self.natives.iter().map(|(_, value)| *value));
+        roots.extend(self.realm.intrinsics.iterator_prototypes.iter().flat_map(
+            |(realm, prototypes)| {
+                [
+                    *realm,
+                    prototypes.helper,
+                    prototypes.wrapper,
+                    prototypes.generator,
+                    prototypes.async_generator,
+                ]
+            },
+        ));
+        roots.extend(self.test262_agent.roots());
+        roots.extend(self.realm
+                .promise
+                .active_native
+                .iter()
+                .map(|activation| activation.callable),);
+        roots.extend(self.realm
+                .promise
+                .rejection_notifications
+                .iter()
+                .map(|notification| match notification {
+                    super::promise::RejectionNotification::Unhandled(promise)
+                    | super::promise::RejectionNotification::Handled(promise) => *promise,
+                }),);
+        roots.extend(self.realm
+                .promise
+                .modules
+                .values()
+                .flat_map(ModuleRecord::roots),);
+        roots.extend(self.realm.promise.module_sources.values().copied());
+        roots.extend(self.realm
+                .promise
+                .dynamic_import_jobs
+                .iter()
+                .flat_map(|job| job.promises.iter().copied()),);
+        roots.extend(self.realm.jobs.iter().flat_map(|job| {
+            std::iter::once(job.callback)
+                .chain(std::iter::once(job.this))
+                .chain(job.args.iter().copied())
+        }));
+        roots.extend(self.realm.template_objects.values().copied());
+        roots.extend(self.realm
+                .intrinsics
+                .arguments_objects
+                .iter()
+                .flat_map(|((global, _), template)| [*global, template.anchor]),);
+        roots.extend(self.with_stack.iter().copied());
+        roots.extend(std::iter::once(self.instanceof_has_instance_holder));
+        roots.extend(self.active_call_roots.iter().copied());
+        roots.extend(self.suspended
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, entry)| {
+                    let continuation = entry.continuation.as_ref()?;
+                    let id = super::activation::ContinuationId {
+                        slot: slot as u32,
+                        generation: entry.generation,
+                    };
+                    (!attached_continuations.contains(&id)).then_some(continuation)
+                })
+                .flat_map(Continuation::roots),);
+        roots.extend(self.symbol_registry.values().copied());
+        roots.extend(self.well_known_symbols.values().copied());
+        roots.extend(self.startup_intrinsics.roots());
+        roots.extend(self.frames.iter().flat_map(|frame| {
+            // A missing map means the function uses a register form
+            // the liveness pass cannot represent; keep the safe
+            // conservative scan for that activation.
+            let register_mask = self.programs.get(frame.program).and_then(|program| {
+                let function = program.functions.get(frame.function as usize)?;
+                (function.register_root_offset != crate::bytecode::NO_REGISTER_ROOT_MAP)
+                    .then(|| {
+                        program
+                            .register_roots
+                            .get(function.register_root_offset as usize + frame.pc)
+                    })
+                    .flatten()
+                    .copied()
+            });
+            [frame.env, frame.this]
+                .into_iter()
+                .chain(frame.context.callee())
+                .chain(frame.original_arguments.iter().copied())
+                .chain(frame.locals.iter().copied())
+                .chain(frame.dynamic_bindings.iter().map(|(_, value)| *value))
+                .chain(frame.registers.iter().enumerate().filter_map(
+                    move |(register, value)| {
+                        register_mask
+                            .is_none_or(|mask| {
+                                register < u64::BITS as usize && mask & (1 << register) != 0
                             })
-                            .flatten()
-                            .copied()
-                    });
-                    [frame.env, frame.this]
-                        .into_iter()
-                        .chain(frame.context.callee())
-                        .chain(frame.original_arguments.iter().copied())
-                        .chain(frame.locals.iter().copied())
-                        .chain(frame.dynamic_bindings.iter().map(|(_, value)| *value))
-                        .chain(frame.registers.iter().enumerate().filter_map(
-                            move |(register, value)| {
-                                register_mask
-                                    .is_none_or(|mask| {
-                                        register < u64::BITS as usize && mask & (1 << register) != 0
-                                    })
-                                    .then_some(*value)
-                            },
-                        ))
-                }))
-                .chain(external_roots);
+                            .then_some(*value)
+                    },
+                ))
+        }));
+        roots.extend(external_roots);
         #[cfg(feature = "profile-memory")]
         if std::env::var_os("QUENCH_MEMORY_PEAK").is_some() {
             let phase = format!("gc_{}_before", self.heap.collection_count() + 1);
@@ -593,13 +582,13 @@ impl<H: Host> Vm<H> {
         }
         let shape_count = self.shapes.len();
         let shape_word_count = shape_count.div_ceil(u64::BITS as usize);
-        let rooted_shape_bits = (0..shape_word_count)
+        let marked_shape_bits = (0..shape_word_count)
             .map(|_| AtomicU64::new(0))
             .collect::<Vec<_>>();
         let shape_trace = ParallelShapeTrace {
             shapes: self.shapes.as_ptr(),
             shape_count,
-            rooted_shapes: &rooted_shape_bits,
+            marked_shapes: &marked_shape_bits,
             owned_roots: &owned_roots,
             _shape_borrow: std::marker::PhantomData,
         };
@@ -607,7 +596,7 @@ impl<H: Host> Vm<H> {
             |trace_kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>| {
                 shape_trace.append(trace_kind, owner, shape, roots);
             };
-        let (finalization_jobs, live_shapes) = self.heap.collect_with_object_roots(
+        let finalization_jobs = self.heap.collect_with_object_roots(
             roots,
             |trace_kind, owner, shape, roots| {
                 shape_trace.append(trace_kind, owner, shape, roots);
@@ -615,10 +604,14 @@ impl<H: Host> Vm<H> {
             Some(&parallel_object_roots),
             full,
         );
+        let live_shapes = shape_trace.live_shapes();
         // Heap weak fields are pruned during collection. Prune the VM-owned
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.
         self.prune_function_values();
+        if full && self.programs.has_unchecked_reclaimable() {
+            self.reclaim_unreferenced_programs();
+        }
         // Do shape work immediately after sweep. In particular, dead method
         // cache handles must be pruned before any runtime cleanup can allocate
         // a new heap cell into a freed slot.

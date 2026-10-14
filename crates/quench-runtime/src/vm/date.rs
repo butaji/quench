@@ -1,4 +1,6 @@
 use super::*;
+
+mod legacy_parse;
 use crate::host::{CapabilityId, HostContext};
 use chrono::{
     DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, Offset, TimeZone, Timelike, Utc,
@@ -239,9 +241,6 @@ impl<H: Host> Vm<H> {
                     setter: None,
                 },
             );
-        }
-        if self.well_known_symbols.contains_key("toStringTag") {
-            self.install_builtin_to_string_tag(prototype, "Date")?;
         }
         if global == self.realm.globals {
             self.global(program, "Date", constructor)
@@ -1094,18 +1093,24 @@ fn format_date_time_string(milliseconds: f64) -> String {
 }
 
 fn parse_date_string(text: &str) -> f64 {
-    let numeric_prefix = text
-        .as_bytes()
-        .first()
-        .is_some_and(|byte| byte.is_ascii_digit() || matches!(byte, b'+' | b'-'));
-    let (date, time, strict) =
-        if let Some((date, time)) = text.split_once(['T', 't']).filter(|_| numeric_prefix) {
-            (date, Some(time), true)
-        } else if let Some((date, time)) = text.split_once(' ') {
-            (date, Some(time), false)
-        } else {
-            (text, None, false)
-        };
+    // Only an ISO date (digits and signs) before the time separator commits
+    // to the strict ISO time form; a 't' inside a word such as "August" does not.
+    let iso_date = |date: &str| {
+        !date.is_empty()
+            && date
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'+' | b'-'))
+    };
+    let (date, time, strict) = if let Some((date, time)) = text
+        .split_once(['T', 't'])
+        .filter(|(date, _)| iso_date(date))
+    {
+        (date, Some(time), true)
+    } else if let Some((date, time)) = text.split_once(' ') {
+        (date, Some(time), false)
+    } else {
+        (text, None, false)
+    };
     if let Some(milliseconds) = parse_numeric_date_parts(date, time, strict) {
         return milliseconds;
     }
@@ -1113,20 +1118,13 @@ fn parse_date_string(text: &str) -> f64 {
     if strict {
         return f64::NAN;
     }
-    chrono::DateTime::parse_from_rfc3339(text)
-        .ok()
-        .map(|date| time_clip(date.timestamp_millis() as f64))
-        .or_else(|| {
-            chrono::DateTime::parse_from_str(text, "%a %b %e %Y %H:%M:%S GMT%z")
-                .ok()
-                .map(|date| time_clip(date.timestamp_millis() as f64))
-        })
-        .or_else(|| {
-            chrono::NaiveDateTime::parse_from_str(text, "%a, %d %b %Y %H:%M:%S GMT")
-                .ok()
-                .map(|date| time_clip(date.and_utc().timestamp_millis() as f64))
-        })
-        .unwrap_or(f64::NAN)
+    let Some((components, utc_offset)) = legacy_parse::parse_legacy_date(text) else {
+        return f64::NAN;
+    };
+    match utc_offset {
+        Some(offset) => time_clip(make_date_milliseconds(components, true) - offset as f64),
+        None => make_date_milliseconds(components, false),
+    }
 }
 
 fn parse_numeric_date_parts(date: &str, time: Option<&str>, strict: bool) -> Option<f64> {

@@ -135,11 +135,10 @@ fn local_index_sources(
         && first.local_slot() <= usize::from(REGISTER_MASK)
         && second.local_slot() <= usize::from(REGISTER_MASK)
         && live_after & ((1 << first.result_register()) | (1 << second.result_register())) == 0)
-        .then(|| {
-            index.set_operand_b(Operand::local(first.local_slot() as u16));
-            index.set_operand_c(Operand::local(second.local_slot() as u16));
-            index
-        })
+        .then_some(())?;
+    index.set_operand_b(Operand::local(first.local_slot() as u16))?;
+    index.set_operand_c(Operand::local(second.local_slot() as u16))?;
+    Some(index)
 }
 
 fn binary_local_target(mut binary: Instr, store: Instr, live_after: u64) -> Option<Instr> {
@@ -214,7 +213,7 @@ mod tests {
             name: None,
             is_arrow: false,
             self_binding_slot: None,
-            source_text: None,
+            source_span: None,
             params: 0,
             length: 0,
             parameter_end_pc: 0,
@@ -244,7 +243,7 @@ mod tests {
             global_function_atoms: vec![],
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
-            name_bindings: vec![],
+            name_bindings: Default::default(),
             binding_sites: vec![],
             source_positions: vec![],
             environment_clones: vec![],
@@ -297,7 +296,7 @@ mod tests {
             name: None,
             is_arrow: false,
             self_binding_slot: None,
-            source_text: None,
+            source_span: None,
             params: 0,
             length: 0,
             parameter_end_pc: 0,
@@ -327,7 +326,7 @@ mod tests {
             global_function_atoms: vec![],
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
-            name_bindings: vec![],
+            name_bindings: Default::default(),
             binding_sites: vec![],
             source_positions: vec![],
             environment_clones: vec![],

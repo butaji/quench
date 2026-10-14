@@ -94,7 +94,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         .iter()
         .map(|name| context.string_rooted(name))
         .collect::<Vec<_>>();
-    if vfs_enabled(context) {
+    if context.host_mut().vfs_enabled() {
         names.push(context.string_rooted("node:vfs"));
     }
     let names = context.array_rooted(&names)?;
@@ -497,7 +497,7 @@ pub(crate) fn is_builtin(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let vfs_enabled = vfs_enabled(context);
+    let vfs_enabled = context.host_mut().vfs_enabled();
     let result = args
         .first()
         .and_then(|argument| context.string_text(*argument).ok().flatten())
@@ -512,16 +512,6 @@ pub(crate) fn is_builtin(
             }
         });
     Ok(context.boolean(result))
-}
-
-fn vfs_enabled(context: &mut NativeContext<'_, NodeHost>) -> bool {
-    context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .exec_argv
-        .iter()
-        .any(|argument| argument == "--experimental-vfs")
 }
 
 fn set(

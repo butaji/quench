@@ -65,7 +65,7 @@ pub(super) fn eval_return_outside_function(program: &Program<'_>) -> Option<oxc_
 }
 
 pub(super) fn normalize_dynamic_function_body(source: &str) -> Cow<'_, str> {
-    if dynamic_body_is_strict(source) {
+    if dynamic_body_is_strict(source) || !has_line_leading_html_close(source) {
         return Cow::Borrowed(source);
     }
     let mut normalized = source.as_bytes().to_vec();
@@ -96,6 +96,18 @@ pub(super) fn normalize_dynamic_function_body(source: &str) -> Cow<'_, str> {
     } else {
         Cow::Borrowed(source)
     }
+}
+
+/// Whether any `-->` follows only spaces and tabs on its line: the one place an HTML-like
+/// closing comment can begin, so a body without such a candidate needs no lexical scan.
+fn has_line_leading_html_close(source: &str) -> bool {
+    source.match_indices("-->").any(|(start, _)| {
+        source.as_bytes()[..start]
+            .iter()
+            .rev()
+            .find(|byte| !matches!(byte, b' ' | b'\t'))
+            .is_none_or(|byte| matches!(byte, b'\n' | b'\r'))
+    })
 }
 
 pub(super) fn normalize_dynamic_function_parameters(source: &str) -> Cow<'_, str> {

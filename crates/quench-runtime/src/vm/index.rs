@@ -398,7 +398,7 @@ impl<H: Host> Vm<H> {
         Ok(true)
     }
 
-    fn array_index_key(&self, key: Value) -> Option<u32> {
+    pub(super) fn array_index_key(&self, key: Value) -> Option<u32> {
         if let Some(index) = key.as_int() {
             return u32::try_from(index).ok();
         }

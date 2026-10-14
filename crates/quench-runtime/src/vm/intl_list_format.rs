@@ -138,7 +138,7 @@ impl<H: Host> Vm<H> {
         if native == Native::IntlListFormatFormat {
             let text = parts
                 .iter()
-                .flat_map(|part| part.value.units().iter().copied())
+                .flat_map(|part| part.value.units().iter())
                 .collect::<Vec<_>>();
             return Ok(self.heap.alloc(Cell::String(JsString::from_units(&text))));
         }

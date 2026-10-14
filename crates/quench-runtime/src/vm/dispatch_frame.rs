@@ -953,6 +953,7 @@ impl<H: Host> Vm<H> {
         &mut self,
         frame: usize,
         fresh: &[u16],
+        reset: &[u16],
     ) -> Result<(), JsError> {
         if !self.frames[frame].captured {
             return Ok(());
@@ -960,7 +961,7 @@ impl<H: Host> Vm<H> {
         let source = self.frames[frame].env;
         let slots = self
             .heap
-            .clone_environment_slots(source, fresh)
+            .clone_environment_slots(source, fresh, reset)
             .ok_or_else(|| JsError("invalid environment clone slots".into()))?;
         let owner = self
             .heap
