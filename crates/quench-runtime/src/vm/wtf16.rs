@@ -196,7 +196,6 @@ impl JsString {
             .get_or_init(|| Rc::<str>::from(String::from_utf16_lossy(self.units())))
     }
 
-    #[cfg(feature = "profile-aggregate")]
     pub(crate) fn len(&self) -> usize {
         self.inner.length
     }

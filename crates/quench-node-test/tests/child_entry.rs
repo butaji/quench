@@ -5772,3 +5772,26 @@ const server=net.createServer(socket=>accepted.push(socket)).listen(0,next);
 function next(){const client=net.connect(server.address().port,()=>{if(++completed===8){const count=process.getActiveResourcesInfo().filter(x=>x==='TCPSocketWrap').length;assert.strictEqual(count,clients.length+accepted.length);console.log('resource-count-matches-delivered-wrappers');for(const socket of clients)socket.destroy();for(const socket of accepted)socket.end();server.close();}else next();});clients.push(client);}
 "#);
 }
+
+#[test]
+fn string_repeat_node_limit_errors_and_lazy_lengths_match_node() {
+    compare_node_stream_source(r#"
+const assert=require('assert');const limit=require('buffer').constants.MAX_STRING_LENGTH;const out=[];
+for(const count of [-0.5,-0,NaN,undefined,0,1,2]){out.push([String(count),'xy'.repeat(count)]);}
+assert.strictEqual('x'.repeat(limit).length,limit);
+assert.strictEqual('x'.repeat(70000000).repeat(2).length,140000000);
+for(const input of ['x','xy','日']){const count=Math.floor(limit/input.length)+1;try{input.repeat(count);out.push('accepted');}catch(e){out.push([e.name,e.message]);}}
+for(const count of [-1,-1.5,Infinity,-Infinity]){try{'x'.repeat(count);out.push('accepted');}catch(e){out.push([e.name,e.message]);}}
+const order=[];const receiver={toString(){order.push('receiver');return 'xy';}};const count={valueOf(){order.push('count');return -0.5;}};out.push([String.prototype.repeat.call(receiver,count),order]);
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn net_create_server_preserves_options_connection_listener_and_arity() {
+    compare_node_stream_source(r#"
+const net=require('net');const output=[];function listener(){}
+for(const args of [[],[listener],[{},listener],[null,listener],[undefined,listener]]){const server=net.createServer(...args);output.push([server instanceof net.Server,server.listeners('connection').length,server.listeners('connection')[0]===listener]);}
+output.push([net.createServer.name,net.createServer.length]);console.log(JSON.stringify(output));
+"#);
+}
