@@ -776,7 +776,6 @@ impl Heap {
                     let value = Value::direct_object(record_id);
                     #[cfg(feature = "profile-memory")]
                     self.profile_allocation(value);
-                    self.peak_live = self.peak_live.max(self.live_slots());
                     return value;
                 }
                 Err(object) => Cell::Object(object),
@@ -810,7 +809,6 @@ impl Heap {
             }
             #[cfg(feature = "profile-memory")]
             self.profile_allocation(Value::heap(index));
-            self.peak_live = self.peak_live.max(self.live_slots());
             return Value::heap(index);
         }
         let index = self.slots.len();
@@ -827,7 +825,6 @@ impl Heap {
         if track_young {
             self.young.push(index as u32);
         }
-        self.peak_live = self.peak_live.max(self.live_slots());
         Value::heap(index as u32)
     }
     pub(crate) fn alloc_object_pair(
