@@ -19,3 +19,6 @@ rustflags = ["-D", "warnings", "-C", "llvm-args=-align-all-functions=6"]
 X86_64_UNKNOWN_LINUX_GNU_OPENSSL_STATIC = "1"
 X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIB_DIR = "/usr/lib/x86_64-linux-gnu"
 X86_64_UNKNOWN_LINUX_GNU_OPENSSL_INCLUDE_DIR = "/usr/include"
+# The system libcrypto archive includes zlib compression support. Declare its
+# archive dependency explicitly so static OpenSSL links resolve those symbols.
+X86_64_UNKNOWN_LINUX_GNU_OPENSSL_LIBS = "ssl:crypto:z"

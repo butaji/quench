@@ -26,7 +26,7 @@ impl<H: Host> Vm<H> {
                 if let (Some(Cell::String(left)), Some(Cell::String(right))) =
                     (vm.heap.get(left), vm.heap.get(right))
                 {
-                    return Ok(operator.matches(left.units().cmp(right.units())));
+                    return Ok(operator.matches(left.units().cmp(&right.units())));
                 }
                 if let Some(ordering) = compare_bigint_string(&vm.heap, left, right) {
                     return Ok(ordering.is_some_and(|ordering| operator.matches(ordering)));
