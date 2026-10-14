@@ -679,7 +679,7 @@ impl Engine {
         Self::specialize_with_mode_and_private_names(
             source,
             name,
-            SpecializationMode::Enabled,
+            SpecializationMode::of(atom_prefix),
             atom_prefix,
             SourceType::script(),
             false,
@@ -740,7 +740,7 @@ impl Engine {
         Self::specialize_with_mode_and_private_names(
             source,
             name,
-            SpecializationMode::Disabled,
+            SpecializationMode::of(atom_prefix),
             atom_prefix,
             source_type,
             false,
@@ -856,7 +856,7 @@ impl Engine {
         Self::specialize_with_program_shape(
             &source,
             name,
-            SpecializationMode::Disabled,
+            SpecializationMode::of(atom_prefix),
             atom_prefix,
             SourceType::script(),
             false,
@@ -877,7 +877,7 @@ impl Engine {
         Self::specialize_with_mode_and_private_names(
             &source,
             name,
-            SpecializationMode::Disabled,
+            SpecializationMode::of(atom_prefix),
             atom_prefix,
             SourceType::script(),
             false,
@@ -1537,6 +1537,18 @@ fn is_immutable_binding_declaration(kind: VariableDeclarationKind) -> bool {
 enum SpecializationMode {
     Enabled,
     Disabled,
+}
+
+impl SpecializationMode {
+    /// A program compiled at run time specializes exactly when the VM it extends does, so
+    /// eval, Function and host-script code keep the inline caches of the code that made it.
+    fn of(host: &dyn AtomPrefix) -> Self {
+        if host.specialized() {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
 }
 
 struct Compiler<'a> {

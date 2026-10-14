@@ -34,14 +34,24 @@ pub(super) fn analyze(
     if function.registers > 64 {
         return None;
     }
+    // Each instruction's reads and writes are fixed; only the live sets iterate.
+    let transfers: Vec<(u64, u64)> = function
+        .code
+        .iter()
+        .map(|&instruction| {
+            (
+                uses(instruction, methods, fields, superinstructions),
+                definitions(instruction, superinstructions),
+            )
+        })
+        .collect();
     let mut live = vec![0; function.code.len() + 1];
     loop {
         let mut changed = false;
         for pc in (0..function.code.len()).rev() {
-            let instruction = function.code[pc];
-            let output = live_out(function, &live, pc, instruction);
-            let next = uses(instruction, methods, fields, superinstructions)
-                | (output & !definitions(instruction, superinstructions));
+            let output = live_out(function, &live, pc, function.code[pc]);
+            let (read, written) = transfers[pc];
+            let next = read | (output & !written);
             if live[pc] != next {
                 live[pc] = next;
                 changed = true;
