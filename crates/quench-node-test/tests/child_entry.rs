@@ -6018,3 +6018,21 @@ out.push(['failed',socket.remoteAddress,!!socket._peername]);fail=false;out.push
 socket._handle=handle;out.push(['local',socket.localAddress,socket.localPort]);socket._handle=null;out.push(['local-after-close',socket.localAddress]);socket._getpeername=()=>({address:'override'});out.push(['override',socket.remoteAddress]);out.push(calls);console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn native_timer_callbacks_and_resource_projection_match_node() {
+    compare_node_stream_source(r#"
+'use strict';
+const assert=require('assert'),out=[];
+for(const value of [null,undefined,0,false,{},'none']){out.push(['clear',String(value),clearTimeout(value),clearInterval(value),clearImmediate(value)]);}
+const dormant=setTimeout(()=>assert.fail('dormant timer fired'),10000).unref();
+const held=setTimeout(()=>assert.fail('held timer fired'),10000);
+const dormantImmediate=setImmediate(()=>{}).unref();
+out.push(['resources',process.getActiveResourcesInfo().filter(v=>v==='Timeout').length,process.getActiveResourcesInfo().filter(v=>v==='Immediate').length]);clearTimeout(held);clearTimeout(dormant);clearImmediate(dormantImmediate);
+let left=3;const rows=[];
+function record(kind,handle,args){assert.strictEqual(this,handle);rows.push([kind,this===handle,args]);if(--left===0){rows.sort((a,b)=>a[0].localeCompare(b[0]));out.push(rows);console.log(JSON.stringify(out));}}
+const immediate=setImmediate(function(...args){record.call(this,'immediate',immediate,args)},'i',2);
+const timeout=setTimeout(function(...args){record.call(this,'timeout',timeout,args)},1,'t',3);
+const interval=setInterval(function(...args){clearInterval(interval);record.call(this,'interval',interval,args)},1,'r',4);
+"#);
+}
