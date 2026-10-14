@@ -2353,6 +2353,7 @@ fn drain_shared_jobs(
             crate::modules::zlib_stream_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
             super::tls_shared_vm::contexts::prune(runtime);
+            super::net_reference_shared_vm::prune(runtime);
             super::fs_stat_watch_shared_vm::prune(runtime);
             return Ok(());
         }
