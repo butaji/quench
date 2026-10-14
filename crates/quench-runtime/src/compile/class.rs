@@ -222,6 +222,7 @@ impl FunctionCompiler<'_, '_> {
                     &scopes,
                     Some(self.function_id),
                     FunctionOptions {
+                        directive_completion: None,
                         defaults: None,
                         source_span: self.owner.source_span(class.span),
                         name_binding: None,
@@ -979,6 +980,7 @@ impl Compiler<'_> {
             scopes,
             parent,
             FunctionOptions {
+                        directive_completion: None,
                 defaults: Some(&method.value.params),
                 source_span: source_span.and_then(|span| {
                     class_method_source_span(self.text, span, method.key.span().start)
@@ -1019,6 +1021,7 @@ impl Compiler<'_> {
             scopes,
             parent,
             FunctionOptions {
+                        directive_completion: None,
                 defaults: None,
                 source_span: None,
                 name_binding: None,

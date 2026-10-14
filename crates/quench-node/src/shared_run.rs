@@ -284,7 +284,8 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                 guest_arguments.extend_from_slice(args.get(index + 1..).unwrap_or_default());
                 input = Some(SharedInput::Eval {
                     source: if print {
-                        format!("console.log({source});")
+                        let literal = serde_json::to_string(&source).map_err(|error| error.to_string())?;
+                        format!("console.log(globalThis[\"\\0quench:evalScript\"]({literal}));")
                     } else {
                         source
                     },
@@ -377,4 +378,11 @@ fn read_cli_stdin() -> Result<String, String> {
         .read_to_end(&mut bytes)
         .map_err(|error| format!("read stdin: {error}"))?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// CLI print evaluates a Script and prints its language completion, not a wrapped expression.
+pub(crate) fn print_eval_script(context: &mut quench_runtime::NativeContext<'_, NodeHost>, _: quench_runtime::RootId, args: &[quench_runtime::RootId]) -> Result<quench_runtime::RootId, quench_runtime::RootedError> {
+    let source = args.first().copied().ok_or_else(|| quench_runtime::RootedError::host("print evaluation source missing"))?;
+    let source = context.string_text(source)?.ok_or_else(|| quench_runtime::RootedError::host("print evaluation source must be a string"))?;
+    context.evaluate_script_rooted(&source, "[eval]")
 }
