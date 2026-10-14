@@ -486,9 +486,9 @@ pub(crate) fn dispatch(
         let watcher = context.retain(watcher)?;
         let result = (|| {
             let current =
-                super::fs_shared_vm::stat::watch_stats(context, current.as_ref(), bigint)?;
+                super::fs_shared_vm::stat::metadata_stats(context, current.as_ref(), bigint)?;
             let previous =
-                super::fs_shared_vm::stat::watch_stats(context, previous.as_ref(), bigint)?;
+                super::fs_shared_vm::stat::metadata_stats(context, previous.as_ref(), bigint)?;
             let emit = get(context, watcher, "emit")?;
             let change = context.string_rooted("change");
             context.call_rooted(emit, watcher, &[change, current, previous])
