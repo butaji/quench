@@ -1,14 +1,16 @@
 use crate::host::NodeHost;
 use crate::modules::shared_event_loop::SharedCallback;
-use quench_runtime::{NativeContext, RootId, RootedError};
+use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError};
 use std::time::Duration;
 
+pub(crate) const TIMER_DESTROYED: &str = "_destroyed";
 const TIMER_ID: &str = "\0quench:shared-timer-id";
 const TIMER_REFED: &str = "refed";
 const PROMISE_STATE: &str = "\0quench:timer-promise-state";
 const PROMISE_KIND: &str = "\0quench:timer-promise-kind";
 const PROMISE_DELAY: &str = "\0quench:timer-promise-delay";
 const PROMISE_VALUE: &str = "\0quench:timer-promise-value";
+const PROMISE_REFED: &str = "\0quench:timer-promise-refed";
 const PROMISE_OPTIONS: &str = "\0quench:timer-promise-options";
 const PROMISE_RESOLVE: &str = "\0quench:timer-promise-resolve";
 const PROMISE_REJECT: &str = "\0quench:timer-promise-reject";
@@ -102,6 +104,12 @@ const PROMISE_INTERVAL_FACTORY: &str = quench_js_check::checked_js!(
 #[derive(Clone, Copy)]
 pub(crate) struct TimerHandleApi {
     pub(crate) refed_key: RootId,
+    pub(crate) async_id_key: RootId,
+    pub(crate) primitive_key: RootId,
+    pub(crate) primitive_registry: RootId,
+    pub(crate) primitive_cleanup: RootId,
+    pub(crate) delete_property: RootId,
+    pub(crate) number_string: RootId,
     pub(crate) timeout_prototype: RootId,
     pub(crate) immediate_prototype: RootId,
 }
@@ -367,12 +375,43 @@ pub(crate) fn schedule_promise_timeout(
     install(context, operation, PROMISE_RESOLVE, resolve)?;
     install(context, operation, PROMISE_REJECT, reject)?;
     let options = property(context, operation, PROMISE_OPTIONS)?;
+    let kind = property_text(context, operation, PROMISE_KIND)?;
+    if kind == PROMISE_TIMEOUT {
+        let delay = property(context, operation, PROMISE_DELAY)?;
+        if !is_undefined(context, delay) && !context.rooted_value(delay).is_some_and(|value| value.as_number().is_some()) {
+            return Err(super::util_shared_vm::argument_type_error(context, delay, "delay", "number")?);
+        }
+    }
+    if !is_undefined(context, options) {
+        if !context.is_object_rooted(options)? || context.rooted_value(options).is_some_and(|value| value.is_null()) || context.is_array_rooted(options)? {
+            return Err(super::util_shared_vm::argument_type_error(context, options, "options", "Object")?);
+        }
+        let signal = property(context, options, "signal")?;
+        if !is_undefined(context, signal) {
+            let signal = property(context, options, "signal")?;
+            let aborted = context.string_rooted("aborted");
+            if !context.is_object_rooted(signal)? || context.rooted_value(signal).is_some_and(|value| value.is_null()) || !context.has_property_rooted(signal, aborted)? {
+                return Err(super::util_shared_vm::argument_type_error(context, signal, "options.signal", "AbortSignal")?);
+            }
+        }
+        let referenced = property(context, options, "ref")?;
+        if !is_undefined(context, referenced) {
+            let referenced = property(context, options, "ref")?;
+            if !context.rooted_value(referenced).is_some_and(|value| value.as_bool().is_some()) {
+                return Err(super::util_shared_vm::argument_type_error(context, referenced, "options.ref", "boolean")?);
+            }
+        }
+    }
     let signal = if is_undefined(context, options) {
         context.undefined()
     } else {
         property(context, options, "signal")?
     };
     install(context, operation, PROMISE_SIGNAL, signal)?;
+    let referenced = if is_undefined(context, options) { context.undefined() } else { property(context, options, "ref")? };
+    let referenced = if is_undefined(context, referenced) { true } else { context.truthy_rooted(referenced)? };
+    let referenced = context.boolean(referenced);
+    install(context, operation, PROMISE_REFED, referenced)?;
     if is_undefined(context, signal) {
         return schedule_promise_operation(context, operation);
     }
@@ -423,6 +462,11 @@ fn schedule_promise_operation(
         schedule_timer(context, &[callback, delay], false)?
     };
     install(context, operation, PROMISE_HANDLE, handle)?;
+    let referenced = property(context, operation, PROMISE_REFED)?;
+    if !context.truthy_rooted(referenced)? {
+        if kind == PROMISE_IMMEDIATE { immediate_unref(context, handle, &[])?; }
+        else { timer_unref(context, handle, &[])?; }
+    }
     Ok(context.undefined())
 }
 
@@ -582,6 +626,8 @@ fn schedule_timer(
         .ok_or_else(|| RootedError::host("shared timer identifier space exhausted"))?;
     let api = timer_handle_api(context)?;
     let handle = context.object_rooted()?;
+    let live = context.boolean(false);
+    install(context, handle, TIMER_DESTROYED, live)?;
     let id_value = context.string_rooted(&id.to_string());
     let id_key = context.string_rooted(TIMER_ID);
     if !context.set_property_rooted(handle, id_key, id_value, handle)? {
@@ -598,6 +644,10 @@ fn schedule_timer(
     }
     let async_id =
         crate::modules::async_hooks_shared_vm::create_context(&context.host_mut().shared_state());
+    let async_id_value = context.number(async_id as f64);
+    context.define_data_property_rooted(handle, api.async_id_key, async_id_value, true, true, true)?;
+    let primitive = context.boolean(false);
+    context.define_data_property_rooted(handle, api.primitive_key, primitive, true, true, true)?;
     crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Timeout", async_id)?;
     let callback = context.retain(callback)?;
     let receiver = context.retain(handle)?;
@@ -623,39 +673,71 @@ fn schedule_timer(
     Ok(handle)
 }
 
-fn timer_delay(
-    context: &mut NativeContext<'_, NodeHost>,
-    delay: Option<RootId>,
-) -> Result<Duration, RootedError> {
-    let Some(delay) = delay else {
-        return Ok(Duration::from_millis(DEFAULT_TIMER_DELAY_MS));
-    };
-    let value = context
-        .rooted_value(delay)
-        .ok_or_else(|| RootedError::host("invalid timer delay root"))?;
-    let numeric = if let Some(number) = value.as_number() {
-        Some(number)
-    } else if let Some(boolean) = value.as_bool() {
-        Some(if boolean { 1.0 } else { 0.0 })
-    } else if value.is_null() {
-        Some(0.0)
-    } else if let Some(text) = context.string_text(delay)? {
-        if text.trim().is_empty() {
-            Some(0.0)
-        } else {
-            text.trim().parse::<f64>().ok()
+#[derive(Default)]
+pub(crate) struct TimerDurationWarnings {
+    negative: bool,
+    not_number: bool,
+}
+
+#[derive(Clone, Copy)]
+enum TimerDurationWarning { Overflow, Negative, NotNumber }
+
+impl TimerDurationWarning {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Overflow => "TimeoutOverflowWarning",
+            Self::Negative => "TimeoutNegativeWarning",
+            Self::NotNumber => "TimeoutNaNWarning",
         }
-    } else if value.is_undefined() {
-        None
-    } else {
-        None
+    }
+    fn detail(self) -> &'static str {
+        match self {
+            Self::Overflow => "does not fit into a 32-bit signed integer.",
+            Self::Negative => "is a negative number.",
+            Self::NotNumber => "is not a number.",
+        }
+    }
+}
+
+fn timer_delay(context: &mut NativeContext<'_, NodeHost>, delay: Option<RootId>) -> Result<Duration, RootedError> {
+    let one = context.number(DEFAULT_TIMER_DELAY_MS as f64);
+    let delay = delay.filter(|value| !context.rooted_value(*value).is_some_and(|value| value.is_undefined()));
+    // Node's `after *= 1`: Core owns conversion hooks, Symbol/BigInt errors and NaN.
+    let numeric = match delay {
+        Some(delay) => context.arithmetic_rooted(NativeArithmetic::Multiply, delay, one)?,
+        None => one,
     };
-    let milliseconds = numeric
-        .filter(|value| value.is_finite())
-        .map(|value| value.max(0.0).trunc() as u64)
-        .unwrap_or(DEFAULT_TIMER_DELAY_MS)
-        .clamp(DEFAULT_TIMER_DELAY_MS, MAX_TIMER_DELAY_MS);
-    Ok(Duration::from_millis(milliseconds))
+    let after = context.rooted_value(numeric).and_then(|value| value.as_number())
+        .ok_or_else(|| RootedError::host("timer multiplication did not return a Number"))?;
+    if after >= DEFAULT_TIMER_DELAY_MS as f64 && after <= MAX_TIMER_DELAY_MS as f64 {
+        return Ok(Duration::from_millis(after.trunc() as u64));
+    }
+    let warning = {
+        let state = context.host_mut().shared_state();
+        let mut state = state.borrow_mut();
+        let warnings = &mut state.timer_duration_warnings;
+        if after > MAX_TIMER_DELAY_MS as f64 { Some(TimerDurationWarning::Overflow) }
+        else if after < 0.0 && !warnings.negative {
+            warnings.negative = true;
+            Some(TimerDurationWarning::Negative)
+        } else if after.is_nan() && !warnings.not_number {
+            warnings.not_number = true;
+            Some(TimerDurationWarning::NotNumber)
+        } else { None }
+    };
+    if let Some(warning) = warning {
+        let api = timer_handle_api(context)?;
+        let undefined = context.undefined();
+        let number = context.call_rooted(api.number_string, undefined, &[numeric])?;
+        let number = context.string_text(number)?.ok_or_else(|| RootedError::host("Number string conversion failed"))?;
+        let message = context.string_rooted(&format!("{number} {}\nTimeout duration was set to 1.", warning.detail()));
+        let kind = context.string_rooted(warning.name());
+        let global = context.global_root()?;
+        let process = property(context, global, "process")?;
+        let emit = property(context, process, "emitWarning")?;
+        context.call_rooted(emit, process, &[message, kind])?;
+    }
+    Ok(Duration::from_millis(DEFAULT_TIMER_DELAY_MS))
 }
 
 pub(crate) fn timer_ref(
@@ -762,10 +844,25 @@ fn timer_handle_api(
         return Ok(api);
     }
     let refed_key = context.symbol_rooted(Some(TIMER_REFED));
+    let async_id_key = context.symbol_rooted(Some("asyncId"));
+    let primitive_key = context.symbol_rooted(Some("kHasPrimitive"));
+    // This is Node's primitive alias registry, not an activity projection.
+    let primitive_registry = context.null_object_rooted()?;
+    let primitive_cleanup = context.host_function(crate::host::shared_vm::operation("timerPrimitiveCleanup"))?;
+    let global = context.global_root()?;
+    let reflect = property(context, global, "Reflect")?;
+    let delete_property = property(context, reflect, "deleteProperty")?;
+    let number_string = property(context, global, "String")?;
     let timeout_prototype = timer_handle_prototype(context, "Timeout", "timerHasRef")?;
     let immediate_prototype = timer_handle_prototype(context, "Immediate", "immediateHasRef")?;
     let api = TimerHandleApi {
         refed_key: context.retain(refed_key)?,
+        async_id_key: context.retain(async_id_key)?,
+        primitive_key: context.retain(primitive_key)?,
+        primitive_registry: context.retain(primitive_registry)?,
+        primitive_cleanup: context.retain(primitive_cleanup)?,
+        delete_property: context.retain(delete_property)?,
+        number_string: context.retain(number_string)?,
         timeout_prototype: context.retain(timeout_prototype)?,
         immediate_prototype: context.retain(immediate_prototype)?,
     };
@@ -843,6 +940,27 @@ fn timer_handle_prototype(
             "cannot name {owner}.prototype.hasRef"
         )));
     }
+    let operation = context.host_function(crate::host::shared_vm::operation(
+        if owner == "Timeout" { "timerDispose" } else { "immediateDispose" }
+    ))?;
+    let factory = context.evaluate_script_rooted(quench_js_check::checked_js!(
+        "operation=>function(){'use strict';return operation(this);}"
+    ), "node:timers/dispose-facade.js")?;
+    let undefined = context.undefined();
+    let method = context.call_rooted(factory, undefined, &[operation])?;
+    let global = context.global_root()?;
+    let symbol = property(context, global, "Symbol")?;
+    let key = property(context, symbol, "dispose")?;
+    context.define_data_property_rooted(prototype, key, method, true, true, true)?;
+    if owner == "Timeout" {
+        let operation = context.host_function(crate::host::shared_vm::operation("timerClose"))?;
+        let method = context.call_rooted(factory, undefined, &[operation])?;
+        install(context, prototype, "close", method)?;
+        let operation = context.host_function(crate::host::shared_vm::operation("timerToPrimitive"))?;
+        let method = context.call_rooted(factory, undefined, &[operation])?;
+        let key = property(context, symbol, "toPrimitive")?;
+        context.define_data_property_rooted(prototype, key, method, true, true, true)?;
+    }
     Ok(prototype)
 }
 
@@ -908,6 +1026,8 @@ pub(crate) fn set_immediate(
         .ok_or_else(|| RootedError::host("shared Immediate identifier space exhausted"))?;
     let api = timer_handle_api(context)?;
     let handle = context.object_rooted()?;
+    let live = context.boolean(false);
+    install(context, handle, TIMER_DESTROYED, live)?;
     if !context.set_prototype_rooted(handle, api.immediate_prototype)? {
         return Err(RootedError::host("cannot install Immediate prototype"));
     }
@@ -954,6 +1074,8 @@ pub(crate) fn clear_immediate(
     };
     let id = queued_guest_immediate_id(context, handle)?;
     if let Some(id) = id {
+        let destroyed = context.boolean(true);
+        install(context, handle, TIMER_DESTROYED, destroyed)?;
         let api = timer_handle_api(context)?;
         let refed = context.get_property_rooted(handle, api.refed_key)?;
         let was_refed = context.truthy_rooted(refed)?;
@@ -994,8 +1116,20 @@ pub(crate) fn clear_timer(
     if context.rooted_value(handle).is_some_and(|value| value.is_null() || value.is_undefined()) {
         return Ok(context.undefined());
     }
+    let handle = if context.rooted_value(handle).is_some_and(|value| value.as_number().is_some()) || context.string_text(handle)?.is_some() {
+        let api = timer_handle_api(context)?;
+        let handle = context.get_property_rooted(api.primitive_registry, handle)?;
+        if context.rooted_value(handle).is_some_and(|value| value.is_undefined()) {
+            return Ok(context.undefined());
+        }
+        handle
+    } else { handle };
     let id = timer_id(context, handle)?;
     if let Some(id) = id {
+        let destroyed = context.boolean(true);
+        install(context, handle, TIMER_DESTROYED, destroyed)?;
+        let undefined = context.undefined();
+        primitive_cleanup(context, undefined, &[handle])?;
         let callback = context
             .host_mut()
             .shared_state()
@@ -1095,4 +1229,80 @@ pub(crate) fn active_resources(context: &mut NativeContext<'_, NodeHost>, _: Roo
         for _ in 0..count { resources.push(context.string_rooted(name)); }
     }
     context.array_rooted(&resources)
+}
+
+pub(crate) fn timer_dispose(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    clear_timer(context, receiver, args)
+}
+pub(crate) fn immediate_dispose(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    clear_immediate(context, receiver, args)
+}
+pub(crate) fn timer_close(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    clear_timer(context, receiver, args)?;
+    Ok(args[0])
+}
+
+/// Public timer functions defer the promise export lookup, preserving its identity and hooks.
+pub(crate) fn install_promisify_globals(context: &mut NativeContext<'_, NodeHost>) -> Result<(), RootedError> {
+    // Capture the intrinsic deletion operation before guest code can replace Reflect.
+    timer_handle_api(context)?;
+    let global = context.global_root()?;
+    let symbol = property(context, global, "Symbol")?;
+    let registry = property(context, symbol, "for")?;
+    let name = context.string_rooted("nodejs.util.promisify.custom");
+    let custom = context.call_rooted(registry, symbol, &[name])?;
+    for name in ["setTimeout", "setImmediate"] {
+        let function = property(context, global, name)?;
+        let name = context.string_rooted(name);
+        let getter = context.host_function_with_data(crate::host::shared_vm::operation("timerPromisifyGet"), name)?;
+        let key = context.string_rooted("name");
+        let value = context.string_rooted("get");
+        context.define_data_property_rooted(getter, key, value, false, false, true)?;
+        let descriptor = context.null_object_rooted()?;
+        install(context, descriptor, "get", getter)?;
+        let yes = context.boolean(true);
+        install(context, descriptor, "enumerable", yes)?;
+        context.define_property_descriptor_rooted(function, custom, descriptor)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn promisify_get(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let name = context.host_function_data()?;
+    let module = crate::host::shared_vm::commonjs::timers_promises_module(context)?;
+    context.get_property_rooted(module, name)
+}
+
+/// Node registers the original receiver only on its first primitive conversion.
+pub(crate) fn to_primitive(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let handle = args[0];
+    let api = timer_handle_api(context)?;
+    let id = context.get_property_rooted(handle, api.async_id_key)?;
+    let known = context.get_property_rooted(handle, api.primitive_key)?;
+    if !context.truthy_rooted(known)? {
+        let yes = context.boolean(true);
+        if !context.set_property_rooted(handle, api.primitive_key, yes, handle)? {
+            let error = context.type_error_rooted("Cannot assign to read only timer primitive registration")?;
+            return Err(context.throw(error));
+        }
+        context.set_property_rooted(api.primitive_registry, id, handle, api.primitive_registry)?;
+    }
+    Ok(id)
+}
+
+/// Remove the primitive alias at real cancellation/completion. A firing timer
+/// supplies the identity read before its callback, matching Node's snapshot.
+pub(crate) fn primitive_cleanup(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let handle = args[0];
+    let api = timer_handle_api(context)?;
+    let known = context.get_property_rooted(handle, api.primitive_key)?;
+    if context.truthy_rooted(known)? {
+        let id = match args.get(1).copied() {
+            Some(id) => id,
+            None => context.get_property_rooted(handle, api.async_id_key)?,
+        };
+        let undefined = context.undefined();
+        context.call_rooted(api.delete_property, undefined, &[api.primitive_registry, id])?;
+    }
+    Ok(context.undefined())
 }
