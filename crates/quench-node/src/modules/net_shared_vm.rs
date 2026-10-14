@@ -520,7 +520,7 @@ enum SocketClosePhase {
     Closing,
 }
 
-enum DeliveryPhase { Pending, Delivered, ReadPending }
+enum DeliveryPhase { Pending, DeliveringConnection, Delivered, ReadPending }
 
 struct SharedSocket {
     stream: SocketStream,
@@ -2137,6 +2137,12 @@ pub(crate) fn deliver_connection(
         .and_then(|value| value.as_number())
         .ok_or_else(|| RootedError::host("queued socket owner is unavailable"))?
         as u64;
+    {
+        let shared = context.host_mut().shared_state();
+        if let Some(socket) = shared.borrow_mut().tcp.sockets.get_mut(&socket) {
+            socket.delivery = DeliveryPhase::DeliveringConnection;
+        };
+    }
     let result = context.call_rooted(callback, receiver, &args[2..]);
     let shared = context.host_mut().shared_state();
     {
@@ -2218,4 +2224,10 @@ pub(crate) fn initialize_server_emitter(
 ) -> Result<RootId, RootedError> {
     let emitter = context.host_function_data()?;
     context.call_rooted(emitter, args[0], &[])
+}
+
+/// The accepted wrapper becomes observable when its original connection
+/// callback begins. Read delivery stays blocked until that callback completes.
+pub(crate) fn connection_delivery_started(transport: &Transport, id: u64) -> bool {
+    transport.sockets.get(&id).is_none_or(|socket| !matches!(socket.delivery, DeliveryPhase::Pending))
 }

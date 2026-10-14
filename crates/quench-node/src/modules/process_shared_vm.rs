@@ -1484,7 +1484,11 @@ pub(crate) fn get_active_network_resources(
     let active_sockets = state
         .net_sockets
         .iter()
-        .filter(|(id, _)| crate::modules::net_shared_vm::socket_has_ref(&state.tcp, **id) == Some(true))
+        .filter(|(id, socket)| {
+            crate::modules::net_shared_vm::socket_has_ref(&state.tcp, **id) == Some(true)
+                && (socket.parent_server.is_none()
+                    || crate::modules::net_shared_vm::connection_delivery_started(&state.tcp, **id))
+        })
         .count()
         + state
             .net_closing_sockets
