@@ -865,8 +865,12 @@ pub(crate) fn has_work(transport: &Transport) -> bool {
             ListenerState::Open(_) => listener.referenced,
             ListenerState::CloseRequested | ListenerState::Closing => true,
         })
-        || transport.sockets.values().any(|socket| socket.referenced
-            || socket.write_offset < socket.pending_write.len() || !socket.completions.is_empty())
+        || transport.sockets.values().any(|socket| {
+            (socket.referenced && !socket.read_ended)
+                || socket.write_offset < socket.pending_write.len()
+                || !socket.completions.is_empty()
+                || (socket.end_after_write && !socket.write_ended)
+        })
         || !transport.closing_sockets.is_empty()
         || transport
             .connecting
