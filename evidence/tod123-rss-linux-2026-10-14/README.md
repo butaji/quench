@@ -92,3 +92,40 @@ work max RSS medians:
 | Splay | -0.08% | [-6.66%, +3.55%] | 88.0 MB | 71.2 MB |
 
 No fixture loses wall with an interval excluding zero.
+
+## Lazy web globals and `Temporal`
+
+The web-stream family, the web-API group, `URL`/`URLSearchParams`,
+`TextDecoder`/`TextEncoder` and the runtime's `Temporal` became lazy data
+properties (`docs/node-host-contracts.md`, "Lazy web globals"). Stock V8-v7
+max RSS, two interleaved rounds each, both binaries with a freshly trained
+order (base `ea5411412`):
+
+| Fixture | Base | Candidate | QuickJS |
+| --- | ---: | ---: | ---: |
+| Crypto | 12.0 MB | 10.6 MB | 3.5 MB |
+| DeltaBlue | 11.5 MB | 10.3 MB | 3.8 MB |
+| EarleyBoyer | 17.9 MB | 16.3-16.7 MB | 16.8 MB |
+| NavierStokes | 12.5 MB | 10.7 MB | 5.0 MB |
+| RayTrace | 11.3 MB | 10.0 MB | 3.3 MB |
+| RegExp | 23.0 MB | 21.9 MB | 6.8 MB |
+| Richards | 11.1 MB | 9.7 MB | 3.3 MB |
+| Splay | 55.4 MB | 54.7 MB | 147 MB |
+
+Empty start: 9.4 MB to 7.9 MB. All-eight Callgrind guard
+(`guard-lazy-globals-raw.txt`): start-up instructions -8% (RegExp) to -57%
+(Richards); per-run within ±2.6% except Splay +21.8% (15.1M to 18.3M
+instructions per run). Splay runs the same 13 collections, but at points with
+more live tree nodes (object visits 1.48M to 1.94M over 75 runs): GC phase,
+not mutator work; whole-program instructions fall 1.0%, and Score stays within
+run noise. The upstream `test/parallel` manifest gives the same outcome for
+every case (405 pass), and the Temporal and `global` Test262 directories pass
+6669 of 6669 on both binaries.
+
+At peak a small fixture holds about 6 MB of file pages (our `.text` 3.5 MB,
+read-only data 1.8 MB, libc 0.6 MB per bootstrap phase). The kernel maps a
+cached file folio around each fault: a stride of one touch per 256 KB over the
+binary maps 141 KB per touch when the page cache came from readahead, 4.6 KB
+when it holds single pages. Releasing clean `.rodata` and RELRO pages at the
+phase boundaries as well re-faulted them at that granularity and raised the
+empty start by 0.5 MB, so only code mappings are released.

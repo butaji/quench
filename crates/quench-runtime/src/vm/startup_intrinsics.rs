@@ -127,7 +127,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// Returns the script's own state after the outermost `enter_startup_intrinsics`. A recorded
-    /// property the host changed meanwhile keeps the change, as its new original.
+    /// property the host changed meanwhile keeps the change, as its new original, whether or not
+    /// the script had replaced it (a lazy data property the host materialized meanwhile).
     pub(crate) fn leave_startup_intrinsics(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         self.startup_intrinsics.depth -= 1;
         if self.startup_intrinsics.depth > 0 {
@@ -140,6 +141,11 @@ impl<H: Host> Vm<H> {
         for &(index, previous) in swapped.iter().rev() {
             restored[index] = true;
             let property = self.startup_intrinsics.properties[index];
+            if let Some(current) = self.slot_property(property.holder, property.key)
+                && current != property.original
+            {
+                self.startup_intrinsics.properties[index].original = current;
+            }
             let result = match previous {
                 Some(previous) => self
                     .redefine_slot_property(p, property.holder, property.key, previous)

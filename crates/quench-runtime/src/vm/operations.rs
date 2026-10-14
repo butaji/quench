@@ -389,6 +389,13 @@ impl<H: Host> Vm<H> {
         if native.is_object_static() {
             return self.call_object_native(p, native, args);
         }
+        if native == Native::LazyDataProperty {
+            return self.lazy_data_property_access(p, this, args);
+        }
+        if native == Native::TemporalInitialize {
+            self.install_temporal(p)?;
+            return Ok(Value::UNDEFINED);
+        }
         if native == Native::ProxyRevoke {
             let callee = self
                 .active_native_callable()

@@ -163,6 +163,12 @@ impl<H: Host> Vm<H> {
                     }
                 }
                 self.evaluate_deferred_namespace_for_key(p, object, Some(property))?;
+                // A lazy data property is configurable with the attributes its data property
+                // will have, so only a descriptor that keeps more of it needs its value.
+                if !descriptor.resolve(&self.heap).replaces_kind_fields() {
+                    let object = self.heap.root_value(target).unwrap();
+                    self.materialize_lazy_data_property(p, object, property)?;
+                }
                 let object = self.heap.root_value(target).unwrap();
                 if self
                     .object_data(object)
