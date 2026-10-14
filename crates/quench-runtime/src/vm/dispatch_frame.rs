@@ -1390,6 +1390,7 @@ impl<H: Host> Vm<H> {
                 }
                 // A field cache hit reads a data slot, and an array's length is an own data
                 // property: neither allocates nor throws. Anything else takes the general path.
+                // `this` is a base once the activation fixed it, as for `SetThisField`.
                 Op::GetField
                     if ins.result_flags() == 0
                         && let Some(crate::bytecode::FieldLookup::Atom {
@@ -1397,9 +1398,13 @@ impl<H: Host> Vm<H> {
                             base,
                             cache_site,
                         }) = ins.field_lookup()
-                        && let Some(register) = base.register_index() =>
+                        && let Some(object) = match base.register_index() {
+                            Some(register) => Some(self.read(frame, register)),
+                            None => self.frames[frame]
+                                .fixed_this
+                                .then(|| self.frames[frame].this),
+                        } =>
                 {
-                    let object = self.read(frame, register);
                     let value = match self.cached_field_hit(p, object, cache_site) {
                         super::object::FieldCacheProbe::Hit(value) => Some(value),
                         super::object::FieldCacheProbe::Ineligible => {
