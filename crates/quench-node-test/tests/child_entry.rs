@@ -6271,3 +6271,17 @@ Object.defineProperty(immediate,'_destroyed',{value:false,writable:true,enumerab
 setImmediate(()=>{out.push('rescue');console.log(JSON.stringify(out));process.exit(0);});
 "#);
 }
+
+#[test]
+fn native_timer_custom_promisify_getters_preserve_exports_identity_and_mutation() {
+    compare_node_stream_source(r#"
+'use strict';
+const assert=require('assert'),timers=require('timers'),promises=require('timers/promises'),util=require('util'),out=[];
+for(const name of ['setTimeout','setImmediate']){
+ assert.strictEqual(timers[name],globalThis[name]);const d=Object.getOwnPropertyDescriptor(timers[name],util.promisify.custom);
+ out.push([name,d.enumerable,d.configurable,d.get.name,d.get.length,d.set===undefined,Object.hasOwn(d.get,'prototype'),util.promisify(timers[name])===promises[name],d.get.call(null)===promises[name]]);
+ const original=promises[name],marker=function changed(){};promises[name]=marker;out.push(util.promisify(timers[name])===marker);promises[name]=original;
+}
+Promise.all([util.promisify(timers.setTimeout)(1,'timeout'),util.promisify(timers.setImmediate)('immediate')]).then(values=>{out.push(values);console.log(JSON.stringify(out));});
+"#);
+}
