@@ -32,6 +32,30 @@ pub(crate) struct WideInstruction {
 }
 
 impl WideInstruction {
+    /// The frame-local slots this instruction reads or writes: its local-slot immediate, a
+    /// fused numeric store target, and local operands. Every frame-local access names its
+    /// slot one of these ways.
+    pub(crate) fn addressed_local_slots(self) -> impl Iterator<Item = u16> {
+        let immediate = (self.op().immediate_role() == ImmediateRole::LocalSlot)
+            .then(|| u16::try_from(self.local_slot()).ok())
+            .flatten();
+        let operands = InstructionField::ALL
+            .iter()
+            .copied()
+            .filter_map(move |field| {
+                let operand = Operand(self.field_value(field));
+                (matches!(
+                    self.op().field_layout(field),
+                    FieldLayout::Operand | FieldLayout::NumericIndexOperand
+                ) && operand.kind() == Some(super::OperandKind::Local))
+                .then(|| operand.payload())
+            });
+        immediate
+            .into_iter()
+            .chain(self.numeric_local_target())
+            .chain(operands)
+    }
+
     pub(crate) const fn new(op: Op, a: u16, b: u16, c: u16, imm: u32) -> Self {
         Self { op, a, b, c, imm }
     }
