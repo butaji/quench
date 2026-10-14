@@ -494,6 +494,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         global "clearInterval" (1) => crate::modules::timers_shared_vm::clear_timer,
         method "processGetActiveTimerResources" (0) => crate::modules::timers_shared_vm::active_resources,
         method "timerPromisifyGet" (0) => crate::modules::timers_shared_vm::promisify_get,
+        method "internalSetUnrefTimeout" (2) => crate::modules::timers_shared_vm::set_unref_timeout,
         method "timerRefresh" (0) => crate::modules::timers_shared_vm::refresh,
         method "timerInvoke" (0) => crate::modules::timers_shared_vm::invoke_timeout,
         method "timerRepeatDelay" (0) => crate::modules::timers_shared_vm::repeat_delay,
