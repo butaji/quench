@@ -9,6 +9,7 @@ use std::sync::{Mutex, OnceLock};
 mod access;
 mod cell;
 mod cell_access;
+mod collection_entries;
 mod external;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
@@ -18,6 +19,7 @@ mod slots;
 mod thin_slice;
 mod weak;
 pub(crate) use cell::*;
+pub(crate) use collection_entries::CollectionEntries;
 use records::{ArrayRecordSpace, ObjectRecordSpace, RecordSweep};
 pub use root::RootId;
 pub(crate) use root::{RootTable, WeakHandle};
@@ -2181,14 +2183,14 @@ impl Heap {
                 entries,
             } => {
                 object(value);
-                work.extend(entries.iter().flat_map(|(key, value)| [*key, *value]));
+                work.extend(entries.iter().flat_map(|(key, value)| [key, value]));
             }
             Cell::Set {
                 object: value,
                 entries,
             } => {
                 object(value);
-                work.extend(entries.iter().copied());
+                work.extend(entries.iter());
             }
             Cell::ShadowRealm {
                 object: value,
