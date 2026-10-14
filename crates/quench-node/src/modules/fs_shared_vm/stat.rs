@@ -14,65 +14,7 @@ const S_IF_DIRECTORY: f64 = 0o040000 as f64;
 #[cfg(not(unix))]
 const S_IF_REGULAR: f64 = 0o100000 as f64;
 
-const STAT_API: &str = r#"(readMetadata) => {
-  function makeStats(metadata) {
-    const stats = {
-      dev: metadata.dev,
-      ino: metadata.ino,
-      mode: metadata.mode,
-      nlink: metadata.nlink,
-      uid: metadata.uid,
-      gid: metadata.gid,
-      rdev: metadata.rdev,
-      size: metadata.size,
-      blksize: metadata.blksize,
-      blocks: metadata.blocks,
-      atimeMs: metadata.atimeMs,
-      mtimeMs: metadata.mtimeMs,
-      ctimeMs: metadata.ctimeMs,
-      birthtimeMs: metadata.birthtimeMs,
-      atime: new Date(metadata.atimeMs),
-      mtime: new Date(metadata.mtimeMs),
-      ctime: new Date(metadata.ctimeMs),
-      birthtime: new Date(metadata.birthtimeMs),
-    };
-    stats.isDirectory = () => metadata.isDirectory;
-    return stats;
-  }
-
-  return function stat(path, callback) {
-    if (typeof callback !== 'function') {
-      throw new TypeError('The "cb" argument must be of type function');
-    }
-    setImmediate(() => {
-      let result;
-      try {
-        result = makeStats(readMetadata(path));
-      } catch (error) {
-        callback(error);
-        return;
-      }
-      callback(null, result);
-    });
-  };
-}"#;
-
-const DECORATE_STATS: &str = quench_js_check::checked_js!(
-    r#"(stats) => {
-  for (const name of ["atime", "mtime", "ctime", "birthtime"]) {
-    stats[name] = new Date(stats[`${name}Ms`]);
-  }
-  for (const name of ["isDirectory", "isFile", "isSymbolicLink", "isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"]) {
-    const result = stats[name];
-    Object.defineProperty(stats, name, { value: () => result, configurable: true, enumerable: false });
-  }
-  return stats;
-}"#
-);
-
-/// Polling needs exact integer metadata before any JavaScript projection.
-/// Keep the operating-system value intact; the ordinary stat APIs may choose
-/// their existing Number view, while watchFile's bigint view never rounds it.
+/// Kernel integer fields and timestamps are authoritative for every stat view.
 #[derive(Clone, Default)]
 struct StatMetadata {
     fields: [i128; types::BASE_FIELDS.len()],
@@ -142,7 +84,7 @@ fn exact_time_ns(time: SystemTime) -> i128 {
     }
 }
 
-pub(crate) fn watch_stats(
+pub(crate) fn metadata_stats(
     context: &mut NativeContext<'_, NodeHost>,
     metadata: Option<&std::fs::Metadata>,
     bigint: bool,
@@ -172,7 +114,6 @@ pub(crate) fn watch_stats(
             types::set_partial_time(context, result, name, nanos)?;
         }
     }
-    // The shared stats facade is attached by the watcher install step.
     types::decorate_stats(context, result, bigint)
 }
 
@@ -181,12 +122,6 @@ pub(crate) fn install(
     module: RootId,
 ) -> Result<(), RootedError> {
     types::install(context, module)?;
-    let host_operation =
-        context.host_function(crate::host::shared_vm::operation("fsStatMetadata"))?;
-    let factory = context.evaluate_script_rooted(STAT_API, "node:fs/shared-stat.js")?;
-    let undefined = context.undefined();
-    let stat = context.call_rooted(factory, undefined, &[host_operation])?;
-    set(context, module, "stat", stat)?;
     let utimes = context.host_function(crate::host::shared_vm::operation("fsUtimesSync"))?;
     set(context, module, "utimesSync", utimes)
 }
@@ -239,24 +174,6 @@ fn to_timespec(seconds: f64) -> libc::timespec {
     libc::timespec {
         tv_sec: whole as libc::time_t,
         tv_nsec: ((seconds - whole) * 1_000_000_000.0) as libc::c_long,
-    }
-}
-
-pub(crate) fn metadata(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
-    let path = args
-        .first()
-        .copied()
-        .map(|path| context.to_string(path))
-        .transpose()?
-        .unwrap_or_else(|| "undefined".to_owned());
-    let path = super::resolve_shared_path(context, path);
-    match std::fs::metadata(&path) {
-        Ok(metadata) => stats(context, &metadata),
-        Err(error) => Err(stat_error(context, error, &path)?),
     }
 }
 
@@ -613,13 +530,14 @@ fn sync_metadata(
         .transpose()?
         .unwrap_or_else(|| "undefined".to_owned());
     let path = super::resolve_shared_path(context, path);
+    let bigint = bigint_option(context, args.get(1).copied())?;
     let result = if follow_links {
         std::fs::symlink_metadata(&path)
     } else {
         std::fs::metadata(&path)
     };
     match result {
-        Ok(metadata) => stats(context, &metadata),
+        Ok(metadata) => metadata_stats(context, Some(&metadata), bigint),
         Err(error) => Err(stat_error(context, error, &path)?),
     }
 }
@@ -757,6 +675,7 @@ pub(crate) fn fstat_sync(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let fd = super::integer_arg(context, args.first().copied(), "file descriptor")?;
+    let bigint = bigint_option(context, args.get(1).copied())?;
     let descriptor_metadata = {
         let shared = context.host_mut().shared_state();
         let state = shared.borrow();
@@ -785,7 +704,7 @@ pub(crate) fn fstat_sync(
         }
     };
     match metadata {
-        Ok(metadata) => stats(context, &metadata),
+        Ok(metadata) => metadata_stats(context, Some(&metadata), bigint),
         Err(error) => Err(super::stream_io_error(context, error, "fstat", &path)?),
     }
 }
@@ -808,89 +727,14 @@ pub(crate) fn read_link_sync(
     }
 }
 
-fn stats(
-    context: &mut NativeContext<'_, NodeHost>,
-    metadata: &std::fs::Metadata,
-) -> Result<RootId, RootedError> {
-    let snapshot = StatSnapshot::from(metadata);
-    let result = context.object_rooted()?;
-    for (name, value) in [
-        ("dev", snapshot.dev),
-        ("ino", snapshot.ino),
-        ("mode", snapshot.mode),
-        ("nlink", snapshot.nlink),
-        ("uid", snapshot.uid),
-        ("gid", snapshot.gid),
-        ("rdev", snapshot.rdev),
-        ("size", snapshot.size),
-        ("blksize", snapshot.blksize),
-        ("blocks", snapshot.blocks),
-        ("atimeMs", snapshot.atime_ms),
-        ("mtimeMs", snapshot.mtime_ms),
-        ("ctimeMs", snapshot.ctime_ms),
-        ("birthtimeMs", snapshot.birthtime_ms),
-    ] {
-        set_number(context, result, name, value)?;
-    }
-    set_bool(context, result, "isDirectory", snapshot.is_directory)?;
-    set_bool(context, result, "isFile", metadata.is_file())?;
-    set_bool(
-        context,
-        result,
-        "isSymbolicLink",
-        metadata.file_type().is_symlink(),
-    )?;
-    for name in ["isBlockDevice", "isCharacterDevice", "isFIFO", "isSocket"] {
-        set_bool(context, result, name, false)?;
-    }
-    let decorator =
-        context.evaluate_script_rooted(DECORATE_STATS, "node:fs/shared-stat-methods.js")?;
-    let undefined = context.undefined();
-    context.call_rooted(decorator, undefined, &[result])
+fn bigint_option(context: &mut NativeContext<'_, NodeHost>, options: Option<RootId>) -> Result<bool, RootedError> {
+    let Some(options) = options else { return Ok(false); };
+    if context.rooted_value(options).is_some_and(|value| value.is_undefined()) { return Ok(false); }
+    let key = context.string_rooted("bigint");
+    let value = context.get_property_rooted(options, key)?;
+    Ok(context.rooted_value(value).and_then(|value| value.as_bool()) == Some(true))
 }
 
-struct StatSnapshot {
-    mode: f64,
-    dev: f64,
-    ino: f64,
-    nlink: f64,
-    uid: f64,
-    gid: f64,
-    rdev: f64,
-    size: f64,
-    blksize: f64,
-    blocks: f64,
-    atime_ms: f64,
-    mtime_ms: f64,
-    ctime_ms: f64,
-    birthtime_ms: f64,
-    is_directory: bool,
-}
-
-impl From<&std::fs::Metadata> for StatSnapshot {
-    fn from(metadata: &std::fs::Metadata) -> Self {
-        let exact = StatMetadata::from_metadata(Some(metadata));
-        let [dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks] = exact.fields;
-        let [atime_ms, mtime_ms, ctime_ms, birthtime_ms] = exact.times.map(stat_time_ms);
-        Self {
-            mode: mode as f64,
-            dev: dev as f64,
-            ino: ino as f64,
-            nlink: nlink as f64,
-            uid: uid as f64,
-            gid: gid as f64,
-            rdev: rdev as f64,
-            size: size as f64,
-            blksize: blksize as f64,
-            blocks: blocks as f64,
-            atime_ms,
-            mtime_ms,
-            ctime_ms,
-            birthtime_ms,
-            is_directory: metadata.is_dir(),
-        }
-    }
-}
 fn stat_time_ms(time: i128) -> f64 {
     time.div_euclid(NANOSECONDS_PER_SECOND) as f64 * MILLISECONDS_PER_SECOND
         + time.rem_euclid(NANOSECONDS_PER_SECOND) as f64 / NANOSECONDS_PER_MILLISECOND as f64
