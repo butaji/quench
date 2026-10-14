@@ -1,4 +1,5 @@
 mod compiled;
+mod startup_intrinsics;
 mod wasm;
 pub use compiled::ExecutionMode;
 mod wasm_exception;
@@ -909,6 +910,8 @@ pub(crate) struct Vm<H> {
     execution_mode: ExecutionMode,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
+    /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
+    startup_intrinsics: startup_intrinsics::StartupIntrinsics,
     /// Set by the first `with` entry and never cleared: `Native::WithEnter` is
     /// the only source of with objects, so until it runs no environment
     /// carries any.
