@@ -1,0 +1,138 @@
+diff --git a/crates/quench-node/src/host/shared_vm/commonjs.rs b/crates/quench-node/src/host/shared_vm/commonjs.rs
+index 4f58dbe93..b23006229 100644
+--- a/crates/quench-node/src/host/shared_vm/commonjs.rs
++++ b/crates/quench-node/src/host/shared_vm/commonjs.rs
+@@ -82,9 +82,17 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
+         "node:bootstrap/process-surface.js",
+     )?;
+     context.release_root(process_surface);
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_process_surface");
+     let buffer_module = cached_builtin(context, BuiltinModule::Buffer)?;
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_buffer_module");
+     crate::modules::buffer_shared_vm::install_global(context, buffer_module)?;
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_buffer_global");
+     crate::modules::url_shared_vm::install_global(context)?;
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_url_global");
+     install_shared_web_globals(context, buffer_module)?;
+     install_vfs_globals(context, buffer_module)?;
+     let console = cached_builtin(context, BuiltinModule::Console)?;
+@@ -119,7 +127,11 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
+         roots.borrow_mut().primordials_module = Some(retained);
+         context.release_root(exports);
+     }
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_primordials");
+     preload_modules(context)?;
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_preloads");
+     if context.is_module()? {
+         return Ok(());
+     }
+@@ -173,8 +185,14 @@ fn install_vfs_globals(
+     buffer_module: RootId,
+ ) -> Result<(), RootedError> {
+     let fs = cached_builtin(context, BuiltinModule::Fs)?;
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_vfs_fs_module");
+     let path = crate::modules::path_shared_vm::module(context)?;
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_vfs_path_module");
+     let stream = cached_builtin(context, BuiltinModule::Stream)?;
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_vfs_stream_module");
+     let buffer = get(context, buffer_module, "Buffer")?;
+     let install_missing_fs_methods = context.evaluate_script_rooted(
+         "(fs) => { for (const name of ['utimesSync', 'lutimesSync', 'futimesSync', 'utimes', 'lutimes', 'futimes', 'rm', 'write']) { if (typeof fs[name] === 'function') continue; Object.defineProperty(fs, name, { configurable: true, writable: true, value() { const error = new Error(`${name} is unavailable outside a mounted VFS`); error.code = 'ENOSYS'; throw error; } }); } }",
+@@ -182,12 +200,16 @@ fn install_vfs_globals(
+     )?;
+     let undefined = context.undefined();
+     context.call_rooted(install_missing_fs_methods, undefined, &[fs])?;
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_vfs_fs_fallbacks");
+     let install = context.evaluate_script_rooted(
+         "(buffer, fs, path, stream) => Object.defineProperties(globalThis, { NodeBuffer: { configurable: true, value: buffer }, __nodeFs: { configurable: true, value: fs }, __nodePath: { configurable: true, value: path }, __nodeStream: { configurable: true, value: stream }, __nodeFdPaths: { configurable: true, value: {} }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
+         "node:bootstrap/vfs-globals.js",
+     )?;
+     let undefined = context.undefined();
+     context.call_rooted(install, undefined, &[buffer, fs, path, stream])?;
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_vfs_globals");
+ 
+     let source = format!(
+         "{}\n{}",
+@@ -196,6 +218,8 @@ fn install_vfs_globals(
+     );
+     let root = context.evaluate_script_rooted(&source, "node:bootstrap/vfs.js")?;
+     context.release_root(root);
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_vfs_polyfill");
+     Ok(())
+ }
+ 
+@@ -207,11 +231,18 @@ fn install_shared_web_globals(
+     let root =
+         context.evaluate_script_rooted(web_streams, "node:bootstrap/shared-vm/web-streams.js")?;
+     context.release_root(root);
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_web_streams_polyfill");
+ 
+     let web_apis = crate::polyfills::bootstrap::globals_extra::web_api_source();
+     let root = context.evaluate_script_rooted(web_apis, "node:bootstrap/shared-vm/web-apis.js")?;
+     context.release_root(root);
+-    crate::modules::buffer_shared_vm::install_blob_export(context, buffer_module)
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_web_apis_polyfill");
++    crate::modules::buffer_shared_vm::install_blob_export(context, buffer_module)?;
++    #[cfg(feature = "profile-memory")]
++    context.profile_memory_checkpoint("node_blob_exports");
++    Ok(())
+ }
+ 
+ pub(super) fn require(
+diff --git a/crates/quench-node/src/modules/process_shared_vm.rs b/crates/quench-node/src/modules/process_shared_vm.rs
+index 45dda80ab..d63b92f5c 100644
+--- a/crates/quench-node/src/modules/process_shared_vm.rs
++++ b/crates/quench-node/src/modules/process_shared_vm.rs
+@@ -95,7 +95,11 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
+     #[cfg(target_os = "linux")]
+     {
+         let signals = super::os_shared_vm::signal_constants(context)?;
++        #[cfg(feature = "profile-memory")]
++        context.profile_memory_checkpoint("node_process_before_kill_util");
+         let util = crate::host::shared_vm::commonjs::util_module(context)?;
++        #[cfg(feature = "profile-memory")]
++        context.profile_memory_checkpoint("node_process_kill_util");
+         let key = context.string_rooted("inspect");
+         let inspect = context.get_property_rooted(util, key)?;
+         let data = context.array_rooted(&[process, signals, inspect])?;
+diff --git a/crates/quench-runtime/src/vm.rs b/crates/quench-runtime/src/vm.rs
+index a9751083d..9da720223 100644
+--- a/crates/quench-runtime/src/vm.rs
++++ b/crates/quench-runtime/src/vm.rs
+@@ -1285,6 +1285,22 @@ impl<H: Host> Vm<H> {
+         #[cfg(feature = "profile-gc-time")]
+         self.report_gc_time_if_enabled();
+         #[cfg(feature = "profile-aggregate")]
++        if std::env::var_os("QUENCH_PROFILE_ALL_PROGRAMS").is_some() {
++            for index in 0..self.programs.len() {
++                let id = ProgramId::from_raw(index as u32);
++                if let Some(residual) = self.programs.get(id) {
++                    eprintln!(
++                        "{{\"kind\":\"quench-profile-program\",\"program_id\":{}}}",
++                        id.raw(),
++                    );
++                    self.profile.report(&self.heap, id.raw(), &residual);
++                }
++            }
++            #[cfg(feature = "profile-memory")]
++            self.report_memory_if_enabled("complete");
++            return;
++        }
++        #[cfg(feature = "profile-aggregate")]
+         if self
+             .profile
+             .report_dispatch_census_if_enabled(ProgramId::MAIN.raw())
