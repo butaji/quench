@@ -696,6 +696,47 @@ fn for_of_iterator_cleanup_survives_body_temporaries() {
     assert_eq!(&*vm.to_string(&program, taken).unwrap(), "1:1");
 }
 
+fn global_text(source: &str, name: &str) -> String {
+    let program = Engine::specialize(source, "global-text.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom(name);
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    vm.to_string(&program, value).unwrap().to_string()
+}
+
+#[test]
+fn legacy_date_strings_parse_like_node() {
+    // Node's (V8's) legacy fallback: named months, slashed dates, AM/PM, zone names,
+    // GMT offsets, comments and 24:00; garbage words after numbers reject the string.
+    let cases = [
+        ("Aug 4 2011 10:00 PM GMT", "1312495200000"),
+        ("4 August 2011 10:00 GMT", "1312452000000"),
+        ("8/4/2011 10:00:30.5 PST", "1312480830500"),
+        ("Tue Oct 14 2026 00:00:00 GMT+0530 (India)", "1791916200000"),
+        ("Aug 4 2011 10:00 GMT+5", "1312434000000"),
+        ("2011/08/04 24:00 UTC", "1312502400000"),
+        ("Aug 4 2011 13:00 PM GMT", "NaN"),
+        ("foo2011 GMT", "NaN"),
+        ("Aug 4 2011 10:00x GMT", "NaN"),
+    ];
+    let source = cases
+        .iter()
+        .map(|(text, _)| format!("Date.parse({text:?})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let expected = cases.map(|(_, millis)| millis).join(",");
+    assert_eq!(global_text(&format!("var parsed = [{source}].join();"), "parsed"), expected);
+}
+
+#[test]
+fn inner_lexical_bindings_shadow_outer_immutable_captures() {
+    let source = "'use strict';\n\
+         const a = 1;\n\
+         var result = (() => { let a = []; [1, 2].forEach(e => { a = a.concat(e); }); return a.join(); })();";
+    assert_eq!(global_text(source, "result"), "1,2");
+}
+
 #[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
