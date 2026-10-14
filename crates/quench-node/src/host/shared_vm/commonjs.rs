@@ -91,16 +91,13 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.release_root(process_surface);
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_process_surface");
-    let buffer_module = cached_builtin(context, BuiltinModule::Buffer)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_buffer_module");
-    crate::modules::buffer_shared_vm::install_global(context, buffer_module)?;
+    crate::modules::buffer_shared_vm::install_global(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_buffer_global");
     crate::modules::url_shared_vm::install_global(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_url_global");
-    install_shared_web_globals(context, buffer_module)?;
+    install_shared_web_globals(context)?;
     if context.host_mut().vfs_enabled() {
         install_vfs_globals(context)?;
     }
@@ -258,10 +255,7 @@ fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedErr
     Ok(())
 }
 
-fn install_shared_web_globals(
-    context: &mut Context<'_>,
-    buffer_module: RootId,
-) -> Result<(), RootedError> {
+fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     let web_streams = crate::polyfills::bootstrap::web_streams::JS;
     let root =
         context.evaluate_script_rooted(web_streams, "node:bootstrap/shared-vm/web-streams.js")?;
@@ -274,9 +268,6 @@ fn install_shared_web_globals(
     context.release_root(root);
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_web_apis_polyfill");
-    crate::modules::buffer_shared_vm::install_blob_export(context, buffer_module)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_blob_exports");
     Ok(())
 }
 
@@ -1015,7 +1006,11 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Net => crate::modules::net_shared_vm::module(context),
         BuiltinModule::Http => crate::modules::http_shared_vm::module(context),
         BuiltinModule::Os => crate::modules::os_shared_vm::module(context),
-        BuiltinModule::Buffer => crate::modules::buffer_shared_vm::module(context),
+        BuiltinModule::Buffer => {
+            let module = crate::modules::buffer_shared_vm::module(context)?;
+            crate::modules::buffer_shared_vm::install_blob_export(context, module)?;
+            Ok(module)
+        }
         BuiltinModule::Stream => {
             let decoder = cached_builtin(context, BuiltinModule::StringDecoder)?;
             crate::modules::stream_shared_vm::module(context, decoder)
