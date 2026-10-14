@@ -12,6 +12,15 @@ unsafe extern "C" {
     static etext: u8;
 }
 
+/// Marks the point where the entry has compiled and its run begins. It does nothing: profiling
+/// splits there (`valgrind --tool=callgrind --dump-before=quench_entry_compiled`), so the trained
+/// link order can lay the functions a run executes together, ahead of start-up code.
+#[unsafe(no_mangle)]
+#[inline(never)]
+pub extern "C" fn quench_entry_compiled() {
+    std::hint::black_box(());
+}
+
 /// The process's own mapping table.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const MAPS_PATH: &str = "/proc/self/maps";
