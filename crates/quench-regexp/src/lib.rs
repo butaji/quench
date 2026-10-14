@@ -320,8 +320,13 @@ impl Regex {
             && compiled_structure_is_safe(&parsed.body))
             .then(|| compile_byte_regex(source, flags))
             .flatten();
+        // Both uses compile the same source and flags; a clone shares the compiled program.
         let compiled_test = (backend_enabled && compiled_test_source_is_safe(source))
-            .then(|| compile_byte_regex(source, flags))
+            .then(|| {
+                compiled
+                    .clone()
+                    .or_else(|| compile_byte_regex(source, flags))
+            })
             .flatten();
         let compiled_locations = compiled
             .as_ref()
