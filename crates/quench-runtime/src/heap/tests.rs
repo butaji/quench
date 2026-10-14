@@ -168,7 +168,10 @@ fn gc_headroom_factors_scale_live_cells_without_overflow() {
         gc_allocation_headroom(LARGE_HEAP_MINIMUM_LIVE_CELLS - 1),
         MINIMUM_GC_ALLOCATION_HEADROOM.max(LARGE_HEAP_MINIMUM_LIVE_CELLS - 1)
     );
-    assert_eq!(gc_allocation_headroom(live), live);
+    assert_eq!(
+        gc_allocation_headroom(live),
+        LARGE_HEAP_GC_HEADROOM.allocation_headroom(live)
+    );
 }
 
 #[cfg(feature = "profile-gc-time")]
