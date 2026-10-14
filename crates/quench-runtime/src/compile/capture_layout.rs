@@ -1,10 +1,10 @@
 use std::rc::Rc;
 
-use crate::bytecode::{Function, Op};
+use crate::bytecode::{Function, Op, WITH_ENTER_BINDING};
 
 pub(super) fn apply(functions: &mut [Function], atoms: &[Rc<str>]) {
     let captured = captured_slots(functions);
-    let dynamic_ancestors = dynamic_scope_ancestors(functions);
+    let dynamic_ancestors = dynamic_scope_ancestors(functions, atoms);
 
     for (id, function) in functions.iter_mut().enumerate() {
         if !has_closure(function) {
@@ -68,11 +68,22 @@ fn captured_slots(functions: &[Function]) -> Vec<Vec<u16>> {
     captured
 }
 
-fn dynamic_scope_ancestors(functions: &[Function]) -> Vec<bool> {
+/// Functions enclosing dynamic name resolution, including a `with` body's by-name
+/// loads, which may denote any ancestor's binding and so need every ancestor's
+/// locals in its environment.
+fn dynamic_scope_ancestors(functions: &[Function], atoms: &[Rc<str>]) -> Vec<bool> {
     let inherited_dynamic_scope = inherited_dynamic_scope(functions);
+    let is_with_enter = |atom: usize| {
+        atoms
+            .get(atom)
+            .is_some_and(|name| &**name == WITH_ENTER_BINDING)
+    };
     let mut unsafe_layout = vec![false; functions.len()];
     for (id, function) in functions.iter().enumerate() {
-        if !function.has_dynamic_scope_access() && !inherited_dynamic_scope[id] {
+        if !function.has_dynamic_scope_access()
+            && !inherited_dynamic_scope[id]
+            && !function.contains_with_statement(is_with_enter)
+        {
             continue;
         }
         let mut current = Some(id);
