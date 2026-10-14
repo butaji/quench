@@ -547,6 +547,37 @@ impl<'a, H: Host> NativeContext<'a, H> {
     }
 
     /// Emit a memory census snapshot when this build enables `profile-memory`.
+    /// Record the realm's intrinsics as they are now, before any script code runs.
+    pub fn seal_startup_intrinsics(&mut self) -> Result<(), RootedError> {
+        let result = self
+            .vm
+            .embedding_program()
+            .and_then(|program| self.vm.seal_startup_intrinsics(&program));
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Run `build` with every sealed intrinsic at its startup descriptor, then give the
+    /// script's own descriptors back, so builtin loading never observes a script's mutation.
+    pub fn with_startup_intrinsics<T>(
+        &mut self,
+        build: impl FnOnce(&mut Self) -> Result<T, RootedError>,
+    ) -> Result<T, RootedError> {
+        let entered = self
+            .vm
+            .embedding_program()
+            .and_then(|program| self.vm.enter_startup_intrinsics(&program));
+        entered.map_err(|error| self.error(error))?;
+        let built = build(self);
+        let left = self
+            .vm
+            .embedding_program()
+            .and_then(|program| self.vm.leave_startup_intrinsics(&program));
+        let left = left.map_err(|error| self.error(error));
+        let value = built?;
+        left?;
+        Ok(value)
+    }
+
     #[cfg(feature = "profile-memory")]
     pub fn profile_memory_checkpoint(&self, phase: &str) {
         self.vm.report_memory_if_enabled(phase);
