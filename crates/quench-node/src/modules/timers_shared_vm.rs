@@ -466,7 +466,9 @@ fn schedule_promise_operation(
         set_immediate(context, receiver, &[callback])?
     } else {
         let delay = property(context, operation, PROMISE_DELAY)?;
-        schedule_timer(context, &[callback, delay], false)?
+        let referenced = property(context, operation, PROMISE_REFED)?;
+        let referenced = context.truthy_rooted(referenced)?;
+        schedule_timer(context, &[callback, delay], false, referenced)?
     };
     install(context, operation, PROMISE_HANDLE, handle)?;
     let referenced = property(context, operation, PROMISE_REFED)?;
@@ -601,7 +603,7 @@ pub(crate) fn set_timeout(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    schedule_timer(context, args, false)
+    schedule_timer(context, args, false, true)
 }
 
 pub(crate) fn set_interval(
@@ -609,13 +611,14 @@ pub(crate) fn set_interval(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    schedule_timer(context, args, true)
+    schedule_timer(context, args, true, true)
 }
 
 fn schedule_timer(
     context: &mut NativeContext<'_, NodeHost>,
     args: &[RootId],
     repeating: bool,
+    initially_refed: bool,
 ) -> Result<RootId, RootedError> {
     let Some(callback) = args.first().copied() else {
         return invalid_callback(context, "undefined");
@@ -643,7 +646,7 @@ fn schedule_timer(
     if !context.set_prototype_rooted(handle, api.timeout_prototype)? {
         return Err(RootedError::host("cannot install Timeout prototype"));
     }
-    let refed = context.boolean(true);
+    let refed = context.boolean(initially_refed);
     if !context.define_data_property_rooted(handle, api.refed_key, refed, true, false, true)? {
         return Err(RootedError::host(
             "cannot initialize Timeout reference state",
@@ -676,6 +679,9 @@ fn schedule_timer(
         .borrow_mut()
         .scheduler
         .queue_shared_timer(id, delay.duration, interval, callback);
+    let refed = context.get_property_rooted(handle, api.refed_key)?;
+    let refed = context.truthy_rooted(refed)?;
+    context.host_mut().shared_state().borrow_mut().scheduler.set_shared_timer_ref(id, refed);
     Ok(handle)
 }
 
@@ -1407,4 +1413,24 @@ pub(crate) fn refresh(context: &mut NativeContext<'_, NodeHost>, receiver: RootI
     context.set_property_rooted(receiver, api.refed_key, value, receiver)?;
     state.borrow_mut().scheduler.set_shared_timer_ref(id, refed);
     Ok(receiver)
+}
+
+/// Native internal scheduling uses the same constructor policy and starts
+/// unreferenced before init hooks. Node ignores arguments after `after` here.
+pub(crate) fn set_unref_timeout(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    schedule_timer(context, &args[..args.len().min(2)], false, false)
+}
+
+pub(crate) fn internal_module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let module = context.object_rooted()?;
+    let factory = context.evaluate_script_rooted(quench_js_check::checked_js!(
+        "schedule=>function setUnrefTimeout(callback,after){return schedule(callback,after);}"
+    ), "node:internal/timers/set-unref-facade.js")?;
+    let operation = context.host_function(crate::host::shared_vm::operation("internalSetUnrefTimeout"))?;
+    let undefined = context.undefined();
+    let method = context.call_rooted(factory, undefined, &[operation])?;
+    install(context, module, "setUnrefTimeout", method)?;
+    let maximum = context.number(MAX_TIMER_DELAY_MS as f64);
+    install(context, module, "TIMEOUT_MAX", maximum)?;
+    Ok(module)
 }
