@@ -56,11 +56,17 @@ struct SharedCallbacks {
     timers: VecDeque<SharedTimer>,
     next_timer_id: u64,
     /// Live scheduler projections of each timer handle's private `refed` slot.
-    firing_timers: HashMap<u64, bool>,
+    firing_timers: HashMap<u64, SharedFiringTimer>,
     cancelled_timers: HashSet<u64>,
     listeners: HashMap<SharedEventKey, Vec<SharedProcessListener>>,
     next_listener_id: u64,
     exiting: bool,
+}
+
+struct SharedFiringTimer {
+    refed: bool,
+    refreshed_due: Option<std::time::Instant>,
+    repeat_started: Option<std::time::Instant>,
 }
 
 struct SharedProcessListener {
@@ -210,7 +216,7 @@ impl SharedEventLoop {
 
     pub fn shared_active_timer_counts(&self) -> (usize, usize) {
         let timers = self.shared.timers.iter().filter(|timer| timer.refed).count()
-            + self.shared.firing_timers.iter().filter(|(id, refed)| **refed && !self.shared.cancelled_timers.contains(id)).count();
+            + self.shared.firing_timers.iter().filter(|(id, refed)| refed.refed && !self.shared.cancelled_timers.contains(id)).count();
         (timers, self.shared.immediate_ref_count as usize)
     }
 
@@ -330,7 +336,7 @@ impl SharedEventLoop {
             .min_by_key(|(_, timer)| timer.due)
             .map(|(index, _)| index)?;
         let timer = self.shared.timers.remove(index)?;
-        self.shared.firing_timers.insert(timer.id, timer.refed);
+        self.shared.firing_timers.insert(timer.id, SharedFiringTimer { refed: timer.refed, refreshed_due: None, repeat_started: None });
         Some(timer)
     }
 
@@ -340,7 +346,7 @@ impl SharedEventLoop {
 
     pub fn has_refed_shared_timers(&self) -> bool {
         self.shared.timers.iter().any(|timer| timer.refed)
-            || self.shared.firing_timers.values().any(|refed| *refed)
+            || self.shared.firing_timers.values().any(|timer| timer.refed)
     }
 
     pub fn discard_unreferenced_shared_timers(&mut self) -> Vec<SharedCallback> {
@@ -364,8 +370,33 @@ impl SharedEventLoop {
             return;
         }
         if let Some(current) = self.shared.firing_timers.get_mut(&id) {
-            *current = refed;
+            current.refed = refed;
         }
+    }
+
+    pub fn begin_shared_timer_repeat(&mut self, id: u64) {
+        if let Some(timer) = self.shared.firing_timers.get_mut(&id) {
+            timer.repeat_started = Some(std::time::Instant::now());
+        }
+    }
+
+    /// Refresh the existing queue/firing owner; the caller creates a new owner
+    /// only when the previous callback has completed and been released.
+    pub fn refresh_shared_timer(&mut self, id: u64, delay: std::time::Duration) -> bool {
+        let due = std::time::Instant::now() + delay;
+        if let Some(index) = self.shared.timers.iter().position(|timer| timer.id == id) {
+            let mut timer = self.shared.timers.remove(index).expect("located queued timer");
+            timer.due = due;
+            self.shared.timers.push_back(timer);
+            self.shared.cancelled_timers.remove(&id);
+            return true;
+        }
+        if let Some(timer) = self.shared.firing_timers.get_mut(&id) {
+            timer.refreshed_due = Some(due);
+            self.shared.cancelled_timers.remove(&id);
+            return true;
+        }
+        false
     }
 
     pub fn cancel_shared_timer(&mut self, id: u64) -> Option<SharedCallback> {
@@ -382,22 +413,18 @@ impl SharedEventLoop {
         mut timer: SharedTimer,
         completed_at: std::time::Instant,
     ) -> Option<SharedCallback> {
-        if let Some(refed) = self.shared.firing_timers.remove(&timer.id) {
-            timer.refed = refed;
-        }
-        if self.shared.cancelled_timers.remove(&timer.id) {
-            return Some(timer.callback);
-        }
-        let Some(interval) = timer.interval else {
-            return Some(timer.callback);
+        let firing = self.shared.firing_timers.remove(&timer.id);
+        if let Some(firing) = &firing { timer.refed = firing.refed; }
+        if self.shared.cancelled_timers.remove(&timer.id) { return Some(timer.callback); }
+        let next_due = match timer.interval {
+            Some(interval) => firing.as_ref().and_then(|firing| firing.repeat_started).unwrap_or(completed_at).checked_add(interval),
+            None => firing.and_then(|firing| firing.refreshed_due),
         };
-        let Some(next_due) = completed_at.checked_add(interval) else {
-            return Some(timer.callback);
-        };
+        let Some(next_due) = next_due else { return Some(timer.callback); };
         self.shared.timers.push_back(SharedTimer {
             id: timer.id,
             due: next_due,
-            interval: Some(interval),
+            interval: timer.interval,
             refed: timer.refed,
             callback: timer.callback,
         });
