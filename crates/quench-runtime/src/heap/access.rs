@@ -142,13 +142,16 @@ impl Heap {
         &self,
         environment: Value,
         fresh: &[u16],
+        reset: &[u16],
     ) -> Option<EnvironmentSlots> {
         let Cell::Environment { slots, .. } = self.get(environment)? else {
             return None;
         };
         (0..slots.len())
             .map(|slot| {
-                if fresh.binary_search(&(slot as u16)).is_ok() {
+                if reset.binary_search(&(slot as u16)).is_ok() {
+                    Some(EnvironmentSlot::Owned(Value::UNDEFINED))
+                } else if fresh.binary_search(&(slot as u16)).is_ok() {
                     self.environment_slot(environment, slot)
                         .map(EnvironmentSlot::Owned)
                 } else {

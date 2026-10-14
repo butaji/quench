@@ -5772,3 +5772,171 @@ const server=net.createServer(socket=>accepted.push(socket)).listen(0,next);
 function next(){const client=net.connect(server.address().port,()=>{if(++completed===8){const count=process.getActiveResourcesInfo().filter(x=>x==='TCPSocketWrap').length;assert.strictEqual(count,clients.length+accepted.length);console.log('resource-count-matches-delivered-wrappers');for(const socket of clients)socket.destroy();for(const socket of accepted)socket.end();server.close();}else next();});clients.push(client);}
 "#);
 }
+
+#[test]
+fn string_repeat_node_limit_errors_and_lazy_lengths_match_node() {
+    compare_node_stream_source(r#"
+const assert=require('assert');const limit=require('buffer').constants.MAX_STRING_LENGTH;const out=[];
+for(const count of [-0.5,-0,NaN,undefined,0,1,2]){out.push([String(count),'xy'.repeat(count)]);}
+assert.strictEqual('x'.repeat(limit).length,limit);
+assert.strictEqual('x'.repeat(70000000).repeat(2).length,140000000);
+for(const input of ['x','xy','日']){const count=Math.floor(limit/input.length)+1;try{input.repeat(count);out.push('accepted');}catch(e){out.push([e.name,e.message]);}}
+for(const count of [-1,-1.5,Infinity,-Infinity]){try{'x'.repeat(count);out.push('accepted');}catch(e){out.push([e.name,e.message]);}}
+const order=[];const receiver={toString(){order.push('receiver');return 'xy';}};const count={valueOf(){order.push('count');return -0.5;}};out.push([String.prototype.repeat.call(receiver,count),order]);
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn net_create_server_preserves_options_connection_listener_and_arity() {
+    compare_node_stream_source(r#"
+const net=require('net');const output=[];function listener(){}
+for(const args of [[],[listener],[{},listener],[null,listener],[undefined,listener]]){const server=net.createServer(...args);output.push([server instanceof net.Server,server.listeners('connection').length,server.listeners('connection')[0]===listener]);}
+output.push([net.createServer.name,net.createServer.length]);console.log(JSON.stringify(output));
+"#);
+}
+
+#[test]
+fn net_socket_option_normalization_cache_and_metadata_match_node() {
+    compare_node_stream_source(r#"
+const net=require('net');const out=[];
+const socket=new net.Socket({noDelay:false,keepAlive:true,keepAliveInitialDelay:1000});
+socket._handle={setNoDelay(...args){out.push(['nodelay',args,this===socket._handle]);return 0;},setKeepAlive(...args){out.push(['keepalive',args,this===socket._handle]);return 0;}};
+for(const enable of [undefined,true,true,false,false])out.push(['returnNoDelay',socket.setNoDelay(enable)===socket]);
+for(const args of [[true,1000],[true,2000],[true,3000],[false,4000],[false,5000],[true,0],[{enable:true,initialDelay:1234,interval:3456,count:9}]])out.push(['returnKeepAlive',socket.setKeepAlive(...args)===socket]);
+out.push(['metadata',net.Socket.prototype.setNoDelay.name,net.Socket.prototype.setNoDelay.length,net.Socket.prototype.setKeepAlive.name,net.Socket.prototype.setKeepAlive.length]);
+socket._handle=null;socket.destroy();console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn original_socket_option_exception_preserves_identity_and_close_progress() {
+    compare_node_stream_source(r#"
+const net=require('net'),assert=require('assert');const marker={};let client;const out=[];
+const server=net.createServer(socket=>socket.end()).listen(0,()=>{
+ client=net.connect({port:server.address().port,noDelay:true});
+ client._handle.setNoDelay=()=>{out.push('option');throw marker;};
+ client.on('connect',()=>assert.fail('connect after original option exception'));
+});
+process.once('uncaughtException',(error,origin)=>{out.push([error===marker,origin]);client.destroy();server.close(()=>console.log(JSON.stringify(out)));});
+"#);
+}
+
+#[test]
+fn net_server_admission_counts_and_drop_addresses_match_node() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),assert=require('assert');const output=[];
+const server=net.createServer(socket=>{
+ output.push(['accepted',server._connections,socket.server===server,socket._server===server]);
+ socket.on('data',data=>socket.write(data));
+});
+server.maxConnections=1;
+server.on('drop',info=>{
+ output.push(['drop',server._connections,Object.getPrototypeOf(info)===null,info.localPort===server.address().port,typeof info.remotePort,info.localFamily,info.remoteFamily]);
+});
+server.listen(0,()=>{
+ const first=net.connect(server.address().port,()=>first.write('one'));
+ first.once('data',()=>{
+  const second=net.connect(server.address().port);
+  second.once('close',()=>{
+   output.push(['beforeDestroy',server._connections]);first.destroy();
+   server.getConnections((error,count)=>{output.push(['count',error===null,count]);server.close(()=>console.log(JSON.stringify(output)));});
+  });
+ });
+});
+"#);
+}
+
+#[test]
+fn net_server_original_admission_hooks_errors_and_count_timing_match_node() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net');const output=[];
+const server=net.createServer().listen(0,()=>{
+ const original=server._handle.onconnection;
+ output.push(['metadata',original.name,original.length,Object.hasOwn(original,'prototype')]);
+ server.maxConnections={valueOf(){output.push('limit');return 0;}};
+ const handle={
+  get getsockname(){output.push('get-local');return function(info){output.push(['local',this===handle,Object.getPrototypeOf(info)===null]);info.address='local';info.port=12;info.family='IPv4';};},
+  get getpeername(){output.push('get-peer');return function(info){output.push(['peer',this===handle,Object.getPrototypeOf(info)===null]);info.address='remote';info.port=34;info.family='IPv6';};},
+  get close(){output.push('get-close');return function(){output.push(['close',this===handle]);};},
+ };
+ server.on('drop',info=>output.push(['drop',Object.getPrototypeOf(info)===null,info]));
+ original.call(server._handle,0,handle);
+ server.once('error',error=>output.push(['error',error.name,error.code,error.errno,error.syscall,error.message]));
+ original.call(server._handle,-22,undefined);
+ let synchronous=true;
+ const returned=server.getConnections((error,count)=>{
+  output.push(['count',error===null,count,synchronous]);
+  server.close(()=>console.log(JSON.stringify(output)));
+ });
+ output.push(['return',returned===server,server.getConnections.name,server.getConnections.length]);
+ synchronous=false;
+});
+"#);
+}
+
+#[test]
+fn net_raw_handle_close_preserves_mutable_callback_and_first_request() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net');const output=[];
+const server=net.createServer(socket=>socket.on('close',()=>server.close(()=>console.log(JSON.stringify(output))))).listen(0,()=>{
+ const client=net.connect(server.address().port,()=>setImmediate(()=>{
+  const handle=client._handle;
+  handle.close(function(){output.push(['first',this===handle]);});
+  const key=Object.getOwnPropertySymbols(handle).find(key=>key.description==='handle_onclose');
+  output.push(['symbol',!!key]);
+  handle[key]=function(){output.push(['replacement',this===handle]);};
+  handle.close(()=>output.push('second'));
+ }));
+});
+"#);
+}
+
+#[test]
+fn net_default_listener_and_native_endpoint_addresses_match_node() {
+    compare_node_stream_source(r#"
+const net=require('net');const out=[];
+const server=net.createServer(socket=>socket.end()).listen(0,()=>{
+ const address=server.address();out.push(['server',address.address,address.family]);
+ const client=net.connect(address.port,()=>{
+  const local={},peer={};const handle=client._handle;
+  out.push(['status',handle.getsockname(local),handle.getpeername(peer)]);
+  out.push(['endpoints',local.address,local.family,peer.address,peer.family,peer.port===address.port]);
+ });
+ client.on('close',()=>server.close(()=>console.log(JSON.stringify(out))));
+});
+"#);
+}
+
+#[test]
+fn native_stat_exact_bigint_metadata_matches_node_across_sync_callback_and_promises() {
+    compare_node_stream_source(r#"
+'use strict';
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-stat-exact-')),file=path.join(dir,'file'),link=path.join(dir,'link');
+fs.writeFileSync(file,'abc');fs.symlinkSync(file,link);fs.utimesSync(file,1700000000.999999,1700000001.123456);
+const fd=fs.openSync(file,'r'),out=[];
+function check(label,big,num,exact){
+ for(const key of ['dev','ino','mode','nlink','uid','gid','rdev','size','blksize','blocks']){assert.strictEqual(typeof big[key],'bigint');if(Number.isSafeInteger(num[key]))assert.strictEqual(big[key],BigInt(num[key]));}
+ for(const key of ['atime','mtime','ctime','birthtime']){assert.strictEqual(big[key+'Ns']/1000000n,big[key+'Ms']);assert(Math.abs(num[key+'Ms']-Number(big[key+'Ns']/1000000n))<1.001);}
+ assert.strictEqual(big.isFile(),num.isFile());assert.strictEqual(big.isSymbolicLink(),num.isSymbolicLink());
+ out.push([label,big.isFile(),big.isSymbolicLink(),exact?big.atimeNs.toString():'link',exact?big.mtimeNs.toString():'link']);
+}
+(async()=>{
+ check('statSync',fs.statSync(file,{bigint:true}),fs.statSync(file),true);
+ check('lstatSync',fs.lstatSync(link,{bigint:true}),fs.lstatSync(link),false);
+ check('fstatSync',fs.fstatSync(fd,{bigint:true}),fs.fstatSync(fd),true);
+ for(const [name,arg] of [['stat',file],['lstat',link],['fstat',fd]]){
+  const invoke=options=>new Promise((resolve,reject)=>fs[name](arg,options,(error,stats)=>error?reject(error):resolve(stats)));
+  check(name,await invoke({bigint:true}),await invoke({}),name!=='lstat');
+ }
+ check('promiseStat',await fs.promises.stat(file,{bigint:true}),await fs.promises.stat(file),true);
+ check('promiseLstat',await fs.promises.lstat(link,{bigint:true}),await fs.promises.lstat(link),false);
+ const handle=await fs.promises.open(file,'r');check('handleStat',await handle.stat({bigint:true}),await handle.stat(),true);await handle.close();
+ fs.closeSync(fd);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(out));
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"#);
+}

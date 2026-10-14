@@ -57,11 +57,7 @@ pub(crate) fn poll(
                         server.closing && server.connections.is_empty()
                     });
                     closed
-                        .then(|| {
-                            host.net_servers
-                                .remove(&server_id)
-                                .map(|server| server.root)
-                        })
+                        .then(|| host.net_servers.remove(&server_id).map(|server| server.root))
                         .flatten()
                 });
                 Some((
@@ -121,14 +117,14 @@ pub(crate) fn poll(
             net_shared_vm::TransportEvent::Accepted {
                 listener,
                 socket,
-                remote,
             } => {
                 let (server_id, net_server) = {
                     let host = shared_state.borrow();
                     (
-                        host.http.servers.iter().find_map(|(id, server)| {
-                            (server.listener == Some(listener)).then_some(*id)
-                        }),
+                        host.http
+                            .servers
+                            .iter()
+                            .find_map(|(id, server)| (server.listener == Some(listener)).then_some(*id)),
                         host.net_servers.get(&listener).map(|server| server.root),
                     )
                 };
@@ -148,79 +144,31 @@ pub(crate) fn poll(
                     }
                     progressed = true;
                 } else if let Some(server_root) = net_server {
-                    let constructor = shared_state
-                        .borrow()
-                        .net_socket_constructor
-                        .ok_or_else(|| "net.Socket constructor is unavailable".to_owned())?;
-                    let accepted = runtime
-                        .construct_rooted(constructor, constructor, &[])
-                        .map_err(|error| error.to_string())?;
-                    let key = runtime.string_rooted("__quenchNetSocketId");
-                    let id = runtime.root(Value::number(socket as f64));
-                    if !runtime
-                        .set_property_rooted(accepted, key, id, accepted)
-                        .map_err(|error| error.to_string())?
-                    {
-                        return Err("cannot tag accepted net socket".into());
-                    }
-                    runtime.release_root(key);
-                    let install = runtime
-                        .host_function(crate::host::shared_vm::operation("netSocketInstallHandle"))
+                    let create = runtime.host_function(crate::host::shared_vm::operation("netSocketCreateHandle"))
                         .map_err(|error| error.to_string())?;
                     let undefined = runtime.root(Value::UNDEFINED);
-                    let installed = runtime.call_rooted(install, undefined, &[accepted, id]);
-                    runtime.release_root(install);
+                    let id = runtime.root(Value::number(socket as f64));
+                    let client_handle = runtime.call_rooted(create, undefined, &[id]);
+                    runtime.release_root(create);
                     runtime.release_root(undefined);
-                    let installed = installed.map_err(|error| error.to_string())?;
-                    runtime.release_root(installed);
                     runtime.release_root(id);
-                    if let Some(remote) = remote {
-                        let remote_address = runtime.string_rooted(&remote.ip().to_string());
-                        let remote_key = runtime.string_rooted("remoteAddress");
-                        runtime
-                            .set_property_rooted(accepted, remote_key, remote_address, accepted)
-                            .map_err(|error| error.to_string())?;
-                        runtime.release_root(remote_key);
-                        runtime.release_root(remote_address);
-                    }
-                    {
-                        let mut host = shared_state.borrow_mut();
-                        host.net_sockets.insert(
-                            socket,
-                            crate::host::node_host::NetSocket {
-                                root: accepted,
-                                encoding: None,
-                                parent_server: Some(listener),
-                                write_callbacks: std::collections::VecDeque::new(),
-                            },
-                        );
-                        if let Some(server) = host.net_servers.get_mut(&listener) {
-                            server.connections.insert(socket);
-                        }
-                    }
-                    queue_connection_event(
-                        runtime,
-                        shared_state,
-                        server_root,
-                        "connection",
-                        &[accepted],
-                        socket,
-                    )?;
+                    let client_handle = client_handle.map_err(|error| error.to_string())?;
+                    let key = runtime.string_rooted("_handle");
+                    let server_handle = runtime.get_property_rooted(server_root, key).map_err(|error| error.to_string())?;
+                    runtime.release_root(key);
+                    let success = runtime.root(Value::number(0.0));
+                    queue_net_method_completion(runtime, shared_state, server_handle, "onconnection", &[success, client_handle], Some(NetDelivery::Connection(socket)))?;
+                    runtime.release_root(success);
+                    runtime.release_root(client_handle);
+                    runtime.release_root(server_handle);
                     progressed = true;
                 } else {
                     net_shared_vm::close_socket(&mut shared_state.borrow_mut().tcp, socket);
                 }
             }
             net_shared_vm::TransportEvent::Secure { socket } => {
-                let root = shared_state
-                    .borrow()
-                    .net_sockets
-                    .get(&socket)
-                    .map(|socket| socket.root);
-                if let Some(root) = root {
-                    queue_net_event(runtime, shared_state, root, "secure", &[])?;
-                    progressed = true;
-                }
+                let root = shared_state.borrow().net_sockets.get(&socket).map(|socket| socket.root);
+                if let Some(root) = root { queue_net_event(runtime, shared_state, root, "secure", &[])?; progressed = true; }
             }
             net_shared_vm::TransportEvent::WriteComplete { socket } => {
                 let callback = shared_state
@@ -305,21 +253,12 @@ pub(crate) fn poll(
                 progressed = true;
             }
             net_shared_vm::TransportEvent::Data { socket, bytes } => {
-                let net_socket = shared_state
-                    .borrow()
-                    .net_sockets
-                    .get(&socket)
-                    .map(|socket| (socket.root, socket.encoding.clone().unwrap_or_default()));
+                let net_socket = shared_state.borrow().net_sockets.get(&socket).map(|socket| {
+                    (socket.root, socket.encoding.clone().unwrap_or_default())
+                });
                 if let Some((root, _encoding)) = net_socket {
                     let chunk = buffer_from_bytes(runtime, &bytes)?;
-                    queue_net_method_completion(
-                        runtime,
-                        shared_state,
-                        root,
-                        "push",
-                        &[chunk],
-                        Some(NetDelivery::Data(socket, bytes.len())),
-                    )?;
+                    queue_net_method_completion(runtime, shared_state, root, "push", &[chunk], Some(NetDelivery::Data(socket, bytes.len())))?;
                     runtime.release_root(chunk);
                     progressed = true;
                     continue;
@@ -367,11 +306,10 @@ pub(crate) fn poll(
                             let incoming_factory = host.http.incoming_factory.ok_or_else(|| {
                                 "HTTP incoming-message factory is unavailable".to_owned()
                             })?;
-                            let close_after_response =
-                                message.headers.iter().any(|(name, value)| {
-                                    name.eq_ignore_ascii_case("connection")
-                                        && value.eq_ignore_ascii_case("close")
-                                });
+                            let close_after_response = message.headers.iter().any(|(name, value)| {
+                                name.eq_ignore_ascii_case("connection")
+                                    && value.eq_ignore_ascii_case("close")
+                            });
                             host.http
                                 .connections
                                 .get_mut(&socket)
@@ -604,14 +542,7 @@ pub(crate) fn poll(
                 };
                 if let Some(root) = net_root {
                     let eof = runtime.root(Value::NULL);
-                    queue_net_method_completion(
-                        runtime,
-                        shared_state,
-                        root,
-                        "push",
-                        &[eof],
-                        Some(NetDelivery::Eof),
-                    )?;
+                    queue_net_method_completion(runtime, shared_state, root, "push", &[eof], Some(NetDelivery::Eof))?;
                     runtime.release_root(eof);
                     progressed = true;
                     continue;
@@ -705,6 +636,15 @@ pub(crate) fn poll(
                         state.net_socket_close_completed,
                     )
                 };
+                let raw_callback = shared_state.borrow_mut().net_handle_close_callbacks.remove(&socket);
+                if let Some(handle) = raw_callback {
+                    let callback = runtime.host_function(crate::host::shared_vm::operation("netHandleCloseComplete"))
+                        .map_err(|error| error.to_string())?;
+                    shared_state.borrow_mut().scheduler.queue_shared_next_tick(
+                        crate::modules::shared_event_loop::SharedCallback { callback, receiver: handle, args: Vec::new() },
+                    );
+                    progressed = true;
+                }
                 if let Some(root) = root {
                     let callback = callback.ok_or("native socket close callback unavailable")?;
                     let callback = runtime.root(
@@ -731,12 +671,8 @@ pub(crate) fn poll(
             } => {
                 // The OS error owns errno; presentation never recovers it from
                 // localized text. Derive the Node code and syscall message.
-                let ssl_error = error
-                    .get_ref()
-                    .and_then(|error| error.downcast_ref::<openssl::ssl::Error>());
-                let native_io = ssl_error
-                    .and_then(|error| error.io_error())
-                    .unwrap_or(&error);
+                let ssl_error=error.get_ref().and_then(|error|error.downcast_ref::<openssl::ssl::Error>());
+                let native_io=ssl_error.and_then(|error|error.io_error()).unwrap_or(&error);
                 let errno = native_io.raw_os_error().map(|errno| -f64::from(errno));
                 let code = errno
                     .map(crate::modules::util_system_error_shared_vm::system_error_name)
@@ -748,32 +684,13 @@ pub(crate) fn poll(
                     .get(&socket)
                     .map(|socket| socket.root);
                 if let Some(net_root) = net_root {
-                    if let Some(stack) = ssl_error.and_then(|error| error.ssl_error()) {
-                        shared_state
-                            .borrow_mut()
-                            .tls_contexts
-                            .transport_errors
-                            .push_back((socket, stack.clone()));
-                        let callback = runtime
-                            .host_function(crate::host::shared_vm::operation(
-                                "tlsSocketTransportError",
-                            ))
-                            .map_err(|error| error.to_string())?;
-                        let receiver = runtime.root(
-                            runtime
-                                .rooted_value(net_root)
-                                .ok_or("TLS error socket unavailable")?,
-                        );
-                        let id = runtime.root(Value::number(socket as f64));
-                        shared_state.borrow_mut().scheduler.queue_shared_next_tick(
-                            crate::modules::shared_event_loop::SharedCallback {
-                                callback,
-                                receiver,
-                                args: vec![id],
-                            },
-                        );
-                        progressed = true;
-                        continue;
+                    if let Some(stack)=ssl_error.and_then(|error|error.ssl_error()) {
+                        shared_state.borrow_mut().tls_contexts.transport_errors.push_back((socket,stack.clone()));
+                        let callback=runtime.host_function(crate::host::shared_vm::operation("tlsSocketTransportError")).map_err(|error|error.to_string())?;
+                        let receiver=runtime.root(runtime.rooted_value(net_root).ok_or("TLS error socket unavailable")?);
+                        let id=runtime.root(Value::number(socket as f64));
+                        shared_state.borrow_mut().scheduler.queue_shared_next_tick(crate::modules::shared_event_loop::SharedCallback{callback,receiver,args:vec![id]});
+                        progressed=true;continue;
                     }
                     let error = net_socket_error_with_code(runtime, &message, &code)?;
                     set_text(runtime, error, "syscall", syscall)?;
@@ -1345,7 +1262,7 @@ fn queue_connection_event(
         receiver,
         "emit",
         &event_args,
-        Some(NetDelivery::Connection(socket)),
+        Some(NetDelivery::Connect(socket)),
     );
     runtime.release_root(event);
     result
@@ -1360,11 +1277,7 @@ fn queue_net_method(
 ) -> Result<(), String> {
     queue_net_method_completion(runtime, shared_state, receiver, method, args, None)
 }
-enum NetDelivery {
-    Connection(u64),
-    Data(u64, usize),
-    Eof,
-}
+enum NetDelivery { Connection(u64), Connect(u64), Data(u64, usize), Eof }
 fn queue_net_method_completion(
     runtime: &mut Runtime<NodeHost>,
     shared_state: &Rc<RefCell<SharedNodeState>>,
@@ -1391,6 +1304,10 @@ fn queue_net_method_completion(
             NetDelivery::Connection(socket) => {
                 retained_args.push(runtime.root(Value::number(socket as f64)));
                 "netDeliverConnection"
+            }
+            NetDelivery::Connect(socket) => {
+                retained_args.push(runtime.root(Value::number(socket as f64)));
+                "netDeliverConnect"
             }
             NetDelivery::Data(socket, length) => {
                 retained_args.push(runtime.root(Value::number(socket as f64)));

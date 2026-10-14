@@ -45,10 +45,14 @@ impl FunctionCompiler<'_, '_> {
             self.owner.object_sites.push(ObjectSite { atoms });
             let count = properties.len() as u16;
             let value_registers = (0..count).map(|_| self.reg()).collect::<Vec<_>>();
+            // Each value's temporaries are dead once it moves into its register.
+            let temporaries = self.next_reg;
             for ((property, _), destination) in properties.into_iter().zip(value_registers.iter()) {
+                self.next_reg = temporaries;
                 let value = self.expression(&property.value);
                 self.emit(Op::Move, *destination, value, 0, 0);
             }
+            self.next_reg = temporaries;
             self.emit(Op::MakeObjectLiteral, dst, value_registers[0], count, site);
             return dst;
         }
@@ -65,7 +69,10 @@ impl FunctionCompiler<'_, '_> {
             self.clone_environment_slots(vec![self.local_slots[&super_atom]]);
             self.store_atom(super_atom, dst);
         }
+        // Each property's temporaries are dead once it is defined on `dst`.
+        let temporaries = self.next_reg;
         for property in &value.properties {
+            self.next_reg = temporaries;
             let property = match property {
                 ObjectPropertyKind::ObjectProperty(property) => property,
                 ObjectPropertyKind::SpreadProperty(spread) => {
@@ -219,6 +226,7 @@ impl FunctionCompiler<'_, '_> {
             }
             self.emit(Op::DefineField, item, dst, 0, atom);
         }
+        self.next_reg = temporaries;
         dst
     }
 
@@ -292,7 +300,7 @@ impl FunctionCompiler<'_, '_> {
             Some(self.function_id),
             FunctionOptions {
                 defaults: Some(&function.params),
-                source_text: self.owner.source_text(source_span),
+                source_span: self.owner.source_span(source_span),
                 async_function: function.r#async,
                 generator: function.generator,
                 with_depth: self.with_depth,

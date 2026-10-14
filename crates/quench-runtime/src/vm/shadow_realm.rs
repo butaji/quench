@@ -91,7 +91,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    fn set_builtin_function_length(&mut self, function: Value, length: f64) -> Result<(), JsError> {
+    pub(super) fn set_builtin_function_length(&mut self, function: Value, length: f64) -> Result<(), JsError> {
         let atom = self.intern_atom("length");
         if self
             .own_property(function, atom)
@@ -173,13 +173,10 @@ impl<H: Host> Vm<H> {
             );
         };
         let source = source.host_string().to_owned();
-        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
-            .map(|atom| self.atom_name(atom as u32).to_owned())
-            .collect::<Vec<_>>();
         let source_is_invalid = crate::Engine::specialize_eval_with_context(
             &source,
             "<ShadowRealm>",
-            &atom_prefix,
+            &*self,
             false,
             crate::compile::EvalContext::default(),
             &[],

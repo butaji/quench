@@ -25,7 +25,7 @@ const CALLABLE_FACADE: &str = quench_js_check::checked_js!(
 })"#
 );
 
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd, initServerEmitterOperation) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd, initServerEmitterOperation, initSocketOptionsOperation, setNoDelay, setKeepAlive, initServerOptionsOperation, getConnections) => {
   class Socket extends Duplex {
     constructor(options = {}) {
       options = { ...socketOptionsOperation(options, false) };
@@ -39,7 +39,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       initEndOperation(this, options, onReadableStreamEnd);
       this._encoding = null;
       this._handle = options.handle || null;
-      this._noDelay = Boolean(options.noDelay);
+      initSocketOptionsOperation(this, options);
       this.connecting = false;
       this.pending = true;
       this.bytesRead = 0;
@@ -75,22 +75,6 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
     address() {
       if (!this.localAddress) return undefined;
       return { address: this.localAddress, family: this.localFamily || 'IPv4', port: this.localPort || 0 };
-    }
-    setNoDelay(noDelay = true) {
-      const enable = Boolean(noDelay);
-      if (!this._handle) {
-        this._noDelay = enable;
-        return this;
-      }
-      if (typeof this._handle.setNoDelay === 'function' && enable !== this._noDelay) {
-        this._noDelay = enable;
-        this._handle.setNoDelay(enable);
-      }
-      return this;
-    }
-    setKeepAlive(enable = false, initialDelay = 0) {
-      if (this._handle && typeof this._handle.setKeepAlive === 'function') this._handle.setKeepAlive(!!enable, initialDelay);
-      return this;
     }
     setTimeout(timeout, callback) {
       if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout < 0) throw new TypeError('The "msecs" argument must be a non-negative number');
@@ -150,6 +134,8 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
     const socket = new Socket(socketOptionsOperation(port, true));
     return socket.connect(port, host, callback);
   };
+  Socket.prototype.setNoDelay = setNoDelay;
+  Socket.prototype.setKeepAlive = setKeepAlive;
   function Server(options, listener) {
     if (!(this instanceof Server)) return new Server(options, listener);
     initServerEmitterOperation(this);
@@ -158,6 +144,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
     if (typeof options === 'function') listener = options;
     serverOptionsOperation(options);
     if (typeof listener === 'function') this.on('connection', listener);
+    initServerOptionsOperation(this, options);
   }
   Server.prototype.listen = function(port, host, callback) {
       if (typeof port === 'function') { callback = port; port = 0; }
@@ -169,11 +156,12 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       this.listening = true;
       return this;
     };
+  Server.prototype.getConnections = getConnections;
   Server.prototype.address = function() { return addressOperation(this); };
   Server.prototype.close = function(callback) { if (typeof callback === 'function') this.once('close', callback); closeOperation(this); this.listening = false; return this; };
   Server.prototype.ref = function() { 'use strict'; return referenceOperation(this, true); };
   Server.prototype.unref = function() { 'use strict'; return referenceOperation(this, false); };
-  const createServer = function createServer(listener) { return new Server(listener); };
+  const createServer = function createServer(options, listener) { return new Server(options, listener); };
   function Stream(options) { return new Socket(options); }
   Stream.prototype = Socket.prototype;
   Object.setPrototypeOf(Stream, Socket);
@@ -442,15 +430,15 @@ enum ListenerSocket {
     },
 }
 impl ListenerSocket {
-    fn accept(&self) -> std::io::Result<(SocketStream, Option<SocketAddr>)> {
+    fn accept(&self) -> std::io::Result<SocketStream> {
         match self {
-            Self::Tcp(listener) => listener.accept().map(|(stream, remote)| {
-                (SocketStream::Plain(RawStream::Tcp(stream)), Some(remote))
-            }),
+            Self::Tcp(listener) => listener
+                .accept()
+                .map(|(stream, _)| SocketStream::Plain(RawStream::Tcp(stream))),
             #[cfg(unix)]
             Self::Local { listener, .. } => listener
                 .accept()
-                .map(|(stream, _)| (SocketStream::Plain(RawStream::Local(stream)), None)),
+                .map(|(stream, _)| SocketStream::Plain(RawStream::Local(stream))),
         }
     }
 }
@@ -506,6 +494,22 @@ enum ConnectFailure {
 struct ConnectingSocket {
     completion: ConnectCompletion,
     referenced: bool,
+    protocol: SocketProtocol,
+    options: TcpOptions,
+}
+#[derive(Clone, Copy)]
+enum SocketProtocol { Tcp, Local }
+#[derive(Default)]
+struct TcpOptions {
+    no_delay: Option<bool>,
+    keep_alive: Option<TcpKeepAlive>,
+}
+#[derive(Clone, Copy)]
+pub(crate) struct TcpKeepAlive {
+    pub(crate) enabled: bool,
+    pub(crate) delay: u32,
+    pub(crate) interval: u32,
+    pub(crate) count: u32,
 }
 enum ConnectCompletion {
     ExternalLookup,
@@ -543,7 +547,6 @@ pub(crate) enum TransportEvent {
     Accepted {
         listener: u64,
         socket: u64,
-        remote: Option<SocketAddr>,
     },
     Connected {
         socket: u64,
@@ -703,6 +706,8 @@ pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Res
         ConnectingSocket {
             completion: ConnectCompletion::NativeRequest(receiver),
             referenced: true,
+            protocol: SocketProtocol::Tcp,
+            options: TcpOptions::default(),
         },
     );
     Ok(id)
@@ -715,6 +720,8 @@ pub(super) fn reserve_lookup(transport: &mut Transport) -> Result<u64, String> {
         ConnectingSocket {
             completion: ConnectCompletion::ExternalLookup,
             referenced: true,
+            protocol: SocketProtocol::Tcp,
+            options: TcpOptions::default(),
         },
     );
     Ok(id)
@@ -779,6 +786,13 @@ pub(crate) fn address(transport: &Transport, listener: u64) -> Option<SocketAddr
         })
 }
 
+pub(crate) fn socket_address(transport: &Transport, id: u64, peer: bool) -> std::io::Result<SocketAddr> {
+    match transport.sockets.get(&id).map(|socket| socket.stream.raw()) {
+        Some(RawStream::Tcp(stream)) => if peer { stream.peer_addr() } else { stream.local_addr() },
+        _ => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
+    }
+}
+
 pub(crate) fn write(transport: &mut Transport, socket: u64, bytes: &[u8]) -> Result<(), String> {
     let stream = transport
         .sockets
@@ -802,6 +816,10 @@ pub(crate) fn write_with_completion(
         .expect("write checked live socket");
     stream.completions.push_back(stream.pending_write.len());
     Ok(())
+}
+
+pub(crate) fn socket_is_open(transport: &Transport, id: u64) -> bool {
+    transport.sockets.contains_key(&id) || transport.connecting.contains_key(&id)
 }
 
 pub(crate) fn is_connected(transport: &Transport, socket: u64) -> bool {
@@ -933,6 +951,10 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
         let referenced = connection.referenced;
         match result {
             Ok(stream) => {
+                if let RawStream::Tcp(tcp) = stream.raw() {
+                    if let Some(enabled) = connection.options.no_delay { let _ = tcp.set_nodelay(enabled); }
+                    if let Some(options) = connection.options.keep_alive { let _ = apply_tcp_keep_alive(tcp, options); }
+                }
                 transport.sockets.insert(
                     id,
                     SharedSocket {
@@ -993,7 +1015,7 @@ fn poll_accepts(transport: &mut Transport) -> Vec<TransportEvent> {
             };
             loop {
                 match listener.accept() {
-                    Ok((stream, remote)) => accepted.push((*listener_id, stream, remote)),
+                    Ok(stream) => accepted.push((*listener_id, stream)),
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
                     Err(_) => break,
                 }
@@ -1002,7 +1024,7 @@ fn poll_accepts(transport: &mut Transport) -> Vec<TransportEvent> {
         })
         .collect::<Vec<_>>();
     let mut events = Vec::with_capacity(listeners.len());
-    for (listener, stream, remote) in listeners {
+    for (listener, stream) in listeners {
         if stream.set_nonblocking(true).is_err() {
             continue;
         }
@@ -1026,7 +1048,6 @@ fn poll_accepts(transport: &mut Transport) -> Vec<TransportEvent> {
         events.push(TransportEvent::Accepted {
             listener,
             socket,
-            remote,
         });
     }
     events
@@ -1331,6 +1352,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         crate::host::shared_vm::operation("netServerInitEmitter"),
         emitter,
     )?;
+    let [init_socket_options, set_no_delay, set_keep_alive, init_server_options] = super::net_socket_options::install(context)?;
+    let connections = context.host_function(crate::host::shared_vm::operation("netServerGetConnections"))?;
+    let connections_factory = context.evaluate_script_rooted(quench_js_check::checked_js!(
+        "operation=>function(cb){'use strict';return operation(this,cb);}"
+    ), "node:net/get-connections.js")?;
+    let get_connections = context.call_rooted(connections_factory, undefined, &[connections])?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
@@ -1356,8 +1383,17 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             init_end,
             readable_end,
             init_server_emitter,
+            init_socket_options,
+            set_no_delay,
+            set_keep_alive,
+            init_server_options,
+            get_connections,
         ],
     )?;
+    let options_data = context.host_mut().shared_state().borrow().net_socket_option_keys
+        .ok_or_else(|| RootedError::host("socket option metadata missing"))?;
+    let key = context.string_rooted("module");
+    context.define_data_property_rooted(options_data, key, surface, false, false, false)?;
     let key = context.string_rooted("Server");
     let server = context.get_property_rooted(surface, key)?;
     let key = context.string_rooted("prototype");
@@ -1634,6 +1670,7 @@ pub(crate) fn destroy_operation(
                 undefined,
                 &[socket, physical],
             )?;
+            super::net_server_admission::socket_destroyed(context, socket, None)?;
             return Ok(socket);
         }
     };
@@ -1657,6 +1694,7 @@ pub(crate) fn destroy_operation(
     context.set_property_rooted(socket, key, null, socket)?;
     let undefined = context.undefined();
     context.call_rooted(callback, undefined, &[error])?;
+    super::net_server_admission::socket_destroyed(context, socket, Some(id))?;
     Ok(socket)
 }
 
@@ -1720,12 +1758,10 @@ pub(crate) fn server_listen_operation(
         .and_then(Value::as_number)
         .filter(|port| port.fract() == 0.0 && (0.0..=65535.0).contains(port))
         .ok_or_else(|| RootedError::host("invalid TCP port"))? as u16;
-    let host = match args.get(2).copied() {
-        Some(host) => context
-            .string_text(host)?
-            .unwrap_or_else(|| "127.0.0.1".to_owned()),
-        None => "127.0.0.1".to_owned(),
-    };
+    let requested = args.get(2).copied().unwrap_or_else(|| context.undefined());
+    let default_address = !context.truthy_rooted(requested)?;
+    let host = context.string_text(requested)?.filter(|host| !host.is_empty())
+        .unwrap_or_else(|| Ipv6Addr::UNSPECIFIED.to_string());
     let address = (host.as_str(), port)
         .to_socket_addrs()
         .map_err(|error| RootedError::host(error.to_string()))?
@@ -1744,8 +1780,17 @@ pub(crate) fn server_listen_operation(
     } else {
         false
     };
-    let listener = listen_with_reuse_port(&mut shared.borrow_mut().tcp, address, reuse_port)
-        .map_err(RootedError::host)?;
+    let listener = listen_with_reuse_port(&mut shared.borrow_mut().tcp, address, reuse_port);
+    // Node tries the IPv6 wildcard first when no host was requested, then
+    // falls back to the IPv4 wildcard if that platform cannot bind IPv6.
+    let listener = match listener {
+        Err(_) if default_address => listen_with_reuse_port(
+            &mut shared.borrow_mut().tcp,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port),
+            reuse_port,
+        ),
+        result => result,
+    }.map_err(RootedError::host)?;
     register_server(context, server, listener)
 }
 
@@ -1916,6 +1961,8 @@ fn connect_local(
         ConnectingSocket {
             completion: ConnectCompletion::NativeRequest(receiver),
             referenced: true,
+            protocol: SocketProtocol::Local,
+            options: TcpOptions::default(),
         },
     );
     Ok(id)
@@ -2265,10 +2312,20 @@ pub(crate) fn deliver_data(
     );
     result
 }
-pub(crate) fn deliver_connection(
+enum ConnectionDelivery { Accepted, Connected }
+pub(crate) fn deliver_connect(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    complete_connection_delivery(context, receiver, args, ConnectionDelivery::Connected)
+}
+
+pub(crate) fn deliver_connection(context: &mut NativeContext<'_, NodeHost>, receiver: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    complete_connection_delivery(context, receiver, args, ConnectionDelivery::Accepted)
+}
+
+fn complete_connection_delivery(
     context: &mut NativeContext<'_, NodeHost>,
     receiver: RootId,
     args: &[RootId],
+    delivery: ConnectionDelivery,
 ) -> Result<RootId, RootedError> {
     let callback = args[0];
     let socket = context
@@ -2282,7 +2339,12 @@ pub(crate) fn deliver_connection(
             socket.delivery = DeliveryPhase::DeliveringConnection;
         };
     }
-    let result = context.call_rooted(callback, receiver, &args[2..]);
+    let result = (|| {
+        if matches!(delivery, ConnectionDelivery::Connected) {
+            super::net_socket_options::apply_connected(context, receiver)?;
+        }
+        context.call_rooted(callback, receiver, &args[2..])
+    })();
     let shared = context.host_mut().shared_state();
     {
         let mut state = shared.borrow_mut();
@@ -2376,4 +2438,44 @@ pub(crate) fn connection_delivery_started(transport: &Transport, id: u64) -> boo
         .sockets
         .get(&id)
         .is_none_or(|socket| !matches!(socket.delivery, DeliveryPhase::Pending))
+}
+
+
+pub(crate) fn socket_is_tcp(transport: &Transport, id: u64) -> bool {
+    transport.sockets.get(&id).map(|socket| matches!(socket.stream.raw(), RawStream::Tcp(_)))
+        .or_else(|| transport.connecting.get(&id).map(|socket| matches!(socket.protocol, SocketProtocol::Tcp)))
+        .unwrap_or(false)
+}
+fn apply_tcp_keep_alive(stream: &TcpStream, options: TcpKeepAlive) -> std::io::Result<()> {
+    let socket = socket2::SockRef::from(stream);
+    socket.set_keepalive(options.enabled)?;
+    if !options.enabled { return Ok(()); }
+    if options.delay == 0 || options.interval == 0 || options.count == 0 {
+        return Err(std::io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    let keep_alive = socket2::TcpKeepalive::new()
+        .with_time(std::time::Duration::from_secs(u64::from(options.delay)))
+        .with_interval(std::time::Duration::from_secs(u64::from(options.interval)))
+        .with_retries(options.count);
+    socket.set_tcp_keepalive(&keep_alive)
+}
+pub(crate) fn tcp_no_delay(transport: &mut Transport, id: u64, enabled: bool) -> std::io::Result<()> {
+    if let Some(socket) = transport.connecting.get_mut(&id) {
+        socket.options.no_delay = Some(enabled);
+        return Ok(());
+    }
+    match transport.sockets.get(&id).map(|socket| socket.stream.raw()) {
+        Some(RawStream::Tcp(stream)) => stream.set_nodelay(enabled),
+        _ => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
+    }
+}
+pub(crate) fn tcp_keep_alive(transport: &mut Transport, id: u64, options: TcpKeepAlive) -> std::io::Result<()> {
+    if let Some(socket) = transport.connecting.get_mut(&id) {
+        socket.options.keep_alive = Some(options);
+        return Ok(());
+    }
+    match transport.sockets.get(&id).map(|socket| socket.stream.raw()) {
+        Some(RawStream::Tcp(stream)) => apply_tcp_keep_alive(stream, options),
+        _ => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
+    }
 }

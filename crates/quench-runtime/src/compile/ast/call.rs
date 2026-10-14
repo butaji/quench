@@ -335,7 +335,7 @@ impl FunctionCompiler<'_, '_> {
                 break;
             };
             for (marker, slot) in scope.iter() {
-                let text = self.owner.atoms[*marker as usize].clone();
+                let text = self.owner.atoms[*marker as usize].to_owned();
                 let Some((kind, name)) = LexicalBindingKind::ALL.into_iter().find_map(|kind| {
                     text.strip_prefix(kind.capture_prefix())
                         .map(|name| (kind, name))
@@ -354,9 +354,9 @@ impl FunctionCompiler<'_, '_> {
                     kind,
                     declaration: if self
                         .owner
-                        .atom_index
-                        .get(catch_marker.as_str())
-                        .is_some_and(|marker| scope.contains_key(marker))
+                        .atoms
+                        .find(&catch_marker)
+                        .is_some_and(|marker| scope.contains_key(&marker))
                     {
                         crate::bytecode::EvalBindingDeclaration::CatchParameter
                     } else {

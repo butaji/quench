@@ -1159,8 +1159,14 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         callee: Value,
     ) -> Result<Value, JsError> {
+        // A realm's own natives run in that realm; a native shared by every realm runs in
+        // its caller's, which is the realm whose objects it builds.
         let realm = match self.heap.get(callee) {
-            Some(Cell::Function { object, .. }) => object.realm,
+            Some(Cell::Function { object, .. })
+                if object.realm == self.realm.globals || !self.shared_natives.contains(&callee) =>
+            {
+                object.realm
+            }
             _ => self.realm.globals,
         };
         let previous_global = self.switch_realm_global(realm);
@@ -3620,13 +3626,10 @@ impl<H: Host> Vm<H> {
         exports: Vec<(String, String)>,
         active: &mut ActiveModuleExports,
     ) -> Result<Vec<(String, StaticModuleValue)>, JsError> {
-        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
-            .map(|atom| self.atom_name(atom as u32).to_owned())
-            .collect::<Vec<_>>();
         let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
             &module.source,
             &module.name,
-            &atom_prefix,
+            &*self,
         )
         .map_err(|diagnostics| {
             if diagnostics
@@ -3858,13 +3861,10 @@ impl<H: Host> Vm<H> {
         let Some(link_plan) = plan.link_plan else {
             return Ok(false);
         };
-        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
-            .map(|atom| self.atom_name(atom as u32).to_owned())
-            .collect::<Vec<_>>();
         let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
             &module.source,
             &module.name,
-            &atom_prefix,
+            &*self,
         )
         .map_err(|diagnostics| {
             if diagnostics

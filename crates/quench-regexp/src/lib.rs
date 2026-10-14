@@ -320,8 +320,13 @@ impl Regex {
             && compiled_structure_is_safe(&parsed.body))
         .then(|| compile_byte_regex(source, flags))
         .flatten();
+        // Both uses compile the same source and flags; a clone shares the compiled program.
         let compiled_test = (backend_enabled && compiled_test_source_is_safe(source))
-            .then(|| compile_byte_regex(source, flags))
+            .then(|| {
+                compiled
+                    .clone()
+                    .or_else(|| compile_byte_regex(source, flags))
+            })
             .flatten();
         let compiled_locations = compiled
             .as_ref()
@@ -408,10 +413,10 @@ impl Regex {
     /// Matches against a subject whose ASCII bytes were prepared once, so repeated matches
     /// over the same text do not rescan and recopy it.
     pub fn find_in_subject(&self, subject: &Subject, start: usize) -> Matches {
-        if start > subject.units.len() {
+        if start > subject.len() {
             return Matches { item: None };
         }
-        if let (Some(bytes), Some(compiled)) = (&subject.ascii, &self.compiled) {
+        if let (Some(bytes), Some(compiled)) = (subject.ascii(), &self.compiled) {
             if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return {
                 return self.find_compiled(compiled, bytes, start);
             }
@@ -425,11 +430,11 @@ impl Regex {
     /// The range of the next match in `subject`, for callers that observe no captures.
     /// A byte matcher that is sound for match ranges answers without capture bookkeeping.
     pub fn find_range_in_subject(&self, subject: &Subject, start: usize) -> Option<Range<usize>> {
-        if start > subject.units.len() {
+        if start > subject.len() {
             return None;
         }
         if let (Some(bytes), Some(compiled)) = (
-            &subject.ascii,
+            subject.ascii(),
             self.compiled_test.as_ref().or(self.compiled.as_ref()),
         ) {
             if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return {
@@ -536,12 +541,20 @@ impl Regex {
     }
 }
 
-/// UTF-16 text prepared once for repeated matching. The shared units are retained, so a
-/// caller can recognize the same string again by allocation identity.
+/// The text a subject matches: a string's own one-byte ASCII storage, or its UTF-16 units.
+enum SubjectText {
+    Ascii(std::rc::Rc<str>),
+    Wide {
+        units: std::rc::Rc<[u16]>,
+        /// One byte per unit, present only when every unit is ASCII.
+        ascii: Option<Box<[u8]>>,
+    },
+}
+
+/// Text prepared once for repeated matching. The shared storage is retained, so a caller
+/// can recognize the same string again by allocation identity.
 pub struct Subject {
-    units: std::rc::Rc<[u16]>,
-    /// One byte per unit, present only when every unit is ASCII.
-    ascii: Option<Box<[u8]>>,
+    text: SubjectText,
     has_carriage_return: bool,
     /// The units decoded for the backtracking matcher, by code unit and by code point
     /// (`unicode`), each decoded on first use.
@@ -559,19 +572,53 @@ impl Subject {
             });
         let ascii = (all_bits <= ASCII_MAX).then(|| units.iter().map(|unit| *unit as u8).collect());
         Self {
-            units,
-            ascii,
+            text: SubjectText::Wide { units, ascii },
             has_carriage_return,
             decoded: Default::default(),
         }
     }
 
+    /// A subject over ASCII text, matched in place without a copy.
+    pub fn from_ascii(text: std::rc::Rc<str>) -> Self {
+        debug_assert!(text.is_ascii());
+        let has_carriage_return = text.as_bytes().contains(&b'\r');
+        Self {
+            text: SubjectText::Ascii(text),
+            has_carriage_return,
+            decoded: Default::default(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match &self.text {
+            SubjectText::Ascii(text) => text.len(),
+            SubjectText::Wide { units, .. } => units.len(),
+        }
+    }
+
+    fn ascii(&self) -> Option<&[u8]> {
+        match &self.text {
+            SubjectText::Ascii(text) => Some(text.as_bytes()),
+            SubjectText::Wide { ascii, .. } => ascii.as_deref(),
+        }
+    }
+
     fn decoded(&self, unicode: bool) -> &[Unit] {
-        self.decoded[usize::from(unicode)].get_or_init(|| units_from_utf16(&self.units, unicode))
+        self.decoded[usize::from(unicode)].get_or_init(|| match &self.text {
+            SubjectText::Ascii(text) => {
+                let units = text.bytes().map(u16::from).collect::<Vec<_>>();
+                units_from_utf16(&units, unicode)
+            }
+            SubjectText::Wide { units, .. } => units_from_utf16(units, unicode),
+        })
     }
 
     pub fn is_text_of(&self, units: &std::rc::Rc<[u16]>) -> bool {
-        std::rc::Rc::ptr_eq(&self.units, units)
+        matches!(&self.text, SubjectText::Wide { units: own, .. } if std::rc::Rc::ptr_eq(own, units))
+    }
+
+    pub fn is_ascii_text_of(&self, text: &std::rc::Rc<str>) -> bool {
+        matches!(&self.text, SubjectText::Ascii(own) if std::rc::Rc::ptr_eq(own, text))
     }
 }
 
@@ -2093,22 +2140,16 @@ fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool, unicode: 
     match item {
         ClassItem::Character(character) => equal(*character, value, ignore_case, unicode),
         ClassItem::Range(min, max) => {
-            let value = if ignore_case {
-                canonical(value, unicode)
-            } else {
-                value
-            };
-            let min = if ignore_case {
-                canonical(*min, unicode)
-            } else {
-                *min
-            };
-            let max = if ignore_case {
-                canonical(*max, unicode)
-            } else {
-                *max
-            };
-            min <= value && value <= max
+            let in_range = |member: u32| *min <= member && member <= *max;
+            if !ignore_case {
+                return in_range(value);
+            }
+            // The range matches when one of its members has `value`'s canonical form.
+            let key = canonical(value, unicode);
+            (canonical(key, unicode) == key && in_range(key))
+                || canonical_preimages(unicode)
+                    .get(&key)
+                    .is_some_and(|members| members.iter().copied().any(in_range))
         }
         ClassItem::Escape(escape) => escape_matches(*escape, value, ignore_case, unicode),
         ClassItem::Property {
@@ -2648,6 +2689,24 @@ fn equal(left: u32, right: u32, ignore_case: bool, unicode: bool) -> bool {
         left == right
     }
 }
+/// For each canonicalization mode, the code points whose canonical form is another code point,
+/// grouped by that form: the inverse of `canonical`, which case-insensitive class ranges need.
+fn canonical_preimages(unicode: bool) -> &'static std::collections::HashMap<u32, Vec<u32>> {
+    static TABLES: [std::sync::OnceLock<std::collections::HashMap<u32, Vec<u32>>>; 2] =
+        [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+    TABLES[usize::from(unicode)].get_or_init(|| {
+        let last = if unicode { u32::from(char::MAX) } else { BMP_MAX };
+        let mut preimages = std::collections::HashMap::<u32, Vec<u32>>::new();
+        for member in 0..=last {
+            let key = canonical(member, unicode);
+            if key != member {
+                preimages.entry(key).or_default().push(member);
+            }
+        }
+        preimages
+    })
+}
+
 fn canonical(value: u32, unicode: bool) -> u32 {
     let Some(character) = char::from_u32(value) else {
         return value;
@@ -2712,6 +2771,18 @@ mod tests {
                     "negative property matched {alias}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn case_insensitive_ranges_match_members_not_folded_endpoints() {
+        // U+03CE folds to U+038F, below the range's start: folding the endpoints empties
+        // the range, while its members (all Greek lowercase letters here) still match.
+        for flags in ["i", "iu"] {
+            let regex = Regex::with_flags(r"^[\u0391-\u03ce]+$", Flags::from(flags)).unwrap();
+            assert!(regex.find_from("αβγδεζηθικλμνξοπρςστυφχψω", 0).next().is_some(), "{flags}");
+            let ascii = Regex::with_flags(r"^[a-z]+$", Flags::from(flags)).unwrap();
+            assert!(ascii.find_from("QUENCH", 0).next().is_some(), "{flags}");
         }
     }
 

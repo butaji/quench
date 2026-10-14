@@ -805,7 +805,7 @@ impl<H: Host> Vm<H> {
         let prototype = self.primitive_prototype(value).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         if let Some(Cell::String(text)) = self.heap.get(value).cloned() {
-            for (index, unit) in text.units().iter().copied().enumerate() {
+            for (index, unit) in text.units().iter().enumerate() {
                 let key = self.intern_atom(&index.to_string());
                 let character = self
                     .heap
@@ -930,21 +930,7 @@ impl<H: Host> Vm<H> {
             Native::SymbolToString,
         )?;
         let description = self.native_value(Native::SymbolDescriptionGetter);
-        self.set_builtin_function_name(description, "get description")?;
-        let description_atom = self.intern_atom("description");
-        self.set_property(symbol_prototype, description_atom, Value::UNDEFINED)?;
-        self.set_property_attributes(
-            symbol_prototype,
-            PropertyKey::string(description_atom),
-            PropertyAttributes {
-                writable: false,
-                enumerable: false,
-                configurable: true,
-                accessor: true,
-                getter: Some(description),
-                setter: None,
-            },
-        );
+        self.install_symbol_description(symbol_prototype, description)?;
         for native in [Native::String, Native::Number] {
             let constructor = self.native_value(native);
             let prototype = self.object();
@@ -1101,9 +1087,6 @@ impl<H: Host> Vm<H> {
         let parameters = argument_strings.join(",");
         let parser_parameters = format!("{parameters}\n");
         let source_name = format!("<Function:{}>", self.programs.len());
-        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
-            .map(|atom| self.atom_name(atom as u32).to_owned())
-            .collect::<Vec<_>>();
         let kind = match native {
             Native::AsyncFunction => crate::compile::DynamicFunctionKind::Async,
             Native::GeneratorFunction => crate::compile::DynamicFunctionKind::Generator,
@@ -1114,7 +1097,7 @@ impl<H: Host> Vm<H> {
             &parser_parameters,
             source,
             &source_name,
-            &atom_prefix,
+            &*self,
             kind,
         )
         .map_err(|diagnostics| {
@@ -1300,10 +1283,13 @@ impl<H: Host> Vm<H> {
             .builtin_prototypes
             .insert((global, Native::RealmTypeError), type_error_prototype);
         self.set_named_constant(program, type_error, "prototype", type_error_prototype)?;
-        self.set_named(program, type_error_prototype, "constructor", type_error)?;
+        self.set_builtin_value_named(type_error_prototype, "constructor", type_error)?;
         let type_error_name = self.heap.alloc(Cell::String("TypeError".into()));
-        self.set_named(program, type_error_prototype, "name", type_error_name)?;
-        self.set_named(program, global, "TypeError", type_error)?;
+        self.set_builtin_value_named(type_error_prototype, "name", type_error_name)?;
+        let empty_message = self.heap.alloc(Cell::String("".into()));
+        self.set_builtin_value_named(type_error_prototype, "message", empty_message)?;
+        self.set_builtin_function_length(type_error, 1.0)?;
+        self.set_builtin_value_named(global, "TypeError", type_error)?;
         let eval = self.native_with_realm(Native::Eval, global, global);
         self.set_builtin_function_value_named(global, "eval", eval)?;
         let function = self.native_with_realm(Native::Function, global, global);
@@ -1328,8 +1314,7 @@ impl<H: Host> Vm<H> {
         self.install_typed_array_constructors_for_realm(program, global)?;
         self.install_weak_collections_for_realm(program, global, object_prototype)?;
         let set = self.native_with_realm(Native::Set, global, global);
-        self.install_set_prototype(program, set, object_prototype)?;
-        self.install_set_species(set)?;
+        let set_prototype = self.install_set_prototype(program, set, object_prototype)?;
         self.set_builtin_value_named(global, "Set", set)?;
         let shadow_realm = self.native_with_realm(Native::ShadowRealm, global, global);
         self.install_shadow_realm_for_realm(program, global, shadow_realm, object_prototype)?;
@@ -1358,7 +1343,16 @@ impl<H: Host> Vm<H> {
             .heap
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.install_promise_for_realm(program, promise, promise_prototype, Some(global))?;
-        self.install_disposal_for_realm(program, global, object_prototype)?;
+        let disposable_stack = self.native_with_realm(Native::DisposableStack, global, global);
+        let async_disposable_stack =
+            self.native_with_realm(Native::AsyncDisposableStack, global, global);
+        self.install_disposable_stacks(
+            program,
+            global,
+            object_prototype,
+            disposable_stack,
+            async_disposable_stack,
+        )?;
         self.install_finalization_registry_for_realm(global, object_prototype)?;
         let realm_iterator_proto = self
             .heap
@@ -1530,7 +1524,7 @@ impl<H: Host> Vm<H> {
         let object = self.native_with_realm(Native::Object, global, global);
         self.set_builtin_function_name(object, "Object")?;
         self.set_named(program, object, "prototype", object_prototype)?;
-        self.set_named(program, object_prototype, "constructor", object)?;
+        self.set_builtin_value_named(object_prototype, "constructor", object)?;
         self.set_property_attributes(
             object,
             PropertyKey::string(prototype_atom),
@@ -1603,6 +1597,21 @@ impl<H: Host> Vm<H> {
             .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.install_map(program, global, map, map_prototype)?;
         self.set_builtin_value_named(global, "Map", map)?;
+        let prototype_atom = self.prototype_atom();
+        let [weak_map_prototype, weak_set_prototype] = ["WeakMap", "WeakSet"].map(|name| {
+            let atom = self.intern_atom(name);
+            self.own_property(global, atom)
+                .and_then(|constructor| self.own_property(constructor, prototype_atom))
+                .expect("realm weak collections are installed")
+        });
+        self.install_collection_symbols(
+            map,
+            map_prototype,
+            set,
+            set_prototype,
+            weak_map_prototype,
+            weak_set_prototype,
+        )?;
         let regexp = self.native_with_realm(Native::RegExp, global, global);
         let regexp_escape = self.native_with_realm(Native::RegExpEscape, global, global);
         self.set_builtin_function_name(regexp_escape, "escape")?;
@@ -1614,25 +1623,7 @@ impl<H: Host> Vm<H> {
         self.install_regexp_accessors(program, regexp_prototype, global)?;
         self.install_regexp_legacy_accessors(program, regexp, global)?;
         self.install_regexp_symbol_properties(regexp, regexp_prototype, global)?;
-        let regexp_name = self.heap.alloc(Cell::String("RegExp".into()));
-        self.set_builtin_value_named(regexp, "name", regexp_name)?;
         self.set_builtin_value_named(global, "RegExp", regexp)?;
-        let async_disposable_stack =
-            self.native_with_realm(Native::AsyncDisposableStack, global, global);
-        let async_disposable_stack_prototype = self
-            .heap
-            .alloc(Cell::Object(Self::empty_object(object_prototype)));
-        self.set_builtin_value_named(
-            async_disposable_stack,
-            "prototype",
-            async_disposable_stack_prototype,
-        )?;
-        self.set_builtin_value_named(
-            async_disposable_stack_prototype,
-            "constructor",
-            async_disposable_stack,
-        )?;
-        self.set_builtin_value_named(global, "AsyncDisposableStack", async_disposable_stack)?;
         let (array_buffer, _) =
             self.install_array_buffer_for_realm(program, global, object_prototype)?;
         self.set_builtin_value_named(global, "ArrayBuffer", array_buffer)?;
@@ -1708,7 +1699,8 @@ impl<H: Host> Vm<H> {
             ("parseInt", Native::ParseInt),
         ] {
             let intrinsic = self.native_with_realm(native, global, global);
-            self.set_named(program, global, name, intrinsic)?;
+            self.set_builtin_function_name(intrinsic, name)?;
+            self.set_builtin_value_named(global, name, intrinsic)?;
         }
         self.install_realm_default_bindings(global)?;
         self.install_json_for_realm(program, global)?;

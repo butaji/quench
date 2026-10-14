@@ -322,18 +322,6 @@ impl<H: Host> Vm<H> {
             },
             env,
         });
-        if let Some(source) = function_plan.source_text.as_deref() {
-            let source_value = self
-                .programs
-                .function_source(self.active_program, id)
-                .unwrap_or_else(|| {
-                    let source_value = self.heap.alloc(Cell::String(source.into()));
-                    self.programs
-                        .cache_function_source(self.active_program, id, source_value)
-                        .unwrap_or(source_value)
-                });
-            self.set_function_source_value(function, source_value)?;
-        }
         let program = self.active_program;
         self.function_values.entry((program, id)).or_default().push(
             self.heap

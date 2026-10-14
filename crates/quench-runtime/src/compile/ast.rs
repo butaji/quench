@@ -102,7 +102,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     /// The expression being compiled is the last operand its consumer evaluates, which
     /// then executes at once; a clobbered local read there may alias its register.
     pub(super) last_operand: bool,
-    local_register_count: Register,
+    /// The lowest register `release_temporaries` frees down to: registers below it hold
+    /// values an enclosing construct reads across its body's statements.
+    temporary_floor: Register,
     shared_undefined: SharedUndefined,
     function_scope: FxHashSet<Atom>,
     annex_b_collisions: FxHashSet<u32>,
@@ -111,6 +113,11 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) handlers: Vec<crate::bytecode::Handler>,
     pub(super) binding_sites: Vec<crate::bytecode::BindingSite>,
     pub(super) environment_clones: Vec<Vec<u16>>,
+    /// For each clone plan, the slots of every lexical scope active at its
+    /// site; see `per_site_environment_clones`.
+    environment_clone_scopes: Vec<Vec<u16>>,
+    /// Clone plans that open a class evaluation; their slots are never reset.
+    pub(super) class_environment_clones: FxHashSet<usize>,
     controls: Vec<ControlTarget>,
     iterator_closures: Vec<IteratorClosure>,
     pub(super) iterator_close_ranges: Vec<(u32, u32)>,
@@ -206,7 +213,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             local_registers,
             clobbered_locals,
             last_operand: false,
-            local_register_count,
+            temporary_floor: local_register_count,
             shared_undefined: SharedUndefined {
                 register: shared_undefined,
                 used: false,
@@ -218,6 +225,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             handlers: vec![],
             binding_sites: vec![],
             environment_clones: vec![],
+            environment_clone_scopes: vec![],
+            class_environment_clones: FxHashSet::default(),
             controls: vec![],
             iterator_closures: vec![],
             iterator_close_ranges: vec![],
@@ -491,7 +500,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     Some(self.function_id),
                     FunctionOptions {
                         defaults: Some(&function.params),
-                        source_text: self.owner.source_text(function.span),
+                        source_span: self.owner.source_span(function.span),
                         name_binding: None,
                         async_function: function.r#async,
                         generator: function.generator,
@@ -743,7 +752,18 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.next_reg = self
             .statement_completion
             .register()
-            .map_or(self.local_register_count, |register| register + 1);
+            .map_or(self.temporary_floor, |register| {
+                self.temporary_floor.max(register + 1)
+            });
+    }
+
+    /// Compiles `body` with every register allocated so far kept from statement-level
+    /// release, for a construct that reads them after the body's statements run.
+    pub(super) fn with_registers_held<T>(&mut self, body: impl FnOnce(&mut Self) -> T) -> T {
+        let floor = std::mem::replace(&mut self.temporary_floor, self.next_reg);
+        let result = body(self);
+        self.temporary_floor = floor;
+        result
     }
 
     fn active_lexical_binding(&self, atom: Atom) -> Option<Atom> {
@@ -763,7 +783,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub(super) fn needs_strict_global_reference_capture(&mut self, atom: Atom) -> bool {
-        if !self.strict || self.owner.atoms[atom as usize].as_ref().starts_with('\0') {
+        if !self.strict || self.owner.atoms[atom as usize].starts_with('\0') {
             return false;
         }
         let binding = self.resolve_lexical(atom);
@@ -874,17 +894,76 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         if slots.is_empty() {
             return;
         }
+        let scopes = self.active_lexical_slots();
         let index = if let Some(index) = self
             .environment_clones
             .iter()
-            .position(|existing| *existing == slots)
+            .zip(&self.environment_clone_scopes)
+            .position(|(existing, existing_scopes)| *existing == slots && *existing_scopes == scopes)
         {
             index
         } else {
-            self.environment_clones.push(slots);
-            self.environment_clones.len() - 1
+            self.push_environment_clone(slots, scopes)
         };
         self.emit(Op::CloneEnv, 0, 0, 0, index as u32);
+    }
+
+    /// Adds a clone plan for `slots`, sited where the lexical scopes owning
+    /// `scopes` are active, and returns its index.
+    pub(super) fn push_environment_clone(&mut self, slots: Vec<u16>, scopes: Vec<u16>) -> usize {
+        self.environment_clones.push(slots);
+        self.environment_clone_scopes.push(scopes);
+        self.environment_clones.len() - 1
+    }
+
+    /// The slots of every lexical scope active at the current position.
+    pub(super) fn active_lexical_slots(&self) -> Vec<u16> {
+        let mut slots = self
+            .lexical_scopes
+            .iter()
+            .flat_map(|scope| scope.bindings.values())
+            .filter_map(|binding| self.local_slots.get(binding).copied())
+            .collect::<Vec<_>>();
+        slots.sort_unstable();
+        slots.dedup();
+        slots
+    }
+
+    /// The clone plans the function runs. A clone owns its fresh slots; every
+    /// other slot is shared with the slot's owner. A slot some clone owns but
+    /// whose scope is not active at another clone's site (an inner loop's or
+    /// a loop body's binding, seen from the loop's next iteration) is out of
+    /// reach there, so that clone resets it: sharing or copying it would keep
+    /// the previous iteration's environment, and through it every earlier
+    /// one, alive for as long as the activation runs. A class's slots (its
+    /// private names, homes and field initializers) are no lexical scope's
+    /// bindings, yet remain reachable from nested classes and closures created
+    /// while the class evaluates, so class clones' slots are never reset.
+    pub(super) fn per_site_environment_clones(&mut self) -> Vec<crate::bytecode::EnvironmentClone> {
+        let owned = self
+            .environment_clones
+            .iter()
+            .enumerate()
+            .filter(|(plan, _)| !self.class_environment_clones.contains(plan))
+            .flat_map(|(_, slots)| slots)
+            .copied()
+            .collect::<FxHashSet<_>>();
+        let scopes = std::mem::take(&mut self.environment_clone_scopes);
+        std::mem::take(&mut self.environment_clones)
+            .into_iter()
+            .zip(scopes)
+            .map(|(fresh, active)| {
+                let mut reset = owned
+                    .iter()
+                    .copied()
+                    .filter(|slot| {
+                        active.binary_search(slot).is_err() && fresh.binary_search(slot).is_err()
+                    })
+                    .collect::<Vec<_>>();
+                reset.sort_unstable();
+                crate::bytecode::EnvironmentClone { fresh, reset }
+            })
+            .collect()
     }
 
     pub(super) fn initialize_lexical_scope(&mut self) {
@@ -1013,15 +1092,15 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                         .get(source)
                         .copied()
                         .unwrap_or(LexicalBindingKind::Mutable);
-                    let name = self.owner.atoms[*source as usize].clone();
+                    let name = self.owner.atoms[*source as usize].to_owned();
                     for kind in LexicalBindingKind::ALL {
                         let marker = format!("{}{name}", kind.capture_prefix());
-                        if let Some(marker) = self.owner.atom_index.get(marker.as_str()) {
+                        if let Some(marker) = self.owner.atoms.find(&marker).as_ref() {
                             scope.remove(marker);
                         }
                     }
                     let catch_name = format!("\0quench:catch-capture:{name}");
-                    if let Some(marker) = self.owner.atom_index.get(catch_name.as_str()) {
+                    if let Some(marker) = self.owner.atoms.find(&catch_name).as_ref() {
                         scope.remove(marker);
                     }
                     let marker = self.owner.atom(&format!("{}{name}", kind.capture_prefix()));
@@ -1046,7 +1125,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     scope
                         .iter()
                         .filter_map(|(atom, slot)| {
-                            let name = self.owner.atoms[*atom as usize].as_ref();
+                            let name = &self.owner.atoms[*atom as usize];
                             (self.is_compiler_binding(*atom)
                                 && !LexicalBindingKind::ALL
                                     .into_iter()
@@ -1095,7 +1174,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             BindingPattern::BindingIdentifier(identifier) => {
                 let atom = self.owner.atom(identifier.name.as_str());
                 scope.entry(atom).or_insert_with(|| {
-                    self.hidden_local(&format!("\0quench:block-binding:{}", identifier.name))
+                    self.hidden_local(&format!(
+                        "{}{}",
+                        crate::bytecode::BLOCK_BINDING_MARKER,
+                        identifier.name
+                    ))
                 });
             }
             BindingPattern::ObjectPattern(pattern) => {

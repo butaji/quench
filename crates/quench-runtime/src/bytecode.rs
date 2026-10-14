@@ -18,11 +18,26 @@ pub(crate) use atoms::{AtomSequence, AtomTable};
 /// Infix of the compiler's hidden atom for a named function expression's own binding:
 /// `{name}{SELF_BINDING_MARKER}{function id}`.
 pub(crate) const SELF_BINDING_MARKER: &str = "\0quench:self-binding:";
+/// Prefix of the compiler's hidden local for a block-scoped binding renamed apart from a
+/// same-named binding of its function: `{BLOCK_BINDING_MARKER}{name}`.
+pub(crate) const BLOCK_BINDING_MARKER: &str = "\0quench:block-binding:";
+
+/// Whether a local named `name` must live in its function's environment whatever its
+/// captures: other hidden bindings (lexical `this`, `new.target`, home objects, private
+/// names, ...) are reached by name, not only through capture slots. A renamed block binding
+/// is reached only through its slot.
+pub(crate) fn local_name_requires_environment(name: &str) -> bool {
+    name.starts_with('\0') && !name.starts_with(BLOCK_BINDING_MARKER)
+}
 pub(crate) use control_flow::branch_table_entries;
 pub use instruction::Instr;
 pub(crate) use instruction::{ConstructArguments, RegisterWindow, WideInstruction};
 pub(crate) use numeric_ops::specialized_numeric_op;
 pub(crate) const RETURN_REGISTER: Register = 1 << 15;
+/// Property cache sites are 16-bit. A program with more sites than that gives every site
+/// past the range this last one, for which the VM never records a cache entry, so those
+/// sites always take the uncached lookup.
+pub(crate) const SHARED_UNCACHED_SITE: u16 = u16::MAX - 1;
 pub(crate) const SET_THIS_REGISTER: Register = 1 << 14;
 pub(crate) const REGISTER_MASK: Register = SET_THIS_REGISTER - 1;
 pub(crate) const INLINE_OBJECT_SITE_ATOMS: usize = 2;
@@ -950,13 +965,22 @@ fn has_backward_branch(code: &[Instr], wide: &[WideInstruction]) -> bool {
     })
 }
 
+/// A byte range of a program's source text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceSpan {
+    pub start: u32,
+    pub end: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct Function {
     pub parent: Option<u32>,
     pub name: Option<Atom>,
     pub is_arrow: bool,
     pub self_binding_slot: Option<u16>,
-    pub source_text: Option<String>,
+    /// The function's source text as a range of the program's `source`, which
+    /// `Function.prototype.toString` reads on demand.
+    pub source_span: Option<SourceSpan>,
     pub params: u16,
     pub length: u16,
     pub parameter_end_pc: u32,
@@ -995,12 +1019,14 @@ pub struct Function {
     pub global_function_atoms: Vec<Atom>,
     pub global_annex_b_var_atoms: Vec<Atom>,
     pub global_immutable_atoms: Vec<Atom>,
-    pub(crate) name_bindings: Vec<EvalBinding>,
+    /// Bindings a dynamic name lookup in this function can see. Functions with the same
+    /// visible bindings share one list (`Compiler::intern_name_bindings`).
+    pub(crate) name_bindings: std::rc::Rc<[EvalBinding]>,
     /// Lexical projections at eval calls and dynamic name operations.
     pub binding_sites: Vec<BindingSite>,
     pub(crate) source_positions: Vec<SourcePosition>,
-    /// Sorted local slots receiving fresh storage for each CloneEnv plan.
-    pub environment_clones: Vec<Vec<u16>>,
+    /// The plan of each CloneEnv instruction.
+    pub environment_clones: Vec<EnvironmentClone>,
     pub code: Vec<Instr>,
     pub(crate) wide: Vec<WideInstruction>,
     pub registers: u16,
@@ -1408,6 +1434,16 @@ impl Function {
             })
     }
 
+    /// Whether the body enters a `with` statement, whose by-name loads may denote
+    /// any enclosing function's binding. `is_with_enter` recognizes the atom id of
+    /// [`WITH_ENTER_BINDING`] in the owning program's atom table.
+    pub(crate) fn contains_with_statement(&self, is_with_enter: impl Fn(usize) -> bool) -> bool {
+        self.instructions().any(|instruction| {
+            matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
+                && usize::try_from(instruction.atom_index()).is_ok_and(&is_with_enter)
+        })
+    }
+
     /// Whether neither this function nor any enclosing one has dynamic scope access or
     /// contains a `with` statement. The compiler then resolved every lexical binding the body
     /// names, so a by-name load in it can only denote a global binding.
@@ -1418,11 +1454,8 @@ impl Function {
     ) -> bool {
         *self.static_name_scope.get_or_init(|| {
             !self.has_dynamic_scope_access()
-                && !self.instructions().any(|instruction| {
-                    matches!(instruction.op(), Op::LoadName | Op::LoadNameCall)
-                        && usize::try_from(instruction.atom_index()).is_ok_and(|atom| {
-                            atom < atoms.len() && &atoms[atom] == WITH_ENTER_BINDING
-                        })
+                && !self.contains_with_statement(|atom| {
+                    atom < atoms.len() && &atoms[atom] == WITH_ENTER_BINDING
                 })
                 && self.parent.is_none_or(|parent| {
                     functions
@@ -1523,7 +1556,7 @@ pub(crate) struct BindingSite {
     pub(crate) bindings: Vec<EvalBinding>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct EvalBinding {
     pub(crate) atom: Atom,
     pub(crate) location: EvalBindingLocation,
@@ -1541,7 +1574,7 @@ impl EvalBinding {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub(crate) enum EvalBindingDeclaration {
     Lexical = 0,
@@ -1558,13 +1591,13 @@ impl EvalBindingDeclaration {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum EvalBindingLocation {
     Local(u16),
     Capture { depth: u16, slot: u16 },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub(crate) enum LexicalBindingKind {
     Mutable = 0,
@@ -1732,6 +1765,16 @@ impl Operand {
     pub(crate) fn register_index(self) -> Option<Register> {
         (self.kind() == Some(OperandKind::Register)).then_some(self.payload())
     }
+}
+
+/// A CloneEnv plan. The clone owns the `fresh` slots, copied from the source
+/// environment, and the `reset` slots, cleared: block bindings out of scope at
+/// the clone's site, whose next scope entry initializes them again. Every other
+/// slot is shared with its owner. Both lists are sorted local slots.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EnvironmentClone {
+    pub fresh: Vec<u16>,
+    pub reset: Vec<u16>,
 }
 
 #[derive(Clone, Debug)]

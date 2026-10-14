@@ -319,3 +319,53 @@ fn throw_preserves_identity_without_hooks_and_retains_source_through_binary() {
         );
     }
 }
+
+#[test]
+fn with_body_names_reach_enclosing_function_vars() {
+    assert_eq!(
+        output(
+            "function f(o) { var x = 42; function inner(o) { with (o) { return x; } } return inner(o); } print(f({})); print(f({ x: 7 }));"
+        ),
+        ["42", "7"]
+    );
+}
+
+#[test]
+fn direct_eval_expressions_resolve_caller_bindings() {
+    assert_eq!(
+        output(
+            "function local() { var q = 2; return eval('typeof q'); } print(local()); function declared() { eval('var C = function () { this.a = 1; }'); return eval('new C().a'); } print(declared()); function nested() { return eval(\"eval('var r = 2;'); typeof r\"); } print(nested());"
+        ),
+        ["number", "1", "number"]
+    );
+}
+
+#[test]
+fn direct_eval_binary_split_respects_looser_operators() {
+    assert_eq!(
+        output(
+            "function f() { var q = 2; return [eval(\"q === 2 ? 'y' : 'n'\"), eval(\"q === 2, 'last'\"), eval(\"null ?? q === 2\")].join(); } print(f());"
+        ),
+        ["y,last,true"]
+    );
+}
+
+#[test]
+fn case_mapping_preserves_lone_surrogates() {
+    assert_eq!(
+        output(
+            "var s = 'a\\ud800b\\udc00\\ud83d\\ude00\\u03a3'; print(Array.from(s.toUpperCase(), function (c) { return c.codePointAt(0).toString(16); }).join()); print(Array.from(s.toLowerCase(), function (c) { return c.codePointAt(0).toString(16); }).join());"
+        ),
+        ["41,d800,42,dc00,1f600,3a3", "61,d800,62,dc00,1f600,3c3"]
+    );
+}
+
+#[test]
+fn nested_class_in_computed_key_keeps_outer_private_names() {
+    assert_eq!(
+        output(
+            "let read; class A { static #x = 42; static [(class {}, read = () => A.#x, 'k')] = 1; } print(read()); for (let i = 0; i < 2; i++) { let f; class B { static #y = i; static [(class {}, f = () => B.#y, 'k')]; } print(f()); }"
+        ),
+        ["42", "0", "1"]
+    );
+}

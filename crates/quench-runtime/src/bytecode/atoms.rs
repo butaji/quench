@@ -18,6 +18,8 @@ enum AtomNames {
         sequence: Rc<AtomSequence>,
         len: usize,
     },
+    /// A host's prefix followed by the names one compilation added after it.
+    Extended(Rc<(AtomTable, AtomTable)>),
 }
 
 impl Default for AtomNames {
@@ -61,10 +63,22 @@ impl AtomTable {
         }
     }
 
+    /// `prefix`, then `added` under the ids that follow it.
+    pub(crate) fn extended(prefix: AtomTable, added: &[Rc<str>]) -> Self {
+        let added = Self::from_rcs(added);
+        if prefix.len() == 0 {
+            return added;
+        }
+        Self {
+            names: AtomNames::Extended(Rc::new((prefix, added))),
+        }
+    }
+
     pub(crate) fn len(&self) -> usize {
         match &self.names {
             AtomNames::Packed { ends, .. } => ends.len(),
             AtomNames::Shared { len, .. } => *len,
+            AtomNames::Extended(parts) => parts.0.len() + parts.1.len(),
         }
     }
 
@@ -91,6 +105,13 @@ impl Index<usize> for AtomTable {
                     "atom {index} lies outside the program's prefix"
                 );
                 sequence.name(index)
+            }
+            AtomNames::Extended(parts) => {
+                let (prefix, added) = &**parts;
+                match index.checked_sub(prefix.len()) {
+                    Some(added_index) => &added[added_index],
+                    None => &prefix[index],
+                }
             }
         }
     }

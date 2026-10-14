@@ -42,17 +42,10 @@ impl<H: Host> Vm<H> {
         if let Some(expression) = crate::Engine::eval_single_expression(source) {
             return self.eval_compiled_expression_named(p, expression, false, source_name);
         }
-        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
-            .map(|atom| self.atom_name(atom as u32).to_owned())
-            .collect::<Vec<_>>();
-        let residual = match crate::Engine::specialize_eval_with_context(
+        let residual = match crate::Engine::specialize_script_with_atom_prefix(
             source,
             source_name,
-            &atom_prefix,
-            false,
-            crate::compile::EvalContext::default(),
-            &[],
-            &[],
+            &*self,
         ) {
             Ok(residual) => residual,
             Err(diagnostics) => {
@@ -111,7 +104,7 @@ impl<H: Host> Vm<H> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         if let Some(Cell::String(source_text)) = self.heap.get(source).cloned()
             && let Some((pattern_units, flag_units)) =
-                eval_regexp_literal_units(source_text.units())
+                eval_regexp_literal_units(&source_text.units().wide())
         {
             if let (Ok(pattern), Ok(flags)) = (
                 String::from_utf16(&pattern_units),
@@ -129,7 +122,7 @@ impl<H: Host> Vm<H> {
                 .alloc(Cell::String(JsString::from_units(flag_units)));
             return self.construct_regexp_native(p, &[pattern, flags], None);
         }
-        if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(value.units()))
+        if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(&value.units().wide()))
         {
             return Ok(Value::UNDEFINED);
         }
@@ -171,23 +164,25 @@ impl<H: Host> Vm<H> {
         {
             return self.eval_global_script(p, &text, inherited_strict);
         }
-        if self.direct_eval && text.contains('#') {
-            let private_names = self
-                .direct_eval_private_names(p)
-                .map_or_else(Vec::new, |(_, names)| names);
+        // Private names the eval can reference are those of its enclosing classes; without
+        // any, a `#` is in a string, comment or an undeclared name the ordinary paths reject.
+        let private_names = if self.direct_eval && text.contains('#') {
+            self.direct_eval_private_names(p)
+                .map_or_else(Vec::new, |(_, names)| names)
+        } else {
+            Vec::new()
+        };
+        if !private_names.is_empty() {
             let context_source = eval_context_source(&text, &private_names, false);
             if let Some(expression) = crate::Engine::eval_method_expression(&context_source) {
                 return self.eval_compiled_expression(p, expression, inherited_strict);
             }
-            let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
-                .map(|atom| self.atom_name(atom as u32).to_owned())
-                .collect::<Vec<_>>();
             let body = private_eval_method_body(&text, &private_names, false);
             crate::Engine::specialize_dynamic_function_with_private_names(
                 "",
                 &body,
                 "<private-eval-validation>",
-                &atom_prefix,
+                &*self,
                 &private_names,
             )
             .map_err(|diagnostics| self.mark_eval_syntax_error(p, diagnostics))?;
@@ -227,9 +222,6 @@ impl<H: Host> Vm<H> {
             return self.eval_compiled_expression_named(p, expression, strict, source_name);
         }
         let context = self.direct_eval_context(p).unwrap_or_default();
-        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
-            .map(|atom| self.atom_name(atom as u32).to_owned())
-            .collect::<Vec<_>>();
         let private_names = if context.home_atom.is_some() {
             self.direct_eval_private_names(p)
                 .map_or_else(Vec::new, |(_, names)| names)
@@ -240,24 +232,24 @@ impl<H: Host> Vm<H> {
             .frames
             .last()
             .is_none_or(|frame| frame.function == super::ROOT_FUNCTION_ID);
-        let annex_b_forbidden_names = atom_prefix
-            .iter()
-            .enumerate()
-            .filter(|(atom, _)| {
-                let atom = *atom as Atom;
-                self.direct_eval
-                    && ((caller_has_global_variables
-                        && self.realm.global_lexical_declarations.contains(&atom))
+        let annex_b_forbidden_names = if self.direct_eval {
+            (0..crate::compile::AtomPrefix::len(self) as Atom)
+                .filter(|atom| {
+                    (caller_has_global_variables
+                        && self.realm.global_lexical_declarations.contains(atom))
                         || self
-                            .direct_eval_binding(atom)
-                            .is_some_and(|binding| binding.conflicts_with_var()))
-            })
-            .map(|(_, name)| name.clone())
-            .collect::<Vec<_>>();
+                            .direct_eval_binding(*atom)
+                            .is_some_and(|binding| binding.conflicts_with_var())
+                })
+                .map(|atom| self.atom_name(atom).to_owned())
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let residual = crate::Engine::specialize_eval_with_context(
             source,
             source_name,
-            &atom_prefix,
+            &*self,
             strict,
             context,
             &private_names,
@@ -298,23 +290,10 @@ impl<H: Host> Vm<H> {
         origin: Option<(u32, u32)>,
     ) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
-        let atom_count = self.atom_text.len() + self.dynamic_atoms.len();
-        let mut atom_prefix = Vec::with_capacity(atom_count);
-        let mut unindexable_prefix_atoms = Vec::new();
-        for atom in 0..atom_count {
-            atom_prefix.push(self.atom_name(atom as u32).to_owned());
-            if let Some(dynamic_index) = atom.checked_sub(self.atom_text.len())
-                && !self.dynamic_atoms[dynamic_index].has_lossless_host_string()
-            {
-                // Keep this ID reserved while preventing replacement characters from aliasing it.
-                unindexable_prefix_atoms.push(atom);
-            }
-        }
         let mut residual = crate::Engine::specialize_script_with_atom_prefix(
             source,
             name,
-            &atom_prefix,
-            &unindexable_prefix_atoms,
+            &*self,
         )
         .map_err(|diagnostics| {
             if diagnostics
@@ -561,7 +540,7 @@ impl<H: Host> Vm<H> {
         };
         let slots = self
             .heap
-            .clone_environment_slots(environment, &[])
+            .clone_environment_slots(environment, &[], &[])
             .ok_or_else(|| JsError("invalid eval scope slots".into()))?;
         let owner = self
             .heap
@@ -907,9 +886,6 @@ impl<H: Host> Vm<H> {
         strict: bool,
         source_name: &str,
     ) -> Result<Value, JsError> {
-        let atom_prefix = (0..self.atom_text.len() + self.dynamic_atoms.len())
-            .map(|atom| self.atom_name(atom as u32).to_owned())
-            .collect::<Vec<_>>();
         let body = if strict {
             format!("'use strict'; return ({expression});")
         } else {
@@ -920,7 +896,7 @@ impl<H: Host> Vm<H> {
             "",
             &body,
             source_name,
-            &atom_prefix,
+            &*self,
         ) {
             Ok(residual) => residual,
             Err(diagnostics)
@@ -940,7 +916,7 @@ impl<H: Host> Vm<H> {
                     "",
                     &body,
                     source_name,
-                    &atom_prefix,
+                    &*self,
                     &private_names,
                 )
                 .map_err(|diagnostics| self.mark_eval_syntax_error(p, diagnostics))?
@@ -950,6 +926,9 @@ impl<H: Host> Vm<H> {
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
+        if self.direct_eval {
+            self.programs.mark_caller_scope(program_id);
+        }
         let residual = self
             .programs
             .get(program_id)
@@ -1466,6 +1445,12 @@ fn find_unquoted_operator(expression: &str) -> Option<(&str, &str, &str)> {
             '\'' | '"' | '`' => quote = Some(character),
             '(' | '[' | '{' => nesting = nesting.saturating_add(1),
             ')' | ']' | '}' => nesting = nesting.saturating_sub(1),
+            // Conditional, coalescing, comma and arrow forms bind more loosely
+            // than every binary operator split here; such an expression is not
+            // a binary expression at its top level.
+            '?' | ',' | '=' if nesting == 0 && binds_below_binary_operators(expression, index) => {
+                return None;
+            }
             _ if nesting == 0 => {
                 let Some((operator, precedence)) = eval_operator_at(expression, index, character)
                 else {
@@ -1499,6 +1484,24 @@ fn find_unquoted_operator(expression: &str) -> Option<(&str, &str, &str)> {
         operator,
         &expression[index + operator.len()..],
     ))
+}
+
+/// Whether the top-level token at `index` is `?` (conditional or `??`, not an
+/// optional chain `?.`), `,`, or an arrow `=>`.
+fn binds_below_binary_operators(expression: &str, index: usize) -> bool {
+    let suffix = &expression[index..];
+    match suffix.as_bytes()[0] {
+        b'?' => {
+            !suffix.starts_with("?.")
+                || suffix
+                    .as_bytes()
+                    .get(2)
+                    .is_some_and(|next| next.is_ascii_digit())
+        }
+        b',' => true,
+        b'=' => suffix.starts_with("=>"),
+        _ => false,
+    }
 }
 
 fn eval_operator_at(
