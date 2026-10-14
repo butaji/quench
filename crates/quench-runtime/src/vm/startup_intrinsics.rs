@@ -2,16 +2,34 @@
 //! with these originals in place, the way Node's builtins use primordials captured before
 //! user code runs, so a script's mutation of an intrinsic never reaches builtin loading and a
 //! builtin can be built on first use instead of at startup.
+//!
+//! Properties are read from their shape slots, so recording and comparing allocate nothing; a
+//! key becomes a JavaScript value only when a property actually has to be redefined.
 
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
 
-/// One own property of an intrinsic holder and its descriptor when the snapshot was sealed.
+/// A shape-held property's state: the slot value (unused by an accessor) and its attributes.
+#[derive(Clone, Copy, PartialEq)]
+struct SlotProperty {
+    value: Value,
+    attributes: PropertyAttributes,
+}
+
+impl SlotProperty {
+    fn values(&self) -> impl Iterator<Item = Value> {
+        [Some(self.value), self.attributes.getter, self.attributes.setter]
+            .into_iter()
+            .flatten()
+    }
+}
+
+/// One own property of an intrinsic holder and its state when the snapshot was sealed.
 #[derive(Clone, Copy)]
 struct IntrinsicProperty {
     holder: Value,
-    key: Value,
-    original: PropertyDescriptorRecord,
+    key: PropertyKey,
+    original: SlotProperty,
 }
 
 #[derive(Default)]
@@ -19,57 +37,46 @@ pub(super) struct StartupIntrinsics {
     properties: Vec<IntrinsicProperty>,
     /// Open `enter_startup_intrinsics` calls; only the outermost one swaps.
     depth: usize,
-    /// Properties holding their original during the outermost call, with the descriptor the
-    /// script had given them (`None` when it had deleted the property).
-    swapped: Vec<(usize, Option<PropertyDescriptorRecord>)>,
+    /// Properties holding their original during the outermost call, with the state the script
+    /// had given them (`None` when it had deleted the property).
+    swapped: Vec<(usize, Option<SlotProperty>)>,
 }
 
 impl StartupIntrinsics {
-    /// Values the snapshot keeps alive: holders, keys and both descriptors of a swap.
+    /// Values the snapshot keeps alive: holders, symbol keys and both states of a swap.
     pub(super) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
-        let record_values = |record: &PropertyDescriptorRecord| {
-            [record.value, record.getter, record.setter]
-                .into_iter()
-                .flatten()
-        };
         self.properties
             .iter()
-            .flat_map(move |property| {
-                [property.holder, property.key]
+            .flat_map(|property| {
+                [Some(property.holder), property.key.symbol_value()]
                     .into_iter()
-                    .chain(record_values(&property.original))
+                    .flatten()
+                    .chain(property.original.values())
             })
             .chain(
                 self.swapped
                     .iter()
                     .filter_map(|(_, previous)| previous.as_ref())
-                    .flat_map(record_values),
+                    .flat_map(SlotProperty::values),
             )
     }
 }
 
-fn same_descriptor(left: &PropertyDescriptorRecord, right: &PropertyDescriptorRecord) -> bool {
-    left.value == right.value
-        && left.writable == right.writable
-        && left.enumerable == right.enumerable
-        && left.configurable == right.configurable
-        && left.getter == right.getter
-        && left.setter == right.setter
-}
-
 impl<H: Host> Vm<H> {
-    /// Records the intrinsics: every own property of the global object, of each object a
+    /// Records the intrinsics: every own shape property of the global object, of each object a
     /// global property holds, and of that object's `prototype`.
-    pub(crate) fn seal_startup_intrinsics(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
+    pub(crate) fn seal_startup_intrinsics(&mut self) {
         let globals = self.realm.globals;
+        let prototype_atom = self.intern_atom("prototype");
         let mut holders = vec![globals];
         let mut seen = FxHashSet::from_iter([globals]);
-        let prototype_atom = self.intern_atom("prototype");
-        for key in self.object_own_key_values(p, globals)? {
-            let Some(record) = self.own_property_record(p, globals, key)? else {
-                continue;
-            };
-            let Some(value) = record.value.filter(|value| self.is_object_like(*value)) else {
+        for key in self.own_shape_keys(globals) {
+            let Some(value) = self
+                .slot_property(globals, key)
+                .filter(|property| !property.attributes.accessor)
+                .map(|property| property.value)
+                .filter(|value| self.is_object_like(*value))
+            else {
                 continue;
             };
             let prototype = self
@@ -83,27 +90,22 @@ impl<H: Host> Vm<H> {
         }
         let mut properties = Vec::new();
         for holder in holders {
-            let keys = self.object_own_key_values(p, holder)?;
-            self.with_call_roots(keys.iter().copied(), |vm| {
-                for &key in &keys {
-                    if let Some(original) = vm.own_property_record(p, holder, key)? {
-                        properties.push(IntrinsicProperty {
-                            holder,
-                            key,
-                            original,
-                        });
-                    }
+            for key in self.own_shape_keys(holder) {
+                if let Some(original) = self.slot_property(holder, key) {
+                    properties.push(IntrinsicProperty {
+                        holder,
+                        key,
+                        original,
+                    });
                 }
-                Ok::<_, JsError>(())
-            })?;
+            }
         }
         properties.shrink_to_fit();
         self.startup_intrinsics.properties = properties;
-        Ok(())
     }
 
-    /// Puts every recorded intrinsic back to its sealed descriptor until the matching
-    /// `leave_startup_intrinsics`. A property the script made non-configurable keeps its value.
+    /// Puts every recorded intrinsic back to its sealed state until the matching
+    /// `leave_startup_intrinsics`. A property the script made non-configurable keeps its state.
     pub(crate) fn enter_startup_intrinsics(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         self.startup_intrinsics.depth += 1;
         if self.startup_intrinsics.depth > 1 {
@@ -111,21 +113,21 @@ impl<H: Host> Vm<H> {
         }
         for index in 0..self.startup_intrinsics.properties.len() {
             let property = self.startup_intrinsics.properties[index];
-            let current = self.own_property_record(p, property.holder, property.key)?;
-            if current.is_some_and(|current| same_descriptor(&current, &property.original)) {
+            let current = self.slot_property(property.holder, property.key);
+            if current == Some(property.original) {
                 continue;
             }
             // Recorded first: once overwritten, the script's values are rooted only here.
             self.startup_intrinsics.swapped.push((index, current));
-            if !self.define_own_property_record(p, property.holder, property.key, property.original)? {
+            if !self.redefine_slot_property(p, property.holder, property.key, property.original)? {
                 self.startup_intrinsics.swapped.pop();
             }
         }
         Ok(())
     }
 
-    /// Returns the script's own descriptors after the outermost `enter_startup_intrinsics`. A
-    /// recorded property the host changed meanwhile keeps the change, as its new original.
+    /// Returns the script's own state after the outermost `enter_startup_intrinsics`. A recorded
+    /// property the host changed meanwhile keeps the change, as its new original.
     pub(crate) fn leave_startup_intrinsics(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
         self.startup_intrinsics.depth -= 1;
         if self.startup_intrinsics.depth > 0 {
@@ -140,22 +142,22 @@ impl<H: Host> Vm<H> {
             let property = self.startup_intrinsics.properties[index];
             let result = match previous {
                 Some(previous) => self
-                    .define_own_property_record(p, property.holder, property.key, previous)
+                    .redefine_slot_property(p, property.holder, property.key, previous)
                     .map(|_| ()),
-                None => self
-                    .object_delete_property(p, &[property.holder, property.key])
-                    .map(|_| ()),
+                None => {
+                    let key = self.property_key_value(property.key);
+                    self.object_delete_property(p, &[property.holder, key])
+                        .map(|_| ())
+                }
             };
             outcome = outcome.and(result);
         }
         self.startup_intrinsics.swapped.clear();
-        for index in 0..self.startup_intrinsics.properties.len() {
-            if restored[index] {
-                continue;
-            }
+        for (index, restored) in restored.into_iter().enumerate() {
             let property = self.startup_intrinsics.properties[index];
-            if let Some(current) = self.own_property_record(p, property.holder, property.key)?
-                && !same_descriptor(&current, &property.original)
+            if !restored
+                && let Some(current) = self.slot_property(property.holder, property.key)
+                && current != property.original
             {
                 self.startup_intrinsics.properties[index].original = current;
             }
@@ -163,17 +165,43 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
-    /// `holder`'s own descriptor for `key`, as `Object.getOwnPropertyDescriptor` reports it.
-    fn own_property_record(
+    fn own_shape_keys(&self, holder: Value) -> Vec<PropertyKey> {
+        self.object_data(holder)
+            .map(|object| self.shape_keys(object.shape()))
+            .unwrap_or_default()
+    }
+
+    /// `holder`'s own shape-held property `key`, read without allocating.
+    fn slot_property(&self, holder: Value, key: PropertyKey) -> Option<SlotProperty> {
+        let (shape, slot) = self.object_property_slot(holder, key)?;
+        let attributes = self.shape_attribute(shape, slot)?;
+        let value = self
+            .object_data(holder)
+            .and_then(|object| self.heap.property_get(object, slot))
+            .unwrap_or(Value::UNDEFINED);
+        Some(SlotProperty { value, attributes })
+    }
+
+    /// Defines `key` on `holder` with `property`'s state, as `Object.defineProperty` would.
+    fn redefine_slot_property(
         &mut self,
         p: &ResidualProgram,
         holder: Value,
-        key: Value,
-    ) -> Result<Option<PropertyDescriptorRecord>, JsError> {
-        let descriptor = self.object_get_own_property_descriptor(p, &[holder, key])?;
-        if descriptor.is_undefined() {
-            return Ok(None);
+        key: PropertyKey,
+        property: SlotProperty,
+    ) -> Result<bool, JsError> {
+        let key = self.property_key_value(key);
+        let record = PropertyDescriptorRecord::from_attributes(property.value, property.attributes);
+        self.with_call_roots([key], |vm| vm.define_own_property_record(p, holder, key, record))
+    }
+
+    /// `key` as a JavaScript property key value.
+    fn property_key_value(&mut self, key: PropertyKey) -> Value {
+        match key {
+            PropertyKey::String(atom) | PropertyKey::Private(atom) => {
+                self.heap.alloc(Cell::String(self.atom_value(atom)))
+            }
+            PropertyKey::Symbol(symbol) => symbol,
         }
-        Ok(Some(self.own_descriptor_record(descriptor)))
     }
 }

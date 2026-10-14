@@ -568,12 +568,8 @@ impl<'a, H: Host> NativeContext<'a, H> {
 
     /// Emit a memory census snapshot when this build enables `profile-memory`.
     /// Record the realm's intrinsics as they are now, before any script code runs.
-    pub fn seal_startup_intrinsics(&mut self) -> Result<(), RootedError> {
-        let result = self
-            .vm
-            .embedding_program()
-            .and_then(|program| self.vm.seal_startup_intrinsics(&program));
-        result.map_err(|error| self.error(error))
+    pub fn seal_startup_intrinsics(&mut self) {
+        self.vm.seal_startup_intrinsics();
     }
 
     /// Run `build` with every sealed intrinsic at its startup descriptor, then give the

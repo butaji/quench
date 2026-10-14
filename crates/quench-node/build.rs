@@ -6,7 +6,9 @@
 //! first, in execution order (`link/x86_64-linux.order`, derived by `quench-wasm-test`'s
 //! `symbol-order` from the start-up and `quench-bench/deegen-curriculum` profiles, never from
 //! a scored bench). A fault on a file-backed page maps its cached neighbours too, so executed
-//! code scattered among cold code keeps the cold pages resident.
+//! code scattered among cold code keeps the cold pages resident. Symbols the order names but a
+//! build lacks are ignored, so code changes erode the layout silently: retrain the order
+//! (`evidence/tod123-rss-linux-2026-10-14/README.md`) when start-up RSS rises.
 
 use std::{env, path::Path};
 

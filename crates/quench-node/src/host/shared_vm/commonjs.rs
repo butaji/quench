@@ -134,7 +134,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.profile_memory_checkpoint("node_primordials");
     // Builtins built after this point see the intrinsics as they are now, whatever a
     // preload or the entry script does to them (`cached_builtin`).
-    context.seal_startup_intrinsics()?;
+    context.seal_startup_intrinsics();
     preload_modules(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
