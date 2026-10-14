@@ -1064,6 +1064,10 @@ pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedErr
     cached_builtin(context, BuiltinModule::Util)
 }
 
+pub(crate) fn timers_promises_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::TimersPromises)
+}
+
 pub(crate) fn crypto_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Crypto)
 }
