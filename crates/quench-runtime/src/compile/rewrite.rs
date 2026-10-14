@@ -688,6 +688,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn constant_fusion_falls_back_when_tagged_operand_cannot_fit() {
+        let index = (0..=u32::from(u16::MAX))
+            .find(|&index| {
+                Operand::constant(index)
+                    .is_some_and(|operand| Instr::try_new(Op::Binary, 0, operand.0, 1, 0).is_none())
+            })
+            .unwrap();
+        let load = Instr::new(Op::LoadConst, 0, 0, 0, index);
+        let left = Instr::new(Op::Binary, 2, 0, 1, 0);
+        let right = Instr::new(Op::Binary, 2, 1, 0, 0);
+        let both = Instr::new(Op::Binary, 2, 0, 0, 0);
+        for (recipe, binary) in [
+            (Recipe::ConstantLeft, left),
+            (Recipe::ConstantRight, right),
+            (Recipe::ConstantLeft, both),
+        ] {
+            assert!(apply_recipe(recipe, load, binary, &mut vec![]).is_none());
+        }
+        let boundary = Instr::new(Op::LoadConst, 0, 0, 0, index - 1);
+        assert!(apply_recipe(Recipe::ConstantLeft, boundary, left, &mut vec![]).is_some());
+        assert!(apply_recipe(Recipe::ConstantRight, boundary, right, &mut vec![]).is_some());
+    }
+
+    #[test]
     fn rejects_rewrite_that_discards_heap_write() {
         let first = Instr::new(Op::SetField, 0, 1, 0, 0);
         let second = Instr::new(Op::Move, 2, 3, 0, 0);

@@ -1042,6 +1042,37 @@ impl<H: Host> Vm<H> {
         )
     }
 
+    pub(crate) fn define_lazy_data_properties_rooted(
+        &mut self,
+        holder: RootId,
+        names: &[&str],
+        enumerable: bool,
+        initializer: RootId,
+    ) -> Result<(), JsError> {
+        let holder = self.embedding_value(holder)?;
+        let initializer = self.embedding_value(initializer)?;
+        let program = self.embedding_program()?;
+        let keys = names
+            .iter()
+            .map(|name| {
+                // The key shares the atom table's text.
+                let atom = self.intern_atom(name);
+                let name = self.heap.alloc(Cell::String(self.atom_value(atom)));
+                self.heap.root(name)
+            })
+            .collect::<Vec<_>>();
+        let values = keys
+            .iter()
+            .map(|&key| self.heap.root_value(key).unwrap())
+            .collect::<Vec<_>>();
+        let defined =
+            self.define_lazy_data_properties(&program, holder, &values, enumerable, initializer);
+        for key in keys {
+            self.heap.release_root(key);
+        }
+        defined
+    }
+
     pub(crate) fn set_prototype_rooted(
         &mut self,
         object: RootId,

@@ -279,9 +279,8 @@ impl<H: Host> Vm<H> {
         {
             return Some(*binding);
         }
-        let bindings = &metadata.name_bindings;
-        if let Ok(index) = bindings.binary_search_by_key(&atom, |binding| binding.atom) {
-            return bindings.get(index).copied();
+        if let Some(binding) = metadata.name_bindings.get(atom) {
+            return Some(binding);
         }
         if metadata.environment_atoms.contains(&atom) {
             return None;
@@ -320,13 +319,7 @@ impl<H: Host> Vm<H> {
                 if scoped_binding.is_none() && metadata.environment_atoms.contains(&atom) {
                     return None;
                 }
-                let binding = scoped_binding.or_else(|| {
-                    metadata
-                        .name_bindings
-                        .binary_search_by_key(&atom, |binding| binding.atom)
-                        .ok()
-                        .map(|index| metadata.name_bindings[index])
-                });
+                let binding = scoped_binding.or_else(|| metadata.name_bindings.get(atom));
                 if let Some(mut binding) = binding {
                     binding.location = match binding.location {
                         crate::bytecode::EvalBindingLocation::Local(slot) => {
@@ -1499,6 +1492,7 @@ impl<H: Host> Vm<H> {
         let frame = &self.frames[frame];
         let cache = &frame.capture_cache;
         (cache.env == frame.env
+            && cache.captured == frame.captured
             && cache.epoch == self.heap.collection_epoch()
             && !cache.slots.is_null())
         .then_some((cache.slots, cache.root))
@@ -1516,8 +1510,9 @@ impl<H: Host> Vm<H> {
     }
 
     /// `direct_capture` through the frame's cached innermost slots. The cache names the
-    /// environment and collection it was taken in: while `env` is unchanged and no collection
-    /// has run, that environment's cell is the same live cell, whose slot storage never moves.
+    /// environment, whether it is the frame's own, and the collection it was taken in: while
+    /// all three are unchanged the walk ends at the same live cell, whose slot storage never
+    /// moves.
     #[inline(always)]
     pub(super) fn cached_direct_capture(
         &mut self,
@@ -1536,6 +1531,7 @@ impl<H: Host> Vm<H> {
             let slots: *const crate::heap::EnvironmentSlots = slots;
             self.frames[frame].capture_cache = CaptureCache {
                 env: self.frames[frame].env,
+                captured: self.frames[frame].captured,
                 epoch,
                 slots,
                 root,
