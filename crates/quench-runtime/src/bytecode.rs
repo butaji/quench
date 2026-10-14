@@ -1956,6 +1956,15 @@ impl ResidualProgram {
                 && self.functions.first().is_some_and(|root| root.strict))
     }
 
+    /// The root function's slots project no global var or global lexical binding, so each
+    /// slot of its environment is the binding itself.
+    pub(crate) fn root_slots_are_bindings(&self) -> bool {
+        self.functions.first().is_some_and(|root| {
+            (self.root_variables_are_local() || root.global_var_atoms.is_empty())
+                && (self.kind != ProgramKind::Script || root.global_lexical_atoms.is_empty())
+        })
+    }
+
     pub fn function_count(&self) -> usize {
         self.functions.len()
     }
