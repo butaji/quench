@@ -12,6 +12,8 @@ pub type Register = u16;
 mod atoms;
 mod control_flow;
 mod instruction;
+mod name_bindings;
+pub(crate) use name_bindings::{CapturedNames, NameBindings};
 mod numeric_ops;
 pub(crate) use atoms::{AtomSequence, AtomTable};
 
@@ -1019,9 +1021,8 @@ pub struct Function {
     pub global_function_atoms: Vec<Atom>,
     pub global_annex_b_var_atoms: Vec<Atom>,
     pub global_immutable_atoms: Vec<Atom>,
-    /// Bindings a dynamic name lookup in this function can see. Functions with the same
-    /// visible bindings share one list (`Compiler::intern_name_bindings`).
-    pub(crate) name_bindings: std::rc::Rc<[EvalBinding]>,
+    /// Bindings a dynamic name lookup in this function can see.
+    pub(crate) name_bindings: NameBindings,
     /// Lexical projections at eval calls and dynamic name operations.
     pub binding_sites: Vec<BindingSite>,
     pub(crate) source_positions: Vec<SourcePosition>,
