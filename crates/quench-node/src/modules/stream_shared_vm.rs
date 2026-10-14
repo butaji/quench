@@ -21,6 +21,10 @@ pub(crate) fn module(
     for (name, operation) in [
         ("closeOption", "streamCloseOption"),
         ("emitClose", "streamEmitClose"),
+        ("shouldResumeData", "streamShouldResumeData"),
+        ("isPaused", "streamIsPaused"),
+        ("setFlowing", "streamSetFlowing"),
+        ("pipeStart", "streamPipeStart"),
     ] {
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         set(context, dependencies, name, function)?;
@@ -399,5 +403,36 @@ pub(crate) fn read_zero(
     let process = get(context, global, "process")?;
     let next_tick = get(context, process, "nextTick")?;
     context.call_rooted(next_tick, process, &[complete, stream])?;
+    Ok(context.undefined())
+}
+
+
+pub(crate) fn should_resume_data(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let flow = get(context, args[0], "flowing")?;
+    let no = context.boolean(false);
+    let enabled = !context.strict_equal_rooted(flow, no)?;
+    Ok(context.boolean(enabled))
+}
+pub(crate) fn is_paused(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let explicit = get(context, args[0], "paused")?;
+    let yes = context.boolean(true);
+    let paused = if context.strict_equal_rooted(explicit, yes)? { true } else {
+        let flow = get(context, args[0], "flowing")?;
+        let no = context.boolean(false);
+        context.strict_equal_rooted(flow, no)?
+    };
+    Ok(context.boolean(paused))
+}
+pub(crate) fn set_flowing(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    if context.truthy_rooted(args[0])? {
+        let value = if context.rooted_value(args[1]).is_some_and(|value| value.is_null() || value.is_undefined()) {
+            context.null()
+        } else {
+            let enabled = context.truthy_rooted(args[1])?;
+            context.boolean(enabled)
+        };
+        let key = context.string_rooted("flowing");
+        context.set_property_rooted(args[0], key, value, args[0])?;
+    }
     Ok(context.undefined())
 }

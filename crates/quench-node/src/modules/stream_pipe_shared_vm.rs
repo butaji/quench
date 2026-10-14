@@ -136,3 +136,21 @@ pub(crate) fn close(
     }
     Ok(context.undefined())
 }
+
+
+/// Pipe actively requests flow even when data listeners respect explicit pause.
+pub(crate) fn start(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let source = args[0];
+    let drain = get(context, args[1], "writableNeedDrain")?;
+    let yes = context.boolean(true);
+    let operation = if context.strict_equal_rooted(drain, yes)? { Some("pause") } else {
+        let state = get(context, source, "_readableState")?;
+        let flow = get(context, state, "flowing")?;
+        if context.truthy_rooted(flow)? { None } else { Some("resume") }
+    };
+    if let Some(operation) = operation {
+        let method = get(context, source, operation)?;
+        context.call_rooted(method, source, &[])?;
+    }
+    Ok(context.undefined())
+}
