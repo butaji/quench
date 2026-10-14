@@ -70,16 +70,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
-        let (program_id, id, env) = self.same_realm_user_target(callee)?;
-        if id == super::ROOT_FUNCTION_ID
-            || program_id != self.active_program
-            || !p
-                .functions
-                .get(id as usize)
-                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
-        {
-            return None;
-        }
+        let (id, env) = self.in_loop_call_target(p, callee)?;
         self.profile.call_source(0);
         let window = i.call_window();
         let this = self.read(f, i.register_c());
@@ -103,6 +94,53 @@ impl<H: Host> Vm<H> {
             call_guard,
             construct_this: None,
         }))
+    }
+
+    /// The function and environment of `callee` when it is a user function of the active
+    /// program in the current realm that the loop may push in place: a non-root ordinary
+    /// body (`CallPlan::in_loop`). Resolved targets are cached (`InLoopCallTarget`).
+    #[inline(always)]
+    fn in_loop_call_target(&mut self, p: &ResidualProgram, callee: Value) -> Option<(u32, Value)> {
+        let index = callee.heap_index()? as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
+        let epoch = self.heap.collection_epoch();
+        let cached = self.call_targets[index];
+        if cached.callee == callee
+            && cached.epoch == epoch
+            && cached.realm == self.realm.globals
+            && cached.program == self.active_program
+        {
+            return Some((cached.function, cached.env));
+        }
+        self.resolve_in_loop_call_target(p, callee, index, epoch)
+    }
+
+    #[inline(never)]
+    fn resolve_in_loop_call_target(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        index: usize,
+        epoch: u64,
+    ) -> Option<(u32, Value)> {
+        let (program, function, env) = self.same_realm_user_target(callee)?;
+        if function == super::ROOT_FUNCTION_ID
+            || program != self.active_program
+            || !p
+                .functions
+                .get(function as usize)
+                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
+        {
+            return None;
+        }
+        self.call_targets[index] = super::InLoopCallTarget {
+            callee,
+            epoch,
+            realm: self.realm.globals,
+            program,
+            function,
+            env,
+        };
+        Some((function, env))
     }
 
     /// `f.call(this, ...args)` and `f.apply(this, list)` of the intrinsic natives invoke `f`
