@@ -512,6 +512,29 @@ struct ProgramCacheLayout {
     method_base: usize,
     object_base: usize,
 }
+/// Entries of the in-loop call target cache, indexed by the callee's heap index.
+const CALL_TARGET_CACHE_SIZE: usize = 64;
+const _: () = assert!(CALL_TARGET_CACHE_SIZE.is_power_of_two());
+/// A user function the dispatch loop may push in place (`Vm::in_loop_call_target`), valid
+/// for `callee` in `realm` until the collection after `epoch`: until then the callee's index
+/// names the same function cell, whose kind, environment and realm never change.
+#[derive(Clone, Copy)]
+struct InLoopCallTarget {
+    callee: Value,
+    epoch: u64,
+    realm: Value,
+    program: ProgramId,
+    function: u32,
+    env: Value,
+}
+const EMPTY_CALL_TARGET: InLoopCallTarget = InLoopCallTarget {
+    callee: Value::UNDEFINED,
+    epoch: 0,
+    realm: Value::UNDEFINED,
+    program: ProgramId::MAIN,
+    function: 0,
+    env: Value::UNDEFINED,
+};
 const STRING_CONCAT_CACHE_SIZE: usize = 64;
 #[derive(Clone, Copy)]
 struct StringConcatCache {
@@ -867,6 +890,7 @@ pub(crate) struct Vm<H> {
     symbol_registry: FxHashMap<String, Value>,
     well_known_symbols: FxHashMap<String, Value>,
     string_concats: Option<Box<[StringConcatCache]>>,
+    call_targets: Box<[InLoopCallTarget; CALL_TARGET_CACHE_SIZE]>,
     field_caches: Vec<FieldCache>,
     /// Field load sites whose data property was found beyond the immediate prototype, by
     /// global site index; cleared with the field caches.
@@ -1461,6 +1485,7 @@ impl<H: Host> Vm<H> {
         self.symbol_registry.clear();
         self.well_known_symbols.clear();
         self.string_concats = None;
+        *self.call_targets = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
         let atom_text = self.atom_text.clone();
         for (id, name) in atom_text.iter().enumerate() {
             self.index_atom(Self::atom_hash_str(name), id as Atom, name);
