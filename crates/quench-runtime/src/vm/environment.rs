@@ -1489,6 +1489,32 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// The frame's cached innermost slots and root program while the cache is current
+    /// (`cached_direct_capture`).
+    #[inline(always)]
+    fn current_capture_slots(
+        &self,
+        frame: usize,
+    ) -> Option<(*const crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
+        let frame = &self.frames[frame];
+        let cache = &frame.capture_cache;
+        (cache.env == frame.env
+            && cache.epoch == self.heap.collection_epoch()
+            && !cache.slots.is_null())
+        .then_some((cache.slots, cache.root))
+    }
+
+    /// `cached_direct_capture` at depth zero of a function's environment while the frame's
+    /// cache is current: the read a loop repeats. `None` leaves the rest to that method.
+    #[inline(always)]
+    pub(super) fn current_function_capture(&self, frame: usize, slot: u16) -> Option<Value> {
+        let (slots, None) = self.current_capture_slots(frame)? else {
+            return None;
+        };
+        // SAFETY: as for `cached_direct_capture`.
+        self.owned_capture(unsafe { &*slots }, None, slot)
+    }
+
     /// `direct_capture` through the frame's cached innermost slots. The cache names the
     /// environment and collection it was taken in: while `env` is unchanged and no collection
     /// has run, that environment's cell is the same live cell, whose slot storage never moves.
@@ -1502,14 +1528,10 @@ impl<H: Host> Vm<H> {
         if depth != 0 {
             return self.direct_capture(frame, depth, slot);
         }
-        let epoch = self.heap.collection_epoch();
-        let cache = &self.frames[frame].capture_cache;
-        let (slots, root) = if cache.env == self.frames[frame].env
-            && cache.epoch == epoch
-            && !cache.slots.is_null()
-        {
-            (cache.slots, cache.root)
+        let (slots, root) = if let Some(current) = self.current_capture_slots(frame) {
+            current
         } else {
+            let epoch = self.heap.collection_epoch();
             let (slots, root) = self.direct_capture_slots(frame, 0)?;
             let slots: *const crate::heap::EnvironmentSlots = slots;
             self.frames[frame].capture_cache = CaptureCache {
