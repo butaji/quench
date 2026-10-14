@@ -184,6 +184,9 @@ pub(super) struct Frame {
     dynamic_bindings: Vec<(Atom, Value)>,
     captured: bool,
     registers: Vec<Value>,
+    /// How many leading register slots hold values, whatever the current length: below it a
+    /// root-mapped activation can take the file without rewriting it.
+    initialized_registers: usize,
     active_iterators: Vec<ActiveIterator>,
     // Empty while active; owns the transferred scope stack while detached.
     with_objects: Vec<Value>,
@@ -197,6 +200,7 @@ impl Frame {
     fn prepare_registers(&mut self, register_count: usize) {
         self.registers.resize(register_count, Value::UNDEFINED);
         self.registers.fill(Value::UNDEFINED);
+        self.initialized_registers = self.initialized_registers.max(register_count);
     }
 
     /// Sizes the register file for `function`. Compiled code writes every register before
@@ -213,7 +217,14 @@ impl Frame {
         {
             self.prepare_registers(register_count);
         } else {
-            self.registers.resize(register_count, Value::UNDEFINED);
+            if register_count <= self.initialized_registers {
+                // SAFETY: the first `initialized_registers` slots of this buffer hold values
+                // (`Value` has no destructor, and shortening the file kept them in place).
+                unsafe { self.registers.set_len(register_count) };
+            } else {
+                self.registers.resize(register_count, Value::UNDEFINED);
+                self.initialized_registers = register_count;
+            }
             if let Some(register) = function.undefined_register {
                 // Validation bounds the register by the function's register count.
                 self.registers[usize::from(register)] = Value::UNDEFINED;

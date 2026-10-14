@@ -174,18 +174,20 @@ impl<H: Host> Vm<H> {
         self.activate_user_frame(p, id, parent, this, args, context)?;
         // An in-loop activation grows the frame stack, not the native stack, so it counts
         // against the live guest-call budget rather than a native transition.
-        match crate::stack::GuestCallGuard::enter() {
-            Ok(guard) => Ok(guard),
-            Err(()) => {
-                let outcome = Err(self.stack_exhaustion_error());
-                let mut frame = self.frames.pop().unwrap();
-                self.deactivate_frame(&mut frame, &outcome);
-                self.persist_global_lexical_bindings(p, &frame);
-                match outcome {
-                    Err(error) => Err(error),
-                    Ok(_) => unreachable!(),
-                }
-            }
+        crate::stack::GuestCallGuard::enter().or_else(|()| Err(self.unwind_exhausted_push(p)))
+    }
+
+    /// Pops an in-loop activation the guest-call budget refused and yields the error.
+    #[cold]
+    #[inline(never)]
+    fn unwind_exhausted_push(&mut self, p: &ResidualProgram) -> JsError {
+        let outcome = Err(self.stack_exhaustion_error());
+        let mut frame = self.frames.pop().unwrap();
+        self.deactivate_frame(&mut frame, &outcome);
+        self.persist_global_lexical_bindings(p, &frame);
+        match outcome {
+            Err(error) => error,
+            Ok(_) => unreachable!(),
         }
     }
 
@@ -279,7 +281,12 @@ impl<H: Host> Vm<H> {
             .function(self.active_program.raw(), id as usize);
         let this = self.call_this_value(this, function.strict)?;
         let mut frame = self.pooled_frame();
-        frame.reset_locals_undefined(usize::from(function.locals));
+        let local_count = if function.call_plan(&p.atoms).addresses_locals {
+            usize::from(function.locals)
+        } else {
+            0
+        };
+        frame.reset_locals_undefined(local_count);
         self.initialize_frame_invocation(&p.atoms, &mut frame, function, context, args);
         frame.function = id;
         frame.program = self.active_program;
@@ -319,6 +326,7 @@ impl<H: Host> Vm<H> {
                 dynamic_bindings: vec![],
                 captured: false,
                 registers: vec![],
+                initialized_registers: 0,
                 active_iterators: vec![],
                 with_objects: Vec::new(),
                 with_base: self.with_stack.len(),
@@ -919,6 +927,7 @@ impl<H: Host> Vm<H> {
                 buffer.shrink_to(RETAINED_FRAME_VALUES);
             }
         }
+        frame.initialized_registers = frame.initialized_registers.min(frame.registers.len());
         frame.dynamic_bindings.shrink_to(RETAINED_FRAME_VALUES);
     }
 

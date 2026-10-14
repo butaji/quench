@@ -1289,6 +1289,7 @@ impl Object {
 
     /// The property storage descriptor, assembled from the header and, without inline
     /// storage, the payload.
+    #[inline(always)]
     pub(crate) fn properties(&self) -> ValueVec {
         let integrity = self.meta & VALUE_VEC_INTEGRITY_BITS;
         let position = if self.meta & OBJECT_INLINE_STORAGE != 0 {
@@ -1314,6 +1315,7 @@ impl Object {
         }
     }
 
+    #[inline(always)]
     fn storage_position(&self) -> u32 {
         if !self.is_array() {
             // SAFETY: both views are plain words; without inline storage the second word

@@ -906,6 +906,11 @@ pub(crate) struct CallPlan {
     pub(crate) legacy_reflection: bool,
     /// `reflects_live_parameters`.
     pub(crate) live_parameters: bool,
+    /// Some instruction can reach the frame's local slots: one names a slot
+    /// (`addressed_local_slots`), creates a closure or clones an environment. A plain
+    /// activation without that needs no local storage, since promoted bindings live in
+    /// registers and nothing else reads its locals.
+    pub(crate) addresses_locals: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1186,6 +1191,10 @@ impl Function {
                     && !self.parameter_eval_arguments_error,
                 legacy_reflection: !self.has_restricted_legacy_caller_access(),
                 live_parameters: self.reflects_live_parameters(atoms),
+                addresses_locals: self.instructions().any(|instruction| {
+                    matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv)
+                        || instruction.addressed_local_slots().next().is_some()
+                }),
             }
         })
     }
