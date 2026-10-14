@@ -3,7 +3,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError};
 
 const MILLISECONDS_PER_SECOND: f64 = 1000.0;
-const SIGNED_INTEGER_MASK: f64 = -1.0;
+pub(super) const SIGNED_INTEGER_MASK: f64 = -1.0;
 const FIELDS: [(&str, &str); 5] = [
     ("noDelay", "kSetNoDelay"),
     ("keepAlive", "kSetKeepAlive"),
@@ -116,18 +116,15 @@ pub(crate) fn keep_alive(context: &mut NativeContext<'_, NodeHost>, _: RootId, a
     let interval = if context.rooted_value(interval).is_some_and(|value| value.is_undefined()) { interval } else { seconds(context, interval)? };
     let data = context.host_function_data()?;
     let handle = get(context, socket, "_handle")?;
-    let has_handle = context.truthy_rooted(handle)?;
-    if has_handle {
-        let handle = get(context, socket, "_handle")?;
-        let method = get(context, handle, "setKeepAlive")?;
-        if !context.truthy_rooted(method)? { return Ok(socket); }
-    }
-    if !has_handle {
+    if !context.truthy_rooted(handle)? {
         for (name, value) in [("keepAlive", enable), ("initialDelay", delay), ("interval", interval), ("count", count)] {
             set(context, data, socket, name, value)?;
         }
         return Ok(socket);
     }
+    let handle = get(context, socket, "_handle")?;
+    let method = get(context, handle, "setKeepAlive")?;
+    if !context.truthy_rooted(method)? { return Ok(socket); }
     let previous = field(context, data, socket, "keepAlive")?;
     let mut changed = !context.strict_equal_rooted(enable, previous)?;
     if !changed && enabled {
@@ -140,11 +137,9 @@ pub(crate) fn keep_alive(context: &mut NativeContext<'_, NodeHost>, _: RootId, a
         for (name, value) in [("keepAlive", enable), ("initialDelay", delay), ("interval", interval), ("count", count)] {
             set(context, data, socket, name, value)?;
         }
-        if has_handle {
-            let handle = get(context, socket, "_handle")?;
-            let method = get(context, handle, "setKeepAlive")?;
-            context.call_rooted(method, handle, &[enable, delay, interval, count])?;
-        }
+        let handle = get(context, socket, "_handle")?;
+        let method = get(context, handle, "setKeepAlive")?;
+        context.call_rooted(method, handle, &[enable, delay, interval, count])?;
     }
     Ok(socket)
 }
@@ -186,6 +181,22 @@ pub(crate) fn initialize_server(context: &mut NativeContext<'_, NodeHost>, _: Ro
         let value = context.boolean(value);
         let key = context.string_rooted(name);
         context.set_property_rooted(server, key, value, server)?;
+    }
+    let key = context.string_rooted("_connections");
+    let zero = context.number(0.0);
+    context.set_property_rooted(server, key, zero, server)?;
+    let block = get(context, options, "blockList")?;
+    if context.truthy_rooted(block)? {
+        let data = context.host_function_data()?;
+        let module = get(context, data, "module")?;
+        let constructor = get(context, module, "BlockList")?;
+        let predicate = get(context, constructor, "isBlockList")?;
+        let valid = context.call_rooted(predicate, constructor, &[block])?;
+        if !context.truthy_rooted(valid)? {
+            return Err(super::util_shared_vm::argument_type_error(context, block, "options.blockList", "net.BlockList")?);
+        }
+        let key = context.string_rooted("blockList");
+        context.set_property_rooted(server, key, block, server)?;
     }
     Ok(context.undefined())
 }
