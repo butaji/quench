@@ -22,6 +22,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,
         method "processExitCodeSet" (1) => crate::modules::process_shared_vm::exit_code_set,
         method "processExit" (1) => crate::modules::process_shared_vm::exit,
+        method "reallyExit" (1) => crate::modules::process_shared_vm::really_exit,
         method "processStreamWrite" (1) => crate::modules::process_shared_vm::stream_write,
         method "processOpenStdin" (0) => crate::modules::process_stdin_shared_vm::open,
         method "processStdin" (0) => crate::modules::process_stdin_shared_vm::get,
@@ -287,6 +288,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "httpServerClose" (0) => crate::modules::http_shared_vm::server_close,
         method "httpAgentCreate" (1) => crate::modules::http_shared_vm::agent_create,
         method "httpAgentDestroy" (1) => crate::modules::http_shared_vm::agent_destroy,
+        method "getName" (0) => crate::modules::http_shared_vm::agent_get_name,
+        method "_resolveFilename" (4) => commonjs::resolve_from_parent,
         method "httpRequestCreate" (2) => crate::modules::http_shared_vm::request_create,
         method "httpRequestNormalizeUrl" (1) => crate::modules::http_shared_vm::request_normalize_url,
         method "httpRequestWrite" (3) => crate::modules::http_shared_vm::request_write,
@@ -425,6 +428,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "cryptoSign" (6) => crate::modules::crypto_shared_vm::sign,
         method "cryptoVerify" (7) => crate::modules::crypto_shared_vm::verify,
         method "cryptoRandomBytes" (1) => crate::modules::crypto_shared_vm::random_bytes,
+        method "get crypto" (0) => crate::modules::crypto_shared_vm::global_crypto,
         method "cryptoPbkdf2" (5) => crate::modules::crypto_shared_vm::pbkdf2,
         method "cryptoScrypt" (7) => crate::modules::crypto_shared_vm::scrypt,
         method "cryptoCipherProcess" (10) => crate::modules::crypto_shared_vm::cipher_process,
@@ -625,7 +629,7 @@ impl quench_runtime::Host for NodeHost {
         }
         let name = path.to_string_lossy().into_owned();
         let source = if extension == "json" {
-            format!("export default {};", String::from_utf8_lossy(&bytes))
+            String::from_utf8_lossy(&bytes).into_owned()
         } else {
             let kind = Self::source_kind(&path)?;
             if kind == quench_runtime::SourceKind::Module {
@@ -637,10 +641,7 @@ impl quench_runtime::Host for NodeHost {
                     "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
                 );
                 source.push_str("export { __quenchModule as 'module.exports' };\n");
-                for (index, export) in commonjs_exports::names(&String::from_utf8_lossy(&bytes))
-                    .into_iter()
-                    .enumerate()
-                {
+                for (index, export) in commonjs_exports::names(&path, &String::from_utf8_lossy(&bytes)).into_iter().enumerate() {
                     let local = format!("__quenchExport{index}");
                     source.push_str("const ");
                     source.push_str(&local);
