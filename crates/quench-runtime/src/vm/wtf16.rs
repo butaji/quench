@@ -12,23 +12,12 @@ pub(crate) struct JsString {
     inner: Rc<JsStringInner>,
 }
 
-/// Flat code units. A string whose units are all ASCII is always stored one byte per unit
-/// (`Ascii` or `AsciiSlice`), so equal strings share a representation. A slice is a substring
-/// sharing its parent's storage (`SLICE_MIN_UNITS`).
+/// Flat code units. A string whose units are all ASCII is always stored `Ascii`, so equal
+/// strings share a representation.
 #[derive(Clone)]
 pub(crate) enum FlatUnits {
     Ascii(Rc<str>),
     Wide(Rc<[u16]>),
-    AsciiSlice(Rc<str>, Range<u32>),
-    WideSlice(Rc<[u16]>, Range<u32>),
-}
-
-/// A substring at least this long shares its parent's storage instead of copying it; below it,
-/// a copy costs no more than a slice's bookkeeping.
-const SLICE_MIN_UNITS: usize = 32;
-
-fn slice_range(range: &Range<u32>) -> Range<usize> {
-    range.start as usize..range.end as usize
 }
 
 impl FlatUnits {
@@ -36,8 +25,6 @@ impl FlatUnits {
         match self {
             Self::Ascii(text) => Units::Ascii(text.as_bytes()),
             Self::Wide(units) => Units::Wide(units),
-            Self::AsciiSlice(text, range) => Units::Ascii(&text.as_bytes()[slice_range(range)]),
-            Self::WideSlice(units, range) => Units::Wide(&units[slice_range(range)]),
         }
     }
 
@@ -45,35 +32,8 @@ impl FlatUnits {
         match (self, other) {
             (Self::Ascii(left), Self::Ascii(right)) => Rc::ptr_eq(left, right),
             (Self::Wide(left), Self::Wide(right)) => Rc::ptr_eq(left, right),
-            (Self::AsciiSlice(left, left_range), Self::AsciiSlice(right, right_range)) => {
-                Rc::ptr_eq(left, right) && left_range == right_range
-            }
-            (Self::WideSlice(left, left_range), Self::WideSlice(right, right_range)) => {
-                Rc::ptr_eq(left, right) && left_range == right_range
-            }
             _ => false,
         }
-    }
-
-    /// `range` of these units as a slice of the same storage, when it stays canonical.
-    fn slice(&self, range: Range<usize>) -> Option<Self> {
-        let (start, end) = (u32::try_from(range.start).ok()?, u32::try_from(range.end).ok()?);
-        Some(match self {
-            Self::Ascii(text) => Self::AsciiSlice(text.clone(), start..end),
-            Self::AsciiSlice(text, outer) => {
-                Self::AsciiSlice(text.clone(), outer.start + start..outer.start + end)
-            }
-            // A run of ASCII units must be stored one byte per unit.
-            Self::Wide(_) | Self::WideSlice(..)
-                if self.view().slice(range.clone()).iter().all(is_ascii_unit) =>
-            {
-                return None;
-            }
-            Self::Wide(units) => Self::WideSlice(units.clone(), start..end),
-            Self::WideSlice(units, outer) => {
-                Self::WideSlice(units.clone(), outer.start + start..outer.start + end)
-            }
-        })
     }
 }
 
@@ -303,8 +263,10 @@ struct JsStringInner {
 
 impl JsStringInner {
     fn flat(units: FlatUnits) -> Self {
-        let view = units.view();
-        let (length, ascii) = (view.len(), matches!(view, Units::Ascii(_)));
+        let (length, ascii) = match &units {
+            FlatUnits::Ascii(text) => (text.len(), true),
+            FlatUnits::Wide(units) => (units.len(), false),
+        };
         Self {
             length,
             ascii,
@@ -422,15 +384,15 @@ impl JsStringBuilder {
         let ascii = self
             .parts
             .iter()
-            .all(|part| matches!(part.units.view(), Units::Ascii(_)));
+            .all(|part| matches!(part.units, FlatUnits::Ascii(_)));
         if ascii {
             let mut output = String::new();
             output
                 .try_reserve_exact(length)
                 .map_err(|_| StringBuildError::Allocation)?;
             for part in &self.parts {
-                if let Units::Ascii(bytes) = part.units.view().slice(part.range.clone()) {
-                    output.push_str(std::str::from_utf8(bytes).expect("ASCII units are UTF-8"));
+                if let FlatUnits::Ascii(text) = &part.units {
+                    output.push_str(&text[part.range.clone()]);
                 }
             }
             return Ok(JsString::from_flat(FlatUnits::Ascii(Rc::from(output))));
@@ -513,31 +475,11 @@ impl JsString {
     fn host_text(&self) -> &Rc<str> {
         match self.flat() {
             FlatUnits::Ascii(text) => text,
-            FlatUnits::AsciiSlice(text, range) => self
+            FlatUnits::Wide(units) => self
                 .inner
                 .host
-                .get_or_init(|| Rc::from(&text[slice_range(range)])),
-            units => self
-                .inner
-                .host
-                .get_or_init(|| Rc::<str>::from(String::from_utf16_lossy(&units.view().wide()))),
+                .get_or_init(|| Rc::<str>::from(String::from_utf16_lossy(units))),
         }
-    }
-
-    /// The units in `range`, sharing this string's storage when the substring is long enough.
-    pub(crate) fn substring(&self, range: Range<usize>) -> Self {
-        if range.len() >= SLICE_MIN_UNITS
-            && range.len() < self.len()
-            && let Some(slice) = self.flat().slice(range.clone())
-        {
-            return Self::from_flat(slice);
-        }
-        Self::from_unit_run(self.units().slice(range))
-    }
-
-    /// Whether both are the same string value cell's text.
-    pub(crate) fn same_text(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.inner, &other.inner)
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -546,23 +488,23 @@ impl JsString {
 
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(crate) fn capacity(&self) -> usize {
-        let units = match self.units() {
-            Units::Ascii(bytes) => bytes.len(),
-            Units::Wide(units) => std::mem::size_of_val(units),
-        };
-        units + self.inner.host.get().map_or(0, |host| host.len())
+        match self.flat() {
+            FlatUnits::Ascii(text) => text.len(),
+            FlatUnits::Wide(units) => {
+                std::mem::size_of_val(&**units) + self.inner.host.get().map_or(0, |host| host.len())
+            }
+        }
     }
 
     #[cfg(feature = "profile-memory")]
     pub(crate) fn memory_parts(&self) -> ((usize, usize), Option<(usize, usize)>) {
         const RC_HEADER_BYTES: usize = 2 * std::mem::size_of::<usize>();
-        // A slice reports its parent's storage, which allocation identity counts once.
         let unit_storage = match self.flat() {
-            FlatUnits::Ascii(text) | FlatUnits::AsciiSlice(text, _) => (
+            FlatUnits::Ascii(text) => (
                 Rc::as_ptr(text) as *const u8 as usize,
                 RC_HEADER_BYTES + text.len(),
             ),
-            FlatUnits::Wide(units) | FlatUnits::WideSlice(units, _) => (
+            FlatUnits::Wide(units) => (
                 Rc::as_ptr(units) as *const u16 as usize,
                 RC_HEADER_BYTES + std::mem::size_of_val(&**units),
             ),
