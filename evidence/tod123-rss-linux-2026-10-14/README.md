@@ -129,3 +129,27 @@ binary maps 141 KB per touch when the page cache came from readahead, 4.6 KB
 when it holds single pages. Releasing clean `.rodata` and RELRO pages at the
 phase boundaries as well re-faulted them at that granularity and raised the
 empty start by 0.5 MB, so only code mappings are released.
+
+## Static C runtime qualification build
+
+The documented harness recipe (docs/README.md, "Wasm execution modes and link
+order") applied to `quench-node`: `build.rs` resolves the frame-registration
+hooks to null and links `link/x86_64-linux-static.order`, trained on the static
+binary with the corpus above. Production builds stay dynamic.
+
+```sh
+RUSTFLAGS="-D warnings -C llvm-args=-align-all-functions=6 \
+  -C target-feature=+crt-static -C relocation-model=static" \
+  CARGO_TARGET_DIR=target/static cargo build --profile production \
+  --target x86_64-unknown-linux-gnu -p quench-node --bin quench-node
+```
+
+Stock V8-v7 max RSS, two interleaved rounds against the dynamic build of the
+same source (MB): Crypto 10.4 -> 9.4, DeltaBlue 10.2 -> 9.2, EarleyBoyer 16.3
+-> 15.4, NavierStokes 10.4 -> 9.4, RayTrace 9.8 -> 8.9, RegExp 21.6 -> 20.3,
+Richards 9.4 -> 8.4, Splay 54.5 -> 53.9; empty start 7.7 -> 7.1. Only the libc
+code a run executes is resident, laid out with the rest. Callgrind
+(`guard-static-runtime-raw.txt`): start-up -3% to -5%, per-run -2.5% (RegExp)
+to -5.7% (Crypto). DNS (local and remote `dns.lookup`), credential lookups,
+`os.homedir`, crypto, zlib, child processes and a local HTTP round trip behave
+as in the dynamic build.
