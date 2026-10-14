@@ -138,7 +138,7 @@ mod native {
     use super::Failure;
     use foreign_types::ForeignType;
     use std::{
-        ffi::{CString, c_char, c_int, c_uint, c_void},
+        ffi::{c_char, c_int, c_uint, c_void, CString},
         ptr::NonNull,
         sync::{Once, OnceLock},
     };

@@ -240,9 +240,6 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        if self.well_known_symbols.contains_key("toStringTag") {
-            self.install_builtin_to_string_tag(prototype, "Date")?;
-        }
         if global == self.realm.globals {
             self.global(program, "Date", constructor)
         } else {

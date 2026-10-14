@@ -459,17 +459,61 @@ pub(crate) fn external_init(
     Ok(context.number(id as f64))
 }
 
-pub(crate) fn initialize_resource(context:&mut NativeContext<'_,NodeHost>,receiver:RootId,args:&[RootId])->Result<RootId,RootedError>{
-    use super::event_constructor_shared_vm::{get,named_set};
-    let undefined=context.undefined();let kind=args.first().copied().unwrap_or(undefined);let options=args.get(1).copied().unwrap_or(undefined);
-    let Some(kind_text)=context.string_text(kind)? else {return Err(super::util_shared_vm::argument_type_error(context,kind,"type","string")?);};
-    let api=context.host_function_data()?;let state=context.host_mut().shared_state();let identity=state.borrow().async_hooks.identity.clone();let parent=identity.current_async_id();
-    let trigger=if context.rooted_value(options).and_then(|v|v.as_number()).is_some(){options}
-    else if context.rooted_value(options).is_some_and(|v|v.is_undefined()){context.number(parent as f64)}
-    else {let trigger=get(context,options,"triggerAsyncId")?;let trigger=if context.rooted_value(trigger).is_some_and(|v|v.is_undefined()){context.number(parent as f64)}else{get(context,options,"triggerAsyncId")?};let _manual_destroy=get(context,options,"requireManualDestroy")?;trigger};
-    let number=context.rooted_value(trigger).and_then(|v|v.as_number());
-    if !number.is_some_and(|n|n.is_finite()&&n.fract()==0.0&&n>=-1.0&&n<=super::util_shared_vm::MAX_SAFE_INTEGER){
-        let received=super::util_shared_vm::range_error_received(context,trigger)?;let error=context.range_error_rooted(&format!("Invalid triggerAsyncId value: {received}"))?;let code=context.string_rooted("ERR_INVALID_ASYNC_ID");named_set(context,api,error,"code",code)?;return Err(context.throw(error));
+pub(crate) fn initialize_resource(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    use super::event_constructor_shared_vm::{get, named_set};
+    let undefined = context.undefined();
+    let kind = args.first().copied().unwrap_or(undefined);
+    let options = args.get(1).copied().unwrap_or(undefined);
+    let Some(kind_text) = context.string_text(kind)? else {
+        return Err(super::util_shared_vm::argument_type_error(
+            context, kind, "type", "string",
+        )?);
+    };
+    let api = context.host_function_data()?;
+    let state = context.host_mut().shared_state();
+    let identity = state.borrow().async_hooks.identity.clone();
+    let parent = identity.current_async_id();
+    let trigger = if context
+        .rooted_value(options)
+        .and_then(|v| v.as_number())
+        .is_some()
+    {
+        options
+    } else if context
+        .rooted_value(options)
+        .is_some_and(|v| v.is_undefined())
+    {
+        context.number(parent as f64)
+    } else {
+        let trigger = get(context, options, "triggerAsyncId")?;
+        let trigger = if context
+            .rooted_value(trigger)
+            .is_some_and(|v| v.is_undefined())
+        {
+            context.number(parent as f64)
+        } else {
+            get(context, options, "triggerAsyncId")?
+        };
+        let _manual_destroy = get(context, options, "requireManualDestroy")?;
+        trigger
+    };
+    let number = context.rooted_value(trigger).and_then(|v| v.as_number());
+    if !number.is_some_and(|n| {
+        n.is_finite()
+            && n.fract() == 0.0
+            && n >= -1.0
+            && n <= super::util_shared_vm::MAX_SAFE_INTEGER
+    }) {
+        let received = super::util_shared_vm::range_error_received(context, trigger)?;
+        let error =
+            context.range_error_rooted(&format!("Invalid triggerAsyncId value: {received}"))?;
+        let code = context.string_rooted("ERR_INVALID_ASYNC_ID");
+        named_set(context, api, error, "code", code)?;
+        return Err(context.throw(error));
     }
     let trigger = number.unwrap() as i64;
     let id = identity.allocate_async_id();

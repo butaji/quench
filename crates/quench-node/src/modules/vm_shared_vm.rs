@@ -11,7 +11,8 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-const MODULE: &str = quench_js_check::checked_js!(r#"((createRealm, evaluateScript) => {
+const MODULE: &str = quench_js_check::checked_js!(
+    r#"((createRealm, evaluateScript) => {
   const mainGlobal = globalThis;
   // Sandbox object -> its realm: the global, its intrinsic keys, the
   // descriptors last shared between the global and the sandbox, and the
@@ -168,13 +169,13 @@ const MODULE: &str = quench_js_check::checked_js!(r#"((createRealm, evaluateScri
     compileFunction, constants,
     measureMemory() { return Promise.reject(new Error('vm.measureMemory is unavailable')); },
   };
-})"#);
+})"#
+);
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(MODULE, "node:vm/shared.js")?;
     let create_realm = context.host_function(crate::host::shared_vm::operation("vmCreateRealm"))?;
-    let evaluate =
-        context.host_function(crate::host::shared_vm::operation("vmEvaluateScript"))?;
+    let evaluate = context.host_function(crate::host::shared_vm::operation("vmEvaluateScript"))?;
     let undefined = context.undefined();
     context.call_rooted(factory, undefined, &[create_realm, evaluate])
 }
@@ -194,7 +195,9 @@ pub(crate) fn evaluate_script(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let [global, source, filename] = args else {
-        return Err(RootedError::host("vm script evaluation expects three arguments"));
+        return Err(RootedError::host(
+            "vm script evaluation expects three arguments",
+        ));
     };
     let source = context.to_string(*source)?;
     let filename = context.to_string(*filename)?;
