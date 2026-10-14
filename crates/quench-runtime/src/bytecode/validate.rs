@@ -1,7 +1,7 @@
 use super::control_flow::instruction_at;
 use super::{
-    FieldBase, FieldLayout, ImmediateLayout, ImmediateRole, InstructionField, Op, Operand,
-    OperandKind, REGISTER_MASK, Register, ResidualProgram,
+    FieldBase, FieldLayout, ImmediateLayout, InstructionField, Op, Operand, OperandKind,
+    REGISTER_MASK, Register, ResidualProgram,
 };
 use rustc_hash::FxHashSet;
 
@@ -160,24 +160,9 @@ fn instruction_uses_promoted_local(
     instruction: super::WideInstruction,
     function: &super::Function,
 ) -> bool {
-    let local_slot = (instruction.op().immediate_role() == ImmediateRole::LocalSlot)
-        .then(|| instruction.local_slot())
-        .and_then(|slot| u16::try_from(slot).ok());
-    local_slot.is_some_and(|slot| function.promoted_register(slot).is_some())
-        || instruction
-            .numeric_local_target()
-            .is_some_and(|slot| function.promoted_register(slot).is_some())
-        || InstructionField::ALL.iter().copied().any(|field| {
-            matches!(
-                instruction.op().field_layout(field),
-                FieldLayout::Operand | FieldLayout::NumericIndexOperand
-            ) && Operand(instruction.field_value(field))
-                .kind()
-                .is_some_and(|kind| kind == OperandKind::Local)
-                && function
-                    .promoted_register(Operand(instruction.field_value(field)).payload())
-                    .is_some()
-        })
+    instruction
+        .addressed_local_slots()
+        .any(|slot| function.promoted_register(slot).is_some())
 }
 
 #[derive(Clone, Copy)]

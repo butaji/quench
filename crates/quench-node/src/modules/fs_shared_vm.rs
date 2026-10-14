@@ -2586,6 +2586,20 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let writable = get(context, streams, "Writable")?;
     write_stream::install(context, module, writable)?;
 
+    let install_missing_fs_methods = context.evaluate_script_rooted(
+        "(fs) => { for (const name of ['utimesSync', 'lutimesSync', 'futimesSync', 'utimes', 'lutimes', 'futimes', 'rm', 'write']) { if (typeof fs[name] === 'function') continue; Object.defineProperty(fs, name, { configurable: true, writable: true, value() { const error = new Error(`${name} is unavailable outside a mounted VFS`); error.code = 'ENOSYS'; throw error; } }); } }",
+        "node:bootstrap/vfs-fs-methods.js",
+    )?;
+    let undefined = context.undefined();
+    context.call_rooted(install_missing_fs_methods, undefined, &[module])?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_vfs_fs_fallbacks");
+    let global = context.global_root()?;
+    let key = context.string_rooted("__nodeFs");
+    if !context.define_data_property_rooted(global, key, module, false, false, true)? {
+        return Err(RootedError::host("cannot install canonical Node Fs alias"));
+    }
+
     Ok(module)
 }
 

@@ -1306,6 +1306,8 @@ impl Heap {
         self.peak_survivors = self.peak_survivors.max(live);
         self.max_threshold = self.max_threshold.max(self.threshold);
         self.collection_state = CollectionState::Idle;
+        #[cfg(feature = "profile-memory")]
+        self.memory_profile.collection_finished();
         (finalization_jobs, live_shapes)
     }
     fn sweep_full_parallel(&mut self, pool: &ThreadPool) -> SweepOutput {
