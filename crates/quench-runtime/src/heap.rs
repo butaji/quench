@@ -30,7 +30,12 @@ use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
-const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
+/// Allocations a collection allows at least, whatever survived. Programs with small live
+/// sets but steady allocation (RayTrace, DeltaBlue, EarleyBoyer) otherwise collect every few
+/// thousand cells, paying each collection's fixed root and sweep cost; 2^16 cells (2 MB of
+/// 32-byte cells) measured RayTrace +20% Score, the others even or better, while 2^17 and
+/// 2^18 gained nothing further (Linux x86_64, 4 vCPU, paired non-PGO rounds).
+const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 1 << 16;
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
@@ -67,9 +72,11 @@ impl GcHeadroomFactor {
     }
 }
 
+// Score lane: small heaps take the large heaps' factor, one live set of new cells before the
+// next collection (with the minimum above, RayTrace +20% over 1/2).
 const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
     numerator: 1,
-    denominator: 2,
+    denominator: 1,
 };
 // This is the sweep variable for large-heap RSS/Score measurements. A factor
 // of 1/1 allows one live set's worth of new cells before collection (2x total
