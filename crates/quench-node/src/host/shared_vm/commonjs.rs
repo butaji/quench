@@ -97,6 +97,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     crate::modules::url_shared_vm::install_global(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_url_global");
+    crate::host::resident_pages::release_read_only_pages();
     install_shared_web_globals(context)?;
     if context.host_mut().vfs_enabled() {
         install_vfs_globals(context)?;
@@ -139,6 +140,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     // Builtins built after this point see the intrinsics as they are now, whatever a
     // preload or the entry script does to them (`cached_builtin`).
     context.seal_startup_intrinsics();
+    crate::host::resident_pages::release_read_only_pages();
     preload_modules(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
@@ -262,6 +264,7 @@ fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedErr
     context.release_root(root);
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_web_streams_polyfill");
+    crate::host::resident_pages::release_read_only_pages();
 
     let web_apis = crate::polyfills::bootstrap::globals_extra::web_api_source();
     let root = context.evaluate_script_rooted(web_apis, "node:bootstrap/shared-vm/web-apis.js")?;
