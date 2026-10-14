@@ -648,13 +648,17 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(BUFFER_FACTORY, "node:buffer/shared.js")?;
     let encode = context.host_function(crate::host::shared_vm::operation("bufferEncode"))?;
-    let encode_view = context.host_function(crate::host::shared_vm::operation("bufferEncodeView"))?;
+    let encode_view =
+        context.host_function(crate::host::shared_vm::operation("bufferEncodeView"))?;
     let decode = context.host_function(crate::host::shared_vm::operation("bufferDecode"))?;
     let canonical_encoding =
         context.host_function(crate::host::shared_vm::operation("bufferCanonicalEncoding"))?;
     let undefined = context.undefined();
-    let constructor =
-        context.call_rooted(factory, undefined, &[encode, decode, canonical_encoding, encode_view])?;
+    let constructor = context.call_rooted(
+        factory,
+        undefined,
+        &[encode, decode, canonical_encoding, encode_view],
+    )?;
 
     let module = context.object_rooted()?;
     let buffer = get(context, constructor, "Buffer")?;
@@ -668,7 +672,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "Buffer", buffer)?;
     let slow_buffer = get(context, constructor, "SlowBuffer")?;
     set(context, module, "SlowBuffer", slow_buffer)?;
-    for name in ["isAscii", "isUtf8", "kMaxLength", "kStringMaxLength", "constants"] {
+    for name in [
+        "isAscii",
+        "isUtf8",
+        "kMaxLength",
+        "kStringMaxLength",
+        "constants",
+    ] {
         let value = get(context, constructor, name)?;
         set(context, module, name, value)?;
     }

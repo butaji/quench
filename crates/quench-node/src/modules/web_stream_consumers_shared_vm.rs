@@ -50,10 +50,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let buffer = context.get_property_rooted(global, buffer_key)?;
     let decoder_key = context.string_rooted("TextDecoder");
     let decoder = context.get_property_rooted(global, decoder_key)?;
-    let factory = context.evaluate_script_rooted(
-        FACTORY,
-        "node:stream/consumers/shared.js",
-    )?;
+    let factory = context.evaluate_script_rooted(FACTORY, "node:stream/consumers/shared.js")?;
     let undefined = context.undefined();
     context.call_rooted(factory, undefined, &[buffer, decoder])
 }

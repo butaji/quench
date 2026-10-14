@@ -8,7 +8,9 @@ pub(crate) fn owner(
     context: &mut NativeContext<'_, NodeHost>,
     socket: RootId,
 ) -> Result<u64, RootedError> {
-    if let Some(id) = physical_owner(context, socket)? { return Ok(id); }
+    if let Some(id) = physical_owner(context, socket)? {
+        return Ok(id);
+    }
     let error = context.type_error_rooted("TLS socket has no native transport")?;
     Err(context.throw(error))
 }
@@ -89,18 +91,32 @@ pub(crate) fn upgrade(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let root = args.first().copied().unwrap_or(receiver);
-    let Some(socket) = physical_owner(context, root)? else { return Ok(context.undefined()); };
+    let Some(socket) = physical_owner(context, root)? else {
+        return Ok(context.undefined());
+    };
     let index = super::sessions::owner(context, root)?;
     let shared = context.host_mut().shared_state();
-    if !super::super::net_shared_vm::is_connected(&shared.borrow().tcp, socket) { return Ok(context.undefined()); }
+    if !super::super::net_shared_vm::is_connected(&shared.borrow().tcp, socket) {
+        return Ok(context.undefined());
+    }
     let pending = {
         let mut state = shared.borrow_mut();
         let session = &mut state.tls_contexts.sessions.entries[index];
-        session.pending.take().map(|pending| (pending.ssl, pending.role, pending.start_requested))
+        session
+            .pending
+            .take()
+            .map(|pending| (pending.ssl, pending.role, pending.start_requested))
     };
-    let Some((ssl, role, started)) = pending else { return Ok(context.undefined()); };
-    let result =
-        super::super::net_shared_vm::encrypt(&mut shared.borrow_mut().tcp, socket, ssl, role, started);
+    let Some((ssl, role, started)) = pending else {
+        return Ok(context.undefined());
+    };
+    let result = super::super::net_shared_vm::encrypt(
+        &mut shared.borrow_mut().tcp,
+        socket,
+        ssl,
+        role,
+        started,
+    );
     result.map_err(|error| match error {
         super::super::net_shared_vm::EncryptError::OpenSsl(error) => {
             super::super::crypto_error_shared_vm::decorated(context, error)
@@ -141,8 +157,14 @@ pub(crate) fn info(
     }
     let value = {
         let state = shared.borrow();
-        let ssl = socket.and_then(|id| super::super::net_shared_vm::tls_info(&state.tcp, id))
-            .or_else(|| state.tls_contexts.sessions.entries[session].pending.as_ref().map(|pending| pending.ssl.as_ref()));
+        let ssl = socket
+            .and_then(|id| super::super::net_shared_vm::tls_info(&state.tcp, id))
+            .or_else(|| {
+                state.tls_contexts.sessions.entries[session]
+                    .pending
+                    .as_ref()
+                    .map(|pending| pending.ssl.as_ref())
+            });
         let Some(ssl) = ssl else {
             return Ok(context.null());
         };
@@ -299,7 +321,9 @@ pub(crate) fn construct(
     if context.truthy_rooted(wrapped)? {
         let id = owner(context, socket)?;
         let connected = super::super::net_shared_vm::is_connected(
-            &context.host_mut().shared_state().borrow().tcp, id);
+            &context.host_mut().shared_state().borrow().tcp,
+            id,
+        );
         if connected {
             let undefined = context.undefined();
             upgrade(context, undefined, &[socket])?;
@@ -322,18 +346,30 @@ pub(crate) fn init_read(
 ) -> Result<RootId, RootedError> {
     let socket = args[0];
     let handle = get(context, socket, "_handle")?;
-    if !context.truthy_rooted(handle)? { return Ok(context.undefined()); }
+    if !context.truthy_rooted(handle)? {
+        return Ok(context.undefined());
+    }
     let wrapped = args[1];
     if context.truthy_rooted(wrapped)? {
         let length = get(context, wrapped, "readableLength")?;
         if context.truthy_rooted(length)? {
             loop {
                 let chunk = method(context, wrapped, "read", &[])?;
-                if context.rooted_value(chunk).is_some_and(|value| value.is_null()) { break; }
-                let bytes = context.view_bytes_rooted(chunk)
+                if context
+                    .rooted_value(chunk)
+                    .is_some_and(|value| value.is_null())
+                {
+                    break;
+                }
+                let bytes = context
+                    .view_bytes_rooted(chunk)
                     .ok_or_else(|| RootedError::host("TLS buffered input is not a byte view"))?;
                 let id = owner(context, socket)?;
-                super::super::net_shared_vm::receive_tls(&mut context.host_mut().shared_state().borrow_mut().tcp, id, &bytes);
+                super::super::net_shared_vm::receive_tls(
+                    &mut context.host_mut().shared_state().borrow_mut().tcp,
+                    id,
+                    &bytes,
+                );
             }
         }
     }
@@ -416,13 +452,25 @@ pub(crate) fn start(
 ) -> Result<RootId, RootedError> {
     let socket = args.first().copied().unwrap_or(receiver);
     let index = super::sessions::owner(context, socket)?;
-    if let Some(pending) = context.host_mut().shared_state().borrow_mut().tls_contexts.sessions.entries[index].pending.as_mut() {
+    if let Some(pending) = context
+        .host_mut()
+        .shared_state()
+        .borrow_mut()
+        .tls_contexts
+        .sessions
+        .entries[index]
+        .pending
+        .as_mut()
+    {
         pending.start_requested = true;
     }
     let undefined = context.undefined();
     upgrade(context, undefined, &[socket])?;
     if let Some(id) = physical_owner(context, socket)? {
-        super::super::net_shared_vm::start_tls(&mut context.host_mut().shared_state().borrow_mut().tcp, id);
+        super::super::net_shared_vm::start_tls(
+            &mut context.host_mut().shared_state().borrow_mut().tcp,
+            id,
+        );
     }
     let handle = get(context, socket, "_handle")?;
     set(context, socket, "ssl", handle)?;
@@ -649,7 +697,11 @@ pub(crate) fn tls_error(
     let event = context.string_rooted("_tlsError");
     method(context, socket, "emit", &[event, error])?;
     let released = get(context, socket, "_controlReleased")?;
-    Ok(if context.truthy_rooted(released)? { error } else { context.null() })
+    Ok(if context.truthy_rooted(released)? {
+        error
+    } else {
+        context.null()
+    })
 }
 pub(crate) fn release_control(
     context: &mut NativeContext<'_, NodeHost>,
@@ -658,7 +710,9 @@ pub(crate) fn release_control(
 ) -> Result<RootId, RootedError> {
     let socket = args[0];
     let released = get(context, socket, "_controlReleased")?;
-    if context.truthy_rooted(released)? { return Ok(context.boolean(false)); }
+    if context.truthy_rooted(released)? {
+        return Ok(context.boolean(false));
+    }
     let yes = context.boolean(true);
     set(context, socket, "_controlReleased", yes)?;
     let error = context.string_rooted("error");

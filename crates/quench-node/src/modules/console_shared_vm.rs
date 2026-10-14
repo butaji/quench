@@ -258,8 +258,18 @@ pub(crate) fn write(
         Ok(_) => Ok(undefined),
         Err(error) => match stack_overflow(context, &error) {
             Ok(true) => Err(error),
-            Ok(false) => { if let Some(root) = error.exception { context.release_root(root); } Ok(undefined) },
-            Err(replacement) => { if let Some(root) = error.exception { context.release_root(root); } Err(replacement) },
+            Ok(false) => {
+                if let Some(root) = error.exception {
+                    context.release_root(root);
+                }
+                Ok(undefined)
+            }
+            Err(replacement) => {
+                if let Some(root) = error.exception {
+                    context.release_root(root);
+                }
+                Err(replacement)
+            }
         },
     };
     // A cleanup throw takes precedence over a write throw, as in finally.

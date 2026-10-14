@@ -531,7 +531,10 @@ impl quench_runtime::Host for NodeHost {
                 .expect("generated Node builtin export names are valid JSON");
         let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
         if crate::host::shared_vm::commonjs::is_builtin_specifier(specifier) {
-            let exports = builtin_exports.get(builtin_name).map(Vec::as_slice).unwrap_or(&[]);
+            let exports = builtin_exports
+                .get(builtin_name)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let require_specifier = specifier;
             let mut source = format!(
                 "const __quenchModule = globalThis[\"\\0quench:require\"]({});\nexport default __quenchModule;\n",
@@ -578,9 +581,12 @@ impl quench_runtime::Host for NodeHost {
         };
         let path = resolution.full_path();
         let path = std::fs::canonicalize(&path).unwrap_or(path);
-        let bytes = std::fs::read(&path)
-            .map_err(|error| format!("module {}: {error}", path.display()))?;
-        let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("");
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
         if extension == "node" {
             return Ok(None);
         }
@@ -598,7 +604,10 @@ impl quench_runtime::Host for NodeHost {
                     "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
                 );
                 source.push_str("export { __quenchModule as 'module.exports' };\n");
-                for (index, export) in commonjs_exports::names(&String::from_utf8_lossy(&bytes)).into_iter().enumerate() {
+                for (index, export) in commonjs_exports::names(&String::from_utf8_lossy(&bytes))
+                    .into_iter()
+                    .enumerate()
+                {
                     let local = format!("__quenchExport{index}");
                     source.push_str("const ");
                     source.push_str(&local);
