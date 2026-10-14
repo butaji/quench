@@ -387,10 +387,25 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_collections(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let map = self.native_value(Native::Map);
         self.map_proto = self.object();
+        self.install_map(program, self.realm.globals, map, self.map_proto)?;
+        self.global(program, "Map", map)?;
+        let set = self.native_value(Native::Set);
+        self.set_proto = self.install_set_prototype(program, set, self.object_proto)?;
+        self.global(program, "Set", set)
+    }
+
+    /// Installs the Map constructor `map` and its prototype for `global`'s realm.
+    pub(super) fn install_map(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        map: Value,
+        map_proto: Value,
+    ) -> Result<(), JsError> {
         self.realm
             .intrinsics
             .builtin_prototypes
-            .insert((self.realm.globals, Native::Map), self.map_proto);
+            .insert((global, Native::Map), map_proto);
         for (name, native) in [
             ("get", Native::MapGet),
             ("set", Native::MapSet),
@@ -404,15 +419,15 @@ impl<H: Host> Vm<H> {
             ("getOrInsert", Native::MapGetOrInsert),
             ("getOrInsertComputed", Native::MapGetOrInsertComputed),
         ] {
-            self.set_builtin_named(program, self.map_proto, name, native)?;
+            self.set_builtin_named(program, map_proto, name, native)?;
         }
-        self.set_builtin_value_named(self.map_proto, "constructor", map)?;
+        self.set_builtin_value_named(map_proto, "constructor", map)?;
         let size_getter = self.native_value(Native::MapSizeGetter);
         self.set_builtin_function_name(size_getter, "get size")?;
-        self.set_named(program, self.map_proto, "size", size_getter)?;
+        self.set_named(program, map_proto, "size", size_getter)?;
         let size_atom = self.intern_atom("size");
         self.set_property_attributes(
-            self.map_proto,
+            map_proto,
             PropertyKey::string(size_atom),
             PropertyAttributes {
                 writable: false,
@@ -423,7 +438,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.set_named(program, map, "prototype", self.map_proto)?;
+        self.set_named(program, map, "prototype", map_proto)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             map,
@@ -438,11 +453,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_function_name(map, "Map")?;
-        self.set_builtin_named(program, map, "groupBy", Native::MapGroupBy)?;
-        self.global(program, "Map", map)?;
-        let set = self.native_value(Native::Set);
-        self.set_proto = self.install_set_prototype(program, set, self.object_proto)?;
-        self.global(program, "Set", set)
+        self.set_builtin_named(program, map, "groupBy", Native::MapGroupBy)
     }
 
     pub(super) fn install_set_prototype(

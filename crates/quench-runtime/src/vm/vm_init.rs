@@ -91,6 +91,7 @@ impl<H: Host> Vm<H> {
             atom_collisions: FxHashMap::default(),
             array_index_atoms: FxHashMap::default(),
             dynamic_atoms: vec![],
+            atom_sequence: Rc::new(crate::bytecode::AtomSequence::new(Default::default())),
             regexp_subject: None,
             regexp_matchers: Default::default(),
             atom_classes: vec![],

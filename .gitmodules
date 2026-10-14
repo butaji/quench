@@ -10,3 +10,7 @@
 [submodule "crates/quench-wasm-test/testsuite"]
 	path = crates/quench-wasm-test/testsuite
 	url = https://github.com/WebAssembly/testsuite.git
+[submodule "quench-bench/jetstream"]
+	path = quench-bench/jetstream
+	url = https://github.com/WebKit/JetStream.git
+	branch = JetStream3.0

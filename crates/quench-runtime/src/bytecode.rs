@@ -13,7 +13,7 @@ mod atoms;
 mod control_flow;
 mod instruction;
 mod numeric_ops;
-pub(crate) use atoms::AtomTable;
+pub(crate) use atoms::{AtomSequence, AtomTable};
 
 /// Infix of the compiler's hidden atom for a named function expression's own binding:
 /// `{name}{SELF_BINDING_MARKER}{function id}`.
@@ -1647,9 +1647,13 @@ impl Operand {
         Self(((OperandKind::Register as u16) << Self::TAG_SHIFT) | value)
     }
 
-    pub(crate) fn constant(value: u32) -> Self {
-        debug_assert!(value <= u32::from(Self::PAYLOAD_MASK));
-        Self(((OperandKind::Constant as u16) << Self::TAG_SHIFT) | value as u16)
+    /// A constant-pool operand, when the pool index fits the operand payload;
+    /// larger programs load the constant into a register instead.
+    pub(crate) fn constant(index: u32) -> Option<Self> {
+        u16::try_from(index)
+            .ok()
+            .filter(|index| *index <= Self::PAYLOAD_MASK)
+            .map(|index| Self(((OperandKind::Constant as u16) << Self::TAG_SHIFT) | index))
     }
 
     pub(crate) fn local(slot: u16) -> Self {
