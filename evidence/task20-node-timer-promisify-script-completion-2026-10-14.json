@@ -13258,7 +13258,7 @@
     "Identity-only and promise-option rounds retained separately with zero additional timer passes and zero lost passes.",
     "CLI print evaluates the input as a Script through Core; user replacement of global eval does not replace CLI evaluation.",
     "OXC directive prologues initialize the captured Script completion using the existing WTF-16 literal representation.",
-    "First Core regression used the separate simple direct-eval path and failed while 598 existing tests passed; this is retained as an unresolved separate language bug. The corrected regression calls the compiled Script path used by the CLI. A subsequent test-only Cow/slice comparison type error was corrected; raw failed checks remain retained.",
+    "First Core regression used the separate simple direct-eval path and failed while 598 existing tests passed. A later independent reproduction narrowed the remaining mismatch to an empty debugger statement overwriting the previous completion; declaration and UTF-16 cases match Node. The corrected regression calls the compiled Script path used by the CLI. The direct-eval debugger completion bug remains open. A subsequent test-only Cow/slice comparison type error was corrected; raw failed checks remain retained.",
     "Promise ref:false updates actual scheduler reference policy. Async-hook init still initially sees ref:true; complete promise async-hook parity is not claimed.",
     "One-round iteration fixed-work diagnostics cover all8 cases with zero clean rounds; no speed claim.",
     "Latest complete full remains1529pass674skip2429fail95timeout outof4727; focused gains are not extrapolated into a full count."
