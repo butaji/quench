@@ -31,6 +31,74 @@ const CALLBACK_TIMER_EXPORTS: &[&str] = &[
     "clearImmediate",
 ];
 
+const PROMISE_INTERVAL_FACTORY: &str = quench_js_check::checked_js!(
+    r#"(schedule, cancel) => function setInterval(delay, value, options = {}) {
+  const signal = options?.signal;
+  let timer;
+  let stopped = false;
+  let failure;
+  let waiter;
+  const values = [];
+  const cleanup = () => signal?.removeEventListener?.("abort", abort);
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    if (timer !== undefined) cancel(timer);
+    cleanup();
+  };
+  const abort = () => {
+    failure = new Error("The operation was aborted");
+    failure.name = "AbortError";
+    failure.code = "ABORT_ERR";
+    stop();
+    if (waiter) {
+      const reject = waiter.reject;
+      waiter = undefined;
+      reject(failure);
+    }
+  };
+  const iterator = {
+    [Symbol.asyncIterator]() { return this; },
+    next() {
+      if (failure) return Promise.reject(failure);
+      if (values.length) return Promise.resolve({ value: values.shift(), done: false });
+      if (stopped) return Promise.resolve({ value: undefined, done: true });
+      return new Promise((resolve, reject) => { waiter = { resolve, reject }; });
+    },
+    return() {
+      values.length = 0;
+      stop();
+      if (waiter) {
+        const resolve = waiter.resolve;
+        waiter = undefined;
+        resolve({ value: undefined, done: true });
+      }
+      return Promise.resolve({ value: undefined, done: true });
+    },
+    throw(error) { stop(); return Promise.reject(error); },
+    ref() { timer?.ref?.(); return this; },
+    unref() { timer?.unref?.(); return this; },
+    hasRef() { return timer?.hasRef?.() ?? true; },
+  };
+  if (signal?.aborted) {
+    abort();
+  } else {
+    signal?.addEventListener?.("abort", abort, { once: true });
+    timer = schedule(() => {
+      if (stopped) return;
+      if (waiter) {
+        const resolve = waiter.resolve;
+        waiter = undefined;
+        resolve({ value, done: false });
+      } else {
+        values.push(value);
+      }
+    }, delay);
+  }
+  return iterator;
+}"#
+);
+
 #[derive(Clone, Copy)]
 pub(crate) struct TimerHandleApi {
     pub(crate) refed_key: RootId,
@@ -92,6 +160,16 @@ pub(crate) fn promises_module(
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         install(context, module, name, function)?;
     }
+    let factory = context.evaluate_script_rooted(
+        PROMISE_INTERVAL_FACTORY,
+        "node:timers/promises/interval.js",
+    )?;
+    let global = context.global_root()?;
+    let schedule = property(context, global, "setInterval")?;
+    let cancel = property(context, global, "clearInterval")?;
+    let undefined = context.undefined();
+    let interval = context.call_rooted(factory, undefined, &[schedule, cancel])?;
+    install(context, module, "setInterval", interval)?;
     let scheduler = scheduler_object(context)?;
     install(context, module, "scheduler", scheduler)?;
     Ok(module)
@@ -520,6 +598,10 @@ fn schedule_timer(
             "cannot initialize Timeout reference state",
         ));
     }
+    let async_id = crate::modules::async_hooks_shared_vm::create_context(
+        &context.host_mut().shared_state(),
+    );
+    crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Timeout", async_id)?;
     let callback = context.retain(callback)?;
     let receiver = context.retain(handle)?;
     let callback_args = args
@@ -838,6 +920,10 @@ pub(crate) fn set_immediate(
             "cannot initialize Immediate reference state",
         ));
     }
+    let async_id = crate::modules::async_hooks_shared_vm::create_context(
+        &context.host_mut().shared_state(),
+    );
+    crate::modules::async_hooks_shared_vm::emit_init(context, handle, "Immediate", async_id)?;
     let callback = context.retain(callback)?;
     let receiver = context.retain(handle)?;
     let args = args[1..]

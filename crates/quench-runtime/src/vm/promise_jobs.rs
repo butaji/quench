@@ -91,15 +91,10 @@ impl<H: Host> Vm<H> {
                 return Err(self.type_error(p, "Promise keyed input must be an object".into()));
             }
             let array = self.object_own_keys(p, input)?;
-            let keys = match self.heap.get(array) {
-                Some(Cell::Array {
-                    object: array_object,
-                }) => {
-                    let elements = array_object.elements();
-                    elements.as_ref().clone()
-                }
-                _ => Vec::new(),
-            };
+            let keys = self
+                .heap
+                .array_elements(array)
+                .map_or_else(Vec::new, |elements| elements.as_ref().clone());
             return Ok(AggregateInput::Keyed {
                 keys: keys.into_iter().map(|key| self.heap.root(key)).collect(),
                 position: 0,

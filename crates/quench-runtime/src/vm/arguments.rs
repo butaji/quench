@@ -26,19 +26,11 @@ impl<H: Host> Vm<H> {
         let Some(index) = self.mapped_argument_index(arguments, slot) else {
             return fallback;
         };
-        match self.heap.get(arguments) {
-            Some(Cell::Array {
-                object: array_object,
-            }) => {
-                let elements = array_object.elements();
-                elements
-                    .get(index)
-                    .copied()
-                    .filter(|value| !value.is_deleted())
-                    .unwrap_or(Value::UNDEFINED)
-            }
-            _ => fallback,
-        }
+        self.heap
+            .array_elements(arguments)
+            .and_then(|elements| elements.get(index).copied())
+            .filter(|value| !value.is_deleted())
+            .unwrap_or(fallback)
     }
 
     pub(super) fn mapped_argument_store(
@@ -106,13 +98,19 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn sync_mapped_argument(&mut self, object: Value, index: usize, value: Value) {
-        let Some(slot) = self
+        let slot = self
             .object_data(object)
-            .and_then(Object::arguments_map)
-            .and_then(|mapping| mapping.get(index).copied())
-            .filter(|slot| *slot != u16::MAX)
-            .map(usize::from)
-        else {
+            .and_then(|object| object.mapped_argument_slot(index));
+        self.sync_mapped_argument_slot(object, slot, value);
+    }
+
+    pub(super) fn sync_mapped_argument_slot(
+        &mut self,
+        object: Value,
+        slot: Option<usize>,
+        value: Value,
+    ) {
+        let Some(slot) = slot else {
             return;
         };
         // The mapping belongs to the one activation whose `arguments` binding holds this object.

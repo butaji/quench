@@ -9,6 +9,23 @@ enum WeakCollectionKind {
 }
 include!("collections_set_relations.rs");
 impl<H: Host> Vm<H> {
+    fn keep_alive(&mut self, value: Value) {
+        if !self
+            .kept_alive
+            .iter()
+            .any(|root| self.heap.root_value(*root) == Some(value))
+        {
+            let root = self.heap.root(value);
+            self.kept_alive.push(root);
+        }
+    }
+
+    pub(crate) fn clear_kept_objects(&mut self) {
+        for root in self.kept_alive.drain(..) {
+            self.heap.release_root(root);
+        }
+    }
+
     pub(super) fn is_collection_native(native: Native) -> bool {
         matches!(
             native,
@@ -223,6 +240,7 @@ impl<H: Host> Vm<H> {
         if !self.is_weak_key_value(target) {
             return Err(self.type_error(p, "WeakRef target must be an object".into()));
         }
+        self.keep_alive(target);
         let target = self
             .heap
             .weak_handle(target)
@@ -369,10 +387,25 @@ impl<H: Host> Vm<H> {
     pub(super) fn install_collections(&mut self, program: &ResidualProgram) -> Result<(), JsError> {
         let map = self.native_value(Native::Map);
         self.map_proto = self.object();
+        self.install_map(program, self.realm.globals, map, self.map_proto)?;
+        self.global(program, "Map", map)?;
+        let set = self.native_value(Native::Set);
+        self.set_proto = self.install_set_prototype(program, set, self.object_proto)?;
+        self.global(program, "Set", set)
+    }
+
+    /// Installs the Map constructor `map` and its prototype for `global`'s realm.
+    pub(super) fn install_map(
+        &mut self,
+        program: &ResidualProgram,
+        global: Value,
+        map: Value,
+        map_proto: Value,
+    ) -> Result<(), JsError> {
         self.realm
             .intrinsics
             .builtin_prototypes
-            .insert((self.realm.globals, Native::Map), self.map_proto);
+            .insert((global, Native::Map), map_proto);
         for (name, native) in [
             ("get", Native::MapGet),
             ("set", Native::MapSet),
@@ -386,15 +419,15 @@ impl<H: Host> Vm<H> {
             ("getOrInsert", Native::MapGetOrInsert),
             ("getOrInsertComputed", Native::MapGetOrInsertComputed),
         ] {
-            self.set_builtin_named(program, self.map_proto, name, native)?;
+            self.set_builtin_named(program, map_proto, name, native)?;
         }
-        self.set_builtin_value_named(self.map_proto, "constructor", map)?;
+        self.set_builtin_value_named(map_proto, "constructor", map)?;
         let size_getter = self.native_value(Native::MapSizeGetter);
         self.set_builtin_function_name(size_getter, "get size")?;
-        self.set_named(program, self.map_proto, "size", size_getter)?;
+        self.set_named(program, map_proto, "size", size_getter)?;
         let size_atom = self.intern_atom("size");
         self.set_property_attributes(
-            self.map_proto,
+            map_proto,
             PropertyKey::string(size_atom),
             PropertyAttributes {
                 writable: false,
@@ -405,7 +438,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.set_named(program, map, "prototype", self.map_proto)?;
+        self.set_named(program, map, "prototype", map_proto)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             map,
@@ -420,11 +453,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_function_name(map, "Map")?;
-        self.set_builtin_named(program, map, "groupBy", Native::MapGroupBy)?;
-        self.global(program, "Map", map)?;
-        let set = self.native_value(Native::Set);
-        self.set_proto = self.install_set_prototype(program, set, self.object_proto)?;
-        self.global(program, "Set", set)
+        self.set_builtin_named(program, map, "groupBy", Native::MapGroupBy)
     }
 
     pub(super) fn install_set_prototype(
@@ -790,6 +819,7 @@ impl<H: Host> Vm<H> {
                         let Some(index) = self.map_entry_index(this, key) else {
                             return Ok(Value::FALSE);
                         };
+                        self.heap.collection_entry_deleted(this, index, true);
                         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
                             unreachable!("receiver validated above")
                         };
@@ -797,6 +827,7 @@ impl<H: Host> Vm<H> {
                         Ok(Value::TRUE)
                     }
                     Native::MapClear => {
+                        self.heap.collection_cleared(this, true);
                         let Some(Cell::Map { entries, .. }) = self.heap.get_mut(this) else {
                             unreachable!("receiver validated above")
                         };
@@ -947,6 +978,7 @@ impl<H: Host> Vm<H> {
                 let Some(index) = self.set_entry_index(this, value) else {
                     return Ok(Value::FALSE);
                 };
+                self.heap.collection_entry_deleted(this, index, false);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(self.type_error(
                         p,
@@ -963,6 +995,7 @@ impl<H: Host> Vm<H> {
                         "Set.prototype.clear called on incompatible receiver".into(),
                     ));
                 }
+                self.heap.collection_cleared(this, false);
                 let Some(Cell::Set { entries, .. }) = self.heap.get_mut(this) else {
                     return Err(self.type_error(
                         p,
@@ -1209,9 +1242,13 @@ impl<H: Host> Vm<H> {
                         "WeakRef.prototype.deref called on incompatible receiver".into(),
                     ));
                 };
-                Ok(target
+                let value = target
                     .and_then(|target| self.heap.weak_value(target))
-                    .unwrap_or(Value::UNDEFINED))
+                    .unwrap_or(Value::UNDEFINED);
+                if !value.is_undefined() {
+                    self.keep_alive(value);
+                }
+                Ok(value)
             }
             _ => Err(JsError("invalid collection native".into())),
         }

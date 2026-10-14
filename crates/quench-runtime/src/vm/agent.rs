@@ -96,13 +96,9 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let method = self.active_native_env().and_then(|env| {
-            let Some(Cell::Array {
-                object: array_object,
-            }) = self.heap.get(env)
-            else {
+            let Some(elements) = self.heap.array_elements(env) else {
                 return None;
             };
-            let elements = array_object.elements();
             elements.first().and_then(|value| value.as_number())
         });
         match method.and_then(AgentMethod::from_index) {

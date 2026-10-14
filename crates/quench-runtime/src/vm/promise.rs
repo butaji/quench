@@ -4467,15 +4467,11 @@ impl<H: Host> Vm<H> {
             return Err(self.type_error(p, "dynamic import attributes must be an object".into()));
         }
         let keys = self.object_own_keys(p, attributes)?;
-        let Some(Cell::Array {
-            object: array_object,
-        }) = self.heap.get(keys)
-        else {
+        let Some(elements) = self.heap.array_elements(keys) else {
             return Err(JsError(
                 "dynamic import own keys result is not an array".into(),
             ));
         };
-        let elements = array_object.elements();
         let keys = elements.as_ref().clone();
         let mut module_type = None;
         for key in keys {
@@ -4569,7 +4565,7 @@ impl<H: Host> Vm<H> {
     fn module_static_value(&mut self, constant: Constant) -> Value {
         match constant {
             Constant::Number(value) => Value::number(value),
-            Constant::WasmBits64(bits) => self.heap.alloc(Cell::WasmBits64(bits)),
+            Constant::WasmBits64(bits) => self.encode_bits64(bits),
             Constant::WasmV128(bits) => self.heap.alloc(Cell::WasmV128(bits)),
             Constant::String(value) => self.heap.alloc(Cell::String(value.into())),
             Constant::StringUnits(value) => {

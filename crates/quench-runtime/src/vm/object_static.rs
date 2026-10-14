@@ -142,20 +142,18 @@ impl<H: Host> Vm<H> {
             "Error"
         } else if let Some(brand) = boxed_brand {
             brand
+        } else if let Some(object) = self.heap.array(value) {
+            if object.is_arguments_object() {
+                "Arguments"
+            } else {
+                "Array"
+            }
         } else {
             match self.heap.get(value) {
                 Some(Cell::Proxy { .. }) if proxy_array => "Array",
                 Some(Cell::Proxy { .. }) if self.is_function(value) => "Function",
                 Some(Cell::String(_)) => "String",
                 Some(Cell::BigInt(_) | Cell::Symbol(_)) => "Object",
-                Some(Cell::Array { .. })
-                    if self
-                        .object_data(value)
-                        .is_some_and(Object::is_arguments_object) =>
-                {
-                    "Arguments"
-                }
-                Some(Cell::Array { .. }) => "Array",
                 Some(Cell::Date { .. }) => "Date",
                 Some(Cell::RegExp { .. }) => "RegExp",
                 Some(Cell::Function { .. }) => "Function",
@@ -295,18 +293,16 @@ impl<H: Host> Vm<H> {
                     if visited_names.contains(&name) {
                         continue;
                     }
-                    let descriptor = self.object_get_own_property_descriptor(
+                    let Some(enumerable) = self.own_property_enumerable(
                         p,
-                        &[
-                            self.heap.root_value(current_root).unwrap(),
-                            self.heap.root_value(*key).unwrap(),
-                        ],
-                    )?;
-                    if descriptor.is_undefined() {
+                        self.heap.root_value(current_root).unwrap(),
+                        self.heap.root_value(*key).unwrap(),
+                    )?
+                    else {
                         continue;
-                    }
+                    };
                     visited_names.insert(name);
-                    if self.descriptor_flag(descriptor, "enumerable") {
+                    if enumerable {
                         keys.push(self.heap.root(self.heap.root_value(*key).unwrap()));
                     }
                 }
@@ -695,6 +691,12 @@ impl<H: Host> Vm<H> {
             })
             .collect::<Vec<_>>();
         entries.sort_by(|(left, _), (right, _)| {
+            if data.is_module_namespace() {
+                return self
+                    .atom_value(*left)
+                    .units()
+                    .cmp(self.atom_value(*right).units());
+            }
             match (
                 array_index(self.atom_name(*left)),
                 array_index(self.atom_name(*right)),

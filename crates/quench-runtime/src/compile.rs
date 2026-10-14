@@ -2230,6 +2230,11 @@ impl<'a> Compiler<'a> {
             module_imports,
             module_link_plan,
             source_name: self.source.to_owned(),
+            source: Some(crate::bytecode::ProgramSource {
+                text: std::sync::Arc::from(self.text),
+                line_offset: 0,
+                column_offset: 0,
+            }),
             atoms,
             constants: self.constants,
             functions,
@@ -2783,6 +2788,8 @@ impl<'a> Compiler<'a> {
             handlers: function.handlers,
             register_root_offset: crate::bytecode::NO_REGISTER_ROOT_MAP,
             undefined_register,
+            parameter_registers: None,
+            initial_register: Default::default(),
         };
         self.functions[id as usize] = Some(result);
         id

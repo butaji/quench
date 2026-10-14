@@ -4,38 +4,49 @@ use std::ops::Range;
 use std::rc::Rc;
 
 /// Heap-owned JavaScript string. The UTF-16 units are authoritative; `host`
-/// memoizes the lossy Rust-text view only after a host/API boundary requests it, behind a
-/// thin pointer so the string stays three words.
-#[derive(Clone, Debug)]
+/// is only the explicit lossy Rust-text view used at host/API boundaries.
+#[derive(Clone)]
 pub(crate) struct JsString {
-    units: Rc<[u16]>,
-    host: OnceCell<Box<Rc<str>>>,
+    inner: Rc<JsStringInner>,
 }
 
-impl JsString {
-    /// Whether no other value shares this string's buffers, so dropping it frees them and
-    /// touches no reference count another string can read.
-    pub(crate) fn is_uniquely_owned(&self) -> bool {
-        Rc::strong_count(&self.units) == 1
-            && Rc::weak_count(&self.units) == 0
-            && self
-                .host
-                .get()
-                .is_none_or(|host| Rc::strong_count(&**host) == 1 && Rc::weak_count(&**host) == 0)
+enum JsStringData {
+    Flat(Rc<[u16]>),
+    Concat(Rc<JsStringInner>, Rc<JsStringInner>),
+}
+
+struct JsStringInner {
+    data: JsStringData,
+    length: usize,
+    flat: OnceCell<Rc<[u16]>>,
+    host: OnceCell<Rc<str>>,
+}
+
+impl JsStringInner {
+    fn flat(units: Rc<[u16]>, host: Option<String>) -> Self {
+        let length = units.len();
+        let flat = OnceCell::new();
+        let _ = flat.set(units.clone());
+        let host_cell = OnceCell::new();
+        if let Some(host) = host {
+            let _ = host_cell.set(Rc::from(host));
+        }
+        Self {
+            data: JsStringData::Flat(units),
+            length,
+            flat,
+            host: host_cell,
+        }
     }
-}
 
-impl PartialEq for JsString {
-    fn eq(&self, other: &Self) -> bool {
-        self.units == other.units
-    }
-}
-
-impl Eq for JsString {}
-
-impl Hash for JsString {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.units.hash(state);
+    fn concat(left: Rc<Self>, right: Rc<Self>) -> Self {
+        let length = left.length.saturating_add(right.length);
+        Self {
+            data: JsStringData::Concat(left, right),
+            length,
+            flat: OnceCell::new(),
+            host: OnceCell::new(),
+        }
     }
 }
 
@@ -81,10 +92,16 @@ impl Default for JsStringBuilder {
 
 impl JsStringBuilder {
     pub(super) fn append(&mut self, string: &JsString) {
-        self.append_slice(string, 0..string.units.len());
+        let units = string.shared_units();
+        let length = units.len();
+        self.append_units(Rc::clone(units), 0..length);
     }
 
     pub(super) fn append_slice(&mut self, string: &JsString, range: Range<usize>) {
+        self.append_units(Rc::clone(string.shared_units()), range);
+    }
+
+    fn append_units(&mut self, units: Rc<[u16]>, range: Range<usize>) {
         if range.is_empty() {
             return;
         }
@@ -97,7 +114,7 @@ impl JsStringBuilder {
             return;
         }
         if let Some(previous) = self.parts.last_mut() {
-            if Rc::ptr_eq(&previous.units, &string.units) && previous.range.end == range.start {
+            if Rc::ptr_eq(&previous.units, &units) && previous.range.end == range.start {
                 previous.range.end = range.end;
                 return;
             }
@@ -107,10 +124,7 @@ impl JsStringBuilder {
             self.parts.clear();
             return;
         }
-        self.parts.push(StringPart {
-            units: Rc::clone(&string.units),
-            range,
-        });
+        self.parts.push(StringPart { units, range });
     }
 
     pub(super) fn finish(self) -> Result<JsString, StringBuildError> {
@@ -128,93 +142,139 @@ impl JsStringBuilder {
 
 impl JsString {
     pub(crate) fn from_units(units: &[u16]) -> Self {
+        let units = Rc::from(units);
         Self {
-            units: Rc::from(units),
-            host: OnceCell::new(),
+            inner: Rc::new(JsStringInner::flat(units, None)),
         }
     }
 
     pub(crate) fn from_str(text: &str) -> Self {
         Self {
-            units: Rc::from(text.encode_utf16().collect::<Vec<_>>()),
-            host: OnceCell::new(),
+            inner: Rc::new(JsStringInner::flat(
+                Rc::from(text.encode_utf16().collect::<Vec<_>>()),
+                None,
+            )),
         }
     }
 
-    pub(crate) fn shared_units(&self) -> &Rc<[u16]> {
-        &self.units
+    pub(crate) fn units(&self) -> &[u16] {
+        self.shared_units().as_ref()
     }
 
-    pub(crate) fn units(&self) -> &[u16] {
-        &self.units
+    pub(crate) fn shared_units(&self) -> &Rc<[u16]> {
+        self.inner.flat.get_or_init(|| {
+            let mut output = Vec::with_capacity(self.inner.length);
+            let mut pending = vec![self.inner.clone()];
+            while let Some(part) = pending.pop() {
+                match &part.data {
+                    JsStringData::Flat(units) => output.extend_from_slice(units),
+                    JsStringData::Concat(left, right) => {
+                        pending.push(right.clone());
+                        pending.push(left.clone());
+                    }
+                }
+            }
+            Rc::from(output)
+        })
     }
 
     pub(crate) fn host_string(&self) -> &str {
-        self.host
-            .get_or_init(|| Box::new(Rc::<str>::from(String::from_utf16_lossy(&self.units))))
-            .as_ref()
+        self.host_text()
+    }
+
+    /// The host text `host_string` borrows, shared rather than copied.
+    pub(crate) fn host_name(&self) -> Rc<str> {
+        self.host_text().clone()
+    }
+
+    fn host_text(&self) -> &Rc<str> {
+        self.inner
+            .host
+            .get_or_init(|| Rc::<str>::from(String::from_utf16_lossy(self.units())))
+    }
+
+    #[cfg(feature = "profile-aggregate")]
+    pub(crate) fn len(&self) -> usize {
+        self.inner.length
     }
 
     pub(crate) fn has_lossless_host_string(&self) -> bool {
-        char::decode_utf16(self.units.iter().copied()).all(|decoded| decoded.is_ok())
+        char::decode_utf16(self.units().iter().copied()).all(|decoded| decoded.is_ok())
     }
 
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(crate) fn capacity(&self) -> usize {
-        self.units.len() * std::mem::size_of::<u16>() + self.host.get().map_or(0, |host| host.len())
+        self.units().len() * std::mem::size_of::<u16>()
+            + self.inner.host.get().map_or(0, |host| host.len())
     }
 
     #[cfg(feature = "profile-memory")]
     pub(crate) fn memory_parts(&self) -> ((usize, usize), Option<(usize, usize)>) {
-        const RC_HEADER_WORDS: usize = 2;
-        let rc_header_bytes = RC_HEADER_WORDS * std::mem::size_of::<usize>();
-        let units = (
-            Rc::as_ptr(&self.units) as *const u16 as usize,
-            rc_header_bytes + self.units.len() * std::mem::size_of::<u16>(),
+        const RC_HEADER_BYTES: usize = 2 * std::mem::size_of::<usize>();
+        let units = self.shared_units();
+        let unit_storage = (
+            Rc::as_ptr(&units) as *const u16 as usize,
+            RC_HEADER_BYTES + units.len() * std::mem::size_of::<u16>(),
         );
-        let host = self.host.get().map(|host| {
+        let host_storage = self.inner.host.get().map(|host| {
             (
-                Rc::as_ptr(&**host) as *const u8 as usize,
-                rc_header_bytes + host.len(),
+                Rc::as_ptr(host) as *const u8 as usize,
+                RC_HEADER_BYTES + host.len(),
             )
         });
-        (units, host)
+        (unit_storage, host_storage)
     }
 
     pub(crate) fn push_js_string(&mut self, text: &Self) {
-        // A chain of slice iterators has an exact length, so this allocates the result once.
-        self.units = self
-            .units
-            .iter()
-            .chain(text.units.iter())
-            .copied()
-            .collect();
-        self.host = OnceCell::new();
+        if self.inner.length == 0 {
+            *self = text.clone();
+            return;
+        }
+        if text.inner.length == 0 {
+            return;
+        }
+        self.inner = Rc::new(JsStringInner::concat(
+            self.inner.clone(),
+            text.inner.clone(),
+        ));
     }
 
     pub(crate) fn repeat(&self, count: usize) -> Self {
-        let mut units = Vec::with_capacity(self.units.len().saturating_mul(count));
-        for _ in 0..count {
-            units.extend(self.units.iter().copied());
+        let mut count = count;
+        let mut result = Self::from_str("");
+        let mut power = self.clone();
+        while count > 0 {
+            if count & 1 != 0 {
+                result.push_js_string(&power);
+            }
+            count >>= 1;
+            if count > 0 {
+                power = Self {
+                    inner: Rc::new(JsStringInner::concat(
+                        power.inner.clone(),
+                        power.inner.clone(),
+                    )),
+                };
+            }
         }
-        Self::from_units(&units)
+        result
     }
 
     pub(crate) fn find_units(&self, search: &[u16], start: usize) -> Option<usize> {
         if search.is_empty() {
-            return Some(start.min(self.units.len()));
+            return Some(start.min(self.units().len()));
         }
-        if search.len() > self.units.len() {
+        if search.len() > self.units().len() {
             return None;
         }
-        (start..=self.units.len().saturating_sub(search.len()))
-            .find(|index| self.units[*index..*index + search.len()] == *search)
+        (start..=self.units().len().saturating_sub(search.len()))
+            .find(|index| self.units()[*index..*index + search.len()] == *search)
     }
 
     pub(crate) fn split_units(&self, separator: &[u16]) -> Vec<Self> {
         if separator.is_empty() {
             return self
-                .units
+                .units()
                 .iter()
                 .map(|unit| Self::from_units(std::slice::from_ref(unit)))
                 .collect();
@@ -222,11 +282,34 @@ impl JsString {
         let mut parts = Vec::new();
         let mut cursor = 0;
         while let Some(offset) = self.find_units(separator, cursor) {
-            parts.push(Self::from_units(&self.units[cursor..offset]));
+            parts.push(Self::from_units(&self.units()[cursor..offset]));
             cursor = offset + separator.len();
         }
-        parts.push(Self::from_units(&self.units[cursor..]));
+        parts.push(Self::from_units(&self.units()[cursor..]));
         parts
+    }
+}
+
+impl PartialEq for JsString {
+    fn eq(&self, other: &Self) -> bool {
+        self.units() == other.units()
+    }
+}
+
+impl Eq for JsString {}
+
+impl Hash for JsString {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.units().hash(state);
+    }
+}
+
+impl std::fmt::Debug for JsString {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("JsString")
+            .field(&self.host_string())
+            .finish()
     }
 }
 
@@ -238,9 +321,9 @@ impl From<&str> for JsString {
 
 impl From<String> for JsString {
     fn from(value: String) -> Self {
+        let units = Rc::from(value.encode_utf16().collect::<Vec<_>>());
         Self {
-            units: Rc::from(value.encode_utf16().collect::<Vec<_>>()),
-            host: OnceCell::new(),
+            inner: Rc::new(JsStringInner::flat(units, Some(value))),
         }
     }
 }
@@ -266,42 +349,6 @@ impl std::fmt::Display for JsString {
 #[cfg(test)]
 mod tests {
     use super::JsString;
-    use std::hash::{DefaultHasher, Hash, Hasher};
-
-    fn hash(string: &JsString) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        string.hash(&mut hasher);
-        hasher.finish()
-    }
-
-    #[test]
-    fn host_text_is_lazy_and_does_not_affect_string_identity() {
-        let cold = JsString::from_str("ascii");
-        let warm = JsString::from_units(cold.units());
-
-        assert!(cold.host.get().is_none());
-        assert!(warm.host.get().is_none());
-        assert_eq!(cold, warm);
-        assert_eq!(hash(&cold), hash(&warm));
-
-        assert_eq!(warm.host_string(), "ascii");
-        assert!(warm.host.get().is_some());
-        assert_eq!(cold, warm);
-        assert_eq!(hash(&cold), hash(&warm));
-    }
-
-    #[test]
-    fn lossless_host_view_check_does_not_materialize_the_view() {
-        let paired = JsString::from_units(&[0xD83E, 0xDD80]);
-        let lone = JsString::from_units(&[0xD800]);
-
-        assert!(paired.has_lossless_host_string());
-        assert!(!lone.has_lossless_host_string());
-        assert!(paired.host.get().is_none());
-        assert!(lone.host.get().is_none());
-        assert_eq!(lone.host_string(), "�");
-        assert_eq!(lone.units(), &[0xD800]);
-    }
 
     #[test]
     fn concatenation_length_checks_the_limit_and_arithmetic_overflow() {
@@ -349,6 +396,18 @@ mod tests {
     }
 
     #[test]
+    fn concatenation_keeps_utf16_units_and_flattens_on_demand() {
+        let mut value = JsString::from_units(&[0xD800, b'a' as u16]);
+        value.push_js_string(&JsString::from_str("bc"));
+        assert_eq!(value.units().len(), 4);
+        assert_eq!(
+            value.units(),
+            &[0xD800, b'a' as u16, b'b' as u16, b'c' as u16]
+        );
+        assert_eq!(value.host_string(), "�abc");
+    }
+
+    #[test]
     fn repeats_units_without_reencoding_surrogates() {
         let value = JsString::from_units(&[0xD800, b'a' as u16]);
         let repeated = value.repeat(2);
@@ -366,5 +425,21 @@ mod tests {
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0].units(), &[0xD800]);
         assert_eq!(parts[1].units(), &[0xDC00]);
+    }
+
+    #[test]
+    fn host_text_is_lazy_and_utf16_remains_authoritative() {
+        let paired = JsString::from_units(&[0xD83E, 0xDD80]);
+        let lone = JsString::from_units(&[0xD800]);
+
+        assert!(paired.inner.host.get().is_none());
+        assert!(lone.inner.host.get().is_none());
+        assert!(paired.has_lossless_host_string());
+        assert!(!lone.has_lossless_host_string());
+        assert!(paired.inner.host.get().is_none());
+        assert!(lone.inner.host.get().is_none());
+        assert_eq!(lone.host_string(), "�");
+        assert_eq!(lone.units(), &[0xD800]);
+        assert!(lone.inner.host.get().is_some());
     }
 }

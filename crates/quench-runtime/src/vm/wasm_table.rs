@@ -21,7 +21,7 @@ impl<H: Host> Vm<H> {
         }
         // Externrefs can carry any live host value, including an opaque GC object.
         if ty.heap_type() == wasmparser::HeapType::EXTERN {
-            return !value.is_heap() || self.heap.get(value).is_some();
+            return !value.is_heap() || self.heap.is_live(value);
         }
         if matches!(self.heap.get(value), Some(Cell::WasmExtern(_))) {
             return matches!(
@@ -440,7 +440,7 @@ mod tests {
         vm.release_root(handle);
         vm.release_root(second_handle);
         vm.collect_now(importer.residual());
-        assert!(vm.heap.get(environment).is_some());
+        assert!(vm.heap.is_live(environment));
         assert_eq!(
             vm.invoke_wasm(&second, 0, &[]).unwrap(),
             Some(WasmValue::I32(17))
@@ -462,7 +462,7 @@ mod tests {
         vm.release_root(second.environment);
         vm.collect_now(importer.residual());
         for value in [environment, table, function] {
-            assert!(vm.heap.get(value).is_none());
+            assert!(!vm.heap.is_live(value));
         }
     }
 
@@ -548,17 +548,17 @@ mod tests {
         vm.wasm_table_fill(table, 0, function, 1).unwrap();
         assert!(vm.release_root(first.environment));
         vm.collect_now(module.residual());
-        assert!(vm.heap.get(first_env).is_some());
+        assert!(vm.heap.is_live(first_env));
         assert!(
             matches!(vm.heap.get(function), Some(Cell::Function { env, .. }) if *env == first_env)
         );
         assert_eq!(vm.wasm_table_get(table, 0).unwrap(), function);
         assert!(vm.release_root(second.environment));
         vm.collect_now(module.residual());
-        assert!(vm.heap.get(first_env).is_none());
-        assert!(vm.heap.get(second_env).is_none());
-        assert!(vm.heap.get(function).is_none());
-        assert!(vm.heap.get(table).is_none());
+        assert!(!vm.heap.is_live(first_env));
+        assert!(!vm.heap.is_live(second_env));
+        assert!(!vm.heap.is_live(function));
+        assert!(!vm.heap.is_live(table));
     }
 }
 
@@ -694,13 +694,13 @@ mod reference_boundary_tests {
         assert!(vm.release_root(imported_instance.environment));
         assert!(vm.release_root(instance.environment));
         vm.collect_now(module.residual());
-        assert!(vm.heap.get(table).is_none());
-        assert!(vm.heap.get(binding).is_none());
-        assert!(vm.heap.get(host_value).is_some());
+        assert!(!vm.heap.is_live(table));
+        assert!(!vm.heap.is_live(binding));
+        assert!(vm.heap.is_live(host_value));
         assert!(vm.release_root(table_root));
         vm.collect_now(module.residual());
-        assert!(vm.heap.get(imported_table).is_none());
-        assert!(vm.heap.get(host_value).is_none());
+        assert!(!vm.heap.is_live(imported_table));
+        assert!(!vm.heap.is_live(host_value));
     }
 }
 
@@ -845,7 +845,7 @@ mod element_owner_tests {
         );
         assert!(vm.release_root(first.environment));
         vm.collect_now(module.residual());
-        assert!(vm.heap.get(first_env).is_some());
+        assert!(vm.heap.is_live(first_env));
         assert_eq!(
             vm.invoke_wasm(&second, 1, &[WasmValue::I64(1)]).unwrap(),
             Some(WasmValue::I32(23))
@@ -857,9 +857,9 @@ mod element_owner_tests {
         );
         vm.wasm_table_fill(second_table, 1, Value::NULL, 1).unwrap();
         vm.collect_now(module.residual());
-        assert!(vm.heap.get(first_env).is_none());
-        assert!(vm.heap.get(passive).is_none());
-        assert!(vm.heap.get(function).is_none());
+        assert!(!vm.heap.is_live(first_env));
+        assert!(!vm.heap.is_live(passive));
+        assert!(!vm.heap.is_live(function));
         // A different program interns these types in a different order. A
         // foreign closure keeps its own environment, and types compare by shape.
         let foreign = Engine::lower_wasm_module_definition(
@@ -920,11 +920,11 @@ mod element_owner_tests {
         );
         assert!(vm.release_root(foreign_instance.environment));
         vm.collect_now(module.residual());
-        assert!(vm.heap.get(foreign_env).is_some());
+        assert!(vm.heap.is_live(foreign_env));
         vm.wasm_table_fill(second_table, 1, Value::NULL, 1).unwrap();
         vm.collect_now(module.residual());
-        assert!(vm.heap.get(foreign_env).is_none());
-        assert!(vm.heap.get(foreign_function).is_none());
+        assert!(!vm.heap.is_live(foreign_env));
+        assert!(!vm.heap.is_live(foreign_function));
         let mut invalid = (*module.program).clone();
         let function = &mut invalid.functions[1];
         let target = function
@@ -986,6 +986,6 @@ mod element_owner_tests {
         }
         assert!(vm.release_root(second.environment));
         vm.collect_now(module.residual());
-        assert!(vm.heap.get(second_env).is_none());
+        assert!(!vm.heap.is_live(second_env));
     }
 }

@@ -878,12 +878,17 @@ impl<H: Host> Vm<H> {
                 }
                 return Ok(iterator);
             }
-            let kind = match self.heap.get(source) {
-                Some(Cell::Array { .. }) | Some(Cell::TypedArray { .. }) => IteratorKind::Array,
-                Some(Cell::String(_)) => IteratorKind::String,
-                Some(Cell::Map { .. }) => IteratorKind::MapEntries,
-                Some(Cell::Set { .. }) => IteratorKind::SetValues,
-                _ => return Err(self.type_error(p, "value is not iterable".into())),
+            let kind = if self.heap.array(source).is_some()
+                || matches!(self.heap.get(source), Some(Cell::TypedArray { .. }))
+            {
+                IteratorKind::Array
+            } else {
+                match self.heap.get(source) {
+                    Some(Cell::String(_)) => IteratorKind::String,
+                    Some(Cell::Map { .. }) => IteratorKind::MapEntries,
+                    Some(Cell::Set { .. }) => IteratorKind::SetValues,
+                    _ => return Err(self.type_error(p, "value is not iterable".into())),
+                }
             };
             Ok(self.heap.alloc(Cell::Iterator {
                 object: Box::new(Self::empty_object(self.iterator_proto)),
@@ -1888,15 +1893,10 @@ impl<H: Host> Vm<H> {
     ) -> Result<(Vec<Value>, Option<Vec<Value>>), JsError> {
         let keys_value = self.object_own_keys(p, input)?;
         let keys_root = self.heap.root(keys_value);
-        let keys = match self.heap.get(keys_value) {
-            Some(Cell::Array {
-                object: array_object,
-            }) => {
-                let elements = array_object.elements();
-                elements.as_ref().clone()
-            }
-            _ => Vec::new(),
-        };
+        let keys = self
+            .heap
+            .array_elements(keys_value)
+            .map_or_else(Vec::new, |elements| elements.as_ref().clone());
         let mut iterators = Vec::new();
         let mut output_keys = Vec::new();
         let mut roots = Vec::new();
@@ -1910,10 +1910,11 @@ impl<H: Host> Vm<H> {
                     let name = self.coerce_js_string(p, property_key)?;
                     Some(self.intern_atom(&name.host_string()))
                 };
-                let enumerable = if matches!(
-                    self.heap.get(input),
-                    Some(Cell::Proxy { .. } | Cell::Array { .. } | Cell::TypedArray { .. })
-                ) {
+                let enumerable = if self.heap.array(input).is_some()
+                    || matches!(
+                        self.heap.get(input),
+                        Some(Cell::Proxy { .. } | Cell::TypedArray { .. })
+                    ) {
                     let descriptor =
                         self.object_get_own_property_descriptor(p, &[input, property_key])?;
                     !descriptor.is_undefined() && self.descriptor_flag(descriptor, "enumerable")
@@ -2822,18 +2823,15 @@ impl<H: Host> Vm<H> {
     pub(super) fn async_from_sync_value(&mut self, args: &[Value]) -> Result<Value, JsError> {
         let value = args.first().copied().unwrap_or(Value::UNDEFINED);
         let env = self.active_native_env().unwrap_or(Value::UNDEFINED);
-        let (done, iterator) = match self.heap.get(env) {
-            Some(Cell::Array {
-                object: array_object,
-            }) => {
-                let elements = array_object.elements();
-                (
-                    elements.first().is_some_and(|done| self.truthy(*done)),
-                    elements.get(1).copied().unwrap_or(Value::UNDEFINED),
-                )
-            }
-            _ => (false, Value::UNDEFINED),
-        };
+        let (done, iterator) =
+            self.heap
+                .array_elements(env)
+                .map_or((false, Value::UNDEFINED), |elements| {
+                    (
+                        elements.first().is_some_and(|done| self.truthy(*done)),
+                        elements.get(1).copied().unwrap_or(Value::UNDEFINED),
+                    )
+                });
         if done {
             if let Some(Cell::Iterator { done, .. }) = self.heap.get_mut(iterator) {
                 *done = true;
@@ -2849,18 +2847,15 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let reason = args.first().copied().unwrap_or(Value::UNDEFINED);
         let env = self.active_native_env().unwrap_or(Value::UNDEFINED);
-        let (iterator, close_on_rejection) = match self.heap.get(env) {
-            Some(Cell::Array {
-                object: array_object,
-            }) => {
-                let elements = array_object.elements();
-                (
-                    elements.get(1).copied().unwrap_or(Value::UNDEFINED),
-                    elements.get(2).is_some_and(|close| self.truthy(*close)),
-                )
-            }
-            _ => (Value::UNDEFINED, false),
-        };
+        let (iterator, close_on_rejection) =
+            self.heap
+                .array_elements(env)
+                .map_or((Value::UNDEFINED, false), |elements| {
+                    (
+                        elements.get(1).copied().unwrap_or(Value::UNDEFINED),
+                        elements.get(2).is_some_and(|close| self.truthy(*close)),
+                    )
+                });
         if close_on_rejection {
             let _ = self.iterator_close(p, iterator);
             if let Some(Cell::Iterator { done, .. }) = self.heap.get_mut(iterator) {

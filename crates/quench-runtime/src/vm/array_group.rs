@@ -8,15 +8,10 @@ impl<H: Host> Vm<H> {
         this: Value,
         args: &[Value],
     ) -> Result<Value, JsError> {
-        let length = match self.heap.get(this) {
-            Some(Cell::Array {
-                object: array_object,
-            }) => {
-                let elements = array_object.elements();
-                self.heap.sparse_length(this).unwrap_or(elements.len())
-            }
-            _ => return Err(JsError("array group receiver is not array".into())),
+        let Some(elements) = self.heap.array_elements(this) else {
+            return Err(JsError("array group receiver is not array".into()));
         };
+        let length = self.heap.sparse_length(this).unwrap_or(elements.len());
         let callback = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_function(callback) {
             return Err(JsError("array group callback is not callable".into()));
@@ -56,13 +51,9 @@ impl<H: Host> Vm<H> {
                     })
                 });
             if let Some(existing) = existing {
-                let Some(Cell::Array {
-                    object: array_object,
-                }) = self.heap.get_mut(existing)
-                else {
+                let Some(elements) = self.heap.array_elements_mut(existing) else {
                     return Err(JsError("array group bucket is not an array".into()));
                 };
-                let elements = array_object.elements_mut();
                 Rc::make_mut(elements).push(value);
                 continue;
             }

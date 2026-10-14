@@ -26,6 +26,13 @@ macro_rules! scalar_conversions {
     };
 }
 
+/// The truncated values a `bits`-wide integer represents: `lower <= value <
+/// limit`.
+pub(crate) fn truncation_bounds(bits: u32, signed: bool) -> (f64, f64) {
+    let limit = 2.0_f64.powi(if signed { bits as i32 - 1 } else { bits as i32 });
+    (if signed { -limit } else { 0.0 }, limit)
+}
+
 fn trunc_to_integer(
     value: f64,
     bits: u32,
@@ -47,8 +54,7 @@ fn trunc_to_integer(
     }
 
     let value = value.trunc();
-    let limit = 2.0_f64.powi(if signed { bits as i32 - 1 } else { bits as i32 });
-    let lower = if signed { -limit } else { 0.0 };
+    let (lower, limit) = truncation_bounds(bits, signed);
     if value < lower || value >= limit {
         return Err(WasmTrap::IntegerOverflow);
     }

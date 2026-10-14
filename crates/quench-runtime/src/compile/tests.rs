@@ -213,3 +213,25 @@ fn unspecialized_entry_keeps_generic_dispatch_class() {
             .all(|function| function.dispatch == DispatchClass::General)
     );
 }
+
+#[test]
+fn constructor_source_anchor_survives_argument_move_coalescing() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let program = compile(
+            "\nthrow new Error('source snapshot');",
+            "constructor-position.js",
+        )
+        .unwrap();
+        let (pc, _) = program.functions[0]
+            .instructions()
+            .enumerate()
+            .find(|(_, instruction)| instruction.op() == Op::Construct)
+            .unwrap();
+        let position = program.source_position(0, pc as u32).unwrap();
+        assert_eq!((position.line, position.column), (2, 7));
+        program.validate().unwrap();
+    }
+}

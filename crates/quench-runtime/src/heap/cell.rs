@@ -1,6 +1,7 @@
+use super::records::RECORD_SPACE_CAPACITY;
 use super::root::WeakHandle;
 use crate::bytecode::Atom;
-use crate::value::Value;
+use crate::value::{HeapReference, Value};
 use crate::value_vec::{
     INLINE_PROPERTY_COUNT, VALUE_VEC_INTEGRITY_BITS, VALUE_VEC_START_BITS, ValueVec,
 };
@@ -966,13 +967,18 @@ pub(crate) struct Object {
     payload: ObjectPayload,
 }
 
-/// Bits of `Object::meta` holding the prototype's heap index; heap indices stay below the
-/// sentinels, which `MAX_HEAP_CELLS` bounds.
+/// Bits of `Object::meta` holding the prototype's heap reference. The field is partitioned
+/// by reference family: legacy slot indices, then one range per direct record space, then
+/// the null and undefined sentinels at the top.
 const PROTO_INDEX_BITS: u32 = (1 << 28) - 1;
 const PROTO_NULL: u32 = PROTO_INDEX_BITS;
 const PROTO_UNDEFINED: u32 = PROTO_INDEX_BITS - 1;
 /// Cells a heap may hold so that any of them can be a prototype.
-pub(crate) const MAX_HEAP_CELLS: usize = PROTO_UNDEFINED as usize;
+pub(crate) const MAX_HEAP_CELLS: usize = 1 << 27;
+const PROTO_OBJECT_RECORD_BASE: u32 = MAX_HEAP_CELLS as u32;
+const PROTO_ARRAY_RECORD_BASE: u32 = PROTO_OBJECT_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const PROTO_RECORD_END: u32 = PROTO_ARRAY_RECORD_BASE + RECORD_SPACE_CAPACITY as u32;
+const _: () = assert!(PROTO_RECORD_END <= PROTO_UNDEFINED);
 const OBJECT_ARRAY: u32 = 1 << 28;
 const OBJECT_INLINE_STORAGE: u32 = 1 << 29;
 const _: () = assert!(
@@ -1084,18 +1090,6 @@ impl ArrayObject {
         // SAFETY: as in `elements`, with `&mut self` making the borrow unique.
         unsafe { &mut (*self.object.payload.array).elements }
     }
-
-    /// The object and the element backing, transferring ownership of both.
-    pub(crate) fn into_parts(self) -> (Object, Rc<Vec<Value>>) {
-        let mut array = std::mem::ManuallyDrop::new(self);
-        // SAFETY: `array` is never dropped, so the backing and the object are each moved out
-        // exactly once.
-        unsafe {
-            let elements =
-                std::mem::ManuallyDrop::take(&mut (*array.object.payload.array).elements);
-            (std::ptr::read(&array.object), elements)
-        }
-    }
 }
 
 impl Drop for ArrayObject {
@@ -1154,17 +1148,26 @@ impl std::fmt::Debug for Object {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) enum CallSiteLocation {
+    Source {
+        file_name: String,
+        line: u32,
+        column: u32,
+    },
+    Native,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct CallSiteRecord {
-    pub(crate) file_name: String,
+    pub(crate) location: CallSiteLocation,
     pub(crate) function_name: Option<String>,
     pub(crate) this_value: Value,
-    pub(crate) line: u32,
-    pub(crate) column: u32,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum StackData {
     Captured(Vec<CallSiteRecord>),
+    Formatted(Value),
     CallSite(CallSiteRecord),
 }
 
@@ -1209,7 +1212,10 @@ impl StackData {
     #[cfg(any(feature = "profile-memory", feature = "profile-aggregate"))]
     fn allocated_bytes(&self) -> usize {
         fn record_bytes(record: &CallSiteRecord) -> usize {
-            record.file_name.capacity() + record.function_name.as_ref().map_or(0, String::capacity)
+            (match &record.location {
+                CallSiteLocation::Source { file_name, .. } => file_name.capacity(),
+                CallSiteLocation::Native => 0,
+            }) + record.function_name.as_ref().map_or(0, String::capacity)
         }
         match self {
             Self::Captured(records) => {
@@ -1217,6 +1223,7 @@ impl StackData {
                     + records.iter().map(record_bytes).sum::<usize>()
             }
             Self::CallSite(record) => record_bytes(record),
+            Self::Formatted(_) => 0,
         }
     }
 }
@@ -1255,14 +1262,16 @@ impl Object {
     }
 
     fn encode_proto(proto: Value) -> u32 {
-        match proto.heap_index() {
-            Some(index) => {
+        match proto.heap_reference() {
+            Some(HeapReference::LegacySlot(index)) => {
                 assert!(
-                    index < PROTO_UNDEFINED,
+                    (index as usize) < MAX_HEAP_CELLS,
                     "heap exhausted the prototype index space"
                 );
                 index
             }
+            Some(HeapReference::ObjectRecord(id)) => PROTO_OBJECT_RECORD_BASE + id,
+            Some(HeapReference::ArrayRecord(id)) => PROTO_ARRAY_RECORD_BASE + id,
             None if proto.is_null() => PROTO_NULL,
             None => {
                 debug_assert!(proto.is_undefined(), "a prototype is an object or null");
@@ -1275,7 +1284,14 @@ impl Object {
         match self.meta & PROTO_INDEX_BITS {
             PROTO_NULL => Value::NULL,
             PROTO_UNDEFINED => Value::UNDEFINED,
-            index => Value::heap(index),
+            index if index < PROTO_OBJECT_RECORD_BASE => Value::heap(index),
+            index if index < PROTO_ARRAY_RECORD_BASE => {
+                Value::direct_object(index - PROTO_OBJECT_RECORD_BASE)
+            }
+            index => {
+                debug_assert!(index < PROTO_RECORD_END);
+                Value::direct_array(index - PROTO_ARRAY_RECORD_BASE)
+            }
         }
     }
 
@@ -1488,12 +1504,6 @@ impl Object {
         self.extras_mut().stack_data = Some(data);
     }
 
-    pub(crate) fn clear_stack_data(&mut self) {
-        if let Some(extras) = self.extras_mut_existing() {
-            extras.stack_data = None;
-        }
-    }
-
     pub(crate) fn visit_stack_data_roots(&self, mut visit: impl FnMut(Value)) {
         match self.extras().and_then(|extras| extras.stack_data.as_ref()) {
             Some(StackData::Captured(records)) => {
@@ -1502,6 +1512,7 @@ impl Object {
                 }
             }
             Some(StackData::CallSite(record)) => visit(record.this_value),
+            Some(StackData::Formatted(value)) => visit(*value),
             None => {}
         }
     }
@@ -1535,6 +1546,13 @@ impl Object {
     }
     pub(crate) fn arguments_map_mut(&mut self) -> Option<&mut Vec<u16>> {
         self.extras_mut_existing()?.arguments_map.as_mut()
+    }
+    pub(crate) fn mapped_argument_slot(&self, index: usize) -> Option<usize> {
+        self.arguments_map()?
+            .get(index)
+            .copied()
+            .filter(|slot| *slot != u16::MAX)
+            .map(usize::from)
     }
     pub(crate) fn set_arguments_map(&mut self, mapping: Vec<u16>) {
         self.extras_mut().arguments_map = Some(mapping);
@@ -1577,11 +1595,6 @@ impl Object {
     pub(crate) fn set_deferred_module(&mut self, module: Option<crate::ModuleSource>) {
         self.extras_mut().deferred_module = module;
     }
-    /// Whether the object owns no heap allocation of its own, so discarding it needs no drop.
-    pub(crate) fn owns_no_allocation(&self) -> bool {
-        self.extras_pointer().is_none()
-    }
-
     pub(crate) fn private_names(&self) -> &[PrivateBrand] {
         self.extras().map_or(&[], |extras| &extras.private_names)
     }
@@ -1605,6 +1618,74 @@ impl Object {
             .find_map(|(name, program, slot)| (*name == atom).then_some((*program, *slot)))
     }
 }
+
+const _: () = assert!(std::mem::size_of::<Object>() == 3 * std::mem::size_of::<Value>());
+
+#[cfg(test)]
+mod object_payload_tests {
+    use super::Object;
+    use crate::value::Value;
+    use crate::value_vec::ValueVec;
+
+    #[test]
+    fn out_of_line_extras_preserve_inline_values_and_clone_state() {
+        let mut object = Object::with_property_storage(
+            Value::NULL,
+            ValueVec::inline_property_storage(7),
+            [Value::integer(11), Value::integer(13)],
+        );
+        object.set_arguments_object();
+        assert!(object.is_arguments_object());
+        assert_eq!(object.shape(), 7);
+        assert_eq!(
+            object.inline_properties().copied(),
+            Some([Value::integer(11), Value::integer(13)])
+        );
+
+        let mut cloned = object.clone();
+        cloned.set_inline_property(0, Value::integer(17));
+        assert_eq!(cloned.inline_properties().unwrap()[0], Value::integer(17));
+        assert_eq!(object.inline_properties().unwrap()[0], Value::integer(11));
+        assert!(cloned.is_arguments_object());
+
+        object.set_shape(19);
+        assert_eq!(object.shape(), 19);
+        assert!(object.is_arguments_object());
+    }
+
+    #[test]
+    fn prototype_references_round_trip_through_every_family() {
+        for proto in [
+            Value::NULL,
+            Value::UNDEFINED,
+            Value::heap(0),
+            Value::heap(super::MAX_HEAP_CELLS as u32 - 1),
+            Value::direct_object(0),
+            Value::direct_object(super::RECORD_SPACE_CAPACITY as u32 - 1),
+            Value::direct_array(0),
+            Value::direct_array(super::RECORD_SPACE_CAPACITY as u32 - 1),
+        ] {
+            let mut object = Object::new(proto);
+            assert_eq!(object.proto(), proto);
+            object.set_proto(Value::NULL);
+            object.set_proto(proto);
+            assert_eq!(object.proto(), proto);
+        }
+    }
+
+    #[test]
+    fn out_of_line_extras_keep_arena_storage_mode_and_integrity() {
+        let mut properties = ValueVec::new();
+        properties.set_extensible(false);
+        let mut object =
+            Object::with_property_storage(Value::NULL, properties, [Value::UNDEFINED; 2]);
+        object.set_module_namespace();
+        assert!(object.is_module_namespace());
+        assert!(!object.properties().has_inline_property_storage());
+        assert!(!object.is_extensible());
+    }
+}
+
 /// Internal methods installed by ProxyCreate, retained after target release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProxyKind {
@@ -1940,7 +2021,7 @@ pub(crate) enum Cell {
     WasmElements(Vec<Value>),
     /// One memory identity owns its bytes and original optional maximum.
     WasmGlobal { value: Value, ty: crate::WasmType, declarations: Box<crate::WasmTypes>, mutable: bool },
-    WasmMemory { bytes: std::sync::Arc<crate::wasm::memory::MemoryStorage>, ty: Box<wasmparser::MemoryType> },
+    WasmMemory { bytes: std::rc::Rc<crate::wasm::memory::MemoryStorage>, ty: Box<wasmparser::MemoryType> },
     /// Typed references owned by a Wasm instance, traced like other heap edges.
     WasmTable {
         table64: bool,

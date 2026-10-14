@@ -123,6 +123,38 @@ fn fallback_descriptor_edges_follow_their_owner_lifetime() {
 }
 
 #[test]
+fn minor_collection_roots_external_edges_of_old_owners() {
+    use super::{DEFAULT_PROPERTY_ATTRIBUTES, PropertyAttributes, property_key::PropertyKey};
+    use crate::heap::Cell;
+
+    let program = Engine::specialize("", "minor-external-roots.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    let owner = vm.object();
+    let owner_root = vm.heap.root(owner);
+    vm.collect_slow(&program, true);
+
+    let getter = vm.heap.alloc(Cell::String("young getter".into()));
+    let getter_weak = vm.heap.weak_handle(getter).unwrap();
+    let key = PropertyKey::string(vm.intern_atom("field"));
+    vm.set_property_attributes(
+        owner,
+        key,
+        PropertyAttributes {
+            getter: Some(getter),
+            ..DEFAULT_PROPERTY_ATTRIBUTES
+        },
+    );
+
+    vm.collect_slow(&program, false);
+    assert_eq!(vm.heap.weak_value(getter_weak), Some(getter));
+
+    vm.set_property_attributes(owner, key, DEFAULT_PROPERTY_ATTRIBUTES);
+    vm.collect_slow(&program, true);
+    assert!(vm.heap.weak_value(getter_weak).is_none());
+    assert!(vm.heap.release_root(owner_root));
+}
+
+#[test]
 fn shape_roots_keep_symbols_and_active_accessors_alive() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
     use crate::heap::Cell;
@@ -349,8 +381,8 @@ fn realm_lexical_state_follows_the_active_global_and_stays_rooted() {
 
     let program = Engine::specialize("print(0);", "realm-switch.js").unwrap();
     vm.collect_now(&program);
-    assert!(vm.heap.get(first_global).is_some());
-    assert!(vm.heap.get(second_global).is_some());
+    assert!(vm.heap.is_live(first_global));
+    assert!(vm.heap.is_live(second_global));
 
     assert_eq!(vm.switch_realm_global(first_global), second_global);
     assert!(
@@ -455,7 +487,7 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
         first_segmenter_prototype,
         second_segmenter_prototype,
     ] {
-        assert!(vm.heap.get(object).is_some());
+        assert!(vm.heap.is_live(object));
     }
     assert_eq!(
         vm.realm
@@ -590,8 +622,8 @@ fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let promise_root = vm.heap.root(promise);
     vm.collect_now(&program);
 
-    assert!(vm.heap.get(promise).is_some());
-    assert!(vm.heap.get(result).is_some());
+    assert!(vm.heap.is_live(promise));
+    assert!(vm.heap.is_live(result));
     assert_eq!(
         vm.realm
             .promise
@@ -740,6 +772,61 @@ fn accessor_descriptors_share_get_and_set_property_semantics() {
             );
         }
     }
+}
+
+#[test]
+fn record_receivers_cache_virtual_names_and_inherited_fields_like_ordinary_cells() {
+    // Objects built by `new` live in record spaces. Their `size`/`length` reads and fields
+    // inherited two prototypes up must reach the same cache tiers as legacy ordinary cells,
+    // while exotic receivers sharing a site keep their own `length`.
+    let source = r#"
+      function Collection() { this.elms = [1, 2, 3]; }
+      Collection.prototype.size = function () { return this.elms.length; };
+      function Base() {}
+      Base.prototype.kind = "base";
+      function Mid() {}
+      Mid.prototype = new Base();
+      function Leaf() {}
+      Leaf.prototype = new Mid();
+      function readSize(x) { return x.size; }
+      function readLength(x) { return x.length; }
+      function readKind(x) { return x.kind; }
+      var collection = new Collection();
+      var leaf = new Leaf();
+      var holder = { length: "proto-length" };
+      var ordinary = Object.create(holder);
+      var array = [];
+      Object.setPrototypeOf(array, holder);
+      var text = new String("abcd");
+      Object.setPrototypeOf(text, holder);
+      for (var i = 0; i < 3; i++) {
+        print(typeof readSize(collection) + " " + collection.size() + " " + readKind(leaf));
+        print(readLength(ordinary) + " " + readLength(array) + " " + readLength(text));
+      }
+      Base.prototype.kind = "changed";
+      print(readKind(leaf));
+    "#;
+    let output = Rc::new(RefCell::new(Vec::new()));
+    let mut vm = Vm::new(RecordingHost(output.clone()));
+    let program = Engine::specialize(source, "record-virtual-names.js").unwrap();
+    vm.execute(&program).unwrap();
+    let mut expected = Vec::new();
+    for _ in 0..3 {
+        expected.push("function 3 base".to_owned());
+        expected.push("proto-length 0 4".to_owned());
+    }
+    expected.push("changed".to_owned());
+    assert_eq!(*output.borrow(), expected);
+    assert!(
+        vm.field_caches
+            .iter()
+            .any(|cache| cache.holder != NO_FIELD_HOLDER),
+        "a prototype-held `size` read on a record receiver filled a holder entry"
+    );
+    assert!(
+        !vm.inherited_field_caches.is_empty(),
+        "a field two prototypes above a record receiver filled the inherited cache"
+    );
 }
 
 #[test]
@@ -939,13 +1026,13 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
     }));
 
     vm.collect_now(&program);
-    assert!(vm.heap.get(live).is_some());
-    assert!(vm.heap.get(original).is_some());
+    assert!(vm.heap.is_live(live));
+    assert!(vm.heap.is_live(original));
 
     vm.frames.pop();
     vm.collect_now(&program);
-    assert!(vm.heap.get(live).is_none());
-    assert!(vm.heap.get(original).is_none());
+    assert!(!vm.heap.is_live(live));
+    assert!(!vm.heap.is_live(original));
 }
 
 #[test]
@@ -1896,6 +1983,8 @@ fn definition_batch_roots_release_after_each_completion() {
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
             let result = vm.object_define_properties(&program, &values[..2]);
+            // End this direct host job before checking temporary-root cleanup.
+            vm.clear_kept_objects();
             match phase {
                 "success" => assert_eq!(result.unwrap(), values[0]),
                 "invalid-late" | "define-reject" => {
@@ -2194,25 +2283,10 @@ fn error_stack_setter_roots_release_after_each_completion() {
             let roots = vm.heap.root_count_for_test();
             let calls = vm.active_call_roots.len();
             let outcome = vm.error_stack_setter(&program, target, &[value]);
-            assert_eq!(
-                outcome.is_ok(),
-                matches!(phase, "missing" | "data" | "accessor"),
-                "{phase}"
-            );
-            if let Err(error) = outcome {
-                if phase.ends_with("-throw") {
-                    let atom = vm.intern_atom("marker");
-                    assert_eq!(
-                        error.thrown_value(),
-                        vm.own_property(vm.realm.globals, atom)
-                    );
-                } else {
-                    assert!(
-                        vm.format_error(&program, &error).starts_with("TypeError:"),
-                        "{phase}"
-                    );
-                }
-            }
+            // A borrowed V8 stack setter ignores receivers without captured
+            // stack data, including proxies, primitives and arbitrary accessors.
+            // It must not invoke their descriptor or setter hooks.
+            assert!(outcome.is_ok(), "{phase}");
             assert_eq!(vm.heap.root_count_for_test(), roots, "{phase}");
             assert_eq!(vm.active_call_roots.len(), calls);
             vm.collect_now(&program);
@@ -3632,8 +3706,8 @@ fn closure_identity_cache_prunes_collected_cells_and_keeps_rooted_cells() {
     let kept = vm.closure(&program, 1, Value::NULL).unwrap();
     let root = vm.root(kept);
     vm.collect_now(&program);
-    assert!(vm.heap.get(dead).is_none());
-    assert!(vm.heap.get(kept).is_some());
+    assert!(!vm.heap.is_live(dead));
+    assert!(vm.heap.is_live(kept));
     assert!(
         !vm.function_values
             .contains_key(&(super::program_store::ProgramId::MAIN, 0))
@@ -3716,7 +3790,7 @@ fn finalization_unregister_does_not_match_a_reused_dead_token_slot() {
     let registry_root = vm.heap.root(registry);
 
     assert!(vm.heap.collect([target, registry]).is_empty());
-    assert!(vm.heap.get(target).is_some());
+    assert!(vm.heap.is_live(target));
     let crate::heap::Cell::FinalizationRegistry { entries, .. } = vm.heap.get(registry).unwrap()
     else {
         panic!("registry remains live");
@@ -3938,20 +4012,20 @@ fn suspended_continuations_are_rooted_until_generation_checked_resume() {
         promise: Value::UNDEFINED,
     });
     vm.collect_now(&program);
-    assert!(vm.heap.get(live).is_some());
-    assert!(vm.heap.get(held).is_some());
-    assert!(vm.heap.get(original).is_some());
-    assert!(vm.heap.get(scope).is_some());
+    assert!(vm.heap.is_live(live));
+    assert!(vm.heap.is_live(held));
+    assert!(vm.heap.is_live(original));
+    assert!(vm.heap.is_live(scope));
     assert_eq!(
         vm.resume_continuation(id).unwrap().original_arguments,
         [original]
     );
     assert!(vm.resume_continuation(id).is_none());
     vm.collect_now(&program);
-    assert!(vm.heap.get(live).is_none());
-    assert!(vm.heap.get(held).is_none());
-    assert!(vm.heap.get(original).is_none());
-    assert!(vm.heap.get(scope).is_none());
+    assert!(!vm.heap.is_live(live));
+    assert!(!vm.heap.is_live(held));
+    assert!(!vm.heap.is_live(original));
+    assert!(!vm.heap.is_live(scope));
 }
 
 #[test]
@@ -4016,15 +4090,18 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         fixed_this: false,
     };
 
-    frame.prepare_registers(1);
+    frame.prepare_registers(1, crate::bytecode::InitialRegister::Undefined);
     assert_eq!(frame.registers, [Value::UNDEFINED]);
 
     frame.registers[0] = Value::heap(13);
-    frame.prepare_registers(3);
+    frame.prepare_registers(3, crate::bytecode::InitialRegister::Undefined);
     assert_eq!(
         frame.registers,
         [Value::UNDEFINED, Value::UNDEFINED, Value::UNDEFINED]
     );
+    frame.registers[1] = Value::heap(13);
+    frame.prepare_registers(2, crate::bytecode::InitialRegister::I32Zero);
+    assert_eq!(frame.registers, [Value::integer(0), Value::integer(0)]);
     assert_eq!(frame.original_arguments, [Value::heap(14)]);
     frame.context = super::activation::CallContext::Function(Value::heap(15));
     let mut recycled = frame;
@@ -4080,10 +4157,18 @@ fn error_data_survives_collection_without_retaining_dead_errors() {
             let error = vm.construct_error_native(&program, kind, &[]).unwrap();
             assert!(vm.error_is_error(error));
             let root = vm.heap.root(error);
+            assert!(matches!(
+                vm.embedding_builtin_data(root),
+                Ok(Some(crate::BuiltinData::Error))
+            ));
             let weak = vm.heap.weak_handle(error).unwrap();
             vm.collect_now(&program);
             let error = vm.heap.root_value(root).unwrap();
             assert!(vm.error_is_error(error));
+            assert!(matches!(
+                vm.embedding_builtin_data(root),
+                Ok(Some(crate::BuiltinData::Error))
+            ));
             let clone = vm
                 .heap
                 .alloc(super::Cell::Object(vm.object_data(error).unwrap().clone()));
@@ -4135,7 +4220,7 @@ fn aggregate_error_intrinsics_and_reason_roots_follow_the_active_realm() {
                 vm.set_property(global, atom, Value::NULL).unwrap();
             }
             vm.collect_now(&program);
-            assert!(vm.heap.get(promise_prototype).is_some());
+            assert!(vm.heap.is_live(promise_prototype));
             let roots = vm.heap.root_count_for_test();
             let reason = vm.object();
             let reason_weak = vm.heap.weak_handle(reason).unwrap();
@@ -4402,15 +4487,11 @@ fn property_copy_roots_release_after_callback_completion() {
                 let operands = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let args = match vm.heap.get(operands) {
-                    Some(super::Cell::Array {
-                        object: array_object,
-                    }) => {
-                        let elements = array_object.elements();
-                        elements.as_ref().clone()
-                    }
-                    _ => panic!("operands"),
-                };
+                let args = vm
+                    .heap
+                    .array_elements(operands)
+                    .map(|elements| elements.as_ref().clone())
+                    .expect("operands");
                 let handles = args
                     .iter()
                     .map(|v| vm.heap.weak_handle(*v).unwrap())
@@ -4499,15 +4580,11 @@ fn descriptor_snapshot_and_assign_root_fresh_native_arguments() {
                 let operands = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let args = match vm.heap.get(operands) {
-                    Some(super::Cell::Array {
-                        object: array_object,
-                    }) => {
-                        let elements = array_object.elements();
-                        elements.as_ref().clone()
-                    }
-                    _ => panic!("operands"),
-                };
+                let args = vm
+                    .heap
+                    .array_elements(operands)
+                    .map(|elements| elements.as_ref().clone())
+                    .expect("operands");
                 let source_handle = vm.heap.weak_handle(args[1]).unwrap();
                 let later_handle = vm.heap.weak_handle(args[2]).unwrap();
                 let first_atom = vm.intern_atom("first");
@@ -4653,15 +4730,11 @@ fn for_in_roots_release_after_prototype_and_key_callbacks() {
                         None
                     }
                     Ok(result) => {
-                        let elements = match vm.heap.get(result) {
-                            Some(super::Cell::Array {
-                                object: array_object,
-                            }) => {
-                                let elements = array_object.elements();
-                                elements.as_ref().clone()
-                            }
-                            _ => panic!("key snapshot"),
-                        };
+                        let elements = vm
+                            .heap
+                            .array_elements(result)
+                            .map(|elements| elements.as_ref().clone())
+                            .expect("key snapshot");
                         let names = elements
                             .into_iter()
                             .map(|key| vm.to_string(&program, key).unwrap())
@@ -4788,15 +4861,11 @@ fn proxy_introspection_roots_release_after_nested_validation() {
                 let operands = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let args = match vm.heap.get(operands) {
-                    Some(super::Cell::Array {
-                        object: array_object,
-                    }) => {
-                        let elements = array_object.elements();
-                        elements.as_ref().clone()
-                    }
-                    _ => panic!("operands"),
-                };
+                let args = vm
+                    .heap
+                    .array_elements(operands)
+                    .map(|elements| elements.as_ref().clone())
+                    .expect("operands");
                 let handles = args
                     .iter()
                     .map(|value| vm.heap.weak_handle(*value).unwrap())
@@ -4940,15 +5009,11 @@ fn proxy_reads_root_operands_and_results_through_nested_callbacks() {
                 let operands = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let args = match vm.heap.get(operands) {
-                    Some(super::Cell::Array {
-                        object: array_object,
-                    }) => {
-                        let elements = array_object.elements();
-                        elements.as_ref().clone()
-                    }
-                    _ => panic!("operands"),
-                };
+                let args = vm
+                    .heap
+                    .array_elements(operands)
+                    .map(|elements| elements.as_ref().clone())
+                    .expect("operands");
                 let handles = args
                     .iter()
                     .map(|value| vm.heap.weak_handle(*value).unwrap())
@@ -5413,15 +5478,11 @@ fn proxy_presence_and_delete_root_fresh_operands_and_restore_scopes() {
                     let values = vm
                         .call_value(&program, factory, Value::UNDEFINED, &[])
                         .unwrap();
-                    let (proxy, raw) = match vm.heap.get(values) {
-                        Some(super::Cell::Array {
-                            object: array_object,
-                        }) => {
-                            let elements = array_object.elements();
-                            (elements[0], elements[1])
-                        }
-                        _ => panic!("operands"),
-                    };
+                    let (proxy, raw) = vm
+                        .heap
+                        .array_elements(values)
+                        .map(|elements| (elements[0], elements[1]))
+                        .expect("operands");
                     let key = if symbol {
                         vm.heap.alloc(super::Cell::Symbol(Some("entry".into())))
                     } else if phase == "coercion" {
@@ -5787,15 +5848,11 @@ fn coerced_binary_operands_restore_roots_after_each_completion() {
                     let values = vm
                         .call_value(&program, factory, Value::UNDEFINED, &[])
                         .unwrap();
-                    let (left, right) = match vm.heap.get(values) {
-                        Some(super::Cell::Array {
-                            object: array_object,
-                        }) => {
-                            let elements = array_object.elements();
-                            (elements[0], elements[1])
-                        }
-                        _ => panic!("operands"),
-                    };
+                    let (left, right) = vm
+                        .heap
+                        .array_elements(values)
+                        .map(|elements| (elements[0], elements[1]))
+                        .expect("operands");
                     let handles = [left, right].map(|value| vm.heap.weak_handle(value).unwrap());
                     let roots = vm.heap.root_count_for_test();
                     let calls = vm.active_call_roots.len();
@@ -5996,15 +6053,11 @@ fn instanceof_roots_fresh_inputs_across_lookup_and_traversal() {
                 let values = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let (value, constructor) = match vm.heap.get(values) {
-                    Some(super::Cell::Array {
-                        object: array_object,
-                    }) => {
-                        let elements = array_object.elements();
-                        (elements[0], elements[1])
-                    }
-                    _ => panic!("operands"),
-                };
+                let (value, constructor) = vm
+                    .heap
+                    .array_elements(values)
+                    .map(|elements| (elements[0], elements[1]))
+                    .expect("operands");
                 let handles = [value, constructor].map(|v| vm.heap.weak_handle(v).unwrap());
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
@@ -6074,15 +6127,11 @@ fn instanceof_roots_detached_prototype_and_restores_cursor_after_throw() {
                 let operands = vm
                     .call_value(&program, factory, Value::UNDEFINED, &[])
                     .unwrap();
-                let values = match vm.heap.get(operands) {
-                    Some(super::Cell::Array {
-                        object: array_object,
-                    }) => {
-                        let elements = array_object.elements();
-                        [elements[0], elements[1], elements[2]]
-                    }
-                    _ => panic!("operands"),
-                };
+                let values = vm
+                    .heap
+                    .array_elements(operands)
+                    .map(|elements| [elements[0], elements[1], elements[2]])
+                    .expect("operands");
                 let handles = values.map(|value| vm.heap.weak_handle(value).unwrap());
                 let roots = vm.heap.root_count_for_test();
                 let calls = vm.active_call_roots.len();
@@ -6422,18 +6471,14 @@ fn array_iterator_advance_roots_owner_and_applies_index_transition() {
                             let atom = vm.intern_atom("value");
                             let mut value = vm.own_property(result, atom).unwrap();
                             if native == Native::ArrayEntries {
-                                value = match vm.heap.get(value) {
-                                    Some(super::Cell::Array {
-                                        object: array_object,
-                                    }) => {
-                                        let elements = array_object.elements();
-                                        {
-                                            assert_eq!(elements[0].as_number(), Some(0.0));
-                                            elements[1]
-                                        }
-                                    }
-                                    _ => panic!("entry"),
-                                };
+                                value = vm
+                                    .heap
+                                    .array_elements(value)
+                                    .map(|elements| {
+                                        assert_eq!(elements[0].as_number(), Some(0.0));
+                                        elements[1]
+                                    })
+                                    .expect("entry");
                             }
                             if native == Native::ArrayKeys {
                                 assert_eq!(value.as_number(), Some(0.0));
@@ -9179,5 +9224,117 @@ fn number_format_legacy_views_release_after_bound_or_options_completion() {
             assert_eq!(vm.active_call_roots.len(), calls);
             assert_eq!(vm.heap.root_count_for_test(), roots - 1);
         }
+    }
+}
+
+#[test]
+fn weak_ref_targets_are_kept_until_host_checkpoint() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        for dereference in [false, true] {
+            let mut vm = Vm::new(SilentHost);
+            let program = compile("var weak = new WeakRef({});", "weak-ref-job.js").unwrap();
+            vm.execute(&program).unwrap();
+            let key = vm.intern_atom("weak");
+            let weak = vm.own_property(vm.realm.globals, key).unwrap();
+            let target = match vm.heap.get(weak) {
+                Some(super::Cell::WeakRef { target, .. }) => target.unwrap(),
+                _ => panic!("expected weak reference"),
+            };
+            if dereference {
+                vm.clear_kept_objects();
+                let value = vm
+                    .call_collection_native(&program, Native::WeakRefDeref, weak, &[])
+                    .unwrap();
+                assert!(!value.is_undefined());
+            }
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(target).is_some());
+            vm.clear_kept_objects();
+            vm.collect_now(&program);
+            assert!(vm.heap.weak_value(target).is_none());
+        }
+    }
+}
+
+#[test]
+fn host_byte_views_preserve_intrinsics_backing_and_gc_edges() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let mut vm = Vm::new(SilentHost);
+        let program = compile("0;", "host-bytes.js").unwrap();
+        vm.execute(&program).unwrap();
+        for bytes in [vec![], vec![0, 127, 128, 255]] {
+            let view = vm.embedding_uint8_array(&bytes).unwrap();
+            let root = vm.heap.root(view);
+            let prototype = match vm.heap.get(view) {
+                Some(super::Cell::TypedArray {
+                    object,
+                    kind,
+                    buffer,
+                    ..
+                }) => {
+                    assert_eq!(*kind, TypedArrayKind::Uint8);
+                    assert!(matches!(
+                        vm.heap.get(*buffer),
+                        Some(super::Cell::ArrayBuffer {
+                            shared: false,
+                            detached: false,
+                            resizable: false,
+                            immutable: false,
+                            ..
+                        })
+                    ));
+                    object.proto()
+                }
+                _ => panic!("expected Uint8Array"),
+            };
+            assert_eq!(prototype, vm.typed_array_proto(TypedArrayKind::Uint8));
+            vm.collect_now(&program);
+            let view = vm.heap.root_value(root).unwrap();
+            assert_eq!(vm.embedding_view_bytes(view).unwrap(), bytes);
+            vm.heap.release_root(root);
+        }
+    }
+}
+
+#[test]
+fn private_host_weak_roots_clear_before_slot_reuse_without_kept_objects() {
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let mut vm = Vm::new(SilentHost);
+        let program = compile("0;", "host-weak.js").unwrap();
+        vm.execute(&program).unwrap();
+        let target = vm
+            .heap
+            .alloc(super::Cell::Object(Vm::<SilentHost>::empty_object(
+                Value::NULL,
+            )));
+        let strong = vm.heap.root(target);
+        let weak = vm.embedding_host_weak_root(strong).unwrap();
+        vm.collect_now(&program);
+        assert_eq!(
+            vm.embedding_host_weak_value(weak),
+            Some(vm.heap.root_value(strong).unwrap())
+        );
+        vm.heap.release_root(strong);
+        vm.collect_now(&program);
+        assert!(vm.embedding_host_weak_value(weak).is_none());
+        let replacement = vm
+            .heap
+            .alloc(super::Cell::Object(Vm::<SilentHost>::empty_object(
+                Value::NULL,
+            )));
+        assert!(vm.heap.is_live(replacement));
+        assert!(vm.embedding_host_weak_value(weak).is_none());
+        let other = Vm::new(SilentHost);
+        assert!(other.embedding_host_weak_value(weak).is_none());
+        vm.heap.release_root(weak);
     }
 }

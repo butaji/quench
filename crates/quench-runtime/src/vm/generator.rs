@@ -119,8 +119,7 @@ impl<H: Host> Vm<H> {
         self.initialize_activation_bindings(&mut frame, false, Value::UNDEFINED, true);
         frame.captured = false;
         frame.with_base = self.with_stack.len();
-        let register_count = function.registers as usize;
-        frame.prepare_registers(register_count);
+        frame.prepare_registers(function.registers, function.initial_register);
         if function.parameter_end_pc != 0 {
             self.frames.push(frame);
             let result = self.run_frame_general_until::<true>(
@@ -352,13 +351,9 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async generator return reaction without state".into()))?;
-        let Some(Cell::Array {
-            object: array_object,
-        }) = self.heap.get(environment)
-        else {
+        let Some(elements) = self.heap.array_elements(environment) else {
             return Err(JsError("async generator return state is invalid".into()));
         };
-        let elements = array_object.elements();
         let [generator, promise] = elements.as_slice() else {
             return Err(JsError("async generator return state is malformed".into()));
         };
@@ -407,13 +402,9 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async generator return rejection without state".into()))?;
-        let Some(Cell::Array {
-            object: array_object,
-        }) = self.heap.get(environment)
-        else {
+        let Some(elements) = self.heap.array_elements(environment) else {
             return Err(JsError("async generator return state is invalid".into()));
         };
-        let elements = array_object.elements();
         let [generator, promise] = elements.as_slice() else {
             return Err(JsError("async generator return state is malformed".into()));
         };
@@ -439,13 +430,9 @@ impl<H: Host> Vm<H> {
         let environment = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate return without state".into()))?;
-        let Some(Cell::Array {
-            object: array_object,
-        }) = self.heap.get(environment)
-        else {
+        let Some(elements) = self.heap.array_elements(environment) else {
             return Err(JsError("async delegate return state is invalid".into()));
         };
-        let elements = array_object.elements();
         let [generator, iterator, destination] = elements.as_slice() else {
             return Err(JsError("async delegate return state is malformed".into()));
         };
@@ -977,13 +964,9 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate reaction without state".into()))?;
-        let Some(Cell::Array {
-            object: array_object,
-        }) = self.heap.get(env)
-        else {
+        let Some(elements) = self.heap.array_elements(env) else {
             return Err(JsError("async delegate reaction state is invalid".into()));
         };
-        let elements = array_object.elements();
         let [generator, destination, throwing, adapter, _async_from_sync] = elements.as_slice()
         else {
             return Err(JsError("async delegate reaction state is malformed".into()));
@@ -1059,13 +1042,9 @@ impl<H: Host> Vm<H> {
         let env = self
             .active_native_env()
             .ok_or_else(|| JsError("async delegate rejection without state".into()))?;
-        let Some(Cell::Array {
-            object: array_object,
-        }) = self.heap.get(env)
-        else {
+        let Some(elements) = self.heap.array_elements(env) else {
             return Err(JsError("async delegate rejection state is invalid".into()));
         };
-        let elements = array_object.elements();
         let generator = elements
             .first()
             .copied()
