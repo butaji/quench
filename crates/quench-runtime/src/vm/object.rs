@@ -1077,7 +1077,7 @@ impl<H: Host> Vm<H> {
         let mut prototype = receiver.proto();
         let mut holder = None;
         for &shape in &cache.prototype_shapes[..usize::from(cache.depth)] {
-            let Some(Cell::Object(data)) = self.heap.get(prototype) else {
+            let Some(data) = self.heap.ordinary_object(prototype) else {
                 return None;
             };
             if data.shape() != shape || data.is_module_namespace() || data.is_arguments_object() {
@@ -1115,7 +1115,7 @@ impl<H: Host> Vm<H> {
         };
         let mut prototype = object.proto();
         for depth in 0..INHERITED_FIELD_CACHE_MAX_DEPTH {
-            let Some(Cell::Object(data)) = self.heap.get(prototype) else {
+            let Some(data) = self.heap.ordinary_object(prototype) else {
                 return None;
             };
             let shape = data.shape();
