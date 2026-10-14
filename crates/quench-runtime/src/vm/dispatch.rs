@@ -74,14 +74,10 @@ impl<H: Host> Vm<H> {
         let (program_id, id, env) = self.same_realm_user_target(callee)?;
         if id == super::ROOT_FUNCTION_ID
             || program_id != self.active_program
-            || !p.functions.get(id as usize).is_some_and(|function| {
-                !function.is_async
-                    && !function.is_generator
-                    && !function.is_class_constructor
-                    && !function.derived_constructor
-                    && !function.class_field_initializer
-                    && !function.parameter_eval_arguments_error
-            })
+            || !p
+                .functions
+                .get(id as usize)
+                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
         {
             return None;
         }
@@ -158,14 +154,10 @@ impl<H: Host> Vm<H> {
         let (program_id, id, env) = self.same_realm_user_target(target)?;
         if id == super::ROOT_FUNCTION_ID
             || program_id != self.active_program
-            || !p.functions.get(id as usize).is_some_and(|function| {
-                !function.is_async
-                    && !function.is_generator
-                    && !function.is_class_constructor
-                    && !function.derived_constructor
-                    && !function.class_field_initializer
-                    && !function.parameter_eval_arguments_error
-            })
+            || !p
+                .functions
+                .get(id as usize)
+                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
         {
             return None;
         }
