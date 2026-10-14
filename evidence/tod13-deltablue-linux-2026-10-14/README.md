@@ -67,3 +67,30 @@ fails without the change.
 
 Fixed-work wall per `run()` (4 interleaved pairs, diagnostic): base
 32.0–37.0 ms, candidate 19.1–20.7 ms.
+
+### Module-level captures read their slot directly
+
+Under `quench-node` the main CommonJS file compiles as a module-goal program,
+so its top-level bindings live in the program's root environment.
+`direct_capture` and `load_environment_binding` refused every root slot and
+took `load_projected_environment_binding` (program lookup, global var, global
+lexical and module-import checks), and the fast lane exited on each such read.
+A root slot is now read directly when `ProgramStore::root_slot_is_binding`
+holds: the root's variables are local or it has no global var atoms, a
+`Script` root has no global lexical atoms, and the slot is not a module
+import. Deleted slots (TDZ) still take the projected path.
+
+Microbenchmark, Callgrind per iteration of `for (i = 0; i < N; i++) {}` with
+`N` captured from module scope: 620 -> 370 (a local `N` is 83).
+
+DeltaBlue, same tree with and without the change (`9d836a1eb` + change):
+218.9M -> 209.8M instructions per `run()` (-4.2%).
+
+Checks: runtime lib 583/583; Test262 stages 3 (145/145), 8 (347/347), 11
+(217/217), 20 (599/599), reports `t262-cand-*.json`; Node oracle
+`capture-oracle/` (ESM live import bindings read in closures, module TDZ,
+CommonJS bindings, sloppy and strict eval), identical output.
+
+Rejected: a fast-lane `LoadCapture` handler over the same `direct_capture`.
+Microbenchmark 370 -> 202 per iteration, but DeltaBlue 209.8M -> 212.4M per
+run (+1.2%): its lanes exit at the next dynamic `Call` anyway.
