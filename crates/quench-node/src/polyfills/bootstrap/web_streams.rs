@@ -5,6 +5,7 @@ const __quenchWebStreamsState = Symbol("kState");
 const __quenchWebStreamControllerError = Symbol.for("nodejs.webstream.controllerErrorFunction");
 Object.defineProperty(globalThis, "__quenchWebStreamsState", {
   configurable: true,
+  writable: false,
   enumerable: false,
   value: __quenchWebStreamsState,
 });
@@ -986,10 +987,12 @@ const __quenchWebStreams = {
 globalThis.ReadableStream = __quenchReadableStream;
 Object.defineProperty(globalThis, "__quenchWebStreams", {
   configurable: true,
+  writable: false,
   value: __quenchWebStreams
 });
 Object.defineProperty(globalThis, "__quenchReadableStream", {
   configurable: true,
+  writable: false,
   value: __quenchReadableStream
 });
 for (const [name, constructor] of Object.entries(__quenchWebStreams)) {

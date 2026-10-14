@@ -105,6 +105,14 @@ impl PropertyDescriptorRecord {
         self.getter.is_some() || self.setter.is_some()
     }
 
+    /// Whether this descriptor gives every field of its kind other than the shared
+    /// `[[Enumerable]]` and `[[Configurable]]`, so the property it defines keeps nothing of
+    /// the current one but those.
+    pub(super) fn replaces_kind_fields(self) -> bool {
+        (self.value.is_some() && self.writable.is_some())
+            || (self.getter.is_some() && self.setter.is_some())
+    }
+
     pub(super) fn has_data_fields(self) -> bool {
         self.value.is_some() || self.writable.is_some()
     }
@@ -430,6 +438,12 @@ impl<H: Host> Vm<H> {
             let key = self.heap.root_value(key).unwrap();
             if matches!(self.heap.get(target), Some(Cell::Proxy { .. })) {
                 return self.proxy_own_property_descriptor(p, target, key);
+            }
+            // A lazy data property reports its data descriptor; its attributes alone (as
+            // enumeration reads them) need no value.
+            if let Some(Cell::String(name)) = self.heap.get(key).cloned() {
+                let atom = self.intern_js_atom(&name);
+                self.materialize_lazy_data_property(p, target, PropertyKey::string(atom))?;
             }
             match self.ordinary_own_property(p, target, key)? {
                 Some((value, attributes)) => self.property_descriptor_object(value, attributes),

@@ -594,3 +594,93 @@ fn collect_json(
     context.collect()?;
     Ok(context.undefined())
 }
+
+#[derive(Default)]
+struct LazyHost;
+
+const LAZY_GROUP_SCRIPT: &str = "globalThis.inits = (globalThis.inits || 0) + 1; \
+    globalThis.A = 'a'; globalThis.B = 'b'; \
+    Object.defineProperty(globalThis, 'C', { value: 'c', writable: true, configurable: true });";
+
+impl Host for LazyHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 {
+        0.0
+    }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![
+            method "initializeGroup" (0) => initialize_lazy_group,
+            method "initializeSingle" (0) => initialize_lazy_single,
+        ]
+    }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        let global = context.global_root()?;
+        let marker = context.string_rooted("before");
+        let key = context.string_rooted("before");
+        assert!(context.set_property_rooted(global, key, marker, global)?);
+        for (operation, names) in [(0, &["A", "B", "C"][..]), (1, &["D"][..])] {
+            let initializer = context.host_function(HostFunctionId(operation))?;
+            context.define_lazy_data_properties_rooted(global, names, false, initializer)?;
+        }
+        let key = context.string_rooted("after");
+        assert!(context.set_property_rooted(global, key, marker, global)?);
+        context.seal_startup_intrinsics();
+        Ok(())
+    }
+}
+
+fn initialize_lazy_group(
+    context: &mut NativeContext<'_, LazyHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    context.evaluate_script_rooted(LAZY_GROUP_SCRIPT, "lazy-group.js")
+}
+
+fn initialize_lazy_single(
+    context: &mut NativeContext<'_, LazyHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    context.evaluate_script_rooted("globalThis.D = 'd';", "lazy-single.js")
+}
+
+#[test]
+fn lazy_data_properties_materialize_once_as_data_in_place() {
+    let mut runtime = Runtime::new(LazyHost);
+    let program = Engine::specialize(
+        r#"
+const check = (ok, message) => { if (!ok) throw new Error(message); };
+const names = Object.getOwnPropertyNames(globalThis);
+const at = names.indexOf("before");
+check(names.slice(at, at + 6).join() === "before,A,B,C,D,after", "definition order");
+check(!Object.keys(globalThis).includes("A"), "non-enumerable");
+check(globalThis.inits === undefined, "lazy until observed");
+globalThis.B = 5;
+delete globalThis.C;
+check(globalThis.inits === undefined, "assignment and delete need no value");
+const a = Object.getOwnPropertyDescriptor(globalThis, "A");
+check(globalThis.inits === 1, "one initialization");
+check(a.value === "a" && a.writable && !a.enumerable && a.configurable, "data descriptor");
+check(B === 5 && !("C" in globalThis), "script changes survive initialization");
+check(A === "a" && globalThis.inits === 1, "initialized once");
+Object.defineProperty(globalThis, "D", { enumerable: true });
+const d = Object.getOwnPropertyDescriptor(globalThis, "D");
+check(d.value === "d" && d.writable && d.enumerable, "partial definition keeps the value");
+const after = Object.getOwnPropertyNames(globalThis);
+check(after.slice(after.indexOf("before"), after.indexOf("before") + 5).join() === "before,A,B,D,after", "order kept");
+var result = "ok";
+"#,
+        "lazy-data.js",
+    )
+    .unwrap();
+    runtime.execute(&program).unwrap();
+    let global = runtime.global_root().unwrap();
+    let key = runtime.string_rooted("result");
+    let result = runtime.get_property_rooted(global, key).unwrap();
+    assert!(
+        runtime
+            .rooted_value(result)
+            .is_some_and(|value| !value.is_undefined())
+    );
+}
