@@ -173,7 +173,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
   Server.prototype.close = function(callback) { if (typeof callback === 'function') this.once('close', callback); closeOperation(this); this.listening = false; return this; };
   Server.prototype.ref = function() { 'use strict'; return referenceOperation(this, true); };
   Server.prototype.unref = function() { 'use strict'; return referenceOperation(this, false); };
-  const createServer = function createServer(listener) { return new Server(listener); };
+  const createServer = function createServer(options, listener) { return new Server(options, listener); };
   function Stream(options) { return new Socket(options); }
   Stream.prototype = Socket.prototype;
   Object.setPrototypeOf(Stream, Socket);
