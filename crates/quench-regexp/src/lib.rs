@@ -408,10 +408,10 @@ impl Regex {
     /// Matches against a subject whose ASCII bytes were prepared once, so repeated matches
     /// over the same text do not rescan and recopy it.
     pub fn find_in_subject(&self, subject: &Subject, start: usize) -> Matches {
-        if start > subject.units.len() {
+        if start > subject.len() {
             return Matches { item: None };
         }
-        if let (Some(bytes), Some(compiled)) = (&subject.ascii, &self.compiled) {
+        if let (Some(bytes), Some(compiled)) = (subject.ascii(), &self.compiled) {
             if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return {
                 return self.find_compiled(compiled, bytes, start);
             }
@@ -515,12 +515,20 @@ impl Regex {
     }
 }
 
-/// UTF-16 text prepared once for repeated matching. The shared units are retained, so a
-/// caller can recognize the same string again by allocation identity.
+/// The text a subject matches: a string's own one-byte ASCII storage, or its UTF-16 units.
+enum SubjectText {
+    Ascii(std::rc::Rc<str>),
+    Wide {
+        units: std::rc::Rc<[u16]>,
+        /// One byte per unit, present only when every unit is ASCII.
+        ascii: Option<Box<[u8]>>,
+    },
+}
+
+/// Text prepared once for repeated matching. The shared storage is retained, so a caller
+/// can recognize the same string again by allocation identity.
 pub struct Subject {
-    units: std::rc::Rc<[u16]>,
-    /// One byte per unit, present only when every unit is ASCII.
-    ascii: Option<Box<[u8]>>,
+    text: SubjectText,
     has_carriage_return: bool,
     /// The units decoded for the backtracking matcher, by code unit and by code point
     /// (`unicode`), each decoded on first use.
@@ -535,19 +543,53 @@ impl Subject {
             .then(|| units.iter().map(|unit| *unit as u8).collect());
         let has_carriage_return = units.contains(&u16::from(b'\r'));
         Self {
-            units,
-            ascii,
+            text: SubjectText::Wide { units, ascii },
             has_carriage_return,
             decoded: Default::default(),
         }
     }
 
+    /// A subject over ASCII text, matched in place without a copy.
+    pub fn from_ascii(text: std::rc::Rc<str>) -> Self {
+        debug_assert!(text.is_ascii());
+        let has_carriage_return = text.as_bytes().contains(&b'\r');
+        Self {
+            text: SubjectText::Ascii(text),
+            has_carriage_return,
+            decoded: Default::default(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match &self.text {
+            SubjectText::Ascii(text) => text.len(),
+            SubjectText::Wide { units, .. } => units.len(),
+        }
+    }
+
+    fn ascii(&self) -> Option<&[u8]> {
+        match &self.text {
+            SubjectText::Ascii(text) => Some(text.as_bytes()),
+            SubjectText::Wide { ascii, .. } => ascii.as_deref(),
+        }
+    }
+
     fn decoded(&self, unicode: bool) -> &[Unit] {
-        self.decoded[usize::from(unicode)].get_or_init(|| units_from_utf16(&self.units, unicode))
+        self.decoded[usize::from(unicode)].get_or_init(|| match &self.text {
+            SubjectText::Ascii(text) => {
+                let units = text.bytes().map(u16::from).collect::<Vec<_>>();
+                units_from_utf16(&units, unicode)
+            }
+            SubjectText::Wide { units, .. } => units_from_utf16(units, unicode),
+        })
     }
 
     pub fn is_text_of(&self, units: &std::rc::Rc<[u16]>) -> bool {
-        std::rc::Rc::ptr_eq(&self.units, units)
+        matches!(&self.text, SubjectText::Wide { units: own, .. } if std::rc::Rc::ptr_eq(own, units))
+    }
+
+    pub fn is_ascii_text_of(&self, text: &std::rc::Rc<str>) -> bool {
+        matches!(&self.text, SubjectText::Ascii(own) if std::rc::Rc::ptr_eq(own, text))
     }
 }
 
