@@ -210,7 +210,7 @@ impl SharedEventLoop {
 
     pub fn shared_active_timer_counts(&self) -> (usize, usize) {
         let timers = self.shared.timers.iter().filter(|timer| timer.refed).count()
-            + self.shared.firing_timers.values().filter(|refed| **refed).count();
+            + self.shared.firing_timers.iter().filter(|(id, refed)| **refed && !self.shared.cancelled_timers.contains(id)).count();
         (timers, self.shared.immediate_ref_count as usize)
     }
 
