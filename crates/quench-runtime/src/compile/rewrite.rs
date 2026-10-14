@@ -212,6 +212,10 @@ fn coalesce_distant_producer_moves(
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> bool {
+    // Liveness is the expensive part; a function without a `Move` has nothing to coalesce.
+    if !function.code.iter().any(|instruction| instruction.op() == Op::Move) {
+        return false;
+    }
     let Some(live) = liveness::analyze(function, methods, field_sites, superinstructions) else {
         return false;
     };
