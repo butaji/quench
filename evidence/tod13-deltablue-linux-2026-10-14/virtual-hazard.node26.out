@@ -1,0 +1,67 @@
+0 plain proto-length proto-size proto-bl
+0 deep proto-length proto-size proto-bl
+0 own 7 8 9
+0 arr 3 proto-size proto-bl
+0 arr2 2 undefined undefined
+0 str 4 proto-size proto-bl
+0 fn 2 proto-size proto-bl
+0 map undefined 1 undefined
+0 mapP proto-length proto-size proto-bl
+0 ta 5 undefined 5
+0 taP proto-length proto-size proto-bl
+0 args 2 undefined undefined
+0 plain2 proto-length proto-size proto-bl
+0 deep2 proto-length proto-size proto-bl
+1 plain proto-length proto-size proto-bl
+1 deep proto-length proto-size proto-bl
+1 own 7 8 9
+1 arr 3 proto-size proto-bl
+1 arr2 2 undefined undefined
+1 str 4 proto-size proto-bl
+1 fn 2 proto-size proto-bl
+1 map undefined 1 undefined
+1 mapP proto-length proto-size proto-bl
+1 ta 5 undefined 5
+1 taP proto-length proto-size proto-bl
+1 args 2 undefined undefined
+1 plain2 proto-length proto-size proto-bl
+1 deep2 proto-length proto-size proto-bl
+2 plain proto-length proto-size proto-bl
+2 deep proto-length proto-size proto-bl
+2 own 7 8 9
+2 arr 3 proto-size proto-bl
+2 arr2 2 undefined undefined
+2 str 4 proto-size proto-bl
+2 fn 2 proto-size proto-bl
+2 map undefined 1 undefined
+2 mapP proto-length proto-size proto-bl
+2 ta 5 undefined 5
+2 taP proto-length proto-size proto-bl
+2 args 2 undefined undefined
+2 plain2 proto-length proto-size proto-bl
+2 deep2 proto-length proto-size proto-bl
+3 plain proto-length proto-size proto-bl
+3 deep proto-length proto-size proto-bl
+3 own 7 8 9
+3 arr 3 proto-size proto-bl
+3 arr2 2 undefined undefined
+3 str 4 proto-size proto-bl
+3 fn 2 proto-size proto-bl
+3 map undefined 1 undefined
+3 mapP proto-length proto-size proto-bl
+3 ta 5 undefined 5
+3 taP proto-length proto-size proto-bl
+3 args 2 undefined undefined
+3 plain2 proto-length proto-size proto-bl
+3 deep2 proto-length proto-size proto-bl
+share A-len
+share 0
+share A-len
+share 0
+share A-len
+share 0
+mut 1
+mut 1
+mut 1
+mut 2
+mut getter
