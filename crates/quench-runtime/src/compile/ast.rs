@@ -111,6 +111,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) handlers: Vec<crate::bytecode::Handler>,
     pub(super) binding_sites: Vec<crate::bytecode::BindingSite>,
     pub(super) environment_clones: Vec<Vec<u16>>,
+    /// For each clone plan, the slots of every lexical scope active at its
+    /// site; see `per_site_environment_clones`.
+    environment_clone_scopes: Vec<Vec<u16>>,
     controls: Vec<ControlTarget>,
     iterator_closures: Vec<IteratorClosure>,
     pub(super) iterator_close_ranges: Vec<(u32, u32)>,
@@ -218,6 +221,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             handlers: vec![],
             binding_sites: vec![],
             environment_clones: vec![],
+            environment_clone_scopes: vec![],
             controls: vec![],
             iterator_closures: vec![],
             iterator_close_ranges: vec![],
@@ -874,17 +878,71 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         if slots.is_empty() {
             return;
         }
+        let scopes = self.active_lexical_slots();
         let index = if let Some(index) = self
             .environment_clones
             .iter()
-            .position(|existing| *existing == slots)
+            .zip(&self.environment_clone_scopes)
+            .position(|(existing, existing_scopes)| *existing == slots && *existing_scopes == scopes)
         {
             index
         } else {
-            self.environment_clones.push(slots);
-            self.environment_clones.len() - 1
+            self.push_environment_clone(slots, scopes)
         };
         self.emit(Op::CloneEnv, 0, 0, 0, index as u32);
+    }
+
+    /// Adds a clone plan for `slots`, sited where the lexical scopes owning
+    /// `scopes` are active, and returns its index.
+    pub(super) fn push_environment_clone(&mut self, slots: Vec<u16>, scopes: Vec<u16>) -> usize {
+        self.environment_clones.push(slots);
+        self.environment_clone_scopes.push(scopes);
+        self.environment_clones.len() - 1
+    }
+
+    /// The slots of every lexical scope active at the current position.
+    pub(super) fn active_lexical_slots(&self) -> Vec<u16> {
+        let mut slots = self
+            .lexical_scopes
+            .iter()
+            .flat_map(|scope| scope.bindings.values())
+            .filter_map(|binding| self.local_slots.get(binding).copied())
+            .collect::<Vec<_>>();
+        slots.sort_unstable();
+        slots.dedup();
+        slots
+    }
+
+    /// The clone plans the function runs. A clone owns its fresh slots; every
+    /// other slot is shared with the slot's owner. A slot some clone owns but
+    /// whose scope is not active at another clone's site (an inner loop's or
+    /// a loop body's binding, seen from the loop's next iteration) is out of
+    /// reach there, so that clone resets it: sharing or copying it would keep
+    /// the previous iteration's environment, and through it every earlier
+    /// one, alive for as long as the activation runs.
+    pub(super) fn per_site_environment_clones(&mut self) -> Vec<crate::bytecode::EnvironmentClone> {
+        let owned = self
+            .environment_clones
+            .iter()
+            .flatten()
+            .copied()
+            .collect::<FxHashSet<_>>();
+        let scopes = std::mem::take(&mut self.environment_clone_scopes);
+        std::mem::take(&mut self.environment_clones)
+            .into_iter()
+            .zip(scopes)
+            .map(|(fresh, active)| {
+                let mut reset = owned
+                    .iter()
+                    .copied()
+                    .filter(|slot| {
+                        active.binary_search(slot).is_err() && fresh.binary_search(slot).is_err()
+                    })
+                    .collect::<Vec<_>>();
+                reset.sort_unstable();
+                crate::bytecode::EnvironmentClone { fresh, reset }
+            })
+            .collect()
     }
 
     pub(super) fn initialize_lexical_scope(&mut self) {
