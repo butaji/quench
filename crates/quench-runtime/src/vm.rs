@@ -184,6 +184,7 @@ pub(super) struct Frame {
     dynamic_bindings: Vec<(Atom, Value)>,
     captured: bool,
     registers: Vec<Value>,
+    capture_cache: CaptureCache,
     /// How many leading register slots hold values, whatever the current length: below it a
     /// root-mapped activation can take the file without rewriting it.
     initialized_registers: usize,
@@ -196,6 +197,25 @@ pub(super) struct Frame {
     /// frames `this` is authoritative and the binding lookup can be skipped.
     fixed_this: bool,
 }
+/// A frame's innermost capture slots, valid for `env` until the collection after `epoch`
+/// (`Vm::cached_direct_capture`).
+#[derive(Clone, Copy)]
+pub(super) struct CaptureCache {
+    env: Value,
+    epoch: u64,
+    slots: *const crate::heap::EnvironmentSlots,
+}
+
+impl Default for CaptureCache {
+    fn default() -> Self {
+        Self {
+            env: Value::NULL,
+            epoch: 0,
+            slots: std::ptr::null(),
+        }
+    }
+}
+
 impl Frame {
     fn prepare_registers(&mut self, register_count: usize) {
         self.registers.resize(register_count, Value::UNDEFINED);
