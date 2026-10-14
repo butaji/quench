@@ -1593,7 +1593,9 @@ struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
     source_line_starts: Vec<usize>,
-    source_position_cursor: SourcePositionCursor,
+    /// Byte offset of each non-ASCII character with the running excess of
+    /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
+    source_utf16_excess: Vec<(usize, usize)>,
     mode: SpecializationMode,
     root_strict: bool,
     module_goal: bool,
@@ -1616,13 +1618,6 @@ struct Compiler<'a> {
     object_sites: Vec<ObjectSite>,
     regexp_literal_sites: Vec<crate::bytecode::RegExpLiteralSite>,
     superinstructions: Vec<Superinstruction>,
-}
-
-#[derive(Clone, Copy)]
-struct SourcePositionCursor {
-    offset: usize,
-    line: u32,
-    column: u32,
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
@@ -1800,15 +1795,20 @@ impl<'a> Compiler<'a> {
             text.match_indices('\n')
                 .map(|(index, _)| index.saturating_add(1)),
         );
+        let mut excess = 0;
+        let source_utf16_excess = text
+            .char_indices()
+            .filter(|(_, character)| !character.is_ascii())
+            .map(|(offset, character)| {
+                excess += character.len_utf8() - character.len_utf16();
+                (offset, excess)
+            })
+            .collect();
         Self {
             source,
             text,
             source_line_starts,
-            source_position_cursor: SourcePositionCursor {
-                offset: 0,
-                line: 1,
-                column: 1,
-            },
+            source_utf16_excess,
             mode,
             root_strict: false,
             module_goal: false,
@@ -1834,43 +1834,26 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn source_position(&mut self, offset: u32) -> SourcePosition {
+    fn source_position(&self, offset: u32) -> SourcePosition {
         let offset = (offset as usize).min(self.text.len());
-        let mut cursor = self.source_position_cursor;
-        if offset >= cursor.offset {
-            for character in self.text[cursor.offset..offset].chars() {
-                if character == '\n' {
-                    cursor.line = cursor.line.saturating_add(1);
-                    cursor.column = 1;
-                } else {
-                    cursor.column = cursor.column.saturating_add(character.len_utf16() as u32);
-                }
-            }
-            cursor.offset = offset;
-            self.source_position_cursor = cursor;
-            return SourcePosition {
-                pc: 0,
-                line: cursor.line,
-                column: cursor.column,
-            };
-        }
-
         let line_index = self
             .source_line_starts
             .partition_point(|start| *start <= offset)
             .saturating_sub(1);
         let line_start = self.source_line_starts[line_index];
-        let column = self
-            .text
-            .get(line_start..offset)
-            .unwrap_or_default()
-            .encode_utf16()
-            .count()
-            .saturating_add(1);
+        let excess_before = |offset: usize| {
+            let index = self
+                .source_utf16_excess
+                .partition_point(|(character, _)| *character < offset);
+            index
+                .checked_sub(1)
+                .map_or(0, |index| self.source_utf16_excess[index].1)
+        };
+        let column = offset - line_start - (excess_before(offset) - excess_before(line_start));
         SourcePosition {
             pc: 0,
             line: u32::try_from(line_index.saturating_add(1)).unwrap_or(u32::MAX),
-            column: u32::try_from(column).unwrap_or(u32::MAX),
+            column: u32::try_from(column.saturating_add(1)).unwrap_or(u32::MAX),
         }
     }
 
