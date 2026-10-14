@@ -11,7 +11,7 @@ const WRAPPER_PREFIX: &str =
     "(function (exports, require, module, __filename, __dirname, primordials) { ";
 const WRAPPER_SUFFIX: &str = "\n});";
 
-fn commonjs_resolver() -> oxc_resolver::Resolver {
+pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
     oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
         extensions: vec![".js".into(), ".json".into(), ".node".into()],
         main_files: vec!["index".into()],
@@ -67,7 +67,7 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
         .and_then(serde_json::Value::as_str)
         == Some("module");
     Ok(
-        if path.extension().is_some_and(|extension| extension == "js") && module {
+        if (path.extension().is_none() || path.extension().is_some_and(|extension| extension == "js")) && module {
             quench_runtime::SourceKind::Module
         } else {
             quench_runtime::SourceKind::Script
@@ -569,11 +569,38 @@ pub(super) fn resolve(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Resolve)?;
+    let parent = context.host_function_data()?;
+    resolve_request(context, &specifier, parent)
+}
+
+pub(crate) fn resolve_from_parent(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let specifier = specifier(context, args, Request::Resolve)?;
     if BuiltinModule::from_specifier(&specifier).is_some() {
         return Ok(context.string_rooted(&specifier));
     }
-    let parent = context.host_function_data()?;
-    let filename = resolve_filename(context, &specifier, parent)?;
+    let parent = match args.get(1).copied() {
+        Some(parent) if context.truthy_rooted(parent)? => parent,
+        _ => {
+            let filename = inline_directory(context)?.join("noop.js");
+            module_record(context, &filename, None, false)?
+        }
+    };
+    resolve_request(context, &specifier, parent)
+}
+
+fn resolve_request(
+    context: &mut Context<'_>,
+    specifier: &str,
+    parent: RootId,
+) -> Result<RootId, RootedError> {
+    if BuiltinModule::from_specifier(specifier).is_some() {
+        return Ok(context.string_rooted(specifier));
+    }
+    let filename = resolve_filename(context, specifier, parent)?;
     Ok(context.string_rooted(&filename.to_string_lossy()))
 }
 
@@ -907,6 +934,10 @@ pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedE
 
 pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Util)
+}
+
+pub(crate) fn crypto_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Crypto)
 }
 
 pub(crate) fn net_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
