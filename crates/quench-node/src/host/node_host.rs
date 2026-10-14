@@ -286,6 +286,27 @@ impl NodeHost {
         super::shared_vm::source_kind(path)
     }
 
+    /// The last VFS CLI switch owns feature availability for this logical process.
+    pub(crate) fn vfs_enabled(&self) -> bool {
+        let state = self.shared_state.borrow();
+        let mut arguments = state.exec_argv.iter();
+        let mut enabled = false;
+        while let Some(argument) = arguments.next() {
+            match argument.as_str() {
+                "--experimental-vfs" => enabled = true,
+                "--no-experimental-vfs" => enabled = false,
+                // The shared CLI retains option values and eval source in execArgv.
+                // They are input, even when their text matches a VFS switch.
+                "--trace-event-categories" | "--trace-event-file-pattern" | "-r" | "--require" => {
+                    let _ = arguments.next();
+                }
+                "-e" | "--eval" | "-p" | "--print" | "-pe" | "-ep" => break,
+                _ => {}
+            }
+        }
+        enabled
+    }
+
     /// Execute a file through the CommonJS loader during shared-VM initialization.
     pub fn with_commonjs_entry(mut self, path: std::path::PathBuf) -> Self {
         self.commonjs_entry = Some(CommonJsEntry {
