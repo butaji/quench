@@ -8,10 +8,10 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 
 // Node's public CommonJS wrapper; this is guest compilation input, not an API shim.
 const WRAPPER_PREFIX: &str =
-    "(function (exports, require, module, __filename, __dirname, primordials) { ";
+    "(function (exports, require, module, __filename, __dirname) { ";
 const WRAPPER_SUFFIX: &str = "\n});";
 
-fn commonjs_resolver() -> oxc_resolver::Resolver {
+pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
     oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
         extensions: vec![".js".into(), ".json".into(), ".node".into()],
         main_files: vec!["index".into()],
@@ -74,7 +74,7 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
         .and_then(serde_json::Value::as_str)
         == Some("module");
     Ok(
-        if path.extension().is_some_and(|extension| extension == "js") && module {
+        if (path.extension().is_none() || path.extension().is_some_and(|extension| extension == "js")) && module {
             quench_runtime::SourceKind::Module
         } else {
             quench_runtime::SourceKind::Script
@@ -116,6 +116,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     set(context, global, "\0quench:require", bootstrap_require)?;
     context.release_root(bootstrap_require);
     install_performance_global(context)?;
+    crate::modules::crypto_shared_vm::install_global(context)?;
     let node_primordials = context
         .host_mut()
         .node_library_root
@@ -580,11 +581,38 @@ pub(super) fn resolve(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Resolve)?;
+    let parent = context.host_function_data()?;
+    resolve_request(context, &specifier, parent)
+}
+
+pub(crate) fn resolve_from_parent(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let specifier = specifier(context, args, Request::Resolve)?;
     if BuiltinModule::from_specifier(&specifier).is_some() {
         return Ok(context.string_rooted(&specifier));
     }
-    let parent = context.host_function_data()?;
-    let filename = resolve_filename(context, &specifier, parent)?;
+    let parent = match args.get(1).copied() {
+        Some(parent) if context.truthy_rooted(parent)? => parent,
+        _ => {
+            let filename = inline_directory(context)?.join("noop.js");
+            module_record(context, &filename, None, false)?
+        }
+    };
+    resolve_request(context, &specifier, parent)
+}
+
+fn resolve_request(
+    context: &mut Context<'_>,
+    specifier: &str,
+    parent: RootId,
+) -> Result<RootId, RootedError> {
+    if BuiltinModule::from_specifier(specifier).is_some() {
+        return Ok(context.string_rooted(specifier));
+    }
+    let filename = resolve_filename(context, specifier, parent)?;
     Ok(context.string_rooted(&filename.to_string_lossy()))
 }
 
@@ -969,6 +997,10 @@ pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedE
 
 pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Util)
+}
+
+pub(crate) fn crypto_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Crypto)
 }
 
 pub(crate) fn net_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -1568,8 +1600,9 @@ const getLinkedBinding = () => ({});
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
                 }
-                let mut arguments = vec![exports, require, module, name, directory, primordials];
+                let mut arguments = vec![exports, require, module, name, directory];
                 if in_node_internal {
+                    arguments.push(primordials);
                     arguments.push(
                         context
                             .host_function(crate::host::shared_vm::operation("traceInternal"))?,

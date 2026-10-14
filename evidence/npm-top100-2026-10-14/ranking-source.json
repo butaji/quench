@@ -1,0 +1,6468 @@
+{
+  "packages": [
+    {
+      "_id": "67bc78502499176361ec66a8",
+      "name": "semver",
+      "description": "The semantic version parser used by npm.",
+      "link": "https://www.npmjs.com/package/semver",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 2757276191,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-08",
+            "downloads": 536758684
+          },
+          {
+            "week_ending": "2026-02-15",
+            "downloads": 550965168
+          },
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 556061792
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 602447850
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 615600250
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 648391142
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 646528764
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 657931122
+          }
+        ]
+      },
+      "dependent_packages_count": 43561,
+      "dependent_repos_count": 1325167,
+      "latest_version": "7.7.4",
+      "npm_timestamps": {
+        "created_at": "2011-02-12T00:20:25.690Z",
+        "modified_at": "2026-03-19T19:28:32.632Z"
+      },
+      "db_created_at": "2025-02-24T13:46:56.919Z",
+      "db_updated_at": "2026-03-30T07:01:49.426Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc7c242499176361ec8f54",
+      "name": "minimatch",
+      "description": "a glob matcher in javascript",
+      "link": "https://www.npmjs.com/package/minimatch",
+      "dependencies": [
+        "brace-expansion"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 2650264870,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 590558335
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 513355845
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 647633610
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 667137039
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 637696988
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 619958375
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 501352322
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 672619082
+          }
+        ]
+      },
+      "dependent_packages_count": 9743,
+      "dependent_repos_count": 2198462,
+      "latest_version": "10.2.5",
+      "npm_timestamps": {
+        "created_at": "2011-07-16T08:52:46.242Z",
+        "modified_at": "2026-03-30T18:08:07.346Z"
+      },
+      "db_created_at": "2025-02-24T14:03:16.311Z",
+      "db_updated_at": "2026-07-20T08:11:32.178Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc7bb52499176361ec8a96",
+      "name": "debug",
+      "description": "Lightweight debugging utility for Node.js and the browser",
+      "link": "https://www.npmjs.com/package/debug",
+      "dependencies": [
+        "ms"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 2539331980,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 532691311
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 553428755
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 559671041
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 580951162
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 534563253
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 612590916
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 628556634
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 600475916
+          }
+        ]
+      },
+      "dependent_packages_count": 46672,
+      "dependent_repos_count": 1419208,
+      "latest_version": "4.4.3",
+      "npm_timestamps": {
+        "created_at": "2011-11-29T01:11:23.618Z",
+        "modified_at": "2025-09-13T17:25:19.913Z"
+      },
+      "db_created_at": "2025-02-24T14:01:25.634Z",
+      "db_updated_at": "2026-06-01T10:51:03.837Z",
+      "keywords": [
+        "debug",
+        "log",
+        "debugger"
+      ]
+    },
+    {
+      "_id": "67bc77092499176361ec5947",
+      "name": "brace-expansion",
+      "description": "Brace expansion as known from sh/bash",
+      "link": "https://www.npmjs.com/package/brace-expansion",
+      "dependencies": [
+        "balanced-match"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 2435285013,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 579965668
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 548420896
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 540353370
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 438937186
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 590467594
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 542944343
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 605073596
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 606656605
+          }
+        ]
+      },
+      "dependent_packages_count": 2652,
+      "dependent_repos_count": 1303119,
+      "latest_version": "5.0.9",
+      "npm_timestamps": {
+        "created_at": "2013-10-13T12:58:47.118Z",
+        "modified_at": "2026-07-30T10:17:07.121Z"
+      },
+      "db_created_at": "2025-02-24T13:41:29.665Z",
+      "db_updated_at": "2026-08-10T06:11:22.179Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc75a52499176361ec4a9d",
+      "name": "ansi-regex",
+      "description": "Regular expression for matching ANSI escape codes",
+      "link": "https://www.npmjs.com/package/ansi-regex",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 2194908219,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 469835563
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 406599115
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 510791881
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 553197344
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 495018362
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 481431505
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 480957660
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 507745002
+          }
+        ]
+      },
+      "dependent_packages_count": 4054,
+      "dependent_repos_count": 1239008,
+      "latest_version": "6.2.2",
+      "npm_timestamps": {
+        "created_at": "2014-06-03T16:59:22.332Z",
+        "modified_at": "2025-09-08T17:18:12.337Z"
+      },
+      "db_created_at": "2025-02-24T13:35:33.410Z",
+      "db_updated_at": "2026-07-20T08:02:59.392Z",
+      "keywords": [
+        "ansi",
+        "styles",
+        "color",
+        "colour",
+        "colors",
+        "terminal",
+        "console",
+        "cli",
+        "string",
+        "tty",
+        "escape",
+        "formatting",
+        "rgb",
+        "256",
+        "shell",
+        "xterm",
+        "command-line",
+        "text",
+        "regex",
+        "regexp",
+        "re",
+        "match",
+        "test",
+        "find",
+        "pattern"
+      ]
+    },
+    {
+      "_id": "67bc771c2499176361ec5a0c",
+      "name": "supports-color",
+      "description": "Detect whether a terminal supports color",
+      "link": "https://www.npmjs.com/package/supports-color",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1914926428,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 413638886
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 366041355
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 452181907
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 459117770
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 445967191
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 426714548
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 420045049
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 464958004
+          }
+        ]
+      },
+      "dependent_packages_count": 4053,
+      "dependent_repos_count": 5765200,
+      "latest_version": "10.2.2",
+      "npm_timestamps": {
+        "created_at": "2014-06-14T01:45:57.033Z",
+        "modified_at": "2025-09-08T17:16:23.348Z"
+      },
+      "db_created_at": "2025-02-24T13:41:48.228Z",
+      "db_updated_at": "2026-07-20T08:04:32.414Z",
+      "keywords": [
+        "color",
+        "colour",
+        "colors",
+        "terminal",
+        "console",
+        "cli",
+        "ansi",
+        "styles",
+        "tty",
+        "rgb",
+        "256",
+        "shell",
+        "xterm",
+        "command-line",
+        "support",
+        "supports",
+        "capability",
+        "detect",
+        "truecolor",
+        "16m"
+      ]
+    },
+    {
+      "_id": "67bc771c2499176361ec5a15",
+      "name": "ms",
+      "description": "Tiny millisecond conversion utility",
+      "link": "https://www.npmjs.com/package/ms",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1873206415,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 395779232
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 414339363
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 417959896
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 432282376
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 433272364
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 378416056
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 478894239
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 465602689
+          }
+        ]
+      },
+      "dependent_packages_count": 5545,
+      "dependent_repos_count": 2318159,
+      "latest_version": "2.1.3",
+      "npm_timestamps": {
+        "created_at": "2011-12-21T19:38:08.664Z",
+        "modified_at": "2025-09-08T19:56:54.242Z"
+      },
+      "db_created_at": "2025-02-24T13:41:48.853Z",
+      "db_updated_at": "2026-06-01T10:34:34.232Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc77132499176361ec59ac",
+      "name": "ansi-styles",
+      "description": "ANSI escape codes for styling strings in the terminal",
+      "link": "https://www.npmjs.com/package/ansi-styles",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1770769131,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 401904384
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 408782963
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 398459798
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 402028854
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 406680653
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 414641178
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 456472178
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 410730015
+          }
+        ]
+      },
+      "dependent_packages_count": 4466,
+      "dependent_repos_count": 1274606,
+      "latest_version": "6.2.3",
+      "npm_timestamps": {
+        "created_at": "2013-07-31T23:00:29.145Z",
+        "modified_at": "2025-09-08T17:07:32.285Z"
+      },
+      "db_created_at": "2025-02-24T13:41:39.078Z",
+      "db_updated_at": "2025-11-03T05:36:57.216Z",
+      "keywords": [
+        "ansi",
+        "styles",
+        "color",
+        "colour",
+        "colors",
+        "terminal",
+        "console",
+        "cli",
+        "string",
+        "tty",
+        "escape",
+        "formatting",
+        "rgb",
+        "256",
+        "shell",
+        "xterm",
+        "log",
+        "logging",
+        "command-line",
+        "text"
+      ]
+    },
+    {
+      "_id": "67bc76b62499176361ec55e5",
+      "name": "chalk",
+      "description": "Terminal string styling done right",
+      "link": "https://www.npmjs.com/package/chalk",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1764513262,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 410875773
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 412738790
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 413497547
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 419951352
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 439430040
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 439494222
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 408603950
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 352646418
+          }
+        ]
+      },
+      "dependent_packages_count": 130085,
+      "dependent_repos_count": 1291351,
+      "latest_version": "5.6.2",
+      "npm_timestamps": {
+        "created_at": "2013-08-03T00:21:56.318Z",
+        "modified_at": "2025-10-29T23:18:03.554Z"
+      },
+      "db_created_at": "2025-02-24T13:40:06.688Z",
+      "db_updated_at": "2026-06-08T09:30:31.773Z",
+      "keywords": [
+        "color",
+        "colour",
+        "colors",
+        "terminal",
+        "console",
+        "cli",
+        "string",
+        "ansi",
+        "style",
+        "styles",
+        "tty",
+        "formatting",
+        "rgb",
+        "256",
+        "shell",
+        "xterm",
+        "log",
+        "logging",
+        "command-line",
+        "text"
+      ]
+    },
+    {
+      "_id": "67bc79752499176361ec72ac",
+      "name": "emoji-regex",
+      "description": "A regular expression to match all Emoji-only symbols as per the Unicode Standard.",
+      "link": "https://www.npmjs.com/package/emoji-regex",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1753375141,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 330789285
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 311015228
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 408374710
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 392696924
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 402239797
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 427097238
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 457206553
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 415637565
+          }
+        ]
+      },
+      "dependent_packages_count": 2426,
+      "dependent_repos_count": 4193583,
+      "latest_version": "10.6.0",
+      "npm_timestamps": {
+        "created_at": "2014-09-28T11:10:47.034Z",
+        "modified_at": "2026-04-24T23:31:06.993Z"
+      },
+      "db_created_at": "2025-02-24T13:51:49.578Z",
+      "db_updated_at": "2026-06-29T09:33:37.637Z",
+      "keywords": [
+        "unicode",
+        "regex",
+        "regexp",
+        "regular expressions",
+        "code points",
+        "symbols",
+        "characters",
+        "emoji"
+      ]
+    },
+    {
+      "_id": "67bc7bab2499176361ec8a1e",
+      "name": "wrap-ansi",
+      "description": "Wordwrap a string with ANSI escape codes",
+      "link": "https://www.npmjs.com/package/wrap-ansi",
+      "dependencies": [
+        "ansi-styles",
+        "string-width",
+        "strip-ansi"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1667678721,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 382512866
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 401889611
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 381643741
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 331068732
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 420573941
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 442159559
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 411512678
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 397889831
+          }
+        ]
+      },
+      "dependent_packages_count": 2301,
+      "dependent_repos_count": 4485420,
+      "latest_version": "10.0.0",
+      "npm_timestamps": {
+        "created_at": "2015-08-19T18:56:22.141Z",
+        "modified_at": "2026-02-20T10:03:54.839Z"
+      },
+      "db_created_at": "2025-02-24T14:01:15.038Z",
+      "db_updated_at": "2026-07-06T09:09:39.975Z",
+      "keywords": [
+        "wrap",
+        "break",
+        "wordwrap",
+        "wordbreak",
+        "linewrap",
+        "ansi",
+        "styles",
+        "color",
+        "colour",
+        "colors",
+        "terminal",
+        "console",
+        "cli",
+        "string",
+        "tty",
+        "escape",
+        "formatting",
+        "rgb",
+        "256",
+        "shell",
+        "xterm",
+        "log",
+        "logging",
+        "command-line",
+        "text"
+      ]
+    },
+    {
+      "_id": "67bc7a832499176361ec7df8",
+      "name": "lru-cache",
+      "description": "A cache object that deletes the least-recently-used items.",
+      "link": "https://www.npmjs.com/package/lru-cache",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1594120234,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-15",
+            "downloads": 318168179
+          },
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 327234342
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 356850537
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 366291975
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 385693477
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 386855368
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 405136388
+          },
+          {
+            "week_ending": "2026-04-05",
+            "downloads": 386492290
+          }
+        ]
+      },
+      "dependent_packages_count": 6362,
+      "dependent_repos_count": 1198118,
+      "latest_version": "11.3.0",
+      "npm_timestamps": {
+        "created_at": "2011-07-16T09:09:00.041Z",
+        "modified_at": "2026-04-06T00:04:00.053Z"
+      },
+      "db_created_at": "2025-02-24T13:56:19.008Z",
+      "db_updated_at": "2026-04-06T07:00:44.389Z",
+      "keywords": [
+        "mru",
+        "lru",
+        "cache"
+      ]
+    },
+    {
+      "_id": "67bc7b452499176361ec85f6",
+      "name": "tslib",
+      "description": "Runtime library for TypeScript helper functions",
+      "link": "https://www.npmjs.com/package/tslib",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1591649008,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 386332352
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 388555327
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 388800060
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 371382717
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 299710031
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 410468744
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 419393902
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 423357440
+          }
+        ]
+      },
+      "dependent_packages_count": 122729,
+      "dependent_repos_count": 1726336,
+      "latest_version": "2.8.1",
+      "npm_timestamps": {
+        "created_at": "2014-12-30T09:21:20.138Z",
+        "modified_at": "2026-06-17T05:44:47.278Z"
+      },
+      "db_created_at": "2025-02-24T13:59:33.468Z",
+      "db_updated_at": "2026-08-03T08:33:34.182Z",
+      "keywords": [
+        "TypeScript",
+        "Microsoft",
+        "compiler",
+        "language",
+        "javascript",
+        "tslib",
+        "runtime"
+      ]
+    },
+    {
+      "_id": "67bc79e72499176361ec7770",
+      "name": "picomatch",
+      "description": "Blazing fast and accurate glob matcher written in JavaScript, with no dependencies and full support for standard and extended Bash glob features, including braces, extglobs, POSIX brackets, and regular expressions.",
+      "link": "https://www.npmjs.com/package/picomatch",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1588809050,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 323026531
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 341988919
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 358763167
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 351840416
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 360750819
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 377818553
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 390249825
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 358147738
+          }
+        ]
+      },
+      "dependent_packages_count": 2541,
+      "dependent_repos_count": 1888591,
+      "latest_version": "4.0.4",
+      "npm_timestamps": {
+        "created_at": "2018-11-05T12:07:08.561Z",
+        "modified_at": "2026-03-24T11:29:28.187Z"
+      },
+      "db_created_at": "2025-02-24T13:53:43.628Z",
+      "db_updated_at": "2026-06-01T10:42:38.159Z",
+      "keywords": [
+        "glob",
+        "match",
+        "picomatch"
+      ]
+    },
+    {
+      "_id": "67bc77d12499176361ec6178",
+      "name": "glob",
+      "description": "the most correct and second fastest glob implementation in JavaScript",
+      "link": "https://www.npmjs.com/package/glob",
+      "dependencies": [
+        "minimatch",
+        "minipass",
+        "path-scurry"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1470826574,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 344886536
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 296860347
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 378391197
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 392079963
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 304368622
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 353250829
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 287422424
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 381046994
+          }
+        ]
+      },
+      "dependent_packages_count": 48165,
+      "dependent_repos_count": 2105034,
+      "latest_version": "13.0.6",
+      "npm_timestamps": {
+        "created_at": "2011-01-02T22:10:36.356Z",
+        "modified_at": "2026-02-19T17:26:33.383Z"
+      },
+      "db_created_at": "2025-02-24T13:44:49.349Z",
+      "db_updated_at": "2026-07-20T08:05:33.956Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc79872499176361ec7364",
+      "name": "minipass",
+      "description": "minimal implementation of a PassThrough stream",
+      "link": "https://www.npmjs.com/package/minipass",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1453055286,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 417914088
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 336315483
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 335438314
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 352842873
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 336019037
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 264034723
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 247372547
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 242590094
+          }
+        ]
+      },
+      "dependent_packages_count": 559,
+      "dependent_repos_count": 3331406,
+      "latest_version": "7.1.3",
+      "npm_timestamps": {
+        "created_at": "2017-03-14T00:11:57.420Z",
+        "modified_at": "2026-02-19T00:34:33.989Z"
+      },
+      "db_created_at": "2025-02-24T13:52:07.986Z",
+      "db_updated_at": "2026-08-10T06:13:04.128Z",
+      "keywords": [
+        "passthrough",
+        "stream"
+      ]
+    },
+    {
+      "_id": "67bc78782499176361ec685f",
+      "name": "type-fest",
+      "description": "A collection of essential TypeScript types",
+      "link": "https://www.npmjs.com/package/type-fest",
+      "dependencies": [
+        "tagged-tag"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1336360812,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 326629731
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 325356090
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 305988915
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 274559041
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 340596488
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 343579310
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 334927769
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 315865005
+          }
+        ]
+      },
+      "dependent_packages_count": 5723,
+      "dependent_repos_count": 3278996,
+      "latest_version": "5.8.0",
+      "npm_timestamps": {
+        "created_at": "2019-03-13T10:40:42.413Z",
+        "modified_at": "2026-07-04T22:51:13.436Z"
+      },
+      "db_created_at": "2025-02-24T13:47:36.394Z",
+      "db_updated_at": "2026-07-06T09:07:10.242Z",
+      "keywords": [
+        "typescript",
+        "ts",
+        "types",
+        "utility",
+        "util",
+        "utilities",
+        "omit",
+        "merge",
+        "json",
+        "generics"
+      ]
+    },
+    {
+      "_id": "67bc7bd02499176361ec8bcd",
+      "name": "color-name",
+      "description": "A list of color names and its values",
+      "link": "https://www.npmjs.com/package/color-name",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1309221019,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 264344627
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 283129819
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 285629342
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 286043000
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 296151360
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 311382224
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 320281889
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 302250135
+          }
+        ]
+      },
+      "dependent_packages_count": 2520,
+      "dependent_repos_count": 1252925,
+      "latest_version": "2.1.0",
+      "npm_timestamps": {
+        "created_at": "2014-11-23T16:18:30.217Z",
+        "modified_at": "2025-11-12T15:36:02.715Z"
+      },
+      "db_created_at": "2025-02-24T14:01:52.855Z",
+      "db_updated_at": "2026-06-01T10:51:33.980Z",
+      "keywords": [
+        "color-name",
+        "color",
+        "color-keyword",
+        "keyword"
+      ]
+    },
+    {
+      "_id": "67bc7c8d2499176361ec9296",
+      "name": "strip-ansi",
+      "description": "Strip ANSI escape codes from a string",
+      "link": "https://www.npmjs.com/package/strip-ansi",
+      "dependencies": [
+        "ansi-regex"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1284925253,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 286980918
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 292596281
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 286934436
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 290752632
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 290950111
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 303700675
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 324018578
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 304570930
+          }
+        ]
+      },
+      "dependent_packages_count": 7310,
+      "dependent_repos_count": 2069298,
+      "latest_version": "7.1.2",
+      "npm_timestamps": {
+        "created_at": "2013-12-07T23:30:14.926Z",
+        "modified_at": "2025-09-08T17:14:01.001Z"
+      },
+      "db_created_at": "2025-02-24T14:05:01.315Z",
+      "db_updated_at": "2025-11-03T05:47:38.406Z",
+      "keywords": [
+        "strip",
+        "trim",
+        "remove",
+        "ansi",
+        "styles",
+        "color",
+        "colour",
+        "colors",
+        "terminal",
+        "console",
+        "string",
+        "tty",
+        "escape",
+        "formatting",
+        "rgb",
+        "256",
+        "shell",
+        "xterm",
+        "log",
+        "logging",
+        "command-line",
+        "text"
+      ]
+    },
+    {
+      "_id": "67bc7a692499176361ec7d03",
+      "name": "balanced-match",
+      "description": "Match balanced character pairs, like \"{\" and \"}\"",
+      "link": "https://www.npmjs.com/package/balanced-match",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1270763944,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 230063979
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 253733802
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 265003627
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 265199308
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 278594470
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 299952628
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 318528260
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 305499298
+          }
+        ]
+      },
+      "dependent_packages_count": 2671,
+      "dependent_repos_count": 1303263,
+      "latest_version": "4.0.4",
+      "npm_timestamps": {
+        "created_at": "2013-10-13T12:26:00.713Z",
+        "modified_at": "2026-02-22T11:38:26.052Z"
+      },
+      "db_created_at": "2025-02-24T13:55:53.861Z",
+      "db_updated_at": "2026-06-01T10:43:49.346Z",
+      "keywords": [
+        "match",
+        "regexp",
+        "test",
+        "balanced",
+        "parse"
+      ]
+    },
+    {
+      "_id": "67bc7b7b2499176361ec880d",
+      "name": "p-limit",
+      "description": "Run multiple promise-returning & async functions with limited concurrency",
+      "link": "https://www.npmjs.com/package/p-limit",
+      "dependencies": [
+        "yocto-queue"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1218207368,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 257921406
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 230776516
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 283362702
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 288317889
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 281171195
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 271701867
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 269193457
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 300089452
+          }
+        ]
+      },
+      "dependent_packages_count": 3167,
+      "dependent_repos_count": 1094175,
+      "latest_version": "7.3.0",
+      "npm_timestamps": {
+        "created_at": "2016-10-21T07:59:41.638Z",
+        "modified_at": "2026-02-03T15:27:40.331Z"
+      },
+      "db_created_at": "2025-02-24T14:00:27.371Z",
+      "db_updated_at": "2026-07-20T08:10:51.374Z",
+      "keywords": [
+        "promise",
+        "limit",
+        "limited",
+        "concurrency",
+        "throttle",
+        "throat",
+        "rate",
+        "batch",
+        "ratelimit",
+        "task",
+        "queue",
+        "async",
+        "await",
+        "promises",
+        "bluebird"
+      ]
+    },
+    {
+      "_id": "67bc79cb2499176361ec764f",
+      "name": "glob-parent",
+      "description": "Extract the non-magic parent path from a glob string.",
+      "link": "https://www.npmjs.com/package/glob-parent",
+      "dependencies": [
+        "is-glob"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1206087900,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 265017072
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 269752964
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 284294610
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 286582245
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 267616010
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 235178066
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 294719431
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 300557950
+          }
+        ]
+      },
+      "dependent_packages_count": 2487,
+      "dependent_repos_count": 6788,
+      "latest_version": "6.0.2",
+      "npm_timestamps": {
+        "created_at": "2015-01-12T20:32:54.422Z",
+        "modified_at": "2023-06-22T16:32:08.502Z"
+      },
+      "db_created_at": "2025-02-24T13:53:15.327Z",
+      "db_updated_at": "2026-06-22T10:47:08.382Z",
+      "keywords": [
+        "glob",
+        "parent",
+        "strip",
+        "path",
+        "dirname",
+        "directory",
+        "base",
+        "wildcard"
+      ]
+    },
+    {
+      "_id": "67bc7a042499176361ec78a4",
+      "name": "p-locate",
+      "description": "Get the first fulfilled promise that satisfies the provided testing function",
+      "link": "https://www.npmjs.com/package/p-locate",
+      "dependencies": [
+        "p-limit"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1179347153,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 233151539
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 217173588
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 264366253
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 250116532
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 265299769
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 275066803
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 279709899
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 272613693
+          }
+        ]
+      },
+      "dependent_packages_count": 2017,
+      "dependent_repos_count": 1089447,
+      "latest_version": "7.0.0",
+      "npm_timestamps": {
+        "created_at": "2016-11-20T10:07:34.210Z",
+        "modified_at": "2026-02-03T07:57:50.017Z"
+      },
+      "db_created_at": "2025-02-24T13:54:12.445Z",
+      "db_updated_at": "2026-06-29T09:34:03.203Z",
+      "keywords": [
+        "promise",
+        "locate",
+        "find",
+        "finder",
+        "search",
+        "searcher",
+        "test",
+        "array",
+        "collection",
+        "iterable",
+        "iterator",
+        "race",
+        "fulfilled",
+        "fastest",
+        "async",
+        "await",
+        "promises",
+        "bluebird"
+      ]
+    },
+    {
+      "_id": "67bc77442499176361ec5bca",
+      "name": "has-flag",
+      "description": "Check if argv has a specific flag",
+      "link": "https://www.npmjs.com/package/has-flag",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1165857864,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 290827909
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 295915388
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 238656376
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 276212089
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 169174825
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 299052587
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 305149292
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 311628210
+          }
+        ]
+      },
+      "dependent_packages_count": 2772,
+      "dependent_repos_count": 1287734,
+      "latest_version": "5.0.1",
+      "npm_timestamps": {
+        "created_at": "2015-07-07T22:43:54.339Z",
+        "modified_at": "2023-04-17T23:19:31.649Z"
+      },
+      "db_created_at": "2025-02-24T13:42:28.798Z",
+      "db_updated_at": "2026-08-03T08:30:20.386Z",
+      "keywords": [
+        "has",
+        "check",
+        "detect",
+        "contains",
+        "find",
+        "flag",
+        "cli",
+        "command-line",
+        "argv",
+        "process",
+        "arg",
+        "args",
+        "argument",
+        "arguments",
+        "getopt",
+        "minimist",
+        "optimist"
+      ]
+    },
+    {
+      "_id": "67bc79282499176361ec6f7a",
+      "name": "iconv-lite",
+      "description": "Convert character encodings in pure javascript.",
+      "link": "https://www.npmjs.com/package/iconv-lite",
+      "dependencies": [
+        "safer-buffer"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1145526733,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 279656288
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 260816722
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 250159293
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 208548766
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 275623968
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 272255599
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 278417598
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 277054556
+          }
+        ]
+      },
+      "dependent_packages_count": 5723,
+      "dependent_repos_count": 2198928,
+      "latest_version": "0.7.3",
+      "npm_timestamps": {
+        "created_at": "2011-11-09T17:51:01.242Z",
+        "modified_at": "2026-07-17T17:10:12.328Z"
+      },
+      "db_created_at": "2025-02-24T13:50:32.680Z",
+      "db_updated_at": "2026-08-10T06:12:49.854Z",
+      "keywords": [
+        "iconv",
+        "convert",
+        "charset",
+        "icu"
+      ]
+    },
+    {
+      "_id": "67bc7ac42499176361ec80ae",
+      "name": "entities",
+      "description": "Encode & decode XML and HTML entities with ease & speed",
+      "link": "https://www.npmjs.com/package/entities",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1121538436,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 275720942
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 264943044
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 238062783
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 231939295
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 257003334
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 261981614
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 270002121
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 273974169
+          }
+        ]
+      },
+      "dependent_packages_count": 1313,
+      "dependent_repos_count": 3284033,
+      "latest_version": "8.0.0",
+      "npm_timestamps": {
+        "created_at": "2012-01-14T13:37:36.242Z",
+        "modified_at": "2026-03-17T11:47:45.798Z"
+      },
+      "db_created_at": "2025-02-24T13:57:24.854Z",
+      "db_updated_at": "2026-08-10T06:13:52.696Z",
+      "keywords": [
+        "html entities",
+        "entity decoder",
+        "entity encoding",
+        "html decoding",
+        "html encoding",
+        "xml decoding",
+        "xml encoding"
+      ]
+    },
+    {
+      "_id": "67bc77242499176361ec5a5e",
+      "name": "uuid",
+      "description": "RFC9562 UUIDs",
+      "link": "https://www.npmjs.com/package/uuid",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1110470937,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 274233384
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 276201384
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 270785745
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 251400197
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 243792245
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 267352912
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 272313920
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 278649657
+          }
+        ]
+      },
+      "dependent_packages_count": 41299,
+      "dependent_repos_count": 1006437,
+      "latest_version": "14.0.1",
+      "npm_timestamps": {
+        "created_at": "2011-03-31T08:12:51.801Z",
+        "modified_at": "2026-06-20T11:56:02.792Z"
+      },
+      "db_created_at": "2025-02-24T13:41:56.185Z",
+      "db_updated_at": "2026-08-03T08:30:14.085Z",
+      "keywords": [
+        "uuid",
+        "guid",
+        "rfc4122",
+        "rfc9562"
+      ]
+    },
+    {
+      "_id": "67bc794e2499176361ec7111",
+      "name": "json-schema-traverse",
+      "description": "Traverse JSON Schema passing each schema object to callback",
+      "link": "https://www.npmjs.com/package/json-schema-traverse",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1095321134,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 232193866
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 236036587
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 241881148
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 245259190
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 258173069
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 258640568
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 243236426
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 168431367
+          }
+        ]
+      },
+      "dependent_packages_count": 1848,
+      "dependent_repos_count": 1067963,
+      "latest_version": "1.0.0",
+      "npm_timestamps": {
+        "created_at": "2017-06-04T18:42:17.844Z",
+        "modified_at": "2023-06-22T16:32:38.879Z"
+      },
+      "db_created_at": "2025-02-24T13:51:10.798Z",
+      "db_updated_at": "2026-06-08T09:32:45.892Z",
+      "keywords": [
+        "JSON-Schema",
+        "traverse",
+        "iterate"
+      ]
+    },
+    {
+      "_id": "67bc78f32499176361ec6d68",
+      "name": "string-width",
+      "description": "Get the visual width of a string - the number of columns required to display it",
+      "link": "https://www.npmjs.com/package/string-width",
+      "dependencies": [
+        "get-east-asian-width",
+        "strip-ansi"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1083129111,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 237887651
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 241356457
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 239887747
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 243085361
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 246153188
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 256268132
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 272505856
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 256904140
+          }
+        ]
+      },
+      "dependent_packages_count": 2714,
+      "dependent_repos_count": 1106583,
+      "latest_version": "8.1.0",
+      "npm_timestamps": {
+        "created_at": "2015-07-16T22:08:17.757Z",
+        "modified_at": "2025-09-01T11:47:08.597Z"
+      },
+      "db_created_at": "2025-02-24T13:49:39.186Z",
+      "db_updated_at": "2025-11-03T05:41:45.087Z",
+      "keywords": [
+        "string",
+        "character",
+        "unicode",
+        "width",
+        "visual",
+        "column",
+        "columns",
+        "fullwidth",
+        "full-width",
+        "wcwidth",
+        "wcswidth",
+        "full",
+        "ansi",
+        "escape",
+        "codes",
+        "cli",
+        "command-line",
+        "terminal",
+        "console",
+        "cjk",
+        "chinese",
+        "japanese",
+        "korean",
+        "fixed-width",
+        "east-asian-width"
+      ]
+    },
+    {
+      "_id": "67bc7ad12499176361ec813e",
+      "name": "escape-string-regexp",
+      "description": "Escape RegExp special characters",
+      "link": "https://www.npmjs.com/package/escape-string-regexp",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1076009817,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 207128976
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 226084464
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 235909668
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 247072602
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 242504887
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 258095575
+          },
+          {
+            "week_ending": "2026-04-05",
+            "downloads": 246597786
+          },
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 248935936
+          }
+        ]
+      },
+      "dependent_packages_count": 5200,
+      "dependent_repos_count": 2044639,
+      "latest_version": "5.0.0",
+      "npm_timestamps": {
+        "created_at": "2014-06-24T15:06:23.496Z",
+        "modified_at": "2023-04-25T16:42:41.472Z"
+      },
+      "db_created_at": "2025-02-24T13:57:37.231Z",
+      "db_updated_at": "2026-04-13T07:21:00.755Z",
+      "keywords": [
+        "escape",
+        "regex",
+        "regexp",
+        "regular",
+        "expression",
+        "string",
+        "special",
+        "characters"
+      ]
+    },
+    {
+      "_id": "67bc7acf2499176361ec811f",
+      "name": "globals",
+      "description": "Global identifiers from different JavaScript environments",
+      "link": "https://www.npmjs.com/package/globals",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1070902287,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 244304410
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 198166513
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 229894475
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 186292528
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 250780263
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 257523869
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 262498347
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 262605501
+          }
+        ]
+      },
+      "dependent_packages_count": 2314,
+      "dependent_repos_count": 1094003,
+      "latest_version": "17.9.0",
+      "npm_timestamps": {
+        "created_at": "2012-11-03T11:51:05.078Z",
+        "modified_at": "2026-08-02T15:24:47.780Z"
+      },
+      "db_created_at": "2025-02-24T13:57:35.215Z",
+      "db_updated_at": "2026-08-10T06:13:53.656Z",
+      "keywords": [
+        "globals",
+        "global",
+        "identifiers",
+        "variables",
+        "vars",
+        "jshint",
+        "eslint",
+        "environments"
+      ]
+    },
+    {
+      "_id": "67bc75612499176361ec47a8",
+      "name": "is-fullwidth-code-point",
+      "description": "Check if the character represented by a given Unicode code point is fullwidth",
+      "link": "https://www.npmjs.com/package/is-fullwidth-code-point",
+      "dependencies": [
+        "get-east-asian-width"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1045721788,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 259181478
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 270365044
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 252675366
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 243053194
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 242421762
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 261257885
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 254505800
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 255438446
+          }
+        ]
+      },
+      "dependent_packages_count": 2006,
+      "dependent_repos_count": 1106069,
+      "latest_version": "5.1.0",
+      "npm_timestamps": {
+        "created_at": "2015-07-16T22:00:18.162Z",
+        "modified_at": "2025-08-31T07:37:04.974Z"
+      },
+      "db_created_at": "2025-02-24T13:34:25.625Z",
+      "db_updated_at": "2026-08-03T08:28:32.012Z",
+      "keywords": [
+        "fullwidth",
+        "full-width",
+        "full",
+        "width",
+        "unicode",
+        "character",
+        "string",
+        "codepoint",
+        "code",
+        "point",
+        "is",
+        "detect",
+        "check",
+        "east-asian-width"
+      ]
+    },
+    {
+      "_id": "67bc79bd2499176361ec75b3",
+      "name": "argparse",
+      "description": "CLI arguments parser. Native port of python's argparse.",
+      "link": "https://www.npmjs.com/package/argparse",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1045649908,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 233814965
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 227719733
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 218635394
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 216038633
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 240483461
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 245800985
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 251175268
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 253461852
+          }
+        ]
+      },
+      "dependent_packages_count": 4248,
+      "dependent_repos_count": 1075818,
+      "latest_version": "3.0.0",
+      "npm_timestamps": {
+        "created_at": "2012-05-16T20:16:27.775Z",
+        "modified_at": "2026-07-14T05:48:02.720Z"
+      },
+      "db_created_at": "2025-02-24T13:53:01.972Z",
+      "db_updated_at": "2026-08-10T06:13:11.630Z",
+      "keywords": [
+        "cli",
+        "parser",
+        "argparse",
+        "option",
+        "args"
+      ]
+    },
+    {
+      "_id": "67bc79e42499176361ec7748",
+      "name": "ignore",
+      "description": "Ignore is a manager and filter for .gitignore rules, the one used by eslint, gitbook and many others.",
+      "link": "https://www.npmjs.com/package/ignore",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 1035996209,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 201291738
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 227337350
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 234298377
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 230878784
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 235736211
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 247177089
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 248485045
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 233279014
+          }
+        ]
+      },
+      "dependent_packages_count": 2726,
+      "dependent_repos_count": 1698122,
+      "latest_version": "7.0.5",
+      "npm_timestamps": {
+        "created_at": "2013-09-02T07:32:08.169Z",
+        "modified_at": "2025-05-31T02:18:53.593Z"
+      },
+      "db_created_at": "2025-02-24T13:53:40.830Z",
+      "db_updated_at": "2026-06-01T10:42:39.534Z",
+      "keywords": [
+        "ignore",
+        ".gitignore",
+        "gitignore",
+        "npmignore",
+        "rules",
+        "manager",
+        "filter",
+        "regexp",
+        "regex",
+        "fnmatch",
+        "glob",
+        "asterisks",
+        "regular-expression"
+      ]
+    },
+    {
+      "_id": "67bc78fb2499176361ec6db5",
+      "name": "which",
+      "description": "Like which(1) unix command. Find the first instance of an executable in the PATH.",
+      "link": "https://www.npmjs.com/package/which",
+      "dependencies": [
+        "isexe"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 977221406,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-08",
+            "downloads": 208927267
+          },
+          {
+            "week_ending": "2026-02-15",
+            "downloads": 187304452
+          },
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 180640547
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 200427854
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 223763232
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 228284818
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 236323310
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 222566211
+          }
+        ]
+      },
+      "dependent_packages_count": 5072,
+      "dependent_repos_count": 4804,
+      "latest_version": "6.0.1",
+      "npm_timestamps": {
+        "created_at": "2011-08-07T18:36:12.410Z",
+        "modified_at": "2026-03-19T19:28:36.069Z"
+      },
+      "db_created_at": "2025-02-24T13:49:47.805Z",
+      "db_updated_at": "2026-03-30T07:02:27.457Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc788a2499176361ec6917",
+      "name": "esbuild",
+      "description": "An extremely fast JavaScript and CSS bundler and minifier.",
+      "link": "https://www.npmjs.com/package/esbuild",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 967363225,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 236847527
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 241803639
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 224484309
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 200590005
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 244543775
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 243988517
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 237969557
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 237262772
+          }
+        ]
+      },
+      "dependent_packages_count": 15949,
+      "dependent_repos_count": 491246,
+      "latest_version": "0.28.1",
+      "npm_timestamps": {
+        "created_at": "2017-11-26T05:52:58.272Z",
+        "modified_at": "2026-06-11T22:47:05.387Z"
+      },
+      "db_created_at": "2025-02-24T13:47:54.266Z",
+      "db_updated_at": "2026-07-06T09:07:14.540Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc79662499176361ec7218",
+      "name": "isexe",
+      "description": "Minimal module to check if a file is executable.",
+      "link": "https://www.npmjs.com/package/isexe",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 964187103,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 170667449
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 193223112
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 200369687
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 200921353
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 206708723
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 221943538
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 246740931
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 241201201
+          }
+        ]
+      },
+      "dependent_packages_count": 2232,
+      "dependent_repos_count": 5752,
+      "latest_version": "4.0.0",
+      "npm_timestamps": {
+        "created_at": "2016-01-17T05:25:47.501Z",
+        "modified_at": "2026-02-09T16:28:03.058Z"
+      },
+      "db_created_at": "2025-02-24T13:51:34.447Z",
+      "db_updated_at": "2026-06-01T10:42:01.910Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc79662499176361ec7216",
+      "name": "js-yaml",
+      "description": "YAML 1.2 parser and serializer",
+      "link": "https://www.npmjs.com/package/js-yaml",
+      "dependencies": [
+        "argparse"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 952993246,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 196749400
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 214249561
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 217115348
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 217121449
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 223875316
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 233391353
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 232469435
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 217853534
+          }
+        ]
+      },
+      "dependent_packages_count": 20789,
+      "dependent_repos_count": 1075506,
+      "latest_version": "4.2.0",
+      "npm_timestamps": {
+        "created_at": "2011-11-02T01:56:02.870Z",
+        "modified_at": "2026-05-31T22:17:13.894Z"
+      },
+      "db_created_at": "2025-02-24T13:51:34.264Z",
+      "db_updated_at": "2026-06-01T10:42:01.759Z",
+      "keywords": [
+        "yaml",
+        "parser",
+        "serializer",
+        "pyyaml"
+      ]
+    },
+    {
+      "_id": "67bc790f2499176361ec6e80",
+      "name": "resolve",
+      "description": "resolve like require.resolve() on behalf of files asynchronously and synchronously",
+      "link": "https://www.npmjs.com/package/resolve",
+      "dependencies": [
+        "es-errors",
+        "path-parse",
+        "is-core-module",
+        "supports-preserve-symlinks-flag"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 923915482,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 207148111
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 210637205
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 222502764
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 222980145
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 209455191
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 183191631
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 228565221
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 232824815
+          }
+        ]
+      },
+      "dependent_packages_count": 10935,
+      "dependent_repos_count": 5229428,
+      "latest_version": "1.22.12",
+      "npm_timestamps": {
+        "created_at": "2011-06-18T10:12:44.109Z",
+        "modified_at": "2026-05-15T20:12:07.875Z"
+      },
+      "db_created_at": "2025-02-24T13:50:07.147Z",
+      "db_updated_at": "2026-06-22T10:46:18.399Z",
+      "keywords": [
+        "resolve",
+        "require",
+        "node",
+        "module"
+      ]
+    },
+    {
+      "_id": "67bc79a42499176361ec7497",
+      "name": "mime-types",
+      "description": "The ultimate javascript content-type utility.",
+      "link": "https://www.npmjs.com/package/mime-types",
+      "dependencies": [
+        "mime-db"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 914156135,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 190968165
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 179689098
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 203071222
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 209489197
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 199003660
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 209033107
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 216332292
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 221851018
+          }
+        ]
+      },
+      "dependent_packages_count": 6561,
+      "dependent_repos_count": 2092391,
+      "latest_version": "3.0.2",
+      "npm_timestamps": {
+        "created_at": "2014-05-02T15:54:00.885Z",
+        "modified_at": "2025-11-20T11:12:29.913Z"
+      },
+      "db_created_at": "2025-02-24T13:52:36.124Z",
+      "db_updated_at": "2026-06-22T10:46:54.428Z",
+      "keywords": [
+        "mime",
+        "types"
+      ]
+    },
+    {
+      "_id": "67bc76a12499176361ec54f4",
+      "name": "nanoid",
+      "description": "A tiny (118 bytes), secure URL-friendly unique string ID generator",
+      "link": "https://www.npmjs.com/package/nanoid",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 911934622,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 177187064
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 157537898
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 165441854
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 216769910
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 220754184
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 228633869
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 178053087
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 229525837
+          }
+        ]
+      },
+      "dependent_packages_count": 7827,
+      "dependent_repos_count": 1618762,
+      "latest_version": "6.0.0",
+      "npm_timestamps": {
+        "created_at": "2017-08-06T05:04:00.915Z",
+        "modified_at": "2026-07-12T15:11:39.111Z"
+      },
+      "db_created_at": "2025-02-24T13:39:45.821Z",
+      "db_updated_at": "2026-07-20T08:04:06.785Z",
+      "keywords": [
+        "id",
+        "random",
+        "url",
+        "uuid"
+      ]
+    },
+    {
+      "_id": "67bc7a152499176361ec7960",
+      "name": "yargs-parser",
+      "description": "the mighty option parser used by yargs",
+      "link": "https://www.npmjs.com/package/yargs-parser",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 908372803,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 213894084
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 222181496
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 214913560
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 205599220
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 203333813
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 228109438
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 234554720
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 242841049
+          }
+        ]
+      },
+      "dependent_packages_count": 3976,
+      "dependent_repos_count": 4384968,
+      "latest_version": "22.0.0",
+      "npm_timestamps": {
+        "created_at": "2016-01-23T21:12:29.644Z",
+        "modified_at": "2025-05-26T20:12:01.075Z"
+      },
+      "db_created_at": "2025-02-24T13:54:29.610Z",
+      "db_updated_at": "2026-08-03T08:32:36.875Z",
+      "keywords": [
+        "argument",
+        "parser",
+        "yargs",
+        "command",
+        "cli",
+        "parsing",
+        "option",
+        "args",
+        "argument"
+      ]
+    },
+    {
+      "_id": "67bc75a22499176361ec4a70",
+      "name": "source-map",
+      "description": "Generates and consumes source maps",
+      "link": "https://www.npmjs.com/package/source-map",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 890684167,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 203254681
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 204223458
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 203401465
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 206353601
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 208039477
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 213934474
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 239138039
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 207412259
+          }
+        ]
+      },
+      "dependent_packages_count": 5880,
+      "dependent_repos_count": 1103771,
+      "latest_version": "0.7.6",
+      "npm_timestamps": {
+        "created_at": "2011-08-30T19:45:39.150Z",
+        "modified_at": "2025-07-29T15:12:31.053Z"
+      },
+      "db_created_at": "2025-02-24T13:35:30.792Z",
+      "db_updated_at": "2025-11-03T05:28:52.807Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc757e2499176361ec48d2",
+      "name": "string_decoder",
+      "description": "The string_decoder module from Node core",
+      "link": "https://www.npmjs.com/package/string_decoder",
+      "dependencies": [
+        "safe-buffer"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 888103897,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 206743099
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 217132076
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 218092474
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 208656979
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 183788797
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 229637731
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 233009894
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 227185552
+          }
+        ]
+      },
+      "dependent_packages_count": 2167,
+      "dependent_repos_count": 1091725,
+      "latest_version": "1.3.0",
+      "npm_timestamps": {
+        "created_at": "2013-12-03T20:13:26.191Z",
+        "modified_at": "2023-07-12T19:05:48.571Z"
+      },
+      "db_created_at": "2025-02-24T13:34:54.026Z",
+      "db_updated_at": "2026-06-29T09:30:33.359Z",
+      "keywords": [
+        "string",
+        "decoder",
+        "browser",
+        "browserify"
+      ]
+    },
+    {
+      "_id": "67bc798a2499176361ec7389",
+      "name": "color-convert",
+      "description": "Plain color conversion functions",
+      "link": "https://www.npmjs.com/package/color-convert",
+      "dependencies": [
+        "color-name"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 875493558,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 204655732
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 206423019
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 204071194
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 206718173
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 209986067
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 211189492
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 202874243
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 208750137
+          }
+        ]
+      },
+      "dependent_packages_count": 3135,
+      "dependent_repos_count": 1246711,
+      "latest_version": "3.1.2",
+      "npm_timestamps": {
+        "created_at": "2011-06-10T04:11:24.300Z",
+        "modified_at": "2025-09-13T16:37:40.407Z"
+      },
+      "db_created_at": "2025-02-24T13:52:10.204Z",
+      "db_updated_at": "2025-11-03T05:42:41.787Z",
+      "keywords": [
+        "color",
+        "colour",
+        "convert",
+        "converter",
+        "conversion",
+        "rgb",
+        "hsl",
+        "hsv",
+        "hwb",
+        "cmyk",
+        "ansi",
+        "ansi16"
+      ]
+    },
+    {
+      "_id": "67bc77b72499176361ec608f",
+      "name": "estraverse",
+      "description": "ECMAScript JS AST traversal functions",
+      "link": "https://www.npmjs.com/package/estraverse",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 859346334,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 203488242
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 208835790
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 203752136
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 196357371
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 158630745
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 216279765
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 220099917
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 224804962
+          }
+        ]
+      },
+      "dependent_packages_count": 3235,
+      "dependent_repos_count": 1803046,
+      "latest_version": "5.3.0",
+      "npm_timestamps": {
+        "created_at": "2012-10-09T18:22:10.554Z",
+        "modified_at": "2023-06-22T16:31:49.531Z"
+      },
+      "db_created_at": "2025-02-24T13:44:23.800Z",
+      "db_updated_at": "2026-08-03T08:30:43.559Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc7b1c2499176361ec844d",
+      "name": "https-proxy-agent",
+      "description": "An HTTP(s) proxy `http.Agent` implementation for HTTPS",
+      "link": "https://www.npmjs.com/package/https-proxy-agent",
+      "dependencies": [
+        "debug",
+        "agent-base",
+        "proxy-agent-negotiate"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 839166979,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 171219202
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 185755697
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 206895003
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 201903976
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 137503818
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 226737244
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 244928850
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 222654154
+          }
+        ]
+      },
+      "dependent_packages_count": 3619,
+      "dependent_repos_count": 1575850,
+      "latest_version": "9.1.0",
+      "npm_timestamps": {
+        "created_at": "2013-07-09T20:44:51.282Z",
+        "modified_at": "2026-06-08T16:47:28.305Z"
+      },
+      "db_created_at": "2025-02-24T13:58:52.836Z",
+      "db_updated_at": "2026-06-29T09:34:41.421Z",
+      "keywords": [
+        "https",
+        "proxy",
+        "endpoint",
+        "agent"
+      ]
+    },
+    {
+      "_id": "67bc77ed2499176361ec629d",
+      "name": "@babel/helper-validator-identifier",
+      "description": "Validate identifier/keywords name",
+      "link": "https://www.npmjs.com/package/@babel/helper-validator-identifier",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 819817503,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 164056974
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 174577432
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 184096159
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 188874858
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 186467498
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 185485161
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 183670764
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 207867631
+          }
+        ]
+      },
+      "dependent_packages_count": 94,
+      "dependent_repos_count": 579219,
+      "latest_version": "8.0.4",
+      "npm_timestamps": {
+        "created_at": "2020-03-20T15:39:13.517Z",
+        "modified_at": "2026-07-09T08:49:41.064Z"
+      },
+      "db_created_at": "2025-02-24T13:45:17.984Z",
+      "db_updated_at": "2026-07-20T08:05:36.453Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc7b912499176361ec8911",
+      "name": "json5",
+      "description": "JSON for Humans",
+      "link": "https://www.npmjs.com/package/json5",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 819017025,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 193666605
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 198846980
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 191688554
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 186379602
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 150637258
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 210812223
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 214882515
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 220781460
+          }
+        ]
+      },
+      "dependent_packages_count": 5411,
+      "dependent_repos_count": 1074368,
+      "latest_version": "2.2.3",
+      "npm_timestamps": {
+        "created_at": "2012-05-27T20:32:39.534Z",
+        "modified_at": "2023-03-04T17:04:33.373Z"
+      },
+      "db_created_at": "2025-02-24T14:00:49.586Z",
+      "db_updated_at": "2026-08-03T08:33:43.948Z",
+      "keywords": [
+        "json",
+        "json5",
+        "es5",
+        "es2015",
+        "ecmascript"
+      ]
+    },
+    {
+      "_id": "67bc7ccd2499176361ec946e",
+      "name": "react-is",
+      "description": "Brand checking of React Elements.",
+      "link": "https://www.npmjs.com/package/react-is",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 814091899,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 288935517
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 255790721
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 318572749
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 323735856
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 315154605
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 305283610
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 246943024
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 333975552
+          }
+        ]
+      },
+      "dependent_packages_count": 10364,
+      "dependent_repos_count": 2549171,
+      "latest_version": "19.2.7",
+      "npm_timestamps": {
+        "created_at": "2017-10-19T07:25:21.846Z",
+        "modified_at": "2026-07-17T16:37:59.069Z"
+      },
+      "db_created_at": "2025-02-24T14:06:05.511Z",
+      "db_updated_at": "2026-07-20T08:11:51.487Z",
+      "keywords": [
+        "react"
+      ]
+    },
+    {
+      "_id": "67bc7a6e2499176361ec7d20",
+      "name": "readdirp",
+      "description": "Recursive version of fs.readdir with small RAM & CPU footprint",
+      "link": "https://www.npmjs.com/package/readdirp",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 811064095,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 184790264
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 182718828
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 183265360
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 181928813
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 194409978
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 192544765
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 195362456
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 197718550
+          }
+        ]
+      },
+      "dependent_packages_count": 1914,
+      "dependent_repos_count": 4905460,
+      "latest_version": "5.1.1",
+      "npm_timestamps": {
+        "created_at": "2012-07-18T11:44:10.802Z",
+        "modified_at": "2026-08-06T06:26:39.304Z"
+      },
+      "db_created_at": "2025-02-24T13:55:58.993Z",
+      "db_updated_at": "2026-08-10T06:13:41.563Z",
+      "keywords": [
+        "recursive",
+        "fs",
+        "stream",
+        "streams",
+        "readdir",
+        "filesystem",
+        "find",
+        "filter"
+      ]
+    },
+    {
+      "_id": "67bc79572499176361ec7169",
+      "name": "commander",
+      "description": "the complete solution for node.js command-line programs",
+      "link": "https://www.npmjs.com/package/commander",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 809290869,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-11-23",
+            "downloads": 244540127
+          },
+          {
+            "week_ending": "2025-11-30",
+            "downloads": 238701876
+          },
+          {
+            "week_ending": "2025-12-07",
+            "downloads": 256955221
+          },
+          {
+            "week_ending": "2025-12-14",
+            "downloads": 250609021
+          },
+          {
+            "week_ending": "2025-12-21",
+            "downloads": 237671866
+          },
+          {
+            "week_ending": "2025-12-28",
+            "downloads": 136306659
+          },
+          {
+            "week_ending": "2026-01-04",
+            "downloads": 127388568
+          },
+          {
+            "week_ending": "2026-01-11",
+            "downloads": 226492248
+          }
+        ]
+      },
+      "dependent_packages_count": 74942,
+      "dependent_repos_count": 1082389,
+      "latest_version": "14.0.2",
+      "npm_timestamps": {
+        "created_at": "2011-08-14T22:17:51.639Z",
+        "modified_at": "2025-11-09T04:11:11.686Z"
+      },
+      "db_created_at": "2025-02-24T13:51:19.097Z",
+      "db_updated_at": "2026-01-12T05:41:20.301Z",
+      "keywords": [
+        "commander",
+        "command",
+        "option",
+        "parser",
+        "cli",
+        "argument",
+        "args",
+        "argv"
+      ]
+    },
+    {
+      "_id": "67bc79922499176361ec73e6",
+      "name": "js-tokens",
+      "description": "Tiny JavaScript tokenizer.",
+      "link": "https://www.npmjs.com/package/js-tokens",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 808370960,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 155389339
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 189698742
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 179140127
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 160509029
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 199439061
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 201865275
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 197780702
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 194580818
+          }
+        ]
+      },
+      "dependent_packages_count": 2251,
+      "dependent_repos_count": 1940799,
+      "latest_version": "10.0.0",
+      "npm_timestamps": {
+        "created_at": "2014-03-08T22:30:50.672Z",
+        "modified_at": "2025-12-08T21:09:55.633Z"
+      },
+      "db_created_at": "2025-02-24T13:52:18.961Z",
+      "db_updated_at": "2026-07-06T09:08:05.253Z",
+      "keywords": [
+        "JavaScript",
+        "js",
+        "ECMAScript",
+        "es",
+        "token",
+        "tokens",
+        "tokenize",
+        "tokenizer",
+        "regex",
+        "regexp"
+      ]
+    },
+    {
+      "_id": "67bc76eb2499176361ec5803",
+      "name": "shebang-regex",
+      "description": "Regular expression for matching a shebang line",
+      "link": "https://www.npmjs.com/package/shebang-regex",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 800870978,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 173212166
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 152742209
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 197448013
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 189955230
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 129407792
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 207049091
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 219085428
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 211986031
+          }
+        ]
+      },
+      "dependent_packages_count": 1945,
+      "dependent_repos_count": 1888701,
+      "latest_version": "4.0.0",
+      "npm_timestamps": {
+        "created_at": "2015-02-17T05:24:58.945Z",
+        "modified_at": "2023-06-16T22:40:59.596Z"
+      },
+      "db_created_at": "2025-02-24T13:40:59.850Z",
+      "db_updated_at": "2026-06-29T09:31:43.959Z",
+      "keywords": [
+        "regex",
+        "regexp",
+        "shebang",
+        "match",
+        "test",
+        "line"
+      ]
+    },
+    {
+      "_id": "67bc78de2499176361ec6c77",
+      "name": "fs-extra",
+      "description": "fs-extra contains methods that aren't included in the vanilla Node.js fs package. Such as recursive mkdir, copy, and remove.",
+      "link": "https://www.npmjs.com/package/fs-extra",
+      "dependencies": [
+        "graceful-fs",
+        "jsonfile",
+        "universalify"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 800342322,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 176006984
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 159049896
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 191506671
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 197581389
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 191654452
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 180851784
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 181889588
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 200021128
+          }
+        ]
+      },
+      "dependent_packages_count": 73834,
+      "dependent_repos_count": 3606808,
+      "latest_version": "11.3.6",
+      "npm_timestamps": {
+        "created_at": "2011-11-16T21:47:16.814Z",
+        "modified_at": "2026-06-29T20:16:12.597Z"
+      },
+      "db_created_at": "2025-02-24T13:49:18.412Z",
+      "db_updated_at": "2026-07-20T08:07:56.716Z",
+      "keywords": [
+        "fs",
+        "file",
+        "file system",
+        "copy",
+        "directory",
+        "extra",
+        "mkdirp",
+        "mkdir",
+        "mkdirs",
+        "recursive",
+        "json",
+        "read",
+        "write",
+        "extra",
+        "delete",
+        "remove",
+        "touch",
+        "create",
+        "text",
+        "output",
+        "move",
+        "promise"
+      ]
+    },
+    {
+      "_id": "67bc75f22499176361ec4dc2",
+      "name": "readable-stream",
+      "description": "Node.js Streams, a user-land copy of the stream library from Node.js",
+      "link": "https://www.npmjs.com/package/readable-stream",
+      "dependencies": [
+        "abort-controller",
+        "buffer",
+        "events",
+        "process",
+        "string_decoder"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 776802112,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 188253093
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 187696170
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 188274269
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 189391003
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 191208655
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 195759079
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 173029794
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 195822508
+          }
+        ]
+      },
+      "dependent_packages_count": 5545,
+      "dependent_repos_count": 1100152,
+      "latest_version": "4.7.0",
+      "npm_timestamps": {
+        "created_at": "2012-07-27T04:46:57.281Z",
+        "modified_at": "2025-01-07T09:15:39.036Z"
+      },
+      "db_created_at": "2025-02-24T13:36:50.492Z",
+      "db_updated_at": "2025-11-03T05:30:34.803Z",
+      "keywords": [
+        "readable",
+        "stream",
+        "pipe"
+      ]
+    },
+    {
+      "_id": "67bc7c972499176361ec9306",
+      "name": "punycode",
+      "description": "A robust Punycode converter that fully complies to RFC 3492 and RFC 5891, and works on nearly all JavaScript platforms.",
+      "link": "https://www.npmjs.com/package/punycode",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 762108082,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 183149273
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 182208028
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 171290074
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 182132058
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 189621167
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 191691797
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 156974541
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 181432807
+          }
+        ]
+      },
+      "dependent_packages_count": 2734,
+      "dependent_repos_count": 2016724,
+      "latest_version": "2.3.1",
+      "npm_timestamps": {
+        "created_at": "2011-09-07T03:53:54.173Z",
+        "modified_at": "2026-04-24T23:30:35.626Z"
+      },
+      "db_created_at": "2025-02-24T14:05:11.381Z",
+      "db_updated_at": "2026-07-06T09:10:13.383Z",
+      "keywords": [
+        "punycode",
+        "unicode",
+        "idn",
+        "idna",
+        "dns",
+        "url",
+        "domain"
+      ]
+    },
+    {
+      "_id": "67bc79f22499176361ec77e3",
+      "name": "tr46",
+      "description": "An implementation of the Unicode UTS #46: Unicode IDNA Compatibility Processing",
+      "link": "https://www.npmjs.com/package/tr46",
+      "dependencies": [
+        "punycode"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 759899586,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 161655130
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 144919532
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 179209709
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 182946754
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 179042079
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 173287042
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 173249635
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 193227044
+          }
+        ]
+      },
+      "dependent_packages_count": 1180,
+      "dependent_repos_count": 2433040,
+      "latest_version": "6.0.0",
+      "npm_timestamps": {
+        "created_at": "2015-06-06T07:11:07.303Z",
+        "modified_at": "2025-09-18T00:42:31.874Z"
+      },
+      "db_created_at": "2025-02-24T13:53:54.022Z",
+      "db_updated_at": "2026-07-20T08:09:31.831Z",
+      "keywords": [
+        "unicode",
+        "tr46",
+        "uts46",
+        "punycode",
+        "url",
+        "whatwg"
+      ]
+    },
+    {
+      "_id": "67bc77122499176361ec59a5",
+      "name": "find-up",
+      "description": "Find a file or directory by walking up parent directories",
+      "link": "https://www.npmjs.com/package/find-up",
+      "dependencies": [
+        "locate-path",
+        "unicorn-magic"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 757007820,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 167416827
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 169004777
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 168270010
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 170912138
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 172686609
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 176663675
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 198822297
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 173708119
+          }
+        ]
+      },
+      "dependent_packages_count": 5094,
+      "dependent_repos_count": 1124485,
+      "latest_version": "8.0.0",
+      "npm_timestamps": {
+        "created_at": "2015-09-01T07:15:16.509Z",
+        "modified_at": "2025-09-16T01:13:57.276Z"
+      },
+      "db_created_at": "2025-02-24T13:41:38.649Z",
+      "db_updated_at": "2025-11-03T05:36:56.974Z",
+      "keywords": [
+        "find",
+        "up",
+        "find-up",
+        "findup",
+        "look-up",
+        "look",
+        "file",
+        "search",
+        "match",
+        "package",
+        "resolve",
+        "parent",
+        "parents",
+        "folder",
+        "directory",
+        "walk",
+        "walking",
+        "path"
+      ]
+    },
+    {
+      "_id": "67bc7b6c2499176361ec878b",
+      "name": "webidl-conversions",
+      "description": "Implements the WebIDL algorithms for converting to and from JavaScript values",
+      "link": "https://www.npmjs.com/package/webidl-conversions",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 755364431,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 185688044
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 190099044
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 185279992
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 179522532
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 179174057
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 199717344
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 204520648
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 210312786
+          }
+        ]
+      },
+      "dependent_packages_count": 1246,
+      "dependent_repos_count": 2433200,
+      "latest_version": "8.0.1",
+      "npm_timestamps": {
+        "created_at": "2014-08-15T20:52:19.528Z",
+        "modified_at": "2026-01-02T12:56:46.075Z"
+      },
+      "db_created_at": "2025-02-24T14:00:12.529Z",
+      "db_updated_at": "2026-08-03T08:33:42.902Z",
+      "keywords": [
+        "webidl",
+        "web",
+        "types"
+      ]
+    },
+    {
+      "_id": "67bc7b592499176361ec86c2",
+      "name": "path-exists",
+      "description": "Check if a path exists",
+      "link": "https://www.npmjs.com/package/path-exists",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 754131906,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 157258167
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 172608787
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 176120235
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 180441275
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 167432314
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 157516396
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 191772865
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 179981864
+          }
+        ]
+      },
+      "dependent_packages_count": 4902,
+      "dependent_repos_count": 1125905,
+      "latest_version": "5.0.0",
+      "npm_timestamps": {
+        "created_at": "2015-05-02T22:43:43.950Z",
+        "modified_at": "2024-10-22T17:26:44.383Z"
+      },
+      "db_created_at": "2025-02-24T13:59:53.232Z",
+      "db_updated_at": "2026-06-01T10:46:07.345Z",
+      "keywords": [
+        "path",
+        "exists",
+        "exist",
+        "file",
+        "filepath",
+        "fs",
+        "filesystem",
+        "file-system",
+        "access",
+        "stat"
+      ]
+    },
+    {
+      "_id": "67bc7b902499176361ec8903",
+      "name": "graceful-fs",
+      "description": "A drop-in replacement for fs, making various improvements.",
+      "link": "https://www.npmjs.com/package/graceful-fs",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 753124224,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 192791921
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 178887979
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 174839428
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 144549567
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 192669545
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 186430466
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 187103983
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 187750933
+          }
+        ]
+      },
+      "dependent_packages_count": 5113,
+      "dependent_repos_count": 1159704,
+      "latest_version": "4.2.11",
+      "npm_timestamps": {
+        "created_at": "2011-07-20T08:49:36.339Z",
+        "modified_at": "2023-06-09T21:32:46.823Z"
+      },
+      "db_created_at": "2025-02-24T14:00:48.691Z",
+      "db_updated_at": "2026-08-10T06:14:29.943Z",
+      "keywords": [
+        "fs",
+        "module",
+        "reading",
+        "retry",
+        "retries",
+        "queue",
+        "error",
+        "errors",
+        "handling",
+        "EMFILE",
+        "EAGAIN",
+        "EINVAL",
+        "EPERM",
+        "EACCESS"
+      ]
+    },
+    {
+      "_id": "67bc7bab2499176361ec8a20",
+      "name": "eslint-scope",
+      "description": "ECMAScript scope analyzer for ESLint",
+      "link": "https://www.npmjs.com/package/eslint-scope",
+      "dependencies": [
+        "@types/esrecurse",
+        "@types/estree",
+        "esrecurse",
+        "estraverse"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 750861788,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 146080877
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 179681074
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 167977063
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 178893043
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 185426714
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 190498702
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 153943840
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 179786199
+          }
+        ]
+      },
+      "dependent_packages_count": 1686,
+      "dependent_repos_count": 1592057,
+      "latest_version": "9.1.2",
+      "npm_timestamps": {
+        "created_at": "2017-03-17T22:10:11.109Z",
+        "modified_at": "2026-03-06T22:32:50.285Z"
+      },
+      "db_created_at": "2025-02-24T14:01:15.092Z",
+      "db_updated_at": "2026-07-06T09:09:40.295Z",
+      "keywords": [
+        "eslint"
+      ]
+    },
+    {
+      "_id": "67bc79442499176361ec70a2",
+      "name": "yargs",
+      "description": "yargs the modern, pirate-themed, successor to optimist.",
+      "link": "https://www.npmjs.com/package/yargs",
+      "dependencies": [
+        "cliui",
+        "escalade",
+        "get-caller-file",
+        "string-width",
+        "y18n",
+        "yargs-parser"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 748062728,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 149304198
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 163184260
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 171520686
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 178758366
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 174137372
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 176383058
+          },
+          {
+            "week_ending": "2026-04-05",
+            "downloads": 166942319
+          },
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 167217371
+          }
+        ]
+      },
+      "dependent_packages_count": 42638,
+      "dependent_repos_count": 4893685,
+      "latest_version": "18.0.0",
+      "npm_timestamps": {
+        "created_at": "2013-11-23T09:34:05.069Z",
+        "modified_at": "2025-05-27T14:27:19.679Z"
+      },
+      "db_created_at": "2025-02-24T13:51:00.459Z",
+      "db_updated_at": "2026-04-13T07:19:52.261Z",
+      "keywords": [
+        "argument",
+        "args",
+        "option",
+        "parser",
+        "parsing",
+        "cli",
+        "command"
+      ]
+    },
+    {
+      "_id": "67bc79482499176361ec70e7",
+      "name": "cross-spawn",
+      "description": "Cross platform child_process#spawn and child_process#spawnSync",
+      "link": "https://www.npmjs.com/package/cross-spawn",
+      "dependencies": [
+        "which",
+        "path-key",
+        "shebang-command"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 747861516,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-08",
+            "downloads": 164514370
+          },
+          {
+            "week_ending": "2026-02-15",
+            "downloads": 139667467
+          },
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 133943258
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 150218946
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 171639426
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 174859216
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 183543553
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 168973167
+          }
+        ]
+      },
+      "dependent_packages_count": 14155,
+      "dependent_repos_count": 1924489,
+      "latest_version": "7.0.6",
+      "npm_timestamps": {
+        "created_at": "2014-06-30T01:04:42.962Z",
+        "modified_at": "2024-11-18T14:21:35.065Z"
+      },
+      "db_created_at": "2025-02-24T13:51:04.761Z",
+      "db_updated_at": "2026-03-30T07:02:47.191Z",
+      "keywords": [
+        "spawn",
+        "spawnSync",
+        "windows",
+        "cross-platform",
+        "path-ext",
+        "shebang",
+        "cmd",
+        "execute"
+      ]
+    },
+    {
+      "_id": "67bc79bf2499176361ec75c4",
+      "name": "statuses",
+      "description": "HTTP status utility",
+      "link": "https://www.npmjs.com/package/statuses",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 746582128,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 160549732
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 159284877
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 153697763
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 151268559
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 170146360
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 175869169
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 182509039
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 180256203
+          }
+        ]
+      },
+      "dependent_packages_count": 2199,
+      "dependent_repos_count": 5106018,
+      "latest_version": "2.0.2",
+      "npm_timestamps": {
+        "created_at": "2014-03-13T01:21:33.978Z",
+        "modified_at": "2025-06-06T19:56:01.588Z"
+      },
+      "db_created_at": "2025-02-24T13:53:03.239Z",
+      "db_updated_at": "2026-08-10T06:13:11.784Z",
+      "keywords": [
+        "http",
+        "status",
+        "code"
+      ]
+    },
+    {
+      "_id": "67bc7ac42499176361ec80b2",
+      "name": "whatwg-url",
+      "description": "An implementation of the WHATWG URL Standard's URL API and parsing machinery",
+      "link": "https://www.npmjs.com/package/whatwg-url",
+      "dependencies": [
+        "@exodus/bytes",
+        "tr46",
+        "webidl-conversions"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 736699138,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 142345446
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 173869312
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 165074858
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 147935700
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 182613446
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 186450622
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 182257124
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 176247578
+          }
+        ]
+      },
+      "dependent_packages_count": 1501,
+      "dependent_repos_count": 1350571,
+      "latest_version": "17.0.0",
+      "npm_timestamps": {
+        "created_at": "2015-06-04T13:09:58.924Z",
+        "modified_at": "2026-06-29T09:42:42.000Z"
+      },
+      "db_created_at": "2025-02-24T13:57:24.988Z",
+      "db_updated_at": "2026-07-06T09:08:56.579Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc79fc2499176361ec7849",
+      "name": "fast-deep-equal",
+      "description": "Fast deep equal",
+      "link": "https://www.npmjs.com/package/fast-deep-equal",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 733465877,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 152641896
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 161454761
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 168586452
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 171209771
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 169024880
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 164750710
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 162918629
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 184290409
+          }
+        ]
+      },
+      "dependent_packages_count": 4389,
+      "dependent_repos_count": 4968905,
+      "latest_version": "3.1.3",
+      "npm_timestamps": {
+        "created_at": "2017-06-15T22:26:29.798Z",
+        "modified_at": "2023-06-22T16:31:52.032Z"
+      },
+      "db_created_at": "2025-02-24T13:54:04.462Z",
+      "db_updated_at": "2026-07-20T08:09:31.959Z",
+      "keywords": [
+        "fast",
+        "equal",
+        "deep-equal"
+      ]
+    },
+    {
+      "_id": "67bc78512499176361ec66b8",
+      "name": "locate-path",
+      "description": "Get the first path that exists on disk of multiple paths",
+      "link": "https://www.npmjs.com/package/locate-path",
+      "dependencies": [
+        "p-locate"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 721029318,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 159988425
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 161422945
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 160704796
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 162819371
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 164847434
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 168234810
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 188223439
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 166336684
+          }
+        ]
+      },
+      "dependent_packages_count": 2166,
+      "dependent_repos_count": 1089462,
+      "latest_version": "8.0.0",
+      "npm_timestamps": {
+        "created_at": "2016-11-20T10:27:29.562Z",
+        "modified_at": "2025-09-15T23:17:38.996Z"
+      },
+      "db_created_at": "2025-02-24T13:46:57.936Z",
+      "db_updated_at": "2025-11-03T05:40:49.434Z",
+      "keywords": [
+        "locate",
+        "path",
+        "paths",
+        "file",
+        "files",
+        "exists",
+        "find",
+        "finder",
+        "search",
+        "searcher",
+        "array",
+        "iterable",
+        "iterator"
+      ]
+    },
+    {
+      "_id": "67bc7b5f2499176361ec86f3",
+      "name": "is-number",
+      "description": "Returns true if a number or string value is a finite number. Useful for regex matches, parsing, user input, etc.",
+      "link": "https://www.npmjs.com/package/is-number",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 718531784,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 170836192
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 168111197
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 161539677
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 159276403
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 169709564
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 165480742
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 168517913
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 168686673
+          }
+        ]
+      },
+      "dependent_packages_count": 2612,
+      "dependent_repos_count": 6502,
+      "latest_version": "7.0.0",
+      "npm_timestamps": {
+        "created_at": "2014-09-22T01:58:51.592Z",
+        "modified_at": "2023-05-26T16:12:33.057Z"
+      },
+      "db_created_at": "2025-02-24T13:59:59.726Z",
+      "db_updated_at": "2026-08-10T06:14:22.386Z",
+      "keywords": [
+        "cast",
+        "check",
+        "coerce",
+        "coercion",
+        "finite",
+        "integer",
+        "is",
+        "isnan",
+        "is-nan",
+        "is-num",
+        "is-number",
+        "isnumber",
+        "isfinite",
+        "istype",
+        "kind",
+        "math",
+        "nan",
+        "num",
+        "number",
+        "numeric",
+        "parseFloat",
+        "parseInt",
+        "test",
+        "type",
+        "typeof",
+        "value"
+      ]
+    },
+    {
+      "_id": "67bc79ad2499176361ec74ff",
+      "name": "get-stream",
+      "description": "Get a stream as a string, Buffer, ArrayBuffer or array",
+      "link": "https://www.npmjs.com/package/get-stream",
+      "dependencies": [
+        "@sec-ant/readable-stream",
+        "is-stream"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 714591872,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 154148256
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 160067794
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 161565073
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 163005377
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 166913418
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 175153699
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 174219785
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 163727329
+          }
+        ]
+      },
+      "dependent_packages_count": 2893,
+      "dependent_repos_count": 2299681,
+      "latest_version": "9.0.1",
+      "npm_timestamps": {
+        "created_at": "2015-10-14T17:28:21.024Z",
+        "modified_at": "2024-03-16T18:05:50.719Z"
+      },
+      "db_created_at": "2025-02-24T13:52:45.105Z",
+      "db_updated_at": "2026-06-01T10:42:26.657Z",
+      "keywords": [
+        "get",
+        "stream",
+        "promise",
+        "concat",
+        "string",
+        "text",
+        "buffer",
+        "read",
+        "data",
+        "consume",
+        "readable",
+        "readablestream",
+        "object",
+        "concat"
+      ]
+    },
+    {
+      "_id": "67bc7b502499176361ec866f",
+      "name": "yaml",
+      "description": "JavaScript parser and stringifier for YAML",
+      "link": "https://www.npmjs.com/package/yaml",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 709639874,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 124182530
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 153348607
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 145321394
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 128296051
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 163917382
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 171423336
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 179578279
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 167011242
+          }
+        ]
+      },
+      "dependent_packages_count": 6419,
+      "dependent_repos_count": 1894156,
+      "latest_version": "2.9.0",
+      "npm_timestamps": {
+        "created_at": "2011-04-15T16:25:52.216Z",
+        "modified_at": "2026-05-11T10:16:24.145Z"
+      },
+      "db_created_at": "2025-02-24T13:59:44.566Z",
+      "db_updated_at": "2026-07-06T09:09:24.021Z",
+      "keywords": [
+        "YAML",
+        "parser",
+        "stringifier"
+      ]
+    },
+    {
+      "_id": "67bc7be12499176361ec8c69",
+      "name": "path-scurry",
+      "description": "walk paths fast and efficiently",
+      "link": "https://www.npmjs.com/package/path-scurry",
+      "dependencies": [
+        "lru-cache",
+        "minipass"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 708082045,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 181761816
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 166366378
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 162294608
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 163934743
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 174055745
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 167640874
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 168873416
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 170333141
+          }
+        ]
+      },
+      "dependent_packages_count": 83,
+      "dependent_repos_count": 88759,
+      "latest_version": "2.0.2",
+      "npm_timestamps": {
+        "created_at": "2023-02-07T05:05:40.075Z",
+        "modified_at": "2026-02-19T17:20:00.316Z"
+      },
+      "db_created_at": "2025-02-24T14:02:09.907Z",
+      "db_updated_at": "2026-08-10T06:14:41.447Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc76322499176361ec503f",
+      "name": "@babel/parser",
+      "description": "A JavaScript parser",
+      "link": "https://www.npmjs.com/package/@babel/parser",
+      "dependencies": [
+        "@babel/types"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 706352977,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 148140252
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 153240791
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 159935858
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 155255690
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 163444085
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 175401820
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 177765878
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 172188770
+          }
+        ]
+      },
+      "dependent_packages_count": 4546,
+      "dependent_repos_count": 3782849,
+      "latest_version": "7.29.7",
+      "npm_timestamps": {
+        "created_at": "2018-05-24T19:20:36.538Z",
+        "modified_at": "2026-05-25T11:16:19.505Z"
+      },
+      "db_created_at": "2025-02-24T13:37:54.780Z",
+      "db_updated_at": "2026-06-01T10:29:25.250Z",
+      "keywords": [
+        "babel",
+        "javascript",
+        "parser",
+        "tc39",
+        "ecmascript",
+        "@babel/parser"
+      ]
+    },
+    {
+      "_id": "67bc761e2499176361ec4f6f",
+      "name": "browserslist",
+      "description": "Share target browsers between different front-end tools, like Autoprefixer, Stylelint and babel-env-preset",
+      "link": "https://www.npmjs.com/package/browserslist",
+      "dependencies": [
+        "caniuse-lite",
+        "node-releases",
+        "electron-to-chromium",
+        "update-browserslist-db",
+        "baseline-browser-mapping"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 702341836,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 150780362
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 134055039
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 164116111
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 166498550
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 164044548
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 159313370
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 159482713
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 178210715
+          }
+        ]
+      },
+      "dependent_packages_count": 4424,
+      "dependent_repos_count": 4076082,
+      "latest_version": "4.28.6",
+      "npm_timestamps": {
+        "created_at": "2014-12-15T08:26:19.552Z",
+        "modified_at": "2026-07-11T18:35:23.754Z"
+      },
+      "db_created_at": "2025-02-24T13:37:34.942Z",
+      "db_updated_at": "2026-07-20T08:03:32.809Z",
+      "keywords": [
+        "browsers",
+        "caniuse",
+        "target"
+      ]
+    },
+    {
+      "_id": "67bc7a7b2499176361ec7db5",
+      "name": "@babel/helper-string-parser",
+      "description": "A utility package to parse strings",
+      "link": "https://www.npmjs.com/package/@babel/helper-string-parser",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 699738581,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 137946839
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 123994530
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 155111338
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 159678463
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 157990341
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 158974705
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 157769741
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 179164378
+          }
+        ]
+      },
+      "dependent_packages_count": 41,
+      "dependent_repos_count": 733858,
+      "latest_version": "8.0.0",
+      "npm_timestamps": {
+        "created_at": "2022-08-01T18:46:39.945Z",
+        "modified_at": "2026-06-16T13:58:47.588Z"
+      },
+      "db_created_at": "2025-02-24T13:56:11.336Z",
+      "db_updated_at": "2026-07-20T08:10:02.611Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc7a992499176361ec7efc",
+      "name": "camelcase",
+      "description": "Convert a dash/dot/underscore/space separated string to camelCase or PascalCase: `foo-bar` \u2192 `fooBar`",
+      "link": "https://www.npmjs.com/package/camelcase",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 694721063,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 165686796
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 160721952
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 152648862
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 151547098
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 167147058
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 160374002
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 177901611
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 147370670
+          }
+        ]
+      },
+      "dependent_packages_count": 8687,
+      "dependent_repos_count": 4809686,
+      "latest_version": "9.0.0",
+      "npm_timestamps": {
+        "created_at": "2013-10-30T20:39:45.449Z",
+        "modified_at": "2025-11-10T20:38:44.306Z"
+      },
+      "db_created_at": "2025-02-24T13:56:41.703Z",
+      "db_updated_at": "2026-08-10T06:13:46.459Z",
+      "keywords": [
+        "camelcase",
+        "camel-case",
+        "camel",
+        "case",
+        "dash",
+        "hyphen",
+        "dot",
+        "underscore",
+        "separator",
+        "string",
+        "text",
+        "convert",
+        "pascalcase",
+        "pascal-case"
+      ]
+    },
+    {
+      "_id": "67bc76ca2499176361ec56c6",
+      "name": "yallist",
+      "description": "Yet Another Linked List",
+      "link": "https://www.npmjs.com/package/yallist",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 692916241,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 157114244
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 157420748
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 156756156
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 158883606
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 160123189
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 162667277
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 174236181
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 162827571
+          }
+        ]
+      },
+      "dependent_packages_count": 1848,
+      "dependent_repos_count": 1187300,
+      "latest_version": "5.0.0",
+      "npm_timestamps": {
+        "created_at": "2015-12-18T08:02:25.789Z",
+        "modified_at": "2024-04-09T19:21:45.008Z"
+      },
+      "db_created_at": "2025-02-24T13:40:26.410Z",
+      "db_updated_at": "2025-11-03T05:35:18.428Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc7b242499176361ec8494",
+      "name": "@babel/template",
+      "description": "Generate an AST from a string template.",
+      "link": "https://www.npmjs.com/package/@babel/template",
+      "dependencies": [
+        "@babel/types",
+        "@babel/parser",
+        "@babel/code-frame"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 689361219,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 157161795
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 155344651
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 153234388
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 123038668
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 169599755
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 173988303
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 178326088
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 180554119
+          }
+        ]
+      },
+      "dependent_packages_count": 1027,
+      "dependent_repos_count": 4582774,
+      "latest_version": "8.0.0",
+      "npm_timestamps": {
+        "created_at": "2017-10-30T18:35:33.711Z",
+        "modified_at": "2026-06-16T14:03:20.322Z"
+      },
+      "db_created_at": "2025-02-24T13:59:00.147Z",
+      "db_updated_at": "2026-08-10T06:14:12.333Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc78a62499176361ec6a39",
+      "name": "cookie",
+      "description": "HTTP server cookie parsing and serialization",
+      "link": "https://www.npmjs.com/package/cookie",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 688774755,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 167173530
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 170450001
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 158442658
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 134357504
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 164490369
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 166302762
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 162671821
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 157577236
+          }
+        ]
+      },
+      "dependent_packages_count": 4117,
+      "dependent_repos_count": 2444047,
+      "latest_version": "2.0.1",
+      "npm_timestamps": {
+        "created_at": "2012-05-28T23:56:11.938Z",
+        "modified_at": "2026-06-30T22:15:14.284Z"
+      },
+      "db_created_at": "2025-02-24T13:48:22.081Z",
+      "db_updated_at": "2026-07-06T09:07:21.805Z",
+      "keywords": [
+        "cookie",
+        "cookies"
+      ]
+    },
+    {
+      "_id": "67bc7c8d2499176361ec929c",
+      "name": "agent-base",
+      "description": "Turn a function into an `http.Agent` instance",
+      "link": "https://www.npmjs.com/package/agent-base",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 687138143,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-02-22",
+            "downloads": 135627995
+          },
+          {
+            "week_ending": "2026-03-01",
+            "downloads": 151595861
+          },
+          {
+            "week_ending": "2026-03-08",
+            "downloads": 157614634
+          },
+          {
+            "week_ending": "2026-03-15",
+            "downloads": 167920286
+          },
+          {
+            "week_ending": "2026-03-22",
+            "downloads": 168111470
+          },
+          {
+            "week_ending": "2026-03-29",
+            "downloads": 167349207
+          },
+          {
+            "week_ending": "2026-04-05",
+            "downloads": 158282361
+          },
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 159319294
+          }
+        ]
+      },
+      "dependent_packages_count": 1124,
+      "dependent_repos_count": 1575522,
+      "latest_version": "9.0.0",
+      "npm_timestamps": {
+        "created_at": "2013-07-09T20:14:39.860Z",
+        "modified_at": "2026-04-01T06:57:34.468Z"
+      },
+      "db_created_at": "2025-02-24T14:05:01.783Z",
+      "db_updated_at": "2026-04-13T07:22:19.142Z",
+      "keywords": [
+        "http",
+        "agent",
+        "base",
+        "barebones",
+        "https"
+      ]
+    },
+    {
+      "_id": "67bc7ab02499176361ec7fd7",
+      "name": "safe-buffer",
+      "description": "Safer Node.js Buffer API",
+      "link": "https://www.npmjs.com/package/safe-buffer",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 686329873,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 154064131
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 154597692
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 153968709
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 154997308
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 157939445
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 161614088
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 174124006
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 160273439
+          }
+        ]
+      },
+      "dependent_packages_count": 4055,
+      "dependent_repos_count": 1261649,
+      "latest_version": "5.2.1",
+      "npm_timestamps": {
+        "created_at": "2016-01-13T04:36:59.750Z",
+        "modified_at": "2023-07-10T23:16:22.564Z"
+      },
+      "db_created_at": "2025-02-24T13:57:04.433Z",
+      "db_updated_at": "2025-11-03T05:44:34.971Z",
+      "keywords": [
+        "buffer",
+        "buffer allocate",
+        "node security",
+        "safe",
+        "safe-buffer",
+        "security",
+        "uninitialized"
+      ]
+    },
+    {
+      "_id": "67bc781b2499176361ec647a",
+      "name": "qs",
+      "description": "A querystring parser that supports nesting and arrays, with a depth limit",
+      "link": "https://www.npmjs.com/package/qs",
+      "dependencies": [
+        "side-channel",
+        "es-define-property"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 681784363,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 156744129
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 133490644
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 166652070
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 167414989
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 165873447
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 161644064
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 126164115
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 171022646
+          }
+        ]
+      },
+      "dependent_packages_count": 15944,
+      "dependent_repos_count": 2110964,
+      "latest_version": "6.15.3",
+      "npm_timestamps": {
+        "created_at": "2011-02-04T04:40:23.617Z",
+        "modified_at": "2026-06-24T20:03:49.860Z"
+      },
+      "db_created_at": "2025-02-24T13:46:03.069Z",
+      "db_updated_at": "2026-07-20T08:06:03.511Z",
+      "keywords": [
+        "querystring",
+        "qs",
+        "query",
+        "url",
+        "parse",
+        "stringify"
+      ]
+    },
+    {
+      "_id": "67bc790c2499176361ec6e4d",
+      "name": "fill-range",
+      "description": "Fill in a range of numbers or letters, optionally passing an increment or `step` to use, or create a regex-compatible range with `options.toRegex`",
+      "link": "https://www.npmjs.com/package/fill-range",
+      "dependencies": [
+        "to-regex-range"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 674425612,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 164689263
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 134925513
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 156231560
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 153500565
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 163336487
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 159056169
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 162378815
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 162845548
+          }
+        ]
+      },
+      "dependent_packages_count": 2299,
+      "dependent_repos_count": 5461792,
+      "latest_version": "7.1.1",
+      "npm_timestamps": {
+        "created_at": "2014-11-25T07:08:17.514Z",
+        "modified_at": "2026-05-27T19:50:30.642Z"
+      },
+      "db_created_at": "2025-02-24T13:50:04.016Z",
+      "db_updated_at": "2026-08-10T06:12:42.744Z",
+      "keywords": [
+        "alpha",
+        "alphabetical",
+        "array",
+        "bash",
+        "brace",
+        "expand",
+        "expansion",
+        "fill",
+        "glob",
+        "match",
+        "matches",
+        "matching",
+        "number",
+        "numerical",
+        "range",
+        "ranges",
+        "regex",
+        "sh"
+      ]
+    },
+    {
+      "_id": "67bc75db2499176361ec4cb2",
+      "name": "path-to-regexp",
+      "description": "Express style path to RegExp utility",
+      "link": "https://www.npmjs.com/package/path-to-regexp",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 667705073,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 169832080
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 180945907
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 185600162
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 171515109
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 116053337
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 181418377
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 181319808
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 149884244
+          }
+        ]
+      },
+      "dependent_packages_count": 6683,
+      "dependent_repos_count": 4298330,
+      "latest_version": "8.4.2",
+      "npm_timestamps": {
+        "created_at": "2012-08-01T22:49:08.434Z",
+        "modified_at": "2026-04-01T21:17:05.330Z"
+      },
+      "db_created_at": "2025-02-24T13:36:27.253Z",
+      "db_updated_at": "2026-06-29T09:30:53.785Z",
+      "keywords": [
+        "express",
+        "regexp",
+        "route",
+        "routing"
+      ]
+    },
+    {
+      "_id": "67bc76212499176361ec4fa0",
+      "name": "lodash",
+      "description": "Lodash modular utilities.",
+      "link": "https://www.npmjs.com/package/lodash",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 658106324,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 161341623
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 159927293
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 130261729
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 152425085
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 120645159
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 162695875
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 162846729
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 166304956
+          }
+        ]
+      },
+      "dependent_packages_count": 159122,
+      "dependent_repos_count": 1936033,
+      "latest_version": "4.18.1",
+      "npm_timestamps": {
+        "created_at": "2012-04-23T16:37:11.912Z",
+        "modified_at": "2026-08-03T00:55:38.403Z"
+      },
+      "db_created_at": "2025-02-24T13:37:37.961Z",
+      "db_updated_at": "2026-08-03T08:29:21.089Z",
+      "keywords": [
+        "modules",
+        "stdlib",
+        "util"
+      ]
+    },
+    {
+      "_id": "67bc792a2499176361ec6f91",
+      "name": "universalify",
+      "description": "Make a callback- or promise-based function support both promises and callbacks.",
+      "link": "https://www.npmjs.com/package/universalify",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 657406567,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 153318280
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 149048829
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 141546694
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 141566586
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 156271267
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 157582250
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 160516378
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 161018752
+          }
+        ]
+      },
+      "dependent_packages_count": 1464,
+      "dependent_repos_count": 3543281,
+      "latest_version": "2.0.1",
+      "npm_timestamps": {
+        "created_at": "2017-04-08T17:28:40.301Z",
+        "modified_at": "2023-11-01T17:12:45.559Z"
+      },
+      "db_created_at": "2025-02-24T13:50:34.163Z",
+      "db_updated_at": "2026-08-10T06:12:50.044Z",
+      "keywords": [
+        "callback",
+        "native",
+        "promise"
+      ]
+    },
+    {
+      "_id": "67bc7a332499176361ec7aa3",
+      "name": "form-data",
+      "description": "A library to create readable \"multipart/form-data\" streams. Can be used to submit forms and file uploads to other web applications.",
+      "link": "https://www.npmjs.com/package/form-data",
+      "dependencies": [
+        "hasown",
+        "asynckit",
+        "mime-types",
+        "combined-stream",
+        "es-set-tostringtag"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 657362382,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 149536864
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 152132585
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 155971368
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 156803657
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 146310302
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 127192843
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 162875582
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 175115892
+          }
+        ]
+      },
+      "dependent_packages_count": 10194,
+      "dependent_repos_count": 1722210,
+      "latest_version": "4.0.6",
+      "npm_timestamps": {
+        "created_at": "2011-05-16T14:58:21.870Z",
+        "modified_at": "2026-06-12T17:39:55.772Z"
+      },
+      "db_created_at": "2025-02-24T13:54:59.603Z",
+      "db_updated_at": "2026-06-22T10:47:30.211Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc788a2499176361ec6920",
+      "name": "jiti",
+      "description": "Runtime typescript and ESM support for Node.js",
+      "link": "https://www.npmjs.com/package/jiti",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 655976495,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 116884379
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 144670275
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 139095385
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 126115826
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 154482859
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 159502746
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 157170616
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 161571371
+          }
+        ]
+      },
+      "dependent_packages_count": 755,
+      "dependent_repos_count": 729108,
+      "latest_version": "2.7.0",
+      "npm_timestamps": {
+        "created_at": "2020-06-06T19:19:56.555Z",
+        "modified_at": "2026-05-05T21:02:48.030Z"
+      },
+      "db_created_at": "2025-02-24T13:47:54.879Z",
+      "db_updated_at": "2026-07-06T09:07:14.375Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc75bf2499176361ec4ba1",
+      "name": "@radix-ui/react-primitive",
+      "description": "",
+      "link": "https://www.npmjs.com/package/@radix-ui/react-primitive",
+      "dependencies": [
+        "@radix-ui/react-slot"
+      ],
+      "peerDependencies": [
+        "@types/react",
+        "@types/react-dom",
+        "react",
+        "react-dom"
+      ],
+      "downloads": {
+        "total": 654667295,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 138432646
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 134079603
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 156188042
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 150746072
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 142134785
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 153476628
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 143395827
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 189568442
+          }
+        ]
+      },
+      "dependent_packages_count": 107,
+      "dependent_repos_count": 46792,
+      "latest_version": "2.1.7",
+      "npm_timestamps": {
+        "created_at": "2021-01-22T17:30:54.937Z",
+        "modified_at": "2026-06-30T16:12:36.326Z"
+      },
+      "db_created_at": "2025-02-24T13:35:59.317Z",
+      "db_updated_at": "2026-07-20T08:03:15.000Z",
+      "keywords": []
+    },
+    {
+      "_id": "67bc7a602499176361ec7c93",
+      "name": "onetime",
+      "description": "Ensure a function is only called once",
+      "link": "https://www.npmjs.com/package/onetime",
+      "dependencies": [
+        "mimic-function"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 654519396,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 129748966
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 120211195
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 148050537
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 138982343
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 147816232
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 155088958
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 157730285
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 153498046
+          }
+        ]
+      },
+      "dependent_packages_count": 1728,
+      "dependent_repos_count": 2142669,
+      "latest_version": "8.0.0",
+      "npm_timestamps": {
+        "created_at": "2013-12-13T21:20:15.964Z",
+        "modified_at": "2026-02-02T07:42:24.174Z"
+      },
+      "db_created_at": "2025-02-24T13:55:44.248Z",
+      "db_updated_at": "2026-06-29T09:34:15.642Z",
+      "keywords": [
+        "once",
+        "function",
+        "one",
+        "onetime",
+        "func",
+        "fn",
+        "single",
+        "call",
+        "called",
+        "prevent"
+      ]
+    },
+    {
+      "_id": "67bc7b842499176361ec886e",
+      "name": "node-releases",
+      "description": "Node.js releases data",
+      "link": "https://www.npmjs.com/package/node-releases",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 646644768,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-12",
+            "downloads": 132792457
+          },
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 145196305
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 149933081
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 144182025
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 145568036
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 153713671
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 156311077
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 147465849
+          }
+        ]
+      },
+      "dependent_packages_count": 1539,
+      "dependent_repos_count": 3706114,
+      "latest_version": "2.0.46",
+      "npm_timestamps": {
+        "created_at": "2016-11-15T01:06:32.648Z",
+        "modified_at": "2026-05-22T04:31:33.638Z"
+      },
+      "db_created_at": "2025-02-24T14:00:36.594Z",
+      "db_updated_at": "2026-06-01T10:48:33.777Z",
+      "keywords": [
+        "nodejs",
+        "releases"
+      ]
+    },
+    {
+      "_id": "67bc75ee2499176361ec4d7e",
+      "name": "ajv",
+      "description": "Another JSON Schema Validator",
+      "link": "https://www.npmjs.com/package/ajv",
+      "dependencies": [
+        "fast-uri",
+        "fast-deep-equal",
+        "require-from-string",
+        "json-schema-traverse"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 645187585,
+        "weekly_trends": [
+          {
+            "week_ending": "2025-09-14",
+            "downloads": 152592614
+          },
+          {
+            "week_ending": "2025-09-21",
+            "downloads": 152943336
+          },
+          {
+            "week_ending": "2025-09-28",
+            "downloads": 151410853
+          },
+          {
+            "week_ending": "2025-10-05",
+            "downloads": 151753055
+          },
+          {
+            "week_ending": "2025-10-12",
+            "downloads": 155853051
+          },
+          {
+            "week_ending": "2025-10-19",
+            "downloads": 157944195
+          },
+          {
+            "week_ending": "2025-10-26",
+            "downloads": 140527842
+          },
+          {
+            "week_ending": "2025-11-02",
+            "downloads": 159676014
+          }
+        ]
+      },
+      "dependent_packages_count": 14548,
+      "dependent_repos_count": 1087714,
+      "latest_version": "8.17.1",
+      "npm_timestamps": {
+        "created_at": "2015-05-29T22:33:14.989Z",
+        "modified_at": "2025-06-09T04:08:01.833Z"
+      },
+      "db_created_at": "2025-02-24T13:36:46.070Z",
+      "db_updated_at": "2025-11-03T05:30:29.729Z",
+      "keywords": [
+        "JSON",
+        "schema",
+        "validator",
+        "validation",
+        "jsonschema",
+        "json-schema",
+        "json-schema-validator",
+        "json-schema-validation"
+      ]
+    },
+    {
+      "_id": "67bc79d42499176361ec76ad",
+      "name": "is-glob",
+      "description": "Returns `true` if the given string looks like a glob pattern or an extglob pattern. This makes it easy to create code that only uses external modules like node-glob when necessary, resulting in much faster code execution and initialization time, and a bet",
+      "link": "https://www.npmjs.com/package/is-glob",
+      "dependencies": [
+        "is-extglob"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 644519841,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 150805913
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 159292539
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 159578401
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 150231912
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 132579300
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 166655129
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 169135982
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 165121743
+          }
+        ]
+      },
+      "dependent_packages_count": 2661,
+      "dependent_repos_count": 6270,
+      "latest_version": "4.0.3",
+      "npm_timestamps": {
+        "created_at": "2014-12-18T10:42:32.979Z",
+        "modified_at": "2023-06-22T16:32:26.552Z"
+      },
+      "db_created_at": "2025-02-24T13:53:24.544Z",
+      "db_updated_at": "2026-06-29T09:33:51.156Z",
+      "keywords": [
+        "bash",
+        "braces",
+        "check",
+        "exec",
+        "expression",
+        "extglob",
+        "glob",
+        "globbing",
+        "globstar",
+        "is",
+        "match",
+        "matches",
+        "pattern",
+        "regex",
+        "regular",
+        "string",
+        "test"
+      ]
+    },
+    {
+      "_id": "67bc75502499176361ec471a",
+      "name": "escalade",
+      "description": "A tiny (183B to 210B) and fast utility to ascend parent directories",
+      "link": "https://www.npmjs.com/package/escalade",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 637499497,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 146890760
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 153859287
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 156045767
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 147561047
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 131528917
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 162690657
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 168232850
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 164174499
+          }
+        ]
+      },
+      "dependent_packages_count": 1851,
+      "dependent_repos_count": 2368706,
+      "latest_version": "3.2.0",
+      "npm_timestamps": {
+        "created_at": "2020-06-19T05:33:37.862Z",
+        "modified_at": "2024-08-29T22:59:36.901Z"
+      },
+      "db_created_at": "2025-02-24T13:34:08.849Z",
+      "db_updated_at": "2026-06-29T09:29:54.171Z",
+      "keywords": [
+        "find",
+        "parent",
+        "parents",
+        "directory",
+        "search",
+        "walk"
+      ]
+    },
+    {
+      "_id": "67bc779a2499176361ec5f66",
+      "name": "update-browserslist-db",
+      "description": "CLI tool to update caniuse-lite to refresh target browsers from Browserslist config",
+      "link": "https://www.npmjs.com/package/update-browserslist-db",
+      "dependencies": [
+        "escalade",
+        "picocolors"
+      ],
+      "peerDependencies": [
+        "browserslist"
+      ],
+      "downloads": {
+        "total": 636417919,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 136712796
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 143893937
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 148611191
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 150510673
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 144865821
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 141484272
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 139694945
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 157229343
+          }
+        ]
+      },
+      "dependent_packages_count": 999,
+      "dependent_repos_count": 1574874,
+      "latest_version": "1.2.3",
+      "npm_timestamps": {
+        "created_at": "2022-06-21T15:39:49.595Z",
+        "modified_at": "2025-12-16T15:17:58.142Z"
+      },
+      "db_created_at": "2025-02-24T13:43:54.742Z",
+      "db_updated_at": "2026-07-20T08:05:05.298Z",
+      "keywords": [
+        "caniuse",
+        "browsers",
+        "target"
+      ]
+    },
+    {
+      "_id": "67bc76d82499176361ec573d",
+      "name": "yocto-queue",
+      "description": "Tiny queue data structure",
+      "link": "https://www.npmjs.com/package/yocto-queue",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 630094918,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-04-19",
+            "downloads": 137798369
+          },
+          {
+            "week_ending": "2026-04-26",
+            "downloads": 141393821
+          },
+          {
+            "week_ending": "2026-05-03",
+            "downloads": 141681538
+          },
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 147778887
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 155851384
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 157224729
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 146867106
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 102341529
+          }
+        ]
+      },
+      "dependent_packages_count": 1176,
+      "dependent_repos_count": 1236763,
+      "latest_version": "1.2.2",
+      "npm_timestamps": {
+        "created_at": "2020-11-24T05:59:48.704Z",
+        "modified_at": "2025-11-11T06:32:09.168Z"
+      },
+      "db_created_at": "2025-02-24T13:40:40.785Z",
+      "db_updated_at": "2026-06-08T09:30:39.107Z",
+      "keywords": [
+        "queue",
+        "data",
+        "structure",
+        "algorithm",
+        "queues",
+        "queuing",
+        "list",
+        "array",
+        "linkedlist",
+        "fifo",
+        "enqueue",
+        "dequeue",
+        "data-structure"
+      ]
+    },
+    {
+      "_id": "67bc77ab2499176361ec6002",
+      "name": "to-regex-range",
+      "description": "Pass two numbers, get a regex-compatible source string for matching ranges. Validated against more than 2.78 million test assertions.",
+      "link": "https://www.npmjs.com/package/to-regex-range",
+      "dependencies": [
+        "is-number"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 629496614,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 141018764
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 98073763
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 128024881
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 156972176
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 128906850
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 149452433
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 119874065
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 156105484
+          }
+        ]
+      },
+      "dependent_packages_count": 2203,
+      "dependent_repos_count": 5300496,
+      "latest_version": "5.0.1",
+      "npm_timestamps": {
+        "created_at": "2015-08-07T10:48:06.053Z",
+        "modified_at": "2022-06-27T07:24:37.330Z"
+      },
+      "db_created_at": "2025-02-24T13:44:11.629Z",
+      "db_updated_at": "2026-07-20T08:05:02.437Z",
+      "keywords": [
+        "bash",
+        "date",
+        "expand",
+        "expansion",
+        "expression",
+        "glob",
+        "match",
+        "match date",
+        "match number",
+        "match numbers",
+        "match year",
+        "matches",
+        "matching",
+        "number",
+        "numbers",
+        "numerical",
+        "range",
+        "ranges",
+        "regex",
+        "regexp",
+        "regular",
+        "regular expression",
+        "sequence"
+      ]
+    },
+    {
+      "_id": "67bc784f2499176361ec6692",
+      "name": "fast-json-stable-stringify",
+      "description": "deterministic `JSON.stringify()` - a faster version of substack's json-stable-strigify without jsonify",
+      "link": "https://www.npmjs.com/package/fast-json-stable-stringify",
+      "dependencies": [],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 622402782,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 136592551
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 134213284
+          },
+          {
+            "week_ending": "2026-07-05",
+            "downloads": 130692940
+          },
+          {
+            "week_ending": "2026-07-12",
+            "downloads": 128848719
+          },
+          {
+            "week_ending": "2026-07-19",
+            "downloads": 143593628
+          },
+          {
+            "week_ending": "2026-07-26",
+            "downloads": 145804224
+          },
+          {
+            "week_ending": "2026-08-02",
+            "downloads": 149661920
+          },
+          {
+            "week_ending": "2026-08-09",
+            "downloads": 152041077
+          }
+        ]
+      },
+      "dependent_packages_count": 2347,
+      "dependent_repos_count": 4957551,
+      "latest_version": "2.1.0",
+      "npm_timestamps": {
+        "created_at": "2017-10-24T09:21:39.783Z",
+        "modified_at": "2023-06-22T16:31:53.694Z"
+      },
+      "db_created_at": "2025-02-24T13:46:55.786Z",
+      "db_updated_at": "2026-08-10T06:12:14.078Z",
+      "keywords": [
+        "json",
+        "stringify",
+        "deterministic",
+        "hash",
+        "stable"
+      ]
+    },
+    {
+      "_id": "67bc77702499176361ec5d7d",
+      "name": "get-intrinsic",
+      "description": "Get and robustly cache all JS language-level intrinsics at first require time",
+      "link": "https://www.npmjs.com/package/get-intrinsic",
+      "dependencies": [
+        "gopd",
+        "hasown",
+        "es-errors",
+        "get-proto",
+        "has-symbols",
+        "function-bind",
+        "es-object-atoms",
+        "math-intrinsics",
+        "es-define-property",
+        "call-bind-apply-helpers"
+      ],
+      "peerDependencies": [],
+      "downloads": {
+        "total": 619552401,
+        "weekly_trends": [
+          {
+            "week_ending": "2026-05-10",
+            "downloads": 145764059
+          },
+          {
+            "week_ending": "2026-05-17",
+            "downloads": 150830387
+          },
+          {
+            "week_ending": "2026-05-24",
+            "downloads": 157368763
+          },
+          {
+            "week_ending": "2026-05-31",
+            "downloads": 147367140
+          },
+          {
+            "week_ending": "2026-06-07",
+            "downloads": 125992315
+          },
+          {
+            "week_ending": "2026-06-14",
+            "downloads": 154539794
+          },
+          {
+            "week_ending": "2026-06-21",
+            "downloads": 157379880
+          },
+          {
+            "week_ending": "2026-06-28",
+            "downloads": 156893965
+          }
+        ]
+      },
+      "dependent_packages_count": 1374,
+      "dependent_repos_count": 2347505,
+      "latest_version": "1.3.0",
+      "npm_timestamps": {
+        "created_at": "2020-10-30T15:03:39.549Z",
+        "modified_at": "2025-09-30T16:34:34.522Z"
+      },
+      "db_created_at": "2025-02-24T13:43:12.813Z",
+      "db_updated_at": "2026-06-29T09:32:11.823Z",
+      "keywords": [
+        "javascript",
+        "ecmascript",
+        "es",
+        "js",
+        "intrinsic",
+        "getintrinsic",
+        "es-abstract"
+      ]
+    }
+  ]
+}

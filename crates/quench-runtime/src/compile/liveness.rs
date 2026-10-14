@@ -62,7 +62,9 @@ pub(super) fn transfers(
 pub(super) fn analyze_transfers(function: &Function, transfers: &[(u64, u64)]) -> Vec<u64> {
     let has_backward_successor = function.code.iter().enumerate().any(|(pc, &instruction)| {
         let mut backward = false;
-        for_each_successor(function, pc, instruction, |successor| backward |= successor <= pc);
+        for_each_successor(function, pc, instruction, |successor| {
+            backward |= successor <= pc
+        });
         backward
     });
     let mut live = vec![0; function.code.len() + 1];
@@ -100,7 +102,8 @@ fn for_each_successor(
             successor(instruction.jump_target() as usize);
         }
         ControlFlowLayout::BranchTable => {
-            crate::bytecode::branch_table_entries(pc, instruction.as_wide()).for_each(&mut successor)
+            crate::bytecode::branch_table_entries(pc, instruction.as_wide())
+                .for_each(&mut successor)
         }
         ControlFlowLayout::Terminal => {}
         ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
