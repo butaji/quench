@@ -18,6 +18,13 @@ Workspace/all-targets and profile aggregate/memory/trace checks pass. Runtime
 new Wasm-retirement/register-reuse regression. `integrated-source.patch` is the
 exact runtime change relative to the post-TLS source `06c7cb54c`.
 
-Production rebuilt Node, affected native fixture and Test262 outcomes, and
-interpreted Wasm checks follow in the milestone qualification artifact. No
-incoming c speed claim is promoted to a Richards win by this integration.
+Production runners are rebuilt at `9bfe4eabcb029e30cfc58b60b6488cbd8713ec49`;
+hashes are in `production-artifacts.json`. Interpreted Wasm passes 67,124/67,124.
+Native VFS remains 98/99 and Fs FileHandle 8/19; inventories and every outcome
+match the pinned pre-integration control. Test262 expressions/function-code
+remain 11,304/11,319 and Function 508/509; all outcomes match the prior checked
+artifacts, including the existing failures. No harness or host shims.
+
+The all-eight one-round stock smoke is valid/output-equal for 8/8. It overlaps
+semantic suites and its timings are discarded; it is not a performance gate.
+No incoming c speed claim is promoted to a Richards win by this integration.
