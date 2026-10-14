@@ -141,6 +141,7 @@ impl Continuation {
         resume_register: Option<u16>,
         promise: Value,
     ) -> Self {
+        frame.initialized_registers = 0;
         Self {
             context: std::mem::replace(&mut frame.context, CallContext::Internal),
             reflected_parameters: std::mem::take(&mut frame.reflected_parameters),
@@ -163,6 +164,7 @@ impl Continuation {
     }
 
     pub(super) fn into_frame(self, with_base: usize) -> super::Frame {
+        let initialized_registers = self.registers.len();
         super::Frame {
             context: self.context,
             reflected_parameters: self.reflected_parameters,
@@ -177,6 +179,7 @@ impl Continuation {
             dynamic_bindings: self.dynamic_bindings,
             captured: self.captured,
             registers: self.registers,
+            initialized_registers,
             active_iterators: self.active_iterators,
             with_objects: self.with_objects,
             with_base,
