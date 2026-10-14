@@ -1,0 +1,27 @@
+   Compiling quench-node-test v0.1.0 (/workspace/quench/crates/quench-node-test)
+    Finished `iteration` profile [optimized] target(s) in 0.56s
+     Running tests/shared_regressions.rs (target/iteration/deps/shared_regressions-878d71a518581a5e)
+
+running 4 tests
+test deep_named_calls_raise_catchable_range_error_and_recover ... FAILED
+test idle_task_combinator_finishes_on_the_shared_worker ... ok
+test strict_call_followed_by_return_of_another_register_matches_node ... ok
+test strict_assert_aliases_preserve_identity_and_strict_comparison ... ok
+
+failures:
+
+---- deep_named_calls_raise_catchable_range_error_and_recover stdout ----
+
+thread 'deep_named_calls_raise_catchable_range_error_and_recover' (118730) panicked at crates/quench-node-test/tests/shared_regressions.rs:97:5:
+assertion `left == right` failed: deep recursion policy failed: Some(Fail { reason: "/tmp/.tmpCPKORM/regression.js:13\nif (!caught) throw new Error(\"deep call did not throw the stack RangeError\");\n             ^\n\nError: deep call did not throw the stack RangeError\n    at /tmp/.tmpCPKORM/regression.js:13:20\n\nNode.js v22.0.0" })
+  left: Fail
+ right: Pass
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    deep_named_calls_raise_catchable_range_error_and_recover
+
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+error: test failed, to rerun pass `-p quench-node-test --test shared_regressions`
