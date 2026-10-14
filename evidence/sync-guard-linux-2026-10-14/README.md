@@ -21,3 +21,7 @@ Fixed-work max RSS (guard scripts, `maxrss.c` launcher, five launches for the th
 Before restoring the small-heap headroom, the merged Score-lane constants (2^16-cell minimum, 1/1 small-heap factor) measured DeltaBlue +27%, EarleyBoyer +36%, RayTrace +22%, RegExp +8.5% max RSS.
 
 Then merged `origin/v2-merged` (Node-lane socket options, static OpenSSL zlib, Test262 waivers) as `3e5ca74ac`: `http_shared_vm/poll.rs` takes the Node lane's version (our side differed only by the Score lane's rustfmt pass), `modules/mod.rs` declares both new modules. On `3e5ca74ac`: workspace build clean, runtime lib 589/589, Wasm 67,124/67,124, V8-v7 8/8 output equal to Node v26.10.0, VFS default and `--experimental-vfs` both work. `quench-node` lib: 2 of 4 fail (`process_shared_vm` root tests, atom index out of bounds in `atom_keys.rs:62`); the same two fail on `origin/v2-merged` before this merge.
+
+## 13:50 UTC: v2-cloud-c `56447112c`, `d11d9917e` (guard FAILS, held)
+
+Base `e3fc15972`, candidate `0736e42b8` (`e3fc15972` + those two commits; not published). Runtime lib 591/591, Wasm 67,124/67,124. `guard-e3fc15972-vs-0736e42b8.txt`: Crypto -20.42%, NavierStokes -25.53%, but Splay +7.18% and Richards +2.19% per run (DeltaBlue +0.66%, EarleyBoyer +0.46%).
