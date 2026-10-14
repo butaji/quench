@@ -8,7 +8,6 @@ fn plain_object() -> Object {
 
 fn collect_minor(heap: &mut Heap, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
     heap.collect_with_object_roots(roots, |_, _, _, _| {}, None, false)
-        .0
 }
 
 #[test]
@@ -50,8 +49,11 @@ fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
     let children = (0..PARALLEL_MARK_MINIMUM_SLOTS)
         .map(|_| heap.alloc(Cell::String("parallel survivor".into())))
         .collect::<Vec<_>>();
-    let root = heap.alloc(Cell::Array {
-        object: ArrayObject::new(plain_object(), Rc::new(children.clone())),
+    // A direct-record array forces the serial collector. Keep this root in
+    // the legacy space so the parallel marker and sweep remain covered.
+    let root = heap.alloc(Cell::Set {
+        object: Box::new(plain_object()),
+        entries: Box::new(children.clone()),
     });
 
     heap.collect([root]);
@@ -60,14 +62,14 @@ fn parallel_mark_matches_serial_verifier_for_full_and_minor_collections() {
     let young = (0..128)
         .map(|_| heap.alloc(Cell::String("remembered young survivor".into())))
         .collect::<Vec<_>>();
-    if let Some(elements) = heap.array_elements_mut(root) {
-        Rc::make_mut(elements).extend(young.iter().copied());
+    if let Some(Cell::Set { entries, .. }) = heap.get_mut(root) {
+        entries.extend(young.iter().copied());
     }
     collect_minor(&mut heap, [root]);
     assert!(young.iter().all(|child| heap.get(*child).is_some()));
 
-    if let Some(elements) = heap.array_elements_mut(root) {
-        Rc::make_mut(elements).clear();
+    if let Some(Cell::Set { entries, .. }) = heap.get_mut(root) {
+        entries.clear();
     }
     heap.collect([root]);
     assert!(children.iter().all(|child| heap.get(*child).is_none()));
