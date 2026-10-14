@@ -43,10 +43,7 @@ pub(crate) fn to_namespaced_path(path: &str) -> String {
         if chars[2] != '?' && chars[2] != '.' {
             return format!("\\\\?\\UNC\\{}", chars[2..].iter().collect::<String>());
         }
-    } else if super::common::is_device_root(chars[0])
-        && chars[1] == ':'
-        && chars[2] == '\\'
-    {
+    } else if super::common::is_device_root(chars[0]) && chars[1] == ':' && chars[2] == '\\' {
         return format!("\\\\?\\{path}");
     }
     path.to_owned()

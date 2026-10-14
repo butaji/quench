@@ -189,6 +189,15 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netListenerReference" (0) => crate::modules::net_reference_shared_vm::reference_handle,
         method "netListenerHasRef" (0) => crate::modules::net_reference_shared_vm::handle_has_ref,
         method "netListenError" (2) => crate::modules::net_shared_vm::listen_error,
+        method "netDeliverConnect" (0) => crate::modules::net_shared_vm::deliver_connect,
+        method "netServerInitializeOptions" (2) => crate::modules::net_socket_options::initialize_server,
+        method "netServerAcceptedOptions" (1) => crate::modules::net_socket_options::accepted_options,
+        method "netServerOnConnection" (2) => crate::modules::net_shared_vm::on_connection,
+        method "netHandleSetNoDelay" (0) => crate::modules::net_reference_shared_vm::set_no_delay,
+        method "netHandleSetKeepAlive" (0) => crate::modules::net_reference_shared_vm::set_keep_alive,
+        method "netSocketInitializeOptions" (2) => crate::modules::net_socket_options::initialize,
+        method "netSocketSetNoDelay" (2) => crate::modules::net_socket_options::no_delay,
+        method "netSocketSetKeepAlive" (5) => crate::modules::net_socket_options::keep_alive,
         method "netServerInitEmitter" (1) => crate::modules::net_shared_vm::initialize_server_emitter,
         method "netSocketInitEnd" (3) => crate::modules::net_shared_vm::initialize_end,
         method "netSocketReadableEnd" (1) => crate::modules::net_shared_vm::readable_end,
@@ -535,7 +544,10 @@ impl quench_runtime::Host for NodeHost {
                 .expect("generated Node builtin export names are valid JSON");
         let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
         if crate::host::shared_vm::commonjs::is_builtin_specifier(specifier) {
-            let exports = builtin_exports.get(builtin_name).map(Vec::as_slice).unwrap_or(&[]);
+            let exports = builtin_exports
+                .get(builtin_name)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let require_specifier = specifier;
             let mut source = format!(
                 "const __quenchModule = globalThis[\"\\0quench:require\"]({});\nexport default __quenchModule;\n",
@@ -582,9 +594,12 @@ impl quench_runtime::Host for NodeHost {
         };
         let path = resolution.full_path();
         let path = std::fs::canonicalize(&path).unwrap_or(path);
-        let bytes = std::fs::read(&path)
-            .map_err(|error| format!("module {}: {error}", path.display()))?;
-        let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("");
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
         if extension == "node" {
             return Ok(None);
         }

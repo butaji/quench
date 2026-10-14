@@ -70,19 +70,33 @@ pub fn classify_outcome(reason: &str) -> &'static str {
     }
 }
 
-pub fn case_outcome(path: String, stage: String, result: &Result<(), String>) -> Value {
-    match result {
+/// The raw case outcome; a waived failure keeps it and names its waiver group.
+pub fn case_outcome(
+    path: String,
+    stage: String,
+    result: &Result<(), String>,
+    waiver: Option<&str>,
+) -> Value {
+    let mut case = match result {
         Ok(()) => json!({"path":path,"stage":stage,"outcome":"pass"}),
         Err(reason) => {
             json!({"path":path,"stage":stage,"outcome":classify_outcome(reason),"reason":reason})
         }
+    };
+    if let Some(waiver) = waiver {
+        case["waiver"] = json!(waiver);
     }
+    case
 }
 
 pub fn outcome_report(outcomes: &[Value], provenance: Value) -> Value {
     let passed = outcomes
         .iter()
         .filter(|case| case["outcome"] == "pass")
+        .count();
+    let waived = outcomes
+        .iter()
+        .filter(|case| case["outcome"] != "pass" && case["waiver"].is_string())
         .count();
     let mut stages = BTreeMap::<String, (usize, usize)>::new();
     let mut families = BTreeMap::<String, usize>::new();
@@ -106,7 +120,7 @@ pub fn outcome_report(outcomes: &[Value], provenance: Value) -> Value {
         })
         .collect::<BTreeMap<_, _>>();
     json!({"schema":1,"engine":RATCHET_ENGINE,"provenance":provenance,
-        "total":outcomes.len(),"passed":passed,"failed":outcomes.len()-passed,
+        "total":outcomes.len(),"passed":passed,"failed":outcomes.len()-passed,"waived":waived,
         "stages":stages,"families":families,"outcomes":outcomes})
 }
 
