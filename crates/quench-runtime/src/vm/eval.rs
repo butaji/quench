@@ -42,25 +42,22 @@ impl<H: Host> Vm<H> {
         if let Some(expression) = crate::Engine::eval_single_expression(source) {
             return self.eval_compiled_expression_named(p, expression, false, source_name);
         }
-        let residual = match crate::Engine::specialize_script_with_atom_prefix(
-            source,
-            source_name,
-            &*self,
-        ) {
-            Ok(residual) => residual,
-            Err(diagnostics) => {
-                if diagnostics
-                    .iter()
-                    .any(crate::compile::Diagnostic::is_stack_exhausted)
-                {
-                    return Err(self.stack_exhaustion_error());
+        let residual =
+            match crate::Engine::specialize_script_with_atom_prefix(source, source_name, &*self) {
+                Ok(residual) => residual,
+                Err(diagnostics) => {
+                    if diagnostics
+                        .iter()
+                        .any(crate::compile::Diagnostic::is_stack_exhausted)
+                    {
+                        return Err(self.stack_exhaustion_error());
+                    }
+                    let message = diagnostics
+                        .first()
+                        .map_or("invalid script source".to_owned(), ToString::to_string);
+                    return self.syntax_error_result(p, &message);
                 }
-                let message = diagnostics
-                    .first()
-                    .map_or("invalid script source".to_owned(), ToString::to_string);
-                return self.syntax_error_result(p, &message);
-            }
-        };
+            };
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
@@ -290,24 +287,20 @@ impl<H: Host> Vm<H> {
         origin: Option<(u32, u32)>,
     ) -> Result<Value, JsError> {
         let program = self.embedding_program()?;
-        let mut residual = crate::Engine::specialize_script_with_atom_prefix(
-            source,
-            name,
-            &*self,
-        )
-        .map_err(|diagnostics| {
-            if diagnostics
-                .iter()
-                .any(crate::compile::Diagnostic::is_stack_exhausted)
-            {
-                return self.stack_exhaustion_error();
-            }
-            let message = diagnostics
-                .first()
-                .map_or("invalid host script".to_owned(), ToString::to_string);
-            self.syntax_error_result(&program, &message)
-                .expect_err("specialized host-script syntax errors must throw")
-        })?;
+        let mut residual = crate::Engine::specialize_script_with_atom_prefix(source, name, &*self)
+            .map_err(|diagnostics| {
+                if diagnostics
+                    .iter()
+                    .any(crate::compile::Diagnostic::is_stack_exhausted)
+                {
+                    return self.stack_exhaustion_error();
+                }
+                let message = diagnostics
+                    .first()
+                    .map_or("invalid host script".to_owned(), ToString::to_string);
+                self.syntax_error_result(&program, &message)
+                    .expect_err("specialized host-script syntax errors must throw")
+            })?;
         if let (Some(source), Some((line_offset, column_offset))) = (&mut residual.source, origin) {
             source.line_offset = line_offset;
             source.column_offset = column_offset;
@@ -892,37 +885,33 @@ impl<H: Host> Vm<H> {
             format!("return ({expression});")
         };
         let mut private_eval_context = None;
-        let residual = match crate::Engine::specialize_dynamic_function(
-            "",
-            &body,
-            source_name,
-            &*self,
-        ) {
-            Ok(residual) => residual,
-            Err(diagnostics)
-                if diagnostics
-                    .iter()
-                    .any(crate::compile::Diagnostic::is_stack_exhausted) =>
-            {
-                return Err(self.stack_exhaustion_error());
-            }
-            Err(diagnostics) if self.direct_eval => {
-                let Some((home, private_names)) = self.direct_eval_private_names(p) else {
-                    return Err(self.mark_eval_syntax_error(p, diagnostics));
-                };
-                private_eval_context = Some((home, private_names.clone()));
-                let body = private_eval_method_body(expression, &private_names, true);
-                crate::Engine::specialize_dynamic_function_with_private_names(
-                    "",
-                    &body,
-                    source_name,
-                    &*self,
-                    &private_names,
-                )
-                .map_err(|diagnostics| self.mark_eval_syntax_error(p, diagnostics))?
-            }
-            Err(diagnostics) => return Err(self.mark_eval_syntax_error(p, diagnostics)),
-        };
+        let residual =
+            match crate::Engine::specialize_dynamic_function("", &body, source_name, &*self) {
+                Ok(residual) => residual,
+                Err(diagnostics)
+                    if diagnostics
+                        .iter()
+                        .any(crate::compile::Diagnostic::is_stack_exhausted) =>
+                {
+                    return Err(self.stack_exhaustion_error());
+                }
+                Err(diagnostics) if self.direct_eval => {
+                    let Some((home, private_names)) = self.direct_eval_private_names(p) else {
+                        return Err(self.mark_eval_syntax_error(p, diagnostics));
+                    };
+                    private_eval_context = Some((home, private_names.clone()));
+                    let body = private_eval_method_body(expression, &private_names, true);
+                    crate::Engine::specialize_dynamic_function_with_private_names(
+                        "",
+                        &body,
+                        source_name,
+                        &*self,
+                        &private_names,
+                    )
+                    .map_err(|diagnostics| self.mark_eval_syntax_error(p, diagnostics))?
+                }
+                Err(diagnostics) => return Err(self.mark_eval_syntax_error(p, diagnostics)),
+            };
         let Some(program_id) = self.store_dynamic_program(residual) else {
             return Err(self.type_error(p, "dynamic program store is full".into()));
         };
