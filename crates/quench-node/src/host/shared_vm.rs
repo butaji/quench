@@ -704,6 +704,7 @@ impl quench_runtime::Host for NodeHost {
     }
 
     fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        crate::host::resident_pages::release_read_only_pages();
         crate::modules::text_decoder_shared_vm::install_global(context)?;
         #[cfg(feature = "profile-memory")]
         context.profile_memory_checkpoint("node_text_decoder");
