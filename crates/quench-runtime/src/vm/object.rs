@@ -1063,7 +1063,9 @@ impl<H: Host> Vm<H> {
             return Ok(value);
         }
         if let Some((cache, value)) = self.inherited_field(receiver, atom) {
-            self.inherited_field_caches.insert(site, cache);
+            if self.field_cache_records(site) {
+                self.inherited_field_caches.insert(site, cache);
+            }
             return Ok(value);
         }
         self.get_property(p, object, atom)
@@ -1821,6 +1823,9 @@ impl<H: Host> Vm<H> {
     }
 
     fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
+        if !self.field_cache_records(site) {
+            return;
+        }
         let index = self.field_add_indices[site];
         if index == NO_FIELD_ADD_SET {
             self.field_add_indices[site] = self.field_add_sets.len() as u32;
@@ -2117,6 +2122,9 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|old| self.is_function(old))
     }
     pub(super) fn record_field_cache(&mut self, site: usize, cache: FieldCache) {
+        if !self.field_cache_records(site) {
+            return;
+        }
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site) };
         if table_index != NO_MEGAMORPHIC_FIELD {

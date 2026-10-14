@@ -255,8 +255,11 @@ impl FunctionCompiler<'_, '_> {
         {
             self.clone_lexical_environment();
         }
-        self.bind_for_of_left(left, value);
-        self.statement(body);
+        // The iterator cleanup record reads `iterator` and `done` until the body ends.
+        self.with_registers_held(|compiler| {
+            compiler.bind_for_of_left(left, value);
+            compiler.statement(body);
+        });
         if let Some(error) = disposal_error {
             let end = self.code.len() as u32;
             let context = self

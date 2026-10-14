@@ -690,6 +690,48 @@ fn loop_iterations_release_their_environments_and_eval_programs() {
 }
 
 #[test]
+fn property_sites_past_the_site_space_share_an_uncached_site() {
+    // Two passes over a line of sites larger than the 16-bit site space: the sites past it
+    // share one site, which alternately reads `a` and `b` from the same shape.
+    let sites = usize::from(u16::MAX) + 64;
+    let reads = (0..sites)
+        .map(|index| if index % 2 == 0 { "s += o.a;" } else { "s += o.b;" })
+        .collect::<String>();
+    let source = format!(
+        "var o = {{ a: 1, b: 2 }}; function sum() {{ var s = 0; {reads} return s; }} var total = sum() + sum();"
+    );
+    let program = Engine::specialize(&source, "site-overflow.js").unwrap();
+    assert_eq!(program.cache_sites, crate::bytecode::SHARED_UNCACHED_SITE + 1);
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("total");
+    let total = vm.own_property(vm.realm.globals, name).unwrap();
+    let expected = 2 * (sites / 2 * 3 + sites % 2);
+    assert_eq!(total.as_number(), Some(expected as f64));
+}
+
+#[test]
+fn for_of_iterator_cleanup_survives_body_temporaries() {
+    // Closing the outer generator while its loop body is suspended in `yield*` closes the
+    // loop's iterator; the body's temporaries must not have reused the iterator's register.
+    let program = Engine::specialize(
+        "function inner(x) { return { *[Symbol.iterator]() { yield x; } }; }\n\
+         var closed = 0;\n\
+         var source = { [Symbol.iterator]() { var i = 0; return { next() { return { value: ++i, done: i > 3 }; }, return() { closed++; return {}; } }; } };\n\
+         function flat(s) { return { *[Symbol.iterator]() { for (let d of source) { if (s) { yield d; } else { yield* inner(d); } } } }; }\n\
+         function* take(data) { for (let d of data) { yield d; return; } }\n\
+         var taken = [...take(flat(false))].join() + ':' + closed;",
+        "for-of-cleanup.js",
+    )
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("taken");
+    let taken = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(&*vm.to_string(&program, taken).unwrap(), "1:1");
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();
