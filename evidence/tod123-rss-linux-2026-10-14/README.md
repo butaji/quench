@@ -55,7 +55,7 @@ Only 2.6-2.9 MB of code executes during an empty start, but 7-10 MB of
 `.text` was resident: fault-around maps cached pages around each fault, so
 executed functions scattered among cold ones keep the cold pages resident.
 `crates/quench-node/link/x86_64-linux.order` lists the functions an empty
-start and `quench-bench/deegen-curriculum` execute, in first-execution order
+start, `quench-bench/deegen-curriculum` and `quench-bench/micros` execute, in first-execution order
 (`symbol-order` from `quench-wasm-test`, Cachegrind `--cache-sim=no
 --demangle=no` on the production binary); `build.rs` links with lld and
 `--symbol-ordering-file`. No scored bench is in the training set (decision 13).
@@ -63,7 +63,7 @@ start and `quench-bench/deegen-curriculum` execute, in first-execution order
 Reproduce the order:
 
 ```sh
-for f in empty.cjs quench-bench/deegen-curriculum/*.js; do
+for f in empty.cjs quench-bench/deegen-curriculum/*.js quench-bench/micros/*.js; do
   valgrind --tool=cachegrind --cache-sim=no --demangle=no \
     --cachegrind-out-file=train/$(basename $f).out target/production/quench-node $f
 done
