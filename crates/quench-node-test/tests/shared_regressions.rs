@@ -24,6 +24,34 @@ fn observe_node_source(source: &str) -> std::process::Output {
 }
 
 #[test]
+fn strict_assert_aliases_preserve_identity_and_strict_comparison() {
+    let source = r#"
+const assert = require('assert');
+const strict = require('assert/strict');
+for (const [alias, target] of [
+  ['equal', 'strictEqual'], ['notEqual', 'notStrictEqual'],
+  ['deepEqual', 'deepStrictEqual'], ['notDeepEqual', 'notDeepStrictEqual']
+]) {
+  assert.strictEqual(strict[alias], assert[target]);
+  assert.strictEqual(strict[alias], strict[target]);
+}
+assert.strictEqual(strict, assert.strict);
+strict.deepEqual({ value: 1 }, { value: 1 });
+strict.notEqual(1, '1');
+strict.notDeepEqual({ value: 1 }, { value: '1' });
+assert.throws(() => strict.deepEqual({ value: 1 }, { value: '1' }), { code: 'ERR_ASSERTION' });
+assert.throws(() => strict.notDeepEqual({ value: 1 }, { value: 1 }), { code: 'ERR_ASSERTION' });
+assert.throws(() => strict.notEqual(1, 1), { code: 'ERR_ASSERTION' });
+console.log('strict-assert-aliases: ok');
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
+
+#[test]
 fn strict_call_followed_by_return_of_another_register_matches_node() {
     let source = r#"
 function g(a, b, c, x) { return arguments.length + 90; }

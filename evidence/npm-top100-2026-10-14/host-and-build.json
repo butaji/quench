@@ -1,0 +1,12 @@
+{
+  "base_commit": "f9bdbab3467386acd261f1c0ec531109cf2492ad",
+  "host": "Linux 3e67e86749eb 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+  "cpu_max": "400000 100000",
+  "memory_max": "17179869184",
+  "profile": "iteration; LLVM -align-all-functions=6; cloud OpenSSL static final link -l z",
+  "executables": {
+    "/workspace/scratch/npm-base": "18eba5dc68aefaab4f24575a026ff8e913a60dfd2e0cbf4041878b1b152da1e6",
+    "/workspace/scratch/npm-candidate-publish": "318570c4eb51f29fd4322bd884f692d81876c3c40bb6ef5faf1c45fd455eda6b",
+    "/workspace/shared/node-v26.11.1-linux-x64/bin/node": "5a7b8a3cf5ccb57d297519754fd73238f64cf560afd0ef19a2f9bf7384cbb657"
+  }
+}

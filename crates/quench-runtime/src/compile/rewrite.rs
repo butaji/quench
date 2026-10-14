@@ -35,21 +35,20 @@ macro_rules! fusion_recipes {
 // macro derives recipe identity, pattern rows, and recipe dispatch together.
 fusion_recipes! {
     ConstantLeft: [LoadConst, Binary] =>
-        |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
+        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
             let result = first.result_register();
             let constant = Operand::constant(first.constant_index() as u32)?;
             if second.operand_b().register_index() != Some(result) { return None; }
-            second.set_operand_b(constant);
-            if second.operand_c().register_index() == Some(result) {
-                second.set_operand_c(constant);
-            }
-            Some(second)
+            let right = if second.operand_c().register_index() == Some(result) {
+                constant.0
+            } else { second.c() };
+            Instr::try_new(second.op(), second.a(), constant.0, right, second.imm())
         };
     ConstantRight: [LoadConst, Binary] =>
-        |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
+        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
             if second.operand_c().register_index() != Some(first.result_register()) { return None; }
-            second.set_operand_c(Operand::constant(first.constant_index() as u32)?);
-            Some(second)
+            let constant = Operand::constant(first.constant_index() as u32)?;
+            Instr::try_new(second.op(), second.a(), second.b(), constant.0, second.imm())
         };
     StoreLoadLocal: [StoreLocal, LoadLocal] =>
         |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
@@ -213,7 +212,11 @@ fn coalesce_distant_producer_moves(
     superinstructions: &[Superinstruction],
 ) -> bool {
     // Liveness is the expensive part; a function without a `Move` has nothing to coalesce.
-    if !function.code.iter().any(|instruction| instruction.op() == Op::Move) {
+    if !function
+        .code
+        .iter()
+        .any(|instruction| instruction.op() == Op::Move)
+    {
         return false;
     }
     let Some(transfers) = liveness::transfers(function, methods, field_sites, superinstructions)
@@ -682,6 +685,30 @@ fn source_instruction_survives(old_pc: usize, old_code: &[Instr], map: &[usize])
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn constant_fusion_falls_back_when_tagged_operand_cannot_fit() {
+        let index = (0..=u32::from(u16::MAX))
+            .find(|&index| {
+                Operand::constant(index)
+                    .is_some_and(|operand| Instr::try_new(Op::Binary, 0, operand.0, 1, 0).is_none())
+            })
+            .unwrap();
+        let load = Instr::new(Op::LoadConst, 0, 0, 0, index);
+        let left = Instr::new(Op::Binary, 2, 0, 1, 0);
+        let right = Instr::new(Op::Binary, 2, 1, 0, 0);
+        let both = Instr::new(Op::Binary, 2, 0, 0, 0);
+        for (recipe, binary) in [
+            (Recipe::ConstantLeft, left),
+            (Recipe::ConstantRight, right),
+            (Recipe::ConstantLeft, both),
+        ] {
+            assert!(apply_recipe(recipe, load, binary, &mut vec![]).is_none());
+        }
+        let boundary = Instr::new(Op::LoadConst, 0, 0, 0, index - 1);
+        assert!(apply_recipe(Recipe::ConstantLeft, boundary, left, &mut vec![]).is_some());
+        assert!(apply_recipe(Recipe::ConstantRight, boundary, right, &mut vec![]).is_some());
+    }
 
     #[test]
     fn rejects_rewrite_that_discards_heap_write() {

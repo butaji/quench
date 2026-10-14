@@ -121,31 +121,6 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       return new Buffer(value, encoding, length);
     }
 
-    static alloc(size, fill = 0, encoding) {
-      if (typeof size !== "number") {
-        throw codedTypeError('The "size" argument must be of type number', "ERR_INVALID_ARG_TYPE");
-      }
-      if (!Number.isFinite(size) || size < 0 || size > 0x7fffffff) {
-        const error = new RangeError("The value of \"size\" is out of range");
-        error.code = "ERR_OUT_OF_RANGE";
-        throw error;
-      }
-      const result = new Buffer(Math.trunc(size));
-      if (typeof fill === "string") {
-        const pattern = Buffer.from(fill, encoding);
-        if (pattern.length === 1) {
-          Uint8Array.prototype.fill.call(result, pattern[0]);
-        } else if (pattern.length > 1) {
-          for (let index = 0; index < result.length; index++) {
-            result[index] = pattern[index % pattern.length];
-          }
-        }
-      } else {
-        result.fill(fill);
-      }
-      return result;
-    }
-
     static allocUnsafe(size) {
       return Buffer.alloc(size);
     }
@@ -625,6 +600,32 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
   Buffer.prototype.asciiWrite = legacyWrite("ascii");
   Buffer.prototype.latin1Write = legacyWrite("latin1");
   Buffer.prototype.utf8Write = legacyWrite("utf8");
+
+  // Node's alloc is an ordinary constructible function, including its arity.
+  Buffer.alloc = function alloc(size, fill, encoding) {
+    if (typeof size !== "number") {
+      throw codedTypeError('The "size" argument must be of type number', "ERR_INVALID_ARG_TYPE");
+    }
+    if (!Number.isFinite(size) || size < 0 || size > 0x7fffffff) {
+      const error = new RangeError("The value of \"size\" is out of range");
+      error.code = "ERR_OUT_OF_RANGE";
+      throw error;
+    }
+    const result = new Buffer(Math.trunc(size));
+    if (typeof fill === "string") {
+      const pattern = Buffer.from(fill, encoding);
+      if (pattern.length === 1) {
+        Uint8Array.prototype.fill.call(result, pattern[0]);
+      } else if (pattern.length > 1) {
+        for (let index = 0; index < result.length; index++) {
+          result[index] = pattern[index % pattern.length];
+        }
+      }
+    } else {
+      result.fill(fill === undefined ? 0 : fill);
+    }
+    return result;
+  };
 
   // Node exposes Buffer's static API as enumerable own properties. Packages
   // such as safer-buffer derive their constructor view with `for...in`.
