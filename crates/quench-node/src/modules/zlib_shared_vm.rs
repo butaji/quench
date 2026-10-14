@@ -228,7 +228,9 @@ pub(super) fn transform_bytes(
             encoder.finish()
         }
         Codec::InflateRaw => read_all(DeflateDecoder::new(Cursor::new(input)), max_output),
-        Codec::Unzip if input.starts_with(GZIP_HEADER) => read_all(MultiGzDecoder::new(input), max_output),
+        Codec::Unzip if input.starts_with(GZIP_HEADER) => {
+            read_all(MultiGzDecoder::new(input), max_output)
+        }
         Codec::Unzip => read_all(ZlibDecoder::new(input), max_output),
         Codec::BrotliCompress => {
             let mut output = Vec::new();
@@ -543,12 +545,29 @@ pub(crate) fn run_callback(
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
     let data = context.host_function_data()?;
-    let api=get(context,data,"0")?;let input=get(context,data,"1")?;let callback=get(context,data,"2")?;
-    let engine=get(context,api,"stream")?;let sync=get(context,api,"sync")?;
-    let undefined=context.undefined();
-    match context.call_rooted(sync,undefined,&[input]) {
-        Ok(result)=>{let destroy=get(context,engine,"destroy")?;context.call_rooted(destroy,engine,&[])?;let null=context.null();context.call_rooted(callback,engine,&[null,result])?;}
-        Err(error)=>{let Some(exception)=error.exception else{return Err(error)};let destroy=get(context,engine,"destroy")?;context.call_rooted(destroy,engine,&[])?;let result=context.call_rooted(callback,engine,&[exception]);context.release_root(exception);result?;}
+    let api = get(context, data, "0")?;
+    let input = get(context, data, "1")?;
+    let callback = get(context, data, "2")?;
+    let engine = get(context, api, "stream")?;
+    let sync = get(context, api, "sync")?;
+    let undefined = context.undefined();
+    match context.call_rooted(sync, undefined, &[input]) {
+        Ok(result) => {
+            let destroy = get(context, engine, "destroy")?;
+            context.call_rooted(destroy, engine, &[])?;
+            let null = context.null();
+            context.call_rooted(callback, engine, &[null, result])?;
+        }
+        Err(error) => {
+            let Some(exception) = error.exception else {
+                return Err(error);
+            };
+            let destroy = get(context, engine, "destroy")?;
+            context.call_rooted(destroy, engine, &[])?;
+            let result = context.call_rooted(callback, engine, &[exception]);
+            context.release_root(exception);
+            result?;
+        }
     }
     Ok(undefined)
 }

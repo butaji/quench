@@ -71,16 +71,7 @@ impl<H: Host> Vm<H> {
             return None;
         }
         let callee = self.read(f, i.register_b());
-        let (program_id, id, env) = self.same_realm_user_target(callee)?;
-        if id == super::ROOT_FUNCTION_ID
-            || program_id != self.active_program
-            || !p
-                .functions
-                .get(id as usize)
-                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
-        {
-            return None;
-        }
+        let (id, env) = self.in_loop_call_target(p, callee)?;
         self.profile.call_source(0);
         let window = i.call_window();
         let this = self.read(f, i.register_c());
@@ -106,6 +97,53 @@ impl<H: Host> Vm<H> {
         }))
     }
 
+    /// The function and environment of `callee` when it is a user function of the active
+    /// program in the current realm that the loop may push in place: a non-root ordinary
+    /// body (`CallPlan::in_loop`). Resolved targets are cached (`InLoopCallTarget`).
+    #[inline(always)]
+    fn in_loop_call_target(&mut self, p: &ResidualProgram, callee: Value) -> Option<(u32, Value)> {
+        let index = callee.heap_index()? as usize & (super::CALL_TARGET_CACHE_SIZE - 1);
+        let epoch = self.heap.collection_epoch();
+        let cached = self.call_targets[index];
+        if cached.callee == callee
+            && cached.epoch == epoch
+            && cached.realm == self.realm.globals
+            && cached.program == self.active_program
+        {
+            return Some((cached.function, cached.env));
+        }
+        self.resolve_in_loop_call_target(p, callee, index, epoch)
+    }
+
+    #[inline(never)]
+    fn resolve_in_loop_call_target(
+        &mut self,
+        p: &ResidualProgram,
+        callee: Value,
+        index: usize,
+        epoch: u64,
+    ) -> Option<(u32, Value)> {
+        let (program, function, env) = self.same_realm_user_target(callee)?;
+        if function == super::ROOT_FUNCTION_ID
+            || program != self.active_program
+            || !p
+                .functions
+                .get(function as usize)
+                .is_some_and(|function| function.call_plan(&p.atoms).in_loop)
+        {
+            return None;
+        }
+        self.call_targets[index] = super::InLoopCallTarget {
+            callee,
+            epoch,
+            realm: self.realm.globals,
+            program,
+            function,
+            env,
+        };
+        Some((function, env))
+    }
+
     /// `f.call(this, ...args)` and `f.apply(this, list)` of the intrinsic natives invoke `f`
     /// with no observable step of their own, so when `try_inline_user_call` declines a call
     /// whose callee is one of them and `f` is a user function, `f` is pushed directly. It
@@ -119,7 +157,7 @@ impl<H: Host> Vm<H> {
         i: WideInstruction,
         pc: usize,
     ) -> Option<Result<StepResult, JsError>> {
-        if i.op() != Op::Call
+        if !matches!(i.op(), Op::Call | Op::CallForwardingArguments)
             || self.direct_eval
             || self.parameter_eval
             || p.kind == crate::bytecode::ProgramKind::Wasm
@@ -144,11 +182,19 @@ impl<H: Host> Vm<H> {
             Some(Cell::Function {
                 kind: FunctionKind::Native(Native::FunctionApply),
                 ..
-            }) => {
-                apply_arguments =
-                    self.dense_apply_arguments(window.get(1).copied().unwrap_or(Value::UNDEFINED))?;
-                apply_arguments.as_slice()
-            }
+            }) => match window.get(1).copied().unwrap_or(Value::UNDEFINED) {
+                // The caller's unmaterialized `arguments`: the values its frame kept.
+                Value::UNMATERIALIZED_ARGUMENTS => {
+                    let kept: *const [Value] = self.frames[f].original_arguments.as_slice();
+                    // SAFETY: the caller's frame stays on the stack and is not mutated while
+                    // the callee is set up; its buffer does not move when `frames` grows.
+                    unsafe { &*kept }
+                }
+                list => {
+                    apply_arguments = self.dense_apply_arguments(list)?;
+                    apply_arguments.as_slice()
+                }
+            },
             _ => return None,
         };
         let (program_id, id, env) = self.same_realm_user_target(target)?;
@@ -177,6 +223,34 @@ impl<H: Host> Vm<H> {
             call_guard,
             construct_this: None,
         }))
+    }
+
+    /// `CallForwardingArguments` whose argument is the caller's unmaterialized `arguments`:
+    /// the intrinsic `apply` of an in-loop user function is pushed with the kept values;
+    /// any other call first materializes the object, then proceeds as `Call` (`None`).
+    #[inline(never)]
+    fn forward_activation_arguments(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+        i: WideInstruction,
+        pc: usize,
+        allow_inline_calls: bool,
+    ) -> Option<Result<StepResult, JsError>> {
+        let last = i.call_window().last()?;
+        if self.read(f, last) != Value::UNMATERIALIZED_ARGUMENTS {
+            return None;
+        }
+        if allow_inline_calls && let Some(result) = self.try_inline_call_apply(p, f, i, pc) {
+            return Some(result);
+        }
+        match self.materialize_activation_arguments(p, f) {
+            Ok(arguments) => {
+                self.write(f, last, arguments);
+                None
+            }
+            Err(error) => Some(Err(error)),
+        }
     }
 
     /// CreateListFromArrayLike for `apply` when it reduces to a copy: null or undefined, a
@@ -1079,7 +1153,13 @@ impl<H: Host> Vm<H> {
                     *pc = i.jump_target() as usize;
                 }
             }
-            Op::Call | Op::CallDirectEvalArray => {
+            Op::Call | Op::CallDirectEvalArray | Op::CallForwardingArguments => {
+                if i.op() == Op::CallForwardingArguments
+                    && let Some(result) =
+                        self.forward_activation_arguments(p, f, i, *pc, allow_inline_calls)
+                {
+                    return result;
+                }
                 self.profile.call_source(0);
                 let window = i.call_window();
                 // A spread direct-eval array is read before any call state changes, since

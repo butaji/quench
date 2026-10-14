@@ -86,12 +86,7 @@ const BUILTIN_MODULES: &[&str] = &[
     "node:test/reporters",
 ];
 
-const NODE_ONLY_BUILTINS: &[&str] = &[
-    "sea",
-    "sqlite",
-    "test",
-    "test/reporters",
-];
+const NODE_ONLY_BUILTINS: &[&str] = &["sea", "sqlite", "test", "test/reporters"];
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let module = context.object_rooted()?;
@@ -106,9 +101,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "builtinModules", names)?;
     let is_builtin = context.host_function(crate::host::shared_vm::operation("isBuiltin"))?;
     set(context, module, "isBuiltin", is_builtin)?;
-    let require_native = context.host_function(crate::host::shared_vm::operation("createRequire"))?;
-    let paths_native = context.host_function(crate::host::shared_vm::operation("moduleNodePaths"))?;
-    let factory = context.evaluate_script_rooted(REQUIRE_FACADES, "node:module/require-facades.js")?;
+    let require_native =
+        context.host_function(crate::host::shared_vm::operation("createRequire"))?;
+    let paths_native =
+        context.host_function(crate::host::shared_vm::operation("moduleNodePaths"))?;
+    let factory =
+        context.evaluate_script_rooted(REQUIRE_FACADES, "node:module/require-facades.js")?;
     let undefined = context.undefined();
     let facades = context.call_rooted(factory, undefined, &[require_native, paths_native])?;
     let create_require = get(context, facades, "0")?;
@@ -273,13 +271,18 @@ fn url_or_string_text(
 
 fn file_url_path(value: &str) -> Option<PathBuf> {
     let url = url::Url::parse(value).ok()?;
-    (url.scheme() == "file").then(|| url.to_file_path().ok()).flatten()
+    (url.scheme() == "file")
+        .then(|| url.to_file_path().ok())
+        .flatten()
 }
 
 fn has_url_scheme(value: &str) -> bool {
-    value
-        .split_once(':')
-        .is_some_and(|(scheme, _)| !scheme.is_empty() && scheme.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.')))
+    value.split_once(':').is_some_and(|(scheme, _)| {
+        !scheme.is_empty()
+            && scheme
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
+    })
 }
 
 fn is_bare_specifier(value: &str) -> bool {
@@ -345,9 +348,7 @@ fn coded_module_error(
     Ok(context.throw(error))
 }
 
-fn invalid_url(
-    context: &mut NativeContext<'_, NodeHost>,
-) -> Result<RootedError, RootedError> {
+fn invalid_url(context: &mut NativeContext<'_, NodeHost>) -> Result<RootedError, RootedError> {
     coded_module_error(context, true, "ERR_INVALID_URL", "Invalid URL")
 }
 
@@ -388,7 +389,10 @@ fn module_not_found(
         context,
         false,
         "ERR_MODULE_NOT_FOUND",
-        &format!("Cannot find module '{}' imported from {from}", path.display()),
+        &format!(
+            "Cannot find module '{}' imported from {from}",
+            path.display()
+        ),
     )
 }
 

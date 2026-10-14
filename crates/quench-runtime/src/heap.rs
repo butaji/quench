@@ -12,8 +12,8 @@ mod cell_access;
 mod external;
 #[cfg(feature = "profile-memory")]
 mod memory_profile;
-mod root;
 mod records;
+mod root;
 mod slots;
 mod thin_slice;
 mod weak;
@@ -30,6 +30,12 @@ use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
+/// Allocations a collection allows at least, whatever survived. The trunk owns this
+/// headroom with the factors below (decision 21), and it stays at 384 cells until a change
+/// wins one bar without losing the other (decision 5). The Score lane measured 2^16 cells
+/// (2 MB of 32-byte cells): RayTrace +20% Score, the others even or better, 2^17 and 2^18 no
+/// further gain (Linux x86_64, 4 vCPU, paired non-PGO rounds); at that minimum, fixed-work
+/// max RSS rose 22% to 36% on DeltaBlue, EarleyBoyer and RayTrace.
 const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
 /// String payload bytes that weigh as one more allocation toward the next collection.
 const STRING_BYTES_PER_ALLOCATION: usize = 64;
@@ -62,24 +68,29 @@ struct GcHeadroomFactor {
 impl GcHeadroomFactor {
     fn allocation_headroom(self, live_cells: usize) -> usize {
         debug_assert!(self.denominator > 0);
-        debug_assert!(self.numerator <= self.denominator);
         let whole = live_cells / self.denominator;
         let remainder = live_cells % self.denominator;
         whole * self.numerator + remainder * self.numerator / self.denominator
     }
 }
 
+// Half a live set of new cells before the next collection on small heaps. The Score lane
+// measured 1/1 with the 2^16 minimum at RayTrace +20% Score, for more max RSS (above).
 const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
     numerator: 1,
     denominator: 2,
 };
 // This is the sweep variable for large-heap RSS/Score measurements. A factor
 // of 1/1 allows one live set's worth of new cells before collection (2x total
-// occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x. The RSS lane
-// (TOD-123) takes 1/2: stock Splay max RSS 66.3 -> 54.5 MB for -14% Score.
+// occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x. The trunk
+// owns this factor (decision 21) and it stays 1/1 until a change wins one bar
+// without losing the other (decision 5). Lane measurements on Linux x86_64:
+// RSS lane 1/2, stock Splay max RSS 66.3 -> 54.5 MB for -14% Score (one run);
+// Score lane, Splay paired non-PGO rounds: 1/1 3542, 2/1 3638, 4/1 4023, 8/1
+// below 4/1, at a higher max RSS.
 const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
     numerator: 1,
-    denominator: 2,
+    denominator: 1,
 };
 
 #[derive(Clone, Copy)]
@@ -188,7 +199,6 @@ impl<'slots> ParallelSweepSlab<'slots> {
             if Heap::marked(marks, index) {
                 result.live += 1;
                 if let Some(object) = cell.object() {
-                    result.live_shapes.push(object.shape());
                     if object.properties().has_compact_range() {
                         result
                             .property_owners
@@ -222,7 +232,6 @@ impl<'slots> ParallelSweepSlab<'slots> {
 struct ParallelSweepResult {
     slab: u32,
     live: usize,
-    live_shapes: Vec<u32>,
     property_owners: Vec<u64>,
     free_slots: FreeSlotBitmap,
     released_properties: Vec<ValueVec>,
@@ -235,7 +244,6 @@ struct ParallelSweepResult {
 #[derive(Default)]
 struct SweepOutput {
     live: usize,
-    live_shapes: Vec<u32>,
     property_owners: Vec<u64>,
     freed_cells: usize,
     swept_slots: usize,
@@ -289,9 +297,9 @@ impl Drop for StoppedCellDrop {
 
 fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
     match cell {
-        Cell::Array { object } => Some(
-            &RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(object.elements()) as usize)],
-        ),
+        Cell::Array { object } => {
+            Some(&RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(object.elements()) as usize)])
+        }
         Cell::ArrayBuffer { bytes, .. } => {
             Some(&RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(bytes) as usize)])
         }
@@ -785,7 +793,6 @@ impl Heap {
                     let value = Value::direct_object(record_id);
                     #[cfg(feature = "profile-memory")]
                     self.profile_allocation(value);
-                    self.peak_live = self.peak_live.max(self.live_slots());
                     return value;
                 }
                 Err(object) => Cell::Object(object),
@@ -819,7 +826,6 @@ impl Heap {
             }
             #[cfg(feature = "profile-memory")]
             self.profile_allocation(Value::heap(index));
-            self.peak_live = self.peak_live.max(self.live_slots());
             return Value::heap(index);
         }
         let index = self.slots.len();
@@ -836,7 +842,6 @@ impl Heap {
         if track_young {
             self.young.push(index as u32);
         }
-        self.peak_live = self.peak_live.max(self.live_slots());
         Value::heap(index as u32)
     }
     pub(crate) fn alloc_object_pair(
@@ -1011,6 +1016,11 @@ impl Heap {
             self.memory_profile = memory_profile::MemoryProfile::default();
         }
     }
+    /// Counts collections; a slot index names the same cell for as long as this is unchanged.
+    #[inline(always)]
+    pub(crate) fn collection_epoch(&self) -> u64 {
+        self.collections
+    }
     pub fn should_collect(&self) -> bool {
         self.allocations >= self.threshold
     }
@@ -1050,7 +1060,6 @@ impl Heap {
     #[cfg(test)]
     pub fn collect(&mut self, roots: impl IntoIterator<Item = Value>) -> Vec<(Value, Value)> {
         self.collect_with_object_roots(roots, |_, _, _, _| {}, None, true)
-            .0
     }
     /// Whether a collection requested as `full` traces and sweeps the whole heap.
     /// Direct records do not yet carry a generation. A full trace is the
@@ -1065,7 +1074,7 @@ impl Heap {
         mut object_roots: impl FnMut(GcTraceKind, Value, u32, &mut Vec<Value>),
         parallel_object_roots: Option<&ParallelObjectRootTrace<'_>>,
         full: bool,
-    ) -> (Vec<(Value, Value)>, Vec<u32>) {
+    ) -> Vec<(Value, Value)> {
         let full = self.collection_is_full(full);
         debug_assert_eq!(self.collection_state, CollectionState::Idle);
         self.collection_state = if full {
@@ -1132,9 +1141,14 @@ impl Heap {
                         let object_records = &self.object_records;
                         let array_records = &self.array_records;
                         let marks = &self.marks;
-                        ephemerons.remembered(value, cell, |target| {
-                            Self::is_marked_in(object_records, array_records, marks, target)
-                        }, &mut work);
+                        ephemerons.remembered(
+                            value,
+                            cell,
+                            |target| {
+                                Self::is_marked_in(object_records, array_records, marks, target)
+                            },
+                            &mut work,
+                        );
                     }
                 }
             }
@@ -1178,7 +1192,6 @@ impl Heap {
         };
         let SweepOutput {
             mut live,
-            mut live_shapes,
             property_owners,
             freed_cells,
             swept_slots,
@@ -1199,7 +1212,6 @@ impl Heap {
             let properties = &mut self.properties;
             let (object_live, object_freed) = self.object_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, object) => {
-                    live_shapes.push(object.shape());
                     if object.properties().has_compact_range() {
                         direct_property_owners.push((
                             object.properties().start_offset(),
@@ -1218,7 +1230,6 @@ impl Heap {
             let mut dead_arrays = Vec::new();
             let (array_live, array_freed) = self.array_records.sweep(|record| match record {
                 RecordSweep::Keep(record_id, array) => {
-                    live_shapes.push(array.shape());
                     if array.properties().has_compact_range() {
                         direct_property_owners.push((
                             array.properties().start_offset(),
@@ -1315,7 +1326,7 @@ impl Heap {
         self.collection_state = CollectionState::Idle;
         #[cfg(feature = "profile-memory")]
         self.memory_profile.collection_finished();
-        (finalization_jobs, live_shapes)
+        finalization_jobs
     }
     fn sweep_full_parallel(&mut self, pool: &ThreadPool) -> SweepOutput {
         self.collection_state = CollectionState::Sweeping;
@@ -1342,7 +1353,6 @@ impl Heap {
                 let ParallelSweepResult {
                     slab,
                     live,
-                    live_shapes,
                     property_owners,
                     free_slots,
                     released_properties,
@@ -1373,7 +1383,6 @@ impl Heap {
                     cell.drop_on_owner();
                 }
                 output.live += live;
-                output.live_shapes.extend(live_shapes);
                 output.property_owners.extend(property_owners);
                 output.freed_cells += freed_cells;
                 output.swept_slots += swept_slots;
@@ -1385,7 +1394,6 @@ impl Heap {
 
     fn sweep_serial(&mut self, full: bool) -> SweepOutput {
         let mut live = 0;
-        let mut live_shapes = Vec::new();
         let mut freed_cells = 0;
         let mut swept_slots = 0;
         let properties = &mut self.properties;
@@ -1432,7 +1440,6 @@ impl Heap {
                         if Self::marked(&self.marks, index) {
                             live += 1;
                             if let Some(object) = slot.cell.as_ref().and_then(Cell::object) {
-                                live_shapes.push(object.shape());
                                 if properties.has_compact_range(object.properties()) {
                                     property_owners_for_sweep.push(pack_offset_owner(
                                         object.properties().start_offset(),
@@ -1473,7 +1480,6 @@ impl Heap {
         }
         SweepOutput {
             live,
-            live_shapes,
             property_owners: property_owners_for_sweep,
             freed_cells,
             swept_slots,
@@ -1543,7 +1549,9 @@ impl Heap {
                         ephemerons.newly_marked(
                             owner,
                             Some(cell),
-                            |target| Self::is_marked_in(object_records, array_records, marks, target),
+                            |target| {
+                                Self::is_marked_in(object_records, array_records, marks, target)
+                            },
                             work,
                         );
                     }
@@ -1753,9 +1761,12 @@ impl Heap {
                 );
                 let (object_records, array_records, marks) =
                     (&self.object_records, &self.array_records, &self.marks);
-                ephemerons.newly_marked(value, None, |target| {
-                    Self::is_marked_in(object_records, array_records, marks, target)
-                }, work);
+                ephemerons.newly_marked(
+                    value,
+                    None,
+                    |target| Self::is_marked_in(object_records, array_records, marks, target),
+                    work,
+                );
             } else if let Some(record_id) = value.direct_array_index() {
                 if !self.array_records.mark(record_id) {
                     continue;
@@ -1782,9 +1793,12 @@ impl Heap {
                 }
                 let (object_records, array_records, marks) =
                     (&self.object_records, &self.array_records, &self.marks);
-                ephemerons.newly_marked(value, None, |target| {
-                    Self::is_marked_in(object_records, array_records, marks, target)
-                }, work);
+                ephemerons.newly_marked(
+                    value,
+                    None,
+                    |target| Self::is_marked_in(object_records, array_records, marks, target),
+                    work,
+                );
             } else {
                 let Some(index) = value.legacy_heap_index().map(|value| value as usize) else {
                     continue;
@@ -1810,11 +1824,14 @@ impl Heap {
                     trace_kind,
                 );
                 let object_records = &self.object_records;
-                        let array_records = &self.array_records;
+                let array_records = &self.array_records;
                 let marks = &self.marks;
-                ephemerons.newly_marked(value, Some(cell), |target| {
-                    Self::is_marked_in(object_records, array_records, marks, target)
-                }, work);
+                ephemerons.newly_marked(
+                    value,
+                    Some(cell),
+                    |target| Self::is_marked_in(object_records, array_records, marks, target),
+                    work,
+                );
                 if let Some(arrays) = self.sparse_arrays.as_ref()
                     && matches!(cell, Cell::Array { .. })
                     && let Some(elements) = arrays.get(&Value::heap(index as u32))
@@ -1844,13 +1861,9 @@ impl Heap {
         let Some(index) = value.legacy_heap_index().map(|index| index as usize) else {
             return false;
         };
-        marks
-            .get(index / u64::BITS as usize)
-            .is_some_and(|word| {
-                word.load(Ordering::Relaxed)
-                    & (1 << (index % u64::BITS as usize))
-                    != 0
-            })
+        marks.get(index / u64::BITS as usize).is_some_and(|word| {
+            word.load(Ordering::Relaxed) & (1 << (index % u64::BITS as usize)) != 0
+        })
     }
 
     #[inline(always)]
@@ -1982,7 +1995,9 @@ impl Heap {
     }
     pub(crate) fn property_set(&mut self, object: Value, slot: usize, value: Value) {
         let vector = {
-            let data = self.object_mut(object).expect("property owner is an object");
+            let data = self
+                .object_mut(object)
+                .expect("property owner is an object");
             if data.inline_properties().is_some() {
                 data.set_inline_property(slot, value);
                 return;
@@ -1999,7 +2014,9 @@ impl Heap {
         value: Value,
     ) {
         let vector = {
-            let data = self.object_mut(object).expect("property owner is an object");
+            let data = self
+                .object_mut(object)
+                .expect("property owner is an object");
             if data.inline_properties().is_some() {
                 debug_assert!(slot < INLINE_PROPERTY_COUNT);
                 data.set_inline_property(slot, value);
@@ -2070,11 +2087,7 @@ impl Heap {
         if let Some(record_id) = identity.direct_array_index() {
             // SAFETY: profile runs immediately after inserting this array.
             let array = unsafe { array_records.get_live(record_id) };
-            memory_profile.allocated_array(
-                identity,
-                array,
-                properties.len(array.properties()),
-            );
+            memory_profile.allocated_array(identity, array, properties.len(array.properties()));
             return;
         }
         let index = identity
@@ -2138,7 +2151,13 @@ impl Heap {
             Cell::Object(value) => object(value),
             Cell::Array { object: value } => {
                 object(value);
-                work.extend(value.elements().iter().copied().filter(|value| value.is_heap()));
+                work.extend(
+                    value
+                        .elements()
+                        .iter()
+                        .copied()
+                        .filter(|value| value.is_heap()),
+                );
             }
             Cell::ArrayBuffer { object: value, .. } => object(value),
             Cell::RegExp {
@@ -2344,7 +2363,13 @@ impl Heap {
         trace_kind: GcTraceKind,
     ) {
         Self::object_children(owner, array, properties, work, object_roots, trace_kind);
-        work.extend(array.elements().iter().copied().filter(|value| value.is_heap()));
+        work.extend(
+            array
+                .elements()
+                .iter()
+                .copied()
+                .filter(|value| value.is_heap()),
+        );
     }
     #[cfg(any(feature = "profile-aggregate", feature = "profile-memory"))]
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
