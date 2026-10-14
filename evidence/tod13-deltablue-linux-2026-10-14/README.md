@@ -94,3 +94,27 @@ CommonJS bindings, sloppy and strict eval), identical output.
 Rejected: a fast-lane `LoadCapture` handler over the same `direct_capture`.
 Microbenchmark 370 -> 202 per iteration, but DeltaBlue 209.8M -> 212.4M per
 run (+1.2%): its lanes exit at the next dynamic `Call` anyway.
+
+### RSS: dynamic programs share the VM's atom names
+
+Every dynamic program (eval, `Function`, host scripts, modules) is compiled
+with every VM atom as its prefix, and kept a private packed copy of all of
+them. `quench-node` evaluates about 100 host scripts at startup, so these
+copies grew quadratically: about 8.2 MB of live heap (massif). Once a dynamic
+program's new atoms are interned its ids are the VM's, so its `AtomTable` now
+becomes a view (`AtomSequence`, length) over the VM's names: the main
+program's packed table plus an append-only list of the dynamic atoms' shared
+host `Rc<str>`.
+
+| Process (production build, same tree) | Max RSS before | After |
+| --- | ---: | ---: |
+| `quench-node` on `console.log(1)` (3 runs) | 43.0-43.1 MB | 34.7-34.8 MB |
+| DeltaBlue fixed work, 40 runs | 43.9 MB | 35.5 MB |
+
+Startup peak live heap without the record reservations, massif:
+26.7 MB -> 16.4 MB.
+
+Checks: runtime lib 584/584 (new `shared_prefixes_keep_names_across_appends`);
+Test262 stages 8, 11, 20, 68, 86 all pass; stage 48 508/509, its one failure
+(`built-ins/Function/call-bind-this-realm-value.js`) fails identically on the
+baseline. Reports `t262-atoms-*.json`.

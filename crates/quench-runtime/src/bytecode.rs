@@ -13,7 +13,7 @@ mod atoms;
 mod control_flow;
 mod instruction;
 mod numeric_ops;
-pub(crate) use atoms::AtomTable;
+pub(crate) use atoms::{AtomSequence, AtomTable};
 
 /// Infix of the compiler's hidden atom for a named function expression's own binding:
 /// `{name}{SELF_BINDING_MARKER}{function id}`.
