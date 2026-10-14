@@ -155,6 +155,41 @@ fn minor_collection_roots_external_edges_of_old_owners() {
 }
 
 #[test]
+fn rootless_shapes_survive_collection_and_shape_compaction() {
+    let program = Engine::specialize("", "shape-compaction.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    let atom = vm.intern_atom("survivor");
+    let live_shape = vm.transition_shape(0, atom);
+    assert!(!vm.shapes[live_shape as usize].may_have_gc_roots);
+    let owner =
+        vm.heap
+            .alloc_object_with_properties(Value::NULL, live_shape, &[Value::integer(42)]);
+    let root = vm.heap.root(owner);
+    // Dead transition history must be reclaimed even when the surviving
+    // object's shape has no symbol keys or accessor functions to trace.
+    let dead_shape_count = vm.shapes.len() * 2;
+    for index in 0..dead_shape_count {
+        let dead_atom = vm.intern_atom(&format!("dead-{index}"));
+        vm.transition_shape(0, dead_atom);
+    }
+    let before = vm.shapes.len();
+    vm.collect_now(&program);
+    assert!(vm.shapes.len() < before);
+    let object = vm.object_data(owner).unwrap();
+    assert_eq!(vm.shapes[object.shape() as usize].storage_len, 1);
+    assert_eq!(
+        vm.heap.property_get(vm.object_data(owner).unwrap(), 0),
+        Some(Value::integer(42))
+    );
+    vm.collect_now(&program);
+    assert_eq!(
+        vm.heap.property_get(vm.object_data(owner).unwrap(), 0),
+        Some(Value::integer(42))
+    );
+    assert!(vm.heap.release_root(root));
+}
+
+#[test]
 fn shape_roots_keep_symbols_and_active_accessors_alive() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
     use crate::heap::Cell;
@@ -1153,6 +1188,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
         captured: false,
         registers,
         initialized_registers: 65,
+        capture_cache: super::CaptureCache::default(),
         active_iterators: vec![],
         with_objects: Vec::new(),
         with_base: 0,
@@ -4217,6 +4253,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         captured: false,
         registers: vec![Value::heap(11), Value::heap(12)],
         initialized_registers: 0,
+        capture_cache: super::CaptureCache::default(),
         active_iterators: vec![],
         with_objects: vec![Value::heap(16)],
         with_base: 0,
@@ -6472,6 +6509,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 captured: true,
                 registers: vec![register, iterator, Value::FALSE],
                 initialized_registers: 0,
+                capture_cache: super::CaptureCache::default(),
                 active_iterators: vec![super::ActiveIterator {
                     iterator: 1,
                     done: 2,
@@ -9418,18 +9456,42 @@ fn weak_ref_targets_are_kept_until_host_checkpoint() {
 
 #[test]
 fn host_byte_views_preserve_intrinsics_backing_and_gc_edges() {
-    for compile in [Engine::specialize as fn(&str,&str)->_,Engine::specialize_unspecialized] {
-        let mut vm=Vm::new(SilentHost);let program=compile("0;","host-bytes.js").unwrap();vm.execute(&program).unwrap();
-        for bytes in [vec![],vec![0,127,128,255]] {
-            let view=vm.embedding_uint8_array(&bytes).unwrap();let root=vm.heap.root(view);
-            let prototype=match vm.heap.get(view) {Some(super::Cell::TypedArray{object,kind,buffer,..})=>{
-                assert_eq!(*kind,TypedArrayKind::Uint8);
-                assert!(matches!(vm.heap.get(*buffer),Some(super::Cell::ArrayBuffer{shared:false,detached:false,resizable:false,immutable:false,..})));
-                object.proto()
-            },_=>panic!("expected Uint8Array")};
-            assert_eq!(prototype,vm.typed_array_proto(TypedArrayKind::Uint8));
-            vm.collect_now(&program);let view=vm.heap.root_value(root).unwrap();
-            assert_eq!(vm.embedding_view_bytes(view).unwrap(),bytes);
+    for compile in [
+        Engine::specialize as fn(&str, &str) -> _,
+        Engine::specialize_unspecialized,
+    ] {
+        let mut vm = Vm::new(SilentHost);
+        let program = compile("0;", "host-bytes.js").unwrap();
+        vm.execute(&program).unwrap();
+        for bytes in [vec![], vec![0, 127, 128, 255]] {
+            let view = vm.embedding_uint8_array(&bytes).unwrap();
+            let root = vm.heap.root(view);
+            let prototype = match vm.heap.get(view) {
+                Some(super::Cell::TypedArray {
+                    object,
+                    kind,
+                    buffer,
+                    ..
+                }) => {
+                    assert_eq!(*kind, TypedArrayKind::Uint8);
+                    assert!(matches!(
+                        vm.heap.get(*buffer),
+                        Some(super::Cell::ArrayBuffer {
+                            shared: false,
+                            detached: false,
+                            resizable: false,
+                            immutable: false,
+                            ..
+                        })
+                    ));
+                    object.proto()
+                }
+                _ => panic!("expected Uint8Array"),
+            };
+            assert_eq!(prototype, vm.typed_array_proto(TypedArrayKind::Uint8));
+            vm.collect_now(&program);
+            let view = vm.heap.root_value(root).unwrap();
+            assert_eq!(vm.embedding_view_bytes(view).unwrap(), bytes);
             vm.heap.release_root(root);
         }
     }

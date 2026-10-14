@@ -7,8 +7,8 @@ pub use embedding::RootedError;
 #[path = "api_native.rs"]
 mod native;
 pub use native::{
-    BuiltinBrand, BuiltinData, HostFunction, HostFunctionId, HostWeakRoot, NativeContext, NativeArithmetic,
-    RootedIterator,
+    BuiltinBrand, BuiltinData, HostFunction, HostFunctionId, HostWeakRoot, NativeArithmetic,
+    NativeContext, RootedIterator,
 };
 
 /// The syntax context used when compiling source. Script and Module use
@@ -4637,7 +4637,8 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
 
     #[test]
     fn regression_array_shift_guards_preserve_order_and_copy_on_write() {
-        assert_output_in_execution_modes(r#"
+        assert_output_in_execution_modes(
+            r#"
             var dense=[{value:1},undefined,3], first=dense[0];
             print(dense.shift()===first);print(dense.length);print(0 in dense);print(dense[1]);
             function make(){return [1,2,3];}var a=make(),b=make();a.shift();print(JSON.stringify(b));
@@ -4650,7 +4651,34 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             var frozen=Object.freeze([1,2]);try{frozen.shift()}catch(e){print(e instanceof TypeError);}print(JSON.stringify(frozen));
             print(Array.prototype.shift.call({0:'a',1:'b',length:2}));
             print((function(x,y){var result=Array.prototype.shift.call(arguments);return result+':'+x+':'+y+':'+arguments.length;})(1,2));
-        "#, &["true","2","true","3","[1,2,3]","inherited-get","inherited-set:2","7","inherited-get","[7,3]","own-get","own-set:3","1","true","3","2","3","false","true","[2,3,3]","true","[1,2]","a","1:2:2:1"]);
+        "#,
+            &[
+                "true",
+                "2",
+                "true",
+                "3",
+                "[1,2,3]",
+                "inherited-get",
+                "inherited-set:2",
+                "7",
+                "inherited-get",
+                "[7,3]",
+                "own-get",
+                "own-set:3",
+                "1",
+                "true",
+                "3",
+                "2",
+                "3",
+                "false",
+                "true",
+                "[2,3,3]",
+                "true",
+                "[1,2]",
+                "a",
+                "1:2:2:1",
+            ],
+        );
     }
 
     #[test]
@@ -4666,25 +4694,43 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
         "#;
         struct Modules(Capture);
         impl Host for Modules {
-            fn write_line(&mut self, text: &str) { self.0.write_line(text); }
-            fn clock_millis(&mut self) -> f64 { 0.0 }
-            fn resolve_dynamic_import(&mut self, _: &str, specifier: &str) -> Result<Option<crate::host::ModuleSource>, String> {
+            fn write_line(&mut self, text: &str) {
+                self.0.write_line(text);
+            }
+            fn clock_millis(&mut self) -> f64 {
+                0.0
+            }
+            fn resolve_dynamic_import(
+                &mut self,
+                _: &str,
+                specifier: &str,
+            ) -> Result<Option<crate::host::ModuleSource>, String> {
                 assert_eq!(specifier, "./ordered-namespace.mjs");
-                Ok(Some(crate::host::ModuleSource { name: "ordered-namespace.mjs".into(), source: DEPENDENCY.into(), bytes: vec![] }))
+                Ok(Some(crate::host::ModuleSource {
+                    name: "ordered-namespace.mjs".into(),
+                    source: DEPENDENCY.into(),
+                    bytes: vec![],
+                }))
             }
         }
-        for compile in [Engine::specialize_module as fn(&str, &str) -> _, Engine::specialize_module_unspecialized] {
+        for compile in [
+            Engine::specialize_module as fn(&str, &str) -> _,
+            Engine::specialize_module_unspecialized,
+        ] {
             let view = Capture::default();
             let mut runtime = Runtime::new(Modules(view.clone()));
             let program = compile(SOURCE, "namespace-order.mjs").unwrap();
             runtime.execute(&program).unwrap();
-            assert_eq!(view.0.borrow().as_slice(), &[
-                "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
-                "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
-                "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\",\"Symbol(Symbol.toStringTag)\"]",
-                "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
-                "[\"2\",\"10\",\"z\",\"a\"]",
-            ]);
+            assert_eq!(
+                view.0.borrow().as_slice(),
+                &[
+                    "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
+                    "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
+                    "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\",\"Symbol(Symbol.toStringTag)\"]",
+                    "[\"10\",\"2\",\"a\",\"z\",\"😀\",\"\u{E000}\"]",
+                    "[\"2\",\"10\",\"z\",\"a\"]",
+                ]
+            );
         }
     }
 
@@ -9314,7 +9360,7 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
         let mut runtime = Runtime::new(host);
         runtime
             .compile_and_execute(ExecutionRequest::script(
-                "var registry = new FinalizationRegistry(function(held) { print(held); }); var target = {}; registry.register(target, 7); target = undefined; for (var i = 0; i < 10000; i = i + 1) { var temporary = {}; } print(\"done\");",
+                "var registry = new FinalizationRegistry(function(held) { print(held); }); var target = {}; registry.register(target, 7); target = undefined; for (var i = 0; i < 300000; i = i + 1) { var temporary = {}; } print(\"done\");",
                 "finalization-drain.js",
             ))
             .unwrap();
@@ -9659,14 +9705,7 @@ print(Object.getPrototypeOf(new A(2).transferToFixedLength(3)) === P);
             }
             "#,
             &[
-                "2.1.1970",
-                "true",
-                "2.1.1970",
-                "true",
-                "2.1.1970",
-                "true",
-                "2.1.1970",
-                "true",
+                "2.1.1970", "true", "2.1.1970", "true", "2.1.1970", "true", "2.1.1970", "true",
             ],
         );
     }

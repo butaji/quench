@@ -117,7 +117,6 @@ pub(crate) fn poll(
             net_shared_vm::TransportEvent::Accepted {
                 listener,
                 socket,
-                remote,
             } => {
                 let (server_id, net_server) = {
                     let host = shared_state.borrow();
@@ -145,67 +144,17 @@ pub(crate) fn poll(
                     }
                     progressed = true;
                 } else if let Some(server_root) = net_server {
-                    let constructor = shared_state
-                        .borrow()
-                        .net_socket_constructor
-                        .ok_or_else(|| "net.Socket constructor is unavailable".to_owned())?;
-                    let options_operation = runtime.host_function(crate::host::shared_vm::operation("netServerAcceptedOptions"))
+                    let create = runtime.host_function(crate::host::shared_vm::operation("netSocketCreateHandle"))
                         .map_err(|error| error.to_string())?;
                     let undefined = runtime.root(Value::UNDEFINED);
-                    let options = runtime.call_rooted(options_operation, undefined, &[server_root]);
-                    runtime.release_root(options_operation);
-                    runtime.release_root(undefined);
-                    let options = options.map_err(|error| error.to_string())?;
-                    let accepted = runtime
-                        .construct_rooted(constructor, constructor, &[options])
-                        .map_err(|error| error.to_string())?;
-                    runtime.release_root(options);
-                    let key = runtime.string_rooted("__quenchNetSocketId");
                     let id = runtime.root(Value::number(socket as f64));
-                    if !runtime
-                        .set_property_rooted(accepted, key, id, accepted)
-                        .map_err(|error| error.to_string())?
-                    {
-                        return Err("cannot tag accepted net socket".into());
-                    }
-                    runtime.release_root(key);
-                    let install = runtime
-                        .host_function(crate::host::shared_vm::operation("netSocketInstallHandle"))
-                        .map_err(|error| error.to_string())?;
-                    let undefined = runtime.root(Value::UNDEFINED);
-                    let installed = runtime.call_rooted(install, undefined, &[accepted, id]);
-                    runtime.release_root(install);
+                    let client_handle = runtime.call_rooted(create, undefined, &[id]);
+                    runtime.release_root(create);
                     runtime.release_root(undefined);
-                    let installed = installed.map_err(|error| error.to_string())?;
-                    runtime.release_root(installed);
                     runtime.release_root(id);
-                    if let Some(remote) = remote {
-                        let remote_address = runtime.string_rooted(&remote.ip().to_string());
-                        let remote_key = runtime.string_rooted("remoteAddress");
-                        runtime
-                            .set_property_rooted(accepted, remote_key, remote_address, accepted)
-                            .map_err(|error| error.to_string())?;
-                        runtime.release_root(remote_key);
-                        runtime.release_root(remote_address);
-                    }
-                    {
-                        let mut host = shared_state.borrow_mut();
-                        host.net_sockets.insert(
-                            socket,
-                            crate::host::node_host::NetSocket {
-                                root: accepted,
-                                encoding: None,
-                                parent_server: Some(listener),
-                                write_callbacks: std::collections::VecDeque::new(),
-                            },
-                        );
-                        if let Some(server) = host.net_servers.get_mut(&listener) {
-                            server.connections.insert(socket);
-                        }
-                    }
+                    let client_handle = client_handle.map_err(|error| error.to_string())?;
                     let key = runtime.string_rooted("_handle");
                     let server_handle = runtime.get_property_rooted(server_root, key).map_err(|error| error.to_string())?;
-                    let client_handle = runtime.get_property_rooted(accepted, key).map_err(|error| error.to_string())?;
                     runtime.release_root(key);
                     let success = runtime.root(Value::number(0.0));
                     queue_net_method_completion(runtime, shared_state, server_handle, "onconnection", &[success, client_handle], Some(NetDelivery::Connection(socket)))?;
@@ -687,6 +636,15 @@ pub(crate) fn poll(
                         state.net_socket_close_completed,
                     )
                 };
+                let raw_callback = shared_state.borrow_mut().net_handle_close_callbacks.remove(&socket);
+                if let Some(handle) = raw_callback {
+                    let callback = runtime.host_function(crate::host::shared_vm::operation("netHandleCloseComplete"))
+                        .map_err(|error| error.to_string())?;
+                    shared_state.borrow_mut().scheduler.queue_shared_next_tick(
+                        crate::modules::shared_event_loop::SharedCallback { callback, receiver: handle, args: Vec::new() },
+                    );
+                    progressed = true;
+                }
                 if let Some(root) = root {
                     let callback = callback.ok_or("native socket close callback unavailable")?;
                     let callback = runtime.root(

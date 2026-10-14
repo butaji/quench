@@ -419,7 +419,9 @@ impl SharedEventLoop {
     }
 
     pub(crate) fn has_shared_string_listener(&self, name: &str) -> bool {
-        self.shared.listeners.iter().any(|(event,listeners)| matches!(event,SharedEventKey::String(event) if event==name) && !listeners.is_empty())
+        self.shared.listeners.iter().any(|(event, listeners)| {
+            matches!(event,SharedEventKey::String(event) if event==name) && !listeners.is_empty()
+        })
     }
 
     pub fn shared_listener_snapshots(&self, event: &SharedEventKey) -> Vec<SharedListenerSnapshot> {

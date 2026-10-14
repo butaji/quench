@@ -109,15 +109,38 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
 
     let raw_debug = context.host_function(crate::host::shared_vm::operation("processRawDebug"))?;
     install(context, process, "_rawDebug", raw_debug)?;
-    let set_capture = context.host_function(crate::host::shared_vm::operation("processSetUncaughtExceptionCaptureCallback"))?;
-    install(context, process, "setUncaughtExceptionCaptureCallback", set_capture)?;
-    let has_capture = context.host_function(crate::host::shared_vm::operation("processHasUncaughtExceptionCaptureCallback"))?;
-    install(context, process, "hasUncaughtExceptionCaptureCallback", has_capture)?;
-    let active_handles = context.host_function(crate::host::shared_vm::operation("processGetActiveHandles"))?;
+    let set_capture = context.host_function(crate::host::shared_vm::operation(
+        "processSetUncaughtExceptionCaptureCallback",
+    ))?;
+    install(
+        context,
+        process,
+        "setUncaughtExceptionCaptureCallback",
+        set_capture,
+    )?;
+    let has_capture = context.host_function(crate::host::shared_vm::operation(
+        "processHasUncaughtExceptionCaptureCallback",
+    ))?;
+    install(
+        context,
+        process,
+        "hasUncaughtExceptionCaptureCallback",
+        has_capture,
+    )?;
+    let active_handles =
+        context.host_function(crate::host::shared_vm::operation("processGetActiveHandles"))?;
     install(context, process, "_getActiveHandles", active_handles)?;
-    let active_network_resources = context.host_function(crate::host::shared_vm::operation("processGetActiveNetworkResources"))?;
-    install(context, process, "__quenchGetActiveNetworkResources", active_network_resources)?;
-    let hrtime_raw = context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
+    let active_network_resources = context.host_function(crate::host::shared_vm::operation(
+        "processGetActiveNetworkResources",
+    ))?;
+    install(
+        context,
+        process,
+        "__quenchGetActiveNetworkResources",
+        active_network_resources,
+    )?;
+    let hrtime_raw =
+        context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
     let hrtime_factory = context.evaluate_script_rooted(
         "(raw) => { const hrtime = (previous) => { const [seconds, nanoseconds] = raw(); if (previous === undefined) return [seconds, nanoseconds]; if (!Array.isArray(previous)) { const received = previous === null ? 'null' : typeof previous === 'number' ? 'type number (' + previous + ')' : typeof previous; const error = new TypeError('The \\\"time\\\" argument must be an instance of Array. Received ' + received); error.code = 'ERR_INVALID_ARG_TYPE'; throw error; } if (previous.length !== 2) { const error = new RangeError('The value of \\\"time\\\" is out of range. It must be 2. Received ' + previous.length); error.code = 'ERR_OUT_OF_RANGE'; throw error; } let sec = seconds - previous[0]; let nsec = nanoseconds - previous[1]; if (nsec < 0) { sec -= 1; nsec += 1000000000; } return [sec, nsec]; }; hrtime.bigint = () => { const [seconds, nanoseconds] = raw(); return BigInt(seconds) * 1000000000n + BigInt(nanoseconds); }; return hrtime; }",
         "node:process/shared-hrtime.js",
@@ -132,8 +155,9 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         context.host_function(crate::host::shared_vm::operation("processRemoveListener"))?;
     install(context, process, "removeListener", remove_listener)?;
     install(context, process, "off", remove_listener)?;
-    let remove_all_listeners = context
-        .host_function(crate::host::shared_vm::operation("processRemoveAllListeners"))?;
+    let remove_all_listeners = context.host_function(crate::host::shared_vm::operation(
+        "processRemoveAllListeners",
+    ))?;
     install(context, process, "removeAllListeners", remove_all_listeners)?;
     let once = context.host_function(crate::host::shared_vm::operation("processOnce"))?;
     install(context, process, "once", once)?;
@@ -144,7 +168,12 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     let shared_state = context.host_mut().shared_state();
     let argv = shared_state.borrow().process_argv.clone();
     let exec_argv = shared_state.borrow().exec_argv.clone();
-    if let Some(pair) = exec_argv.windows(2).rev().find(|pair| matches!(pair[0].as_str(), "-e" | "--eval" | "-p" | "--print" | "-pe" | "-ep")) {
+    if let Some(pair) = exec_argv.windows(2).rev().find(|pair| {
+        matches!(
+            pair[0].as_str(),
+            "-e" | "--eval" | "-p" | "--print" | "-pe" | "-ep"
+        )
+    }) {
         set_text(context, process, "_eval", &pair[1])?;
     }
     let title = exec_argv
@@ -183,11 +212,13 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         }
     }
     install(context, process, "env", env)?;
-    let load_env_file = context.host_function(crate::host::shared_vm::operation("processLoadEnvFile"))?;
+    let load_env_file =
+        context.host_function(crate::host::shared_vm::operation("processLoadEnvFile"))?;
     install(context, process, "loadEnvFile", load_env_file)?;
     let set_env = context.host_function(crate::host::shared_vm::operation("processSetEnv"))?;
     install(context, process, "__quenchSetEnv", set_env)?;
-    let delete_env = context.host_function(crate::host::shared_vm::operation("processDeleteEnv"))?;
+    let delete_env =
+        context.host_function(crate::host::shared_vm::operation("processDeleteEnv"))?;
     install(context, process, "__quenchDeleteEnv", delete_env)?;
     for (name, values) in [
         ("argv", argv.as_slice()),
@@ -202,11 +233,16 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     }
     set_text(context, process, "arch", process_state::architecture())?;
     set_text(context, process, "platform", &process_state::platform())?;
-    let executable = std::env::current_exe()
-        .map_err(|error| RootedError::host(error.to_string()))?;
+    let executable =
+        std::env::current_exe().map_err(|error| RootedError::host(error.to_string()))?;
     let node_executable = crate::shared_run::executable_path()
         .map_err(|error| RootedError::host(error.to_string()))?;
-    set_text(context, process, "execPath", &node_executable.to_string_lossy())?;
+    set_text(
+        context,
+        process,
+        "execPath",
+        &node_executable.to_string_lossy(),
+    )?;
     let host_argv0 = std::env::args_os().next().map(std::path::PathBuf::from);
     let argv0_is_runtime = host_argv0
         .as_deref()
@@ -512,7 +548,12 @@ pub(crate) fn exit(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let process_control = context.host_mut().shared_state().borrow().process_control.clone();
+    let process_control = context
+        .host_mut()
+        .shared_state()
+        .borrow()
+        .process_control
+        .clone();
     let code = match args.first().copied() {
         None => process_control.exit_code().unwrap_or(0),
         Some(value_root) => {
@@ -592,7 +633,9 @@ fn exit_code_range_error(
     } else {
         number.to_string()
     };
-    let message = format!("The value of \"code\" is out of range. It must be a safe integer. Received {received}");
+    let message = format!(
+        "The value of \"code\" is out of range. It must be a safe integer. Received {received}"
+    );
     let error = context.range_error_rooted(&message)?;
     Err(throw_with_code(context, error, "ERR_OUT_OF_RANGE"))
 }
@@ -830,10 +873,7 @@ pub(crate) fn initgroups(
     Ok(context.undefined())
 }
 
-fn is_array(
-    context: &mut NativeContext<'_, NodeHost>,
-    value: RootId,
-) -> Result<bool, RootedError> {
+fn is_array(context: &mut NativeContext<'_, NodeHost>, value: RootId) -> Result<bool, RootedError> {
     let global = context.global_root()?;
     let array_key = context.string_rooted("Array");
     let array = context.get_property_rooted(global, array_key)?;
@@ -990,9 +1030,7 @@ fn throw_os_process_error(
     syscall: &str,
     error: std::io::Error,
 ) -> Result<RootedError, RootedError> {
-    let errno = error
-        .raw_os_error()
-        .unwrap_or(libc::EINVAL);
+    let errno = error.raw_os_error().unwrap_or(libc::EINVAL);
     let code = errno_name(errno);
     let message = unsafe {
         std::ffi::CStr::from_ptr(libc::strerror(errno))
@@ -1047,7 +1085,9 @@ fn extra_group_type_error(
     )?;
     throw_process_error(
         context,
-        &format!("The \"extraGroup\" argument must be one of type number or string. Received {received}"),
+        &format!(
+            "The \"extraGroup\" argument must be one of type number or string. Received {received}"
+        ),
         "ERR_INVALID_ARG_TYPE",
         true,
     )
@@ -1062,7 +1102,9 @@ fn group_argument_type_error(
     let label = index.map_or_else(|| "extraGroup".to_owned(), |i| format!("groups[{i}]"));
     throw_process_error(
         context,
-        &format!("The \"{label}\" argument must be one of type number or string. Received {received}"),
+        &format!(
+            "The \"{label}\" argument must be one of type number or string. Received {received}"
+        ),
         "ERR_INVALID_ARG_TYPE",
         true,
     )
@@ -1185,12 +1227,12 @@ fn credential_id_by_name(name: &str, kind: CredentialKind) -> Option<u32> {
         let name = std::ffi::CString::new(name).ok()?;
         return unsafe {
             match kind {
-                CredentialKind::Uid | CredentialKind::Euid => {
-                    libc::getpwnam(name.as_ptr()).as_ref().map(|entry| entry.pw_uid)
-                }
-                CredentialKind::Gid | CredentialKind::Egid => {
-                    libc::getgrnam(name.as_ptr()).as_ref().map(|entry| entry.gr_gid)
-                }
+                CredentialKind::Uid | CredentialKind::Euid => libc::getpwnam(name.as_ptr())
+                    .as_ref()
+                    .map(|entry| entry.pw_uid),
+                CredentialKind::Gid | CredentialKind::Egid => libc::getgrnam(name.as_ptr())
+                    .as_ref()
+                    .map(|entry| entry.gr_gid),
             }
         };
     }
@@ -1211,9 +1253,7 @@ fn credential_type_error(
     };
     throw_process_error(
         context,
-        &format!(
-            "The \"id\" argument must be one of type number or string. Received {received}"
-        ),
+        &format!("The \"id\" argument must be one of type number or string. Received {received}"),
         "ERR_INVALID_ARG_TYPE",
         true,
     )
@@ -1418,21 +1458,16 @@ pub(crate) fn set_uncaught_exception_capture_callback(
             "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET",
         ));
     }
-    let is_null = context
-        .rooted_value(callback)
-        .is_some_and(Value::is_null);
+    let is_null = context.rooted_value(callback).is_some_and(Value::is_null);
     if !is_null && !context.is_callable_rooted(callback)? {
         return Err(uncaught_capture_type_error(context, Some(callback))?);
     }
-    let value = if is_null { context.undefined() } else { callback };
-    if !context.define_data_property_rooted(
-        process,
-        current_key,
-        value,
-        true,
-        false,
-        true,
-    )? {
+    let value = if is_null {
+        context.undefined()
+    } else {
+        callback
+    };
+    if !context.define_data_property_rooted(process, current_key, value, true, false, true)? {
         return Err(RootedError::host(
             "cannot set process uncaught-exception capture callback",
         ));
@@ -1493,7 +1528,9 @@ pub(crate) fn get_active_network_resources(
     let active_servers = state
         .net_servers
         .keys()
-        .filter(|id| crate::modules::net_shared_vm::listener_has_ref(&state.tcp, **id) == Some(true))
+        .filter(|id| {
+            crate::modules::net_shared_vm::listener_has_ref(&state.tcp, **id) == Some(true)
+        })
         .count();
     let mut resources = Vec::with_capacity(active_sockets + active_servers);
     for _ in 0..active_sockets {
@@ -1588,9 +1625,8 @@ pub(crate) fn load_env_file(
     } else {
         cwd.join(requested)
     };
-    let contents = std::fs::read_to_string(&path).map_err(|error| {
-        dotenv_file_error(context, &path_text, error)
-    })?;
+    let contents = std::fs::read_to_string(&path)
+        .map_err(|error| dotenv_file_error(context, &path_text, error))?;
     let process = context
         .host_mut()
         .shared_state()
@@ -1732,27 +1768,23 @@ pub(crate) fn finish_execution(
         .borrow()
         .process_control
         .clone();
-    let checkpoint = (|| {
-        loop {
-            drain_checkpoint(runtime, program)?;
-            if process_control.requested_exit_code().is_some() {
-                return Ok(());
-            }
-            let state = runtime.host_mut().shared_state();
-            let span = crate::modules::trace_state::EnvironmentSpan::enter(&state, "BeforeExit");
-            let code = runtime.root(Value::number(
-                process_control.exit_code().unwrap_or(0) as f64
-            ));
-            let emitted = emit_before_exit(runtime, program, code);
-            runtime.release_root(code);
-            drop(span);
-            emitted?;
-            drain_shared_jobs(runtime, program, &state)?;
-            if process_control.requested_exit_code().is_some()
-                || !has_referenced_shared_work(&state)
-            {
-                return Ok(());
-            }
+    let checkpoint = (|| loop {
+        drain_checkpoint(runtime, program)?;
+        if process_control.requested_exit_code().is_some() {
+            return Ok(());
+        }
+        let state = runtime.host_mut().shared_state();
+        let span = crate::modules::trace_state::EnvironmentSpan::enter(&state, "BeforeExit");
+        let code = runtime.root(Value::number(
+            process_control.exit_code().unwrap_or(0) as f64
+        ));
+        let emitted = emit_before_exit(runtime, program, code);
+        runtime.release_root(code);
+        drop(span);
+        emitted?;
+        drain_shared_jobs(runtime, program, &state)?;
+        if process_control.requested_exit_code().is_some() || !has_referenced_shared_work(&state) {
+            return Ok(());
         }
     })();
     if process_control.requested_exit_code().is_some() {
@@ -1967,7 +1999,9 @@ fn drain_checkpoint(
             continue;
         }
 
-        if has_referenced_shared_work(&shared_state) && super::fs_watch_shared_vm::poll(runtime, program)? {
+        if has_referenced_shared_work(&shared_state)
+            && super::fs_watch_shared_vm::poll(runtime, program)?
+        {
             continue;
         }
         let can_run_timers = has_referenced_shared_work(&shared_state);
@@ -2334,7 +2368,9 @@ fn drain_shared_jobs(
             let Some(callback) = callback else {
                 break;
             };
-            runtime.with_native_stack_frame("process.processTicksAndRejections", |runtime| invoke_async_callback(runtime, program, callback))?;
+            runtime.with_native_stack_frame("process.processTicksAndRejections", |runtime| {
+                invoke_async_callback(runtime, program, callback)
+            })?;
         }
         run_host_jobs_with_uncaught(runtime, program)?;
         if shared_state.borrow().scheduler.has_shared_next_ticks() {
@@ -2353,6 +2389,7 @@ fn drain_shared_jobs(
             crate::modules::zlib_stream_shared_vm::prune(runtime);
             super::fs_watch_shared_vm::prune(runtime);
             super::tls_shared_vm::contexts::prune(runtime);
+            super::net_reference_shared_vm::prune(runtime);
             super::fs_stat_watch_shared_vm::prune(runtime);
             return Ok(());
         }
@@ -2874,10 +2911,7 @@ fn emit_exit_inner(
 ) -> Result<(), String> {
     let shared_state = runtime.host_mut().shared_state();
     let _span = crate::modules::trace_state::EnvironmentSpan::enter(&shared_state, "AtExit");
-    shared_state
-        .borrow()
-        .process_control
-        .begin_exit_emission();
+    shared_state.borrow().process_control.begin_exit_emission();
     let listeners = shared_state.borrow_mut().scheduler.begin_shared_exit();
     if let Some(process) = shared_process_root(runtime) {
         let event_count = shared_state.borrow().scheduler.shared_listener_count();
@@ -3623,7 +3657,9 @@ fn unwatch_process_signal(
     event: Option<&crate::modules::shared_event_loop::SharedEventKey>,
 ) {
     let name = match event {
-        Some(crate::modules::shared_event_loop::SharedEventKey::String(name)) => Some(name.as_str()),
+        Some(crate::modules::shared_event_loop::SharedEventKey::String(name)) => {
+            Some(name.as_str())
+        }
         Some(_) => return,
         None => None,
     };
@@ -3789,7 +3825,13 @@ pub(crate) fn getgroups(
             Ok(groups)
         };
         match query() {
-            Ok(groups) => { let values = groups.into_iter().map(|group| context.number(f64::from(group))).collect::<Vec<_>>();context.array_rooted(&values) },
+            Ok(groups) => {
+                let values = groups
+                    .into_iter()
+                    .map(|group| context.number(f64::from(group)))
+                    .collect::<Vec<_>>();
+                context.array_rooted(&values)
+            }
             Err(error) => {
                 let errno = error.raw_os_error().unwrap_or(libc::EIO);
                 let code = super::util_system_error_shared_vm::system_error_name(-f64::from(errno));
