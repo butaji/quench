@@ -46,12 +46,13 @@ fn eval_binding_declarations_survive_residual_round_trip() {
         .flat_map(|function| {
             function
                 .name_bindings
-                .iter()
+                .resolved()
+                .into_iter()
                 .chain(
                     function
                         .binding_sites
                         .iter()
-                        .flat_map(|site| site.bindings.iter()),
+                        .flat_map(|site| site.bindings.iter().copied()),
                 )
                 .map(|binding| {
                     (
