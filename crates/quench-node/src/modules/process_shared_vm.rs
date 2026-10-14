@@ -95,7 +95,11 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
     #[cfg(target_os = "linux")]
     {
         let signals = super::os_shared_vm::signal_constants(context)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_process_before_kill_util");
         let util = crate::host::shared_vm::commonjs::util_module(context)?;
+        #[cfg(feature = "profile-memory")]
+        context.profile_memory_checkpoint("node_process_kill_util");
         let key = context.string_rooted("inspect");
         let inspect = context.get_property_rooted(util, key)?;
         let data = context.array_rooted(&[process, signals, inspect])?;
