@@ -222,15 +222,6 @@ impl<H: Host> Vm<H> {
                 self.string_from_units(&units[start as usize..end as usize])
             }
             Native::StringSubstring => {
-                if let Some(length) = self.ascii_string_len(this) {
-                    let length = length as i64;
-                    let mut start = self.argument_integer(p, args, 0, 0)?.clamp(0, length);
-                    let mut end = self.argument_integer(p, args, 1, length)?.clamp(0, length);
-                    if start > end {
-                        std::mem::swap(&mut start, &mut end);
-                    }
-                    return self.ascii_string_slice(this, start as usize, end as usize);
-                }
                 let units = self.string_units(this)?;
                 let length = units.len() as i64;
                 let mut start = self.argument_integer(p, args, 0, 0)?.clamp(0, length);
@@ -241,18 +232,6 @@ impl<H: Host> Vm<H> {
                 self.string_from_units(&units[start as usize..end as usize])
             }
             Native::StringSubstr => {
-                if let Some(length) = self.ascii_string_len(this) {
-                    let length = length as i64;
-                    let raw_start = self.argument_integer(p, args, 0, 0)?;
-                    let start = if raw_start < 0 {
-                        (length + raw_start).max(0)
-                    } else {
-                        raw_start.min(length)
-                    };
-                    let count = self.argument_integer(p, args, 1, length - start)?.max(0);
-                    let end = start.saturating_add(count).min(length);
-                    return self.ascii_string_slice(this, start as usize, end as usize);
-                }
                 let units = self.string_units(this)?;
                 let length = units.len() as i64;
                 let raw_start = self.argument_integer(p, args, 0, 0)?;
@@ -654,38 +633,12 @@ impl<H: Host> Vm<H> {
         }
     }
 
-    fn string_units(&self, value: Value) -> Result<Vec<u16>, JsError> {
+    /// The receiver's UTF-16 units, shared with the string rather than copied.
+    fn string_units(&self, value: Value) -> Result<Rc<[u16]>, JsError> {
         match self.heap.get(value) {
-            Some(Cell::String(text)) => Ok(text.units().to_vec()),
+            Some(Cell::String(text)) => Ok(text.shared_units().clone()),
             _ => Err(JsError("string method receiver is not a string".into())),
         }
-    }
-
-    fn ascii_string_len(&self, value: Value) -> Option<usize> {
-        match self.heap.get(value) {
-            Some(Cell::String(text))
-                if text
-                    .units()
-                    .iter()
-                    .all(|unit| *unit < crate::unicode::ASCII_CODE_UNIT_LIMIT) =>
-            {
-                Some(text.units().len())
-            }
-            _ => None,
-        }
-    }
-
-    fn ascii_string_slice(
-        &mut self,
-        value: Value,
-        start: usize,
-        end: usize,
-    ) -> Result<Value, JsError> {
-        let Some(Cell::String(text)) = self.heap.get(value) else {
-            return Err(JsError("string method receiver is not a string".into()));
-        };
-        let result = text.host_string()[start..end].to_owned();
-        Ok(self.heap.alloc(Cell::String(result.into())))
     }
 
     pub(super) fn string_from_units(&mut self, units: &[u16]) -> Result<Value, JsError> {

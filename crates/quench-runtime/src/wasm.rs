@@ -842,7 +842,7 @@ impl Engine {
                 name: None,
                 is_arrow: false,
                 self_binding_slot: None,
-                source_text: None,
+                source_span: None,
                 params,
                 length: params,
                 parameter_end_pc: 0,
