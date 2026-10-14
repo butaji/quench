@@ -1161,7 +1161,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             BindingPattern::BindingIdentifier(identifier) => {
                 let atom = self.owner.atom(identifier.name.as_str());
                 scope.entry(atom).or_insert_with(|| {
-                    self.hidden_local(&format!("\0quench:block-binding:{}", identifier.name))
+                    self.hidden_local(&format!(
+                        "{}{}",
+                        crate::bytecode::BLOCK_BINDING_MARKER,
+                        identifier.name
+                    ))
                 });
             }
             BindingPattern::ObjectPattern(pattern) => {
