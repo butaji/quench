@@ -349,3 +349,13 @@ fn direct_eval_binary_split_respects_looser_operators() {
         ["y,last,true"]
     );
 }
+
+#[test]
+fn case_mapping_preserves_lone_surrogates() {
+    assert_eq!(
+        output(
+            "var s = 'a\\ud800b\\udc00\\ud83d\\ude00\\u03a3'; print(Array.from(s.toUpperCase(), function (c) { return c.codePointAt(0).toString(16); }).join()); print(Array.from(s.toLowerCase(), function (c) { return c.codePointAt(0).toString(16); }).join());"
+        ),
+        ["41,d800,42,dc00,1f600,3a3", "61,d800,62,dc00,1f600,3c3"]
+    );
+}
