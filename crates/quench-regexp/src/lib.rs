@@ -427,6 +427,19 @@ impl Regex {
         }
     }
 
+    /// The match that starts exactly at `start`, as a sticky (`y`) search requires. Only that
+    /// position is tried, so a failing sticky match costs no scan of the rest of the text.
+    pub fn find_sticky_in_subject(&self, subject: &Subject, start: usize) -> Matches {
+        if start > subject.len() {
+            return Matches { item: None };
+        }
+        let units = subject.decoded(self.flags.unicode || self.flags.unicode_sets);
+        let first = first_unit_at(units, start);
+        Matches {
+            item: self.match_at_positions(units, first..=first),
+        }
+    }
+
     /// The range of the next match in `subject`, for callers that observe no captures.
     /// A byte matcher that is sound for match ranges answers without capture bookkeeping.
     pub fn find_range_in_subject(&self, subject: &Subject, start: usize) -> Option<Range<usize>> {
@@ -488,8 +501,17 @@ impl Regex {
         {
             return None;
         }
+        self.match_at_positions(input, first..=input.len())
+    }
+
+    /// The first match starting at one of `positions`, tried in order.
+    fn match_at_positions(
+        &self,
+        input: &[Unit],
+        positions: std::ops::RangeInclusive<usize>,
+    ) -> Option<Match> {
         let unset = std::rc::Rc::new(vec![None; self.capture_names.len()]);
-        for position in first..=input.len() {
+        for position in positions {
             let state = State {
                 position,
                 captures: std::rc::Rc::clone(&unset),
@@ -2784,6 +2806,17 @@ mod tests {
             let ascii = Regex::with_flags(r"^[a-z]+$", Flags::from(flags)).unwrap();
             assert!(ascii.find_from("QUENCH", 0).next().is_some(), "{flags}");
         }
+    }
+
+    #[test]
+    fn sticky_matches_only_at_the_start_position() {
+        let regex = Regex::with_flags(r"y|\d+", Flags::default()).unwrap();
+        let subject = super::Subject::from_ascii("ab12y".into());
+        assert!(regex.find_sticky_in_subject(&subject, 0).next().is_none());
+        let digits = regex.find_sticky_in_subject(&subject, 2).next().unwrap();
+        assert_eq!(digits.range, 2..4);
+        assert_eq!(regex.find_sticky_in_subject(&subject, 4).next().unwrap().range, 4..5);
+        assert!(regex.find_sticky_in_subject(&subject, 6).next().is_none());
     }
 
     #[test]

@@ -1010,8 +1010,9 @@ pub(crate) struct Vm<H> {
     /// Every atom name in id order (`atom_text`, then `dynamic_atoms`), shared by the dynamic
     /// and module programs whose atoms are a prefix of the VM's.
     atom_sequence: Rc<crate::bytecode::AtomSequence>,
-    // The last string matched by a RegExp, prepared once for repeated matching.
-    regexp_subject: Option<Rc<quench_regexp::Subject>>,
+    /// The strings most recently matched by a RegExp, most recent first, each prepared once
+    /// for repeated matching (`Vm::regexp_subject`).
+    regexp_subjects: Vec<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
     // One lazily derived class byte per atom; length tracks atom_text plus dynamic_atoms.
     atom_classes: Vec<std::cell::Cell<u8>>,
@@ -1691,7 +1692,7 @@ impl<H: Host> Vm<H> {
         self.array_index_atoms.clear();
         self.dynamic_atoms.clear();
         self.atom_classes.clear();
-        self.regexp_subject = None;
+        self.regexp_subjects.clear();
         self.regexp_matchers.clear();
         self.atom_classes
             .resize_with(self.atom_text.len(), Default::default);
