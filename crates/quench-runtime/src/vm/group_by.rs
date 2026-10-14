@@ -133,7 +133,7 @@ impl<H: Host> Vm<H> {
                 let Some(Cell::Map { entries, .. }) = self.heap.get(result) else {
                     unreachable!("groupBy owns a Map result")
                 };
-                entries[index].1
+                entries.value_at(index)
             }),
         };
         if let Some(group) = group {
@@ -160,10 +160,11 @@ impl<H: Host> Vm<H> {
                     _ => unreachable!("ToPropertyKey returns a string or symbol"),
                 },
                 GroupByKind::Map => {
+                    let key_hash = self.same_value_zero_hash(key);
                     let Some(Cell::Map { entries, .. }) = self.heap.get_mut(result) else {
                         unreachable!("groupBy owns a Map result")
                     };
-                    entries.push((key, group));
+                    entries.push((key, group), key_hash);
                 }
             }
         }
