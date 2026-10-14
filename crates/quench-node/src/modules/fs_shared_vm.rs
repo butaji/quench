@@ -2779,12 +2779,10 @@ pub(crate) fn read_file_sync(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let path = args
-        .first()
-        .copied()
-        .map(|path| context.to_string(path))
-        .transpose()?
-        .unwrap_or_else(|| "undefined".to_owned());
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
+    let undefined = context.undefined();
+    let input = crate::modules::url_shared_vm::to_path_if_file_url(context, undefined, &[input])?;
+    let path = context.to_string(input)?;
     let path = resolve_shared_path(context, path);
     let (encoding, flag) = if let Some(options) = args.get(1).copied().filter(|options| {
         context

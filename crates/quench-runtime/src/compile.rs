@@ -1578,7 +1578,14 @@ struct Compiler<'a> {
     superinstructions: Vec<Superinstruction>,
     /// Distinct `name_bindings` lists: sibling functions that see the same bindings,
     /// such as every function declared in one module scope, share one list.
-    name_binding_lists: FxHashSet<std::rc::Rc<[crate::bytecode::EvalBinding]>>,
+    /// Resolved captured scopes keyed by (scope, enclosing chain) addresses; see `captured_names`.
+    captured_name_scopes: FxHashMap<
+        (usize, Option<usize>),
+        (
+            std::rc::Rc<FxHashMap<Atom, u16>>,
+            std::rc::Rc<crate::bytecode::CapturedNames>,
+        ),
+    >,
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
@@ -1711,16 +1718,98 @@ impl From<&Constant> for ConstantKey {
 }
 
 impl<'a> Compiler<'a> {
-    fn intern_name_bindings(
+    /// The captured scopes of `scopes`, innermost first. A scope's names are resolved once per
+    /// enclosing chain and shared by every function closing over it.
+    fn captured_names(
         &mut self,
-        bindings: Vec<crate::bytecode::EvalBinding>,
-    ) -> std::rc::Rc<[crate::bytecode::EvalBinding]> {
-        if let Some(shared) = self.name_binding_lists.get(bindings.as_slice()) {
-            return shared.clone();
+        scopes: &[std::rc::Rc<FxHashMap<Atom, u16>>],
+    ) -> Option<std::rc::Rc<crate::bytecode::CapturedNames>> {
+        if scopes
+            .len()
+            .checked_sub(1)
+            .is_some_and(|deepest| u16::try_from(deepest).is_err())
+        {
+            self.reject(Span::default(), "eval capture depth exceeds residual encoding");
+            return None;
         }
-        let shared: std::rc::Rc<[crate::bytecode::EvalBinding]> = bindings.into();
-        self.name_binding_lists.insert(shared.clone());
-        shared
+        let mut outer: Option<std::rc::Rc<crate::bytecode::CapturedNames>> = None;
+        for scope in scopes.iter().rev() {
+            let key = (
+                std::rc::Rc::as_ptr(scope) as usize,
+                outer.as_ref().map(|outer| std::rc::Rc::as_ptr(outer) as usize),
+            );
+            let level = match self.captured_name_scopes.get(&key) {
+                Some((_, level)) => level.clone(),
+                None => {
+                    let bindings = self.captured_scope_bindings(scope);
+                    let level = std::rc::Rc::new(crate::bytecode::CapturedNames::new(
+                        bindings,
+                        outer.clone(),
+                    ));
+                    // The scope and the outer chain stay alive with the key, so neither
+                    // address is reused while it names this entry.
+                    self.captured_name_scopes
+                        .insert(key, (scope.clone(), level.clone()));
+                    level
+                }
+            };
+            outer = Some(level);
+        }
+        outer
+    }
+
+    /// One captured scope's bindings, sorted by atom. Lexical markers own mutability and
+    /// declaration conflicts, so ordinary captures are added only for names they leave.
+    fn captured_scope_bindings(
+        &mut self,
+        scope: &FxHashMap<Atom, u16>,
+    ) -> Vec<crate::bytecode::EvalBinding> {
+        let capture = |slot: u16| crate::bytecode::EvalBindingLocation::Capture { depth: 0, slot };
+        let mut visible = FxHashSet::default();
+        let mut bindings = Vec::new();
+        for (marker, slot) in scope.iter() {
+            let text = self.atoms[*marker as usize].to_owned();
+            let Some((kind, name)) = LexicalBindingKind::ALL.into_iter().find_map(|kind| {
+                text.strip_prefix(kind.capture_prefix())
+                    .map(|name| (kind, name))
+            }) else {
+                continue;
+            };
+            let atom = self.atom(name);
+            if !visible.insert(atom) {
+                continue;
+            }
+            let catch_marker = format!("\0quench:catch-capture:{name}");
+            bindings.push(crate::bytecode::EvalBinding {
+                atom,
+                location: capture(*slot),
+                with_depth: 0,
+                kind,
+                declaration: if self
+                    .atoms
+                    .find(&catch_marker)
+                    .is_some_and(|marker| scope.contains_key(&marker))
+                {
+                    crate::bytecode::EvalBindingDeclaration::CatchParameter
+                } else {
+                    crate::bytecode::EvalBindingDeclaration::Lexical
+                },
+            });
+        }
+        for (atom, slot) in scope.iter() {
+            if self.atoms[*atom as usize].contains('\0') || !visible.insert(*atom) {
+                continue;
+            }
+            bindings.push(crate::bytecode::EvalBinding {
+                atom: *atom,
+                location: capture(*slot),
+                with_depth: 0,
+                kind: LexicalBindingKind::Mutable,
+                declaration: crate::bytecode::EvalBindingDeclaration::Variable,
+            });
+        }
+        bindings.sort_unstable_by_key(|binding| binding.atom);
+        bindings
     }
 
     fn annex_b_collisions(&self, body: &[Statement<'_>]) -> FxHashSet<u32> {
@@ -1777,7 +1866,7 @@ impl<'a> Compiler<'a> {
             object_sites: vec![],
             regexp_literal_sites: vec![],
             superinstructions: vec![],
-            name_binding_lists: FxHashSet::default(),
+            captured_name_scopes: FxHashMap::default(),
         }
     }
 
@@ -2640,7 +2729,6 @@ impl<'a> Compiler<'a> {
                 .collect()
         });
         let name_bindings = function.name_bindings();
-        let name_bindings = function.owner.intern_name_bindings(name_bindings);
         let undefined_register = function.used_undefined_register();
         let environment_clones = function.per_site_environment_clones();
         let result = BcFunction {

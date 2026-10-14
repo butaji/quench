@@ -991,6 +991,9 @@ pub(crate) fn clear_timer(
     let Some(handle) = args.first().copied() else {
         return Ok(context.undefined());
     };
+    if context.rooted_value(handle).is_some_and(|value| value.is_null() || value.is_undefined()) {
+        return Ok(context.undefined());
+    }
     let id = timer_id(context, handle)?;
     if let Some(id) = id {
         let callback = context
@@ -1083,4 +1086,13 @@ fn release_callback(context: &mut NativeContext<'_, NodeHost>, callback: SharedC
     for argument in callback.args {
         context.release_root(argument);
     }
+}
+
+pub(crate) fn active_resources(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    let (timers, immediates) = context.host_mut().shared_state().borrow().scheduler.shared_active_timer_counts();
+    let mut resources = Vec::with_capacity(timers + immediates);
+    for (name, count) in [("Timeout", timers), ("Immediate", immediates)] {
+        for _ in 0..count { resources.push(context.string_rooted(name)); }
+    }
+    context.array_rooted(&resources)
 }

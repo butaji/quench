@@ -60,6 +60,16 @@ struct LexicalScope {
     pub(super) with_depth: u16,
 }
 
+/// The state a capture scope is derived from. Locals and lexical pushes only grow, so equal
+/// states name the same locals and lexical stack.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct CaptureScopeState {
+    local_count: usize,
+    lexical_depth: usize,
+    lexical_pushes: usize,
+    parameter_context: bool,
+}
+
 pub(super) struct FinallyContext {
     control_depth: usize,
     iterator_depth: usize,
@@ -143,6 +153,11 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     pub(super) parameter_local_count: usize,
     pub(super) super_call_binds_this: bool,
     lexical_scopes: Vec<LexicalScope>,
+    lexical_scope_pushes: usize,
+    /// The current function's capture scope for one lexical state: closures created in the
+    /// same state (hoisted declarations, sibling callbacks) share it instead of re-copying
+    /// every local binding.
+    capture_scope_memo: Option<(CaptureScopeState, Rc<FxHashMap<Atom, u16>>)>,
     disposal_scopes: Vec<DisposalScope>,
 }
 
@@ -252,6 +267,8 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             parameter_local_count,
             super_call_binds_this: false,
             lexical_scopes: Vec::new(),
+            lexical_scope_pushes: 0,
+            capture_scope_memo: None,
             disposal_scopes: vec![DisposalScope::default()],
         }
     }
@@ -850,7 +867,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 )
             })
             .collect();
-        self.lexical_scopes.push(LexicalScope {
+        self.enter_lexical_scope(LexicalScope {
             bindings,
             kinds,
             catch_parameter: false,
@@ -858,8 +875,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         });
     }
 
+    fn enter_lexical_scope(&mut self, scope: LexicalScope) {
+        self.lexical_scope_pushes += 1;
+        self.lexical_scopes.push(scope);
+    }
+
     pub(super) fn push_function_name_binding(&mut self, name: Atom, binding: Atom) {
-        self.lexical_scopes.push(LexicalScope {
+        self.enter_lexical_scope(LexicalScope {
             bindings: FxHashMap::from_iter([(name, binding)]),
             kinds: FxHashMap::from_iter([(name, LexicalBindingKind::FunctionName)]),
             catch_parameter: false,
@@ -1063,6 +1085,50 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub(super) fn capture_scopes(&mut self) -> Vec<Rc<FxHashMap<Atom, u16>>> {
+        let state = CaptureScopeState {
+            local_count: self.local_slots.len(),
+            lexical_depth: self.lexical_scopes.len(),
+            lexical_pushes: self.lexical_scope_pushes,
+            parameter_context: self.parameter_context,
+        };
+        let scope = match &self.capture_scope_memo {
+            Some((memo_state, scope)) if *memo_state == state => Rc::clone(scope),
+            _ => {
+                let scope = Rc::new(self.current_capture_scope());
+                self.capture_scope_memo = Some((state, Rc::clone(&scope)));
+                scope
+            }
+        };
+        let mut scopes = vec![scope];
+        // Eval can introduce vars that shadow inherited bindings. Current lexical
+        // bindings cannot be replaced by those declarations and remain capturable.
+        if !self.dynamic_eval {
+            scopes.extend(self.scopes.iter().cloned());
+        } else {
+            // Source eval cannot introduce compiler bindings. Keep their scope
+            // depths while dropping source-name projections and capture markers.
+            scopes.extend(self.scopes.iter().map(|scope| {
+                Rc::new(
+                    scope
+                        .iter()
+                        .filter_map(|(atom, slot)| {
+                            let name = &self.owner.atoms[*atom as usize];
+                            (self.is_compiler_binding(*atom)
+                                && !LexicalBindingKind::ALL
+                                    .into_iter()
+                                    .any(|kind| name.starts_with(kind.capture_prefix()))
+                                && !name.starts_with("\0quench:catch-capture:"))
+                            .then_some((*atom, *slot))
+                        })
+                        .collect(),
+                )
+            }));
+        }
+        scopes
+    }
+
+    /// The current function's bindings visible to a closure created at this position.
+    fn current_capture_scope(&mut self) -> FxHashMap<Atom, u16> {
         let mut scope: FxHashMap<Atom, u16> = self
             .function_scope
             .iter()
@@ -1113,32 +1179,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 }
             }
         }
-        let mut scopes = vec![Rc::new(scope)];
-        // Eval can introduce vars that shadow inherited bindings. Current lexical
-        // bindings cannot be replaced by those declarations and remain capturable.
-        if !self.dynamic_eval {
-            scopes.extend(self.scopes.iter().cloned());
-        } else {
-            // Source eval cannot introduce compiler bindings. Keep their scope
-            // depths while dropping source-name projections and capture markers.
-            scopes.extend(self.scopes.iter().map(|scope| {
-                Rc::new(
-                    scope
-                        .iter()
-                        .filter_map(|(atom, slot)| {
-                            let name = &self.owner.atoms[*atom as usize];
-                            (self.is_compiler_binding(*atom)
-                                && !LexicalBindingKind::ALL
-                                    .into_iter()
-                                    .any(|kind| name.starts_with(kind.capture_prefix()))
-                                && !name.starts_with("\0quench:catch-capture:"))
-                            .then_some((*atom, *slot))
-                        })
-                        .collect(),
-                )
-            }));
-        }
-        scopes
+        scope
     }
 
     pub(super) fn push_catch_binding(&mut self, handler: &CatchClause<'_>, binding: Option<Atom>) {
@@ -1156,11 +1197,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
         }
         self.push_lexical_bindings(scope);
-        // Annex B permits redeclaration only for a simple catch identifier.
+        // Annex B permits redeclaration only for a simple catch identifier. Marking the scope
+        // changes its capture projection, so it counts as a fresh lexical state.
         self.lexical_scopes
             .last_mut()
             .expect("catch binding scope was just pushed")
             .catch_parameter = !requires_initialization;
+        self.lexical_scope_pushes += 1;
         if requires_initialization {
             self.initialize_lexical_scope();
         }
