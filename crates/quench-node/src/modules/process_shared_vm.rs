@@ -139,6 +139,8 @@ pub(crate) fn initialize(context: &mut NativeContext<'_, NodeHost>) -> Result<()
         "__quenchGetActiveNetworkResources",
         active_network_resources,
     )?;
+    let active_timer_resources = context.host_function(crate::host::shared_vm::operation("processGetActiveTimerResources"))?;
+    install(context, process, "__quenchGetActiveTimerResources", active_timer_resources)?;
     let hrtime_raw =
         context.host_function(crate::host::shared_vm::operation("processHrtimeNow"))?;
     let hrtime_factory = context.evaluate_script_rooted(
