@@ -307,8 +307,15 @@ impl ProcessCwd {
         if let Some(directory) = self.0.borrow().directory.clone() {
             use std::os::fd::AsRawFd;
             use std::os::unix::process::CommandExt;
-            let relative = requested.map(std::ffi::CString::new).transpose()
-                .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "cwd contains a null byte"))?;
+            let relative = requested
+                .map(std::ffi::CString::new)
+                .transpose()
+                .map_err(|_| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "cwd contains a null byte",
+                    )
+                })?;
             // Only async-signal-safe directory syscalls run between fork and exec.
             // The captured CLOEXEC descriptor stays owned until command completion.
             unsafe {

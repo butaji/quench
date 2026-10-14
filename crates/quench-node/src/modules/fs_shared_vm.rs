@@ -1,5 +1,5 @@
 use crate::host::NodeHost;
-use crate::modules::fs_ops as fs_ops;
+use crate::modules::fs_ops;
 use quench_runtime::{NativeContext, RootId, RootedError};
 use std::io::Read;
 
@@ -18,7 +18,8 @@ pub(crate) mod sync;
 #[path = "fs_shared_vm/write_stream.rs"]
 pub(crate) mod write_stream;
 
-const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream) => ({
+const PROMISES_FACTORY: &str = quench_js_check::checked_js!(
+    r#"(readFile, stat, lstat, readdir, readlink, realpath, openSync, closeSync, readSync, writeSync, fstatSync, fchmodSync, fsyncSync, fdatasyncSync, writeFileSync, appendFileSync, readvSync, writevSync, createReadStream) => ({
   readFile: (...args) => Promise.resolve().then(() => {
     const handle = args[0];
     if (handle && typeof handle.readFile === 'function') return handle.readFile(args[1]);
@@ -250,7 +251,8 @@ const PROMISES_FACTORY: &str = quench_js_check::checked_js!(r#"(readFile, stat, 
     handle[Symbol.dispose] = handle.close;
     return handle;
   }),
-})"#);
+})"#
+);
 
 const ASYNC_SYNC_API: &str = r#"(fsyncSync, fdatasyncSync) => {
   const create = (sync, syscall) => function(fd, callback) {
@@ -278,7 +280,8 @@ const ASYNC_SYNC_API: &str = r#"(fsyncSync, fdatasyncSync) => {
   return { fsync: create(fsyncSync, 'fsync'), fdatasync: create(fdatasyncSync, 'fdatasync') };
 }"#;
 
-const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, closeSync, readSync, fstatSync) => {
+const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(
+    r#"(openSync, closeSync, readSync, fstatSync) => {
   const assertBuffer = (buffer) => {
     if (ArrayBuffer.isView(buffer)) return;
     const received = buffer === null || buffer === undefined
@@ -525,9 +528,11 @@ const OPEN_CLOSE_FACTORY: &str = quench_js_check::checked_js!(r#"(openSync, clos
     });
   });
   return api;
-}"#);
+}"#
+);
 
-const WRITEV_API: &str = quench_js_check::checked_js!(r#"(writeSync) => {
+const WRITEV_API: &str = quench_js_check::checked_js!(
+    r#"(writeSync) => {
   const validateBuffers = (buffers) => {
     if (!Array.isArray(buffers) || buffers.some((buffer) => !Buffer.isBuffer(buffer) && !(buffer instanceof Uint8Array))) {
       const error = new TypeError('The "buffers" argument must be an Array of Buffer or Uint8Array instances');
@@ -560,9 +565,11 @@ const WRITEV_API: &str = quench_js_check::checked_js!(r#"(writeSync) => {
     });
   }
   return { writev, writevSync };
-}"#);
+}"#
+);
 
-const READV_API: &str = quench_js_check::checked_js!(r#"(readSync) => {
+const READV_API: &str = quench_js_check::checked_js!(
+    r#"(readSync) => {
   const validateBuffers = (buffers) => {
     if (!Array.isArray(buffers) || buffers.some((buffer) => !Buffer.isBuffer(buffer) && !(buffer instanceof Uint8Array))) {
       const error = new TypeError('The "buffers" argument must be an Array of Buffer or Uint8Array instances');
@@ -598,9 +605,11 @@ const READV_API: &str = quench_js_check::checked_js!(r#"(readSync) => {
     new Promise((resolve, reject) => readv(fd, buffers, position, (error, bytesRead, readBuffers) =>
       error ? reject(error) : resolve({ bytesRead, buffers: readBuffers })));
   return { readv, readvSync };
-}"#);
+}"#
+);
 
-const READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readDir) => (path, options) => {
+const READDIR_FACTORY: &str = quench_js_check::checked_js!(
+    r#"(readDir) => (path, options) => {
   if (typeof path !== "string" && !Buffer.isBuffer(path) && !(path instanceof URL)) {
     const received = path === null ? "null" : path === undefined ? "undefined" : `type ${typeof path}`;
     const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${received}`);
@@ -619,9 +628,11 @@ const READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readDir) => (path
     }
     return dirent;
   });
-}"#);
+}"#
+);
 
-const ASYNC_READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readdirSync) => function readdir(path, options, callback) {
+const ASYNC_READDIR_FACTORY: &str = quench_js_check::checked_js!(
+    r#"(readdirSync) => function readdir(path, options, callback) {
   if (typeof options === "function") {
     callback = options;
     options = undefined;
@@ -649,9 +660,11 @@ const ASYNC_READDIR_FACTORY: &str = quench_js_check::checked_js!(r#"(readdirSync
     }
     Reflect.apply(callback, undefined, [null, entries]);
   });
-}"#);
+}"#
+);
 
-const OPENDIR_API: &str = quench_js_check::checked_js!(r#"(readdirSync) => {
+const OPENDIR_API: &str = quench_js_check::checked_js!(
+    r#"(readdirSync) => {
   const states = new WeakMap();
   class Dirent {
     constructor(entry, parentPath) {
@@ -769,7 +782,8 @@ const OPENDIR_API: &str = quench_js_check::checked_js!(r#"(readdirSync) => {
   }
   const opendirPromise = (path, options) => Promise.resolve().then(() => makeDir(path, options));
   return { Dir, Dirent, opendir, opendirSync, opendirPromise };
-}"#);
+}"#
+);
 
 const ASYNC_READ_FILE_FACTORY: &str = quench_js_check::checked_js!(
     r#"(readFileSync, validateSignal, completeRead) => function readFile(path, options, callback) {
@@ -793,9 +807,11 @@ const ASYNC_READ_FILE_FACTORY: &str = quench_js_check::checked_js!(
   const signal = options?.signal;
   validateSignal(signal);
   queueMicrotask(() => completeRead(readFileSync, callback, path, options, signal));
-}"#);
+}"#
+);
 
-const ASYNC_WRITE_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(writeFileSync) => function writeFile(path, data, options, callback) {
+const ASYNC_WRITE_FILE_FACTORY: &str = quench_js_check::checked_js!(
+    r#"(writeFileSync) => function writeFile(path, data, options, callback) {
   if (typeof options === "function") {
     callback = options;
     options = undefined;
@@ -820,9 +836,11 @@ const ASYNC_WRITE_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(writeFil
       Reflect.apply(callback, undefined, [null]);
     } catch (error) { Reflect.apply(callback, undefined, [error]); }
   });
-}"#);
+}"#
+);
 
-const ASYNC_APPEND_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(appendFileSync) => function appendFile(path, data, options, callback) {
+const ASYNC_APPEND_FILE_FACTORY: &str = quench_js_check::checked_js!(
+    r#"(appendFileSync) => function appendFile(path, data, options, callback) {
   if (typeof options === "function") {
     callback = options;
     options = undefined;
@@ -845,7 +863,8 @@ const ASYNC_APPEND_FILE_FACTORY: &str = quench_js_check::checked_js!(r#"(appendF
       Reflect.apply(callback, undefined, [null]);
     } catch (error) { Reflect.apply(callback, undefined, [error]); }
   });
-}"#);
+}"#
+);
 
 const REALPATH_SYNC_API: &str = r#"(hostRealpathSync) => function realpathSync(path, options) {
   if (typeof path !== 'string' && !Buffer.isBuffer(path) && !(path instanceof URL)) {
@@ -861,7 +880,8 @@ const REALPATH_SYNC_API: &str = r#"(hostRealpathSync) => function realpathSync(p
   return encoding === undefined ? resolved : Buffer.from(resolved).toString(encoding);
 }"#;
 
-const REALPATH_FACTORY: &str = quench_js_check::checked_js!(r#"(realpathSync) => {
+const REALPATH_FACTORY: &str = quench_js_check::checked_js!(
+    r#"(realpathSync) => {
   function realpath(path, options, callback) {
     if (typeof options === "function") callback = options;
     if (typeof callback !== "function") {
@@ -876,7 +896,8 @@ const REALPATH_FACTORY: &str = quench_js_check::checked_js!(r#"(realpathSync) =>
   }
   realpath.native = realpath;
   return realpath;
-}"#);
+}"#
+);
 
 const CREATE_READ_STREAM: &str = r#"(openFile, readFileChunk, closeFile, Readable) => {
   function ReadStream(path, options) {
@@ -2106,8 +2127,7 @@ fn fs_constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Roo
 fn make_readdir_sync(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let read_directory =
         context.host_function(crate::host::shared_vm::operation("fsReaddirSync"))?;
-    let factory =
-        context.evaluate_script_rooted(READDIR_FACTORY, "node:fs/shared-readdir.js")?;
+    let factory = context.evaluate_script_rooted(READDIR_FACTORY, "node:fs/shared-readdir.js")?;
     let undefined = context.undefined();
     context.call_rooted(factory, undefined, &[read_directory])
 }
@@ -2116,10 +2136,8 @@ fn make_readdir_async(
     context: &mut NativeContext<'_, NodeHost>,
     readdir_sync: RootId,
 ) -> Result<RootId, RootedError> {
-    let factory = context.evaluate_script_rooted(
-        ASYNC_READDIR_FACTORY,
-        "node:fs/shared-async-readdir.js",
-    )?;
+    let factory =
+        context.evaluate_script_rooted(ASYNC_READDIR_FACTORY, "node:fs/shared-async-readdir.js")?;
     let undefined = context.undefined();
     context.call_rooted(factory, undefined, &[readdir_sync])
 }
@@ -2130,25 +2148,27 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let opendir_promise;
     let read_file = context.host_function(crate::host::shared_vm::operation("fsReadFileSync"))?;
     set(context, module, "readFileSync", read_file)?;
-    let read_file_factory = context.evaluate_script_rooted(
-        ASYNC_READ_FILE_FACTORY,
-        "node:fs/shared-async-read-file.js",
-    )?;
-    let validate = context.host_function(crate::host::shared_vm::operation("fsValidateAbortSignal"))?;
-    let complete = context.host_function(crate::host::shared_vm::operation("fsReadFileComplete"))?;
+    let read_file_factory = context
+        .evaluate_script_rooted(ASYNC_READ_FILE_FACTORY, "node:fs/shared-async-read-file.js")?;
+    let validate =
+        context.host_function(crate::host::shared_vm::operation("fsValidateAbortSignal"))?;
+    let complete =
+        context.host_function(crate::host::shared_vm::operation("fsReadFileComplete"))?;
     let undefined = context.undefined();
-    let read_file_async = context.call_rooted(read_file_factory, undefined, &[read_file, validate, complete])?;
+    let read_file_async = context.call_rooted(
+        read_file_factory,
+        undefined,
+        &[read_file, validate, complete],
+    )?;
     set(context, module, "readFile", read_file_async)?;
     let stat_host = context.host_function(crate::host::shared_vm::operation("fsStatSync"))?;
     let decorate_bigint_stats =
         context.evaluate_script_rooted(BIGINT_STATS_API, "node:fs/shared-bigint-stats.js")?;
-    let stat_factory = context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-stat-sync.js")?;
+    let stat_factory =
+        context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-stat-sync.js")?;
     let undefined = context.undefined();
-    let stat_sync = context.call_rooted(
-        stat_factory,
-        undefined,
-        &[stat_host, decorate_bigint_stats],
-    )?;
+    let stat_sync =
+        context.call_rooted(stat_factory, undefined, &[stat_host, decorate_bigint_stats])?;
     set(context, module, "statSync", stat_sync)?;
     let statfs_host = context.host_function(crate::host::shared_vm::operation("fsStatfsSync"))?;
     let statfs_factory =
@@ -2186,7 +2206,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "fchmod", fchmod)?;
     set(context, module, "fchmodSync", fchmod_sync)?;
     let lstat_host = context.host_function(crate::host::shared_vm::operation("fsLstatSync"))?;
-    let lstat_factory = context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-lstat-sync.js")?;
+    let lstat_factory =
+        context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-lstat-sync.js")?;
     let undefined = context.undefined();
     let lstat_sync = context.call_rooted(
         lstat_factory,
@@ -2194,17 +2215,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         &[lstat_host, decorate_bigint_stats],
     )?;
     set(context, module, "lstatSync", lstat_sync)?;
-    let lstat_factory = context.evaluate_script_rooted(
-        ASYNC_LSTAT_API,
-        "node:fs/shared-async-lstat.js",
-    )?;
+    let lstat_factory =
+        context.evaluate_script_rooted(ASYNC_LSTAT_API, "node:fs/shared-async-lstat.js")?;
     let lstat = context.call_rooted(lstat_factory, undefined, &[lstat_sync])?;
     set(context, module, "lstat", lstat)?;
     let readdir_sync = make_readdir_sync(context)?;
     set(context, module, "readdirSync", readdir_sync)?;
     let readdir = make_readdir_async(context, readdir_sync)?;
     set(context, module, "readdir", readdir)?;
-    let opendir_factory = context.evaluate_script_rooted(OPENDIR_API, "node:fs/shared-opendir.js")?;
+    let opendir_factory =
+        context.evaluate_script_rooted(OPENDIR_API, "node:fs/shared-opendir.js")?;
     let opendir_api = context.call_rooted(opendir_factory, undefined, &[readdir_sync])?;
     let dir_constructor = get(context, opendir_api, "Dir")?;
     let dirent_constructor = get(context, opendir_api, "Dirent")?;
@@ -2215,30 +2235,30 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "Dirent", dirent_constructor)?;
     set(context, module, "opendir", opendir)?;
     set(context, module, "opendirSync", opendir_sync)?;
-    let readlink_host = context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
+    let readlink_host =
+        context.host_function(crate::host::shared_vm::operation("fsReadlinkSync"))?;
     let readlink_factory =
         context.evaluate_script_rooted(READLINK_SYNC_API, "node:fs/shared-readlink-sync.js")?;
     let undefined = context.undefined();
     let readlink_sync = context.call_rooted(readlink_factory, undefined, &[readlink_host])?;
     set(context, module, "readlinkSync", readlink_sync)?;
-    let readlink_factory = context.evaluate_script_rooted(
-        ASYNC_READLINK_API,
-        "node:fs/shared-async-readlink.js",
-    )?;
+    let readlink_factory =
+        context.evaluate_script_rooted(ASYNC_READLINK_API, "node:fs/shared-async-readlink.js")?;
     let readlink = context.call_rooted(readlink_factory, undefined, &[readlink_sync])?;
     set(context, module, "readlink", readlink)?;
-    let realpath_host = context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
+    let realpath_host =
+        context.host_function(crate::host::shared_vm::operation("fsRealpathSync"))?;
     let realpath_sync_factory =
         context.evaluate_script_rooted(REALPATH_SYNC_API, "node:fs/shared-realpath-sync.js")?;
     let undefined = context.undefined();
-    let realpath_sync =
-        context.call_rooted(realpath_sync_factory, undefined, &[realpath_host])?;
+    let realpath_sync = context.call_rooted(realpath_sync_factory, undefined, &[realpath_host])?;
     set(context, module, "realpathSync", realpath_sync)?;
     let native = context.string_rooted("native");
     if !context.set_property_rooted(realpath_sync, native, realpath_sync, realpath_sync)? {
         return Err(RootedError::host("cannot install fs.realpathSync.native"));
     }
-    let realpath_factory = context.evaluate_script_rooted(REALPATH_FACTORY, "node:fs/shared-realpath.js")?;
+    let realpath_factory =
+        context.evaluate_script_rooted(REALPATH_FACTORY, "node:fs/shared-realpath.js")?;
     let undefined = context.undefined();
     let realpath = context.call_rooted(realpath_factory, undefined, &[realpath_sync])?;
     set(context, module, "realpath", realpath)?;
@@ -2254,15 +2274,10 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     sync::install(context, module)?;
     let fsync_sync = get(context, module, "fsyncSync")?;
     let fdatasync_sync = get(context, module, "fdatasyncSync")?;
-    let async_sync_factory = context.evaluate_script_rooted(
-        ASYNC_SYNC_API,
-        "node:fs/shared-async-sync.js",
-    )?;
-    let async_sync = context.call_rooted(
-        async_sync_factory,
-        undefined,
-        &[fsync_sync, fdatasync_sync],
-    )?;
+    let async_sync_factory =
+        context.evaluate_script_rooted(ASYNC_SYNC_API, "node:fs/shared-async-sync.js")?;
+    let async_sync =
+        context.call_rooted(async_sync_factory, undefined, &[fsync_sync, fdatasync_sync])?;
     let fsync_async = get(context, async_sync, "fsync")?;
     let fdatasync_async = get(context, async_sync, "fdatasync")?;
     set(context, module, "fsync", fsync_async)?;
@@ -2287,44 +2302,34 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let truncate = context.call_rooted(truncate_factory, undefined, &[truncate_sync])?;
     set(context, module, "truncate", truncate)?;
     let ftruncate_sync = get(context, module, "ftruncateSync")?;
-    let ftruncate_factory = context
-        .evaluate_script_rooted(ASYNC_FTRUNCATE_API, "node:fs/shared-async-ftruncate.js")?;
+    let ftruncate_factory =
+        context.evaluate_script_rooted(ASYNC_FTRUNCATE_API, "node:fs/shared-async-ftruncate.js")?;
     let ftruncate = context.call_rooted(ftruncate_factory, undefined, &[ftruncate_sync])?;
     set(context, module, "ftruncate", ftruncate)?;
-    let stat_factory = context.evaluate_script_rooted(
-        ASYNC_STAT_API,
-        "node:fs/shared-async-stat.js",
-    )?;
+    let stat_factory =
+        context.evaluate_script_rooted(ASYNC_STAT_API, "node:fs/shared-async-stat.js")?;
     let undefined = context.undefined();
     let stat = context.call_rooted(stat_factory, undefined, &[stat_sync])?;
     set(context, module, "stat", stat)?;
     let mkdir_sync = get(context, module, "mkdirSync")?;
-    let mkdir_factory = context.evaluate_script_rooted(
-        ASYNC_MKDIR_API,
-        "node:fs/shared-async-mkdir.js",
-    )?;
+    let mkdir_factory =
+        context.evaluate_script_rooted(ASYNC_MKDIR_API, "node:fs/shared-async-mkdir.js")?;
     let undefined = context.undefined();
     let mkdir = context.call_rooted(mkdir_factory, undefined, &[mkdir_sync])?;
     set(context, module, "mkdir", mkdir)?;
     let rmdir_sync = get(context, module, "rmdirSync")?;
-    let rmdir_factory = context.evaluate_script_rooted(
-        ASYNC_RMDIR_API,
-        "node:fs/shared-async-rmdir.js",
-    )?;
+    let rmdir_factory =
+        context.evaluate_script_rooted(ASYNC_RMDIR_API, "node:fs/shared-async-rmdir.js")?;
     let rmdir = context.call_rooted(rmdir_factory, undefined, &[rmdir_sync])?;
     set(context, module, "rmdir", rmdir)?;
     let mkdtemp_sync = get(context, module, "mkdtempSync")?;
-    let mkdtemp_factory = context.evaluate_script_rooted(
-        ASYNC_MKDTEMP_API,
-        "node:fs/shared-async-mkdtemp.js",
-    )?;
+    let mkdtemp_factory =
+        context.evaluate_script_rooted(ASYNC_MKDTEMP_API, "node:fs/shared-async-mkdtemp.js")?;
     let mkdtemp = context.call_rooted(mkdtemp_factory, undefined, &[mkdtemp_sync])?;
     set(context, module, "mkdtemp", mkdtemp)?;
     let copy_file_sync = get(context, module, "copyFileSync")?;
-    let copy_file_factory = context.evaluate_script_rooted(
-        ASYNC_COPYFILE_API,
-        "node:fs/shared-async-copyfile.js",
-    )?;
+    let copy_file_factory =
+        context.evaluate_script_rooted(ASYNC_COPYFILE_API, "node:fs/shared-async-copyfile.js")?;
     let copy_file = context.call_rooted(copy_file_factory, undefined, &[copy_file_sync])?;
     set(context, module, "copyFile", copy_file)?;
     let cp_factory = context.evaluate_script_rooted(CP_API, "node:fs/shared-cp.js")?;
@@ -2357,28 +2362,23 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     set(context, module, "cpSync", cp_sync)?;
     set(context, module, "cp", cp)?;
     let symlink_sync = get(context, module, "symlinkSync")?;
-    let symlink_factory = context.evaluate_script_rooted(
-        ASYNC_SYMLINK_API,
-        "node:fs/shared-async-symlink.js",
-    )?;
+    let symlink_factory =
+        context.evaluate_script_rooted(ASYNC_SYMLINK_API, "node:fs/shared-async-symlink.js")?;
     let symlink = context.call_rooted(symlink_factory, undefined, &[symlink_sync])?;
     set(context, module, "symlink", symlink)?;
     let link_sync = get(context, module, "linkSync")?;
-    let link_factory = context.evaluate_script_rooted(ASYNC_LINK_API, "node:fs/shared-async-link.js")?;
+    let link_factory =
+        context.evaluate_script_rooted(ASYNC_LINK_API, "node:fs/shared-async-link.js")?;
     let link = context.call_rooted(link_factory, undefined, &[link_sync])?;
     set(context, module, "link", link)?;
     let rename_sync = get(context, module, "renameSync")?;
-    let rename_factory = context.evaluate_script_rooted(
-        ASYNC_RENAME_API,
-        "node:fs/shared-async-rename.js",
-    )?;
+    let rename_factory =
+        context.evaluate_script_rooted(ASYNC_RENAME_API, "node:fs/shared-async-rename.js")?;
     let rename = context.call_rooted(rename_factory, undefined, &[rename_sync])?;
     set(context, module, "rename", rename)?;
     let unlink_sync = get(context, module, "unlinkSync")?;
-    let unlink_factory = context.evaluate_script_rooted(
-        ASYNC_UNLINK_API,
-        "node:fs/shared-async-unlink.js",
-    )?;
+    let unlink_factory =
+        context.evaluate_script_rooted(ASYNC_UNLINK_API, "node:fs/shared-async-unlink.js")?;
     let unlink = context.call_rooted(unlink_factory, undefined, &[unlink_sync])?;
     set(context, module, "unlink", unlink)?;
     for (name, sync_name, descriptor) in [
@@ -2387,26 +2387,25 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         ("fchown", "fchownSync", true),
     ] {
         let owner_sync = get(context, module, sync_name)?;
-        let owner_factory = context.evaluate_script_rooted(
-            ASYNC_OWNER_API,
-            "node:fs/shared-async-owner.js",
-        )?;
+        let owner_factory =
+            context.evaluate_script_rooted(ASYNC_OWNER_API, "node:fs/shared-async-owner.js")?;
         let descriptor_value = context.boolean(descriptor);
-        let owner = context.call_rooted(
-            owner_factory,
-            undefined,
-            &[owner_sync, descriptor_value],
-        )?;
+        let owner =
+            context.call_rooted(owner_factory, undefined, &[owner_sync, descriptor_value])?;
         set(context, module, name, owner)?;
     }
     let open_sync = get(context, module, "openSync")?;
     let close_sync = get(context, module, "closeSync")?;
     let fstat_sync = get(context, module, "fstatSync")?;
-    let factory = context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
+    let factory =
+        context.evaluate_script_rooted(OPEN_CLOSE_FACTORY, "node:fs/shared-open-close.js")?;
     let undefined = context.undefined();
     let read_sync = get(context, module, "readSync")?;
-    let open_close =
-        context.call_rooted(factory, undefined, &[open_sync, close_sync, read_sync, fstat_sync])?;
+    let open_close = context.call_rooted(
+        factory,
+        undefined,
+        &[open_sync, close_sync, read_sync, fstat_sync],
+    )?;
     let open = get(context, open_close, "open")?;
     let close = get(context, open_close, "close")?;
     let read = get(context, open_close, "read")?;
@@ -2433,13 +2432,21 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let readable = get(context, streams, "Readable")?;
     let read_stream_factory = context
         .evaluate_script_rooted(CREATE_READ_STREAM, "node:fs/shared-create-read-stream.js")?;
-    let read_stream_open = context.host_function(crate::host::shared_vm::operation("fsReadStreamOpen"))?;
-    let read_stream_read = context.host_function(crate::host::shared_vm::operation("fsReadStreamRead"))?;
-    let read_stream_close = context.host_function(crate::host::shared_vm::operation("fsReadStreamClose"))?;
+    let read_stream_open =
+        context.host_function(crate::host::shared_vm::operation("fsReadStreamOpen"))?;
+    let read_stream_read =
+        context.host_function(crate::host::shared_vm::operation("fsReadStreamRead"))?;
+    let read_stream_close =
+        context.host_function(crate::host::shared_vm::operation("fsReadStreamClose"))?;
     let read_stream_api = context.call_rooted(
         read_stream_factory,
         undefined,
-        &[read_stream_open, read_stream_read, read_stream_close, readable],
+        &[
+            read_stream_open,
+            read_stream_read,
+            read_stream_close,
+            readable,
+        ],
     )?;
     let create_read_stream = get(context, read_stream_api, "createReadStream")?;
     let read_stream = get(context, read_stream_api, "ReadStream")?;
@@ -2491,8 +2498,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "(statfsSync) => (...args) => Promise.resolve().then(() => statfsSync(...args))",
         "node:fs/promises/shared-statfs.js",
     )?;
-    let statfs_promise =
-        context.call_rooted(statfs_promise_factory, undefined, &[statfs_sync])?;
+    let statfs_promise = context.call_rooted(statfs_promise_factory, undefined, &[statfs_sync])?;
     set(context, promises, "statfs", statfs_promise)?;
     let mkdtemp_disposable_factory = context.evaluate_script_rooted(
         "(mkdtempSync, rmSync) => async (prefix) => { const absolutePath = await mkdtempSync(prefix); const normalizedPrefix = Buffer.isBuffer(prefix) ? prefix.toString() : prefix instanceof URL ? decodeURIComponent(prefix.pathname) : prefix; const path = normalizedPrefix.startsWith('/') ? absolutePath : `${normalizedPrefix}${absolutePath.slice(-6)}`; const remove = () => Promise.resolve().then(() => rmSync(absolutePath, { recursive: true, force: true })); const disposable = { path, remove }; disposable[Symbol.asyncDispose] = remove; return disposable; }",
@@ -2526,22 +2532,19 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "(linkSync) => (...args) => Promise.resolve().then(() => linkSync(...args))",
         "node:fs/promises/shared-link.js",
     )?;
-    let link_promise =
-        context.call_rooted(link_promise_factory, undefined, &[link_sync])?;
+    let link_promise = context.call_rooted(link_promise_factory, undefined, &[link_sync])?;
     set(context, promises, "link", link_promise)?;
     let rename_promise_factory = context.evaluate_script_rooted(
         "(renameSync) => (...args) => Promise.resolve().then(() => renameSync(...args))",
         "node:fs/promises/shared-rename.js",
     )?;
-    let rename_promise =
-        context.call_rooted(rename_promise_factory, undefined, &[rename_sync])?;
+    let rename_promise = context.call_rooted(rename_promise_factory, undefined, &[rename_sync])?;
     set(context, promises, "rename", rename_promise)?;
     let unlink_promise_factory = context.evaluate_script_rooted(
         "(unlinkSync) => (...args) => Promise.resolve().then(() => unlinkSync(...args))",
         "node:fs/promises/shared-unlink.js",
     )?;
-    let unlink_promise =
-        context.call_rooted(unlink_promise_factory, undefined, &[unlink_sync])?;
+    let unlink_promise = context.call_rooted(unlink_promise_factory, undefined, &[unlink_sync])?;
     set(context, promises, "unlink", unlink_promise)?;
     for (name, sync_name) in [("chown", "chownSync"), ("lchown", "lchownSync")] {
         let owner_sync = get(context, module, sync_name)?;
@@ -2549,8 +2552,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             "(ownerSync) => (...args) => Promise.resolve().then(() => ownerSync(...args))",
             "node:fs/promises/shared-owner.js",
         )?;
-        let owner_promise =
-            context.call_rooted(owner_promise_factory, undefined, &[owner_sync])?;
+        let owner_promise = context.call_rooted(owner_promise_factory, undefined, &[owner_sync])?;
         set(context, promises, name, owner_promise)?;
     }
     let access_promise_factory = context.evaluate_script_rooted(
@@ -2571,11 +2573,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     for name in ["lchmod", "utimes", "lutimes"] {
         let name_root = context.string_rooted(name);
-        let promise = context.call_rooted(
-            metadata_promise_factory,
-            undefined,
-            &[name_root],
-        )?;
+        let promise = context.call_rooted(metadata_promise_factory, undefined, &[name_root])?;
         set(context, promises, name, promise)?;
         context.release_root(name_root);
         context.release_root(promise);
@@ -2657,7 +2655,8 @@ pub(crate) fn promises_module(
     )?;
     let rmdir = context.call_rooted(rmdir_factory, undefined, &[rmdir_sync])?;
     set(context, promises, "rmdir", rmdir)?;
-    let native_watch = context.host_function(crate::host::shared_vm::operation("fsRecursivePromiseWatch"))?;
+    let native_watch =
+        context.host_function(crate::host::shared_vm::operation("fsRecursivePromiseWatch"))?;
     let watch_factory = context.evaluate_script_rooted(
         "native => async function* _watch(filename, options = undefined) { yield* native(filename, options); }",
         "node:fs/promises/watch-facade.js",
@@ -2821,17 +2820,15 @@ pub(crate) fn read_file_sync(
         Ok(bytes)
     })();
     match bytes {
-        Ok(bytes) => {
-            match encoding.as_deref() {
-                None | Some("buffer") => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
-                Some(encoding) => {
-                    let buffer = crate::modules::buffer_shared_vm::from_bytes(context, &bytes)?;
-                    let to_string = get(context, buffer, "toString")?;
-                    let encoding = context.string_rooted(encoding);
-                    context.call_rooted(to_string, buffer, &[encoding])
-                }
+        Ok(bytes) => match encoding.as_deref() {
+            None | Some("buffer") => crate::modules::buffer_shared_vm::from_bytes(context, &bytes),
+            Some(encoding) => {
+                let buffer = crate::modules::buffer_shared_vm::from_bytes(context, &bytes)?;
+                let to_string = get(context, buffer, "toString")?;
+                let encoding = context.string_rooted(encoding);
+                context.call_rooted(to_string, buffer, &[encoding])
             }
-        }
+        },
         Err(ReadFileFailure::TooLarge(size)) => {
             let error =
                 context.range_error_rooted(&format!("File size ({size}) is greater than 2 GiB"))?;
