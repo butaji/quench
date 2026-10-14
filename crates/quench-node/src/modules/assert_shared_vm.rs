@@ -138,6 +138,9 @@ pub(crate) fn module(
     set(context, strict, "doesNotMatch", does_not_match)?;
     set(context, strict, "fail", fail)?;
     set(context, strict, "equal", strict_equal)?;
+    set(context, strict, "notEqual", not_strict_equal)?;
+    set(context, strict, "deepEqual", deep_strict_equal)?;
+    set(context, strict, "notDeepEqual", not_deep_strict_equal)?;
     set(context, strict, "strict", strict)?;
     set(context, strict, "throws", throws)?;
     set(context, strict, "doesNotThrow", does_not_throw)?;
