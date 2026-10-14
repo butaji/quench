@@ -280,6 +280,10 @@ impl<H: Host> Vm<H> {
         self.set_named_constant(program, prototype, "length", Value::number(0.0))?;
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
+        self.realm
+            .intrinsics
+            .builtin_prototypes
+            .insert((realm, Native::String), prototype);
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
             constructor,

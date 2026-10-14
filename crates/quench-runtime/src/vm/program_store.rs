@@ -18,9 +18,23 @@ struct ProgramEntry {
     /// The program's compiled functions, once the compiled mode first calls
     /// one; `Some(None)` records that none compile.
     compiled: Option<Option<Rc<super::compiled::CompiledProgram>>>,
-    /// An eval program evaluated in the global environment (indirect eval or a host script),
-    /// whose names resolve as script code's do.
-    global_scope: bool,
+    /// The environment the program's root body evaluates in.
+    scope: ProgramScope,
+}
+
+/// Where a stored program's root body evaluates, which decides whether its
+/// by-name loads can only reach the global environment.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum ProgramScope {
+    /// As its kind dictates: Script code in the global environment.
+    #[default]
+    Own,
+    /// An eval program evaluated in the global environment (indirect eval or a
+    /// host script), whose names resolve as script code's do.
+    Global,
+    /// A body compiled as Script code but evaluated in a direct eval caller's
+    /// environment, whose bindings its names may denote.
+    Caller,
 }
 
 #[derive(Clone, Copy)]
@@ -73,15 +87,28 @@ impl ProgramStore {
     }
 
     pub(crate) fn mark_global_scope(&mut self, id: ProgramId) {
+        self.set_scope(id, ProgramScope::Global);
+    }
+
+    pub(crate) fn mark_caller_scope(&mut self, id: ProgramId) {
+        self.set_scope(id, ProgramScope::Caller);
+    }
+
+    fn set_scope(&mut self, id: ProgramId, scope: ProgramScope) {
         if let Some(entry) = self.programs.get_mut(id.index()) {
-            entry.global_scope = true;
+            entry.scope = scope;
         }
     }
 
+    /// Whether the program's root body evaluates in the global environment.
     pub(crate) fn runs_in_global_scope(&self, id: ProgramId) -> bool {
         self.programs
             .get(id.index())
-            .is_some_and(|entry| entry.global_scope)
+            .is_some_and(|entry| match entry.scope {
+                ProgramScope::Own => entry.residual.kind == crate::bytecode::ProgramKind::Script,
+                ProgramScope::Global => true,
+                ProgramScope::Caller => false,
+            })
     }
 
     pub(crate) fn insert(&mut self, program: ResidualProgram) -> Option<ProgramId> {
@@ -117,7 +144,7 @@ impl ProgramStore {
             module: false,
             lane_views,
             compiled: None,
-            global_scope: false,
+            scope: ProgramScope::Own,
         });
         Some(id)
     }
