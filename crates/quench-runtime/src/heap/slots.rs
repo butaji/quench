@@ -68,7 +68,8 @@ impl FreeSlotBitmap {
                 .zip(other.words.iter())
                 .all(|(left, right)| left & right == 0)
         );
-        for (word_index, (left, right)) in self.words.iter_mut().zip(other.words.iter()).enumerate() {
+        for (word_index, (left, right)) in self.words.iter_mut().zip(other.words.iter()).enumerate()
+        {
             if *right == 0 {
                 continue;
             }

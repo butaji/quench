@@ -701,15 +701,27 @@ impl<H: Host> Vm<H> {
         left: RootId,
         right: RootId,
     ) -> Result<bool, JsError> {
+        self.embedding_relational(super::operations::RelationalOperator::GreaterThan, left, right)
+    }
+
+    pub(crate) fn embedding_greater_equal(
+        &mut self,
+        left: RootId,
+        right: RootId,
+    ) -> Result<bool, JsError> {
+        self.embedding_relational(super::operations::RelationalOperator::GreaterEqual, left, right)
+    }
+
+    fn embedding_relational(
+        &mut self,
+        operator: super::operations::RelationalOperator,
+        left: RootId,
+        right: RootId,
+    ) -> Result<bool, JsError> {
         let left = self.embedding_value(left)?;
         let right = self.embedding_value(right)?;
         let program = self.embedding_program()?;
-        let result = self.binary(
-            &program,
-            super::operations::RelationalOperator::GreaterThan as u32,
-            left,
-            right,
-        )?;
+        let result = self.binary(&program, operator as u32, left, right)?;
         Ok(self.truthy(result))
     }
 

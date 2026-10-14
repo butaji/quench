@@ -81,7 +81,10 @@ impl GeneralCodeCursor {
 }
 
 impl<H: Host> Vm<H> {
-    /// A code cursor for `function`, with its lane view where the lane runs.
+    /// A code cursor for `function`, with its lane view where the lane runs: Wasm programs.
+    /// JavaScript keeps the general loop, whose inline fast arms the lane's per-entry
+    /// hand-off measured slower on every V8-v7 fixture but RegExp (Linux x86_64, 4 vCPU:
+    /// Richards -7%, DeltaBlue -15%, RayTrace -14%, Splay -13%, NavierStokes -16% Score).
     pub(super) fn general_cursor(
         &self,
         program_id: ProgramId,
@@ -90,7 +93,7 @@ impl<H: Host> Vm<H> {
         lane: bool,
     ) -> GeneralCodeCursor {
         GeneralCodeCursor {
-            lane: if lane {
+            lane: if lane && program.kind == crate::bytecode::ProgramKind::Wasm {
                 self.lane_view(program_id, function)
             } else {
                 std::ptr::null()
@@ -262,7 +265,7 @@ impl<H: Host> Vm<H> {
         frame.locals.clear();
         frame.registers.clear();
         frame.registers.extend_from_slice(registers);
-        frame.initialized_registers = frame.registers.len();
+        frame.initialized_registers = frame.initialized_registers.max(registers.len());
         frame.context = CallContext::Internal;
         frame.function = id;
         frame.program = program;
@@ -609,12 +612,46 @@ impl<H: Host> Vm<H> {
         if let Some(slot) = function.self_binding_slot {
             frame.locals[usize::from(slot)] = context.callee().unwrap_or(Value::UNDEFINED);
         }
+        let forwards_arguments = function.call_plan(atoms).forwards_arguments;
         if let Some(slot) = function.arguments_slot {
-            frame.locals[usize::from(slot)] =
-                self.activation_arguments_object(function, context, args)?;
+            frame.locals[usize::from(slot)] = if forwards_arguments {
+                Value::UNMATERIALIZED_ARGUMENTS
+            } else {
+                self.activation_arguments_object(function, context, args)?
+            };
         }
         self.initialize_frame_invocation(atoms, frame, function, context, args);
+        if forwards_arguments {
+            // The frame keeps every argument for the object it may still materialize; legacy
+            // reflection reads the same values, since such a frame reflects no parameter.
+            debug_assert_eq!(frame.reflected_parameters, 0);
+            frame.original_arguments.clear();
+            frame.original_arguments.extend_from_slice(args);
+        }
         Ok(())
+    }
+
+    /// The `arguments` object of activation `f`, whose binding holds
+    /// `UNMATERIALIZED_ARGUMENTS`: made from the values the frame kept, as on entry, and
+    /// bound so that every later read finds the same object.
+    #[inline(never)]
+    pub(super) fn materialize_activation_arguments(
+        &mut self,
+        p: &ResidualProgram,
+        f: usize,
+    ) -> Result<Value, JsError> {
+        let frame = &self.frames[f];
+        let function = &p.functions[frame.function as usize];
+        let slot = usize::from(
+            function
+                .arguments_slot
+                .expect("only an `arguments` binding is unmaterialized"),
+        );
+        let context = frame.context;
+        let args = frame.original_arguments.clone();
+        let arguments = self.activation_arguments_object(function, context, &args)?;
+        self.frames[f].locals[slot] = arguments;
+        Ok(arguments)
     }
 
     /// Copies a program root activation's module import bindings into its locals or, for a
@@ -1120,7 +1157,10 @@ impl<H: Host> Vm<H> {
         // every PC, so they run the general path only.
         let fast_lane = !STOPS
             && stop_pc.is_none()
-            && !cfg!(any(feature = "profile-aggregate", feature = "profile-memory"));
+            && !cfg!(any(
+                feature = "profile-aggregate",
+                feature = "profile-memory"
+            ));
         let initial_function = self.frames[frame].function as usize;
         let mut executing_program = self.frames[frame].program;
         let mut cursor = self.general_cursor(
@@ -1163,8 +1203,12 @@ impl<H: Host> Vm<H> {
                 published_pc = &mut self.frames[frame].pc;
                 self.active_registers = self.frames[frame].registers.as_mut_ptr();
                 if self.frames[frame].function != cursor.function {
-                    cursor =
-                        self.general_cursor(cursor.program, p, self.frames[frame].function, fast_lane);
+                    cursor = self.general_cursor(
+                        cursor.program,
+                        p,
+                        self.frames[frame].function,
+                        fast_lane,
+                    );
                 }
             }
             if STOPS && stop_pc == Some(pc) {
@@ -1233,7 +1277,7 @@ impl<H: Host> Vm<H> {
                 }
                 Op::LoadCapture => {
                     if let Some(value) =
-                        self.direct_capture(frame, ins.capture_depth(), ins.capture_slot())
+                        self.cached_direct_capture(frame, ins.capture_depth(), ins.capture_slot())
                     {
                         self.write(frame, ins.result_register(), value);
                         continue;
@@ -1347,6 +1391,7 @@ impl<H: Host> Vm<H> {
                 }
                 // A field cache hit reads a data slot, and an array's length is an own data
                 // property: neither allocates nor throws. Anything else takes the general path.
+                // `this` is a base once the activation fixed it, as for `SetThisField`.
                 Op::GetField
                     if ins.result_flags() == 0
                         && let Some(crate::bytecode::FieldLookup::Atom {
@@ -1354,9 +1399,13 @@ impl<H: Host> Vm<H> {
                             base,
                             cache_site,
                         }) = ins.field_lookup()
-                        && let Some(register) = base.register_index() =>
+                        && let Some(object) = match base.register_index() {
+                            Some(register) => Some(self.read(frame, register)),
+                            None => self.frames[frame]
+                                .fixed_this
+                                .then(|| self.frames[frame].this),
+                        } =>
                 {
-                    let object = self.read(frame, register);
                     let value = match self.cached_field_hit(p, object, cache_site) {
                         super::object::FieldCacheProbe::Hit(value) => Some(value),
                         super::object::FieldCacheProbe::Ineligible => {
@@ -1448,10 +1497,13 @@ impl<H: Host> Vm<H> {
                         // share this return path and may enter defined function zero.
                         debug_assert!(
                             completed_frame.function != super::ROOT_FUNCTION_ID
-                                || self.programs.wasm_function_signature(
-                                    completed_frame.program,
-                                    completed_frame.function,
-                                ).is_some()
+                                || self
+                                    .programs
+                                    .wasm_function_signature(
+                                        completed_frame.program,
+                                        completed_frame.function,
+                                    )
+                                    .is_some()
                         );
                         self.pool_frame(completed_frame);
                         frame = pending.caller;
@@ -1464,7 +1516,12 @@ impl<H: Host> Vm<H> {
                         };
                         pc = self.frames[frame].pc;
                         cursor = pending.caller_cursor.unwrap_or_else(|| {
-                            self.general_cursor(executing_program, p, self.frames[frame].function, fast_lane)
+                            self.general_cursor(
+                                executing_program,
+                                p,
+                                self.frames[frame].function,
+                                fast_lane,
+                            )
                         });
                         published_pc = &mut self.frames[frame].pc;
                         drop(pending.call_guard);
@@ -1496,8 +1553,12 @@ impl<H: Host> Vm<H> {
                     pc = self.frames[frame].pc;
                     let callee_program = self.frames[frame].program;
                     debug_assert_eq!(callee_program, executing_program);
-                    cursor =
-                        self.general_cursor(callee_program, p, self.frames[frame].function, fast_lane);
+                    cursor = self.general_cursor(
+                        callee_program,
+                        p,
+                        self.frames[frame].function,
+                        fast_lane,
+                    );
                     published_pc = &mut self.frames[frame].pc;
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
                 }
@@ -1513,9 +1574,12 @@ impl<H: Host> Vm<H> {
                     executing_program = replacement_program;
                     executing_residual = current_program.as_deref().unwrap_or(entry_program);
                     pc = self.frames[frame].pc;
-                    cursor = self.general_cursor(replacement_program,
+                    cursor = self.general_cursor(
+                        replacement_program,
                         current_program.as_deref().unwrap_or(entry_program),
-                        self.frames[frame].function, fast_lane);
+                        self.frames[frame].function,
+                        fast_lane,
+                    );
                     published_pc = &mut self.frames[frame].pc;
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
                     // The replacement frame publishes all callee roots before this back edge.
@@ -1597,7 +1661,12 @@ impl<H: Host> Vm<H> {
                     frame = pending.caller;
                     pc = self.frames[frame].pc;
                     *cursor = pending.caller_cursor.unwrap_or_else(|| {
-                        self.general_cursor(executing_program, p, self.frames[frame].function, fast_lane)
+                        self.general_cursor(
+                            executing_program,
+                            p,
+                            self.frames[frame].function,
+                            fast_lane,
+                        )
                     });
                     self.active_registers = self.frames[frame].registers.as_mut_ptr();
                     throwing_pc = pending.call_pc;

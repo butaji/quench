@@ -42,8 +42,15 @@ pub(crate) fn entry_path(path: &Path) -> Result<PathBuf, String> {
 /// Match Node's tryGetCwd fallback for eval and stdin module setup.
 fn inline_directory(context: &mut Context<'_>) -> Result<PathBuf, RootedError> {
     let cwd = context.host_mut().shared_state().borrow().cwd.clone();
-    if let Ok(path) = cwd.query_path() { return Ok(path); }
-    std::env::current_exe().map(|path| path.parent().unwrap_or_else(|| Path::new("/")).to_path_buf())
+    if let Ok(path) = cwd.query_path() {
+        return Ok(path);
+    }
+    std::env::current_exe()
+        .map(|path| {
+            path.parent()
+                .unwrap_or_else(|| Path::new("/"))
+                .to_path_buf()
+        })
         .map_err(|error| RootedError::host(error.to_string()))
 }
 
@@ -174,7 +181,10 @@ fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
     while let Some(argument) = arguments.get(index) {
         let specifier = match argument.as_str() {
             "-e" | "--eval" | "-p" | "--print" | "-pe" | "-ep" => break,
-            "-r" | "--require" => { index += 1; arguments.get(index).map(String::as_str) },
+            "-r" | "--require" => {
+                index += 1;
+                arguments.get(index).map(String::as_str)
+            }
             argument => argument.strip_prefix("--require="),
         };
         if let Some(specifier) = specifier {
@@ -187,6 +197,10 @@ fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
 }
 
 fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
+    // The VFS sources wrap `globalThis.__nodeFs`, which building `fs` defines.
+    cached_builtin(context, BuiltinModule::Fs)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_vfs_fs_module");
     let path = crate::modules::path_shared_vm::module(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_path_module");
@@ -290,8 +304,7 @@ pub(super) fn require(
         let builtin_ids = BUILTIN_SPECIFIERS
             .iter()
             .filter_map(|(name, _)| {
-                (!name.starts_with("node:") && !name.starts_with("internal/"))
-                    .then_some(*name)
+                (!name.starts_with("node:") && !name.starts_with("internal/")).then_some(*name)
             })
             .collect::<std::collections::BTreeSet<_>>();
         let builtin_ids = serde_json::to_string(&builtin_ids)
@@ -400,9 +413,13 @@ pub(super) fn require(
         }
         Some(BuiltinModule::InternalTestBinding) => {
             let shared = context.host_mut().shared_state();
-            let process = shared.borrow().process_module.ok_or_else(|| RootedError::host("Process warning owner is not initialized"))?;
+            let process = shared
+                .borrow()
+                .process_module
+                .ok_or_else(|| RootedError::host("Process warning owner is not initialized"))?;
             let warning = get(context, process, "emitWarning")?;
-            let message = context.string_rooted("These APIs are for internal testing only. Do not use them.");
+            let message =
+                context.string_rooted("These APIs are for internal testing only. Do not use them.");
             let kind = context.string_rooted("internal/test/binding");
             context.call_rooted(warning, process, &[message, kind])?;
             let dgram = cached_builtin(context, BuiltinModule::Dgram)?;
@@ -722,13 +739,28 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("node:constants", BuiltinModule::Internal("constants")),
     ("dns/promises", BuiltinModule::Internal("dns/promises")),
     ("node:dns/promises", BuiltinModule::Internal("dns/promises")),
-    ("inspector/promises", BuiltinModule::Internal("inspector/promises")),
-    ("node:inspector/promises", BuiltinModule::Internal("inspector/promises")),
+    (
+        "inspector/promises",
+        BuiltinModule::Internal("inspector/promises"),
+    ),
+    (
+        "node:inspector/promises",
+        BuiltinModule::Internal("inspector/promises"),
+    ),
     ("punycode", BuiltinModule::Internal("punycode")),
     ("node:punycode", BuiltinModule::Internal("punycode")),
-    ("readline/promises", BuiltinModule::Internal("readline/promises")),
-    ("node:readline/promises", BuiltinModule::Internal("readline/promises")),
-    ("node:test/reporters", BuiltinModule::Internal("node:test/reporters")),
+    (
+        "readline/promises",
+        BuiltinModule::Internal("readline/promises"),
+    ),
+    (
+        "node:readline/promises",
+        BuiltinModule::Internal("readline/promises"),
+    ),
+    (
+        "node:test/reporters",
+        BuiltinModule::Internal("node:test/reporters"),
+    ),
     ("_http_agent", BuiltinModule::Internal("_http_agent")),
     ("node:_http_agent", BuiltinModule::Internal("_http_agent")),
     ("_http_client", BuiltinModule::Internal("_http_client")),
@@ -736,23 +768,56 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("_http_common", BuiltinModule::Internal("_http_common")),
     ("node:_http_common", BuiltinModule::Internal("_http_common")),
     ("_http_incoming", BuiltinModule::Internal("_http_incoming")),
-    ("node:_http_incoming", BuiltinModule::Internal("_http_incoming")),
+    (
+        "node:_http_incoming",
+        BuiltinModule::Internal("_http_incoming"),
+    ),
     ("_http_outgoing", BuiltinModule::Internal("_http_outgoing")),
-    ("node:_http_outgoing", BuiltinModule::Internal("_http_outgoing")),
+    (
+        "node:_http_outgoing",
+        BuiltinModule::Internal("_http_outgoing"),
+    ),
     ("_http_server", BuiltinModule::Internal("_http_server")),
     ("node:_http_server", BuiltinModule::Internal("_http_server")),
     ("_stream_duplex", BuiltinModule::Internal("_stream_duplex")),
-    ("node:_stream_duplex", BuiltinModule::Internal("_stream_duplex")),
-    ("_stream_passthrough", BuiltinModule::Internal("_stream_passthrough")),
-    ("node:_stream_passthrough", BuiltinModule::Internal("_stream_passthrough")),
-    ("_stream_readable", BuiltinModule::Internal("_stream_readable")),
-    ("node:_stream_readable", BuiltinModule::Internal("_stream_readable")),
-    ("_stream_transform", BuiltinModule::Internal("_stream_transform")),
-    ("node:_stream_transform", BuiltinModule::Internal("_stream_transform")),
+    (
+        "node:_stream_duplex",
+        BuiltinModule::Internal("_stream_duplex"),
+    ),
+    (
+        "_stream_passthrough",
+        BuiltinModule::Internal("_stream_passthrough"),
+    ),
+    (
+        "node:_stream_passthrough",
+        BuiltinModule::Internal("_stream_passthrough"),
+    ),
+    (
+        "_stream_readable",
+        BuiltinModule::Internal("_stream_readable"),
+    ),
+    (
+        "node:_stream_readable",
+        BuiltinModule::Internal("_stream_readable"),
+    ),
+    (
+        "_stream_transform",
+        BuiltinModule::Internal("_stream_transform"),
+    ),
+    (
+        "node:_stream_transform",
+        BuiltinModule::Internal("_stream_transform"),
+    ),
     ("_stream_wrap", BuiltinModule::Internal("_stream_wrap")),
     ("node:_stream_wrap", BuiltinModule::Internal("_stream_wrap")),
-    ("_stream_writable", BuiltinModule::Internal("_stream_writable")),
-    ("node:_stream_writable", BuiltinModule::Internal("_stream_writable")),
+    (
+        "_stream_writable",
+        BuiltinModule::Internal("_stream_writable"),
+    ),
+    (
+        "node:_stream_writable",
+        BuiltinModule::Internal("_stream_writable"),
+    ),
     ("_tls_common", BuiltinModule::Internal("_tls_common")),
     ("node:_tls_common", BuiltinModule::Internal("_tls_common")),
     ("_tls_wrap", BuiltinModule::Internal("_tls_wrap")),
@@ -854,7 +919,10 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("internal/deps/undici/undici", BuiltinModule::InternalUndici),
     ("internal/test/binding", BuiltinModule::InternalTestBinding),
     ("internal/blocklist", BuiltinModule::InternalBlockList),
-    ("internal/socketaddress", BuiltinModule::InternalSocketAddress),
+    (
+        "internal/socketaddress",
+        BuiltinModule::InternalSocketAddress,
+    ),
     ("https", BuiltinModule::Https),
     ("node:https", BuiltinModule::Https),
     ("http2", BuiltinModule::Http2),
@@ -1122,7 +1190,11 @@ fn resolve_filename(
     let node_lib = context.host_mut().node_library_root.join("lib");
     let internal_specifier = specifier.strip_prefix("node:").unwrap_or(specifier);
     let node_internal = internal_specifier.starts_with("internal/")
-        || (internal_specifier.starts_with('_') && node_lib.join(internal_specifier).with_extension("js").is_file());
+        || (internal_specifier.starts_with('_')
+            && node_lib
+                .join(internal_specifier)
+                .with_extension("js")
+                .is_file());
     let (base, resolved_specifier) = if node_internal {
         (node_lib.as_path(), format!("./{internal_specifier}"))
     } else {
@@ -1462,7 +1534,9 @@ const getLinkedBinding = () => ({});
                 };
                 let prefix = if in_node_internal {
                     format!("(function (exports, require, module, __filename, __dirname, primordials, __nativeInternalBinding) {{ {internal_binding}")
-                } else { format!("{WRAPPER_PREFIX}{internal_binding}") };
+                } else {
+                    format!("{WRAPPER_PREFIX}{internal_binding}")
+                };
                 let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
                 drop(text);
                 drop(source);
@@ -1493,9 +1567,15 @@ const getLinkedBinding = () => ({});
                 // call, so the file text and wrapper are released before it.
                 drop(wrapper_source);
                 drop(file_text);
+                if parent.is_none() {
+                    crate::host::resident_pages::release_read_only_pages();
+                }
                 let mut arguments = vec![exports, require, module, name, directory, primordials];
                 if in_node_internal {
-                    arguments.push(context.host_function(crate::host::shared_vm::operation("traceInternal"))?);
+                    arguments.push(
+                        context
+                            .host_function(crate::host::shared_vm::operation("traceInternal"))?,
+                    );
                 }
                 context.call_rooted(wrapper, exports, &arguments)?;
                 if let Some(root) = primordial_seed {

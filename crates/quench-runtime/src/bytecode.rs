@@ -813,6 +813,9 @@ opcodes!(
     LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
     StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
     JumpTrue => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
+    // `Call` whose last window argument the instruction before it loaded from the activation's
+    // `arguments` binding (`CallPlan::forwards_arguments`).
+    CallForwardingArguments => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
 
 );
 
@@ -1072,6 +1075,10 @@ pub(crate) struct CallPlan {
     /// activation without that needs no local storage, since promoted bindings live in
     /// registers and nothing else reads its locals.
     pub(crate) addresses_locals: bool,
+    /// The activation passes its `arguments` binding only straight into
+    /// `CallForwardingArguments` calls, so it keeps the argument values instead of an
+    /// `arguments` object until a call needs one (`Function::forwards_arguments_only`).
+    pub(crate) forwards_arguments: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1365,8 +1372,52 @@ impl Function {
                     matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv)
                         || instruction.addressed_local_slots().next().is_some()
                 }),
+                forwards_arguments: self.forwards_arguments_only(),
             }
         })
+    }
+
+    /// Whether every read of the `arguments` binding loads it into the last argument of the
+    /// `CallForwardingArguments` right after, and nothing else can reach the binding: no
+    /// closure, environment clone, dynamic scope access or promoted register, and no
+    /// suspension. An object it later materializes must equal one made on entry: unmapped,
+    /// or mapped onto no parameters.
+    fn forwards_arguments_only(&self) -> bool {
+        let Some(slot) = self.arguments_slot else {
+            return false;
+        };
+        if self.is_generator
+            || self.is_async
+            || (self.arguments_are_mapped() && self.params != 0)
+            || self.local_registers.iter().any(|entry| entry.local == slot)
+            || self.has_dynamic_scope_access()
+        {
+            return false;
+        }
+        let instructions = self.instructions().collect::<Vec<_>>();
+        let mut forwarded = false;
+        for (pc, instruction) in instructions.iter().enumerate() {
+            if matches!(instruction.op(), Op::MakeClosure | Op::CloneEnv) {
+                return false;
+            }
+            if !instruction
+                .addressed_local_slots()
+                .any(|addressed| addressed == slot)
+            {
+                continue;
+            }
+            let feeds_forwarding_call =
+                matches!(instruction.op(), Op::LoadLocal | Op::LoadLocalPlain)
+                    && instructions.get(pc + 1).is_some_and(|next| {
+                        next.op() == Op::CallForwardingArguments
+                            && next.call_window().last() == Some(instruction.result_register())
+                    });
+            if !feeds_forwarding_call {
+                return false;
+            }
+            forwarded = true;
+        }
+        forwarded
     }
 
     /// Whether the function itself can reach bindings by name at run time: it was created
