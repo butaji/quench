@@ -105,13 +105,9 @@ impl Heap {
             let Some(index) = value.legacy_heap_index().map(|index| index as usize) else {
                 return false;
             };
-            marks
-                .get(index / u64::BITS as usize)
-                .is_some_and(|word| {
-                    word.load(Ordering::Relaxed)
-                        & (1 << (index % u64::BITS as usize))
-                        != 0
-                })
+            marks.get(index / u64::BITS as usize).is_some_and(|word| {
+                word.load(Ordering::Relaxed) & (1 << (index % u64::BITS as usize)) != 0
+            })
         };
         if full {
             for (index, slot) in slots.iter_mut().enumerate() {

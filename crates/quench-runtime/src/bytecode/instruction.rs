@@ -16,6 +16,13 @@ pub(crate) struct RegisterWindow {
     pub(crate) count: u16,
 }
 
+impl RegisterWindow {
+    /// The window's last register, when it has one.
+    pub(crate) fn last(self) -> Option<Register> {
+        self.count.checked_sub(1).map(|offset| self.base + offset)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ConstructArguments {
     Registers(RegisterWindow),

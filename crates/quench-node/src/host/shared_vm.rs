@@ -191,7 +191,14 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "netDeliverConnect" (0) => crate::modules::net_shared_vm::deliver_connect,
         method "netServerInitializeOptions" (2) => crate::modules::net_socket_options::initialize_server,
         method "netServerAcceptedOptions" (1) => crate::modules::net_socket_options::accepted_options,
-        method "netServerOnConnection" (2) => crate::modules::net_shared_vm::on_connection,
+        method "netServerOnConnection" (3) => crate::modules::net_server_admission::on_connection,
+        method "netSocketCreateHandle" (1) => crate::modules::net_reference_shared_vm::create_socket_handle,
+        method "netHandleClose" (0) => crate::modules::net_reference_shared_vm::close,
+        method "netHandleCloseComplete" (0) => crate::modules::net_reference_shared_vm::close_complete,
+        method "netHandleGetSockName" (0) => crate::modules::net_reference_shared_vm::get_sock_name,
+        method "netHandleGetPeerName" (0) => crate::modules::net_reference_shared_vm::get_peer_name,
+        method "netServerGetConnections" (2) => crate::modules::net_server_admission::get_connections,
+        method "netServerConnectionsResult" (0) => crate::modules::net_server_admission::connections_result,
         method "netHandleSetNoDelay" (0) => crate::modules::net_reference_shared_vm::set_no_delay,
         method "netHandleSetKeepAlive" (0) => crate::modules::net_reference_shared_vm::set_keep_alive,
         method "netSocketInitializeOptions" (2) => crate::modules::net_socket_options::initialize,
@@ -540,7 +547,10 @@ impl quench_runtime::Host for NodeHost {
                 .expect("generated Node builtin export names are valid JSON");
         let builtin_name = specifier.strip_prefix("node:").unwrap_or(specifier);
         if crate::host::shared_vm::commonjs::is_builtin_specifier(specifier) {
-            let exports = builtin_exports.get(builtin_name).map(Vec::as_slice).unwrap_or(&[]);
+            let exports = builtin_exports
+                .get(builtin_name)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
             let require_specifier = specifier;
             let mut source = format!(
                 "const __quenchModule = globalThis[\"\\0quench:require\"]({});\nexport default __quenchModule;\n",
@@ -587,9 +597,12 @@ impl quench_runtime::Host for NodeHost {
         };
         let path = resolution.full_path();
         let path = std::fs::canonicalize(&path).unwrap_or(path);
-        let bytes = std::fs::read(&path)
-            .map_err(|error| format!("module {}: {error}", path.display()))?;
-        let extension = path.extension().and_then(|value| value.to_str()).unwrap_or("");
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
         if extension == "node" {
             return Ok(None);
         }
@@ -607,7 +620,10 @@ impl quench_runtime::Host for NodeHost {
                     "import {{ createRequire as __quenchCreateRequire }} from 'node:module';\nconst __quenchRequire = __quenchCreateRequire({filename});\nconst __quenchModule = __quenchRequire({filename});\nexport default __quenchModule;\n"
                 );
                 source.push_str("export { __quenchModule as 'module.exports' };\n");
-                for (index, export) in commonjs_exports::names(&String::from_utf8_lossy(&bytes)).into_iter().enumerate() {
+                for (index, export) in commonjs_exports::names(&String::from_utf8_lossy(&bytes))
+                    .into_iter()
+                    .enumerate()
+                {
                     let local = format!("__quenchExport{index}");
                     source.push_str("const ");
                     source.push_str(&local);

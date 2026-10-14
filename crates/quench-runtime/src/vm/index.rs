@@ -192,8 +192,7 @@ impl<H: Host> Vm<H> {
                     Ok(())
                 };
             }
-            if let Some(array_object) = self.heap.array(object)
-            {
+            if let Some(array_object) = self.heap.array(object) {
                 let elements = array_object.elements();
                 let existing = index < elements.len()
                     && elements.get(index).is_some_and(|value| !value.is_deleted())
@@ -238,10 +237,9 @@ impl<H: Host> Vm<H> {
             {
                 return Ok(());
             }
-            let replaces = self
-                .heap
-                .array_elements(object)
-                .is_some_and(|elements| elements.get(index).is_some_and(|value| !value.is_deleted()));
+            let replaces = self.heap.array_elements(object).is_some_and(|elements| {
+                elements.get(index).is_some_and(|value| !value.is_deleted())
+            });
             if replaces {
                 self.replace_dense_element(object, index, value);
                 return Ok(());
@@ -284,8 +282,7 @@ impl<H: Host> Vm<H> {
     /// Overwrites a present dense array element after every guard has passed.
     #[inline(always)]
     pub(super) fn replace_dense_element(&mut self, object: Value, index: usize, value: Value) {
-        let Some(array_object) = self.heap.array_mut(object)
-        else {
+        let Some(array_object) = self.heap.array_mut(object) else {
             unreachable!("dense element replacement requires an array")
         };
         // Only a mapped arguments object mirrors its elements into parameter bindings.
@@ -412,8 +409,7 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn set_array_element(&mut self, object: Value, index: usize, value: Value) -> bool {
-        let Some(array_object) = self.heap.array(object)
-        else {
+        let Some(array_object) = self.heap.array(object) else {
             return false;
         };
         let elements = array_object.elements();
@@ -422,8 +418,7 @@ impl<H: Host> Vm<H> {
         }
         let dense_len = elements.len();
         if index < dense_len {
-            let Some(array_object) = self.heap.array_mut(object)
-            else {
+            let Some(array_object) = self.heap.array_mut(object) else {
                 unreachable!()
             };
             let elements = array_object.elements_mut();
@@ -437,8 +432,7 @@ impl<H: Host> Vm<H> {
         let sparse = self.array_index_uses_sparse_storage(object, index, dense_len);
         if sparse {
             self.heap.sparse_set(object, index, value);
-        } else if let Some(array_object) = self.heap.array_mut(object)
-        {
+        } else if let Some(array_object) = self.heap.array_mut(object) {
             let elements = array_object.elements_mut();
             #[cfg(feature = "profile-aggregate")]
             self.profile
@@ -480,8 +474,7 @@ impl<H: Host> Vm<H> {
         object: Value,
         index: usize,
     ) -> Result<(), JsError> {
-        let Some(array_object) = self.heap.array(object)
-        else {
+        let Some(array_object) = self.heap.array(object) else {
             return Err(JsError("array receiver is not array".into()));
         };
         let elements = array_object.elements();
@@ -523,8 +516,7 @@ mod tests {
             ),
         });
         assert!(vm.set_array_element(array, 1_000_000, Value::TRUE));
-        let Some(array_object) = vm.heap.array(array)
-        else {
+        let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
         };
         let elements = array_object.elements();
@@ -538,8 +530,7 @@ mod tests {
         let mut vm = Vm::new(SilentHost);
         let array = vm.array_create(&program, 16_900).unwrap();
 
-        let Some(array_object) = vm.heap.array(array)
-        else {
+        let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
         };
         let elements = array_object.elements();
@@ -548,8 +539,7 @@ mod tests {
         assert_eq!(vm.heap.sparse_length(array), None);
 
         assert!(vm.set_array_element(array, 16_899, Value::TRUE));
-        let Some(array_object) = vm.heap.array(array)
-        else {
+        let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
         };
         let elements = array_object.elements();
@@ -570,8 +560,7 @@ mod tests {
 
         assert!(vm.set_array_element(array, 2_048, Value::TRUE));
 
-        let Some(array_object) = vm.heap.array(array)
-        else {
+        let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
         };
         let elements = array_object.elements();
@@ -596,8 +585,7 @@ mod tests {
 
         vm.heap.sparse_set_length(array, 16_900);
 
-        let Some(array_object) = vm.heap.array(array)
-        else {
+        let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
         };
         let elements = array_object.elements();
@@ -649,8 +637,7 @@ mod tests {
 
         assert_eq!(vm.delete_array_index(array, 1023), Value::TRUE);
 
-        let Some(array_object) = vm.heap.array(array)
-        else {
+        let Some(array_object) = vm.heap.array(array) else {
             panic!("array cell")
         };
         let elements = array_object.elements();

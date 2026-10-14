@@ -7,7 +7,8 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-const DOMAIN_MODULE: &str = quench_js_check::checked_js!(r#"(EventEmitter, processObject) => {
+const DOMAIN_MODULE: &str = quench_js_check::checked_js!(
+    r#"(EventEmitter, processObject) => {
   const stack = [];
 
   const report = (domain, error) => {
@@ -135,7 +136,8 @@ const DOMAIN_MODULE: &str = quench_js_check::checked_js!(r#"(EventEmitter, proce
   const module = { Domain, create, createDomain: create, _stack: stack };
   Object.defineProperty(module, 'active', { enumerable: true, get: currentDomain });
   return module;
-}"#);
+}"#
+);
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(DOMAIN_MODULE, "node:domain/shared.js")?;
