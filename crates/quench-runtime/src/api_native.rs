@@ -314,6 +314,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Apply shared ToNumber, including original number-hint conversion hooks
+    /// and Symbol/BigInt rejection, without replacing it with host parsing.
+    pub fn to_number(&mut self, root: RootId) -> Result<f64, RootedError> {
+        let result = self.vm.embedding_to_number(root);
+        result.map_err(|error| self.error(error))
+    }
+
     pub fn arithmetic_rooted(
         &mut self,
         operation: NativeArithmetic,
