@@ -637,6 +637,20 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `Binary` of arithmetic operator `OP` on two registers, its operator and operand
+    /// kinds resolved when the view was derived (`specialize_arithmetic`): the fields hold
+    /// the operand registers themselves.
+    fn lane_arith<OP: u32>(cx, r, ip, i, view) {
+        let Some((value, _)) = super::operations::number_operator::<OP>(r.get(i.b), r.get(i.c))
+        else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+lane_handler! {
     /// A present dense array element; any other read takes the general path.
     fn lane_get_index<>(cx, r, ip, i, view) {
         let (Some(base), Some(key)) =
@@ -3385,6 +3399,7 @@ fn derive_lane_view<H: Host>(
             }
         }
     }
+    specialize_arithmetic::<H>(function, &mut records);
     let mut entries = vec![false; records.len()].into_boxed_slice();
     let mut run = 0usize;
     for pc in (0..records.len()).rev() {
@@ -3407,6 +3422,39 @@ fn derive_lane_view<H: Host>(
         memory_register,
         activation,
         enters,
+    }
+}
+
+/// Gives each lane `Binary` record of an arithmetic operator on two register operands the
+/// handler for that operator, with the decoded registers in its fields: the record then
+/// neither decodes operand kinds nor dispatches on the operator.
+fn specialize_arithmetic<H: Host>(function: &Function, records: &mut [LaneInstruction]) {
+    use super::operations::{ADDITION, DIVISION, MULTIPLICATION, SUBTRACTION};
+    let generic = lane_binary::<H> as Handler as *const ();
+    for (pc, packed) in function.code.iter().enumerate() {
+        let instruction = decoded_instruction(function, *packed);
+        let record = &mut records[pc];
+        if record.handler != generic || instruction.numeric_local_target().is_some() {
+            continue;
+        }
+        let (left, right) = (instruction.operand_b(), instruction.operand_c());
+        let (
+            Some(crate::bytecode::OperandKind::Register),
+            Some(crate::bytecode::OperandKind::Register),
+        ) = (left.kind(), right.kind())
+        else {
+            continue;
+        };
+        let handler: Handler = match instruction.binary_operator() {
+            ADDITION => lane_arith::<H, ADDITION>,
+            SUBTRACTION => lane_arith::<H, SUBTRACTION>,
+            MULTIPLICATION => lane_arith::<H, MULTIPLICATION>,
+            DIVISION => lane_arith::<H, DIVISION>,
+            _ => continue,
+        };
+        record.handler = handler as *const ();
+        record.b = left.payload();
+        record.c = right.payload();
     }
 }
 
