@@ -94,7 +94,14 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_url_global");
     install_shared_web_globals(context, buffer_module)?;
-    install_vfs_globals(context, buffer_module)?;
+    // Fs/Stream bootstrap captures language intrinsics before guest mutation.
+    // Keep that initialization eager while the optional VFS layer is deferred.
+    cached_builtin(context, BuiltinModule::Fs)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_fs_module");
+    if context.host_mut().vfs_enabled() {
+        install_vfs_globals(context)?;
+    }
     let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
     set(context, global, "console", console)?;
@@ -181,34 +188,19 @@ fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
     Ok(())
 }
 
-fn install_vfs_globals(
-    context: &mut Context<'_>,
-    buffer_module: RootId,
-) -> Result<(), RootedError> {
-    let fs = cached_builtin(context, BuiltinModule::Fs)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_fs_module");
+fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
     let path = crate::modules::path_shared_vm::module(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_path_module");
     let stream = cached_builtin(context, BuiltinModule::Stream)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_stream_module");
-    let buffer = get(context, buffer_module, "Buffer")?;
-    let install_missing_fs_methods = context.evaluate_script_rooted(
-        "(fs) => { for (const name of ['utimesSync', 'lutimesSync', 'futimesSync', 'utimes', 'lutimes', 'futimes', 'rm', 'write']) { if (typeof fs[name] === 'function') continue; Object.defineProperty(fs, name, { configurable: true, writable: true, value() { const error = new Error(`${name} is unavailable outside a mounted VFS`); error.code = 'ENOSYS'; throw error; } }); } }",
-        "node:bootstrap/vfs-fs-methods.js",
-    )?;
-    let undefined = context.undefined();
-    context.call_rooted(install_missing_fs_methods, undefined, &[fs])?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_fs_fallbacks");
     let install = context.evaluate_script_rooted(
-        "(buffer, fs, path, stream) => Object.defineProperties(globalThis, { NodeBuffer: { configurable: true, value: buffer }, __nodeFs: { configurable: true, value: fs }, __nodePath: { configurable: true, value: path }, __nodeStream: { configurable: true, value: stream }, __nodeFdPaths: { configurable: true, value: {} }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
+        "(path, stream) => Object.defineProperties(globalThis, { __nodePath: { configurable: true, value: path }, __nodeStream: { configurable: true, value: stream }, __nodeFdPaths: { configurable: true, value: {} }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
         "node:bootstrap/vfs-globals.js",
     )?;
     let undefined = context.undefined();
-    context.call_rooted(install, undefined, &[buffer, fs, path, stream])?;
+    context.call_rooted(install, undefined, &[path, stream])?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_globals");
 
@@ -288,7 +280,7 @@ pub(super) fn require(
         set(context, error, "code", code)?;
         return Err(context.throw(error));
     }
-    if specifier == "node:vfs" && !vfs_enabled(context) {
+    if specifier == "node:vfs" && !context.host_mut().vfs_enabled() {
         let error = context.error_rooted(
             "ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:vfs",
         )?;
@@ -571,16 +563,6 @@ pub(super) fn require(
         EntryGoal::Node
     };
     load(context, &filename, Some(parent), goal)
-}
-
-fn vfs_enabled(context: &mut Context<'_>) -> bool {
-    context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .exec_argv
-        .iter()
-        .any(|argument| argument == "--experimental-vfs")
 }
 
 pub(super) fn resolve(
