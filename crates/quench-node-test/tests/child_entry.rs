@@ -6195,3 +6195,26 @@ const timeout=setTimeout(function(...args){const before=process.getActiveResourc
 const interval=setInterval(function(...args){clearInterval(interval);record.call(this,'interval',interval,args)},1,'r',4);
 "#);
 }
+
+#[test]
+fn global_crypto_is_installed_before_commonjs_entry_and_preloads() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = r#"const descriptor=Object.getOwnPropertyDescriptor(globalThis,'crypto');
+console.log(JSON.stringify([typeof globalThis.crypto,descriptor.enumerable,descriptor.configurable,typeof descriptor.get,globalThis.crypto===require('crypto').webcrypto]));"#;
+    std::fs::write(directory.path().join("preload.cjs"), source).unwrap();
+    std::fs::write(directory.path().join("entry.cjs"), source).unwrap();
+    for arguments in [vec!["entry.cjs"], vec!["--require", "./preload.cjs", "entry.cjs"]] {
+        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command = Command::new(executable);
+            command.current_dir(directory.path()).args(&arguments);
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+        });
+        for observation in &observations {
+            assert!(!observation.timed_out);
+            assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+            assert!(observation.stderr.is_empty());
+        }
+        assert_eq!(observations[0].stdout, observations[1].stdout);
+    }
+}
