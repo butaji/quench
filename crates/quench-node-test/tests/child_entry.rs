@@ -1840,6 +1840,33 @@ console.log('parent-resolution');fs.rmSync(dir,{recursive:true,force:true});
 }
 
 #[test]
+fn read_file_sync_accepts_file_urls_and_uses_url_validation() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert'),url=require('url');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-url-'));
+const file=path.join(dir,'a space %.txt');fs.writeFileSync(file,'hello');
+assert.strictEqual(fs.readFileSync(url.pathToFileURL(file),'utf8'),'hello');
+for(const input of ['https://example.com/a','file://example.com/a','file:///a%2Fb']) {
+  try { fs.readFileSync(new URL(input));assert.fail('invalid file URL accepted'); }
+  catch(error) { console.log(error.name,error.code); }
+}
+console.log('file-url-read');fs.rmSync(dir,{recursive:true,force:true});
+"#);
+}
+
+#[test]
+fn public_commonjs_wrappers_have_five_parameters_and_no_internal_bindings() {
+    compare_node_stream_source(r#"
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-cjs-wrapper-'));
+const file=path.join(dir,'module.cjs');
+fs.writeFileSync(file,'const primordials=42;module.exports=[arguments.length,primordials,typeof internalBinding]');
+assert.deepStrictEqual(require(file),[5,42,'undefined']);
+console.log('public-cjs-wrapper');fs.rmSync(dir,{recursive:true,force:true});
+"#);
+}
+
+#[test]
 fn really_exit_coerces_int32_and_skips_guest_exit_handlers() {
     for value in ["undefined", "7.9", "'7'", "true", "NaN", "4294967298", "Symbol()", "1n", "({valueOf(){console.log('coerce');throw Error('marker')}})"] {
         let source = format!("process.on('exit',()=>console.log('must-not-emit'));console.log('before');process.reallyExit({value});console.log('must-not-return');");
