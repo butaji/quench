@@ -1159,8 +1159,14 @@ impl<H: Host> Vm<H> {
         args: &[Value],
         callee: Value,
     ) -> Result<Value, JsError> {
+        // A realm's own natives run in that realm; a native shared by every realm runs in
+        // its caller's, which is the realm whose objects it builds.
         let realm = match self.heap.get(callee) {
-            Some(Cell::Function { object, .. }) => object.realm,
+            Some(Cell::Function { object, .. })
+                if object.realm == self.realm.globals || !self.shared_natives.contains(&callee) =>
+            {
+                object.realm
+            }
             _ => self.realm.globals,
         };
         let previous_global = self.switch_realm_global(realm);
