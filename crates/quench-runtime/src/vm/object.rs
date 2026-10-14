@@ -608,13 +608,12 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         match self.cached_field_hit(p, object, site) {
             FieldCacheProbe::Hit(value) => Ok(value),
-            FieldCacheProbe::OrdinaryMiss => self.get_field_polymorphic(
-                p,
-                object,
-                atom,
-                site,
-                object.heap_reference(),
-            ),
+            FieldCacheProbe::OrdinaryMiss => match self.array_length_field(object, atom) {
+                Some(length) => Ok(length),
+                None => {
+                    self.get_field_polymorphic(p, object, atom, site, object.heap_reference())
+                }
+            },
             FieldCacheProbe::Ineligible => match self.array_length_field(object, atom) {
                 Some(length) => Ok(length),
                 None => self.get_field_uncached(p, object, atom, site, object.heap_reference()),
@@ -855,16 +854,14 @@ impl<H: Host> Vm<H> {
         if let Some(hit) = self.own_shape_field_hit(p, object, site) {
             return Some(hit.value);
         }
-        match self.heap.get(object)? {
-            Cell::String(_) | Cell::Proxy { .. } => None,
-            cell if self.specialized && p.specialized => {
-                match self.object_field_cache_read(cell, atom, site) {
-                    FieldCacheRead::Hit(hit) => Some(hit.value),
-                    _ => None,
-                }
-            }
-            _ => None,
+        if !(self.specialized && p.specialized) {
+            return None;
         }
+        let receiver = self.shape_property_lookup(object, atom)?;
+        let site = self.field_cache_index(site);
+        self.cached_field_value(site, receiver)
+            .or_else(|| self.cached_holder_field_value(site, receiver, atom))
+            .map(|hit| hit.value)
     }
 
     #[inline(always)]
