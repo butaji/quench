@@ -135,11 +135,10 @@ fn local_index_sources(
         && first.local_slot() <= usize::from(REGISTER_MASK)
         && second.local_slot() <= usize::from(REGISTER_MASK)
         && live_after & ((1 << first.result_register()) | (1 << second.result_register())) == 0)
-        .then(|| {
-            index.set_operand_b(Operand::local(first.local_slot() as u16));
-            index.set_operand_c(Operand::local(second.local_slot() as u16));
-            index
-        })
+        .then_some(())?;
+    index.set_operand_b(Operand::local(first.local_slot() as u16))?;
+    index.set_operand_c(Operand::local(second.local_slot() as u16))?;
+    Some(index)
 }
 
 fn binary_local_target(mut binary: Instr, store: Instr, live_after: u64) -> Option<Instr> {

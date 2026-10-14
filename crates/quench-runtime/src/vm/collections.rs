@@ -519,8 +519,51 @@ impl<H: Host> Vm<H> {
         self.set_builtin_function_name(set, "Set")?;
         Ok(set_proto)
     }
-    pub(super) fn install_map_species(&mut self) -> Result<(), JsError> {
-        let map = self.native_value(Native::Map);
+    /// The symbol-keyed members of one realm's keyed collections: `@@iterator` on the Map and
+    /// Set prototypes (their own `entries` and `values`), each prototype's `@@toStringTag`, and
+    /// the Map and Set constructors' `@@species`.
+    pub(super) fn install_collection_symbols(
+        &mut self,
+        map: Value,
+        map_proto: Value,
+        set: Value,
+        set_proto: Value,
+        weak_map_proto: Value,
+        weak_set_proto: Value,
+    ) -> Result<(), JsError> {
+        let iterator = self.well_known_symbols["iterator"];
+        for (prototype, method) in [(map_proto, "entries"), (set_proto, "values")] {
+            let atom = self.intern_atom(method);
+            let method = self
+                .own_property(prototype, atom)
+                .expect("collection prototype has its iteration method");
+            self.set_symbol_property(prototype, iterator, method)?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(iterator),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
+        for (prototype, tag) in [
+            (map_proto, "Map"),
+            (set_proto, "Set"),
+            (weak_map_proto, "WeakMap"),
+            (weak_set_proto, "WeakSet"),
+        ] {
+            self.install_builtin_to_string_tag(prototype, tag)?;
+        }
+        self.install_map_species(map)?;
+        self.install_set_species(set)
+    }
+
+    fn install_map_species(&mut self, map: Value) -> Result<(), JsError> {
         let Some(species) = self.well_known_symbols.get("species").copied() else {
             return Ok(());
         };
@@ -542,7 +585,7 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
-    pub(super) fn install_set_species(&mut self, set: Value) -> Result<(), JsError> {
+    fn install_set_species(&mut self, set: Value) -> Result<(), JsError> {
         let Some(species) = self.well_known_symbols.get("species").copied() else {
             return Ok(());
         };
@@ -589,42 +632,6 @@ impl<H: Host> Vm<H> {
         )?;
         self.install_builtin_to_string_tag(self.set_iterator_proto, "Set Iterator")?;
 
-        if let Some(iterator) = self.well_known_symbols.get("iterator").copied() {
-            self.set_symbol_property(
-                self.map_proto,
-                iterator,
-                self.native_value(Native::MapEntries),
-            )?;
-            self.set_property_attributes(
-                self.map_proto,
-                PropertyKey::symbol(iterator),
-                PropertyAttributes {
-                    writable: true,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-            self.set_symbol_property(
-                self.set_proto,
-                iterator,
-                self.native_value(Native::SetValues),
-            )?;
-            self.set_property_attributes(
-                self.set_proto,
-                PropertyKey::symbol(iterator),
-                PropertyAttributes {
-                    writable: true,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-        }
         Ok(())
     }
     pub(super) fn construct_collection_native(
