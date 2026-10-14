@@ -94,11 +94,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_url_global");
     install_shared_web_globals(context, buffer_module)?;
-    // Fs/Stream bootstrap captures language intrinsics before guest mutation.
-    // Keep that initialization eager while the optional VFS layer is deferred.
-    cached_builtin(context, BuiltinModule::Fs)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_fs_module");
     if context.host_mut().vfs_enabled() {
         install_vfs_globals(context)?;
     }
@@ -137,6 +132,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
+    // Builtins built after this point see the intrinsics as they are now, whatever a
+    // preload or the entry script does to them (`cached_builtin`).
+    context.seal_startup_intrinsics()?;
     preload_modules(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
@@ -893,7 +891,7 @@ fn cached_builtin(
         return Ok(module);
     }
 
-    let module = build_builtin(context, builtin)?;
+    let module = context.with_startup_intrinsics(|context| build_builtin(context, builtin))?;
     let retained = context.retain(module)?;
     roots.borrow_mut().module_cache.insert(key, retained);
     Ok(module)
