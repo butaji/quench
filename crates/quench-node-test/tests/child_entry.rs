@@ -6456,6 +6456,7 @@ for(const name of ['indexOf','lastIndexOf','includes']) {
    for(const end of [undefined,0,2,4,100,-1,'utf8']) out.push(buffer[name](value,offset,end));
  const log=[],offset={[Symbol.toPrimitive](hint){log.push(hint);return 1;}};out.push(buffer[name]('a',offset),log);
  const marker={};try{buffer[name]('a',{valueOf(){throw marker;}});}catch(error){out.push(error===marker);}
+ for(const value of [()=>{}, {}, [], null,undefined,true,Symbol('x'),1n]){try{buffer[name](value);out.push('accepted');}catch(error){out.push([error.name,error.code,error.message]);}}
  for(const call of [()=>buffer[name]({},0),()=>buffer[name]('a',0,'unknown'),()=>Buffer.prototype[name].call({},'a'),()=>buffer[name]('a',Symbol('x')),()=>buffer[name]('a',1n)]) {try{call();out.push('accepted');}catch(error){out.push([error.name,error.code||null]);}}
 }
 for(const name of ['indexOf','lastIndexOf','includes']) {

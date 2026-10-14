@@ -181,7 +181,7 @@ pub(crate) fn search(
                 context,
                 needle,
                 "value",
-                "of type number or string or an instance of Buffer, or Uint8Array",
+                "one of type number or string or an instance of Buffer or Uint8Array",
             )?);
         }
     };
