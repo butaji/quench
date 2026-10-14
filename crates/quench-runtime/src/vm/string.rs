@@ -441,28 +441,27 @@ impl<H: Host> Vm<H> {
         };
         match native {
             Native::StringAt | Native::StringCodePointAt => {
-                let units = receiver.units().to_vec();
                 let raw = self
                     .to_number(p, args.first().copied().unwrap_or(Value::UNDEFINED))?
                     .trunc() as i64;
+                let units = receiver.units();
                 let index = if native == Native::StringAt && raw < 0 {
                     units.len() as i64 + raw
                 } else {
                     raw
                 };
-                let Some(index) = usize::try_from(index)
+                let Some((index, first)) = usize::try_from(index)
                     .ok()
-                    .filter(|index| *index < units.len())
+                    .and_then(|index| units.get(index).map(|unit| (index, unit)))
                 else {
                     return Ok(Value::UNDEFINED);
                 };
                 if native == Native::StringAt {
-                    return self.string_from_units(&units[index..index + 1]);
+                    return self.string_from_units(&[first]);
                 }
-                let first = units[index];
                 let code_point = units
                     .get(index + 1)
-                    .and_then(|low| crate::unicode::decode_surrogate_pair(first, *low))
+                    .and_then(|low| crate::unicode::decode_surrogate_pair(first, low))
                     .unwrap_or_else(|| u32::from(first));
                 Ok(Value::number(code_point as f64))
             }
