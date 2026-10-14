@@ -923,6 +923,9 @@ pub(crate) struct Vm<H> {
     /// them without formatting and hashing the decimal text.
     array_index_atoms: FxHashMap<u32, Atom>,
     dynamic_atoms: Vec<JsString>,
+    /// Every atom name in id order (`atom_text`, then `dynamic_atoms`), shared by the dynamic
+    /// and module programs whose atoms are a prefix of the VM's.
+    atom_sequence: Rc<crate::bytecode::AtomSequence>,
     // The last string matched by a RegExp, prepared once for repeated matching.
     regexp_subject: Option<Rc<quench_regexp::Subject>>,
     regexp_matchers: regexp::RegExpMatcherCache,
@@ -1568,6 +1571,7 @@ impl<H: Host> Vm<H> {
         self.shapes.truncate(1);
         self.transitions.clear();
         self.atom_text = program.atoms.clone();
+        self.atom_sequence = Rc::new(crate::bytecode::AtomSequence::new(self.atom_text.clone()));
         self.atoms.clear();
         self.atom_collisions.clear();
         self.array_index_atoms.clear();
@@ -1672,7 +1676,7 @@ impl<H: Host> Vm<H> {
         }
     }
     pub(super) fn store_module_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
-        self.intern_program_atoms(&program);
+        let program = self.intern_program_atoms(program);
         let id = self.programs.insert_module(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
@@ -1680,7 +1684,7 @@ impl<H: Host> Vm<H> {
         Some(id)
     }
     pub(super) fn store_dynamic_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
-        self.intern_program_atoms(&program);
+        let program = self.intern_program_atoms(program);
         let id = self.programs.insert(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
@@ -1770,12 +1774,27 @@ impl<H: Host> Vm<H> {
     pub(super) fn object_cache_index(&self, site: usize) -> usize {
         self.active_cache_layout().object_base + site
     }
-    fn intern_program_atoms(&mut self, program: &ResidualProgram) {
+    /// Interns the atoms `program` adds to the VM's; its atom ids are the VM's, so it then reads
+    /// every name through the shared sequence instead of keeping its own copy.
+    fn intern_program_atoms(&mut self, mut program: ResidualProgram) -> ResidualProgram {
         let first_new_atom = self.atom_text.len() + self.dynamic_atoms.len();
         for (index, name) in program.atoms.iter().enumerate().skip(first_new_atom) {
             let atom = self.intern_atom(name);
             debug_assert_eq!(atom as usize, index);
         }
+        debug_assert!(
+            program
+                .atoms
+                .iter()
+                .enumerate()
+                .all(|(atom, name)| self.atom_name(atom as u32) == name),
+            "a dynamic program's atoms are a prefix of the VM's"
+        );
+        program.atoms = crate::bytecode::AtomTable::shared(
+            self.atom_sequence.clone(),
+            program.atoms.len(),
+        );
+        program
     }
     fn call_value(
         &mut self,

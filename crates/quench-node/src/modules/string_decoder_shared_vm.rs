@@ -24,7 +24,7 @@ const FACTORY: &str = quench_js_check::checked_js!(
         "ERR_INVALID_ARG_TYPE",
       );
     }
-    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    return value;
   };
   const assertStringSize = (pendingLength, inputLength) => {
     if (pendingLength + inputLength > maxStringBytes) {
@@ -98,7 +98,8 @@ const FACTORY: &str = quench_js_check::checked_js!(
 
   StringDecoder.prototype.text = function (input, offset = 0) {
     stateFor(this);
-    const view = byteView(input);
+    const inputView = byteView(input);
+    const view = new Uint8Array(inputView.buffer, inputView.byteOffset, inputView.byteLength);
     const start = Math.max(0, Math.trunc(Number(offset)) || 0);
     const result = decodeChunk([], view.subarray(start), "utf8", true);
     return result.text;
