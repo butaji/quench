@@ -433,7 +433,11 @@ impl<H: Host> Vm<H> {
 
     /// Resolve `this` through the activation's lexical-this binding.
     #[inline(never)]
-    fn resolved_this_binding(&mut self, p: &ResidualProgram, frame: usize) -> Result<Value, JsError> {
+    fn resolved_this_binding(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+    ) -> Result<Value, JsError> {
         self.lexical_this(frame).ok_or_else(|| {
             self.reference_error(
                 p,
@@ -615,9 +619,7 @@ impl<H: Host> Vm<H> {
             FieldCacheProbe::Hit(value) => Ok(value),
             FieldCacheProbe::OrdinaryMiss => match self.array_length_field(object, atom) {
                 Some(length) => Ok(length),
-                None => {
-                    self.get_field_polymorphic(p, object, atom, site, object.heap_reference())
-                }
+                None => self.get_field_polymorphic(p, object, atom, site, object.heap_reference()),
             },
             FieldCacheProbe::Ineligible => match self.array_length_field(object, atom) {
                 Some(length) => Ok(length),
@@ -716,7 +718,9 @@ impl<H: Host> Vm<H> {
         heap_reference: Option<HeapReference>,
     ) -> Result<Value, JsError> {
         let index = self.field_cache_index(site);
-        if let Some(receiver) = heap_reference.and_then(|reference| self.heap.record_object(reference)) {
+        if let Some(receiver) =
+            heap_reference.and_then(|reference| self.heap.record_object(reference))
+        {
             if let Some(hit) = self
                 .cached_field_value(index, receiver)
                 .or_else(|| self.cached_holder_field_value(index, receiver, atom))
@@ -742,7 +746,9 @@ impl<H: Host> Vm<H> {
         site: u16,
         heap_reference: Option<HeapReference>,
     ) -> Result<Value, JsError> {
-        if let Some(receiver) = heap_reference.and_then(|reference| self.heap.record_object(reference)) {
+        if let Some(receiver) =
+            heap_reference.and_then(|reference| self.heap.record_object(reference))
+        {
             if self.specialized && p.specialized && !receiver.is_module_namespace() {
                 let index = self.field_cache_index(site);
                 if let Some(hit) = self
@@ -1057,7 +1063,9 @@ impl<H: Host> Vm<H> {
             return Ok(value);
         }
         if let Some((cache, value)) = self.inherited_field(receiver, atom) {
-            self.inherited_field_caches.insert(site, cache);
+            if self.field_cache_records(site) {
+                self.inherited_field_caches.insert(site, cache);
+            }
             return Ok(value);
         }
         self.get_property(p, object, atom)
@@ -1815,6 +1823,9 @@ impl<H: Host> Vm<H> {
     }
 
     fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
+        if !self.field_cache_records(site) {
+            return;
+        }
         let index = self.field_add_indices[site];
         if index == NO_FIELD_ADD_SET {
             self.field_add_indices[site] = self.field_add_sets.len() as u32;
@@ -2111,6 +2122,9 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|old| self.is_function(old))
     }
     pub(super) fn record_field_cache(&mut self, site: usize, cache: FieldCache) {
+        if !self.field_cache_records(site) {
+            return;
+        }
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site) };
         if table_index != NO_MEGAMORPHIC_FIELD {

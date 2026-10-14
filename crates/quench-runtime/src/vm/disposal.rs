@@ -40,55 +40,6 @@ pub(super) fn disposal_native_length(native: Native) -> Option<f64> {
 }
 
 impl<H: Host> Vm<H> {
-    pub(super) fn install_disposal_for_realm(
-        &mut self,
-        _p: &ResidualProgram,
-        global: Value,
-        object_prototype: Value,
-    ) -> Result<(), JsError> {
-        for (name, constructor_native) in [
-            ("DisposableStack", Native::DisposableStack),
-            ("AsyncDisposableStack", Native::AsyncDisposableStack),
-        ] {
-            let constructor = self.native_with_realm(constructor_native, global, global);
-            let prototype = self
-                .heap
-                .alloc(Cell::Object(Self::empty_object(object_prototype)));
-            self.set_builtin_function_name(constructor, name)?;
-            self.set_builtin_value_named(constructor, "prototype", prototype)?;
-            self.set_builtin_value_named(prototype, "constructor", constructor)?;
-            let prototype_atom = self.prototype_atom();
-            self.set_property_attributes(
-                constructor,
-                PropertyKey::string(prototype_atom),
-                PropertyAttributes {
-                    writable: false,
-                    enumerable: false,
-                    configurable: false,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-            self.install_builtin_to_string_tag(prototype, name)?;
-            let property = self.intern_atom(name);
-            self.set_property(global, property, constructor)?;
-            self.set_property_attributes(
-                global,
-                PropertyKey::string(property),
-                PropertyAttributes {
-                    writable: true,
-                    enumerable: false,
-                    configurable: true,
-                    accessor: false,
-                    getter: None,
-                    setter: None,
-                },
-            );
-        }
-        Ok(())
-    }
-
     pub(super) fn is_disposal_native(native: Native) -> bool {
         matches!(
             native,
@@ -117,9 +68,20 @@ impl<H: Host> Vm<H> {
         )
     }
 
-    pub(super) fn install_disposal(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
-        let constructor = self.native_value(Native::DisposableStack);
-        let prototype = self.object();
+    /// DisposableStack and AsyncDisposableStack for the realm of `global`, whose
+    /// `Object.prototype` is `object_prototype`.
+    pub(super) fn install_disposable_stacks(
+        &mut self,
+        p: &ResidualProgram,
+        global: Value,
+        object_prototype: Value,
+        disposable_stack: Value,
+        async_disposable_stack: Value,
+    ) -> Result<(), JsError> {
+        let constructor = disposable_stack;
+        let prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
         self.set_builtin_value_named(prototype, "constructor", constructor)?;
         for (name, native) in [
             ("use", Native::DisposableStackUse),
@@ -160,6 +122,18 @@ impl<H: Host> Vm<H> {
                 symbol,
                 self.native_value(Native::DisposableStackDisposeAsync),
             )?;
+            self.set_property_attributes(
+                prototype,
+                PropertyKey::symbol(symbol),
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
         }
         self.set_builtin_value_named(
             prototype,
@@ -203,10 +177,12 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_function_name(constructor, "DisposableStack")?;
-        self.global(p, "DisposableStack", constructor)?;
+        self.set_builtin_value_named(global, "DisposableStack", constructor)?;
 
-        let constructor = self.native_value(Native::AsyncDisposableStack);
-        let prototype = self.object();
+        let constructor = async_disposable_stack;
+        let prototype = self
+            .heap
+            .alloc(Cell::Object(Self::empty_object(object_prototype)));
         for (name, native) in [
             ("use", Native::AsyncDisposableStackUse),
             ("adopt", Native::AsyncDisposableStackAdopt),
@@ -274,7 +250,7 @@ impl<H: Host> Vm<H> {
             },
         );
         self.set_builtin_function_name(constructor, "AsyncDisposableStack")?;
-        self.global(p, "AsyncDisposableStack", constructor)
+        self.set_builtin_value_named(global, "AsyncDisposableStack", constructor)
     }
 
     pub(super) fn construct_disposable_stack_native(

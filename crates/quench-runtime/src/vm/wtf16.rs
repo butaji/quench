@@ -595,7 +595,10 @@ impl Hash for JsString {
 
 impl std::fmt::Debug for JsString {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_tuple("JsString").field(&self.host_string()).finish()
+        formatter
+            .debug_tuple("JsString")
+            .field(&self.host_string())
+            .finish()
     }
 }
 
@@ -683,7 +686,10 @@ mod tests {
         let mut value = JsString::from_units(&[0xD800, b'a' as u16]);
         value.push_js_string(&JsString::from_str("bc"));
         assert_eq!(value.units().len(), 4);
-        assert_eq!(value.units(), &[0xD800, b'a' as u16, b'b' as u16, b'c' as u16]);
+        assert_eq!(
+            value.units(),
+            &[0xD800, b'a' as u16, b'b' as u16, b'c' as u16]
+        );
         assert_eq!(value.host_string(), "�abc");
     }
 

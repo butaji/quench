@@ -2,6 +2,9 @@
 
 use crate::host::{node_host::SharedChildProcess, NodeHost};
 use quench_runtime::{NativeContext, RootId, RootedError};
+#[cfg(not(unix))]
+use std::io::Read;
+use std::time::Duration;
 use std::{
     process::Command,
     sync::{
@@ -9,9 +12,6 @@ use std::{
         mpsc,
     },
 };
-#[cfg(not(unix))]
-use std::io::Read;
-use std::time::Duration;
 
 static NEXT_CHILD_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -261,7 +261,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         prototype,
     )?;
     let spawn = context.host_function(crate::host::shared_vm::operation("childProcessSpawn"))?;
-    let register = context.host_function(crate::host::shared_vm::operation("childProcessRegister"))?;
+    let register =
+        context.host_function(crate::host::shared_vm::operation("childProcessRegister"))?;
     let write = context.host_function(crate::host::shared_vm::operation("childProcessWrite"))?;
     let end = context.host_function(crate::host::shared_vm::operation("childProcessEnd"))?;
     let warning = context.host_function(crate::host::shared_vm::operation(
@@ -463,7 +464,12 @@ pub(crate) fn spawn_child(
         Err(error) => {
             let code = spawn_error_code(error.raw_os_error());
             #[cfg(unix)]
-            if !error.raw_os_error().is_some_and(|number| matches!(number, libc::EACCES | libc::EAGAIN | libc::EMFILE | libc::ENFILE | libc::ENOENT)) {
+            if !error.raw_os_error().is_some_and(|number| {
+                matches!(
+                    number,
+                    libc::EACCES | libc::EAGAIN | libc::EMFILE | libc::ENFILE | libc::ENOENT
+                )
+            }) {
                 let exception = context.error_rooted(&format!("spawn {code}"))?;
                 if let Some(errno) = error.raw_os_error() {
                     let errno = context.number(-f64::from(errno));
@@ -473,8 +479,14 @@ pub(crate) fn spawn_child(
                 set_string(context, exception, "syscall", "spawn")?;
                 return Err(context.throw(exception));
             }
-            (0, None, Some(code.clone()), Some(format!("spawn {file} {code}")), error.raw_os_error().map(|number| -number))
-        },
+            (
+                0,
+                None,
+                Some(code.clone()),
+                Some(format!("spawn {file} {code}")),
+                error.raw_os_error().map(|number| -number),
+            )
+        }
     };
 
     let result = context.object_rooted()?;
@@ -522,13 +534,9 @@ fn spawn_reader<R: Read + Send + 'static>(
                 Ok(0) | Err(_) => break,
                 Ok(length) => {
                     let event = if stdout {
-                        crate::host::node_host::ChildProcessEvent::Stdout(
-                            bytes[..length].to_vec(),
-                        )
+                        crate::host::node_host::ChildProcessEvent::Stdout(bytes[..length].to_vec())
                     } else {
-                        crate::host::node_host::ChildProcessEvent::Stderr(
-                            bytes[..length].to_vec(),
-                        )
+                        crate::host::node_host::ChildProcessEvent::Stderr(bytes[..length].to_vec())
                     };
                     if sender.send(event).is_err() {
                         return;
@@ -592,7 +600,9 @@ pub(crate) fn register_child(
         .child_processes
         .remove(&id)
     else {
-        return Err(RootedError::host("child process registration id is unknown"));
+        return Err(RootedError::host(
+            "child process registration id is unknown",
+        ));
     };
     process.stdin_stream = Some(stdin);
     process.child = Some(child);
@@ -774,7 +784,9 @@ pub(crate) fn write_child(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(encoded)
         .map_err(|error| RootedError::host(error.to_string()))?;
-    let callback = args.get(2).copied()
+    let callback = args
+        .get(2)
+        .copied()
         .ok_or_else(|| RootedError::host("child stdin write callback missing"))?;
     let callback = context.retain(callback)?;
     let state = context.host_mut().shared_state();
@@ -791,7 +803,8 @@ pub(crate) fn write_child(
         Err(error) => {
             context.release_root(callback);
             let error = super::child_process_input_shared_vm::write_error(
-                context, error.raw_os_error().unwrap_or(libc::EIO),
+                context,
+                error.raw_os_error().unwrap_or(libc::EIO),
             )?;
             Err(context.throw(error))
         }
@@ -862,9 +875,17 @@ pub(crate) fn poll(
             ] {
                 use super::child_process_output_shared_vm::Progress;
                 match pipe.progress() {
-                    Progress::Idle => {},
-                    Progress::Data(bytes) => events.push(if stdout { ChildProcessEvent::Stdout(bytes) } else { ChildProcessEvent::Stderr(bytes) }),
-                    Progress::End => events.push(if stdout { ChildProcessEvent::StdoutEnd } else { ChildProcessEvent::StderrEnd }),
+                    Progress::Idle => {}
+                    Progress::Data(bytes) => events.push(if stdout {
+                        ChildProcessEvent::Stdout(bytes)
+                    } else {
+                        ChildProcessEvent::Stderr(bytes)
+                    }),
+                    Progress::End => events.push(if stdout {
+                        ChildProcessEvent::StdoutEnd
+                    } else {
+                        ChildProcessEvent::StderrEnd
+                    }),
                 }
             }
             let mut exit = None;
@@ -934,7 +955,14 @@ pub(crate) fn poll(
             dispatch_exit(runtime, program, child, "close", code, signal.as_deref())?;
             progressed = true;
         }
-        let finished = shared_state.borrow().child_processes.get(&id).is_some_and(|process| process.close_dispatched && process.handle_phase == crate::host::node_host::ChildHandlePhase::Closed);
+        let finished = shared_state
+            .borrow()
+            .child_processes
+            .get(&id)
+            .is_some_and(|process| {
+                process.close_dispatched
+                    && process.handle_phase == crate::host::node_host::ChildHandlePhase::Closed
+            });
         if finished {
             let process = shared_state.borrow_mut().child_processes.remove(&id);
             if let Some(mut process) = process {
@@ -1045,15 +1073,35 @@ pub(crate) fn has_pending(
     shared_state: &std::rc::Rc<std::cell::RefCell<crate::host::SharedNodeState>>,
 ) -> bool {
     #[cfg(unix)]
-    { shared_state.borrow().child_processes.values().any(|process|
-        (process.referenced && process.handle_phase == crate::host::node_host::ChildHandlePhase::Open)
-        || process.handle_phase == crate::host::node_host::ChildHandlePhase::Closing || process.stdin.has_pending()
-        || process.ipc.as_ref().is_some_and(super::child_process_ipc_shared_vm::IpcChannel::parent_has_work)
-        || process.stdout_pipe.is_referenced() || process.stderr_pipe.is_referenced()
-    ) }
+    {
+        shared_state
+            .borrow()
+            .child_processes
+            .values()
+            .any(|process| {
+                (process.referenced
+                    && process.handle_phase == crate::host::node_host::ChildHandlePhase::Open)
+                    || process.handle_phase == crate::host::node_host::ChildHandlePhase::Closing
+                    || process.stdin.has_pending()
+                    || process.ipc.as_ref().is_some_and(
+                        super::child_process_ipc_shared_vm::IpcChannel::parent_has_work,
+                    )
+                    || process.stdout_pipe.is_referenced()
+                    || process.stderr_pipe.is_referenced()
+            })
+    }
     #[cfg(not(unix))]
     {
-        shared_state.borrow().child_processes.values().any(|process| process.referenced && process.exit.is_none() || !process.stdout_terminal || !process.stderr_terminal || process.stdin.has_pending())
+        shared_state
+            .borrow()
+            .child_processes
+            .values()
+            .any(|process| {
+                process.referenced && process.exit.is_none()
+                    || !process.stdout_terminal
+                    || !process.stderr_terminal
+                    || process.stdin.has_pending()
+            })
     }
 }
 
@@ -1170,17 +1218,36 @@ pub(crate) fn spawn_sync(
             };
             match collected {
                 Ok((output, error)) => {
-                    let code = error.map(|errno| super::util_system_error_shared_vm::system_error_name(-f64::from(errno)));
-                    make_result(context, Some(pid), output.status.code(), signal_name(&output.status),
-                        stdio[1].piped().then_some(output.stdout.as_slice()), stdio[2].piped().then_some(output.stderr.as_slice()),
-                        code.as_deref().map(|code| (error, code, format!("spawnSync {command} {code}"))))?
-                },
+                    let code = error.map(|errno| {
+                        super::util_system_error_shared_vm::system_error_name(-f64::from(errno))
+                    });
+                    make_result(
+                        context,
+                        Some(pid),
+                        output.status.code(),
+                        signal_name(&output.status),
+                        stdio[1].piped().then_some(output.stdout.as_slice()),
+                        stdio[2].piped().then_some(output.stderr.as_slice()),
+                        code.as_deref()
+                            .map(|code| (error, code, format!("spawnSync {command} {code}"))),
+                    )?
+                }
                 Err(error) => {
                     let code = spawn_error_code(error.raw_os_error());
-                    make_result(context, Some(pid), None, None,
-                        stdio[1].piped().then_some(&[]), stdio[2].piped().then_some(&[]),
-                        Some((error.raw_os_error(), code.as_str(), format!("spawnSync {command} {code}"))))?
-                },
+                    make_result(
+                        context,
+                        Some(pid),
+                        None,
+                        None,
+                        stdio[1].piped().then_some(&[]),
+                        stdio[2].piped().then_some(&[]),
+                        Some((
+                            error.raw_os_error(),
+                            code.as_str(),
+                            format!("spawnSync {command} {code}"),
+                        )),
+                    )?
+                }
             }
         }
         Err(error) => {
@@ -1332,9 +1399,16 @@ fn project_sync_output(
     Ok(())
 }
 
-fn string_array(context: &mut NativeContext<'_, NodeHost>, array: RootId) -> Result<Vec<String>, RootedError> {
+fn string_array(
+    context: &mut NativeContext<'_, NodeHost>,
+    array: RootId,
+) -> Result<Vec<String>, RootedError> {
     let length = property(context, array, "length")?;
-    let length = context.rooted_value(length).and_then(|value| value.as_number()).unwrap_or_default().max(0.0) as usize;
+    let length = context
+        .rooted_value(length)
+        .and_then(|value| value.as_number())
+        .unwrap_or_default()
+        .max(0.0) as usize;
     (0..length)
         .map(|index| {
             let key = context.string_rooted(&index.to_string());
@@ -1432,28 +1506,55 @@ fn reject_cwd_null(
     Err(context.throw(error))
 }
 
-fn property_string(context: &mut NativeContext<'_, NodeHost>, object: RootId, name: &str) -> Result<Option<String>, RootedError> {
+fn property_string(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+) -> Result<Option<String>, RootedError> {
     let value = property(context, object, name)?;
-    if context.rooted_value(value).is_some_and(|value| value.is_undefined() || value.is_null()) {
+    if context
+        .rooted_value(value)
+        .is_some_and(|value| value.is_undefined() || value.is_null())
+    {
         Ok(None)
     } else {
         context.string_text(value)
     }
 }
 
-fn property(context: &mut NativeContext<'_, NodeHost>, object: RootId, name: &str) -> Result<RootId, RootedError> {
+fn property(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+) -> Result<RootId, RootedError> {
     let key = context.string_rooted(name);
     context.get_property_rooted(object, key)
 }
 
-fn set_string(context: &mut NativeContext<'_, NodeHost>, object: RootId, name: &str, value: &str) -> Result<(), RootedError> {
+fn set_string(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+    value: &str,
+) -> Result<(), RootedError> {
     let value = context.string_rooted(value);
     set(context, object, name, value)
 }
 
-fn set(context: &mut NativeContext<'_, NodeHost>, object: RootId, name: &str, value: RootId) -> Result<(), RootedError> {
+fn set(
+    context: &mut NativeContext<'_, NodeHost>,
+    object: RootId,
+    name: &str,
+    value: RootId,
+) -> Result<(), RootedError> {
     let key = context.string_rooted(name);
-    if context.set_property_rooted(object, key, value, object)? { Ok(()) } else { Err(RootedError::host(format!("cannot set child_process result {name}"))) }
+    if context.set_property_rooted(object, key, value, object)? {
+        Ok(())
+    } else {
+        Err(RootedError::host(format!(
+            "cannot set child_process result {name}"
+        )))
+    }
 }
 
 #[cfg(unix)]
@@ -1478,19 +1579,31 @@ fn signal_name(status: &std::process::ExitStatus) -> Option<&'static str> {
 }
 
 #[cfg(not(unix))]
-fn signal_name(_: &std::process::ExitStatus) -> Option<&'static str> { None }
+fn signal_name(_: &std::process::ExitStatus) -> Option<&'static str> {
+    None
+}
 
 /// normalizeSpawnArguments emits DEP0190 once across sync and async calls.
-pub(crate) fn shell_args_warning(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+pub(crate) fn shell_args_warning(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let undefined = context.undefined();
     let arguments = args.first().copied().unwrap_or(undefined);
     let key = context.string_rooted("length");
     let length = context.get_property_rooted(arguments, key)?;
-    if !context.rooted_value(length).and_then(|value| value.as_number()).is_some_and(|length| length > 0.0) {
+    if !context
+        .rooted_value(length)
+        .and_then(|value| value.as_number())
+        .is_some_and(|length| length > 0.0)
+    {
         return Ok(undefined);
     }
     let shared = context.host_mut().shared_state();
-    if shared.borrow().child_process_shell_args_warning_emitted { return Ok(undefined); }
+    if shared.borrow().child_process_shell_args_warning_emitted {
+        return Ok(undefined);
+    }
     let global = context.global_root()?;
     let key = context.string_rooted("process");
     let process = context.get_property_rooted(global, key)?;
@@ -1578,7 +1691,16 @@ pub(crate) fn sync_kill_signal(
     #[cfg(target_os = "linux")]
     {
         let name = name.map(|name| name.to_uppercase());
-        if let Some(signal) = super::process_signals_state::SIGNALS.iter().find_map(|(candidate, signal)| (name.as_deref() == Some(*candidate) || number == Some(f64::from(*signal))).then_some(*signal)) { return Ok(signal); }
+        if let Some(signal) =
+            super::process_signals_state::SIGNALS
+                .iter()
+                .find_map(|(candidate, signal)| {
+                    (name.as_deref() == Some(*candidate) || number == Some(f64::from(*signal)))
+                        .then_some(*signal)
+                })
+        {
+            return Ok(signal);
+        }
         let value = context.to_string(value)?;
         let error = context.type_error_rooted(&format!("Unknown signal: {value}"))?;
         let key = context.string_rooted("code");

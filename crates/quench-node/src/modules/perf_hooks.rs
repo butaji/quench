@@ -6,7 +6,8 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-const MODULE: &str = quench_js_check::checked_js!(r#"((now) => {
+const MODULE: &str = quench_js_check::checked_js!(
+    r#"((now) => {
   const marks = [];
   const measures = [];
   const timeOrigin = Date.now() - now();
@@ -71,7 +72,8 @@ const MODULE: &str = quench_js_check::checked_js!(r#"((now) => {
     toJSON() { return { timeOrigin }; },
   };
   return { performance };
-})"#);
+})"#
+);
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(MODULE, "node:perf_hooks.js")?;

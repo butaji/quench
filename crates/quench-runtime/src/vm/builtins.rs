@@ -623,6 +623,7 @@ impl<H: Host> Vm<H> {
         for native in NATIVES {
             let value = self.native(*native);
             self.natives.push((*native, value));
+            self.shared_natives.insert(value);
         }
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_native_function_table");
@@ -749,8 +750,14 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
-        self.install_map_species()?;
-        self.install_set_species(self.native_value(Native::Set))?;
+        self.install_collection_symbols(
+            self.native_value(Native::Map),
+            self.map_proto,
+            self.native_value(Native::Set),
+            self.set_proto,
+            self.weak_map_proto,
+            self.weak_set_proto,
+        )?;
         self.install_shadow_realm_tag(self.shadow_realm_proto)?;
         self.install_regexp_symbol_properties(
             self.native_value(Native::RegExp),
@@ -804,26 +811,24 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        for (prototype, tag) in [
-            (self.map_proto, "Map"),
-            (self.set_proto, "Set"),
-            (self.weak_map_proto, "WeakMap"),
-            (self.weak_set_proto, "WeakSet"),
-            (self.weak_ref_proto, "WeakRef"),
-        ] {
-            self.install_builtin_to_string_tag(prototype, tag)?;
-        }
+        self.install_builtin_to_string_tag(self.weak_ref_proto, "WeakRef")?;
         self.install_array_species()?;
         self.install_typed_array_species(
             self.native_value(Native::TypedArray),
             self.typed_array_proto,
             self.realm.globals,
         )?;
-        self.install_array_unscopables()?;
+        self.install_array_unscopables(self.array_proto)?;
         self.install_abstract_module_source(program)?;
         self.install_array_buffer_species()?;
         self.global(program, "Symbol", symbol)?;
-        self.install_disposal(program)?;
+        self.install_disposable_stacks(
+            program,
+            self.realm.globals,
+            self.object_proto,
+            self.native_value(Native::DisposableStack),
+            self.native_value(Native::AsyncDisposableStack),
+        )?;
         let string = self.native_value(Native::String);
         self.install_string(program, string)?;
         self.set_builtin_named(program, string, "fromCharCode", Native::StringFromCharCode)?;

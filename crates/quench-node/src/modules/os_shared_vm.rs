@@ -10,10 +10,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "type", "platform", "arch", "release", "hostname", "homedir", "tmpdir",
     ] {
         let data = context.string_rooted(name);
-        let function = context.host_function_with_data(
-            crate::host::shared_vm::operation("osString"),
-            data,
-        )?;
+        let function =
+            context.host_function_with_data(crate::host::shared_vm::operation("osString"), data)?;
         set(context, module, name, function)?;
     }
     for (name, operation) in [
@@ -24,12 +22,21 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         set(context, module, name, function)?;
     }
-    set_string(context, module, "EOL", if cfg!(windows) { "\r\n" } else { "\n" })?;
+    set_string(
+        context,
+        module,
+        "EOL",
+        if cfg!(windows) { "\r\n" } else { "\n" },
+    )?;
     set_string(
         context,
         module,
         "devNull",
-        if cfg!(windows) { "\\.\\nul" } else { "/dev/null" },
+        if cfg!(windows) {
+            "\\.\\nul"
+        } else {
+            "/dev/null"
+        },
     )?;
     #[cfg(target_os = "linux")]
     {
@@ -104,12 +111,7 @@ pub(crate) fn network_interfaces_operation(
                 if is_v4 { "IPv4" } else { "IPv6" },
             )?;
             set_string(context, entry, "netmask", &netmask.to_string())?;
-            set_string(
-                context,
-                entry,
-                "mac",
-                &network.mac_address().to_string(),
-            )?;
+            set_string(context, entry, "mac", &network.mac_address().to_string())?;
             set_bool(context, entry, "internal", address.is_loopback())?;
             set_string(
                 context,
