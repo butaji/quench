@@ -17,7 +17,7 @@ impl Compiler<'_> {
     ) -> u32 {
         let id = self.functions.len() as u32;
         self.functions.push(None);
-        let source_text = self.source_text(value.span);
+        let source_span = self.source_span(value.span);
         let body_lexicals = if let oxc_ast::ast::ArrowFunctionBody::FunctionBody(body) = &value.body
         {
             self.collect_body_lexical_bindings(&body.statements)
@@ -118,7 +118,7 @@ impl Compiler<'_> {
             name: None,
             is_arrow: true,
             self_binding_slot: None,
-            source_text,
+            source_span,
             params: params.len() as u16,
             length: value
                 .params

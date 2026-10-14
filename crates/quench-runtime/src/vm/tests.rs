@@ -281,7 +281,7 @@ fn repeated_normal_closures_reuse_function_descriptor_shapes() {
 }
 
 #[test]
-fn closures_share_cached_function_source_and_program_roots_it() {
+fn closures_share_on_demand_function_source_and_program_roots_it() {
     let program = Engine::specialize(
         "function outer() { return function inner() { return 1; }; }",
         "closure-source-cache.js",
@@ -302,11 +302,17 @@ fn closures_share_cached_function_source_and_program_roots_it() {
 
     let first = vm.closure(&program, inner, Value::NULL).unwrap();
     let source_atom = vm.intern_atom("\0quench:function-source");
-    let source = vm.own_property(first, source_atom).unwrap();
+    // Creating a closure records no source; the text is made on first request.
+    assert_eq!(vm.own_property(first, source_atom), None);
+    let source = vm.function_source_value(first).unwrap();
+    assert!(matches!(
+        vm.heap.get(source),
+        Some(super::Cell::String(text)) if text.host_string() == "function inner() { return 1; }"
+    ));
     let source_weak = vm.heap.weak_handle(source).unwrap();
     let second = vm.closure(&program, inner, Value::NULL).unwrap();
 
-    assert_eq!(vm.own_property(second, source_atom), Some(source));
+    assert_eq!(vm.function_source_value(second), Some(source));
     vm.collect_now(&program);
     assert_eq!(vm.heap.weak_value(source_weak), Some(source));
 }
