@@ -910,7 +910,7 @@ pub(crate) fn has_work(transport: &Transport) -> bool {
             ListenerState::CloseRequested | ListenerState::Closing => true,
         })
         || transport.sockets.values().any(|socket| {
-            (socket.referenced && !socket.read_ended)
+            (socket.referenced && !socket.read_ended && socket.read_demand == ReadDemand::Active)
                 || socket.write_offset < socket.pending_write.len()
                 || !socket.completions.is_empty()
                 || (socket.end_after_write && !socket.write_ended)
