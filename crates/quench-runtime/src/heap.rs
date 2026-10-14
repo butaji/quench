@@ -30,12 +30,13 @@ use slots::{FreeSlotBitmap, SLOTS_PER_SLAB, SlotArena};
 const DENSE_ARRAY_HOLE_BUDGET_BYTES: usize = 256 * 1024;
 const MAX_DENSE_ARRAY_HOLE_LENGTH: usize = DENSE_ARRAY_HOLE_BUDGET_BYTES / size_of::<Value>();
 const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
-/// Allocations a collection allows at least, whatever survived. Programs with small live
-/// sets but steady allocation (RayTrace, DeltaBlue, EarleyBoyer) otherwise collect every few
-/// thousand cells, paying each collection's fixed root and sweep cost; 2^16 cells (2 MB of
-/// 32-byte cells) measured RayTrace +20% Score, the others even or better, while 2^17 and
-/// 2^18 gained nothing further (Linux x86_64, 4 vCPU, paired non-PGO rounds).
-const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 1 << 16;
+/// Allocations a collection allows at least, whatever survived. The trunk owns this
+/// headroom with the factors below (decision 21), and it stays at 384 cells until a change
+/// wins one bar without losing the other (decision 5). The Score lane measured 2^16 cells
+/// (2 MB of 32-byte cells): RayTrace +20% Score, the others even or better, 2^17 and 2^18 no
+/// further gain (Linux x86_64, 4 vCPU, paired non-PGO rounds); at that minimum, fixed-work
+/// max RSS rose 22% to 36% on DeltaBlue, EarleyBoyer and RayTrace.
+const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
@@ -71,11 +72,11 @@ impl GcHeadroomFactor {
     }
 }
 
-// Score lane: small heaps take the large heaps' factor, one live set of new cells before the
-// next collection (with the minimum above, RayTrace +20% over 1/2).
+// Half a live set of new cells before the next collection on small heaps. The Score lane
+// measured 1/1 with the 2^16 minimum at RayTrace +20% Score, for more max RSS (above).
 const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
     numerator: 1,
-    denominator: 1,
+    denominator: 2,
 };
 // This is the sweep variable for large-heap RSS/Score measurements. A factor
 // of 1/1 allows one live set's worth of new cells before collection (2x total
