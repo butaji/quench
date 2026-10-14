@@ -560,7 +560,7 @@ impl ResidualProgram {
                     "function {index} has duplicate or unsorted name bindings"
                 ));
             }
-            for binding in &function.name_bindings {
+            for binding in function.name_bindings.iter() {
                 if !eval_binding_is_valid(binding, function, &self.functions, self.atoms.len()) {
                     return Err(format!("function {index} has an invalid name binding"));
                 }
@@ -1080,17 +1080,19 @@ mod tests {
             },
         ] {
             let mut invalid = program.clone();
-            invalid.functions[owner].name_bindings[0].location = location;
+            std::rc::Rc::make_mut(&mut invalid.functions[owner].name_bindings)[0].location =
+                location;
             assert!(invalid.validate().is_err());
         }
         let mut invalid = program.clone();
-        invalid.functions[owner].name_bindings.reverse();
+        std::rc::Rc::make_mut(&mut invalid.functions[owner].name_bindings).reverse();
         assert!(invalid.validate().is_err());
         let mut invalid = program.clone();
-        invalid.functions[owner].name_bindings[1] = invalid.functions[owner].name_bindings[0];
+        let bindings = std::rc::Rc::make_mut(&mut invalid.functions[owner].name_bindings);
+        bindings[1] = bindings[0];
         assert!(invalid.validate().is_err());
         let mut invalid = program;
-        invalid.functions[owner].name_bindings[0].atom = u32::MAX;
+        std::rc::Rc::make_mut(&mut invalid.functions[owner].name_bindings)[0].atom = u32::MAX;
         assert!(invalid.validate().is_err());
     }
 
@@ -1148,7 +1150,7 @@ mod tests {
             global_function_atoms: vec![],
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
-            name_bindings: vec![],
+            name_bindings: Default::default(),
             binding_sites: vec![],
             source_positions: vec![],
             environment_clones: vec![],

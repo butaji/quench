@@ -41,7 +41,8 @@ struct JsonSerialization {
 
 fn write_json_string(value: &JsString, output: &mut String) {
     output.push('"');
-    let units = value.units();
+    let wide = value.units().wide();
+    let units: &[u16] = &wide;
     let mut index = 0;
     while index < units.len() {
         let unit = units[index];
@@ -397,7 +398,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let units = text.units();
+        let wide = text.units().wide();
+        let units: &[u16] = &wide;
         if units
             .first()
             .is_some_and(|unit| JSON_WHITESPACE.contains(unit))
@@ -463,7 +465,7 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let text = self.coerce_js_string(p, args.first().copied().unwrap_or(Value::UNDEFINED))?;
-        let parsed = match JsonParser::new(text.units()).parse() {
+        let parsed = match JsonParser::new(&text.units().wide()).parse() {
             Ok(parsed) => parsed,
             Err(JsonParseError::Syntax(error)) => return self.syntax_error_result(p, &error),
             Err(JsonParseError::StackExhausted) => return Err(self.stack_exhaustion_error()),
@@ -782,7 +784,7 @@ impl<H: Host> Vm<H> {
         }
         if let Some(Cell::String(text)) = self.heap.get(value) {
             return Ok(String::from_utf16_lossy(
-                &text.units()[..text.units().len().min(10)],
+                &text.units().slice(0..text.units().len().min(10)).wide(),
             ));
         }
         Ok(String::new())
@@ -982,7 +984,7 @@ impl<H: Host> Vm<H> {
         }
         let raw = self.lookup_atom("rawJSON")?;
         match self.heap.get(self.own_property(value, raw)?) {
-            Some(Cell::String(text)) => Some(String::from_utf16_lossy(&text.units())),
+            Some(Cell::String(text)) => Some(text.host_string().to_owned()),
             _ => None,
         }
     }

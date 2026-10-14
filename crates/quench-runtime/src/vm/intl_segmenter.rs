@@ -234,10 +234,10 @@ impl<H: Host> Vm<H> {
         };
         let start = start.as_number().unwrap_or(0.0) as usize;
         let end = end.as_number().unwrap_or(0.0) as usize;
-        let Some(units) = text.units().get(start..end) else {
+        let Some(units) = text.units().get_range(start..end) else {
             return Ok(None);
         };
-        let text = JsString::from_units(units);
+        let text = JsString::from_unit_run(units);
         let word = self
             .hidden_string(segmenter, SEGMENTER_GRANULARITY_SLOT)
             .as_deref()
