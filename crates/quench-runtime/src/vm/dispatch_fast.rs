@@ -798,14 +798,14 @@ lane_handler! {
 }
 
 lane_handler! {
-    /// Integer relational operands on the general path's fast path.
+    /// Number comparisons, as on the general path's fast path.
     fn lane_jump_binary_false<BACKWARD: bool>(cx, r, ip, i, view) {
         let (Some(left), Some(right)) =
             (lane_operand_value(cx, r, i.b), lane_operand_value(cx, r, i.c))
         else {
             return exit(ip);
         };
-        let Some(holds) = super::operations::integer_relation(u32::from(i.a), left, right) else {
+        let Some(holds) = super::operations::number_relation(u32::from(i.a), left, right) else {
             return exit(ip);
         };
         if !holds {
@@ -820,7 +820,7 @@ lane_handler! {
     /// (`specialize_register_operands`).
     fn lane_jump_binary_false_registers<BACKWARD: bool>(cx, r, ip, i, view) {
         let Some(holds) =
-            super::operations::integer_relation(u32::from(i.a), r.get(i.b), r.get(i.c))
+            super::operations::number_relation(u32::from(i.a), r.get(i.b), r.get(i.c))
         else {
             return exit(ip);
         };
