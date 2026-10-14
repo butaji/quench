@@ -1120,6 +1120,20 @@ pub(crate) enum PlainLocalSlotIneligibility {
 }
 
 impl Function {
+    /// Reusing an activation is observable while its call is protected by a handler.
+    /// A terminal return may skip its following Return instruction without being a
+    /// proper tail call: the caller must still catch the callee's abrupt completion.
+    pub(crate) fn permits_js_tail_call_at(&self, pc: u32) -> bool {
+        self.strict && !self.class_field_initializer && self.handler_at(pc).is_none()
+    }
+
+    pub(crate) fn handler_at(&self, pc: u32) -> Option<Handler> {
+        self.handlers
+            .iter()
+            .find(|handler| pc >= handler.start && pc < handler.end)
+            .copied()
+    }
+
     pub(crate) fn promoted_register(&self, local: u16) -> Option<Register> {
         self.local_registers
             .binary_search_by_key(&local, |entry| entry.local)

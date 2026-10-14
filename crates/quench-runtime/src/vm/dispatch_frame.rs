@@ -1688,11 +1688,7 @@ impl<H: Host> Vm<H> {
         if wasm && error.wasm_exception().is_none() {
             return Err(error);
         }
-        let handler = program.functions[function]
-            .handlers
-            .iter()
-            .find(|handler| throwing_pc >= handler.start && throwing_pc < handler.end)
-            .copied();
+        let handler = program.functions[function].handler_at(throwing_pc);
         let Some(handler) = handler else {
             let mut error = error;
             error.capture_source_location(program, function as u32, throwing_pc);
