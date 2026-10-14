@@ -1,5 +1,4 @@
 use super::object_descriptors::PropertyDescriptorRecord;
-use super::property_key::PropertyKey;
 use super::*;
 use std::collections::{HashMap, HashSet};
 
@@ -241,11 +240,12 @@ impl<H: Host> Vm<H> {
             let atom = self.intern_js_atom(&name);
             if self.is_private_name(atom)
                 || !self
-                    .property_attributes(
+                    .ordinary_own_property(
+                        program,
                         self.heap.root_value(source).unwrap(),
-                        PropertyKey::string(atom),
-                    )
-                    .is_some_and(|attributes| attributes.enumerable)
+                        key,
+                    )?
+                    .is_some_and(|(_, attributes)| attributes.enumerable)
             {
                 continue;
             }
