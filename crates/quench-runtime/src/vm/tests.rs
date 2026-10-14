@@ -962,6 +962,7 @@ fn unrepresentable_register_maps_keep_the_conservative_frame_roots() {
         dynamic_bindings: vec![],
         captured: false,
         registers,
+        initialized_registers: 65,
         active_iterators: vec![],
         with_objects: Vec::new(),
         with_base: 0,
@@ -4025,6 +4026,7 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
         dynamic_bindings: vec![],
         captured: false,
         registers: vec![Value::heap(11), Value::heap(12)],
+        initialized_registers: 0,
         active_iterators: vec![],
         with_objects: vec![Value::heap(16)],
         with_base: 0,
@@ -4050,6 +4052,31 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
     assert_eq!(recycled.context, super::activation::CallContext::Internal);
     assert!(recycled.original_arguments.is_empty());
     assert!(recycled.with_objects.is_empty());
+}
+
+#[test]
+fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
+    let mut vm = Vm::new(SilentHost);
+    let mut frame = Box::new(super::Frame::empty(super::program_store::ProgramId::MAIN, 0));
+    frame.prepare_registers(u16::MAX, crate::bytecode::InitialRegister::I32Zero);
+    let prior_capacity = frame.registers.capacity();
+    vm.frames.push(frame);
+    vm.retire_wasm_frame();
+    let mut frame = vm.pooled_frame();
+    assert!(frame.registers.capacity() < prior_capacity);
+    assert_eq!(frame.initialized_registers, 0);
+
+    // Exercise register preparation only: a mapped JS activation must grow and
+    // initialize the retired buffer, rather than set its length past capacity.
+    let mut program = Engine::specialize("function identity(x) { return x; }", "retired-frame.js")
+        .unwrap();
+    let function = &mut program.functions[1];
+    function.registers = u16::MAX;
+    function.register_root_offset = 0;
+    frame.prepare_registers_for(function);
+    assert_eq!(frame.registers.len(), usize::from(u16::MAX));
+    assert!(frame.registers.capacity() >= frame.registers.len());
+    assert!(frame.registers.iter().all(|value| *value == Value::UNDEFINED));
 }
 
 #[test]
@@ -6254,6 +6281,7 @@ fn suspended_owners_trace_complete_frame_and_request_state() {
                 dynamic_bindings: vec![(atom, binding)],
                 captured: true,
                 registers: vec![register, iterator, Value::FALSE],
+                initialized_registers: 0,
                 active_iterators: vec![super::ActiveIterator {
                     iterator: 1,
                     done: 2,
