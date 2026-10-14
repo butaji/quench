@@ -100,6 +100,7 @@ impl<H: Host> Vm<H> {
             symbol_registry: FxHashMap::default(),
             well_known_symbols: FxHashMap::default(),
             string_concats: None,
+            call_targets: Box::new([EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE]),
             field_caches: vec![],
             inherited_field_caches: FxHashMap::default(),
             field_add_indices: vec![],

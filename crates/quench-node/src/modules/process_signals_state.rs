@@ -5,8 +5,8 @@ mod platform {
     use std::collections::{BTreeMap, HashMap, VecDeque};
     use std::io::{self, Read};
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     pub(crate) const SIGNALS: &[(&str, libc::c_int)] = &[
         ("SIGHUP", libc::SIGHUP),
@@ -354,9 +354,9 @@ mod platform {
     }
 }
 
+pub(crate) use platform::SignalState;
 #[cfg(target_os = "linux")]
 pub(crate) use platform::SIGNALS;
-pub(crate) use platform::SignalState;
 
 /// The VM runs on a stack-owning worker. Keep process-directed signals from
 /// being delivered to its waiting caller, while preserving the caller's mask

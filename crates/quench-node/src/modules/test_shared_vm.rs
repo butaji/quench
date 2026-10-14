@@ -3,7 +3,8 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-const TEST_FACTORY: &str = quench_js_check::checked_js!(r#"(nativeTest, assert) => {
+const TEST_FACTORY: &str = quench_js_check::checked_js!(
+    r#"(nativeTest, assert) => {
   const mock = {
     fn(implementation = () => {}) {
       const calls = [];
@@ -56,7 +57,8 @@ const TEST_FACTORY: &str = quench_js_check::checked_js!(r#"(nativeTest, assert) 
   run.skip = run.todo = () => undefined;
   run.mock = mock;
   return run;
-}"#);
+}"#
+);
 
 pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
     let factory = context.evaluate_script_rooted(TEST_FACTORY, "node:test/shared.js")?;
