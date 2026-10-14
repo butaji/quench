@@ -21,6 +21,26 @@ const _: () = assert!(
         && (TAG_INT - TAG_UNDEFINED) >> TAG_SHIFT == 4
 );
 
+/// `value` truncated toward zero when it fits `i32`; any other result is some `i32` whose
+/// conversion back differs from `value`. x86-64 truncates directly (out-of-range and NaN
+/// inputs give `i32::MIN`), skipping the saturation a Rust cast adds.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn truncate_to_i32(value: f64) -> i32 {
+    use std::arch::x86_64::{_mm_cvttsd_si32, _mm_set_sd};
+    // SAFETY: SSE2 is part of the x86-64 baseline.
+    #[allow(unused_unsafe)]
+    unsafe {
+        _mm_cvttsd_si32(_mm_set_sd(value))
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[inline(always)]
+fn truncate_to_i32(value: f64) -> i32 {
+    value as i32
+}
+
 #[cfg(feature = "profile-aggregate")]
 #[derive(Clone, Copy)]
 #[repr(usize)]
@@ -51,13 +71,19 @@ impl Value {
     pub const TRUE: Self = Self(TAG_BOOL | 1);
     pub(crate) const DELETED: Self = Self(TAG_DELETED);
 
+    /// A Number: integral values in `i32` range other than -0 are stored as integers, NaN
+    /// canonically. A value is integral exactly when its truncation converts back to the
+    /// same bits, which also excludes -0 (+0's bits differ) and NaN.
     pub fn number(value: f64) -> Self {
-        let integer = value as i32;
-        if integer as f64 == value && !(value == 0.0 && value.is_sign_negative()) {
+        let integer = truncate_to_i32(value);
+        if f64::from(integer).to_bits() == value.to_bits() {
             return Self::integer(integer);
         }
-        let bits = value.to_bits();
-        Self(if value.is_nan() { CANONICAL_NAN } else { bits })
+        Self(if value.is_nan() {
+            CANONICAL_NAN
+        } else {
+            value.to_bits()
+        })
     }
 
     #[inline(always)]
