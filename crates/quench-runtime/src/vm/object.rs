@@ -224,7 +224,7 @@ impl<H: Host> Vm<H> {
         let shape = self.object_data(object)?.shape();
         Some((shape, self.property_shape_slot(shape, key)?))
     }
-    fn shape_attribute(&self, shape: u32, slot: usize) -> Option<PropertyAttributes> {
+    pub(super) fn shape_attribute(&self, shape: u32, slot: usize) -> Option<PropertyAttributes> {
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
             return Some(
                 index
