@@ -65,7 +65,6 @@ struct GcHeadroomFactor {
 impl GcHeadroomFactor {
     fn allocation_headroom(self, live_cells: usize) -> usize {
         debug_assert!(self.denominator > 0);
-        debug_assert!(self.numerator <= self.denominator);
         let whole = live_cells / self.denominator;
         let remainder = live_cells % self.denominator;
         whole * self.numerator + remainder * self.numerator / self.denominator
@@ -80,9 +79,12 @@ const SMALL_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
 };
 // This is the sweep variable for large-heap RSS/Score measurements. A factor
 // of 1/1 allows one live set's worth of new cells before collection (2x total
-// occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x.
+// occupied high-water); 3/4 targets 1.75x and 1/2 targets 1.5x. The Score lane
+// takes 4/1 (5x high-water): a large live set is re-marked by every collection,
+// so fewer collections are the larger saving. Splay, paired non-PGO rounds on
+// Linux x86_64 (4 vCPU): 1/1 3542, 2/1 3638, 4/1 4023, 8/1 below 4/1 again.
 const LARGE_HEAP_GC_HEADROOM: GcHeadroomFactor = GcHeadroomFactor {
-    numerator: 1,
+    numerator: 4,
     denominator: 1,
 };
 
