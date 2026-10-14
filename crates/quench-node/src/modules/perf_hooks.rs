@@ -7,7 +7,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const MODULE: &str = quench_js_check::checked_js!(
-    r#"((now) => {
+    r#"((now, query) => {
   const marks = [];
   const measures = [];
   const timeOrigin = Date.now() - now();
@@ -30,7 +30,6 @@ const MODULE: &str = quench_js_check::checked_js!(
       if (name === undefined || entries[index].name === String(name)) entries.splice(index, 1);
     }
   };
-  const timeline = () => [...marks, ...measures].sort((a, b) => a.startTime - b.startTime);
   const performance = {
     now,
     timeOrigin,
@@ -63,12 +62,9 @@ const MODULE: &str = quench_js_check::checked_js!(
     },
     clearMarks(name) { clear(marks, name); },
     clearMeasures(name) { clear(measures, name); },
-    getEntries: timeline,
-    getEntriesByName(name, type) {
-      return timeline().filter((item) => item.name === String(name) &&
-        (type === undefined || item.entryType === String(type)));
-    },
-    getEntriesByType(type) { return timeline().filter((item) => item.entryType === String(type)); },
+    getEntries() { return query(this, marks, measures, 0, undefined, undefined, arguments.length); },
+    getEntriesByName(name, type = undefined) { return query(this, marks, measures, 1, name, type, arguments.length); },
+    getEntriesByType(type) { return query(this, marks, measures, 2, type, undefined, arguments.length); },
     toJSON() { return { timeOrigin }; },
   };
   return { performance };
@@ -79,7 +75,26 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let factory = context.evaluate_script_rooted(MODULE, "node:perf_hooks.js")?;
     let now = context.host_function(crate::host::shared_vm::operation("perfHooksNow"))?;
     let undefined = context.undefined();
-    context.call_rooted(factory, undefined, &[now])
+    let data = context.null_object_rooted()?;
+    let global = context.global_root()?;
+    let array = super::event_constructor_shared_vm::get(context, global, "Array")?;
+    let prototype = super::event_constructor_shared_vm::get(context, array, "prototype")?;
+    let sort = super::event_constructor_shared_vm::get(context, prototype, "sort")?;
+    let compare = context.host_function(crate::host::shared_vm::operation("perfHooksCompareEntries"))?;
+    let coerce = context.evaluate_script_rooted(quench_js_check::checked_js!("value => `${value}`"), "node:perf_hooks/coerce.js")?;
+    for (name, value) in [("sort", sort), ("compare", compare), ("coerce", coerce)] {
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(data, key, value, false, false, false)?;
+    }
+    let query = context.host_function_with_data(crate::host::shared_vm::operation("perfHooksEntries"), data)?;
+    let module = context.call_rooted(factory, undefined, &[now, query])?;
+    let performance = super::event_constructor_shared_vm::get(context, module, "performance")?;
+    let brand = context.symbol_rooted(Some("performance"));
+    let yes = context.boolean(true);
+    context.define_data_property_rooted(performance, brand, yes, true, true, true)?;
+    let key = context.string_rooted("brand");
+    context.define_data_property_rooted(data, key, brand, false, false, false)?;
+    Ok(module)
 }
 
 pub(crate) fn now(

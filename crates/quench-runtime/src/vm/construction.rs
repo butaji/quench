@@ -41,8 +41,8 @@ impl<H: Host> Vm<H> {
         args: &[Value],
     ) -> Result<Value, JsError> {
         let argument = self.string_constructor_argument(args);
-        let text = self.to_string(p, argument)?;
-        Ok(self.heap.alloc(Cell::String(text.into())))
+        let text = self.coerce_js_string(p, argument)?;
+        Ok(self.heap.alloc(Cell::String(text)))
     }
 
     pub(super) fn set_function_name(

@@ -6218,3 +6218,23 @@ console.log(JSON.stringify([typeof globalThis.crypto,descriptor.enumerable,descr
         assert_eq!(observations[0].stdout, observations[1].stdout);
     }
 }
+
+#[test]
+fn native_performance_queries_preserve_identity_order_coercion_and_errors() {
+    compare_node_stream_source(r#"
+'use strict';
+const {performance:p}=require('perf_hooks');const out=[],log=[];
+p.clearMarks();p.clearMeasures();
+const a=p.mark('same',{startTime:30}),b=p.mark('same',{startTime:10}),c=p.mark('other',{startTime:20}),m=p.measure('same',{start:5,end:6});
+function rows(entries){return entries.map(e=>[e.name,e.entryType,e.startTime,e.duration,e===a,e===b,e===c,e===m]);}
+out.push(rows(p.getEntriesByName({toString(){log.push('name');return 'same'}},{toString(){log.push('type');return 'mark'}})));out.push(log);
+out.push(rows(p.getEntriesByName('same')));out.push(rows(p.getEntriesByType('mark')));out.push(p.getEntriesByType('unknown').length);
+const snapshot=p.getEntriesByName('same','mark');snapshot.length=0;out.push(p.getEntriesByName('same','mark').length);
+const surrogate=p.mark('\ud800',{startTime:2});out.push(p.getEntriesByName('\ud800')[0]===surrogate,p.getEntriesByName('\ud801').length);
+for(const fn of [()=>p.getEntriesByName(),()=>p.getEntriesByType(),()=>p.getEntriesByName(Symbol('x')),()=>p.getEntriesByType(Symbol('x')),()=>p.getEntries.call({}),()=>p.getEntriesByName.call({},'same')]){try{fn();out.push('accepted')}catch(e){out.push([e.name,e.code||null,e.message]);}}
+const brand=Reflect.ownKeys(p).find(key=>typeof key==='symbol'&&key.description==='performance');
+out.push(p.getEntries.call(new Proxy(p,{})).length,p.getEntries.call({[brand]:false}).length);
+try{p.getEntries.call(Object.create(p))}catch(e){out.push([e.name,e.code,e.message]);}
+p.clearMarks();p.clearMeasures();console.log(JSON.stringify(out));
+"#);
+}
