@@ -72,10 +72,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       return 'closed';
     }
     get bufferSize() { return this.writableLength || 0; }
-    address() {
-      if (!this.localAddress) return undefined;
-      return { address: this.localAddress, family: this.localFamily || 'IPv4', port: this.localPort || 0 };
-    }
+    address() { return this._getsockname(); }
     setTimeout(timeout, callback) {
       if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout < 0) throw new TypeError('The "msecs" argument must be a non-negative number');
       if (typeof callback === 'function') this.once('timeout', callback);
@@ -1440,6 +1437,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     }
     let socket_key = context.string_rooted("Socket");
     let socket_constructor = context.get_property_rooted(surface, socket_key)?;
+    super::net_socket_address::install(context, socket_constructor)?;
     let retained = context.retain(socket_constructor)?;
     context
         .host_mut()
@@ -1712,6 +1710,8 @@ pub(crate) fn destroy_operation(
         .push((id, was_connected));
     let key = context.string_rooted("_handle");
     let null = context.null();
+    context.set_property_rooted(socket, key, null, socket)?;
+    let key = context.string_rooted("_sockname");
     context.set_property_rooted(socket, key, null, socket)?;
     let undefined = context.undefined();
     context.call_rooted(callback, undefined, &[error])?;

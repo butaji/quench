@@ -6002,3 +6002,19 @@ const server=tls.createServer({key:fs.readFileSync(root+'agent1-key.pem'),cert:f
 });
 "#);
 }
+
+#[test]
+fn native_socket_endpoint_getters_follow_original_handle_and_cache_like_node() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),assert=require('assert');const out=[];
+for(const name of ['remoteAddress','remoteFamily','remotePort','localAddress','localFamily','localPort']){
+ const d=Object.getOwnPropertyDescriptor(net.Socket.prototype,name);out.push([name,d.enumerable,d.configurable,d.get.name,d.get.length,d.set===undefined,Object.hasOwn(d.get,'prototype')]);
+}
+const socket=new net.Socket(), calls=[];let fail=true;
+const handle={get getpeername(){calls.push('get-peer');return function(o){calls.push(['peer',this===handle,Object.getPrototypeOf(o)===Object.prototype]);o.address='peer';o.family='IPv6';o.port=42;return fail?1:0;};},get getsockname(){calls.push('get-local');return function(o){calls.push(['local',this===handle]);o.address='local';o.family='IPv4';o.port=7;return 1;};}};
+socket._handle=handle;socket.connecting=true;out.push(['connecting',socket.remoteAddress]);socket.connecting=false;
+out.push(['failed',socket.remoteAddress,!!socket._peername]);fail=false;out.push(['success',socket.remotePort,socket.remoteFamily]);socket._handle=null;out.push(['closed',socket.remoteAddress,socket.localAddress]);
+socket._handle=handle;out.push(['local',socket.localAddress,socket.localPort]);socket._handle=null;out.push(['local-after-close',socket.localAddress]);socket._getpeername=()=>({address:'override'});out.push(['override',socket.remoteAddress]);out.push(calls);console.log(JSON.stringify(out));
+"#);
+}
