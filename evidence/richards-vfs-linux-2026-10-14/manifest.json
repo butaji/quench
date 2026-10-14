@@ -1,0 +1,16 @@
+{
+  "base_source": "e54557a9d17163dae0280fc6c025f285e69d7b4d",
+  "candidate_source": "base_source plus source.patch; five Node files only",
+  "profile": "production; thin LTO, opt3, codegen1; no PGO, no guest JIT",
+  "artifact_sha256": {
+    "control": "605e100e339c7194bd182ec9c6507a4ccbf7e280d5a13b1ba72e2a9ecf063c8c",
+    "candidate": "63aa1e6c957bf92facfcccb0203d0092cffd31c39eb964079e8de9042fe10fe8",
+    "candidate_native_runner": "603540ef02f0997da1be9d6b234d0a4e6ec6e610cbcd753668f31d891dfd31b1",
+    "benchmark_runner": "5dd4281520a75224a73e1b79d936dd7b0353b541aa7138c09697a32de0631e97"
+  },
+  "source_patch_sha256": "163826a71774df35436ac767d39213a30a7510ad099c981bb7c8be746a77eb96",
+  "platform": "Linux 8daeb45b5007 6.18.44 #1 SMP Sat Sep 26 20:02:31 UTC 2026 x86_64 GNU/Linux",
+  "cpu_quota": "400000 100000",
+  "memory_limit": "17179869184",
+  "qualification_ready": false
+}
