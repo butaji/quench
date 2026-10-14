@@ -35,20 +35,21 @@ macro_rules! fusion_recipes {
 // macro derives recipe identity, pattern rows, and recipe dispatch together.
 fusion_recipes! {
     ConstantLeft: [LoadConst, Binary] =>
-        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+        |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
             let result = first.result_register();
             let constant = Operand::constant(first.constant_index() as u32)?;
             if second.operand_b().register_index() != Some(result) { return None; }
-            let right = if second.operand_c().register_index() == Some(result) {
-                constant.0
-            } else { second.c() };
-            Instr::try_new(second.op(), second.a(), constant.0, right, second.imm())
+            second.set_operand_b(constant)?;
+            if second.operand_c().register_index() == Some(result) {
+                second.set_operand_c(constant)?;
+            }
+            Some(second)
         };
     ConstantRight: [LoadConst, Binary] =>
-        |first: Instr, second: Instr, _: &mut Vec<FieldSite>| {
+        |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
             if second.operand_c().register_index() != Some(first.result_register()) { return None; }
-            let constant = Operand::constant(first.constant_index() as u32)?;
-            Instr::try_new(second.op(), second.a(), second.b(), constant.0, second.imm())
+            second.set_operand_c(Operand::constant(first.constant_index() as u32)?)?;
+            Some(second)
         };
     StoreLoadLocal: [StoreLocal, LoadLocal] =>
         |mut first: Instr, second: Instr, _: &mut Vec<FieldSite>| {

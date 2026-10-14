@@ -64,6 +64,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .builtin_prototypes
             .insert((global, Native::DataView), prototype);
+        self.set_builtin_function_name(constructor, "DataView")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
