@@ -83,7 +83,7 @@ impl<H: Host> Vm<H> {
                 Ok(SetRelationResult::Set) => {
                     let set = self.heap.alloc(Cell::Set {
                         object: Box::new(Self::empty_object(self.set_proto)),
-                        entries: Box::new(values),
+                        entries: Box::new(values.into()),
                     });
                     Ok(set)
                 }
@@ -191,10 +191,10 @@ impl<H: Host> Vm<H> {
         F: FnMut(&mut Self, Value) -> Result<bool, JsError>,
     {
         let values = match self.heap.get(set) {
-            Some(Cell::Set { entries, .. }) => entries.clone(),
+            Some(Cell::Set { entries, .. }) => entries.to_vec(),
             _ => return Err(self.type_error(p, "Set method called on incompatible receiver".into())),
         };
-        for value in *values {
+        for value in values {
             if !visit(self, value)? {
                 break;
             }
@@ -211,29 +211,7 @@ impl<H: Host> Vm<H> {
     where
         F: FnMut(&mut Self, Value) -> Result<bool, JsError>,
     {
-        let mut index = 0;
-        loop {
-            let Some(value) = self.heap.get(set).and_then(|cell| match cell {
-                Cell::Set { entries, .. } => entries.get(index).copied(),
-                _ => None,
-            }) else {
-                break;
-            };
-            if !visit(self, value)? {
-                break;
-            }
-            let still_at_index = self
-                .heap
-                .get(set)
-                .and_then(|cell| match cell {
-                    Cell::Set { entries, .. } => entries.get(index),
-                    _ => None,
-                })
-                .is_some_and(|current| self.same_value_zero(*current, value));
-            if still_at_index {
-                index += 1;
-            }
-        }
+        self.walk_collection(set, |vm, value, _| visit(vm, value))?;
         let _ = p;
         Ok(())
     }
@@ -252,11 +230,11 @@ impl<H: Host> Vm<H> {
         match other {
             SetRecord::Native { set, .. } => {
                 let values = match self.heap.get(*set) {
-                    Some(Cell::Set { entries, .. }) => entries.clone(),
-                    _ => Box::default(),
+                    Some(Cell::Set { entries, .. }) => entries.to_vec(),
+                    _ => Vec::new(),
                 };
                 let mut acc = initialize(self)?;
-                for value in *values {
+                for value in values {
                     acc = match step(self, acc, value)? {
                         SetRecordStep::Continue(acc) => acc,
                         SetRecordStep::Stop(acc) => return Ok(acc),
@@ -408,10 +386,10 @@ impl<H: Host> Vm<H> {
             }
             Native::SetDifference => {
                 let current = match self.heap.get(own) {
-                    Some(Cell::Set { entries, .. }) => entries.clone(),
-                    _ => Box::default(),
+                    Some(Cell::Set { entries, .. }) => entries.to_vec(),
+                    _ => Vec::new(),
                 };
-                for value in *current {
+                for value in current {
                     self.push_set_result(values, roots, value);
                 }
                 self.fold_set_record(p, other, |_| Ok(()), |vm, (), value| {
@@ -443,10 +421,10 @@ impl<H: Host> Vm<H> {
                         let mut result = Vec::new();
                         let mut result_roots = Vec::new();
                         let current = match vm.heap.get(own) {
-                            Some(Cell::Set { entries, .. }) => entries.clone(),
-                            _ => Box::default(),
+                            Some(Cell::Set { entries, .. }) => entries.to_vec(),
+                            _ => Vec::new(),
                         };
-                        for value in *current {
+                        for value in current {
                             vm.push_set_result(&mut result, &mut result_roots, value);
                         }
                         Ok((result, result_roots))

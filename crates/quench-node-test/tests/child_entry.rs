@@ -6218,3 +6218,146 @@ console.log(JSON.stringify([typeof globalThis.crypto,descriptor.enumerable,descr
         assert_eq!(observations[0].stdout, observations[1].stdout);
     }
 }
+
+#[test]
+fn native_performance_queries_preserve_identity_order_coercion_and_errors() {
+    compare_node_stream_source(r#"
+'use strict';
+const {performance:p}=require('perf_hooks');const out=[],log=[];
+p.clearMarks();p.clearMeasures();
+const a=p.mark('same',{startTime:30}),b=p.mark('same',{startTime:10}),c=p.mark('other',{startTime:20}),m=p.measure('same',{start:5,end:6});
+function rows(entries){return entries.map(e=>[e.name,e.entryType,e.startTime,e.duration,e===a,e===b,e===c,e===m]);}
+out.push(rows(p.getEntriesByName({toString(){log.push('name');return 'same'}},{toString(){log.push('type');return 'mark'}})));out.push(log);
+out.push(rows(p.getEntriesByName('same')));out.push(rows(p.getEntriesByType('mark')));out.push(p.getEntriesByType('unknown').length);
+const snapshot=p.getEntriesByName('same','mark');snapshot.length=0;out.push(p.getEntriesByName('same','mark').length);
+const surrogate=p.mark('\ud800',{startTime:2});out.push(p.getEntriesByName('\ud800')[0]===surrogate,p.getEntriesByName('\ud801').length);
+for(const fn of [()=>p.getEntriesByName(),()=>p.getEntriesByType(),()=>p.getEntriesByName(Symbol('x')),()=>p.getEntriesByType(Symbol('x')),()=>p.getEntries.call({}),()=>p.getEntriesByName.call({},'same')]){try{fn();out.push('accepted')}catch(e){out.push([e.name,e.code||null,e.message]);}}
+const brand=Reflect.ownKeys(p).find(key=>typeof key==='symbol'&&key.description==='performance');
+out.push(p.getEntries.call(new Proxy(p,{})).length,p.getEntries.call({[brand]:false}).length);
+try{p.getEntries.call(Object.create(p))}catch(e){out.push([e.name,e.code,e.message]);}
+p.clearMarks();p.clearMeasures();console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_timer_disposal_metadata_and_destroyed_phases_match_node() {
+    compare_node_stream_source(r#"
+'use strict';
+const assert=require('assert'),out=[],rows=[];
+for(const [kind,handle] of [['Timeout',setTimeout(()=>assert.fail('disposed timeout fired'),10000)],['Interval',setInterval(()=>assert.fail('disposed interval fired'),10000)],['Immediate',setImmediate(()=>assert.fail('disposed immediate fired'))]]){
+ const proto=Object.getPrototypeOf(handle);
+ for(const key of ['close',Symbol.dispose]){const d=Object.getOwnPropertyDescriptor(proto,key);out.push([kind,String(key),d?[d.value.name,d.value.length,d.writable,d.enumerable,d.configurable]:null]);}
+ out.push([kind,'live',handle._destroyed,handle.hasRef()]);
+ out.push([kind,'dispose',handle[Symbol.dispose](),handle._destroyed,handle.hasRef()]);
+ if(kind!=='Immediate')out.push([kind,'close',handle.close()===handle,handle._destroyed,handle.hasRef()]);
+ handle[Symbol.dispose]();
+}
+const timeout=setTimeout(function(){rows.push(['timeout','during',this===timeout,this._destroyed,this.hasRef()]);process.nextTick(()=>rows.push(['timeout','after',timeout._destroyed,timeout.hasRef()]));},1);
+const interval=setInterval(function(){rows.push(['interval','during',this===interval,this._destroyed,this.hasRef()]);assert.strictEqual(this.close(),this);rows.push(['interval','after',this._destroyed,this.hasRef()]);},1);
+const immediate=setImmediate(function(){rows.push(['immediate','during',this===immediate,this._destroyed,this.hasRef()]);});
+process.on('exit',()=>{rows.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));out.push(rows);console.log(JSON.stringify(out));});
+"#);
+}
+
+#[test]
+fn native_immediate_destroyed_setter_failure_preserves_original_callback_ownership() {
+    compare_node_stream_source(r#"
+'use strict';
+const out=[],marker={};
+const immediate=setImmediate(()=>out.push('fired'));
+Object.defineProperty(immediate,'_destroyed',{configurable:true,get(){return false},set(value){out.push(['set',value]);throw marker;}});
+try{clearImmediate(immediate)}catch(error){out.push(error===marker);}
+Object.defineProperty(immediate,'_destroyed',{value:false,writable:true,enumerable:true,configurable:true});
+setImmediate(()=>{out.push('rescue');console.log(JSON.stringify(out));process.exit(0);});
+"#);
+}
+
+#[test]
+fn native_timer_custom_promisify_getters_preserve_exports_identity_and_mutation() {
+    compare_node_stream_source(r#"
+'use strict';
+const assert=require('assert'),timers=require('timers'),promises=require('timers/promises'),util=require('util'),out=[];
+for(const name of ['setTimeout','setImmediate']){
+ assert.strictEqual(timers[name],globalThis[name]);const d=Object.getOwnPropertyDescriptor(timers[name],util.promisify.custom);
+ out.push([name,d.enumerable,d.configurable,d.get.name,d.get.length,d.set===undefined,Object.hasOwn(d.get,'prototype'),util.promisify(timers[name])===promises[name],d.get.call(null)===promises[name]]);
+ const original=promises[name],marker=function changed(){};promises[name]=marker;out.push(util.promisify(timers[name])===marker);promises[name]=original;
+}
+Promise.all([util.promisify(timers.setTimeout)(1,'timeout'),util.promisify(timers.setImmediate)('immediate')]).then(values=>{out.push(values);console.log(JSON.stringify(out));});
+"#);
+}
+
+#[test]
+fn native_timer_promise_options_validate_with_original_getters_and_coded_errors() {
+    compare_node_stream_source(r#"
+'use strict';
+const timers=require('timers/promises'),out=[];
+(async()=>{
+ for(const [label,call] of [
+  ['delay',()=>timers.setTimeout(false)],['options',()=>timers.setTimeout(1,null,2)],
+  ['signal',()=>timers.setTimeout(1,null,{signal:null})],['ref',()=>timers.setTimeout(1,null,{ref:2})],
+  ['immediate-options',()=>timers.setImmediate(null,2)],['immediate-signal',()=>timers.setImmediate(null,{signal:{}})],['immediate-ref',()=>timers.setImmediate(null,{ref:null})]]){
+  try{await call();out.push([label,'accepted'])}catch(e){out.push([label,e.name,e.code,e.message,String(e)]);}
+ }
+ const log=[],options={get signal(){log.push('signal');return undefined},get ref(){log.push('ref');return true}};
+ await timers.setTimeout(1,'done',options);out.push(log);
+ const marker={};try{await timers.setImmediate(null,{get signal(){throw marker}})}catch(e){out.push(e===marker)}
+ console.log(JSON.stringify(out));
+})();
+"#);
+}
+
+#[test]
+fn cli_print_evaluates_script_statements_and_language_completion_like_node() {
+    for source in ["const x=1; x+2", "var x=4; x*3", "'first'; const x=1;", "if(true){7}else{9}", "globalThis.eval=()=>99; 5", "const t=require('timers/promises'); t.setTimeout(1000,null,{ref:false}).then(()=>{throw Error('unreferenced timer fired')});"] {
+        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command=Command::new(executable);
+            command.args(["-pe",source]);
+            if executable!="node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+            quench_node_test::case_process::observe_command(command,Duration::from_secs(5)).unwrap()
+        });
+        for observation in &observations { assert!(!observation.timed_out); assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr)); assert!(observation.stderr.is_empty()); }
+        if !source.contains("t.setTimeout") { assert_eq!(observations[0].stdout,observations[1].stdout); }
+    }
+}
+
+#[test]
+fn native_timer_primitive_aliases_cancel_original_handles_like_node() {
+    compare_node_stream_source(r#"
+"use strict";
+const assert=require('assert'),out=[],fired=[];
+const a=setTimeout(()=>fired.push('number'),10),b=setInterval(()=>fired.push('string'),10);
+const proto=Object.getPrototypeOf(a),method=proto[Symbol.toPrimitive],d=Object.getOwnPropertyDescriptor(proto,Symbol.toPrimitive);
+out.push([method.name,method.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(method,'prototype')]);
+const primitive=Object.getOwnPropertySymbols(a).find(s=>s.description==='kHasPrimitive');
+const asyncId=Object.getOwnPropertySymbols(a).find(s=>s.description==='asyncId');
+out.push(a[primitive],typeof a[asyncId]);
+const id=+a;out.push(typeof id,Number.isNaN(id),id===method.call(a),String(a)===String(id),a[primitive]);
+clearTimeout(id);clearInterval(String(b));out.push(a._destroyed,b._destroyed);
+const c=setTimeout(()=>fired.push('uncoerced'),1);clearTimeout(c[asyncId]);
+const e=setTimeout(()=>fired.push('getter'),10),original=e[asyncId],log=[];
+Object.defineProperty(e,asyncId,{configurable:true,get(){log.push('id');return original;}});
+Object.defineProperty(e,primitive,{configurable:true,get(){log.push('flag');return false;},set(v){log.push(['set',v]);}});
+out.push(method.call(e)===original,log.slice());clearTimeout(original);
+const marker={},f=setTimeout(()=>fired.push('throw'),10);
+Object.defineProperty(f,primitive,{configurable:true,get(){throw marker;}});
+try{method.call(f)}catch(error){out.push(error===marker)}
+Object.defineProperty(f,primitive,{configurable:true,value:false,writable:true});clearTimeout(f);
+setTimeout(()=>{out.push(fired);console.log(JSON.stringify(out));},30);
+"#);
+}
+
+#[test]
+fn native_timer_duration_coercion_warning_policy_and_overflow_delay_match_node() {
+    compare_node_stream_source(r#"
+"use strict";
+const out=[],log=[],noop=()=>{};
+process.emitWarning=function(message,name){out.push([this===process,arguments.length,message,name]);};
+globalThis.String=()=>"wrong conversion";
+for(const delay of [undefined,null,0,false,NaN,NaN,-1,-2,Infinity,2147483648,2147483647,'0x10']) { const t=setTimeout(noop,delay);clearTimeout(t); }
+const delay={ [Symbol.toPrimitive](hint){log.push(hint);return 0;} };clearInterval(setInterval(noop,delay));out.push(log);
+const marker={};try{setTimeout(noop,{[Symbol.toPrimitive](){throw marker;}});}catch(error){out.push(error===marker);}
+for(const delay of [Symbol('x'),1n]) {try{setTimeout(noop,delay);}catch(error){out.push(error.name);}}
+process.emitWarning=()=>{throw marker;};try{setTimeout(noop,Infinity);}catch(error){out.push(error===marker);}
+let fired=false;process.emitWarning=()=>{};setTimeout(()=>{fired=true;},2147483648);setTimeout(()=>{out.push(fired);console.log(JSON.stringify(out));},30);
+"#);
+}
