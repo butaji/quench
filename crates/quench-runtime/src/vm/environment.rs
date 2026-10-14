@@ -430,7 +430,7 @@ impl<H: Host> Vm<H> {
         slot: u16,
         value: Value,
     ) -> Result<(), JsError> {
-        self.clone_frame_environment(frame, &[slot])?;
+        self.clone_frame_environment(frame, &[slot], &[])?;
         if self.local_slot_is_environment_owned(p, frame, usize::from(slot)) {
             *self
                 .heap
