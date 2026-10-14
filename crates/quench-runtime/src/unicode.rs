@@ -1,5 +1,4 @@
 pub(crate) const UTF16_MAX_CODE_UNIT: u32 = u16::MAX as u32;
-pub(crate) const ASCII_CODE_UNIT_LIMIT: u16 = 0x80;
 pub(crate) const HIGH_SURROGATE_START: u16 = 0xD800;
 pub(crate) const HIGH_SURROGATE_END: u16 = 0xDBFF;
 pub(crate) const LOW_SURROGATE_START: u16 = 0xDC00;

@@ -2133,3 +2133,31 @@ impl Cell {
         }
     }
 }
+
+impl Cell {
+    /// Each program whose code this cell can still run or resolve names in:
+    /// a user function's code, an environment's scope, a suspended generator.
+    pub(crate) fn program_references(&self, mut visit: impl FnMut(ProgramId)) {
+        match self {
+            Self::Function {
+                kind: FunctionKind::User(program, _) | FunctionKind::NumericUser(program, _),
+                ..
+            } => visit(*program),
+            Self::Environment { scope, .. } => {
+                if let Some(program) = scope.program {
+                    visit(ProgramId::from_raw(program));
+                }
+            }
+            Self::Iterator { ext, .. } => {
+                if let Some(continuation) = ext
+                    .generator
+                    .as_ref()
+                    .and_then(|generator| generator.continuation.as_ref())
+                {
+                    visit(continuation.program);
+                }
+            }
+            _ => {}
+        }
+    }
+}

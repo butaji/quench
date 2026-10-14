@@ -28,64 +28,101 @@ pub(super) fn analyze(
     fields: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> Option<Vec<u64>> {
-    if !function.wide.is_empty() {
+    let transfers = transfers(function, methods, fields, superinstructions)?;
+    Some(analyze_transfers(function, &transfers))
+}
+
+/// Each instruction's (uses, definitions) register masks, for a function whose registers fit
+/// the masks; liveness iterates only the live sets over this fixed table.
+pub(super) fn transfers(
+    function: &Function,
+    methods: &[MethodSite],
+    fields: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) -> Option<Vec<(u64, u64)>> {
+    if !function.wide.is_empty() || function.registers > 64 {
         return None;
     }
-    if function.registers > 64 {
-        return None;
-    }
+    Some(
+        function
+            .code
+            .iter()
+            .map(|&instruction| {
+                (
+                    uses(instruction, methods, fields, superinstructions),
+                    definitions(instruction, superinstructions),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// Live registers before each instruction. A reverse pass settles every instruction whose
+/// successors all follow it, so only code with a backward successor iterates to a fixed point.
+pub(super) fn analyze_transfers(function: &Function, transfers: &[(u64, u64)]) -> Vec<u64> {
+    let has_backward_successor = function.code.iter().enumerate().any(|(pc, &instruction)| {
+        let mut backward = false;
+        for_each_successor(function, pc, instruction, |successor| backward |= successor <= pc);
+        backward
+    });
     let mut live = vec![0; function.code.len() + 1];
     loop {
         let mut changed = false;
         for pc in (0..function.code.len()).rev() {
-            let instruction = function.code[pc];
-            let output = live_out(function, &live, pc, instruction);
-            let next = uses(instruction, methods, fields, superinstructions)
-                | (output & !definitions(instruction, superinstructions));
+            let output = live_out(function, &live, pc, function.code[pc]);
+            let (read, written) = transfers[pc];
+            let next = read | (output & !written);
             if live[pc] != next {
                 live[pc] = next;
                 changed = true;
             }
         }
-        if !changed {
+        if !changed || !has_backward_successor {
             break;
         }
     }
     add_suspended_exception_roots(function, &mut live);
-    Some(live)
+    live
+}
+
+/// The instructions control can reach from `instruction` at `pc`, normally or through a
+/// handler covering it. `pc + 1` stands for the function's end after its last instruction.
+fn for_each_successor(
+    function: &Function,
+    pc: usize,
+    instruction: Instr,
+    mut successor: impl FnMut(usize),
+) {
+    match instruction.op().control_flow_layout() {
+        ControlFlowLayout::Jump => successor(instruction.jump_target() as usize),
+        ControlFlowLayout::ConditionalJump => {
+            successor(pc + 1);
+            successor(instruction.jump_target() as usize);
+        }
+        ControlFlowLayout::BranchTable => {
+            crate::bytecode::branch_table_entries(pc, instruction.as_wide()).for_each(&mut successor)
+        }
+        ControlFlowLayout::Terminal => {}
+        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
+            if instruction.returns_from_frame() => {}
+        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => successor(pc + 1),
+    }
+    for handler in &function.handlers {
+        if pc as u32 >= handler.start && (pc as u32) < handler.end {
+            successor(handler.target as usize);
+            if let Some(target) = handler.return_target {
+                successor(target as usize);
+            }
+        }
+    }
 }
 
 pub(super) fn live_out(function: &Function, live: &[u64], pc: usize, instruction: Instr) -> u64 {
-    let fallthrough = live.get(pc + 1).copied().unwrap_or(0);
-    let normal = match instruction.op().control_flow_layout() {
-        ControlFlowLayout::Jump => live[instruction.jump_target() as usize],
-        ControlFlowLayout::ConditionalJump => {
-            fallthrough | live[instruction.jump_target() as usize]
-        }
-        ControlFlowLayout::BranchTable => {
-            crate::bytecode::branch_table_entries(pc, instruction.as_wide())
-                .fold(0, |mask, entry| mask | live[entry])
-        }
-        ControlFlowLayout::Terminal => 0,
-        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough
-            if instruction.returns_from_frame() =>
-        {
-            0
-        }
-        ControlFlowLayout::Call | ControlFlowLayout::Fallthrough => fallthrough,
-    };
-    function
-        .handlers
-        .iter()
-        .filter(|handler| pc as u32 >= handler.start && (pc as u32) < handler.end)
-        .fold(normal, |mask, handler| {
-            let exceptional = live[handler.target as usize];
-            let returned = handler
-                .return_target
-                .map(|target| live[target as usize])
-                .unwrap_or(0);
-            mask | exceptional | returned
-        })
+    let mut output = 0;
+    for_each_successor(function, pc, instruction, |successor| {
+        output |= live.get(successor).copied().unwrap_or(0);
+    });
+    output
 }
 
 fn add_suspended_exception_roots(function: &Function, live: &mut [u64]) {
@@ -280,7 +317,7 @@ mod tests {
             name: None,
             is_arrow: false,
             self_binding_slot: None,
-            source_text: None,
+            source_span: None,
             params: 0,
             length: 0,
             parameter_end_pc: 0,
@@ -310,7 +347,7 @@ mod tests {
             global_function_atoms: vec![],
             global_annex_b_var_atoms: vec![],
             global_immutable_atoms: vec![],
-            name_bindings: vec![],
+            name_bindings: Default::default(),
             binding_sites: vec![],
             source_positions: vec![],
             environment_clones: vec![],

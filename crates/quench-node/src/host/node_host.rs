@@ -97,6 +97,12 @@ pub(crate) struct SharedNodeState {
     pub(crate) child_process_shell_args_warning_emitted: bool,
     pub(crate) child_processes: std::collections::HashMap<u64, SharedChildProcess>,
     pub(crate) net_socket_constructor: Option<quench_runtime::RootId>,
+    pub(crate) net_handle_owner_symbol: Option<quench_runtime::RootId>,
+    pub(crate) net_server_on_connection: Option<quench_runtime::RootId>,
+    pub(crate) net_handle_onclose_symbol: Option<quench_runtime::RootId>,
+    pub(crate) net_socket_option_keys: Option<quench_runtime::RootId>,
+    pub(crate) net_handle_identities: Vec<(quench_runtime::HostWeakRoot, u64)>,
+    pub(crate) net_handle_close_callbacks: std::collections::HashMap<u64, quench_runtime::RootId>,
 }
 
 pub(crate) struct NetSocket {
@@ -164,6 +170,12 @@ impl SharedNodeState {
         self.url_search_params_constructor = None;
         self.timer_handle_api = None;
         self.net_socket_constructor = None;
+        self.net_handle_owner_symbol = None;
+        self.net_server_on_connection = None;
+        self.net_handle_onclose_symbol = None;
+        self.net_socket_option_keys = None;
+        self.net_handle_identities.clear();
+        self.net_handle_close_callbacks.clear();
         self.fs_watch = crate::modules::fs_watch_shared_vm::State::default();
         self.crypto_engines = crate::modules::crypto_engine_shared_vm::State::default();
         self.tls_contexts = crate::modules::tls_shared_vm::contexts::State::default();
@@ -229,6 +241,12 @@ impl SharedNodeState {
             child_process_shell_args_warning_emitted: false,
             child_processes: std::collections::HashMap::new(),
             net_socket_constructor: None,
+            net_handle_owner_symbol: None,
+            net_server_on_connection: None,
+            net_handle_onclose_symbol: None,
+            net_socket_option_keys: None,
+            net_handle_identities: Vec::new(),
+            net_handle_close_callbacks: std::collections::HashMap::new(),
         }
     }
 }
@@ -284,6 +302,27 @@ impl NodeHost {
     /// Select Node's Script/Module parse goal from its filename and package type.
     pub fn source_kind(path: &std::path::Path) -> Result<quench_runtime::SourceKind, String> {
         super::shared_vm::source_kind(path)
+    }
+
+    /// The last VFS CLI switch owns feature availability for this logical process.
+    pub(crate) fn vfs_enabled(&self) -> bool {
+        let state = self.shared_state.borrow();
+        let mut arguments = state.exec_argv.iter();
+        let mut enabled = false;
+        while let Some(argument) = arguments.next() {
+            match argument.as_str() {
+                "--experimental-vfs" => enabled = true,
+                "--no-experimental-vfs" => enabled = false,
+                // The shared CLI retains option values and eval source in execArgv.
+                // They are input, even when their text matches a VFS switch.
+                "--trace-event-categories" | "--trace-event-file-pattern" | "-r" | "--require" => {
+                    let _ = arguments.next();
+                }
+                "-e" | "--eval" | "-p" | "--print" | "-pe" | "-ep" => break,
+                _ => {}
+            }
+        }
+        enabled
     }
 
     /// Execute a file through the CommonJS loader during shared-VM initialization.

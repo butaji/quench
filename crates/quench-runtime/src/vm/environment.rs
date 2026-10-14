@@ -430,7 +430,7 @@ impl<H: Host> Vm<H> {
         slot: u16,
         value: Value,
     ) -> Result<(), JsError> {
-        self.clone_frame_environment(frame, &[slot])?;
+        self.clone_frame_environment(frame, &[slot], &[])?;
         if self.local_slot_is_environment_owned(p, frame, usize::from(slot)) {
             *self
                 .heap
@@ -601,29 +601,16 @@ impl<H: Host> Vm<H> {
         slot: usize,
         source_atom: Option<Atom>,
     ) -> Result<Value, JsError> {
-        let value = if let Some(value) = self.direct_eval_var_binding(frame, slot) {
-            value
-        } else if let Some(value) =
-            self.root_global_lexical_value(p, self.frames[frame].function, slot)
-        {
-            value
-        } else if let Some(atom) = self.global_object_var_atom(frame, slot) {
-            self.get_property(p, self.realm.globals, atom)?
-        } else if let Some(value) = self.module_import_value(
-            self.frames[frame].program,
-            self.frames[frame].function,
-            slot,
-        ) {
-            value
-        } else if self.local_slot_is_environment_owned(p, frame, slot) {
-            self.heap
+        let value = match self.root_body_binding(p, frame, slot)? {
+            Some(value) => value,
+            None if self.local_slot_is_environment_owned(p, frame, slot) => self
+                .heap
                 .environment_slot(self.frames[frame].env, slot)
-                .ok_or_else(|| JsError("invalid local environment".into()))?
-        } else {
-            *self.frames[frame]
+                .ok_or_else(|| JsError("invalid local environment".into()))?,
+            None => *self.frames[frame]
                 .locals
                 .get(slot)
-                .ok_or_else(|| JsError("invalid local slot".into()))?
+                .ok_or_else(|| JsError("invalid local slot".into()))?,
         };
         if value.is_deleted() {
             let atom = source_atom
@@ -637,6 +624,34 @@ impl<H: Host> Vm<H> {
             self.checked_binding_read(p, atom, value)?;
         }
         Ok(self.mapped_argument_load(p, frame, slot, value))
+    }
+
+    /// A root body's slot that stands for a binding outside its frame: a direct eval's var
+    /// redirected to its caller, a global lexical or var binding, or a module import. Every
+    /// other function's slot is its own.
+    fn root_body_binding(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        slot: usize,
+    ) -> Result<Option<Value>, JsError> {
+        if self.frames[frame].function != super::ROOT_FUNCTION_ID {
+            return Ok(None);
+        }
+        if let Some(value) = self.direct_eval_var_binding(frame, slot) {
+            return Ok(Some(value));
+        }
+        if let Some(value) = self.root_global_lexical_value(p, self.frames[frame].function, slot) {
+            return Ok(Some(value));
+        }
+        if let Some(atom) = self.global_object_var_atom(frame, slot) {
+            return self.get_property(p, self.realm.globals, atom).map(Some);
+        }
+        Ok(self.module_import_value(
+            self.frames[frame].program,
+            self.frames[frame].function,
+            slot,
+        ))
     }
 
     fn is_self_binding(&self, atom: Atom) -> bool {
@@ -1898,8 +1913,7 @@ impl<H: Host> Vm<H> {
             && !self.realm.global_lexical_bindings.contains_key(&atom)
             && self.frames.last().is_some_and(|frame| {
                 frame.function != super::ROOT_FUNCTION_ID
-                    && (p.kind == crate::bytecode::ProgramKind::Script
-                        || self.programs.runs_in_global_scope(frame.program))
+                    && self.programs.runs_in_global_scope(frame.program)
                     && p.functions
                         .get(frame.function as usize)
                         .is_some_and(|function| {

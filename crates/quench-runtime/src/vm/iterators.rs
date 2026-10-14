@@ -3028,7 +3028,7 @@ impl<H: Host> Vm<H> {
                             let mut selected = None;
                             while offset < units.len() {
                                 let end = if units.get(offset + 1).is_some_and(|low| {
-                                    crate::unicode::decode_surrogate_pair(units[offset], *low)
+                                    crate::unicode::decode_surrogate_pair(units.at(offset), low)
                                         .is_some()
                                 }) {
                                     offset + 2
@@ -3037,7 +3037,7 @@ impl<H: Host> Vm<H> {
                                 };
                                 if element == index {
                                     let value = vm.heap.alloc(Cell::String(
-                                        super::wtf16::JsString::from_units(&units[offset..end]),
+                                        super::wtf16::JsString::from_unit_run(units.slice(offset..end)),
                                     ));
                                     selected = Some((value, None));
                                     break;

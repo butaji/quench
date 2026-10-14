@@ -38,11 +38,11 @@ fn regression_global_var_lowering_checks_instruction_roles_before_slots() {
 
 #[test]
 fn scalar_constants_reuse_exact_slots() {
-    let mut compiler = Compiler::new_with_mode(
+    let mut compiler = Compiler::new(
         "test.js",
         "",
         SpecializationMode::Enabled,
-        &[],
+        &NoAtomPrefix,
         FxHashMap::default(),
     );
     assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
@@ -54,11 +54,11 @@ fn scalar_constants_reuse_exact_slots() {
 
 #[test]
 fn scalar_constants_preserve_signed_zero_bits() {
-    let mut compiler = Compiler::new_with_mode(
+    let mut compiler = Compiler::new(
         "test.js",
         "",
         SpecializationMode::Enabled,
-        &[],
+        &NoAtomPrefix,
         FxHashMap::default(),
     );
     assert_ne!(
@@ -120,11 +120,11 @@ fn validator_rejects_a_promoted_binding_read_through_its_local_slot() {
 
 #[test]
 fn constant_runs_remain_fresh_and_contiguous() {
-    let mut compiler = Compiler::new_with_mode(
+    let mut compiler = Compiler::new(
         "test.js",
         "",
         SpecializationMode::Enabled,
-        &[],
+        &NoAtomPrefix,
         FxHashMap::default(),
     );
     assert_eq!(compiler.constant(Constant::Number(1.0)), 0);
@@ -234,4 +234,27 @@ fn constructor_source_anchor_survives_argument_move_coalescing() {
         assert_eq!((position.line, position.column), (2, 7));
         program.validate().unwrap();
     }
+}
+
+#[test]
+fn completion_capturing_host_scripts_keep_script_declarations() {
+    // A strict host script (vm.runInContext, $262.evalScript) declares global bindings; only
+    // eval code keeps a strict body's declarations local.
+    let source = "'use strict'; function f() {} var v = 1;";
+    let script =
+        Engine::specialize_script_with_atom_prefix(source, "host.js", &NoAtomPrefix).unwrap();
+    assert_eq!(script.kind, crate::bytecode::ProgramKind::Script);
+    assert!(!script.root_variables_are_local());
+    let eval = Engine::specialize_eval_with_context(
+        source,
+        "eval.js",
+        &NoAtomPrefix,
+        false,
+        EvalContext::default(),
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert_eq!(eval.kind, crate::bytecode::ProgramKind::Eval);
+    assert!(eval.root_variables_are_local());
 }

@@ -1,4 +1,5 @@
 mod compiled;
+mod startup_intrinsics;
 mod wasm;
 pub use compiled::ExecutionMode;
 mod wasm_exception;
@@ -607,6 +608,16 @@ struct ProgramCacheLayout {
     field_base: usize,
     method_base: usize,
     object_base: usize,
+    /// The field cache index of the program's shared overflow site, when its sites
+    /// outnumber the 16-bit site space (`SHARED_UNCACHED_SITE`); nothing is cached there.
+    shared_uncached_field: Option<usize>,
+}
+
+impl ProgramCacheLayout {
+    fn shared_uncached_field(field_base: usize, program: &ResidualProgram) -> Option<usize> {
+        (program.cache_sites > crate::bytecode::SHARED_UNCACHED_SITE)
+            .then(|| field_base + usize::from(crate::bytecode::SHARED_UNCACHED_SITE))
+    }
 }
 /// Entries of the in-loop call target cache, indexed by the callee's heap index.
 const CALL_TARGET_CACHE_SIZE: usize = 64;
@@ -904,6 +915,8 @@ pub(crate) struct Vm<H> {
     object_proto: Value,
     function_proto: Value,
     array_proto: Value,
+    /// %String.prototype% of the current realm; primitive string property
+    /// reads use it directly, so realm switches re-derive it.
     string_proto: Value,
     array_buffer_proto: Value,
     shared_array_buffer_proto: Value,
@@ -948,6 +961,9 @@ pub(crate) struct Vm<H> {
     temporal_plain_month_day_proto: Value,
     temporal_plain_year_month_proto: Value,
     natives: Vec<(Native, Value)>,
+    /// The function values in `natives`. One native serves every realm, so it runs in the
+    /// realm of its caller rather than switching to the creator's.
+    shared_natives: FxHashSet<Value>,
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
     frame_pool: Vec<Box<Frame>>,
@@ -957,6 +973,8 @@ pub(crate) struct Vm<H> {
     execution_mode: ExecutionMode,
     active_call_roots: Vec<Value>,
     with_stack: Vec<Value>,
+    /// The realm's intrinsics as the host bootstrap left them (`seal_startup_intrinsics`).
+    startup_intrinsics: startup_intrinsics::StartupIntrinsics,
     /// Set by the first `with` entry and never cleared: `Native::WithEnter` is
     /// the only source of with objects, so until it runs no environment
     /// carries any.
@@ -1086,6 +1104,29 @@ impl<H: Host> Vm<H> {
         self.realm.global_lexical_declarations = state.declarations;
         self.realm.global_lexical_bindings = state.bindings;
         self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
+        // Natives are shared by every realm and allocate from these fields, so the fields
+        // follow the active realm: a native called from a realm builds that realm's objects.
+        for native in [Native::Object, Native::Function, Native::Array, Native::String] {
+            if let Some(&prototype) = self
+                .realm
+                .intrinsics
+                .builtin_prototypes
+                .get(&(global, native))
+            {
+                *self.realm_prototype_field(native) = prototype;
+            }
+        }
+    }
+
+    /// The VM field holding the active realm's `native.prototype`.
+    fn realm_prototype_field(&mut self, native: Native) -> &mut Value {
+        match native {
+            Native::Object => &mut self.object_proto,
+            Native::Function => &mut self.function_proto,
+            Native::Array => &mut self.array_proto,
+            Native::String => &mut self.string_proto,
+            _ => unreachable!("only these prototypes follow the active realm"),
+        }
     }
 
     pub(crate) fn root(&mut self, value: Value) -> RootId {
@@ -1616,6 +1657,7 @@ impl<H: Host> Vm<H> {
         self.realm.intrinsics.arguments_objects.clear();
         self.heap.reset();
         self.natives.clear();
+        self.shared_natives.clear();
         self.frames.clear();
         self.frame_pool.clear();
         self.realm.jobs.clear();
@@ -1687,8 +1729,10 @@ impl<H: Host> Vm<H> {
         self.regexp_builtin_layout = None;
         self.instanceof_has_instance_holder = Value::NULL;
         self.program_cache_layouts.clear();
-        self.program_cache_layouts
-            .push(ProgramCacheLayout::default());
+        self.program_cache_layouts.push(ProgramCacheLayout {
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(0, program),
+            ..ProgramCacheLayout::default()
+        });
         self.set_active_program(ProgramId::MAIN);
         self.typed_array_proto = Value::NULL;
         self.finalization_registry_proto = Value::NULL;
@@ -1748,7 +1792,7 @@ impl<H: Host> Vm<H> {
     }
     pub(super) fn store_dynamic_program(&mut self, program: ResidualProgram) -> Option<ProgramId> {
         let program = self.intern_program_atoms(program);
-        let id = self.programs.insert(program)?;
+        let id = self.programs.insert_reclaimable(program)?;
         let residual = self.programs.get(id)?;
         self.append_program_cache_layout(id, &residual);
         self.materialize_program_constants(id, &residual);
@@ -1765,6 +1809,10 @@ impl<H: Host> Vm<H> {
         debug_assert_eq!(id.raw() as usize, self.program_cache_layouts.len());
         Self::prime_loop_decoding(program);
         self.program_cache_layouts.push(ProgramCacheLayout {
+            shared_uncached_field: ProgramCacheLayout::shared_uncached_field(
+                self.field_caches.len(),
+                program,
+            ),
             field_base: self.field_caches.len(),
             method_base: self.method_caches.len(),
             object_base: self.object_shapes.len(),
@@ -1830,6 +1878,11 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn field_cache_index(&self, site: u16) -> usize {
         self.active_cache_layout().field_base + usize::from(site)
+    }
+    /// Whether the active program may record cache entries at `index`: every index but its
+    /// shared overflow site, if it has one.
+    pub(super) fn field_cache_records(&self, index: usize) -> bool {
+        self.active_layout.shared_uncached_field != Some(index)
     }
     pub(super) fn method_cache_index(&self, site: usize) -> usize {
         self.active_cache_layout().method_base + site

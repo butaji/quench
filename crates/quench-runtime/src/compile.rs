@@ -1,5 +1,5 @@
 use crate::bytecode::{
-    Atom, AtomTable, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, Instr,
+    Atom, Constant, DispatchClass, FieldBase, FieldSite, Function as BcFunction, Instr,
     LexicalBindingKind, MethodSite, ModuleImportBinding, ModuleImportName, ModuleLinkPlan,
     ModuleRequest, ModuleRequestPhase, ObjectSite, Op, Operand, Register, ResidualProgram,
     SET_THIS_REGISTER, SourcePosition, Superinstruction, WideInstruction,
@@ -11,8 +11,12 @@ use oxc_span::{GetSpan, SourceType, Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 use std::{fmt, ops::Range};
+/// The most registers a function's promoted locals may take: half of the register domain,
+/// leaving the other half for the temporaries of any one statement.
+const PROMOTED_LOCAL_REGISTER_BUDGET: Register = crate::bytecode::SET_THIS_REGISTER / 2;
 mod annex_b_targets;
 mod arrow;
+mod atoms;
 mod ast;
 mod binding_time;
 mod capture_layout;
@@ -32,6 +36,8 @@ mod stack;
 mod string;
 mod template;
 use ast::{FunctionCompiler, StatementCompletion};
+use atoms::CompilerAtoms;
+pub(crate) use atoms::{AtomPrefix, NoAtomPrefix};
 
 /// The synthetic method supplies parsing context only; execution uses its body.
 fn eval_method_body<'a, 'b>(
@@ -660,25 +666,23 @@ impl Engine {
             source,
             name,
             SpecializationMode::Enabled,
-            &[],
+            &NoAtomPrefix,
             SourceType::script(),
             false,
             false,
             false,
         )
     }
-    /// Compile a host Script with the VM's positional atom prefix. Lossy UTF-16
-    /// slots stay reserved but cannot become source-name aliases.
+    /// Compile a host Script against the VM's atom prefix.
     pub(crate) fn specialize_script_with_atom_prefix(
         source: &str,
         name: &str,
-        atom_prefix: &[String],
-        unindexable_prefix_atoms: &[usize],
+        atom_prefix: &dyn AtomPrefix,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_with_mode_and_private_names_and_atom_mask(
+        Self::specialize_with_mode_and_private_names(
             source,
             name,
-            SpecializationMode::Enabled,
+            SpecializationMode::of(atom_prefix),
             atom_prefix,
             SourceType::script(),
             false,
@@ -687,7 +691,6 @@ impl Engine {
             &[],
             &[],
             ParsedProgramShape::Any,
-            unindexable_prefix_atoms,
         )
     }
     pub fn specialize_unspecialized(
@@ -698,27 +701,8 @@ impl Engine {
             source,
             name,
             SpecializationMode::Disabled,
-            &[],
+            &NoAtomPrefix,
             SourceType::script(),
-            false,
-            false,
-            false,
-        )
-    }
-    /// Compile a script whose atom indices extend an existing immutable
-    /// program prefix. Dynamic sources use the same atom authority so values
-    /// and property sites compare identically across program boundaries.
-    pub fn specialize_unspecialized_with_atom_prefix(
-        source: &str,
-        name: &str,
-        atom_prefix: &[String],
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_with_mode(
-            source,
-            name,
-            SpecializationMode::Disabled,
-            atom_prefix,
-            SourceType::unambiguous(),
             false,
             false,
             false,
@@ -727,7 +711,7 @@ impl Engine {
     pub(crate) fn specialize_eval_with_context(
         source: &str,
         name: &str,
-        atom_prefix: &[String],
+        atom_prefix: &dyn AtomPrefix,
         inherited_strict: bool,
         context: EvalContext,
         private_names: &[(String, String)],
@@ -759,7 +743,7 @@ impl Engine {
         Self::specialize_with_mode_and_private_names(
             source,
             name,
-            SpecializationMode::Disabled,
+            SpecializationMode::of(atom_prefix),
             atom_prefix,
             source_type,
             false,
@@ -778,10 +762,10 @@ impl Engine {
         Self::specialize_module_with_mode(source, name, SpecializationMode::Disabled)
     }
     /// Compile a module against an existing program's canonical atom prefix.
-    pub fn specialize_module_unspecialized_with_atom_prefix(
+    pub(crate) fn specialize_module_unspecialized_with_atom_prefix(
         source: &str,
         name: &str,
-        atom_prefix: &[String],
+        atom_prefix: &dyn AtomPrefix,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_with_mode(
             source,
@@ -799,11 +783,11 @@ impl Engine {
     }
     /// Compile already-coerced Function-constructor parameter and body strings
     /// through the same OXC script pipeline used by ordinary source.
-    pub fn specialize_dynamic_function(
+    pub(crate) fn specialize_dynamic_function(
         parameters: &str,
         body: &str,
         name: &str,
-        atom_prefix: &[String],
+        atom_prefix: &dyn AtomPrefix,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_dynamic_function_with_kind(
             parameters,
@@ -817,7 +801,7 @@ impl Engine {
         parameters: &str,
         body: &str,
         name: &str,
-        atom_prefix: &[String],
+        atom_prefix: &dyn AtomPrefix,
         kind: DynamicFunctionKind,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_dynamic_function_source(
@@ -833,7 +817,7 @@ impl Engine {
         parameters: &str,
         body: &str,
         name: &str,
-        atom_prefix: &[String],
+        atom_prefix: &dyn AtomPrefix,
         kind: DynamicFunctionKind,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         Self::specialize_dynamic_function_source(
@@ -849,7 +833,7 @@ impl Engine {
         parameters: &str,
         body: &str,
         name: &str,
-        atom_prefix: &[String],
+        atom_prefix: &dyn AtomPrefix,
         kind: DynamicFunctionKind,
         validation: DynamicFunctionValidation,
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
@@ -875,7 +859,7 @@ impl Engine {
         Self::specialize_with_program_shape(
             &source,
             name,
-            SpecializationMode::Disabled,
+            SpecializationMode::of(atom_prefix),
             atom_prefix,
             SourceType::script(),
             false,
@@ -888,7 +872,7 @@ impl Engine {
         parameters: &str,
         body: &str,
         name: &str,
-        atom_prefix: &[String],
+        atom_prefix: &dyn AtomPrefix,
         private_names: &[(String, String)],
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let body = early::normalize_dynamic_function_body(body);
@@ -896,7 +880,7 @@ impl Engine {
         Self::specialize_with_mode_and_private_names(
             &source,
             name,
-            SpecializationMode::Disabled,
+            SpecializationMode::of(atom_prefix),
             atom_prefix,
             SourceType::script(),
             false,
@@ -916,7 +900,7 @@ impl Engine {
             source,
             name,
             mode,
-            &[],
+            &NoAtomPrefix,
             SourceType::mjs(),
             true,
             false,
@@ -927,7 +911,7 @@ impl Engine {
         source: &str,
         name: &str,
         mode: SpecializationMode,
-        atom_prefix: &[String],
+        atom_prefix: &dyn AtomPrefix,
         source_type: SourceType,
         module_goal: bool,
         capture_script_completion: bool,
@@ -949,7 +933,7 @@ impl Engine {
         source: &str,
         name: &str,
         mode: SpecializationMode,
-        atom_prefix: &[String],
+        atom_prefix: &dyn AtomPrefix,
         source_type: SourceType,
         module_goal: bool,
         capture_script_completion: bool,
@@ -974,7 +958,7 @@ impl Engine {
         source: &str,
         name: &str,
         mode: SpecializationMode,
-        atom_prefix: &[String],
+        atom_prefix: &dyn AtomPrefix,
         source_type: SourceType,
         module_goal: bool,
         capture_script_completion: bool,
@@ -982,36 +966,6 @@ impl Engine {
         private_name_overrides: &[(String, String)],
         annex_b_forbidden_names: &[String],
         expected_shape: ParsedProgramShape,
-    ) -> Result<ResidualProgram, Vec<Diagnostic>> {
-        Self::specialize_with_mode_and_private_names_and_atom_mask(
-            source,
-            name,
-            mode,
-            atom_prefix,
-            source_type,
-            module_goal,
-            capture_script_completion,
-            inherited_strict,
-            private_name_overrides,
-            annex_b_forbidden_names,
-            expected_shape,
-            &[],
-        )
-    }
-
-    fn specialize_with_mode_and_private_names_and_atom_mask(
-        source: &str,
-        name: &str,
-        mode: SpecializationMode,
-        atom_prefix: &[String],
-        source_type: SourceType,
-        module_goal: bool,
-        capture_script_completion: bool,
-        inherited_strict: bool,
-        private_name_overrides: &[(String, String)],
-        annex_b_forbidden_names: &[String],
-        expected_shape: ParsedProgramShape,
-        unindexable_prefix_atoms: &[usize],
     ) -> Result<ResidualProgram, Vec<Diagnostic>> {
         let normalized = early::normalize_hashbang(source);
         let allocator = Allocator::with_capacity(normalized.len().saturating_mul(6));
@@ -1180,13 +1134,12 @@ impl Engine {
         } else {
             None
         };
-        let mut compiler = Compiler::new_with_atom_mask(
+        let mut compiler = Compiler::new(
             name,
             &normalized,
             mode,
             atom_prefix,
             private_name_ids,
-            unindexable_prefix_atoms,
         );
         compiler.private_name_labels = private_name_labels;
         compiler.private_name_overrides = private_aliases;
@@ -1589,21 +1542,32 @@ enum SpecializationMode {
     Disabled,
 }
 
+impl SpecializationMode {
+    /// A program compiled at run time specializes exactly when the VM it extends does, so
+    /// eval, Function and host-script code keep the inline caches of the code that made it.
+    fn of(host: &dyn AtomPrefix) -> Self {
+        if host.specialized() {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+}
+
 struct Compiler<'a> {
     source: &'a str,
     text: &'a str,
     source_line_starts: Vec<usize>,
-    /// The source is ASCII, so a column (in UTF-16 units) is a byte distance.
-    source_is_ascii: bool,
-    source_position_cursor: SourcePositionCursor,
+    /// Byte offset of each non-ASCII character with the running excess of
+    /// UTF-8 bytes over UTF-16 units through it; columns count UTF-16 units.
+    source_utf16_excess: Vec<(usize, usize)>,
     mode: SpecializationMode,
     root_strict: bool,
     module_goal: bool,
     capture_script_completion: bool,
     eval_context: Option<EvalContext>,
     eval_annex_b_collisions: FxHashSet<u32>,
-    atoms: Vec<Rc<str>>,
-    atom_index: FxHashMap<Rc<str>, Atom>,
+    atoms: CompilerAtoms<'a>,
     private_name_ids: FxHashMap<(u32, u32), u32>,
     private_name_labels: FxHashMap<(u32, u32), String>,
     private_name_overrides: FxHashMap<u32, String>,
@@ -1618,13 +1582,9 @@ struct Compiler<'a> {
     object_sites: Vec<ObjectSite>,
     regexp_literal_sites: Vec<crate::bytecode::RegExpLiteralSite>,
     superinstructions: Vec<Superinstruction>,
-}
-
-#[derive(Clone, Copy)]
-struct SourcePositionCursor {
-    offset: usize,
-    line: u32,
-    column: u32,
+    /// Distinct `name_bindings` lists: sibling functions that see the same bindings,
+    /// such as every function declared in one module scope, share one list.
+    name_binding_lists: FxHashSet<std::rc::Rc<[crate::bytecode::EvalBinding]>>,
 }
 
 type MethodSiteSpec = (Atom, u16, Vec<Register>, Option<(Atom, u16)>);
@@ -1699,7 +1659,7 @@ enum FunctionBody<'a> {
 #[derive(Default)]
 struct FunctionOptions<'a> {
     defaults: Option<&'a FormalParameters<'a>>,
-    source_text: Option<String>,
+    source_span: Option<crate::bytecode::SourceSpan>,
     name_binding: Option<Atom>,
     async_function: bool,
     generator: bool,
@@ -1757,62 +1717,51 @@ impl From<&Constant> for ConstantKey {
 }
 
 impl<'a> Compiler<'a> {
+    fn intern_name_bindings(
+        &mut self,
+        bindings: Vec<crate::bytecode::EvalBinding>,
+    ) -> std::rc::Rc<[crate::bytecode::EvalBinding]> {
+        if let Some(shared) = self.name_binding_lists.get(bindings.as_slice()) {
+            return shared.clone();
+        }
+        let shared: std::rc::Rc<[crate::bytecode::EvalBinding]> = bindings.into();
+        self.name_binding_lists.insert(shared.clone());
+        shared
+    }
+
     fn annex_b_collisions(&self, body: &[Statement<'_>]) -> FxHashSet<u32> {
         let mut collisions = early::annex_b_lexical_collisions(body);
         collisions.extend(self.eval_annex_b_collisions.iter().copied());
         collisions
     }
 
-    #[cfg(test)]
-    fn new_with_mode(
+    fn new(
         source: &'a str,
         text: &'a str,
         mode: SpecializationMode,
-        atom_prefix: &[String],
+        atom_prefix: &'a dyn AtomPrefix,
         private_name_ids: FxHashMap<(u32, u32), u32>,
     ) -> Self {
-        Self::new_with_atom_mask(source, text, mode, atom_prefix, private_name_ids, &[])
-    }
-
-    fn new_with_atom_mask(
-        source: &'a str,
-        text: &'a str,
-        mode: SpecializationMode,
-        atom_prefix: &[String],
-        private_name_ids: FxHashMap<(u32, u32), u32>,
-        unindexable_prefix_atoms: &[usize],
-    ) -> Self {
-        let atoms: Vec<Rc<str>> = atom_prefix
-            .iter()
-            .map(|atom| Rc::from(atom.as_str()))
-            .collect();
-        let unindexable_prefix_atoms = unindexable_prefix_atoms
-            .iter()
-            .copied()
-            .collect::<FxHashSet<_>>();
-        let mut atom_index = FxHashMap::default();
-        for (index, atom) in atoms.iter().enumerate() {
-            // An opaque prefix slot reserves its VM atom ID but is not a name alias.
-            if !unindexable_prefix_atoms.contains(&index) {
-                atom_index.entry(Rc::clone(atom)).or_insert(index as Atom);
-            }
-        }
+        let atoms = CompilerAtoms::new(atom_prefix);
         let mut source_line_starts = vec![0];
         source_line_starts.extend(
             text.match_indices('\n')
                 .map(|(index, _)| index.saturating_add(1)),
         );
-        let source_is_ascii = text.is_ascii();
+        let mut excess = 0;
+        let source_utf16_excess = text
+            .char_indices()
+            .filter(|(_, character)| !character.is_ascii())
+            .map(|(offset, character)| {
+                excess += character.len_utf8() - character.len_utf16();
+                (offset, excess)
+            })
+            .collect();
         Self {
             source,
             text,
             source_line_starts,
-            source_is_ascii,
-            source_position_cursor: SourcePositionCursor {
-                offset: 0,
-                line: 1,
-                column: 1,
-            },
+            source_utf16_excess,
             mode,
             root_strict: false,
             module_goal: false,
@@ -1820,7 +1769,6 @@ impl<'a> Compiler<'a> {
             eval_context: None,
             eval_annex_b_collisions: FxHashSet::default(),
             atoms,
-            atom_index,
             private_name_ids,
             private_name_labels: FxHashMap::default(),
             private_name_overrides: FxHashMap::default(),
@@ -1835,60 +1783,30 @@ impl<'a> Compiler<'a> {
             object_sites: vec![],
             regexp_literal_sites: vec![],
             superinstructions: vec![],
+            name_binding_lists: FxHashSet::default(),
         }
     }
 
-    fn source_position(&mut self, offset: u32) -> SourcePosition {
+    fn source_position(&self, offset: u32) -> SourcePosition {
         let offset = (offset as usize).min(self.text.len());
-        if self.source_is_ascii {
-            // Every character is one byte and one UTF-16 unit: the column is the distance
-            // from the line start, found by search instead of a scan of the line.
-            let line_index = self
-                .source_line_starts
-                .partition_point(|start| *start <= offset)
-                .saturating_sub(1);
-            let column = offset - self.source_line_starts[line_index] + 1;
-            return SourcePosition {
-                pc: 0,
-                line: u32::try_from(line_index + 1).unwrap_or(u32::MAX),
-                column: u32::try_from(column).unwrap_or(u32::MAX),
-            };
-        }
-        let mut cursor = self.source_position_cursor;
-        if offset >= cursor.offset {
-            for character in self.text[cursor.offset..offset].chars() {
-                if character == '\n' {
-                    cursor.line = cursor.line.saturating_add(1);
-                    cursor.column = 1;
-                } else {
-                    cursor.column = cursor.column.saturating_add(character.len_utf16() as u32);
-                }
-            }
-            cursor.offset = offset;
-            self.source_position_cursor = cursor;
-            return SourcePosition {
-                pc: 0,
-                line: cursor.line,
-                column: cursor.column,
-            };
-        }
-
         let line_index = self
             .source_line_starts
             .partition_point(|start| *start <= offset)
             .saturating_sub(1);
         let line_start = self.source_line_starts[line_index];
-        let column = self
-            .text
-            .get(line_start..offset)
-            .unwrap_or_default()
-            .encode_utf16()
-            .count()
-            .saturating_add(1);
+        let excess_before = |offset: usize| {
+            let index = self
+                .source_utf16_excess
+                .partition_point(|(character, _)| *character < offset);
+            index
+                .checked_sub(1)
+                .map_or(0, |index| self.source_utf16_excess[index].1)
+        };
+        let column = offset - line_start - (excess_before(offset) - excess_before(line_start));
         SourcePosition {
             pc: 0,
             line: u32::try_from(line_index.saturating_add(1)).unwrap_or(u32::MAX),
-            column: u32::try_from(column).unwrap_or(u32::MAX),
+            column: u32::try_from(column.saturating_add(1)).unwrap_or(u32::MAX),
         }
     }
 
@@ -1949,7 +1867,7 @@ impl<'a> Compiler<'a> {
             None,
             FunctionOptions {
                 defaults: None,
-                source_text: None,
+                source_span: None,
                 name_binding: None,
                 async_function: async_module,
                 generator: false,
@@ -2034,11 +1952,11 @@ impl<'a> Compiler<'a> {
         }
         let global_lexical_atoms: Vec<_> = global_lexical_names
             .iter()
-            .filter_map(|name| self.atom_index.get(name.as_str()).copied())
+            .filter_map(|name| self.atoms.find(name))
             .collect();
         let global_immutable_atoms: Vec<_> = global_immutable_names
             .iter()
-            .filter_map(|name| self.atom_index.get(name.as_str()).copied())
+            .filter_map(|name| self.atoms.find(name))
             .collect();
         let global_function_names: Vec<_> = program
             .body
@@ -2053,7 +1971,7 @@ impl<'a> Compiler<'a> {
             .collect();
         let global_function_atoms = global_function_names
             .iter()
-            .filter_map(|name| self.atom_index.get(name.as_str()).copied())
+            .filter_map(|name| self.atoms.find(name))
             .collect();
         let mut global_var_names = early::collect_var_names(&program.body);
         let mut global_annex_b_var_names = Vec::new();
@@ -2090,11 +2008,11 @@ impl<'a> Compiler<'a> {
         global_var_names.dedup();
         let global_var_atoms = global_var_names
             .iter()
-            .filter_map(|name| self.atom_index.get(name.as_str()).copied())
+            .filter_map(|name| self.atoms.find(name))
             .collect();
         let global_annex_b_var_atoms = global_annex_b_var_names
             .iter()
-            .filter_map(|name| self.atom_index.get(name.as_str()).copied())
+            .filter_map(|name| self.atoms.find(name))
             .collect();
         if let Some(Some(root)) = self.functions.first_mut() {
             root.global_lexical_atoms = global_lexical_atoms;
@@ -2211,7 +2129,7 @@ impl<'a> Compiler<'a> {
         }
         let (mut method_sites, mut method_arguments) =
             Self::flatten_method_sites(self.method_sites);
-        let atoms = AtomTable::from_rcs(&self.atoms);
+        let atoms = self.atoms.table();
         self.constants.shrink_to_fit();
         functions.shrink_to_fit();
         method_sites.shrink_to_fit();
@@ -2219,9 +2137,11 @@ impl<'a> Compiler<'a> {
         self.field_sites.shrink_to_fit();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
+            // Eval code is code compiled for an eval; a host script that only captures its
+            // completion value keeps Script declaration semantics.
             kind: if self.module_goal {
                 crate::bytecode::ProgramKind::Module
-            } else if self.capture_script_completion {
+            } else if self.eval_context.is_some() {
                 crate::bytecode::ProgramKind::Eval
             } else {
                 crate::bytecode::ProgramKind::Script
@@ -2253,14 +2173,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn atom(&mut self, text: &str) -> Atom {
-        if let Some(atom) = self.atom_index.get(text) {
-            return *atom;
-        }
-        let atom = self.atoms.len() as Atom;
-        let text: Rc<str> = Rc::from(text);
-        self.atoms.push(Rc::clone(&text));
-        self.atom_index.insert(text, atom);
-        atom
+        self.atoms.intern(text)
     }
 
     fn private_name_atom(&mut self, span: Span) -> Atom {
@@ -2285,12 +2198,15 @@ impl<'a> Compiler<'a> {
     fn private_name_is_overridden(&self, atom: Atom) -> bool {
         self.private_name_overrides
             .values()
-            .any(|name| self.atom_index.get(name.as_str()) == Some(&atom))
+            .any(|name| self.atoms.find(name) == Some(atom))
     }
 
-    fn source_text(&self, span: Span) -> Option<String> {
-        let source = self.text.get(span.start as usize..span.end as usize)?;
-        Some(source.to_owned())
+    fn source_span(&self, span: Span) -> Option<crate::bytecode::SourceSpan> {
+        self.text.get(span.start as usize..span.end as usize)?;
+        Some(crate::bytecode::SourceSpan {
+            start: span.start,
+            end: span.end,
+        })
     }
 
     fn private_name_label(&self, span: Span, id: u32) -> String {
@@ -2368,11 +2284,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn cache_site(&mut self) -> u16 {
-        let site = self.cache_sites;
-        self.cache_sites = self
-            .cache_sites
-            .checked_add(1)
-            .expect("property cache limit");
+        let site = self.cache_sites.min(crate::bytecode::SHARED_UNCACHED_SITE);
+        self.cache_sites = site + 1;
         site
     }
 
@@ -2607,6 +2520,11 @@ impl<'a> Compiler<'a> {
         } else {
             Vec::new()
         };
+        // Promoted locals take the lowest registers; past half the register domain a
+        // function keeps its locals in frame slots so its temporaries still fit.
+        if promoted_local_slots.len() > usize::from(PROMOTED_LOCAL_REGISTER_BUDGET) {
+            promoted_local_slots.clear();
+        }
         promoted_local_slots.sort_unstable();
         let clobbered_local_slots = promoted_local_slots
             .iter()
@@ -2614,7 +2532,7 @@ impl<'a> Compiler<'a> {
             .filter(|&slot| {
                 register_local_facts
                     .nested_written_names
-                    .contains(self.atoms[locals[usize::from(slot)] as usize].as_ref())
+                    .contains(&self.atoms[locals[usize::from(slot)] as usize])
             })
             .collect::<Vec<_>>();
         let mut function = FunctionCompiler::new(
@@ -2728,13 +2646,15 @@ impl<'a> Compiler<'a> {
                 .collect()
         });
         let name_bindings = function.name_bindings();
+        let name_bindings = function.owner.intern_name_bindings(name_bindings);
         let undefined_register = function.used_undefined_register();
+        let environment_clones = function.per_site_environment_clones();
         let result = BcFunction {
             parent,
             name: name.map(|value| function.owner.atom(value)),
             is_arrow: false,
             self_binding_slot,
-            source_text: options.source_text,
+            source_span: options.source_span,
             params: params.len() as u16,
             length: options.defaults.map_or(params.len(), Self::formal_length) as u16,
             parameter_end_pc: if options.generator {
@@ -2774,7 +2694,7 @@ impl<'a> Compiler<'a> {
             name_bindings,
             binding_sites: function.binding_sites,
             source_positions: function.source_positions,
-            environment_clones: function.environment_clones,
+            environment_clones,
             code: function.code,
             wide: function.wide,
             registers: function.max_reg,
@@ -2831,9 +2751,9 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn specialize_plain_local_operations(function: &mut BcFunction, atoms: &[Rc<str>]) {
+    fn specialize_plain_local_operations(function: &mut BcFunction, atoms: &CompilerAtoms<'_>) {
         let plain_slots =
-            function.plain_local_slots(|atom| atoms.get(atom as usize).map(|name| &**name));
+            function.plain_local_slots(|atom| atoms.get(atom as usize));
 
         for instruction in &mut function.code {
             match instruction.op() {

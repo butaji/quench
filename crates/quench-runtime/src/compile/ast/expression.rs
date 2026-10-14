@@ -189,7 +189,7 @@ impl FunctionCompiler<'_, '_> {
     }
     fn parameter_binding_atom(&self, atom: Atom) -> Atom {
         if self.parameter_context
-            && self.owner.atoms[atom as usize].as_ref() == "arguments"
+            && &self.owner.atoms[atom as usize] == "arguments"
             && let Some(slot) = self.parameter_arguments_slot
         {
             self.locals[usize::from(slot)]
@@ -329,7 +329,6 @@ impl FunctionCompiler<'_, '_> {
             return;
         }
         if self.owner.atoms[atom as usize]
-            .as_ref()
             .contains("\0quench:class-binding:")
             || immutable_lexical
             || (self.with_depth == 0
@@ -411,21 +410,38 @@ impl FunctionCompiler<'_, '_> {
     }
 
     pub(super) fn has_immutable_capture(&mut self, atom: Atom) -> bool {
-        let name = self.owner.atoms[atom as usize].clone();
-        let marker = self.owner.atom(&format!(
-            "{}{name}",
-            LexicalBindingKind::Immutable.capture_prefix()
-        ));
-        self.scopes.iter().any(|scope| scope.contains_key(&marker))
+        self.captured_binding_kind(atom) == Some(LexicalBindingKind::Immutable)
     }
 
     fn has_function_name_capture(&mut self, atom: Atom) -> bool {
-        let name = self.owner.atoms[atom as usize].clone();
-        let marker = self.owner.atom(&format!(
-            "{}{name}",
-            LexicalBindingKind::FunctionName.capture_prefix()
-        ));
-        self.scopes.iter().any(|scope| scope.contains_key(&marker))
+        self.captured_binding_kind(atom) == Some(LexicalBindingKind::FunctionName)
+    }
+
+    /// The kind of the nearest captured binding of `atom`: an inner binding shadows outer
+    /// ones, so only the first scope that binds the name decides.
+    fn captured_binding_kind(&self, atom: Atom) -> Option<LexicalBindingKind> {
+        let name = &self.owner.atoms[atom as usize];
+        let markers = LexicalBindingKind::ALL.map(|kind| {
+            let marker = self
+                .owner
+                .atoms
+                .find(&format!("{}{name}", kind.capture_prefix()));
+            (kind, marker)
+        });
+        self.scopes.iter().find_map(|scope| {
+            markers
+                .iter()
+                .find_map(|(kind, marker)| {
+                    marker
+                        .filter(|marker| scope.contains_key(marker))
+                        .map(|_| *kind)
+                })
+                .or_else(|| {
+                    scope
+                        .contains_key(&atom)
+                        .then_some(LexicalBindingKind::Mutable)
+                })
+        })
     }
 
     fn throw_immutable_binding(&mut self, atom: Atom) {
@@ -455,7 +471,7 @@ impl FunctionCompiler<'_, '_> {
             &scopes,
             Some(self.function_id),
             FunctionOptions {
-                source_text: self.owner.source_text(value.span),
+                source_span: self.owner.source_span(value.span),
                 defaults: Some(&value.params),
                 name_binding,
                 async_function: value.r#async,

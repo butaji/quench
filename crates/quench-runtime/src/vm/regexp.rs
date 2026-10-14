@@ -1,4 +1,5 @@
 use super::*;
+use super::wtf16::FlatUnits;
 use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -119,6 +120,7 @@ impl<H: Host> Vm<H> {
             .intrinsics
             .regexp_intrinsics
             .insert(realm, RegExpIntrinsics::new(constructor, prototype));
+        self.set_builtin_function_name(constructor, "RegExp")?;
         self.set_builtin_value_named(constructor, "prototype", prototype)?;
         let prototype_atom = self.prototype_atom();
         self.set_property_attributes(
@@ -772,9 +774,19 @@ impl<H: Host> Vm<H> {
     /// The prepared form of `input`, rebuilt only when a different string is matched.
     fn regexp_subject(&mut self, input: &JsString) -> Rc<quench_regexp::Subject> {
         match &self.regexp_subject {
-            Some(subject) if subject.is_text_of(input.shared_units()) => Rc::clone(subject),
+            Some(subject)
+                if match input.flat() {
+                    FlatUnits::Ascii(text) => subject.is_ascii_text_of(text),
+                    FlatUnits::Wide(units) => subject.is_text_of(units),
+                } =>
+            {
+                Rc::clone(subject)
+            }
             _ => {
-                let subject = Rc::new(quench_regexp::Subject::new(Rc::clone(input.shared_units())));
+                let subject = Rc::new(match input.flat() {
+                    FlatUnits::Ascii(text) => quench_regexp::Subject::from_ascii(Rc::clone(text)),
+                    FlatUnits::Wide(units) => quench_regexp::Subject::new(Rc::clone(units)),
+                });
                 self.regexp_subject = Some(Rc::clone(&subject));
                 subject
             }
@@ -799,7 +811,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let subject = self.regexp_subject(input);
         if let FastReplacement::Template(template) = replacement {
-            if !template.units().contains(&u16::from(b'$')) {
+            if !template.units().iter().any(|unit| unit == u16::from(b'$')) {
                 return self.regexp_replace_with_literal(
                     p, receiver, input, &subject, template, matcher, flags,
                 );
@@ -829,14 +841,14 @@ impl<H: Host> Vm<H> {
         let mut next_source = 0;
         for found in &matches {
             let position = found.range.start;
-            let matched = JsString::from_units(&input.units()[found.range.clone()]);
+            let matched = JsString::from_unit_run(input.units().slice(found.range.clone()));
             let captures = found
                 .captures
                 .iter()
                 .map(|range| {
                     range.clone().map_or(Value::UNDEFINED, |range| {
                         self.heap
-                            .alloc(Cell::String(JsString::from_units(&input.units()[range])))
+                            .alloc(Cell::String(JsString::from_unit_run(input.units().slice(range))))
                     })
                 })
                 .collect::<Vec<_>>();
@@ -969,12 +981,12 @@ impl<H: Host> Vm<H> {
         let mut output = super::wtf16::JsStringBuilder::default();
         let mut cursor = 0usize;
         while cursor < units.len() {
-            if units[cursor] != u16::from(b'$') || cursor + 1 == units.len() {
+            if units.at(cursor) != u16::from(b'$') || cursor + 1 == units.len() {
                 output.append_slice(template, cursor..cursor + 1);
                 cursor += 1;
                 continue;
             }
-            match units[cursor + 1] {
+            match units.at(cursor + 1) {
                 unit if unit == u16::from(b'$') => {
                     output.append_slice(template, cursor..cursor + 1);
                     cursor += 2;
@@ -993,12 +1005,12 @@ impl<H: Host> Vm<H> {
                     cursor += 2;
                 }
                 unit if (u16::from(b'0')..=u16::from(b'9')).contains(&unit) => {
-                    let first = usize::from(units[cursor + 1] - u16::from(b'0'));
+                    let first = usize::from(units.at(cursor + 1) - u16::from(b'0'));
                     let second = units
                         .get(cursor + 2)
                         .filter(|unit| (u16::from(b'0')..=u16::from(b'9')).contains(unit))
                         .map(|unit| {
-                            first * REPLACEMENT_CAPTURE_RADIX + usize::from(*unit - u16::from(b'0'))
+                            first * REPLACEMENT_CAPTURE_RADIX + usize::from(unit - u16::from(b'0'))
                         });
                     let selected = match (first, second) {
                         (0, Some(index)) if index > 0 && index <= captures.len() => {
@@ -1025,9 +1037,10 @@ impl<H: Host> Vm<H> {
                     }
                 }
                 unit if unit == u16::from(b'<') && !groups.is_undefined() => {
-                    let Some(end) = units[cursor + 2..]
+                    let Some(end) = units
+                        .slice(cursor + 2..units.len())
                         .iter()
-                        .position(|unit| *unit == u16::from(b'>'))
+                        .position(|unit| unit == u16::from(b'>'))
                         .map(|offset| cursor + 2 + offset)
                     else {
                         output.append_slice(template, cursor..cursor + 1);
@@ -1036,7 +1049,7 @@ impl<H: Host> Vm<H> {
                     };
                     let name = self
                         .heap
-                        .alloc(Cell::String(JsString::from_units(&units[cursor + 2..end])));
+                        .alloc(Cell::String(JsString::from_unit_run(units.slice(cursor + 2..end))));
                     let value = self.get_index(p, groups, name)?;
                     if !value.is_undefined() {
                         let value = self.coerce_js_string(p, value)?;
@@ -1174,9 +1187,7 @@ impl<H: Host> Vm<H> {
                                     false,
                                 ));
                             }
-                            let piece = vm.heap.alloc(Cell::String(JsString::from_units(
-                                &input.units()[p_index..q],
-                            )));
+                            let piece = vm.heap.alloc(Cell::String(JsString::from_unit_run(input.units().slice(p_index..q))));
                             if vm.append_fresh_array_element(array, piece) >= limit {
                                 return Ok((end, true));
                             }
@@ -1197,9 +1208,7 @@ impl<H: Host> Vm<H> {
                         }
                         q = next;
                     }
-                    let tail = vm.heap.alloc(Cell::String(JsString::from_units(
-                        &input.units()[p_index..],
-                    )));
+                    let tail = vm.heap.alloc(Cell::String(JsString::from_unit_run(input.units().slice(p_index..input.units().len()))));
                     vm.append_fresh_array_element(array, tail);
                     Ok(array)
                 })
@@ -1270,9 +1279,7 @@ impl<H: Host> Vm<H> {
                 q = advance_string_index_units(input.units(), q, unicode);
                 continue;
             }
-            let piece = self.heap.alloc(Cell::String(JsString::from_units(
-                &input.units()[p_index..q],
-            )));
+            let piece = self.heap.alloc(Cell::String(JsString::from_unit_run(input.units().slice(p_index..q))));
             if self.append_fresh_array_element(array, piece) >= limit {
                 return self.finish_regexp_split_builtin(splitter, input, last_match, array);
             }
@@ -1280,7 +1287,7 @@ impl<H: Host> Vm<H> {
             for capture in captures {
                 let value = capture.map_or(Value::UNDEFINED, |range| {
                     self.heap
-                        .alloc(Cell::String(JsString::from_units(&input.units()[range])))
+                        .alloc(Cell::String(JsString::from_unit_run(input.units().slice(range))))
                 });
                 if self.append_fresh_array_element(array, value) >= limit {
                     return self.finish_regexp_split_builtin(splitter, input, last_match, array);
@@ -1288,9 +1295,7 @@ impl<H: Host> Vm<H> {
             }
             q = p_index;
         }
-        let tail = self.heap.alloc(Cell::String(JsString::from_units(
-            &input.units()[p_index..],
-        )));
+        let tail = self.heap.alloc(Cell::String(JsString::from_unit_run(input.units().slice(p_index..input.units().len()))));
         self.append_fresh_array_element(array, tail);
         self.finish_regexp_split_builtin(splitter, input, last_match, array)
     }
@@ -1664,8 +1669,9 @@ impl<H: Host> Vm<H> {
                             .cloned()
                             .flatten(),
                     };
-                    Some(JsString::from_units(
-                        range.map_or(&[][..], |range| &input.units()[range]),
+                    Some(range.map_or_else(
+                        || JsString::from_units(&[]),
+                        |range| JsString::from_unit_run(input.units().slice(range)),
                     ))
                 }
             }
@@ -2015,9 +2021,9 @@ impl<H: Host> Vm<H> {
             let flags = vm.coerce_js_string(p, flags)?;
             let mut output = Vec::new();
             output.push(REGEXP_DELIMITER);
-            output.extend_from_slice(source.units());
+            source.units().extend_into(&mut output);
             output.push(REGEXP_DELIMITER);
-            output.extend_from_slice(flags.units());
+            flags.units().extend_into(&mut output);
             vm.string_from_units(&output)
         })
     }
@@ -2111,7 +2117,7 @@ impl<H: Host> Vm<H> {
                 .map(|range| {
                     range.map_or(Value::UNDEFINED, |range| {
                         vm.heap
-                            .alloc(Cell::String(JsString::from_units(&input.units()[range])))
+                            .alloc(Cell::String(JsString::from_unit_run(input.units().slice(range))))
                     })
                 })
                 .collect::<Vec<_>>();
@@ -2242,7 +2248,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn regexp_groups_object(
         &mut self,
         named: &[(String, Option<Range<usize>>)],
-        input: &[u16],
+        input: super::wtf16::Units<'_>,
     ) -> Result<Value, JsError> {
         if named.is_empty() {
             return Ok(Value::UNDEFINED);
@@ -2254,7 +2260,7 @@ impl<H: Host> Vm<H> {
             let atom = self.intern_atom(name);
             let value = range.as_ref().map_or(Value::UNDEFINED, |range| {
                 self.heap
-                    .alloc(Cell::String(JsString::from_units(&input[range.clone()])))
+                    .alloc(Cell::String(JsString::from_unit_run(input.slice(range.clone()))))
             });
             self.set_property(groups, atom, value)?;
         }
@@ -2339,12 +2345,12 @@ fn regexp_parser_source(
     unicode: bool,
 ) -> Result<std::borrow::Cow<'_, str>, JsError> {
     let needs_projection = if unicode {
-        char::decode_utf16(source.units().iter().copied()).any(|character| character.is_err())
+        char::decode_utf16(source.units().iter()).any(|character| character.is_err())
     } else {
         source
             .units()
             .iter()
-            .any(|unit| (HIGH_SURROGATE_START..=LOW_SURROGATE_END).contains(unit))
+            .any(|unit| (HIGH_SURROGATE_START..=LOW_SURROGATE_END).contains(&unit))
     };
     if !needs_projection {
         return Ok(std::borrow::Cow::Borrowed(source.host_string()));
@@ -2352,7 +2358,7 @@ fn regexp_parser_source(
     use std::fmt::Write;
     let mut projected = String::with_capacity(source.host_string().len());
     let mut escaped = false;
-    for character in char::decode_utf16(source.units().iter().copied()) {
+    for character in char::decode_utf16(source.units().iter()) {
         match character {
             Ok(character) if unicode || character.len_utf16() == 1 => {
                 projected.push(character);
@@ -2397,7 +2403,7 @@ fn escape_regexp_source(source: &JsString) -> JsString {
     let mut escaped = Vec::new();
     let mut after_odd_backslashes = false;
     let mut in_character_class = false;
-    for &unit in source.units() {
+    for unit in source.units().iter() {
         match unit {
             REGEXP_DELIMITER if !after_odd_backslashes && !in_character_class => {
                 escaped.extend([REGEXP_ESCAPE, REGEXP_DELIMITER]);
@@ -2442,13 +2448,17 @@ fn escape_regexp_source(source: &JsString) -> JsString {
     JsString::from_units(&escaped)
 }
 
-pub(super) fn advance_string_index_units(input: &[u16], index: usize, unicode: bool) -> usize {
+pub(super) fn advance_string_index_units(
+    input: super::wtf16::Units<'_>,
+    index: usize,
+    unicode: bool,
+) -> usize {
     if unicode
         && input.get(index).is_some_and(|unit| {
-            (HIGH_SURROGATE_START..=HIGH_SURROGATE_END).contains(unit)
+            (HIGH_SURROGATE_START..=HIGH_SURROGATE_END).contains(&unit)
                 && input
                     .get(index + 1)
-                    .is_some_and(|next| (LOW_SURROGATE_START..=LOW_SURROGATE_END).contains(next))
+                    .is_some_and(|next| (LOW_SURROGATE_START..=LOW_SURROGATE_END).contains(&next))
         })
     {
         index + 2
@@ -2498,24 +2508,24 @@ fn escape_regexp_string(input: &JsString) -> JsString {
     let mut escaped = String::new();
     let mut index = 0;
     while let Some(unit) = units.get(index) {
-        if (HIGH_SURROGATE_START..=HIGH_SURROGATE_END).contains(unit)
+        if (HIGH_SURROGATE_START..=HIGH_SURROGATE_END).contains(&unit)
             && units
                 .get(index + 1)
-                .is_some_and(|next| (LOW_SURROGATE_START..=LOW_SURROGATE_END).contains(next))
+                .is_some_and(|next| (LOW_SURROGATE_START..=LOW_SURROGATE_END).contains(&next))
         {
             let scalar = 0x1_0000
-                + ((u32::from(*unit) - u32::from(HIGH_SURROGATE_START)) << 10)
-                + u32::from(units[index + 1])
+                + ((u32::from(unit) - u32::from(HIGH_SURROGATE_START)) << 10)
+                + u32::from(units.at(index + 1))
                 - u32::from(LOW_SURROGATE_START);
             if let Some(character) = char::from_u32(scalar) {
                 escape_regexp_character(&mut escaped, character, index == 0);
             }
             index += 2;
-        } else if (HIGH_SURROGATE_START..=LOW_SURROGATE_END).contains(unit) {
+        } else if (HIGH_SURROGATE_START..=LOW_SURROGATE_END).contains(&unit) {
             escaped.push_str(&format!("\\u{unit:04x}"));
             index += 1;
         } else {
-            if let Some(character) = char::from_u32(u32::from(*unit)) {
+            if let Some(character) = char::from_u32(u32::from(unit)) {
                 escape_regexp_character(&mut escaped, character, index == 0);
             }
             index += 1;

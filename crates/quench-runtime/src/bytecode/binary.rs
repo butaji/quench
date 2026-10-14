@@ -181,7 +181,11 @@ pub(super) fn write_program(
         out.option_u32(function.name);
         out.u8(u8::from(function.is_arrow));
         out.u16(function.self_binding_slot.unwrap_or(u16::MAX));
-        write_optional_string(&mut out, function.source_text.as_deref());
+        out.u8(u8::from(function.source_span.is_some()));
+        if let Some(span) = function.source_span {
+            out.u32(span.start);
+            out.u32(span.end);
+        }
         out.u16(function.params);
         out.u16(function.length);
         out.u32(function.parameter_end_pc);
@@ -217,14 +221,16 @@ pub(super) fn write_program(
             out.u32(*atom);
         }
         out.u32(function.name_bindings.len() as u32);
-        for binding in &function.name_bindings {
+        for binding in function.name_bindings.iter() {
             write_eval_binding(&mut out, binding);
         }
         out.u32(function.environment_clones.len() as u32);
-        for slots in &function.environment_clones {
-            out.u32(slots.len() as u32);
-            for slot in slots {
-                out.u16(*slot);
+        for clone in &function.environment_clones {
+            for slots in [&clone.fresh, &clone.reset] {
+                out.u32(slots.len() as u32);
+                for slot in slots {
+                    out.u16(*slot);
+                }
             }
         }
         match &function.selective_capture_slots {
@@ -465,7 +471,13 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             u16::MAX => None,
             slot => Some(slot),
         };
-        let source_text = read_optional_string(input)?;
+        let source_span = match input.u8()? {
+            0 => None,
+            _ => Some(super::SourceSpan {
+                start: input.u32()?,
+                end: input.u32()?,
+            }),
+        };
         let params = input.u16()?;
         let length = input.u16()?;
         let parameter_end_pc = input.u32()?;
@@ -539,7 +551,12 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
         })?;
         let environment_atoms = input.list(|input| input.u32())?;
         let name_bindings = input.list(read_eval_binding)?;
-        let environment_clones = input.list(|input| input.list(|input| input.u16()))?;
+        let environment_clones = input.list(|input| {
+            Ok(crate::bytecode::EnvironmentClone {
+                fresh: input.list(|input| input.u16())?,
+                reset: input.list(|input| input.u16())?,
+            })
+        })?;
         let selective_capture_slots = match input.u8()? {
             0 => None,
             1 => Some(input.u16s()?),
@@ -641,7 +658,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             name,
             is_arrow,
             self_binding_slot,
-            source_text,
+            source_span,
             params,
             length,
             parameter_end_pc,
@@ -666,7 +683,7 @@ pub(super) fn read_program(path: &std::path::Path) -> Result<super::ResidualProg
             selective_capture_slots,
             inherited_with_scope,
             environment_clones,
-            name_bindings,
+            name_bindings: name_bindings.into(),
             lexical_atoms,
             global_lexical_atoms,
             global_var_atoms,

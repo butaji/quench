@@ -101,7 +101,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_url_global");
     install_shared_web_globals(context, buffer_module)?;
-    install_lazy_vfs_globals(context, buffer_module)?;
+    if context.host_mut().vfs_enabled() {
+        install_vfs_globals(context)?;
+    }
     let console = cached_builtin(context, BuiltinModule::Console)?;
     let global = context.global_root()?;
     set(context, global, "console", console)?;
@@ -137,6 +139,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
+    // Builtins built after this point see the intrinsics as they are now, whatever a
+    // preload or the entry script does to them (`cached_builtin`).
+    context.seal_startup_intrinsics();
     preload_modules(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
@@ -191,67 +196,23 @@ fn preload_modules(context: &mut Context<'_>) -> Result<(), RootedError> {
     Ok(())
 }
 
-/// The VFS globals before `fs` loads: `NodeBuffer` itself, and for every name the VFS
-/// installation defines, an accessor that loads `fs`, whose first build installs the VFS and
-/// replaces these accessors with its data properties (`install_vfs_globals`). Startup then
-/// builds no file-system surface for a program that never reaches it.
-fn install_lazy_vfs_globals(
-    context: &mut Context<'_>,
-    buffer_module: RootId,
-) -> Result<(), RootedError> {
-    let buffer = get(context, buffer_module, "Buffer")?;
-    let install = context.evaluate_script_rooted(
-        quench_js_check::checked_js!(
-            r#"(buffer) => {
-  Object.defineProperty(globalThis, "NodeBuffer", { configurable: true, value: buffer });
-  for (const name of ["__nodeFs", "__nodePath", "__nodeStream", "__nodeFdPaths", "__quenchVfsFdHandles", "__quenchVfsStatsHelpers", "__nodeVfs"]) {
-    Object.defineProperty(globalThis, name, {
-      configurable: true,
-      get() {
-        globalThis["\0quench:require"]("fs");
-        // Loading fs replaced this accessor; a name the installation left alone reads
-        // undefined, as it did when the installation ran at startup.
-        return Object.getOwnPropertyDescriptor(globalThis, name)?.get === undefined
-          ? globalThis[name]
-          : undefined;
-      },
-    });
-  }
-}"#
-        ),
-        "node:bootstrap/vfs-lazy-globals.js",
-    )?;
-    let undefined = context.undefined();
-    context.call_rooted(install, undefined, &[buffer])?;
-    context.release_root(install);
-    Ok(())
-}
-
-/// Installs the VFS over a just-built `fs`, already in the module cache so the VFS sources
-/// requiring it find this module.
-fn install_vfs_globals(context: &mut Context<'_>, fs: RootId) -> Result<(), RootedError> {
-    let buffer_module = cached_builtin(context, BuiltinModule::Buffer)?;
+fn install_vfs_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
+    // The VFS sources wrap `globalThis.__nodeFs`, which building `fs` defines.
+    cached_builtin(context, BuiltinModule::Fs)?;
+    #[cfg(feature = "profile-memory")]
+    context.profile_memory_checkpoint("node_vfs_fs_module");
     let path = crate::modules::path_shared_vm::module(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_path_module");
     let stream = cached_builtin(context, BuiltinModule::Stream)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_stream_module");
-    let buffer = get(context, buffer_module, "Buffer")?;
-    let install_missing_fs_methods = context.evaluate_script_rooted(
-        "(fs) => { for (const name of ['utimesSync', 'lutimesSync', 'futimesSync', 'utimes', 'lutimes', 'futimes', 'rm', 'write']) { if (typeof fs[name] === 'function') continue; Object.defineProperty(fs, name, { configurable: true, writable: true, value() { const error = new Error(`${name} is unavailable outside a mounted VFS`); error.code = 'ENOSYS'; throw error; } }); } }",
-        "node:bootstrap/vfs-fs-methods.js",
-    )?;
-    let undefined = context.undefined();
-    context.call_rooted(install_missing_fs_methods, undefined, &[fs])?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_vfs_fs_fallbacks");
     let install = context.evaluate_script_rooted(
-        "(buffer, fs, path, stream) => Object.defineProperties(globalThis, { NodeBuffer: { configurable: true, value: buffer }, __nodeFs: { configurable: true, value: fs }, __nodePath: { configurable: true, value: path }, __nodeStream: { configurable: true, value: stream }, __nodeFdPaths: { configurable: true, value: {} }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
+        "(path, stream) => Object.defineProperties(globalThis, { __nodePath: { configurable: true, value: path }, __nodeStream: { configurable: true, value: stream }, __nodeFdPaths: { configurable: true, value: {} }, __quenchVfsFdHandles: { configurable: true, value: new Map() } })",
         "node:bootstrap/vfs-globals.js",
     )?;
     let undefined = context.undefined();
-    context.call_rooted(install, undefined, &[buffer, fs, path, stream])?;
+    context.call_rooted(install, undefined, &[path, stream])?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_vfs_globals");
 
@@ -331,9 +292,10 @@ pub(super) fn require(
         set(context, error, "code", code)?;
         return Err(context.throw(error));
     }
-    if specifier == "node:vfs" && !vfs_enabled(context) {
-        let error = context
-            .error_rooted("ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:vfs")?;
+    if specifier == "node:vfs" && !context.host_mut().vfs_enabled() {
+        let error = context.error_rooted(
+            "ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:vfs",
+        )?;
         let code = context.string_rooted("ERR_UNKNOWN_BUILTIN_MODULE");
         set(context, error, "code", code)?;
         return Err(context.throw(error));
@@ -616,16 +578,6 @@ pub(super) fn require(
         EntryGoal::Node
     };
     load(context, &filename, Some(parent), goal)
-}
-
-fn vfs_enabled(context: &mut Context<'_>) -> bool {
-    context
-        .host_mut()
-        .shared_state()
-        .borrow()
-        .exec_argv
-        .iter()
-        .any(|argument| argument == "--experimental-vfs")
 }
 
 pub(super) fn resolve(
@@ -1007,12 +959,9 @@ fn cached_builtin(
         return Ok(module);
     }
 
-    let module = build_builtin(context, builtin)?;
+    let module = context.with_startup_intrinsics(|context| build_builtin(context, builtin))?;
     let retained = context.retain(module)?;
     roots.borrow_mut().module_cache.insert(key, retained);
-    if matches!(builtin, BuiltinModule::Fs) {
-        install_vfs_globals(context, module)?;
-    }
     Ok(module)
 }
 
@@ -1393,8 +1342,11 @@ fn load(
     let result = (|| {
         let bytes =
             std::fs::read(filename).map_err(|error| RootedError::host(error.to_string()))?;
-        let text = String::from_utf8_lossy(&bytes);
-        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+        // The file's text owns the bytes it was read into, so a module's source is held once
+        // until its wrapper is built.
+        let file_text = String::from_utf8(bytes)
+            .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
+        let text = file_text.strip_prefix('\u{feff}').unwrap_or(&file_text);
         match filename
             .extension()
             .and_then(|extension| extension.to_str())
@@ -1421,7 +1373,7 @@ fn load(
                 // symbol for native Hash objects. The compact crypto builtin
                 // uses the global registry to expose the matching handle to
                 // that source module.
-                let source = if filename
+                let source: std::borrow::Cow<'_, str> = if filename
                     .to_string_lossy()
                     .ends_with("/internal/crypto/util.js")
                 {
@@ -1429,8 +1381,9 @@ fn load(
                         "const kHandle = Symbol('kHandle');",
                         "const kHandle = Symbol.for('quench.internal.crypto.kHandle');",
                     )
+                    .into()
                 } else {
-                    text.to_owned()
+                    text.into()
                 };
                 let text = source.strip_prefix('\u{feff}').unwrap_or(&source);
                 let is_primordials = filename
@@ -1446,10 +1399,11 @@ fn load(
                 } else {
                     None
                 };
-                let text = if is_primordials {
+                let text: std::borrow::Cow<'_, str> = if is_primordials {
                     format!("primordials ??= {{}};\n{text}\nmodule.exports = primordials;\n")
+                        .into()
                 } else {
-                    text.to_owned()
+                    text.into()
                 };
                 let exports = get(context, module, "exports")?;
                 let require = get(context, module, "require")?;
@@ -1584,6 +1538,8 @@ const getLinkedBinding = () => ({});
                     format!("{WRAPPER_PREFIX}{internal_binding}")
                 };
                 let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
+                drop(text);
+                drop(source);
                 let line_offset = u32::try_from(
                     prefix.bytes().filter(|byte| *byte == b'\n').count(),
                 )
@@ -1607,6 +1563,13 @@ const getLinkedBinding = () => ({});
                     line_offset,
                     column_offset,
                 )?;
+                // The compiled program keeps its own source; the module body runs inside this
+                // call, so the file text and wrapper are released before it.
+                drop(wrapper_source);
+                drop(file_text);
+                if parent.is_none() {
+                    crate::host::resident_pages::release_read_only_pages();
+                }
                 let mut arguments = vec![exports, require, module, name, directory, primordials];
                 if in_node_internal {
                     arguments.push(

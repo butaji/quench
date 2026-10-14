@@ -224,7 +224,7 @@ impl<H: Host> Vm<H> {
         let shape = self.object_data(object)?.shape();
         Some((shape, self.property_shape_slot(shape, key)?))
     }
-    fn shape_attribute(&self, shape: u32, slot: usize) -> Option<PropertyAttributes> {
+    pub(super) fn shape_attribute(&self, shape: u32, slot: usize) -> Option<PropertyAttributes> {
         if let Some(index) = self.shapes[shape as usize].lookup_index.get() {
             return Some(
                 index
@@ -282,6 +282,11 @@ impl<H: Host> Vm<H> {
             _ => self.shapes[parent as usize].dictionary_trigger,
         };
         let parent_may_have_gc_roots = self.shapes[parent as usize].may_have_gc_roots;
+        // The object that grew has moved to the child, so the parent's lookup index usually
+        // serves nobody; an object left on the parent rebuilds it after
+        // `SHAPE_INDEX_LONG_WALKS` long walks. Otherwise every intermediate shape of a growing
+        // wide object (the global object during bootstrap) kept a full index.
+        self.shapes[parent as usize].lookup_index.take();
         self.shapes.push(Shape::child(
             Some(parent),
             transition,
@@ -1012,7 +1017,9 @@ impl<H: Host> Vm<H> {
             return Ok(value);
         }
         if let Some((cache, value)) = self.inherited_field(receiver, atom) {
-            self.inherited_field_caches.insert(site, cache);
+            if self.field_cache_records(site) {
+                self.inherited_field_caches.insert(site, cache);
+            }
             return Ok(value);
         }
         self.get_property(p, object, atom)
@@ -1770,6 +1777,9 @@ impl<H: Host> Vm<H> {
     }
 
     fn record_field_add_cache(&mut self, site: usize, cache: FieldAddCache) {
+        if !self.field_cache_records(site) {
+            return;
+        }
         let index = self.field_add_indices[site];
         if index == NO_FIELD_ADD_SET {
             self.field_add_indices[site] = self.field_add_sets.len() as u32;
@@ -2066,6 +2076,9 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|old| self.is_function(old))
     }
     pub(super) fn record_field_cache(&mut self, site: usize, cache: FieldCache) {
+        if !self.field_cache_records(site) {
+            return;
+        }
         // SAFETY: compiler-produced sites index exactly-sized cache vectors.
         let table_index = unsafe { *self.megamorphic_field_indices.get_unchecked(site) };
         if table_index != NO_MEGAMORPHIC_FIELD {

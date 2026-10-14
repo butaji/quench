@@ -155,6 +155,41 @@ fn minor_collection_roots_external_edges_of_old_owners() {
 }
 
 #[test]
+fn rootless_shapes_survive_collection_and_shape_compaction() {
+    let program = Engine::specialize("", "shape-compaction.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    let atom = vm.intern_atom("survivor");
+    let live_shape = vm.transition_shape(0, atom);
+    assert!(!vm.shapes[live_shape as usize].may_have_gc_roots);
+    let owner =
+        vm.heap
+            .alloc_object_with_properties(Value::NULL, live_shape, &[Value::integer(42)]);
+    let root = vm.heap.root(owner);
+    // Dead transition history must be reclaimed even when the surviving
+    // object's shape has no symbol keys or accessor functions to trace.
+    let dead_shape_count = vm.shapes.len() * 2;
+    for index in 0..dead_shape_count {
+        let dead_atom = vm.intern_atom(&format!("dead-{index}"));
+        vm.transition_shape(0, dead_atom);
+    }
+    let before = vm.shapes.len();
+    vm.collect_now(&program);
+    assert!(vm.shapes.len() < before);
+    let object = vm.object_data(owner).unwrap();
+    assert_eq!(vm.shapes[object.shape() as usize].storage_len, 1);
+    assert_eq!(
+        vm.heap.property_get(vm.object_data(owner).unwrap(), 0),
+        Some(Value::integer(42))
+    );
+    vm.collect_now(&program);
+    assert_eq!(
+        vm.heap.property_get(vm.object_data(owner).unwrap(), 0),
+        Some(Value::integer(42))
+    );
+    assert!(vm.heap.release_root(root));
+}
+
+#[test]
 fn shape_roots_keep_symbols_and_active_accessors_alive() {
     use super::{DEFAULT_PROPERTY_ATTRIBUTES, property_key::PropertyKey};
     use crate::heap::Cell;
@@ -281,7 +316,7 @@ fn repeated_normal_closures_reuse_function_descriptor_shapes() {
 }
 
 #[test]
-fn closures_share_cached_function_source_and_program_roots_it() {
+fn closures_share_on_demand_function_source_and_program_roots_it() {
     let program = Engine::specialize(
         "function outer() { return function inner() { return 1; }; }",
         "closure-source-cache.js",
@@ -302,11 +337,17 @@ fn closures_share_cached_function_source_and_program_roots_it() {
 
     let first = vm.closure(&program, inner, Value::NULL).unwrap();
     let source_atom = vm.intern_atom("\0quench:function-source");
-    let source = vm.own_property(first, source_atom).unwrap();
+    // Creating a closure records no source; the text is made on first request.
+    assert_eq!(vm.own_property(first, source_atom), None);
+    let source = vm.function_source_value(first).unwrap();
+    assert!(matches!(
+        vm.heap.get(source),
+        Some(super::Cell::String(text)) if text.host_string() == "function inner() { return 1; }"
+    ));
     let source_weak = vm.heap.weak_handle(source).unwrap();
     let second = vm.closure(&program, inner, Value::NULL).unwrap();
 
-    assert_eq!(vm.own_property(second, source_atom), Some(source));
+    assert_eq!(vm.function_source_value(second), Some(source));
     vm.collect_now(&program);
     assert_eq!(vm.heap.weak_value(source_weak), Some(source));
 }
@@ -600,6 +641,135 @@ fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
     assert!(vm.realm.promise.aggregates.is_empty());
     assert!(vm.realm.promise.aggregate_jobs.is_empty());
     assert!(vm.realm.promise.reaction_capabilities.is_empty());
+}
+
+#[test]
+fn loop_clones_reset_bindings_of_scopes_out_of_reach() {
+    let program = Engine::specialize(
+        "function f() { var g; for (let i = 0; i < 2; i++) { for (let k = 0; k < 2; k++) { g = () => k; } g = () => i; } return g; }",
+        "loop-clone-reset.js",
+    )
+    .unwrap();
+    let plans: Vec<_> = program
+        .functions
+        .iter()
+        .flat_map(|function| function.environment_clones.iter())
+        .collect();
+    // The outer loop's next iteration does not share the inner loop's `k`
+    // with the clone that last owned it: it resets the slot.
+    assert!(plans.iter().any(|plan| !plan.reset.is_empty()));
+    assert!(plans.iter().all(|plan| plan
+        .reset
+        .iter()
+        .all(|slot| plan.fresh.binary_search(slot).is_err())));
+}
+
+#[test]
+fn loop_iterations_release_their_environments_and_eval_programs() {
+    let mut vm = Vm::new(SilentHost);
+    let program = Engine::specialize(
+        "var kept = []; function run(n) { for (let i = 0; i < n; i++) { let m; eval('m = (() => { const x = ' + i + '; return () => x; })()'); for (let k = 0; k < 2; k++) {} kept.push(m()); } }",
+        "loop-eval-reclaim.js",
+    )
+    .unwrap();
+    vm.execute(&program).unwrap();
+    let programs_before = vm.programs.live_count();
+    let name = vm.intern_atom("run");
+    let run = vm.own_property(vm.realm.globals, name).unwrap();
+    vm.call_value(&program, run, Value::UNDEFINED, &[Value::number(4.0)])
+        .unwrap();
+    assert!(vm.programs.live_count() > programs_before);
+    // A program survives the first reclamation pass after its insertion.
+    vm.collect_now(&program);
+    vm.collect_now(&program);
+    assert_eq!(vm.programs.live_count(), programs_before);
+    let name = vm.intern_atom("kept");
+    let kept = vm.own_property(vm.realm.globals, name).unwrap();
+    let joined = vm.to_string(&program, kept).unwrap();
+    assert_eq!(&*joined, "0,1,2,3");
+}
+
+#[test]
+fn property_sites_past_the_site_space_share_an_uncached_site() {
+    // Two passes over a line of sites larger than the 16-bit site space: the sites past it
+    // share one site, which alternately reads `a` and `b` from the same shape.
+    let sites = usize::from(u16::MAX) + 64;
+    let reads = (0..sites)
+        .map(|index| if index % 2 == 0 { "s += o.a;" } else { "s += o.b;" })
+        .collect::<String>();
+    let source = format!(
+        "var o = {{ a: 1, b: 2 }}; function sum() {{ var s = 0; {reads} return s; }} var total = sum() + sum();"
+    );
+    let program = Engine::specialize(&source, "site-overflow.js").unwrap();
+    assert_eq!(program.cache_sites, crate::bytecode::SHARED_UNCACHED_SITE + 1);
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("total");
+    let total = vm.own_property(vm.realm.globals, name).unwrap();
+    let expected = 2 * (sites / 2 * 3 + sites % 2);
+    assert_eq!(total.as_number(), Some(expected as f64));
+}
+
+#[test]
+fn for_of_iterator_cleanup_survives_body_temporaries() {
+    // Closing the outer generator while its loop body is suspended in `yield*` closes the
+    // loop's iterator; the body's temporaries must not have reused the iterator's register.
+    let program = Engine::specialize(
+        "function inner(x) { return { *[Symbol.iterator]() { yield x; } }; }\n\
+         var closed = 0;\n\
+         var source = { [Symbol.iterator]() { var i = 0; return { next() { return { value: ++i, done: i > 3 }; }, return() { closed++; return {}; } }; } };\n\
+         function flat(s) { return { *[Symbol.iterator]() { for (let d of source) { if (s) { yield d; } else { yield* inner(d); } } } }; }\n\
+         function* take(data) { for (let d of data) { yield d; return; } }\n\
+         var taken = [...take(flat(false))].join() + ':' + closed;",
+        "for-of-cleanup.js",
+    )
+    .unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom("taken");
+    let taken = vm.own_property(vm.realm.globals, name).unwrap();
+    assert_eq!(&*vm.to_string(&program, taken).unwrap(), "1:1");
+}
+
+fn global_text(source: &str, name: &str) -> String {
+    let program = Engine::specialize(source, "global-text.js").unwrap();
+    let mut vm = Vm::new(SilentHost);
+    vm.execute(&program).unwrap();
+    let name = vm.intern_atom(name);
+    let value = vm.own_property(vm.realm.globals, name).unwrap();
+    vm.to_string(&program, value).unwrap().to_string()
+}
+
+#[test]
+fn legacy_date_strings_parse_like_node() {
+    // Node's (V8's) legacy fallback: named months, slashed dates, AM/PM, zone names,
+    // GMT offsets, comments and 24:00; garbage words after numbers reject the string.
+    let cases = [
+        ("Aug 4 2011 10:00 PM GMT", "1312495200000"),
+        ("4 August 2011 10:00 GMT", "1312452000000"),
+        ("8/4/2011 10:00:30.5 PST", "1312480830500"),
+        ("Tue Oct 14 2026 00:00:00 GMT+0530 (India)", "1791916200000"),
+        ("Aug 4 2011 10:00 GMT+5", "1312434000000"),
+        ("2011/08/04 24:00 UTC", "1312502400000"),
+        ("Aug 4 2011 13:00 PM GMT", "NaN"),
+        ("foo2011 GMT", "NaN"),
+        ("Aug 4 2011 10:00x GMT", "NaN"),
+    ];
+    let source = cases
+        .iter()
+        .map(|(text, _)| format!("Date.parse({text:?})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let expected = cases.map(|(_, millis)| millis).join(",");
+    assert_eq!(global_text(&format!("var parsed = [{source}].join();"), "parsed"), expected);
+}
+
+#[test]
+fn inner_lexical_bindings_shadow_outer_immutable_captures() {
+    let source = "'use strict';\n\
+         const a = 1;\n\
+         var result = (() => { let a = []; [1, 2].forEach(e => { a = a.concat(e); }); return a.join(); })();";
+    assert_eq!(global_text(source, "result"), "1,2");
 }
 
 #[test]
@@ -4109,6 +4279,31 @@ fn pooled_frame_registers_are_reset_when_their_length_is_reused() {
     assert_eq!(recycled.context, super::activation::CallContext::Internal);
     assert!(recycled.original_arguments.is_empty());
     assert!(recycled.with_objects.is_empty());
+}
+
+#[test]
+fn wasm_retirement_invalidates_register_reuse_after_shrinking() {
+    let mut vm = Vm::new(SilentHost);
+    let mut frame = Box::new(super::Frame::empty(super::program_store::ProgramId::MAIN, 0));
+    frame.prepare_registers(u16::MAX, crate::bytecode::InitialRegister::I32Zero);
+    let prior_capacity = frame.registers.capacity();
+    vm.frames.push(frame);
+    vm.retire_wasm_frame();
+    let mut frame = vm.pooled_frame();
+    assert!(frame.registers.capacity() < prior_capacity);
+    assert_eq!(frame.initialized_registers, 0);
+
+    // Exercise register preparation only: a mapped JS activation must grow and
+    // initialize the retired buffer, rather than set its length past capacity.
+    let mut program = Engine::specialize("function identity(x) { return x; }", "retired-frame.js")
+        .unwrap();
+    let function = &mut program.functions[1];
+    function.registers = u16::MAX;
+    function.register_root_offset = 0;
+    frame.prepare_registers_for(function);
+    assert_eq!(frame.registers.len(), usize::from(u16::MAX));
+    assert!(frame.registers.capacity() >= frame.registers.len());
+    assert!(frame.registers.iter().all(|value| *value == Value::UNDEFINED));
 }
 
 #[test]
@@ -9336,5 +9531,25 @@ fn private_host_weak_roots_clear_before_slot_reuse_without_kept_objects() {
         let other = Vm::new(SilentHost);
         assert!(other.embedding_host_weak_value(weak).is_none());
         vm.heap.release_root(weak);
+    }
+}
+
+#[test]
+fn string_repeat_limits_preserve_lazy_utf16_length_and_fractional_counts() {
+    let limit = super::wtf16::MAX_STRING_UNITS;
+    let source = format!(r#"
+      print('x'.repeat({limit}).length);
+      print('x'.repeat(70000000).repeat(2).length);
+      print('xy'.repeat(-0.5).length);
+      print('日'.repeat(3).length);
+      try {{ 'x'.repeat({limit} + 1); }}
+      catch (error) {{ print(error.name + ':' + error.message); }}
+    "#);
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let program = compile(&source, "string-repeat-limit.js").unwrap();
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let mut vm = Vm::new(RecordingHost(output.clone()));
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(), [limit.to_string(), "140000000".into(), "0".into(), "3".into(), "RangeError:Invalid string length".into()]);
     }
 }
