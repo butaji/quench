@@ -6424,3 +6424,22 @@ fn native_internal_timer_require_and_resolution_obey_exposure_flag() {
         assert_eq!(observations[0].stdout,observations[1].stdout);
     }
 }
+
+#[test]
+fn native_internal_timer_clock_preserves_metadata_and_monotonic_origin() {
+    let source = r#"
+"use strict";
+const {internalBinding}=require('internal/test/binding'),binding=internalBinding('timers'),fn=binding.getLibuvNow,out=[];
+const d=Object.getOwnPropertyDescriptor(binding,'getLibuvNow');out.push(binding===internalBinding('timers'),fn.name,fn.length,Object.hasOwn(fn,'prototype'),d.writable,d.enumerable,d.configurable);
+for(const receiver of [undefined,{},binding]){try{const value=fn.call(receiver);out.push(['value',Number.isInteger(value),value>=0,value<0x3ffffff]);}catch(error){out.push([error.name,error.code||null,error.message]);}}
+process.uptime=()=>99999999;const begin=binding.getLibuvNow();while(binding.getLibuvNow()-begin<2){}out.push(binding.getLibuvNow()-begin>=2);console.log(JSON.stringify(out));
+"#;
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command=Command::new(executable);
+        command.args(["--expose-internals","--no-warnings","-e",source]);
+        if executable!="node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations { assert!(!observation.timed_out); assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr)); assert!(observation.stderr.is_empty()); }
+    assert_eq!(observations[0].stdout,observations[1].stdout);
+}
