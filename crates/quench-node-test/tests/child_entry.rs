@@ -6285,3 +6285,23 @@ for(const name of ['setTimeout','setImmediate']){
 Promise.all([util.promisify(timers.setTimeout)(1,'timeout'),util.promisify(timers.setImmediate)('immediate')]).then(values=>{out.push(values);console.log(JSON.stringify(out));});
 "#);
 }
+
+#[test]
+fn native_timer_promise_options_validate_with_original_getters_and_coded_errors() {
+    compare_node_stream_source(r#"
+'use strict';
+const timers=require('timers/promises'),out=[];
+(async()=>{
+ for(const [label,call] of [
+  ['delay',()=>timers.setTimeout(false)],['options',()=>timers.setTimeout(1,null,2)],
+  ['signal',()=>timers.setTimeout(1,null,{signal:null})],['ref',()=>timers.setTimeout(1,null,{ref:2})],
+  ['immediate-options',()=>timers.setImmediate(null,2)],['immediate-signal',()=>timers.setImmediate(null,{signal:{}})],['immediate-ref',()=>timers.setImmediate(null,{ref:null})]]){
+  try{await call();out.push([label,'accepted'])}catch(e){out.push([label,e.name,e.code,e.message,String(e)]);}
+ }
+ const log=[],options={get signal(){log.push('signal');return undefined},get ref(){log.push('ref');return true}};
+ await timers.setTimeout(1,'done',options);out.push(log);
+ const marker={};try{await timers.setImmediate(null,{get signal(){throw marker}})}catch(e){out.push(e===marker)}
+ console.log(JSON.stringify(out));
+})();
+"#);
+}

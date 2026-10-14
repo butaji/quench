@@ -10,6 +10,7 @@ const PROMISE_STATE: &str = "\0quench:timer-promise-state";
 const PROMISE_KIND: &str = "\0quench:timer-promise-kind";
 const PROMISE_DELAY: &str = "\0quench:timer-promise-delay";
 const PROMISE_VALUE: &str = "\0quench:timer-promise-value";
+const PROMISE_REFED: &str = "\0quench:timer-promise-refed";
 const PROMISE_OPTIONS: &str = "\0quench:timer-promise-options";
 const PROMISE_RESOLVE: &str = "\0quench:timer-promise-resolve";
 const PROMISE_REJECT: &str = "\0quench:timer-promise-reject";
@@ -368,12 +369,43 @@ pub(crate) fn schedule_promise_timeout(
     install(context, operation, PROMISE_RESOLVE, resolve)?;
     install(context, operation, PROMISE_REJECT, reject)?;
     let options = property(context, operation, PROMISE_OPTIONS)?;
+    let kind = property_text(context, operation, PROMISE_KIND)?;
+    if kind == PROMISE_TIMEOUT {
+        let delay = property(context, operation, PROMISE_DELAY)?;
+        if !is_undefined(context, delay) && !context.rooted_value(delay).is_some_and(|value| value.as_number().is_some()) {
+            return Err(super::util_shared_vm::argument_type_error(context, delay, "delay", "number")?);
+        }
+    }
+    if !is_undefined(context, options) {
+        if !context.is_object_rooted(options)? || context.rooted_value(options).is_some_and(|value| value.is_null()) || context.is_array_rooted(options)? {
+            return Err(super::util_shared_vm::argument_type_error(context, options, "options", "Object")?);
+        }
+        let signal = property(context, options, "signal")?;
+        if !is_undefined(context, signal) {
+            let signal = property(context, options, "signal")?;
+            let aborted = context.string_rooted("aborted");
+            if !context.is_object_rooted(signal)? || context.rooted_value(signal).is_some_and(|value| value.is_null()) || !context.has_property_rooted(signal, aborted)? {
+                return Err(super::util_shared_vm::argument_type_error(context, signal, "options.signal", "AbortSignal")?);
+            }
+        }
+        let referenced = property(context, options, "ref")?;
+        if !is_undefined(context, referenced) {
+            let referenced = property(context, options, "ref")?;
+            if !context.rooted_value(referenced).is_some_and(|value| value.as_bool().is_some()) {
+                return Err(super::util_shared_vm::argument_type_error(context, referenced, "options.ref", "boolean")?);
+            }
+        }
+    }
     let signal = if is_undefined(context, options) {
         context.undefined()
     } else {
         property(context, options, "signal")?
     };
     install(context, operation, PROMISE_SIGNAL, signal)?;
+    let referenced = if is_undefined(context, options) { context.undefined() } else { property(context, options, "ref")? };
+    let referenced = if is_undefined(context, referenced) { true } else { context.truthy_rooted(referenced)? };
+    let referenced = context.boolean(referenced);
+    install(context, operation, PROMISE_REFED, referenced)?;
     if is_undefined(context, signal) {
         return schedule_promise_operation(context, operation);
     }
@@ -424,6 +456,11 @@ fn schedule_promise_operation(
         schedule_timer(context, &[callback, delay], false)?
     };
     install(context, operation, PROMISE_HANDLE, handle)?;
+    let referenced = property(context, operation, PROMISE_REFED)?;
+    if !context.truthy_rooted(referenced)? {
+        if kind == PROMISE_IMMEDIATE { immediate_unref(context, handle, &[])?; }
+        else { timer_unref(context, handle, &[])?; }
+    }
     Ok(context.undefined())
 }
 
