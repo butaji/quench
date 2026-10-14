@@ -70,8 +70,10 @@ pub(crate) struct HeapMemoryComposition {
 
 pub(crate) struct MemoryProfile {
     clock: u64,
+    last_collection_clock: u64,
     births: Vec<u64>,
     birth_bytes: Vec<usize>,
+    birth_managed_bytes: Vec<usize>,
     kinds: Vec<u8>,
     live_counts: [u64; KINDS],
     live_birth_bytes: [u64; KINDS],
@@ -83,6 +85,10 @@ pub(crate) struct MemoryProfile {
     size_buckets: [[u64; BUCKETS]; KINDS],
     freed_counts: [u64; KINDS],
     freed_bytes: [u64; KINDS],
+    recently_allocated_freed_counts: [u64; KINDS],
+    recently_allocated_freed_payload_bytes: [u64; KINDS],
+    freed_managed_bytes: u64,
+    recently_allocated_freed_managed_bytes: [u64; KINDS],
     lifetime_buckets: [[u64; BUCKETS]; KINDS],
     first_orders: [u64; KINDS],
     last_orders: [u64; KINDS],
@@ -99,8 +105,10 @@ impl Default for MemoryProfile {
     fn default() -> Self {
         Self {
             clock: 0,
+            last_collection_clock: 0,
             births: Vec::new(),
             birth_bytes: Vec::new(),
+            birth_managed_bytes: Vec::new(),
             kinds: Vec::new(),
             live_counts: [0; KINDS],
             live_birth_bytes: [0; KINDS],
@@ -112,6 +120,10 @@ impl Default for MemoryProfile {
             size_buckets: [[0; BUCKETS]; KINDS],
             freed_counts: [0; KINDS],
             freed_bytes: [0; KINDS],
+            recently_allocated_freed_counts: [0; KINDS],
+            recently_allocated_freed_payload_bytes: [0; KINDS],
+            freed_managed_bytes: 0,
+            recently_allocated_freed_managed_bytes: [0; KINDS],
             lifetime_buckets: [[0; BUCKETS]; KINDS],
             first_orders: [0; KINDS],
             last_orders: [0; KINDS],
@@ -186,6 +198,11 @@ impl MemoryProfile {
         self.identity_slots.insert(identity, index);
         self.births[index] = self.clock;
         self.birth_bytes[index] = bytes;
+        self.birth_managed_bytes[index] = bytes.saturating_add(match kind {
+            kind if kind == CellKind::Object as usize => size_of::<Object>(),
+            kind if kind == CellKind::Array as usize => size_of::<ArrayObject>(),
+            _ => size_of::<Cell>(),
+        });
         self.kinds[index] = kind as u8;
         self.live_counts[kind] += 1;
         self.live_birth_bytes[kind] += bytes as u64;
@@ -241,6 +258,13 @@ impl MemoryProfile {
 
     fn freed_record(&mut self, index: usize, kind: usize, object_slots: Option<usize>) {
         let bytes = self.birth_bytes[index];
+        let managed_bytes = self.birth_managed_bytes[index];
+        self.freed_managed_bytes += managed_bytes as u64;
+        if self.births[index] > self.last_collection_clock {
+            self.recently_allocated_freed_counts[kind] += 1;
+            self.recently_allocated_freed_payload_bytes[kind] += bytes as u64;
+            self.recently_allocated_freed_managed_bytes[kind] += managed_bytes as u64;
+        }
         self.live_counts[kind] -= 1;
         self.live_birth_bytes[kind] -= bytes as u64;
         self.freed_counts[kind] += 1;
@@ -248,6 +272,10 @@ impl MemoryProfile {
         let lifetime = self.clock - self.births[index];
         self.lifetime_buckets[kind][Heap::size_bucket(lifetime as usize)] += 1;
         self.record_object_death(index, kind, object_slots);
+    }
+
+    pub(super) fn collection_finished(&mut self) {
+        self.last_collection_clock = self.clock;
     }
 
     pub(super) fn object_slots_changed(&mut self, identity: Value, slots: usize) {
@@ -275,7 +303,7 @@ impl MemoryProfile {
             .copied()
             .collect::<Vec<_>>();
         eprintln!(
-            "{{\"kind\":\"quench-allocation-census\",\"phase\":\"{phase}\",\"kind_names\":{:?},\"cell_variant_names\":{:?},\"cell_variant_allocated_counts\":{:?},\"bucket_max\":[0,7,15,31,63,127,255,null],\"allocation_clock\":{},\"allocated_counts\":{:?},\"allocated_birth_bytes\":{:?},\"allocation_size_buckets\":{:?},\"first_allocation_order\":{:?},\"last_allocation_order\":{:?},\"freed_counts\":{:?},\"freed_birth_bytes\":{:?},\"lifetime_allocation_buckets\":{:?},\"live_counts\":{:?},\"live_current_bytes\":{:?},\"peak_live_counts\":{:?},\"peak_birth_bytes\":{:?}}}",
+            "{{\"kind\":\"quench-allocation-census\",\"phase\":\"{phase}\",\"kind_names\":{:?},\"cell_variant_names\":{:?},\"cell_variant_allocated_counts\":{:?},\"bucket_max\":[0,7,15,31,63,127,255,null],\"allocation_clock\":{},\"allocated_counts\":{:?},\"allocated_birth_bytes\":{:?},\"allocation_size_buckets\":{:?},\"first_allocation_order\":{:?},\"last_allocation_order\":{:?},\"freed_counts\":{:?},\"freed_birth_bytes\":{:?},\"freed_recently_allocated_counts_by_kind\":{:?},\"freed_recently_allocated_payload_bytes_by_kind\":{:?},\"freed_managed_bytes\":{},\"freed_recently_allocated_managed_bytes_by_kind\":{:?},\"lifetime_allocation_buckets\":{:?},\"live_counts\":{:?},\"live_current_bytes\":{:?},\"peak_live_counts\":{:?},\"peak_birth_bytes\":{:?}}}",
             CellKind::NAMES,
             variant_names,
             variant_counts,
@@ -287,6 +315,10 @@ impl MemoryProfile {
             self.last_orders,
             self.freed_counts,
             self.freed_bytes,
+            self.recently_allocated_freed_counts,
+            self.recently_allocated_freed_payload_bytes,
+            self.freed_managed_bytes,
+            self.recently_allocated_freed_managed_bytes,
             self.lifetime_buckets,
             live_counts,
             live_bytes,
@@ -302,6 +334,8 @@ impl MemoryProfile {
         let len = index + 1;
         self.births.resize(len.max(self.births.len()), 0);
         self.birth_bytes.resize(len.max(self.birth_bytes.len()), 0);
+        self.birth_managed_bytes
+            .resize(len.max(self.birth_managed_bytes.len()), 0);
         self.kinds.resize(len.max(self.kinds.len()), 0);
         self.object_sites
             .resize(len.max(self.object_sites.len()), 0);
@@ -412,6 +446,7 @@ impl MemoryProfile {
         size_of::<Self>()
             + self.births.capacity() * size_of::<u64>()
             + self.birth_bytes.capacity() * size_of::<usize>()
+            + self.birth_managed_bytes.capacity() * size_of::<usize>()
             + self.kinds.capacity() * size_of::<u8>()
             + self.sites.capacity() * size_of::<Option<AllocationSite>>()
             + self.site_ids.capacity() * size_of::<(AllocationSite, u32)>()
