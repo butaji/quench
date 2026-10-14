@@ -1432,12 +1432,11 @@ impl<H: Host> Vm<H> {
                         self.read(frame, ins.register_b()),
                         self.read(frame, ins.register_c()),
                     );
-                    if let Some(index) = self.replaceable_dense_index(object, key) {
-                        self.replace_dense_element(
-                            object,
-                            index,
-                            self.read(frame, ins.register_a()),
-                        );
+                    if self.try_replace_dense_element(
+                        object,
+                        key,
+                        self.read(frame, ins.register_a()),
+                    ) {
                         continue;
                     }
                 }
