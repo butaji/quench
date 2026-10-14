@@ -6238,3 +6238,36 @@ try{p.getEntries.call(Object.create(p))}catch(e){out.push([e.name,e.code,e.messa
 p.clearMarks();p.clearMeasures();console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn native_timer_disposal_metadata_and_destroyed_phases_match_node() {
+    compare_node_stream_source(r#"
+'use strict';
+const assert=require('assert'),out=[],rows=[];
+for(const [kind,handle] of [['Timeout',setTimeout(()=>assert.fail('disposed timeout fired'),10000)],['Interval',setInterval(()=>assert.fail('disposed interval fired'),10000)],['Immediate',setImmediate(()=>assert.fail('disposed immediate fired'))]]){
+ const proto=Object.getPrototypeOf(handle);
+ for(const key of ['close',Symbol.dispose]){const d=Object.getOwnPropertyDescriptor(proto,key);out.push([kind,String(key),d?[d.value.name,d.value.length,d.writable,d.enumerable,d.configurable]:null]);}
+ out.push([kind,'live',handle._destroyed,handle.hasRef()]);
+ out.push([kind,'dispose',handle[Symbol.dispose](),handle._destroyed,handle.hasRef()]);
+ if(kind!=='Immediate')out.push([kind,'close',handle.close()===handle,handle._destroyed,handle.hasRef()]);
+ handle[Symbol.dispose]();
+}
+const timeout=setTimeout(function(){rows.push(['timeout','during',this===timeout,this._destroyed,this.hasRef()]);process.nextTick(()=>rows.push(['timeout','after',timeout._destroyed,timeout.hasRef()]));},1);
+const interval=setInterval(function(){rows.push(['interval','during',this===interval,this._destroyed,this.hasRef()]);assert.strictEqual(this.close(),this);rows.push(['interval','after',this._destroyed,this.hasRef()]);},1);
+const immediate=setImmediate(function(){rows.push(['immediate','during',this===immediate,this._destroyed,this.hasRef()]);});
+process.on('exit',()=>{rows.sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));out.push(rows);console.log(JSON.stringify(out));});
+"#);
+}
+
+#[test]
+fn native_immediate_destroyed_setter_failure_preserves_original_callback_ownership() {
+    compare_node_stream_source(r#"
+'use strict';
+const out=[],marker={};
+const immediate=setImmediate(()=>out.push('fired'));
+Object.defineProperty(immediate,'_destroyed',{configurable:true,get(){return false},set(value){out.push(['set',value]);throw marker;}});
+try{clearImmediate(immediate)}catch(error){out.push(error===marker);}
+Object.defineProperty(immediate,'_destroyed',{value:false,writable:true,enumerable:true,configurable:true});
+setImmediate(()=>{out.push('rescue');console.log(JSON.stringify(out));process.exit(0);});
+"#);
+}
