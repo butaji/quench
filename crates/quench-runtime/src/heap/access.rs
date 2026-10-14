@@ -255,14 +255,22 @@ impl Heap {
     }
 
     pub(crate) fn array(&self, value: Value) -> Option<&ArrayObject> {
-        if let Some(record_id) = value.direct_array_index() {
-            // SAFETY: direct-array Values name live records, retired after weak pruning.
-            return Some(unsafe { self.array_records.get_live(record_id) });
+        if let Some(object) = self.record_array(value) {
+            return Some(object);
         }
         match self.get(value)? {
             Cell::Array { object } => Some(object),
             _ => None,
         }
+    }
+
+    /// The array a direct-array Value names; `None` for any other value, including an array
+    /// in a slot.
+    #[inline(always)]
+    pub(crate) fn record_array(&self, value: Value) -> Option<&ArrayObject> {
+        let record_id = value.direct_array_index()?;
+        // SAFETY: direct-array Values name live records, retired after weak pruning.
+        Some(unsafe { self.array_records.get_live(record_id) })
     }
 
     /// An array's dense element backing, whether it lives in a record or a slot.
@@ -277,10 +285,17 @@ impl Heap {
         self.array_mut(value).map(ArrayObject::elements_mut)
     }
 
+    /// `record_array`, mutably.
+    #[inline(always)]
+    pub(crate) fn record_array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
+        let record_id = value.direct_array_index()?;
+        // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
+        Some(unsafe { self.array_records.get_live_mut(record_id) })
+    }
+
     pub(crate) fn array_mut(&mut self, value: Value) -> Option<&mut ArrayObject> {
-        if let Some(record_id) = value.direct_array_index() {
-            // SAFETY: direct-array Values name live records; `&mut self` is exclusive.
-            return Some(unsafe { self.array_records.get_live_mut(record_id) });
+        if value.direct_array_index().is_some() {
+            return self.record_array_mut(value);
         }
         match self.get_mut(value)? {
             Cell::Array { object } => Some(object),
