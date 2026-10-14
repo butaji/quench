@@ -153,3 +153,34 @@ code a run executes is resident, laid out with the rest. Callgrind
 to -5.7% (Crypto). DNS (local and remote `dns.lookup`), credential lookups,
 `os.homedir`, crypto, zlib, child processes and a local HTTP round trip behave
 as in the dynamic build.
+
+## Run-phase layout
+
+A small fixture's peak comes after start-up: the run and its output touch a
+few hundred functions spread through the start-up-ordered layout, and each
+touch maps cached neighbours (64 KB fault-around, whole folios when cached
+large), so the run kept 4-6 MB of file pages resident. `quench_entry_compiled`
+(a no-op called once the entry has compiled) splits a callgrind profile there
+(`--dump-before`); `symbol-order --run` places the functions executed after it
+first: the empty start's in order, then the corpus's by how many programs
+executed them. The start-up order follows. Retrain both orders (static and
+dynamic builds) on their own binaries:
+
+```sh
+for f in empty.cjs quench-bench/deegen-curriculum/*.js quench-bench/micros/*.js train-test262/*.js; do
+  valgrind --tool=cachegrind --cache-sim=no --demangle=no \
+    --cachegrind-out-file=train/$(basename $f).out $BINARY $f
+  valgrind --tool=callgrind --demangle=no --dump-before=quench_entry_compiled \
+    --callgrind-out-file=run/$(basename $f).out $BINARY $f
+done
+target/production/symbol-order $BINARY $ORDER train/empty.cjs.out train/*.js.out \
+  --run run/empty.cjs.out run/*.js.out
+```
+
+Stock V8-v7 max RSS against the previous orders (MB), static / dynamic:
+Crypto 10.0 -> 9.0 / 11.1 -> 10.4, DeltaBlue 9.8 -> 9.1 / 10.9 -> 10.2,
+EarleyBoyer 15.6 -> 15.0 / 17.0 -> 16.1, NavierStokes 9.9 -> 9.1 / 11.1 ->
+10.5, RayTrace 9.2 -> 8.4 / 10.1 -> 9.8, RegExp 21.3 -> 21.2 / 22.0 -> 22.0,
+Richards 8.9 -> 8.1 / 9.9 -> 9.4, Splay 54.2 -> 53.8 / 55.1 -> 55.0. The
+empty start rises 0.6 MB (start-up code now follows the run region); no
+fixture peaks during start-up.
