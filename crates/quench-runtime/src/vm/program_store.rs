@@ -281,6 +281,15 @@ impl ProgramStore {
         Some(id)
     }
 
+    /// Whether `slot` of `id`'s root environment is the binding itself: no global var,
+    /// global lexical or module-import projection reads through it.
+    pub(crate) fn root_slot_is_binding(&self, id: ProgramId, slot: u16) -> bool {
+        self.programs.get(id.index()).is_some_and(|entry| {
+            entry.residual.root_slots_are_bindings()
+                && !entry.module_imports.iter().any(|(local, _)| *local == slot)
+        })
+    }
+
     pub(crate) fn is_module(&self, id: ProgramId) -> bool {
         self.programs
             .get(id.index())
