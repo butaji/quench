@@ -160,6 +160,7 @@ impl Heap {
             .map(|slots| EnvironmentSlots(slots.into()))
     }
 
+    #[inline(always)]
     pub fn get(&self, value: Value) -> Option<&Cell> {
         let HeapReference::LegacySlot(index) = value.heap_reference()? else {
             return None;
@@ -167,6 +168,7 @@ impl Heap {
         self.get_legacy(index)
     }
 
+    #[inline(always)]
     pub(crate) fn get_legacy(&self, index: u32) -> Option<&Cell> {
         let index = index as usize;
         if index >= self.slots.len() {
@@ -189,6 +191,7 @@ impl Heap {
         unsafe { self.slots.get_unchecked_mut(index).cell.as_mut() }
     }
 
+    #[inline(always)]
     pub(crate) fn object(&self, value: Value) -> Option<&Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: a direct-object Value is only created after the
@@ -202,6 +205,7 @@ impl Heap {
         self.get(value)?.object()
     }
 
+    #[inline(always)]
     pub(crate) fn object_mut(&mut self, value: Value) -> Option<&mut Object> {
         if let Some(record_id) = value.direct_object_index() {
             // SAFETY: direct-object Values name live records; `&mut self` is exclusive.

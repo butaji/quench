@@ -81,7 +81,10 @@ impl GeneralCodeCursor {
 }
 
 impl<H: Host> Vm<H> {
-    /// A code cursor for `function`, with its lane view where the lane runs.
+    /// A code cursor for `function`, with its lane view where the lane runs: Wasm programs.
+    /// JavaScript keeps the general loop, whose inline fast arms the lane's per-entry
+    /// hand-off measured slower on every V8-v7 fixture but RegExp (Linux x86_64, 4 vCPU:
+    /// Richards -7%, DeltaBlue -15%, RayTrace -14%, Splay -13%, NavierStokes -16% Score).
     pub(super) fn general_cursor(
         &self,
         program_id: ProgramId,
@@ -90,7 +93,7 @@ impl<H: Host> Vm<H> {
         lane: bool,
     ) -> GeneralCodeCursor {
         GeneralCodeCursor {
-            lane: if lane {
+            lane: if lane && program.kind == crate::bytecode::ProgramKind::Wasm {
                 self.lane_view(program_id, function)
             } else {
                 std::ptr::null()

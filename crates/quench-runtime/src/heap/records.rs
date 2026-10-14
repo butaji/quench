@@ -172,6 +172,7 @@ impl<T> RecordSpace<T> {
     /// # Safety
     /// `id` must come from a live direct Value of this record family. Sweep removes the
     /// record only after all weak owners have been pruned.
+    #[inline(always)]
     pub(super) unsafe fn get_live(&self, id: RecordId) -> &T {
         debug_assert!(
             self.is_occupied(id),
@@ -184,6 +185,7 @@ impl<T> RecordSpace<T> {
     /// # Safety
     /// `id` must come from a live direct Value of this record family, and
     /// the caller must have exclusive access to the heap.
+    #[inline(always)]
     pub(super) unsafe fn get_live_mut(&mut self, id: RecordId) -> &mut T {
         debug_assert!(
             self.is_occupied(id),
