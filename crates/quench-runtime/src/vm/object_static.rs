@@ -270,8 +270,16 @@ impl<H: Host> Vm<H> {
             }));
         }
         let mut current = self.box_object(source)?;
-        let mut visited_objects = std::collections::HashMap::new();
-        let mut visited_names = std::collections::HashSet::new();
+        if let Some(keys) = self.shape_for_in_keys(current) {
+            return Ok(self.heap.alloc(Cell::Array {
+                object: crate::heap::ArrayObject::new(
+                    Self::empty_object(self.array_proto),
+                    Rc::new(keys),
+                ),
+            }));
+        }
+        let mut visited_objects = FxHashMap::default();
+        let mut visited_names = FxHashSet::default();
         let mut keys = Vec::new();
         let mut own_keys = Vec::new();
         let outcome = (|| {
@@ -329,6 +337,58 @@ impl<H: Host> Vm<H> {
         outcome
     }
 
+    /// for-in keys of an object whose prototype chain holds only objects with
+    /// shape-held keys: no Proxy, array, typed array or module namespace. The
+    /// keys and their order are those of the generic walk; prototypes after
+    /// the last one with an enumerable key are skipped, since they can neither
+    /// add a key nor shadow one. `None` sends other chains to the generic walk.
+    fn shape_for_in_keys(&mut self, receiver: Value) -> Option<Vec<Value>> {
+        let mut chain = Vec::new();
+        let mut current = receiver;
+        while !current.is_null() {
+            let plain = !matches!(self.heap.get(current), Some(Cell::Proxy { .. }))
+                && self.heap.array(current).is_none()
+                && !matches!(self.heap.get(current), Some(Cell::TypedArray { .. }));
+            let object = self.object_data(current).filter(|_| plain)?;
+            if object.is_module_namespace() {
+                return None;
+            }
+            let prototype = object.proto();
+            let keys = self
+                .own_named_keys(current)
+                .into_iter()
+                .map(|atom| {
+                    let enumerable = self
+                        .property_attributes(current, PropertyKey::string(atom))
+                        .is_none_or(|attributes| attributes.enumerable);
+                    (atom, enumerable)
+                })
+                .collect::<Vec<_>>();
+            chain.push(keys);
+            current = prototype;
+        }
+        let Some(last) = chain
+            .iter()
+            .rposition(|keys| keys.iter().any(|(_, enumerable)| *enumerable))
+        else {
+            return Some(Vec::new());
+        };
+        let mut visited = FxHashSet::default();
+        let mut result = Vec::new();
+        for keys in &chain[..=last] {
+            for &(atom, enumerable) in keys {
+                if last > 0 && !visited.insert(atom) {
+                    continue;
+                }
+                if enumerable {
+                    let name = self.atom_value(atom);
+                    result.push(self.intern_dynamic_value(name));
+                }
+            }
+        }
+        Some(result)
+    }
+
     pub(super) fn object_for_in_key_is_enumerable(
         &mut self,
         p: &ResidualProgram,
@@ -339,21 +399,23 @@ impl<H: Host> Vm<H> {
             return Ok(false);
         }
         let mut current = self.box_object(source)?;
+        if !matches!(self.heap.get(current), Some(Cell::Proxy { .. }))
+            && let Some(enumerable) = self.own_property_enumerable(p, current, key)?
+        {
+            return Ok(enumerable);
+        }
         let key = self.heap.root(key);
-        let mut visited_objects = std::collections::HashMap::new();
+        let mut visited_objects = FxHashMap::default();
         let outcome = (|| {
             while !current.is_null() && !visited_objects.contains_key(&current) {
                 let current_root = self.heap.root(current);
                 visited_objects.insert(current, current_root);
-                let descriptor = self.object_get_own_property_descriptor(
+                if let Some(enumerable) = self.own_property_enumerable(
                     p,
-                    &[
-                        self.heap.root_value(current_root).unwrap(),
-                        self.heap.root_value(key).unwrap(),
-                    ],
-                )?;
-                if !descriptor.is_undefined() {
-                    return Ok(self.descriptor_flag(descriptor, "enumerable"));
+                    self.heap.root_value(current_root).unwrap(),
+                    self.heap.root_value(key).unwrap(),
+                )? {
+                    return Ok(enumerable);
                 }
                 current =
                     self.object_get_prototype_of(p, self.heap.root_value(current_root).unwrap())?;
@@ -571,14 +633,12 @@ impl<H: Host> Vm<H> {
                     return Err(self.type_error(p, "Object.hasOwn target is nullish".into()));
                 }
                 let target = self.box_object(target)?;
-                let key_value = args.get(1).copied().unwrap_or(Value::UNDEFINED);
-                let descriptor =
-                    self.object_get_own_property_descriptor(p, &[target, key_value])?;
-                Ok(if !descriptor.is_undefined() {
-                    Value::TRUE
-                } else {
-                    Value::FALSE
-                })
+                let target_root = self.heap.root(target);
+                let key = self.to_property_key(p, args.get(1).copied().unwrap_or(Value::UNDEFINED));
+                let target = self.heap.root_value(target_root).unwrap();
+                self.heap.release_root(target_root);
+                let found = self.own_property_enumerable(p, target, key?)?.is_some();
+                Ok(if found { Value::TRUE } else { Value::FALSE })
             }
             Native::ObjectPreventExtensions => self.object_prevent_extensions(p, args),
             Native::ObjectIsExtensible => self.object_is_extensible(p, args),
