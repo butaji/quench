@@ -52,10 +52,6 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
         if (this._quenchTimeoutTimer !== null) clearTimeout(this._quenchTimeoutTimer);
         this._quenchTimeoutTimer = null;
       });
-      this.on('data', (chunk) => {
-        if (chunk) this.bytesRead += chunk.length || 0;
-        this._quenchResetTimeout();
-      });
     }
     emit(event, ...args) {
       if (event === 'connect') {
@@ -65,12 +61,6 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
         return super.emit(event, ...args);
       }
       if (event === 'close') { this.pending = true; if (this._quenchTimeoutTimer !== null) clearTimeout(this._quenchTimeoutTimer); this._quenchTimeoutTimer = null; }
-      if (event === 'data' && args[0]) { this.bytesRead += args[0].length || 0; this._quenchResetTimeout(); }
-      if (event === 'end' && !this.allowHalfOpen) {
-        const result = super.emit(event, ...args);
-        this.end();
-        return result;
-      }
       return super.emit(event, ...args);
     }
     setEncoding(encoding) { this._encoding = String(encoding); encodingOperation(this, this._encoding); super.setEncoding(encoding); return this; }
@@ -540,7 +530,7 @@ enum SocketClosePhase {
     Closing,
 }
 
-enum DeliveryPhase { Pending, Delivered }
+enum DeliveryPhase { Pending, Delivered, ReadPending }
 
 struct SharedSocket {
     stream: SocketStream,
@@ -875,8 +865,12 @@ pub(crate) fn has_work(transport: &Transport) -> bool {
             ListenerState::Open(_) => listener.referenced,
             ListenerState::CloseRequested | ListenerState::Closing => true,
         })
-        || transport.sockets.values().any(|socket| socket.referenced
-            || socket.write_offset < socket.pending_write.len() || !socket.completions.is_empty())
+        || transport.sockets.values().any(|socket| {
+            (socket.referenced && !socket.read_ended)
+                || socket.write_offset < socket.pending_write.len()
+                || !socket.completions.is_empty()
+                || (socket.end_after_write && !socket.write_ended)
+        })
         || !transport.closing_sockets.is_empty()
         || transport
             .connecting
@@ -1008,7 +1002,7 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
         let Some(socket) = transport.sockets.get_mut(&id) else {
             continue;
         };
-        if matches!(socket.delivery, DeliveryPhase::Pending) { continue; }
+        if !matches!(socket.delivery, DeliveryPhase::Delivered) { continue; }
         if let SocketStream::Encrypted(tls) = &mut socket.stream {
             match tls.handshake() {
                 Ok(true) => events.push(TransportEvent::Secure { socket: id }),
@@ -1083,7 +1077,11 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                     socket.read_ended = true;
                     break;
                 }
-                Ok(count) => received.extend_from_slice(&buffer[..count]),
+                Ok(count) => {
+                    received.extend_from_slice(&buffer[..count]);
+                    socket.delivery = DeliveryPhase::ReadPending;
+                    break;
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(error) => {
@@ -1809,7 +1807,6 @@ pub(super) fn register_socket(
             root: retained,
             encoding: None,
             parent_server: None,
-            connection_event_pending: false,
             write_callbacks: VecDeque::new(),
         },
     );
@@ -2012,6 +2009,7 @@ pub(crate) fn encrypt(
     id: u64,
     ssl: openssl::ssl::Ssl,
     role: encrypted::Role,
+    started: bool,
 ) -> Result<(), EncryptError> {
     let Some(mut socket) = transport.sockets.remove(&id) else {
         return Err(EncryptError::NotConnected);
@@ -2025,7 +2023,7 @@ pub(crate) fn encrypt(
         }
     };
     let referenced = socket.referenced;
-    match encrypted::EncryptedStream::new(ssl, raw, role) {
+    match encrypted::EncryptedStream::new(ssl, raw, role, started) {
         Ok(tls) => {
             socket.stream = SocketStream::Encrypted(tls);
             transport.sockets.insert(id, socket);
@@ -2052,6 +2050,16 @@ pub(crate) fn authorize(transport: &mut Transport, id: u64) {
         tls.authorize();
     }
 }
+pub(crate) fn start_tls(transport: &mut Transport, id: u64) {
+    if let Some(SharedSocket { stream: SocketStream::Encrypted(tls), .. }) = transport.sockets.get_mut(&id) {
+        tls.start();
+    }
+}
+pub(crate) fn receive_tls(transport: &mut Transport, id: u64, bytes: &[u8]) {
+    if let Some(SharedSocket { stream: SocketStream::Encrypted(tls), .. }) = transport.sockets.get_mut(&id) {
+        tls.receive(bytes);
+    }
+}
 pub(crate) fn tls_info(transport: &Transport, id: u64) -> Option<&openssl::ssl::SslRef> {
     match &transport.sockets.get(&id)?.stream {
         SocketStream::Encrypted(tls) => Some(tls.ssl()),
@@ -2063,6 +2071,37 @@ pub(crate) fn release_delivery(transport: &mut Transport, id: u64) {
     if let Some(socket) = transport.sockets.get_mut(&id) {
         socket.delivery = DeliveryPhase::Delivered;
     }
+}
+pub(crate) fn deliver_eof(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    context.call_rooted(args[0], receiver, &args[1..])?;
+    let key = context.string_rooted("read");
+    let read = context.get_property_rooted(receiver, key)?;
+    let zero = context.number(0.0);
+    context.call_rooted(read, receiver, &[zero])
+}
+pub(crate) fn deliver_data(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = context.rooted_value(args[1]).and_then(|value| value.as_number())
+        .ok_or_else(|| RootedError::host("queued socket input owner is unavailable"))? as u64;
+    let result = (|| {
+        let key = context.string_rooted("bytesRead");
+        let previous = context.get_property_rooted(receiver, key)?;
+        let count = context.arithmetic_rooted(quench_runtime::NativeArithmetic::Add, previous, args[2])?;
+        context.set_property_rooted(receiver, key, count, receiver)?;
+        let key = context.string_rooted("_quenchResetTimeout");
+        let reset = context.get_property_rooted(receiver, key)?;
+        context.call_rooted(reset, receiver, &[])?;
+        context.call_rooted(args[0], receiver, &args[3..])
+    })();
+    release_delivery(&mut context.host_mut().shared_state().borrow_mut().tcp, socket);
+    result
 }
 pub(crate) fn deliver_connection(
     context: &mut NativeContext<'_, NodeHost>,
@@ -2079,16 +2118,7 @@ pub(crate) fn deliver_connection(
     let shared = context.host_mut().shared_state();
     {
         let mut state = shared.borrow_mut();
-        if let Some(endpoint) = state.net_sockets.get_mut(&socket) {
-            endpoint.connection_event_pending = false;
-        }
         release_delivery(&mut state.tcp, socket);
     }
     result
-}
-
-pub(crate) fn listener_resource_active(transport: &Transport, id: u64) -> bool {
-    transport.listeners.get(&id).is_some_and(|listener| {
-        listener.referenced && matches!(listener.state, ListenerState::Open(_))
-    })
 }

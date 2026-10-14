@@ -5566,9 +5566,29 @@ server.listen(0,'127.0.0.1',()=>{const socket=net.connect(server.address().port,
 "#);
 }
 
+fn tls_peer_first_line(child: &mut std::process::Child) -> (std::io::BufReader<std::process::ChildStdout>, String) {
+    use std::io::{BufRead, BufReader};
+    let stdout = child.stdout.take().unwrap();
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    let reader = std::thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout);
+        let mut line = String::new();
+        let result = stdout.read_line(&mut line);
+        let _ = send.send((stdout, line, result));
+    });
+    let result = receive.recv_timeout(Duration::from_secs(5));
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    reader.join().unwrap();
+    let (stdout, line, result) = result.expect("TLS peer did not announce its port before the startup deadline");
+    result.expect("TLS peer stdout failed");
+    (stdout, line)
+}
+
 #[test]
 fn native_tls_client_exchanges_encrypted_bytes_with_independent_node_peer() {
-    use std::io::{BufRead, BufReader};
     struct Peer(std::process::Child);
     impl Drop for Peer {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
     let fixtures=std::env::var("QUENCH_NODE_LIBRARY_ROOT").unwrap_or_else(|_|format!("{}/../../tests/node",env!("CARGO_MANIFEST_DIR")));
@@ -5577,7 +5597,7 @@ const tls=require('tls'),fs=require('fs'),path=require('path');const root=proces
 const server=tls.createServer({key:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-key.pem')),cert:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-cert.pem'))},socket=>{socket.on('error',()=>{});socket.on('data',chunk=>socket.write(chunk));socket.on('end',()=>socket.end());});
 server.on('tlsClientError',()=>{});server.listen(0,'127.0.0.1',()=>console.log(server.address().port));setTimeout(()=>process.exit(0),30000);
 "#]).env("QUENCH_TLS_PEER_ROOT",&fixtures).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap());
-    let mut line=String::new();BufReader::new(peer.0.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    let (_, line) = tls_peer_first_line(&mut peer.0);
     let port:u16=line.trim().parse().expect("independent TLS peer did not start");
     let source=format!(r#"
 const tls=require('tls'),net=require('net');const socket=tls.connect({{port:{port},host:'127.0.0.1',rejectUnauthorized:false}});let result=[];
@@ -5599,7 +5619,14 @@ socket.on('secureConnect',()=>{{console.log('unexpected secure');socket.end()}})
 const tls=require('tls'),fs=require('fs');const socket=tls.connect({{port:{port},host:'127.0.0.1',servername:'wrong.invalid',ca:fs.readFileSync(process.env.QUENCH_TLS_PEER_ROOT+'/test/fixtures/keys/ca1-cert.pem')}});
 socket.on('secureConnect',()=>{{console.log('unexpected secure');socket.end()}});socket.on('error',e=>console.log(JSON.stringify([e.name,e.code,e.message,e.reason,e.host,e.cert?.subject.CN])));socket.on('close',()=>console.log('closed'));
 "#);
-    for source in [source,trusted,rejected,mismatch] {
+    let direct=format!(r#"
+const tls=require('tls'),net=require('net');const socket=new tls.TLSSocket(undefined,{{rejectUnauthorized:true,checkServerIdentity:()=>{{throw new Error('direct socket must not authorize')}}}});let result=[];
+console.log(JSON.stringify([socket.getProtocol(),socket.getPeerCertificate(),socket.isSessionReused()]));
+socket.once('secure',()=>{{console.log(JSON.stringify([socket instanceof tls.TLSSocket,socket instanceof net.Socket,socket.encrypted,socket.secureConnecting,socket.authorized,socket.authorizationError,socket.getProtocol()]));socket.end(Buffer.from([0,1,2,127,128,255,10,13]));}});
+socket.on('secureConnect',()=>{{throw new Error('direct socket must emit secure')}});socket.on('data',chunk=>result.push(chunk));socket.on('end',()=>console.log(JSON.stringify(Array.from(Buffer.concat(result)))));
+socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.code,error.message]));process.exitCode=1}});socket.connect({{port:{port},host:'127.0.0.1'}});socket._start();
+"#);
+    for source in [source,trusted,rejected,mismatch,direct] {
     let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
         let mut command=Command::new(executable);command.args(["-e",&source]).env("QUENCH_TLS_PEER_ROOT",&fixtures);
         if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
@@ -5615,7 +5642,7 @@ socket.on('secureConnect',()=>{{console.log('unexpected secure');socket.end()}})
 
 #[test]
 fn native_tls_server_accepts_encrypted_bytes_from_independent_node_client() {
-    use std::io::{BufRead,BufReader,Read};
+    use std::io::Read;
     struct Peer(std::process::Child);
     impl Drop for Peer {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
     let fixtures=std::env::var("QUENCH_NODE_LIBRARY_ROOT").unwrap_or_else(|_|format!("{}/../../tests/node",env!("CARGO_MANIFEST_DIR")));
@@ -5624,10 +5651,21 @@ const tls=require('tls'),net=require('net'),fs=require('fs'),path=require('path'
 const server=tls.createServer({key:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-key.pem')),cert:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-cert.pem'))},socket=>{console.log(JSON.stringify([socket instanceof tls.TLSSocket,socket instanceof net.Socket,socket.encrypted,socket.secureConnecting,socket.getProtocol()]));socket.on('data',chunk=>socket.end(chunk));socket.on('close',()=>server.close());socket.on('error',()=>{});});
 server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
 "#;
+    let direct_server_source=r#"
+const tls=require('tls'),net=require('net'),fs=require('fs'),path=require('path');const root=process.env.QUENCH_TLS_PEER_ROOT;
+const context=tls.createSecureContext({key:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-key.pem')),cert:fs.readFileSync(path.join(root,'test/fixtures/keys/agent1-cert.pem'))});
+const server=net.createServer(raw=>{const socket=new tls.TLSSocket(raw,{isServer:true,secureContext:context});socket.on('secure',()=>{console.log(JSON.stringify([socket instanceof tls.TLSSocket,socket instanceof net.Socket,socket.encrypted,socket.secureConnecting,socket.getProtocol()]));socket.on('data',chunk=>socket.end(chunk));socket.on('close',()=>server.close());});socket.on('error',()=>{});});
+server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
+"#;
+    let delayed_server_source = direct_server_source
+        .replace("raw=>{const socket=", "raw=>{setTimeout(()=>{console.log(JSON.stringify([raw.readableLength>0,raw.bytesRead>0,raw.readableFlowing==null]));const socket=")
+        .replace("socket.on('error',()=>{});});", "socket.on('error',()=>{});},100);});");
+    let abrupt_server_source = direct_server_source.replace("chunk=>socket.end(chunk)", "chunk=>socket.destroy()");
+    for (server_source, expected_client_exit) in [(server_source,0),(direct_server_source,0),(delayed_server_source.as_str(),0),(abrupt_server_source.as_str(),1)] {
     let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
         let mut command=Command::new(executable);command.args(["-e",server_source]).env("QUENCH_TLS_PEER_ROOT",&fixtures).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
         if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
-        let mut peer=Peer(command.spawn().unwrap());let mut stdout=BufReader::new(peer.0.stdout.take().unwrap());let mut line=String::new();stdout.read_line(&mut line).unwrap();
+        let mut peer=Peer(command.spawn().unwrap());let (mut stdout,line)=tls_peer_first_line(&mut peer.0);
         let port:u16=line.trim().parse().expect("TLS server did not start");
         let source=format!(r#"
 const tls=require('tls'),fs=require('fs');const socket=tls.connect({{port:{port},host:'127.0.0.1',servername:'agent1',ca:fs.readFileSync(process.env.QUENCH_TLS_PEER_ROOT+'/test/fixtures/keys/ca1-cert.pem')}});let chunks=[];
@@ -5635,7 +5673,7 @@ socket.on('secureConnect',()=>socket.end(Buffer.from([0,22,23,127,254,255])));so
 "#);
         let mut client=Command::new("node");client.args(["-e",&source]).env("QUENCH_TLS_PEER_ROOT",&fixtures);
         let result=quench_node_test::case_process::observe_command(client,Duration::from_secs(10)).unwrap();
-        assert!(!result.timed_out,"external client timed out");assert_eq!(result.exit_code,Some(0),"client stderr: {}",String::from_utf8_lossy(&result.stderr));
+        assert!(!result.timed_out,"external client timed out");assert_eq!(result.exit_code,Some(expected_client_exit),"engine {executable}; server {server_source}; client stdout: {}; stderr: {}",String::from_utf8_lossy(&result.stdout),String::from_utf8_lossy(&result.stderr));
         let deadline=std::time::Instant::now()+Duration::from_secs(5);
         let status=loop{if let Some(status)=peer.0.try_wait().unwrap(){break status;}if std::time::Instant::now()>=deadline{let _=peer.0.kill();let _=peer.0.wait();panic!("TLS server did not close after peer EOF");}std::thread::sleep(Duration::from_millis(10));};
         let mut rest=String::new();stdout.read_to_string(&mut rest).unwrap();
@@ -5643,6 +5681,7 @@ socket.on('secureConnect',()=>socket.end(Buffer.from([0,22,23,127,254,255])));so
         (result.stdout,rest)
     });
     assert_eq!(observations[1],observations[0]);
+    }
 }
 
 #[test]
@@ -5652,5 +5691,26 @@ const net=require('net');let peer,client;const count=t=>process.getActiveResourc
 const server=net.createServer(socket=>{peer=socket;});server.listen(0,'127.0.0.1',()=>{client=net.connect(server.address().port,'127.0.0.1',()=>setImmediate(()=>{
 console.log(JSON.stringify([count('TCPSocketWrap'),count('TCPServerWrap')]));client.unref();peer.unref();server.unref();console.log(JSON.stringify([count('TCPSocketWrap'),count('TCPServerWrap')]));client.ref();peer.ref();server.ref();console.log(JSON.stringify([count('TCPSocketWrap'),count('TCPServerWrap')]));client.destroy();peer.end();console.log(count('TCPServerWrap'));server.close(()=>console.log(JSON.stringify([count('TCPSocketWrap'),count('TCPServerWrap')])));
 }));});
+"#);
+}
+
+#[test]
+fn native_net_unconsumed_bytes_remain_buffered_and_count_before_data_listeners() {
+    compare_node_stream_source(r#"
+const net=require('net');let client;
+const server=net.createServer(socket=>{setTimeout(()=>{
+console.log(JSON.stringify([socket.readableLength,socket.bytesRead,socket.readableFlowing==null]));
+const data=socket.read();console.log(JSON.stringify(Array.from(data)));socket.end(data);socket.on('close',()=>server.close());
+},100);});
+server.listen(0,'127.0.0.1',()=>{client=net.connect(server.address().port,'127.0.0.1',()=>client.end(Buffer.from([0,127,128,255])));client.on('data',data=>console.log(JSON.stringify(Array.from(data))));});
+"#);
+}
+
+#[test]
+fn native_net_accepted_resources_are_visible_inside_original_connection_callback() {
+    compare_node_stream_source(r#"
+const net=require('net');let client;
+const server=net.createServer(socket=>{console.log(process.getActiveResourcesInfo().filter(x=>x==='TCPSocketWrap').length);socket.end();socket.on('close',()=>server.close());});
+server.listen(0,'127.0.0.1',()=>{client=net.connect(server.address().port,'127.0.0.1');client.resume();});
 "#);
 }
