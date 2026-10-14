@@ -6032,7 +6032,7 @@ out.push(['resources',process.getActiveResourcesInfo().filter(v=>v==='Timeout').
 let left=3;const rows=[];
 function record(kind,handle,args){assert.strictEqual(this,handle);rows.push([kind,this===handle,args]);if(--left===0){rows.sort((a,b)=>a[0].localeCompare(b[0]));out.push(rows);console.log(JSON.stringify(out));}}
 const immediate=setImmediate(function(...args){record.call(this,'immediate',immediate,args)},'i',2);
-const timeout=setTimeout(function(...args){record.call(this,'timeout',timeout,args)},1,'t',3);
+const timeout=setTimeout(function(...args){const before=process.getActiveResourcesInfo().filter(v=>v==='Timeout').length;clearTimeout(timeout);assert.strictEqual(process.getActiveResourcesInfo().filter(v=>v==='Timeout').length,before-1);record.call(this,'timeout',timeout,args)},1,'t',3);
 const interval=setInterval(function(...args){clearInterval(interval);record.call(this,'interval',interval,args)},1,'r',4);
 "#);
 }
