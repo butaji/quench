@@ -8,7 +8,7 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 
 // Node's public CommonJS wrapper; this is guest compilation input, not an API shim.
 const WRAPPER_PREFIX: &str =
-    "(function (exports, require, module, __filename, __dirname, primordials) { ";
+    "(function (exports, require, module, __filename, __dirname) { ";
 const WRAPPER_SUFFIX: &str = "\n});";
 
 pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
@@ -1601,8 +1601,9 @@ const getLinkedBinding = () => ({});
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
                 }
-                let mut arguments = vec![exports, require, module, name, directory, primordials];
+                let mut arguments = vec![exports, require, module, name, directory];
                 if in_node_internal {
+                    arguments.push(primordials);
                     arguments.push(
                         context
                             .host_function(crate::host::shared_vm::operation("traceInternal"))?,
