@@ -53,6 +53,8 @@ pub(crate) mod http_shared_vm;
 pub(crate) mod module_shared_vm;
 pub(crate) mod net_socket_options;
 pub(crate) mod net_server_admission;
+pub(crate) mod net_socket_read;
+pub(crate) mod net_socket_address;
 pub(crate) mod net_config;
 pub(crate) mod net_connect_error;
 pub(crate) mod net_endpoint_shared_vm;

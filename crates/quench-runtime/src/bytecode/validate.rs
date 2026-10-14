@@ -80,6 +80,52 @@ fn eval_binding_is_valid(
         })
 }
 
+/// Every name-binding list is sorted with one entry per atom, and each binding names a slot
+/// of the function it resolves to.
+fn name_bindings_are_valid(
+    function: &super::Function,
+    functions: &[super::Function],
+    atoms: usize,
+    checked_captured: &mut rustc_hash::FxHashSet<(usize, u16, Option<u32>)>,
+) -> bool {
+    let bindings = &function.name_bindings;
+    if !strictly_ascending(bindings.direct().iter().map(|binding| binding.atom))
+        || !strictly_ascending(bindings.hidden().iter().copied())
+        || !bindings
+            .hidden()
+            .iter()
+            .all(|atom| atom_in_bounds(*atom, atoms))
+        || !bindings
+            .direct()
+            .iter()
+            .all(|binding| eval_binding_is_valid(binding, function, functions, atoms))
+    {
+        return false;
+    }
+    bindings.captured_levels().all(|(depth, level)| {
+        let key = (
+            level as *const super::CapturedNames as usize,
+            depth,
+            function.parent,
+        );
+        checked_captured.contains(&key)
+            || (strictly_ascending(level.bindings_at(depth).map(|binding| binding.atom))
+                && level
+                    .bindings_at(depth)
+                    .all(|binding| eval_binding_is_valid(&binding, function, functions, atoms))
+                && checked_captured.insert(key))
+    })
+}
+
+fn strictly_ascending(atoms: impl IntoIterator<Item = super::Atom>) -> bool {
+    let mut previous = None;
+    atoms.into_iter().all(|atom| {
+        previous
+            .replace(atom)
+            .is_none_or(|previous| previous < atom)
+    })
+}
+
 fn cache_in_bounds(cache: u16, caches: u16) -> bool {
     cache < caches
 }
@@ -450,6 +496,9 @@ impl ResidualProgram {
         }
         let selective_capture_scope_unsafe =
             selective_capture_scope_unsafe(&self.functions, &self.atoms);
+        // Captured name scopes are shared by sibling functions: each is checked once per
+        // position in a parent chain.
+        let mut checked_captured_names = rustc_hash::FxHashSet::default();
         for (index, function) in self.functions.iter().enumerate() {
             if function.code.is_empty() || !super::control_flow::is_bounded(function) {
                 return Err(format!("function {index} can fall off its code"));
@@ -464,7 +513,7 @@ impl ResidualProgram {
                 return Err(format!("function {index} has an invalid self-binding slot"));
             }
             if let Some(slot) = function.self_binding_slot
-                && !function.name_bindings.iter().any(|binding| {
+                && !function.name_bindings.direct().iter().any(|binding| {
                     binding.kind == super::LexicalBindingKind::FunctionName
                         && matches!(
                             binding.location,
@@ -551,19 +600,13 @@ impl ResidualProgram {
                     ));
                 }
             }
-            if function
-                .name_bindings
-                .windows(2)
-                .any(|pair| pair[0].atom >= pair[1].atom)
-            {
-                return Err(format!(
-                    "function {index} has duplicate or unsorted name bindings"
-                ));
-            }
-            for binding in function.name_bindings.iter() {
-                if !eval_binding_is_valid(binding, function, &self.functions, self.atoms.len()) {
-                    return Err(format!("function {index} has an invalid name binding"));
-                }
+            if !name_bindings_are_valid(
+                function,
+                &self.functions,
+                self.atoms.len(),
+                &mut checked_captured_names,
+            ) {
+                return Err(format!("function {index} has invalid name bindings"));
             }
             let code_len = function.code.len() as u32;
             if function
@@ -1066,8 +1109,16 @@ mod tests {
         let owner = program
             .functions
             .iter()
-            .position(|function| function.name_bindings.len() >= 2)
+            .position(|function| function.name_bindings.resolved().len() >= 2)
             .unwrap();
+        let with_bindings = |edit: &dyn Fn(&mut Vec<crate::bytecode::EvalBinding>)| {
+            let mut invalid = program.clone();
+            let mut bindings = invalid.functions[owner].name_bindings.resolved();
+            edit(&mut bindings);
+            invalid.functions[owner].name_bindings = crate::bytecode::NameBindings::flat(bindings);
+            invalid
+        };
+        assert!(with_bindings(&|_| {}).validate().is_ok());
         for location in [
             EvalBindingLocation::Local(u16::MAX),
             EvalBindingLocation::Capture {
@@ -1079,21 +1130,27 @@ mod tests {
                 slot: u16::MAX,
             },
         ] {
-            let mut invalid = program.clone();
-            std::rc::Rc::make_mut(&mut invalid.functions[owner].name_bindings)[0].location =
-                location;
-            assert!(invalid.validate().is_err());
+            assert!(
+                with_bindings(&|bindings| bindings[0].location = location)
+                    .validate()
+                    .is_err()
+            );
         }
-        let mut invalid = program.clone();
-        std::rc::Rc::make_mut(&mut invalid.functions[owner].name_bindings).reverse();
-        assert!(invalid.validate().is_err());
-        let mut invalid = program.clone();
-        let bindings = std::rc::Rc::make_mut(&mut invalid.functions[owner].name_bindings);
-        bindings[1] = bindings[0];
-        assert!(invalid.validate().is_err());
-        let mut invalid = program;
-        std::rc::Rc::make_mut(&mut invalid.functions[owner].name_bindings)[0].atom = u32::MAX;
-        assert!(invalid.validate().is_err());
+        assert!(
+            with_bindings(&|bindings| bindings.reverse())
+                .validate()
+                .is_err()
+        );
+        assert!(
+            with_bindings(&|bindings| bindings[1] = bindings[0])
+                .validate()
+                .is_err()
+        );
+        assert!(
+            with_bindings(&|bindings| bindings[0].atom = u32::MAX)
+                .validate()
+                .is_err()
+        );
     }
 
     #[test]

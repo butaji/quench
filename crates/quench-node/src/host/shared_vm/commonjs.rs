@@ -8,10 +8,10 @@ type Context<'a> = NativeContext<'a, NodeHost>;
 
 // Node's public CommonJS wrapper; this is guest compilation input, not an API shim.
 const WRAPPER_PREFIX: &str =
-    "(function (exports, require, module, __filename, __dirname, primordials) { ";
+    "(function (exports, require, module, __filename, __dirname) { ";
 const WRAPPER_SUFFIX: &str = "\n});";
 
-fn commonjs_resolver() -> oxc_resolver::Resolver {
+pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
     oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
         extensions: vec![".js".into(), ".json".into(), ".node".into()],
         main_files: vec!["index".into()],
@@ -74,7 +74,7 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
         .and_then(serde_json::Value::as_str)
         == Some("module");
     Ok(
-        if path.extension().is_some_and(|extension| extension == "js") && module {
+        if (path.extension().is_none() || path.extension().is_some_and(|extension| extension == "js")) && module {
             quench_runtime::SourceKind::Module
         } else {
             quench_runtime::SourceKind::Script
@@ -91,16 +91,14 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.release_root(process_surface);
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_process_surface");
-    let buffer_module = cached_builtin(context, BuiltinModule::Buffer)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_buffer_module");
-    crate::modules::buffer_shared_vm::install_global(context, buffer_module)?;
+    crate::modules::buffer_shared_vm::install_global(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_buffer_global");
     crate::modules::url_shared_vm::install_global(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_url_global");
-    install_shared_web_globals(context, buffer_module)?;
+    crate::host::resident_pages::release_read_only_pages();
+    install_shared_web_globals(context)?;
     if context.host_mut().vfs_enabled() {
         install_vfs_globals(context)?;
     }
@@ -118,6 +116,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     set(context, global, "\0quench:require", bootstrap_require)?;
     context.release_root(bootstrap_require);
     install_performance_global(context)?;
+    crate::modules::crypto_shared_vm::install_global(context)?;
     let node_primordials = context
         .host_mut()
         .node_library_root
@@ -142,6 +141,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     // Builtins built after this point see the intrinsics as they are now, whatever a
     // preload or the entry script does to them (`cached_builtin`).
     context.seal_startup_intrinsics();
+    crate::host::resident_pages::release_read_only_pages();
     preload_modules(context)?;
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_preloads");
@@ -258,26 +258,86 @@ fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedErr
     Ok(())
 }
 
-fn install_shared_web_globals(
-    context: &mut Context<'_>,
-    buffer_module: RootId,
-) -> Result<(), RootedError> {
-    let web_streams = crate::polyfills::bootstrap::web_streams::JS;
-    let root =
-        context.evaluate_script_rooted(web_streams, "node:bootstrap/shared-vm/web-streams.js")?;
-    context.release_root(root);
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_web_streams_polyfill");
+/// The globals each web polyfill defines, in definition order. They are lazy data properties
+/// (as in Node), so a polyfill is evaluated only when script first observes one of its globals.
+/// A member materializes writable, so a polyfill defining one read-only says so explicitly.
+const WEB_STREAM_GLOBALS: &[&str] = &[
+    "__quenchWebStreamsState",
+    "ReadableStream",
+    "__quenchWebStreams",
+    "__quenchReadableStream",
+    "WritableStream",
+    "TransformStream",
+    "CompressionStream",
+    "DecompressionStream",
+    "TextEncoderStream",
+    "TextDecoderStream",
+    "ByteLengthQueuingStrategy",
+    "CountQueuingStrategy",
+    "ReadableStreamDefaultReader",
+    "ReadableStreamBYOBReader",
+    "ReadableStreamBYOBRequest",
+    "ReadableByteStreamController",
+    "ReadableStreamDefaultController",
+    "TransformStreamDefaultController",
+    "WritableStreamDefaultWriter",
+    "WritableStreamDefaultController",
+];
+const WEB_API_GLOBALS: &[&str] = &[
+    "__quenchBlobEnsureReadable",
+    "Blob",
+    "Headers",
+    "Request",
+    "Response",
+];
 
-    let web_apis = crate::polyfills::bootstrap::globals_extra::web_api_source();
-    let root = context.evaluate_script_rooted(web_apis, "node:bootstrap/shared-vm/web-apis.js")?;
-    context.release_root(root);
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_web_apis_polyfill");
-    crate::modules::buffer_shared_vm::install_blob_export(context, buffer_module)?;
-    #[cfg(feature = "profile-memory")]
-    context.profile_memory_checkpoint("node_blob_exports");
+fn install_shared_web_globals(context: &mut Context<'_>) -> Result<(), RootedError> {
+    let global = context.global_root()?;
+    for (operation, names) in [
+        ("webStreamsInitialize", WEB_STREAM_GLOBALS),
+        ("webApisInitialize", WEB_API_GLOBALS),
+    ] {
+        let initializer = context.host_function(super::operation(operation))?;
+        context.define_lazy_data_properties_rooted(global, names, false, initializer)?;
+        context.release_root(initializer);
+    }
     Ok(())
+}
+
+/// Evaluates a polyfill as a block, so its declarations stay its own instead of becoming
+/// global lexical bindings that script could collide with.
+fn evaluate_polyfill_block(
+    context: &mut Context<'_>,
+    source: &str,
+    label: &str,
+) -> Result<RootId, RootedError> {
+    let root = context.evaluate_script_rooted(&format!("{{\n{source}\n}}"), label)?;
+    context.release_root(root);
+    Ok(context.undefined())
+}
+
+pub(super) fn initialize_web_streams(
+    context: &mut Context<'_>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    evaluate_polyfill_block(
+        context,
+        crate::polyfills::bootstrap::web_streams::JS,
+        "node:bootstrap/shared-vm/web-streams.js",
+    )
+}
+
+pub(super) fn initialize_web_apis(
+    context: &mut Context<'_>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    evaluate_polyfill_block(
+        context,
+        crate::polyfills::bootstrap::globals_extra::web_api_source(),
+        "node:bootstrap/shared-vm/web-apis.js",
+    )
 }
 
 pub(super) fn require(
@@ -586,11 +646,38 @@ pub(super) fn resolve(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Resolve)?;
+    let parent = context.host_function_data()?;
+    resolve_request(context, &specifier, parent)
+}
+
+pub(crate) fn resolve_from_parent(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let specifier = specifier(context, args, Request::Resolve)?;
     if BuiltinModule::from_specifier(&specifier).is_some() {
         return Ok(context.string_rooted(&specifier));
     }
-    let parent = context.host_function_data()?;
-    let filename = resolve_filename(context, &specifier, parent)?;
+    let parent = match args.get(1).copied() {
+        Some(parent) if context.truthy_rooted(parent)? => parent,
+        _ => {
+            let filename = inline_directory(context)?.join("noop.js");
+            module_record(context, &filename, None, false)?
+        }
+    };
+    resolve_request(context, &specifier, parent)
+}
+
+fn resolve_request(
+    context: &mut Context<'_>,
+    specifier: &str,
+    parent: RootId,
+) -> Result<RootId, RootedError> {
+    if BuiltinModule::from_specifier(specifier).is_some() {
+        return Ok(context.string_rooted(specifier));
+    }
+    let filename = resolve_filename(context, specifier, parent)?;
     Ok(context.string_rooted(&filename.to_string_lossy()))
 }
 
@@ -977,6 +1064,10 @@ pub(crate) fn util_module(context: &mut Context<'_>) -> Result<RootId, RootedErr
     cached_builtin(context, BuiltinModule::Util)
 }
 
+pub(crate) fn crypto_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Crypto)
+}
+
 pub(crate) fn net_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Net)
 }
@@ -1015,7 +1106,11 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
         BuiltinModule::Net => crate::modules::net_shared_vm::module(context),
         BuiltinModule::Http => crate::modules::http_shared_vm::module(context),
         BuiltinModule::Os => crate::modules::os_shared_vm::module(context),
-        BuiltinModule::Buffer => crate::modules::buffer_shared_vm::module(context),
+        BuiltinModule::Buffer => {
+            let module = crate::modules::buffer_shared_vm::module(context)?;
+            crate::modules::buffer_shared_vm::install_blob_export(context, module)?;
+            Ok(module)
+        }
         BuiltinModule::Stream => {
             let decoder = cached_builtin(context, BuiltinModule::StringDecoder)?;
             crate::modules::stream_shared_vm::module(context, decoder)
@@ -1570,8 +1665,9 @@ const getLinkedBinding = () => ({});
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
                 }
-                let mut arguments = vec![exports, require, module, name, directory, primordials];
+                let mut arguments = vec![exports, require, module, name, directory];
                 if in_node_internal {
+                    arguments.push(primordials);
                     arguments.push(
                         context
                             .host_function(crate::host::shared_vm::operation("traceInternal"))?,

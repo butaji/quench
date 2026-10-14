@@ -419,6 +419,7 @@ if (typeof globalThis.Blob !== "function" ||
   };
   Object.defineProperty(globalThis, "__quenchBlobEnsureReadable", {
     configurable: true,
+    writable: false,
     value: __nodeBlobEnsureReadable,
   });
   class Blob {

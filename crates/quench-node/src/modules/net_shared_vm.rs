@@ -25,13 +25,12 @@ const CALLABLE_FACADE: &str = quench_js_check::checked_js!(
 })"#
 );
 
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd, initServerEmitterOperation, initSocketOptionsOperation, setNoDelay, setKeepAlive, initServerOptionsOperation, getConnections) => {
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd, initServerEmitterOperation, initSocketOptionsOperation, setNoDelay, setKeepAlive, initServerOptionsOperation, getConnections, initializeRead, readSocket) => {
   class Socket extends Duplex {
     constructor(options = {}) {
       options = { ...socketOptionsOperation(options, false) };
       super({
         ...options, autoDestroy: true, allowHalfOpen: true, emitClose: false,
-        read() {},
         write(chunk, encoding, callback) { try { writeOperation(this, chunk, callback); } catch (error) { callback(error); } },
         final(callback) { try { endOperation(this); callback(); } catch (error) { callback(error); } },
         destroy(error, callback) { try { destroyOperation(this, error, callback); } catch (failure) { callback(failure); } },
@@ -51,6 +50,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
         if (this._quenchTimeoutTimer !== null) clearTimeout(this._quenchTimeoutTimer);
         this._quenchTimeoutTimer = null;
       });
+      initializeRead(this, options);
     }
     emit(event, ...args) {
       if (event === 'connect') {
@@ -72,10 +72,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
       return 'closed';
     }
     get bufferSize() { return this.writableLength || 0; }
-    address() {
-      if (!this.localAddress) return undefined;
-      return { address: this.localAddress, family: this.localFamily || 'IPv4', port: this.localPort || 0 };
-    }
+    address() { return this._getsockname(); }
     setTimeout(timeout, callback) {
       if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout < 0) throw new TypeError('The "msecs" argument must be a non-negative number');
       if (typeof callback === 'function') this.once('timeout', callback);
@@ -134,6 +131,7 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
     const socket = new Socket(socketOptionsOperation(port, true));
     return socket.connect(port, host, callback);
   };
+  Socket.prototype._read = readSocket;
   Socket.prototype.setNoDelay = setNoDelay;
   Socket.prototype.setKeepAlive = setKeepAlive;
   function Server(options, listener) {
@@ -496,6 +494,7 @@ struct ConnectingSocket {
     referenced: bool,
     protocol: SocketProtocol,
     options: TcpOptions,
+    read_demand: ReadDemand,
 }
 #[derive(Clone, Copy)]
 enum SocketProtocol { Tcp, Local }
@@ -531,8 +530,12 @@ enum DeliveryPhase {
     ReadPending,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadDemand { Idle, Active }
+
 struct SharedSocket {
     stream: SocketStream,
+    read_demand: ReadDemand,
     delivery: DeliveryPhase,
     referenced: bool,
     pending_write: Vec<u8>,
@@ -708,6 +711,7 @@ pub(crate) fn connect(transport: &mut Transport, host: String, port: u16) -> Res
             referenced: true,
             protocol: SocketProtocol::Tcp,
             options: TcpOptions::default(),
+            read_demand: ReadDemand::Active,
         },
     );
     Ok(id)
@@ -722,6 +726,7 @@ pub(super) fn reserve_lookup(transport: &mut Transport) -> Result<u64, String> {
             referenced: true,
             protocol: SocketProtocol::Tcp,
             options: TcpOptions::default(),
+            read_demand: ReadDemand::Active,
         },
     );
     Ok(id)
@@ -902,7 +907,7 @@ pub(crate) fn has_work(transport: &Transport) -> bool {
             ListenerState::CloseRequested | ListenerState::Closing => true,
         })
         || transport.sockets.values().any(|socket| {
-            (socket.referenced && !socket.read_ended)
+            (socket.referenced && !socket.read_ended && socket.read_demand == ReadDemand::Active)
                 || socket.write_offset < socket.pending_write.len()
                 || !socket.completions.is_empty()
                 || (socket.end_after_write && !socket.write_ended)
@@ -959,6 +964,7 @@ fn poll_connects(transport: &mut Transport) -> Vec<TransportEvent> {
                     id,
                     SharedSocket {
                         stream,
+                        read_demand: connection.read_demand,
                         delivery: DeliveryPhase::Pending,
                         referenced,
                         pending_write: Vec::new(),
@@ -1035,6 +1041,7 @@ fn poll_accepts(transport: &mut Transport) -> Vec<TransportEvent> {
             socket,
             SharedSocket {
                 stream,
+                read_demand: ReadDemand::Active,
                 delivery: DeliveryPhase::Pending,
                 referenced: true,
                 pending_write: Vec::new(),
@@ -1144,6 +1151,9 @@ fn poll_sockets(transport: &mut Transport) -> Vec<TransportEvent> {
                 }
             }
         }
+        // Writes and TLS handshakes have independent progress; application
+        // bytes are consumed only while the native read request is active.
+        if socket.read_demand == ReadDemand::Idle { continue; }
         let mut received = Vec::new();
         let mut ended = false;
         let mut failure = None;
@@ -1358,6 +1368,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         "operation=>function(cb){'use strict';return operation(this,cb);}"
     ), "node:net/get-connections.js")?;
     let get_connections = context.call_rooted(connections_factory, undefined, &[connections])?;
+    let initialize_read = context.host_function(crate::host::shared_vm::operation("netSocketInitializeRead"))?;
+    let read_operation = context.host_function(crate::host::shared_vm::operation("netSocketRead"))?;
+    let read_factory = context.evaluate_script_rooted(quench_js_check::checked_js!(
+        "operation=>function(n){'use strict';return operation(this,n);}"
+    ), "node:net/read.js")?;
+    let read_socket = context.call_rooted(read_factory, undefined, &[read_operation])?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
@@ -1388,6 +1404,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             set_keep_alive,
             init_server_options,
             get_connections,
+            initialize_read,
+            read_socket,
         ],
     )?;
     let options_data = context.host_mut().shared_state().borrow().net_socket_option_keys
@@ -1419,6 +1437,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     }
     let socket_key = context.string_rooted("Socket");
     let socket_constructor = context.get_property_rooted(surface, socket_key)?;
+    super::net_socket_address::install(context, socket_constructor)?;
     let retained = context.retain(socket_constructor)?;
     context
         .host_mut()
@@ -1692,6 +1711,8 @@ pub(crate) fn destroy_operation(
     let key = context.string_rooted("_handle");
     let null = context.null();
     context.set_property_rooted(socket, key, null, socket)?;
+    let key = context.string_rooted("_sockname");
+    context.set_property_rooted(socket, key, null, socket)?;
     let undefined = context.undefined();
     context.call_rooted(callback, undefined, &[error])?;
     super::net_server_admission::socket_destroyed(context, socket, Some(id))?;
@@ -1963,6 +1984,7 @@ fn connect_local(
             referenced: true,
             protocol: SocketProtocol::Local,
             options: TcpOptions::default(),
+            read_demand: ReadDemand::Active,
         },
     );
     Ok(id)
@@ -2304,7 +2326,9 @@ pub(crate) fn deliver_data(
         let key = context.string_rooted("_quenchResetTimeout");
         let reset = context.get_property_rooted(receiver, key)?;
         context.call_rooted(reset, receiver, &[])?;
-        context.call_rooted(args[0], receiver, &args[3..])
+        let result = context.call_rooted(args[0], receiver, &args[3..])?;
+        super::net_socket_read::delivered(context, receiver, result)?;
+        Ok(result)
     })();
     release_delivery(
         &mut context.host_mut().shared_state().borrow_mut().tcp,
@@ -2343,7 +2367,11 @@ fn complete_connection_delivery(
         if matches!(delivery, ConnectionDelivery::Connected) {
             super::net_socket_options::apply_connected(context, receiver)?;
         }
-        context.call_rooted(callback, receiver, &args[2..])
+        let result = context.call_rooted(callback, receiver, &args[2..])?;
+        if matches!(delivery, ConnectionDelivery::Connected) {
+            super::net_socket_read::connected(context, receiver)?;
+        }
+        Ok(result)
     })();
     let shared = context.host_mut().shared_state();
     {
@@ -2478,4 +2506,24 @@ pub(crate) fn tcp_keep_alive(transport: &mut Transport, id: u64, options: TcpKee
         Some(RawStream::Tcp(stream)) => apply_tcp_keep_alive(stream, options),
         _ => Err(std::io::Error::from_raw_os_error(libc::EBADF)),
     }
+}
+
+
+pub(crate) fn start_read(transport: &mut Transport, id: u64) -> std::io::Result<()> {
+    let socket = transport.sockets.get_mut(&id)
+        .ok_or_else(|| std::io::Error::from_raw_os_error(libc::EINVAL))?;
+    if socket.read_ended { return Err(std::io::Error::from_raw_os_error(libc::EINVAL)); }
+    if socket.read_demand == ReadDemand::Active { return Err(std::io::Error::from_raw_os_error(libc::EALREADY)); }
+    socket.read_demand = ReadDemand::Active;
+    Ok(())
+}
+pub(crate) fn stop_read(transport: &mut Transport, id: u64) {
+    if let Some(socket) = transport.sockets.get_mut(&id) { socket.read_demand = ReadDemand::Idle; }
+    if let Some(socket) = transport.connecting.get_mut(&id) { socket.read_demand = ReadDemand::Idle; }
+}
+
+pub(crate) fn read_active(transport: &Transport, id: u64) -> bool {
+    transport.sockets.get(&id).map(|socket| socket.read_demand)
+        .or_else(|| transport.connecting.get(&id).map(|socket| socket.read_demand))
+        == Some(ReadDemand::Active)
 }
