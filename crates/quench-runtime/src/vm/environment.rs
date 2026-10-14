@@ -279,9 +279,8 @@ impl<H: Host> Vm<H> {
         {
             return Some(*binding);
         }
-        let bindings = &metadata.name_bindings;
-        if let Ok(index) = bindings.binary_search_by_key(&atom, |binding| binding.atom) {
-            return bindings.get(index).copied();
+        if let Some(binding) = metadata.name_bindings.get(atom) {
+            return Some(binding);
         }
         if metadata.environment_atoms.contains(&atom) {
             return None;
@@ -320,13 +319,7 @@ impl<H: Host> Vm<H> {
                 if scoped_binding.is_none() && metadata.environment_atoms.contains(&atom) {
                     return None;
                 }
-                let binding = scoped_binding.or_else(|| {
-                    metadata
-                        .name_bindings
-                        .binary_search_by_key(&atom, |binding| binding.atom)
-                        .ok()
-                        .map(|index| metadata.name_bindings[index])
-                });
+                let binding = scoped_binding.or_else(|| metadata.name_bindings.get(atom));
                 if let Some(mut binding) = binding {
                     binding.location = match binding.location {
                         crate::bytecode::EvalBindingLocation::Local(slot) => {
