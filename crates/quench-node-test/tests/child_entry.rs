@@ -6382,3 +6382,45 @@ const d=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer),'refresh');
 setTimeout(()=>{out.push(['end',count,switched,fired,timer._destroyed,typeof timer._onTimeout]);console.log(JSON.stringify(out));},30);
 "#);
 }
+
+#[test]
+fn native_internal_unref_timers_and_promise_init_reference_state_match_node() {
+    let source = r#"
+"use strict";
+const internal=require('internal/timers'),hooks=require('async_hooks'),out=[],phases=[];
+out.push(internal===require('internal/timers'),internal.TIMEOUT_MAX,internal.setUnrefTimeout.name,internal.setUnrefTimeout.length,Object.hasOwn(internal.setUnrefTimeout,'prototype'));
+const hook=hooks.createHook({init(id,type,trigger,resource){if(type==='Timeout')phases.push([type,resource.hasRef()]);}}).enable();
+const t=internal.setUnrefTimeout(function(){out.push(['internal',this===t,arguments.length,this.hasRef()]);},1,'ignored');
+require('timers/promises').setTimeout(1,'value',{ref:false}).then(value=>out.push(['promise',value]));
+setTimeout(()=>{hook.disable();out.push(phases);console.log(JSON.stringify(out));},30);
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--expose-internals", "--no-warnings", "-e", source]);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn native_internal_timer_require_and_resolution_obey_exposure_flag() {
+    let source=r#"for(const operation of [()=>require('internal/timers').setUnrefTimeout,()=>require.resolve('internal/timers')]){try{const value=operation();console.log(JSON.stringify([typeof value,typeof value==='string'?value:value.name]));}catch(error){console.log(JSON.stringify([error.name,error.code,error.message.split('\n')[0]]));}}
+"#;
+    for expose in [false,true] {
+        let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command=Command::new(executable);
+            if expose { command.arg("--expose-internals"); }
+            command.args(["-e",source]);
+            if executable!="node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+            quench_node_test::case_process::observe_command(command,Duration::from_secs(5)).unwrap()
+        });
+        for observation in &observations { assert!(!observation.timed_out); assert_eq!(observation.exit_code,Some(0)); assert!(observation.stderr.is_empty()); }
+        assert_eq!(observations[0].stdout,observations[1].stdout);
+    }
+}
