@@ -288,7 +288,8 @@ impl<H: Host> Vm<H> {
         };
         // Roots are gathered source by source: a single iterator chain over
         // every source costs each root a step through every nesting level.
-        let mut roots: Vec<Value> = self.programs.roots().collect();
+        let mut roots = Vec::new();
+        self.programs.extend_roots(&mut roots);
         roots.extend([
             self.realm.globals,
             self.object_proto,

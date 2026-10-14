@@ -212,9 +212,15 @@ fn coalesce_distant_producer_moves(
     field_sites: &[FieldSite],
     superinstructions: &[Superinstruction],
 ) -> bool {
-    let Some(live) = liveness::analyze(function, methods, field_sites, superinstructions) else {
+    // Liveness is the expensive part; a function without a `Move` has nothing to coalesce.
+    if !function.code.iter().any(|instruction| instruction.op() == Op::Move) {
+        return false;
+    }
+    let Some(transfers) = liveness::transfers(function, methods, field_sites, superinstructions)
+    else {
         return false;
     };
+    let live = liveness::analyze_transfers(function, &transfers);
     let protected = protected_positions(
         &function.code,
         &function.handlers,
@@ -241,12 +247,11 @@ fn coalesce_distant_producer_moves(
         {
             continue;
         }
+        // Spans coalesced earlier in this pass end before `claimed_until`, so the
+        // instructions scanned here still have the masks recorded in `transfers`.
         let Some(producer) = (claimed_until..target).rev().find(|&pc| {
-            let instruction = function.code[pc];
-            (liveness::uses(instruction, methods, field_sites, superinstructions)
-                | liveness::definitions(instruction, superinstructions))
-                & pair
-                != 0
+            let (read, written) = transfers[pc];
+            (read | written) & pair != 0
         }) else {
             continue;
         };
@@ -269,8 +274,8 @@ fn coalesce_distant_producer_moves(
                 matches!(recipe, Recipe::ProducerMove)
             })
             || instruction.result_register() != source
-            || liveness::definitions(instruction, superinstructions) != register_bit(source)
-            || liveness::uses(instruction, methods, field_sites, superinstructions) & pair != 0
+            || transfers[producer].1 != register_bit(source)
+            || transfers[producer].0 & pair != 0
         {
             continue;
         }
