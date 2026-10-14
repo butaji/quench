@@ -108,7 +108,7 @@ impl<H: Host> Vm<H> {
         let source = args.first().copied().unwrap_or(Value::UNDEFINED);
         if let Some(Cell::String(source_text)) = self.heap.get(source).cloned()
             && let Some((pattern_units, flag_units)) =
-                eval_regexp_literal_units(source_text.units())
+                eval_regexp_literal_units(&source_text.units().wide())
         {
             if let (Ok(pattern), Ok(flags)) = (
                 String::from_utf16(&pattern_units),
@@ -126,7 +126,7 @@ impl<H: Host> Vm<H> {
                 .alloc(Cell::String(JsString::from_units(flag_units)));
             return self.construct_regexp_native(p, &[pattern, flags], None);
         }
-        if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(value.units()))
+        if matches!(self.heap.get(source), Some(Cell::String(value)) if eval_source_has_no_tokens(&value.units().wide()))
         {
             return Ok(Value::UNDEFINED);
         }
