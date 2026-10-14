@@ -9630,3 +9630,32 @@ fn string_constructor_and_template_coercion_preserve_wtf16_and_original_hooks() 
         Vm::new(SilentHost).execute(&program).unwrap();
     }
 }
+
+#[test]
+fn script_directive_completion_survives_declarations_and_preserves_string_units() {
+    for program in [
+        Engine::compile(crate::ExecutionRequest { source: "", name: "directive-completion.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::specialize("", "directive-completion.js").unwrap(),
+    ] {
+        for (source, expected) in [
+            ("'first'; const x=1;", Some("first")),
+            ("'use strict'; let x;", Some("use strict")),
+            ("'a'; 'b'; var x;", Some("b")),
+            ("'first'; function f(){}", Some("first")),
+            ("'first'; if(false){2}", None),
+            ("'first'; ; debugger;", Some("first")),
+        ] {
+            let mut vm = Vm::new(SilentHost);
+            vm.execute(&program).unwrap();
+            let value = vm.eval_global_script_named(&program, source, false, "directive-completion.js").unwrap();
+            match expected {
+                Some(expected) => assert!(matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.host_string() == expected), "{source}"),
+                None => assert!(value.is_undefined(), "{source}"),
+            }
+        }
+        let mut vm = Vm::new(SilentHost);
+        vm.execute(&program).unwrap();
+        let value = vm.eval_global_script_named(&program, r"'\ud800'; var x;", false, "directive-completion.js").unwrap();
+        assert!(matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.units().wide().as_ref() == [0xd800]));
+    }
+}

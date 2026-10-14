@@ -115,6 +115,9 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     let bootstrap_require = create_require(context, &bootstrap_filename)?;
     set(context, global, "\0quench:require", bootstrap_require)?;
     context.release_root(bootstrap_require);
+    let print_eval = context.host_function(crate::host::shared_vm::operation("nodePrintEvalScript"))?;
+    let key = context.string_rooted("\0quench:evalScript");
+    context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
     install_performance_global(context)?;
     crate::modules::crypto_shared_vm::install_global(context)?;
     let node_primordials = context
