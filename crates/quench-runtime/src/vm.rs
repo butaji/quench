@@ -1106,7 +1106,12 @@ impl<H: Host> Vm<H> {
         self.realm.immutable_global_lexical_bindings = state.immutable_bindings;
         // Natives are shared by every realm and allocate from these fields, so the fields
         // follow the active realm: a native called from a realm builds that realm's objects.
-        for native in [Native::Object, Native::Function, Native::Array, Native::String] {
+        for native in [
+            Native::Object,
+            Native::Function,
+            Native::Array,
+            Native::String,
+        ] {
             if let Some(&prototype) = self
                 .realm
                 .intrinsics

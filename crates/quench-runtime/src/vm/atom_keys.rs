@@ -1,5 +1,5 @@
-use super::wtf16::Units;
 use super::wtf16::JsString;
+use super::wtf16::Units;
 use super::*;
 use std::hash::Hasher;
 

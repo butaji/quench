@@ -328,8 +328,7 @@ impl FunctionCompiler<'_, '_> {
             }
             return;
         }
-        if self.owner.atoms[atom as usize]
-            .contains("\0quench:class-binding:")
+        if self.owner.atoms[atom as usize].contains("\0quench:class-binding:")
             || immutable_lexical
             || (self.with_depth == 0
                 && !self.dynamic_eval
