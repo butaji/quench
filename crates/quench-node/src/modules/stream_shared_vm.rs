@@ -1,6 +1,7 @@
 //! Shared-VM projection of the existing guest stream state machine.
 
 use crate::host::NodeHost;
+use crate::modules::event_constructor_shared_vm::get;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 pub(crate) fn module(
@@ -12,6 +13,9 @@ pub(crate) fn module(
         "node:stream/shared.js",
     )?;
     let dependencies = context.object_rooted()?;
+    let read_zero = context.host_function_with_data(
+        crate::host::shared_vm::operation("streamReadZero"), dependencies)?;
+    set(context, dependencies, "readZero", read_zero)?;
     for (name, operation) in [
         ("closeOption", "streamCloseOption"),
         ("emitClose", "streamEmitClose"),
@@ -19,6 +23,16 @@ pub(crate) fn module(
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         set(context, dependencies, name, function)?;
     }
+    let half_close = context.host_function(crate::host::shared_vm::operation("streamHalfClose"))?;
+    let end_factory = context.evaluate_script_rooted(
+        quench_js_check::checked_js!("operation => function onend() { return operation(this); }"),
+        "node:stream/duplex-end.js",
+    )?;
+    let undefined = context.undefined();
+    let onend = context.call_rooted(end_factory, undefined, &[half_close])?;
+    let init = context.host_function_with_data(
+        crate::host::shared_vm::operation("streamDuplexInit"), onend)?;
+    set(context, dependencies, "duplexInit", init)?;
     let pipe_plan = context.host_function(crate::host::shared_vm::operation("streamPipePlan"))?;
     set(context, dependencies, "pipePlan", pipe_plan)?;
     let pipe_end =
@@ -273,4 +287,80 @@ pub(crate) fn pipe_should_end(
         }
     }
     Ok(context.boolean(true))
+}
+
+pub(crate) fn half_close(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let stream = args[0];
+    let allow = get(context, stream, "allowHalfOpen")?;
+    if context.truthy_rooted(allow)? { return Ok(context.undefined()); }
+    let writable = get(context, stream, "_writableState")?;
+    for name in ["ended", "finished"] {
+        let value = get(context, writable, name)?;
+        if context.truthy_rooted(value)? { return Ok(context.undefined()); }
+    }
+    let global = context.global_root()?;
+    let key = context.string_rooted("process");
+    let process = context.get_property_rooted(global, key)?;
+    let key = context.string_rooted("nextTick");
+    let next_tick = context.get_property_rooted(process, key)?;
+    let callback = context.host_function(crate::host::shared_vm::operation("streamHalfCloseComplete"))?;
+    context.call_rooted(next_tick, process, &[callback, args[0]])
+}
+pub(crate) fn half_close_complete(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let socket = args[0];
+    for name in ["writableEnded", "destroyed"] {
+        let key = context.string_rooted(name);
+        let value = context.get_property_rooted(socket, key)?;
+        if context.truthy_rooted(value)? { return Ok(context.undefined()); }
+    }
+    let key = context.string_rooted("end");
+    let end = context.get_property_rooted(socket, key)?;
+    context.call_rooted(end, socket, &[])?;
+    Ok(context.undefined())
+}
+
+pub(crate) fn duplex_init(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let stream = args[0];
+    let on = get(context, stream, "on")?;
+    let end = context.string_rooted("end");
+    let callback = context.host_function_data()?;
+    context.call_rooted(on, stream, &[end, callback])?;
+    Ok(context.undefined())
+}
+pub(crate) fn read_zero(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let stream = args[0];
+    let state = get(context, stream, "_readableState")?;
+    let ended = get(context, state, "ended")?;
+    if !context.truthy_rooted(ended)? { return Ok(context.undefined()); }
+    let emitted = get(context, state, "endEmitted")?;
+    if context.truthy_rooted(emitted)? { return Ok(context.undefined()); }
+    let dependencies = context.host_function_data()?;
+    let count = get(context, dependencies, "readableBufferCount")?;
+    let undefined = context.undefined();
+    let count = context.call_rooted(count, undefined, &[state])?;
+    if context.rooted_value(count).and_then(|value| value.as_number()) != Some(0.0) {
+        return Ok(context.undefined());
+    }
+    let complete = get(context, dependencies, "completeReadableEnd")?;
+    let global = context.global_root()?;
+    let process = get(context, global, "process")?;
+    let next_tick = get(context, process, "nextTick")?;
+    context.call_rooted(next_tick, process, &[complete, stream])?;
+    Ok(context.undefined())
 }

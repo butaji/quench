@@ -556,6 +556,8 @@
     }
     return true;
   }
+  deps.completeReadableEnd = completeReadableEnd;
+  deps.readableBufferCount = readableBufferCount;
 
   function flowReadable(stream) {
     if (stream.destroyed) return;
@@ -931,14 +933,6 @@
       if (chunk === null) {
         st.ended = true;
         st.needReadable = listenerCountOf(this, "readable") > 0;
-        if (
-          this._isDuplex && !this.allowHalfOpen &&
-          !this._writableState.ended && !this._writableState.finished
-        ) {
-          setImmediate(() => {
-            if (!this.destroyed && !this._writableState.ended) this.end();
-          });
-        }
       } else {
         if (
           !st.objectMode && typeof chunk !== "string" &&
@@ -1018,6 +1012,7 @@
       if (size !== 0) st.emittedReadable = false;
       if (this._passThrough) this._passThroughRead = true;
       if (size === 0) {
+        deps.readZero(this);
         if (!st.ended && !st.reading) requestRead(this);
         return null;
       }
@@ -3120,6 +3115,7 @@
       initWritable(this, options || {});
       initConstruct(this, options || {});
       this.allowHalfOpen = !options || options.allowHalfOpen !== false;
+      deps.duplexInit(this);
       if (options?.readable === false) {
         this.readable = false;
         this._readableState.ended = true;

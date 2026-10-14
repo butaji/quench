@@ -105,6 +105,7 @@ pub(crate) fn connection(
         set(context, options, name, value)?;
     }
     let socket = context.construct_rooted(constructor, constructor, &[args[0], options])?;
+    super::sessions::set_purpose(context, socket, super::sessions::Purpose::Server)?;
     let event = context.string_rooted("error");
     let callback =
         context.host_function(crate::host::shared_vm::operation("tlsServerSocketError"))?;
