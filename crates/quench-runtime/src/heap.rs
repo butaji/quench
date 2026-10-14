@@ -1610,10 +1610,12 @@ impl Heap {
     ) {
         let parallel_marks = Self::snapshot_marks(&self.marks);
         let parallel_object_marks = self.object_records.snapshot_marks();
+        let parallel_array_marks = self.array_records.snapshot_marks();
         #[cfg(feature = "profile-aggregate")]
         let profile = self.gc_profile;
         Self::clear_marks(&self.marks);
         self.object_records.clear_marks();
+        self.array_records.clear_marks();
         let mut work = roots.to_vec();
         let mut ephemerons = weak::EphemeronWork::default();
         self.mark_work(
@@ -1624,13 +1626,23 @@ impl Heap {
         );
         let sequential_marks = Self::snapshot_marks(&self.marks);
         let sequential_object_marks = self.object_records.snapshot_marks();
+        let sequential_array_marks = self.array_records.snapshot_marks();
         assert_eq!(
-            (sequential_marks.as_slice(), sequential_object_marks.as_slice()),
-            (parallel_marks.as_slice(), parallel_object_marks.as_slice()),
+            (
+                sequential_marks.as_slice(),
+                sequential_object_marks.as_slice(),
+                sequential_array_marks.as_slice(),
+            ),
+            (
+                parallel_marks.as_slice(),
+                parallel_object_marks.as_slice(),
+                parallel_array_marks.as_slice(),
+            ),
             "full mark differs from the single-threaded verifier"
         );
         Self::restore_marks(&self.marks, &parallel_marks);
         self.object_records.restore_marks(&parallel_object_marks);
+        self.array_records.restore_marks(&parallel_array_marks);
         self.collection_state = CollectionState::FullMarking;
         #[cfg(feature = "profile-aggregate")]
         {
