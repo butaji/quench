@@ -5763,3 +5763,12 @@ output.push(['events',events]);
 console.log(JSON.stringify(output));
 "#);
 }
+
+#[test]
+fn net_resource_counts_exclude_undelivered_accepted_wrappers() {
+    compare_node_stream_source(r#"
+const net=require('net'),assert=require('assert');const clients=[],accepted=[];let completed=0;
+const server=net.createServer(socket=>accepted.push(socket)).listen(0,next);
+function next(){const client=net.connect(server.address().port,()=>{if(++completed===8){const count=process.getActiveResourcesInfo().filter(x=>x==='TCPSocketWrap').length;assert.strictEqual(count,clients.length+accepted.length);console.log('resource-count-matches-delivered-wrappers');for(const socket of clients)socket.destroy();for(const socket of accepted)socket.end();server.close();}else next();});clients.push(client);}
+"#);
+}
