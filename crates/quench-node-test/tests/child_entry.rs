@@ -5795,3 +5795,29 @@ for(const args of [[],[listener],[{},listener],[null,listener],[undefined,listen
 output.push([net.createServer.name,net.createServer.length]);console.log(JSON.stringify(output));
 "#);
 }
+
+#[test]
+fn net_socket_option_normalization_cache_and_metadata_match_node() {
+    compare_node_stream_source(r#"
+const net=require('net');const out=[];
+const socket=new net.Socket({noDelay:false,keepAlive:true,keepAliveInitialDelay:1000});
+socket._handle={setNoDelay(...args){out.push(['nodelay',args,this===socket._handle]);return 0;},setKeepAlive(...args){out.push(['keepalive',args,this===socket._handle]);return 0;}};
+for(const enable of [undefined,true,true,false,false])out.push(['returnNoDelay',socket.setNoDelay(enable)===socket]);
+for(const args of [[true,1000],[true,2000],[true,3000],[false,4000],[false,5000],[true,0],[{enable:true,initialDelay:1234,interval:3456,count:9}]])out.push(['returnKeepAlive',socket.setKeepAlive(...args)===socket]);
+out.push(['metadata',net.Socket.prototype.setNoDelay.name,net.Socket.prototype.setNoDelay.length,net.Socket.prototype.setKeepAlive.name,net.Socket.prototype.setKeepAlive.length]);
+socket._handle=null;socket.destroy();console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn original_socket_option_exception_preserves_identity_and_close_progress() {
+    compare_node_stream_source(r#"
+const net=require('net'),assert=require('assert');const marker={};let client;const out=[];
+const server=net.createServer(socket=>socket.end()).listen(0,()=>{
+ client=net.connect({port:server.address().port,noDelay:true});
+ client._handle.setNoDelay=()=>{out.push('option');throw marker;};
+ client.on('connect',()=>assert.fail('connect after original option exception'));
+});
+process.once('uncaughtException',(error,origin)=>{out.push([error===marker,origin]);client.destroy();server.close(()=>console.log(JSON.stringify(out)));});
+"#);
+}
