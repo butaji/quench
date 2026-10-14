@@ -102,7 +102,9 @@ pub(super) struct FunctionCompiler<'a, 'b> {
     /// The expression being compiled is the last operand its consumer evaluates, which
     /// then executes at once; a clobbered local read there may alias its register.
     pub(super) last_operand: bool,
-    local_register_count: Register,
+    /// The lowest register `release_temporaries` frees down to: registers below it hold
+    /// values an enclosing construct reads across its body's statements.
+    temporary_floor: Register,
     shared_undefined: SharedUndefined,
     function_scope: FxHashSet<Atom>,
     annex_b_collisions: FxHashSet<u32>,
@@ -211,7 +213,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             local_registers,
             clobbered_locals,
             last_operand: false,
-            local_register_count,
+            temporary_floor: local_register_count,
             shared_undefined: SharedUndefined {
                 register: shared_undefined,
                 used: false,
@@ -750,7 +752,18 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         self.next_reg = self
             .statement_completion
             .register()
-            .map_or(self.local_register_count, |register| register + 1);
+            .map_or(self.temporary_floor, |register| {
+                self.temporary_floor.max(register + 1)
+            });
+    }
+
+    /// Compiles `body` with every register allocated so far kept from statement-level
+    /// release, for a construct that reads them after the body's statements run.
+    pub(super) fn with_registers_held<T>(&mut self, body: impl FnOnce(&mut Self) -> T) -> T {
+        let floor = std::mem::replace(&mut self.temporary_floor, self.next_reg);
+        let result = body(self);
+        self.temporary_floor = floor;
+        result
     }
 
     fn active_lexical_binding(&self, atom: Atom) -> Option<Atom> {

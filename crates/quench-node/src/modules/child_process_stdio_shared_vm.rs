@@ -214,13 +214,35 @@ fn inherited_stream_descriptor(
     value: RootId,
 ) -> Result<Option<Specification>, RootedError> {
     let state = context.host_mut().shared_state();
-    let streams = state.borrow().child_processes.iter()
-        .flat_map(|(owner, process)| [
-            (process.stdin_stream, process.stdin.descriptor(), *owner, Channel::Stdin),
-            (process.stdout, process.stdout_pipe.descriptor(), *owner, Channel::Stdout),
-            (process.stderr, process.stderr_pipe.descriptor(), *owner, Channel::Stderr),
-        ])
-        .filter_map(|(stream, fd, owner, channel)| stream.map(|stream| (stream, fd, owner, channel)))
+    let streams = state
+        .borrow()
+        .child_processes
+        .iter()
+        .flat_map(|(owner, process)| {
+            [
+                (
+                    process.stdin_stream,
+                    process.stdin.descriptor(),
+                    *owner,
+                    Channel::Stdin,
+                ),
+                (
+                    process.stdout,
+                    process.stdout_pipe.descriptor(),
+                    *owner,
+                    Channel::Stdout,
+                ),
+                (
+                    process.stderr,
+                    process.stderr_pipe.descriptor(),
+                    *owner,
+                    Channel::Stderr,
+                ),
+            ]
+        })
+        .filter_map(|(stream, fd, owner, channel)| {
+            stream.map(|stream| (stream, fd, owner, channel))
+        })
         .collect::<Vec<_>>();
     for (stream, fd, owner, channel) in streams {
         if context.strict_equal_rooted(value, stream)? {
@@ -242,11 +264,20 @@ pub(crate) fn activate_inherited_streams(
         let state = context.host_mut().shared_state();
         let stream = {
             let mut state = state.borrow_mut();
-            state.child_processes.get_mut(owner).and_then(|process| match channel {
-                Channel::Stdin => None,
-                Channel::Stdout => { process.stdout_pipe.stop(); process.stdout },
-                Channel::Stderr => { process.stderr_pipe.stop(); process.stderr },
-            })
+            state
+                .child_processes
+                .get_mut(owner)
+                .and_then(|process| match channel {
+                    Channel::Stdin => None,
+                    Channel::Stdout => {
+                        process.stdout_pipe.stop();
+                        process.stdout
+                    }
+                    Channel::Stderr => {
+                        process.stderr_pipe.stop();
+                        process.stderr
+                    }
+                })
         };
         if let Some(stream) = stream {
             let key = context.string_rooted("pause");
@@ -254,7 +285,7 @@ pub(crate) fn activate_inherited_streams(
             context.call_rooted(pause, stream, &[])?;
             if let Some(process) = state.borrow_mut().child_processes.get_mut(owner) {
                 match channel {
-                    Channel::Stdin => {},
+                    Channel::Stdin => {}
                     Channel::Stdout => process.stdout_pipe.inherit(),
                     Channel::Stderr => process.stderr_pipe.inherit(),
                 }

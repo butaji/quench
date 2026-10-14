@@ -16,7 +16,14 @@ const FIRST_TAG: u64 = TAG_UNDEFINED;
 const TAG_SHIFT: u32 = PAYLOAD_MASK.count_ones();
 const LAST_TAG: u64 = TAG_DELETED;
 const _: () = {
-    let tags = [TAG_UNDEFINED, TAG_NULL, TAG_BOOL, TAG_HEAP, TAG_INT, TAG_DELETED];
+    let tags = [
+        TAG_UNDEFINED,
+        TAG_NULL,
+        TAG_BOOL,
+        TAG_HEAP,
+        TAG_INT,
+        TAG_DELETED,
+    ];
     let step = 1 << TAG_SHIFT;
     let mut index = 1;
     while index < tags.len() {
@@ -103,6 +110,10 @@ impl Value {
     pub const FALSE: Self = Self(TAG_BOOL);
     pub const TRUE: Self = Self(TAG_BOOL | 1);
     pub(crate) const DELETED: Self = Self(TAG_DELETED);
+    /// An activation's `arguments` binding whose object does not exist yet
+    /// (`CallPlan::forwards_arguments`). Not a heap reference, and distinct from every value a
+    /// guest operation produces.
+    pub(crate) const UNMATERIALIZED_ARGUMENTS: Self = Self(TAG_DELETED | 1);
 
     /// A Number: integral values in `i32` range other than -0 are stored as integers, NaN
     /// canonically. A value is integral exactly when its truncation converts back to the
@@ -283,7 +294,8 @@ impl Value {
     fn is_tagged(self) -> bool {
         // The tag field, shifted down, compared as one small range.
         let field = (self.0 >> TAG_SHIFT) as u32;
-        field.wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32) <= ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32
+        field.wrapping_sub((FIRST_TAG >> TAG_SHIFT) as u32)
+            <= ((LAST_TAG - FIRST_TAG) >> TAG_SHIFT) as u32
     }
 
     #[cfg(feature = "profile-aggregate")]

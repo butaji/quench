@@ -39,16 +39,16 @@ fusion_recipes! {
             let result = first.result_register();
             let constant = Operand::constant(first.constant_index() as u32)?;
             if second.operand_b().register_index() != Some(result) { return None; }
-            second.set_operand_b(constant);
+            second.set_operand_b(constant)?;
             if second.operand_c().register_index() == Some(result) {
-                second.set_operand_c(constant);
+                second.set_operand_c(constant)?;
             }
             Some(second)
         };
     ConstantRight: [LoadConst, Binary] =>
         |first: Instr, mut second: Instr, _: &mut Vec<FieldSite>| {
             if second.operand_c().register_index() != Some(first.result_register()) { return None; }
-            second.set_operand_c(Operand::constant(first.constant_index() as u32)?);
+            second.set_operand_c(Operand::constant(first.constant_index() as u32)?)?;
             Some(second)
         };
     StoreLoadLocal: [StoreLocal, LoadLocal] =>

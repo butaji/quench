@@ -202,7 +202,9 @@ pub(crate) fn handle_has_ref(
     let state = context.host_mut().shared_state();
     let value = match kind {
         EndpointKind::Listener => super::net_shared_vm::listener_has_ref(&state.borrow().tcp, id),
-        EndpointKind::Socket => Some(super::net_shared_vm::socket_has_ref(&state.borrow().tcp, id).unwrap_or(false)),
+        EndpointKind::Socket => {
+            Some(super::net_shared_vm::socket_has_ref(&state.borrow().tcp, id).unwrap_or(false))
+        }
     };
     Ok(match value {
         Some(value) => context.boolean(value),

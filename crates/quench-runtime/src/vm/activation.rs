@@ -180,6 +180,7 @@ impl Continuation {
             captured: self.captured,
             registers: self.registers,
             initialized_registers,
+            capture_cache: super::CaptureCache::default(),
             active_iterators: self.active_iterators,
             with_objects: self.with_objects,
             with_base,

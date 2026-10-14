@@ -6,7 +6,7 @@
 
 use std::{cell::RefCell, ops::Range};
 
-use oxc::regular_expression::{LiteralParser, Options, ast};
+use oxc::regular_expression::{ast, LiteralParser, Options};
 
 mod stack;
 
@@ -318,8 +318,8 @@ impl Regex {
         let compiled = (backend_enabled
             && compiled_source_syntax_is_safe(source, NonCapturingGroups::Allowed)
             && compiled_structure_is_safe(&parsed.body))
-            .then(|| compile_byte_regex(source, flags))
-            .flatten();
+        .then(|| compile_byte_regex(source, flags))
+        .flatten();
         let compiled_test = (backend_enabled && compiled_test_source_is_safe(source))
             .then(|| compile_byte_regex(source, flags))
             .flatten();
@@ -420,6 +420,27 @@ impl Regex {
         Matches {
             item: self.find_units(units, first_unit_at(units, start)),
         }
+    }
+
+    /// The range of the next match in `subject`, for callers that observe no captures.
+    /// A byte matcher that is sound for match ranges answers without capture bookkeeping.
+    pub fn find_range_in_subject(&self, subject: &Subject, start: usize) -> Option<Range<usize>> {
+        if start > subject.len() {
+            return None;
+        }
+        if let (Some(bytes), Some(compiled)) = (
+            subject.ascii(),
+            self.compiled_test.as_ref().or(self.compiled.as_ref()),
+        ) {
+            if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return {
+                return compiled
+                    .find_at(bytes, start)
+                    .map(|matched| matched.range());
+            }
+        }
+        self.find_in_subject(subject, start)
+            .next()
+            .map(|matched| matched.range)
     }
 
     pub fn find_from_utf16(&self, input: &[u16], start: usize) -> Matches {
@@ -537,11 +558,14 @@ pub struct Subject {
 
 impl Subject {
     pub fn new(units: std::rc::Rc<[u16]>) -> Self {
-        let ascii = units
-            .iter()
-            .all(|unit| *unit <= ASCII_MAX)
-            .then(|| units.iter().map(|unit| *unit as u8).collect());
-        let has_carriage_return = units.contains(&u16::from(b'\r'));
+        // One branch-free pass classifies the text (vectorizable); a second narrows ASCII
+        // text to bytes. Early-exit scans would stop the compiler from vectorizing either.
+        let carriage_return = u16::from(b'\r');
+        let (all_bits, has_carriage_return) =
+            units.iter().fold((0, false), |(bits, carriage), unit| {
+                (bits | *unit, carriage | (*unit == carriage_return))
+            });
+        let ascii = (all_bits <= ASCII_MAX).then(|| units.iter().map(|unit| *unit as u8).collect());
         Self {
             text: SubjectText::Wide { units, ascii },
             has_carriage_return,
@@ -800,7 +824,8 @@ fn class_contains_invalid_string_property(class: &ast::CharacterClass<'_>, flags
 }
 
 fn compiled_test_source_is_safe(source: &str) -> bool {
-    compiled_source_syntax_is_safe(source, NonCapturingGroups::Rejected) && !has_backreference(source)
+    compiled_source_syntax_is_safe(source, NonCapturingGroups::Rejected)
+        && !has_backreference(source)
 }
 
 /// Whether the byte backend may see `(?:` groups; any other `(?` form stays on the
@@ -844,7 +869,9 @@ fn term_structure_is_safe(term: &ast::Term<'_>) -> bool {
 /// Whether `term` can match the empty string; assertions and references count as nullable.
 fn term_is_nullable(term: &ast::Term<'_>) -> bool {
     match term {
-        ast::Term::Quantifier(quantifier) => quantifier.min == 0 || term_is_nullable(&quantifier.body),
+        ast::Term::Quantifier(quantifier) => {
+            quantifier.min == 0 || term_is_nullable(&quantifier.body)
+        }
         ast::Term::CapturingGroup(group) => disjunction_is_nullable(&group.body),
         ast::Term::IgnoreGroup(group) => disjunction_is_nullable(&group.body),
         ast::Term::Character(_)
@@ -873,13 +900,11 @@ fn captures_always_participate(term: &ast::Term<'_>) -> bool {
             !term_has_capture(&quantifier.body)
                 || (quantifier.min > 0 && captures_always_participate(&quantifier.body))
         }
-        ast::Term::LookAroundAssertion(assertion) => {
-            !assertion
-                .body
-                .body
-                .iter()
-                .any(|alternative| alternative.body.iter().any(term_has_capture))
-        }
+        ast::Term::LookAroundAssertion(assertion) => !assertion
+            .body
+            .body
+            .iter()
+            .any(|alternative| alternative.body.iter().any(term_has_capture)),
         _ => true,
     }
 }
@@ -1119,9 +1144,12 @@ fn required_literal(program: &Expr, flags: Flags) -> Box<[u32]> {
 
 /// Whether `literal` occurs in `input`.
 fn contains_literal(input: &[Unit], literal: &[u32]) -> bool {
-    input
-        .windows(literal.len())
-        .any(|window| window.iter().zip(literal).all(|(unit, value)| unit.value == *value))
+    input.windows(literal.len()).any(|window| {
+        window
+            .iter()
+            .zip(literal)
+            .all(|(unit, value)| unit.value == *value)
+    })
 }
 
 /// The index of the first decoded unit at or after UTF-16 offset `start`.
@@ -2411,7 +2439,11 @@ fn class_matches(class: &ClassExpr, value: u32, ignore_case: bool, unicode: bool
                 && !class.items.iter().skip(1).any(item_matches)
         }
     };
-    if class.negative { !matches } else { matches }
+    if class.negative {
+        !matches
+    } else {
+        matches
+    }
 }
 
 fn escape_matches(
@@ -2512,7 +2544,7 @@ enum PropertyMatcherKind {
 
 impl PropertyMatcher {
     pub fn matches(self, character: char) -> bool {
-        use icu_properties::{CodePointMapData, props};
+        use icu_properties::{props, CodePointMapData};
         match self.kind {
             PropertyMatcherKind::Any => true,
             PropertyMatcherKind::Assigned => {
@@ -2544,7 +2576,7 @@ fn binary_property_matches<P: icu_properties::props::BinaryProperty>(character: 
 }
 
 pub fn compile_property_matcher(name: &str, value: Option<&str>) -> Option<PropertyMatcher> {
-    use icu_properties::{PropertyParser, props};
+    use icu_properties::{props, PropertyParser};
     let new_script_ranges = value.and_then(|value| {
         NEW_UNICODE_SCRIPTS
             .iter()
@@ -2763,12 +2795,10 @@ mod tests {
     fn empty_match_search_past_input_end_terminates() {
         let regex = Regex::with_flags("(?:)", Flags::default()).unwrap();
         let input = "A😀B".encode_utf16().collect::<Vec<_>>();
-        assert!(
-            regex
-                .find_from_utf16(&input, input.len() + 1)
-                .next()
-                .is_none()
-        );
+        assert!(regex
+            .find_from_utf16(&input, input.len() + 1)
+            .next()
+            .is_none());
         assert!(regex.find_from("A😀B", "A😀B".len() + 1).next().is_none());
     }
     #[test]

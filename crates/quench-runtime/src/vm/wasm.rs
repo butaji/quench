@@ -314,17 +314,16 @@ impl<H: Host> Vm<H> {
             let wraps = self.execution_mode == super::ExecutionMode::Compiled;
             let guarded = (!memory.ty.shared
                 && !memory.ty.memory64
-                && (memory.ty.page_size() as usize)
-                    .is_multiple_of(crate::wasm::memory::HOST_PAGE))
-                .then(|| crate::wasm::memory::LinearBytes::reserved(length, wraps))
-                .flatten();
+                && (memory.ty.page_size() as usize).is_multiple_of(crate::wasm::memory::HOST_PAGE))
+            .then(|| crate::wasm::memory::LinearBytes::reserved(length, wraps))
+            .flatten();
             let bytes = match guarded {
                 Some(bytes) => bytes,
                 None => {
                     let mut bytes = Vec::new();
-                    bytes.try_reserve_exact(length).map_err(|_| {
-                        JsError::validation("Wasm memory allocation failed".into())
-                    })?;
+                    bytes
+                        .try_reserve_exact(length)
+                        .map_err(|_| JsError::validation("Wasm memory allocation failed".into()))?;
                     bytes.resize(length, 0);
                     crate::wasm::memory::LinearBytes::heap(bytes)
                 }

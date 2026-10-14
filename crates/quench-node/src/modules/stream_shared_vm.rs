@@ -14,7 +14,9 @@ pub(crate) fn module(
     )?;
     let dependencies = context.object_rooted()?;
     let read_zero = context.host_function_with_data(
-        crate::host::shared_vm::operation("streamReadZero"), dependencies)?;
+        crate::host::shared_vm::operation("streamReadZero"),
+        dependencies,
+    )?;
     set(context, dependencies, "readZero", read_zero)?;
     for (name, operation) in [
         ("closeOption", "streamCloseOption"),
@@ -23,15 +25,20 @@ pub(crate) fn module(
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         set(context, dependencies, name, function)?;
     }
-    let complete = context.host_function(crate::host::shared_vm::operation("streamHalfCloseComplete"))?;
+    let complete =
+        context.host_function(crate::host::shared_vm::operation("streamHalfCloseComplete"))?;
     let end_factory = context.evaluate_script_rooted(
-        quench_js_check::checked_js!("operation => function endWritableNT(stream) { return operation(stream); }"),
+        quench_js_check::checked_js!(
+            "operation => function endWritableNT(stream) { return operation(stream); }"
+        ),
         "node:stream/duplex-end.js",
     )?;
     let undefined = context.undefined();
     let complete = context.call_rooted(end_factory, undefined, &[complete])?;
     let readable_end = context.host_function_with_data(
-        crate::host::shared_vm::operation("streamAfterReadableEnd"), complete)?;
+        crate::host::shared_vm::operation("streamAfterReadableEnd"),
+        complete,
+    )?;
     set(context, dependencies, "afterReadableEnd", readable_end)?;
     let pipe_plan = context.host_function(crate::host::shared_vm::operation("streamPipePlan"))?;
     set(context, dependencies, "pipePlan", pipe_plan)?;
@@ -298,7 +305,11 @@ pub(crate) fn after_readable_end(
     let writable = get(context, stream, "writable")?;
     if context.truthy_rooted(writable)? {
         let allow = get(context, stream, "allowHalfOpen")?;
-        if context.rooted_value(allow).and_then(|value| value.as_bool()) == Some(false) {
+        if context
+            .rooted_value(allow)
+            .and_then(|value| value.as_bool())
+            == Some(false)
+        {
             let global = context.global_root()?;
             let process = get(context, global, "process")?;
             let next_tick = get(context, process, "nextTick")?;
@@ -309,15 +320,23 @@ pub(crate) fn after_readable_end(
     }
     let state = get(context, stream, "_readableState")?;
     let auto = get(context, state, "autoDestroy")?;
-    if !context.truthy_rooted(auto)? { return Ok(context.undefined()); }
+    if !context.truthy_rooted(auto)? {
+        return Ok(context.undefined());
+    }
     let state = get(context, stream, "_writableState")?;
     if context.truthy_rooted(state)? {
         let auto = get(context, state, "autoDestroy")?;
-        if !context.truthy_rooted(auto)? { return Ok(context.undefined()); }
+        if !context.truthy_rooted(auto)? {
+            return Ok(context.undefined());
+        }
         let finished = get(context, state, "finished")?;
         if !context.truthy_rooted(finished)? {
             let writable = get(context, state, "writable")?;
-            if context.rooted_value(writable).and_then(|value| value.as_bool()) != Some(false) {
+            if context
+                .rooted_value(writable)
+                .and_then(|value| value.as_bool())
+                != Some(false)
+            {
                 return Ok(context.undefined());
             }
         }
@@ -333,11 +352,15 @@ pub(crate) fn half_close_complete(
 ) -> Result<RootId, RootedError> {
     let socket = args[0];
     let writable = get(context, socket, "writable")?;
-    if !context.truthy_rooted(writable)? { return Ok(context.undefined()); }
+    if !context.truthy_rooted(writable)? {
+        return Ok(context.undefined());
+    }
     for name in ["writableEnded", "destroyed"] {
         let key = context.string_rooted(name);
         let value = context.get_property_rooted(socket, key)?;
-        if context.truthy_rooted(value)? { return Ok(context.undefined()); }
+        if context.truthy_rooted(value)? {
+            return Ok(context.undefined());
+        }
     }
     let key = context.string_rooted("end");
     let end = context.get_property_rooted(socket, key)?;
@@ -353,14 +376,22 @@ pub(crate) fn read_zero(
     let stream = args[0];
     let state = get(context, stream, "_readableState")?;
     let ended = get(context, state, "ended")?;
-    if !context.truthy_rooted(ended)? { return Ok(context.undefined()); }
+    if !context.truthy_rooted(ended)? {
+        return Ok(context.undefined());
+    }
     let emitted = get(context, state, "endEmitted")?;
-    if context.truthy_rooted(emitted)? { return Ok(context.undefined()); }
+    if context.truthy_rooted(emitted)? {
+        return Ok(context.undefined());
+    }
     let dependencies = context.host_function_data()?;
     let count = get(context, dependencies, "readableBufferCount")?;
     let undefined = context.undefined();
     let count = context.call_rooted(count, undefined, &[state])?;
-    if context.rooted_value(count).and_then(|value| value.as_number()) != Some(0.0) {
+    if context
+        .rooted_value(count)
+        .and_then(|value| value.as_number())
+        != Some(0.0)
+    {
         return Ok(context.undefined());
     }
     let complete = get(context, dependencies, "completeReadableEnd")?;
