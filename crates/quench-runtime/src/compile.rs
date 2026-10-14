@@ -16,8 +16,8 @@ use std::{fmt, ops::Range};
 const PROMOTED_LOCAL_REGISTER_BUDGET: Register = crate::bytecode::SET_THIS_REGISTER / 2;
 mod annex_b_targets;
 mod arrow;
-mod atoms;
 mod ast;
+mod atoms;
 mod binding_time;
 mod capture_layout;
 #[cfg(feature = "profile-memory")]
@@ -1134,13 +1134,7 @@ impl Engine {
         } else {
             None
         };
-        let mut compiler = Compiler::new(
-            name,
-            &normalized,
-            mode,
-            atom_prefix,
-            private_name_ids,
-        );
+        let mut compiler = Compiler::new(name, &normalized, mode, atom_prefix, private_name_ids);
         compiler.private_name_labels = private_name_labels;
         compiler.private_name_overrides = private_aliases;
         compiler.capture_script_completion = capture_script_completion;
@@ -2840,8 +2834,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn specialize_plain_local_operations(function: &mut BcFunction, atoms: &CompilerAtoms<'_>) {
-        let plain_slots =
-            function.plain_local_slots(|atom| atoms.get(atom as usize));
+        let plain_slots = function.plain_local_slots(|atom| atoms.get(atom as usize));
 
         for instruction in &mut function.code {
             match instruction.op() {

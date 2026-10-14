@@ -112,11 +112,7 @@ fn inherited_dynamic_scope(functions: &[Function]) -> Vec<bool> {
     inherited
 }
 
-fn selective_layout_is_safe(
-    function: &Function,
-    id: usize,
-    has_dynamic_descendant: bool,
-) -> bool {
+fn selective_layout_is_safe(function: &Function, id: usize, has_dynamic_descendant: bool) -> bool {
     id != 0
         && function.parent.is_some()
         && !has_dynamic_descendant

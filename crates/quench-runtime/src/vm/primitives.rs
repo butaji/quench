@@ -279,9 +279,10 @@ impl<H: Host> Vm<H> {
                     Native::StringIncludes => {
                         receiver.find_units(search.units(), position).is_some()
                     }
-                    Native::StringStartsWith => {
-                        receiver.units().slice(position..receiver.units().len()).starts_with(search.units())
-                    }
+                    Native::StringStartsWith => receiver
+                        .units()
+                        .slice(position..receiver.units().len())
+                        .starts_with(search.units()),
                     Native::StringEndsWith => {
                         let start = position.saturating_sub(search.units().len());
                         receiver.units().slice(start..position) == search.units()

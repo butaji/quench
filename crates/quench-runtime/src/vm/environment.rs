@@ -1483,8 +1483,9 @@ impl<H: Host> Vm<H> {
     }
 
     /// `direct_capture` through the frame's cached innermost slots. The cache names the
-    /// environment and collection it was taken in: while `env` is unchanged and no collection
-    /// has run, that environment's cell is the same live cell, whose slot storage never moves.
+    /// environment, whether it is the frame's own, and the collection it was taken in: while
+    /// all three are unchanged the walk ends at the same live cell, whose slot storage never
+    /// moves.
     #[inline(always)]
     pub(super) fn cached_direct_capture(
         &mut self,

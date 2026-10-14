@@ -1,0 +1,258 @@
+[
+  {
+    "side": "base",
+    "fixture": "crypto-0.js",
+    "status": 0,
+    "stdout": "done crypto 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "crypto-0.js",
+    "status": 0,
+    "stdout": "done crypto 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "crypto-1.js",
+    "status": 0,
+    "stdout": "done crypto 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "crypto-1.js",
+    "status": 0,
+    "stdout": "done crypto 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "deltablue-0.js",
+    "status": 0,
+    "stdout": "done deltablue 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "deltablue-0.js",
+    "status": 0,
+    "stdout": "done deltablue 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "deltablue-10.js",
+    "status": 0,
+    "stdout": "done deltablue 10\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "deltablue-10.js",
+    "status": 0,
+    "stdout": "done deltablue 10\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "earley-boyer-0.js",
+    "status": 0,
+    "stdout": "done earley-boyer 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "earley-boyer-0.js",
+    "status": 0,
+    "stdout": "done earley-boyer 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "earley-boyer-1.js",
+    "status": 0,
+    "stdout": "done earley-boyer 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "earley-boyer-1.js",
+    "status": 0,
+    "stdout": "done earley-boyer 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "navier-stokes-0.js",
+    "status": 0,
+    "stdout": "done navier-stokes 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "navier-stokes-0.js",
+    "status": 0,
+    "stdout": "done navier-stokes 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "navier-stokes-1.js",
+    "status": 0,
+    "stdout": "done navier-stokes 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "navier-stokes-1.js",
+    "status": 0,
+    "stdout": "done navier-stokes 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "raytrace-0.js",
+    "status": 0,
+    "stdout": "done raytrace 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "raytrace-0.js",
+    "status": 0,
+    "stdout": "done raytrace 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "raytrace-3.js",
+    "status": 0,
+    "stdout": "done raytrace 3\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "raytrace-3.js",
+    "status": 0,
+    "stdout": "done raytrace 3\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "regexp-0.js",
+    "status": 0,
+    "stdout": "done regexp 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "regexp-0.js",
+    "status": 0,
+    "stdout": "done regexp 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "regexp-1.js",
+    "status": 0,
+    "stdout": "done regexp 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "regexp-1.js",
+    "status": 0,
+    "stdout": "done regexp 1\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "richards-0.js",
+    "status": 0,
+    "stdout": "done richards 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "richards-0.js",
+    "status": 0,
+    "stdout": "done richards 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "richards-25.js",
+    "status": 0,
+    "stdout": "done richards 25\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "richards-25.js",
+    "status": 0,
+    "stdout": "done richards 25\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "splay-0.js",
+    "status": 0,
+    "stdout": "done splay 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "splay-0.js",
+    "status": 0,
+    "stdout": "done splay 0\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "base",
+    "fixture": "splay-75.js",
+    "status": 0,
+    "stdout": "done splay 75\n",
+    "stderr": "",
+    "passed": true
+  },
+  {
+    "side": "candidate",
+    "fixture": "splay-75.js",
+    "status": 0,
+    "stdout": "done splay 75\n",
+    "stderr": "",
+    "passed": true
+  }
+]
