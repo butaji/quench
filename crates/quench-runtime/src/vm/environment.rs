@@ -1401,6 +1401,18 @@ impl<H: Host> Vm<H> {
     /// environment owns. One cell read per layer; anything else is `None`.
     #[inline(always)]
     pub(super) fn direct_capture(&self, frame: usize, depth: u16, slot: u16) -> Option<Value> {
+        self.direct_capture_slots(frame, depth)?
+            .owned(usize::from(slot))
+            .filter(|value| !value.is_deleted())
+    }
+
+    /// The slots a direct capture at `depth` reads: the walk from the frame's environment
+    /// (past its own, once captured) when every layer belongs to a non-root function.
+    fn direct_capture_slots(
+        &self,
+        frame: usize,
+        depth: u16,
+    ) -> Option<&crate::heap::EnvironmentSlots> {
         let frame = &self.frames[frame];
         let mut cell = self.heap.get(frame.env)?;
         if frame.captured {
@@ -1427,13 +1439,47 @@ impl<H: Host> Vm<H> {
                 if *function == super::ROOT_FUNCTION_ID {
                     return None;
                 }
-                return slots
-                    .owned(usize::from(slot))
-                    .filter(|value| !value.is_deleted());
+                return Some(slots);
             }
             remaining -= 1;
             cell = self.heap.get(*parent)?;
         }
+    }
+
+    /// `direct_capture` through the frame's cached innermost slots. The cache names the
+    /// environment and collection it was taken in: while `env` is unchanged and no collection
+    /// has run, that environment's cell is the same live cell, whose slot storage never moves.
+    #[inline(always)]
+    pub(super) fn cached_direct_capture(
+        &mut self,
+        frame: usize,
+        depth: u16,
+        slot: u16,
+    ) -> Option<Value> {
+        if depth != 0 {
+            return self.direct_capture(frame, depth, slot);
+        }
+        let epoch = self.heap.collection_epoch();
+        let cache = &self.frames[frame].capture_cache;
+        let slots = if cache.env == self.frames[frame].env
+            && cache.epoch == epoch
+            && !cache.slots.is_null()
+        {
+            cache.slots
+        } else {
+            let slots: *const crate::heap::EnvironmentSlots =
+                self.direct_capture_slots(frame, 0)?;
+            self.frames[frame].capture_cache = CaptureCache {
+                env: self.frames[frame].env,
+                epoch,
+                slots,
+            };
+            slots
+        };
+        // SAFETY: see above; the pointer was taken from the frame's current environment.
+        unsafe { &*slots }
+            .owned(usize::from(slot))
+            .filter(|value| !value.is_deleted())
     }
 
     #[cold]

@@ -327,6 +327,7 @@ impl<H: Host> Vm<H> {
                 captured: false,
                 registers: vec![],
                 initialized_registers: 0,
+                capture_cache: CaptureCache::default(),
                 active_iterators: vec![],
                 with_objects: Vec::new(),
                 with_base: self.with_stack.len(),
@@ -1087,7 +1088,7 @@ impl<H: Host> Vm<H> {
                 }
                 Op::LoadCapture => {
                     if let Some(value) =
-                        self.direct_capture(frame, ins.capture_depth(), ins.capture_slot())
+                        self.cached_direct_capture(frame, ins.capture_depth(), ins.capture_slot())
                     {
                         self.write(frame, ins.result_register(), value);
                         continue;
