@@ -4,8 +4,8 @@
 //!
 //! On x86-64 Linux the functions a start-up and a general workload execute are laid out
 //! first, in execution order (`link/x86_64-linux.order`, derived by `quench-wasm-test`'s
-//! `symbol-order` from the start-up, `quench-bench/deegen-curriculum` and `quench-bench/micros`
-//! profiles, never from a scored bench). A fault on a file-backed page maps its cached
+//! `symbol-order` from the start-up, `quench-bench/deegen-curriculum`, `quench-bench/micros`
+//! and a Test262 sample's profiles, never from a scored bench). A fault on a file-backed page maps its cached
 //! neighbours too, so executed code scattered among cold code keeps the cold pages resident.
 //! Symbols the order names but a
 //! build lacks are ignored, so code changes erode the layout silently: retrain the order
