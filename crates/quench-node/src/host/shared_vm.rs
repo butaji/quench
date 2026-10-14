@@ -454,6 +454,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "diagnosticsTraceCallback" (1) => crate::modules::diagnostics_channel_shared_vm::trace_callback,
         method "diagnosticsTraceComplete" (4) => crate::modules::diagnostics_channel_shared_vm::trace_complete,
         method "diagnosticsIsPromise" (1) => crate::modules::diagnostics_channel_shared_vm::is_promise,
+        method "perfHooksEntries" (0) => crate::modules::perf_timeline_query::entries,
+        method "perfHooksCompareEntries" (2) => crate::modules::perf_timeline_query::compare,
         method "perfHooksNow" (0) => crate::modules::perf_hooks::now,
         method "dnsLookup" (3) => crate::modules::dns_shared_vm::lookup,
         method "zlibStreamOpen" (4) => crate::modules::zlib_stream_shared_vm::open,
