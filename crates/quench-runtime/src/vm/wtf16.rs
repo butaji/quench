@@ -1,4 +1,4 @@
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
@@ -10,41 +10,32 @@ pub(crate) struct JsString {
     inner: Rc<JsStringInner>,
 }
 
-enum JsStringData {
-    Flat(Rc<[u16]>),
-    Concat(Rc<JsStringInner>, Rc<JsStringInner>),
-}
-
+/// A string is a rope until its units are first read; flattening then releases the halves, so
+/// the text is held once.
 struct JsStringInner {
-    data: JsStringData,
     length: usize,
     flat: OnceCell<Rc<[u16]>>,
+    /// The concatenated halves, present exactly while `flat` is unset.
+    rope: Cell<Option<(Rc<JsStringInner>, Rc<JsStringInner>)>>,
     host: OnceCell<Rc<str>>,
 }
 
 impl JsStringInner {
-    fn flat(units: Rc<[u16]>, host: Option<String>) -> Self {
-        let length = units.len();
-        let flat = OnceCell::new();
-        let _ = flat.set(units.clone());
-        let host_cell = OnceCell::new();
-        if let Some(host) = host {
-            let _ = host_cell.set(Rc::from(host));
-        }
+    fn flat(units: Rc<[u16]>) -> Self {
         Self {
-            data: JsStringData::Flat(units),
-            length,
-            flat,
-            host: host_cell,
+            length: units.len(),
+            flat: OnceCell::from(units),
+            rope: Cell::new(None),
+            host: OnceCell::new(),
         }
     }
 
     fn concat(left: Rc<Self>, right: Rc<Self>) -> Self {
         let length = left.length.saturating_add(right.length);
         Self {
-            data: JsStringData::Concat(left, right),
             length,
             flat: OnceCell::new(),
+            rope: Cell::new(Some((left, right))),
             host: OnceCell::new(),
         }
     }
@@ -147,16 +138,15 @@ impl JsString {
     pub(crate) fn from_units(units: &[u16]) -> Self {
         let units = Rc::from(units);
         Self {
-            inner: Rc::new(JsStringInner::flat(units, None)),
+            inner: Rc::new(JsStringInner::flat(units)),
         }
     }
 
     pub(crate) fn from_str(text: &str) -> Self {
         Self {
-            inner: Rc::new(JsStringInner::flat(
-                Rc::from(text.encode_utf16().collect::<Vec<_>>()),
-                None,
-            )),
+            inner: Rc::new(JsStringInner::flat(Rc::from(
+                text.encode_utf16().collect::<Vec<_>>(),
+            ))),
         }
     }
 
@@ -169,14 +159,16 @@ impl JsString {
             let mut output = Vec::with_capacity(self.inner.length);
             let mut pending = vec![self.inner.clone()];
             while let Some(part) = pending.pop() {
-                match &part.data {
-                    JsStringData::Flat(units) => output.extend_from_slice(units),
-                    JsStringData::Concat(left, right) => {
-                        pending.push(right.clone());
-                        pending.push(left.clone());
-                    }
+                if let Some(units) = part.flat.get() {
+                    output.extend_from_slice(units);
+                    continue;
                 }
+                let (left, right) = part.rope.take().expect("an unflattened string is a rope");
+                pending.push(right.clone());
+                pending.push(left.clone());
+                part.rope.set(Some((left, right)));
             }
+            drop(self.inner.rope.take());
             Rc::from(output)
         })
     }
@@ -316,10 +308,7 @@ impl From<&str> for JsString {
 
 impl From<String> for JsString {
     fn from(value: String) -> Self {
-        let units = Rc::from(value.encode_utf16().collect::<Vec<_>>());
-        Self {
-            inner: Rc::new(JsStringInner::flat(units, Some(value))),
-        }
+        Self::from_str(&value)
     }
 }
 
