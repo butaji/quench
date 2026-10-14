@@ -2140,22 +2140,16 @@ fn class_item_matches(item: &ClassItem, value: u32, ignore_case: bool, unicode: 
     match item {
         ClassItem::Character(character) => equal(*character, value, ignore_case, unicode),
         ClassItem::Range(min, max) => {
-            let value = if ignore_case {
-                canonical(value, unicode)
-            } else {
-                value
-            };
-            let min = if ignore_case {
-                canonical(*min, unicode)
-            } else {
-                *min
-            };
-            let max = if ignore_case {
-                canonical(*max, unicode)
-            } else {
-                *max
-            };
-            min <= value && value <= max
+            let in_range = |member: u32| *min <= member && member <= *max;
+            if !ignore_case {
+                return in_range(value);
+            }
+            // The range matches when one of its members has `value`'s canonical form.
+            let key = canonical(value, unicode);
+            (canonical(key, unicode) == key && in_range(key))
+                || canonical_preimages(unicode)
+                    .get(&key)
+                    .is_some_and(|members| members.iter().copied().any(in_range))
         }
         ClassItem::Escape(escape) => escape_matches(*escape, value, ignore_case, unicode),
         ClassItem::Property {
@@ -2695,6 +2689,24 @@ fn equal(left: u32, right: u32, ignore_case: bool, unicode: bool) -> bool {
         left == right
     }
 }
+/// For each canonicalization mode, the code points whose canonical form is another code point,
+/// grouped by that form: the inverse of `canonical`, which case-insensitive class ranges need.
+fn canonical_preimages(unicode: bool) -> &'static std::collections::HashMap<u32, Vec<u32>> {
+    static TABLES: [std::sync::OnceLock<std::collections::HashMap<u32, Vec<u32>>>; 2] =
+        [std::sync::OnceLock::new(), std::sync::OnceLock::new()];
+    TABLES[usize::from(unicode)].get_or_init(|| {
+        let last = if unicode { u32::from(char::MAX) } else { BMP_MAX };
+        let mut preimages = std::collections::HashMap::<u32, Vec<u32>>::new();
+        for member in 0..=last {
+            let key = canonical(member, unicode);
+            if key != member {
+                preimages.entry(key).or_default().push(member);
+            }
+        }
+        preimages
+    })
+}
+
 fn canonical(value: u32, unicode: bool) -> u32 {
     let Some(character) = char::from_u32(value) else {
         return value;
@@ -2759,6 +2771,18 @@ mod tests {
                     "negative property matched {alias}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn case_insensitive_ranges_match_members_not_folded_endpoints() {
+        // U+03CE folds to U+038F, below the range's start: folding the endpoints empties
+        // the range, while its members (all Greek lowercase letters here) still match.
+        for flags in ["i", "iu"] {
+            let regex = Regex::with_flags(r"^[\u0391-\u03ce]+$", Flags::from(flags)).unwrap();
+            assert!(regex.find_from("αβγδεζηθικλμνξοπρςστυφχψω", 0).next().is_some(), "{flags}");
+            let ascii = Regex::with_flags(r"^[a-z]+$", Flags::from(flags)).unwrap();
+            assert!(ascii.find_from("QUENCH", 0).next().is_some(), "{flags}");
         }
     }
 
