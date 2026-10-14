@@ -13,9 +13,10 @@ const ODD_INTEGER_PARITY: f64 = 1.0;
 /// The comparison operators occupy the binary operator discriminants up to this one.
 const LAST_COMPARISON_OPERATOR: u32 = BinaryOperator::GreaterEqualThan as u32;
 
-/// A comparison operator applied to two numbers.
+/// A comparison operator applied to two numbers, or to two integers, which compare as the
+/// numbers they denote.
 #[inline(always)]
-fn number_comparison(op: u32, a: f64, b: f64) -> bool {
+fn number_comparison<T: PartialOrd>(op: u32, a: T, b: T) -> bool {
     const EQUALITY: u32 = BinaryOperator::Equality as u32;
     const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
     const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
@@ -54,26 +55,19 @@ const NUMERIC_BINARY_OPERATORS: [BinaryOperator; NUMERIC_BINARY_OPERATOR_COUNT] 
     BinaryOperator::BitwiseAnd,
 ];
 
-/// Binary operator immediates up to this one are equality and relational
-/// comparisons, in `integer_relation` order.
-const LAST_RELATIONAL_OPERATOR: u32 = 7;
-
-/// The integer fast path of an equality or relational operator.
+/// A comparison operator on two Numbers, comparing integers as integers; `None` for any
+/// other operator or value.
 #[inline(always)]
-pub(super) fn integer_relation(op: u32, left: Value, right: Value) -> Option<bool> {
-    if op > LAST_RELATIONAL_OPERATOR {
+pub(super) fn number_relation(op: u32, left: Value, right: Value) -> Option<bool> {
+    if op > LAST_COMPARISON_OPERATOR {
         return None;
     }
-    let (a, b) = Value::int_pair(left, right)?;
-    Some(match op {
-        0 | 2 => a == b,
-        1 | 3 => a != b,
-        4 => a < b,
-        5 => a <= b,
-        6 => a > b,
-        7 => a >= b,
-        _ => unreachable!("relational operator range"),
-    })
+    if let Some((a, b)) = Value::int_pair(left, right) {
+        return Some(number_comparison(op, a, b));
+    }
+    // Equality, strict equality and the relational operators agree with IEEE 754
+    // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
+    Some(number_comparison(op, left.as_number()?, right.as_number()?))
 }
 
 #[inline(always)]
@@ -1647,7 +1641,7 @@ impl<H: Host> Vm<H> {
                 right,
                 crate::profile::BinaryValuePath::IntegerFastPath,
             );
-            return Some(number_comparison(op, f64::from(a), f64::from(b)));
+            return Some(number_comparison(op, a, b));
         }
         // Equality, strict equality and the relational operators agree with IEEE 754
         // comparison on numbers: NaN is unordered and unequal, and -0 equals +0.
