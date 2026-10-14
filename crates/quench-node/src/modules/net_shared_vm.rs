@@ -25,8 +25,7 @@ const CALLABLE_FACADE: &str = quench_js_check::checked_js!(
 })"#
 );
 
-const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd) => {
-  const listeners = (socket) => socket._listeners;
+const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, endOperation, destroyOperation, encodingOperation, listenOperation, closeOperation, addressOperation, accountWriteOperation, endpointOperation, referenceOperation, socketReferenceOperation, unrefTimeoutOperation, socketOptionsOperation, serverOptionsOperation, initEndOperation, onReadableStreamEnd, initServerEmitterOperation) => {
   class Socket extends Duplex {
     constructor(options = {}) {
       options = { ...socketOptionsOperation(options, false) };
@@ -153,22 +152,13 @@ const NET_MODULE_FACTORY: &str = r#"((Duplex, connectOperation, writeOperation, 
   };
   function Server(options, listener) {
     if (!(this instanceof Server)) return new Server(options, listener);
-    this._listeners = new Map();
+    initServerEmitterOperation(this);
     this._handle = null; this._unref = false;
     this.listening = false;
     if (typeof options === 'function') listener = options;
     serverOptionsOperation(options);
     if (typeof listener === 'function') this.on('connection', listener);
   }
-  Server.prototype.on = function(event, callback) { const list = this._listeners.get(event) || []; list.push(callback); this._listeners.set(event, list); return this; };
-  Server.prototype.addListener = function(event, callback) { return this.on(event, callback); };
-  Server.prototype.once = function(event, callback) { const wrapped = (...args) => { this.removeListener(event, wrapped); callback.apply(this, args); }; wrapped.listener = callback; return this.on(event, wrapped); };
-  Server.prototype.removeListener = function(event, callback) { const list = this._listeners.get(event) || []; this._listeners.set(event, list.filter((item) => item !== callback && item.listener !== callback)); return this; };
-  Server.prototype.off = Server.prototype.removeListener;
-  Server.prototype.listeners = function(event) { return (this._listeners.get(event) || []).map((item) => item.listener || item); };
-  Server.prototype.listenerCount = function(event) { return this.listeners(event).length; };
-  Server.prototype.removeAllListeners = function(event) { if (event === undefined) this._listeners.clear(); else this._listeners.delete(event); return this; };
-  Server.prototype.emit = function(event, ...args) { for (const callback of [...(this._listeners.get(event) || [])]) callback.apply(this, args); return true; };
   Server.prototype.listen = function(port, host, callback) {
       if (typeof port === 'function') { callback = port; port = 0; }
       const plan = endpointOperation(port, host, callback, false);
@@ -530,7 +520,7 @@ enum SocketClosePhase {
     Closing,
 }
 
-enum DeliveryPhase { Pending, Delivered, ReadPending }
+enum DeliveryPhase { Pending, DeliveringConnection, Delivered, ReadPending }
 
 struct SharedSocket {
     stream: SocketStream,
@@ -1257,6 +1247,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     ), "node:net/readable-end.js")?;
     let readable_end = context.call_rooted(facade, undefined, &[readable_end])?;
     let init_end = context.host_function(crate::host::shared_vm::operation("netSocketInitEnd"))?;
+    let emitter_api = context.host_mut().shared_state().borrow().event_targets_api
+        .ok_or_else(|| RootedError::host("EventEmitter configuration missing"))?;
+    let key = context.string_rooted("emitterCtor");
+    let emitter = context.get_property_rooted(emitter_api, key)?;
+    let init_server_emitter = context.host_function_with_data(
+        crate::host::shared_vm::operation("netServerInitEmitter"), emitter,
+    )?;
     let factory = context.evaluate_script_rooted(NET_MODULE_FACTORY, "node:net/module.js")?;
     let undefined = context.undefined();
     let surface = context.call_rooted(
@@ -1281,8 +1278,16 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
             server_options,
             init_end,
             readable_end,
+            init_server_emitter,
         ],
     )?;
+    let key = context.string_rooted("Server");
+    let server = context.get_property_rooted(surface, key)?;
+    let key = context.string_rooted("prototype");
+    let server_prototype = context.get_property_rooted(server, key)?;
+    let emitter_prototype = context.get_property_rooted(emitter, key)?;
+    context.set_prototype_rooted(server_prototype, emitter_prototype)?;
+    context.set_prototype_rooted(server, emitter)?;
     for name in ["Socket", "Stream", "Server", "BlockList", "SocketAddress", "connect", "createConnection", "createServer"] {
         let key = context.string_rooted(name);
         let value = context.get_property_rooted(surface, key)?;
@@ -2132,6 +2137,12 @@ pub(crate) fn deliver_connection(
         .and_then(|value| value.as_number())
         .ok_or_else(|| RootedError::host("queued socket owner is unavailable"))?
         as u64;
+    {
+        let shared = context.host_mut().shared_state();
+        if let Some(socket) = shared.borrow_mut().tcp.sockets.get_mut(&socket) {
+            socket.delivery = DeliveryPhase::DeliveringConnection;
+        };
+    }
     let result = context.call_rooted(callback, receiver, &args[2..]);
     let shared = context.host_mut().shared_state();
     {
@@ -2204,4 +2215,19 @@ pub(crate) fn initialize_end(
     let event = context.string_rooted("end");
     context.call_rooted(on, socket, &[event, args[2]])?;
     Ok(context.undefined())
+}
+
+pub(crate) fn initialize_server_emitter(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let emitter = context.host_function_data()?;
+    context.call_rooted(emitter, args[0], &[])
+}
+
+/// The accepted wrapper becomes observable when its original connection
+/// callback begins. Read delivery stays blocked until that callback completes.
+pub(crate) fn connection_delivery_started(transport: &Transport, id: u64) -> bool {
+    transport.sockets.get(&id).is_none_or(|socket| !matches!(socket.delivery, DeliveryPhase::Pending))
 }
