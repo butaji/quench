@@ -701,7 +701,11 @@ impl<H: Host> Vm<H> {
         left: RootId,
         right: RootId,
     ) -> Result<bool, JsError> {
-        self.embedding_relational(super::operations::RelationalOperator::GreaterThan, left, right)
+        self.embedding_relational(
+            super::operations::RelationalOperator::GreaterThan,
+            left,
+            right,
+        )
     }
 
     pub(crate) fn embedding_greater_equal(
@@ -709,7 +713,11 @@ impl<H: Host> Vm<H> {
         left: RootId,
         right: RootId,
     ) -> Result<bool, JsError> {
-        self.embedding_relational(super::operations::RelationalOperator::GreaterEqual, left, right)
+        self.embedding_relational(
+            super::operations::RelationalOperator::GreaterEqual,
+            left,
+            right,
+        )
     }
 
     fn embedding_relational(
