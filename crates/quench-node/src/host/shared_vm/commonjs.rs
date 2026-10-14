@@ -1567,6 +1567,9 @@ const getLinkedBinding = () => ({});
                 // call, so the file text and wrapper are released before it.
                 drop(wrapper_source);
                 drop(file_text);
+                if parent.is_none() {
+                    crate::host::resident_pages::release_read_only_pages();
+                }
                 let mut arguments = vec![exports, require, module, name, directory, primordials];
                 if in_node_internal {
                     arguments.push(

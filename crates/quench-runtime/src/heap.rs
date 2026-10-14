@@ -37,6 +37,8 @@ const LARGE_HEAP_MINIMUM_LIVE_CELLS: usize = 1 << 16;
 /// further gain (Linux x86_64, 4 vCPU, paired non-PGO rounds); at that minimum, fixed-work
 /// max RSS rose 22% to 36% on DeltaBlue, EarleyBoyer and RayTrace.
 const MINIMUM_GC_ALLOCATION_HEADROOM: usize = 384;
+/// String payload bytes that weigh as one more allocation toward the next collection.
+const STRING_BYTES_PER_ALLOCATION: usize = 64;
 const PARALLEL_MARK_MINIMUM_SLOTS: usize = 50_000;
 const PARALLEL_MARK_MAX_THREADS: usize = 4;
 // Paired Splay screens on the 4-vCPU Linux host favored the collector thread;
@@ -776,8 +778,12 @@ impl Heap {
             self.gc_profile.allocated_payload_bytes[kind] += bytes as u64;
             self.gc_profile.allocated_size_buckets[kind][Self::size_bucket(bytes)] += 1;
         }
-        self.allocations += 1;
-        self.allocations_since_full = self.allocations_since_full.saturating_add(1);
+        let weight = 1 + match &cell {
+            Cell::String(text) => text.flat_unit_bytes() / STRING_BYTES_PER_ALLOCATION,
+            _ => 0,
+        };
+        self.allocations += weight;
+        self.allocations_since_full = self.allocations_since_full.saturating_add(weight);
         let track_young = self.tracks_young_cells();
         self.total_allocations += 1;
         self.external_bytes += cell.external_bytes();
