@@ -48,6 +48,8 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        let description = self.native_with_realm(Native::SymbolDescriptionGetter, global, global);
+        self.install_symbol_description(prototype, description)?;
         if let Some(to_string_tag) = self.well_known_symbols.get("toStringTag").copied() {
             let tag = self.heap.alloc(Cell::String(JsString::from_str("Symbol")));
             self.set_symbol_property(prototype, to_string_tag, tag)?;
@@ -64,6 +66,30 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
+        Ok(())
+    }
+
+    /// `Symbol.prototype.description`, an accessor whose getter is `getter`.
+    pub(super) fn install_symbol_description(
+        &mut self,
+        prototype: Value,
+        getter: Value,
+    ) -> Result<(), JsError> {
+        self.set_builtin_function_name(getter, "get description")?;
+        let description_atom = self.intern_atom("description");
+        self.set_property(prototype, description_atom, Value::UNDEFINED)?;
+        self.set_property_attributes(
+            prototype,
+            PropertyKey::string(description_atom),
+            PropertyAttributes {
+                writable: false,
+                enumerable: false,
+                configurable: true,
+                accessor: true,
+                getter: Some(getter),
+                setter: None,
+            },
+        );
         Ok(())
     }
 
