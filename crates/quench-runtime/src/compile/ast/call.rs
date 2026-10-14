@@ -306,16 +306,19 @@ impl FunctionCompiler<'_, '_> {
         });
     }
 
-    pub(crate) fn name_bindings(&mut self) -> Vec<crate::bytecode::EvalBinding> {
-        let mut visible = rustc_hash::FxHashSet::default();
-        let mut bindings = Vec::new();
+    /// The bindings a dynamic name lookup in this function resolves statically: its function-name
+    /// bindings, then the captured bindings its own declarations do not hide.
+    pub(crate) fn name_bindings(&mut self) -> crate::bytecode::NameBindings {
+        let mut direct = Vec::new();
         for scope in self.lexical_scopes.iter().rev() {
             for (atom, target) in &scope.bindings {
                 if scope.kinds.get(atom) == Some(&LexicalBindingKind::FunctionName)
-                    && visible.insert(*atom)
+                    && !direct
+                        .iter()
+                        .any(|binding: &crate::bytecode::EvalBinding| binding.atom == *atom)
                     && let Some(slot) = self.local_slots.get(target)
                 {
-                    bindings.push(crate::bytecode::EvalBinding {
+                    direct.push(crate::bytecode::EvalBinding {
                         atom: *atom,
                         location: crate::bytecode::EvalBindingLocation::Local(*slot),
                         with_depth: scope.with_depth.saturating_sub(self.inherited_with_depth),
@@ -325,62 +328,16 @@ impl FunctionCompiler<'_, '_> {
                 }
             }
         }
-        visible.extend(self.function_scope.iter().copied());
-        for (depth, scope) in self.scopes.iter().enumerate() {
-            let Ok(depth) = u16::try_from(depth) else {
-                self.owner.reject(
-                    Span::default(),
-                    "eval capture depth exceeds residual encoding",
-                );
-                break;
-            };
-            for (marker, slot) in scope.iter() {
-                let text = self.owner.atoms[*marker as usize].to_owned();
-                let Some((kind, name)) = LexicalBindingKind::ALL.into_iter().find_map(|kind| {
-                    text.strip_prefix(kind.capture_prefix())
-                        .map(|name| (kind, name))
-                }) else {
-                    continue;
-                };
-                let atom = self.owner.atom(name);
-                if !visible.insert(atom) {
-                    continue;
-                }
-                let catch_marker = format!("\0quench:catch-capture:{name}");
-                bindings.push(crate::bytecode::EvalBinding {
-                    atom,
-                    location: crate::bytecode::EvalBindingLocation::Capture { depth, slot: *slot },
-                    with_depth: 0,
-                    kind,
-                    declaration: if self
-                        .owner
-                        .atoms
-                        .find(&catch_marker)
-                        .is_some_and(|marker| scope.contains_key(&marker))
-                    {
-                        crate::bytecode::EvalBindingDeclaration::CatchParameter
-                    } else {
-                        crate::bytecode::EvalBindingDeclaration::Lexical
-                    },
-                });
-            }
-            // Lexical markers own mutability and declaration conflicts. Add
-            // ordinary captures only after those source names have been resolved.
-            for (atom, slot) in scope.iter() {
-                if self.owner.atoms[*atom as usize].contains('\0') || !visible.insert(*atom) {
-                    continue;
-                }
-                bindings.push(crate::bytecode::EvalBinding {
-                    atom: *atom,
-                    location: crate::bytecode::EvalBindingLocation::Capture { depth, slot: *slot },
-                    with_depth: 0,
-                    kind: LexicalBindingKind::Mutable,
-                    declaration: crate::bytecode::EvalBindingDeclaration::Variable,
-                });
-            }
-        }
-        bindings.sort_unstable_by_key(|binding| binding.atom);
-        bindings
+        direct.sort_unstable_by_key(|binding| binding.atom);
+        let captured = self.owner.captured_names(&self.scopes);
+        let mut hidden: Vec<Atom> = self
+            .function_scope
+            .iter()
+            .copied()
+            .filter(|atom| captured.as_ref().is_some_and(|names| names.contains(*atom)))
+            .collect();
+        hidden.sort_unstable();
+        crate::bytecode::NameBindings::new(direct, hidden, captured)
     }
 
     fn after_super_call(&mut self, result: Register) {
