@@ -1,0 +1,22 @@
+{
+  "scope": "Interrupted full sweep; not a complete result",
+  "runtime_commit": "9fa05ac949ff96e0cf30b8f478fe14e0b3ef2df1",
+  "published_commit": "9bfffee76ef43151af1b4f9ef8f815663c0bf04d",
+  "partial_log_counts": {
+    "Fail": 1664,
+    "Pass": 1094,
+    "Timeout": 74,
+    "Skip": 645
+  },
+  "log_sha256": "e62ccc60ee510d60ed26da5cda0c27b695a070da1fef61d5cde051de091e3e26",
+  "log_bytes": 288439,
+  "log_path": "work/parallel-node-native-timers-full.log",
+  "final_json_exists": false,
+  "runner_exit_exists": false,
+  "memory_events_at_recovery": "low 0\nhigh 0\nmax 529888\noom 0\noom_kill 0\noom_group_kill 0\n",
+  "qualifications": [
+    "Environment transition interrupted the coordinator; no complete JSON or runner exit proof was produced. Partial rows are not combined with another run or counted as a complete sweep.",
+    "Orphan worker process group1148364 was identified by original frozen binary and worker arguments, then terminated before restart.",
+    "Original logs and binary manifests remain unchanged. Restart uses a separate artifact prefix with the same binaries, pin,4727 inventory,jobs4 and30-second deadline."
+  ]
+}
