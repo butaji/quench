@@ -6305,3 +6305,17 @@ const timers=require('timers/promises'),out=[];
 })();
 "#);
 }
+
+#[test]
+fn cli_print_evaluates_script_statements_and_language_completion_like_node() {
+    for source in ["const x=1; x+2", "var x=4; x*3", "'first'; const x=1;", "if(true){7}else{9}", "globalThis.eval=()=>99; 5", "const t=require('timers/promises'); t.setTimeout(1000,null,{ref:false}).then(()=>{throw Error('unreferenced timer fired')});"] {
+        let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command=Command::new(executable);
+            command.args(["-pe",source]);
+            if executable!="node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+            quench_node_test::case_process::observe_command(command,Duration::from_secs(5)).unwrap()
+        });
+        for observation in &observations { assert!(!observation.timed_out); assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr)); assert!(observation.stderr.is_empty()); }
+        if !source.contains("t.setTimeout") { assert_eq!(observations[0].stdout,observations[1].stdout); }
+    }
+}
