@@ -156,6 +156,15 @@ through the shared VM's canonical integrity operation. On Unix,
 image owning the host implementation; it does not infer linkage from fixture
 names or a build environment. Non-Unix retains the previous linkage fact.
 
+A distribution with static OpenSSL includes the matching native OpenSSL CLI as
+`openssl-cli` beside `quench-node`. Freeze that tool with the sibling engine and
+runner, and retain its hash and `openssl-cli version` output. Consumers of
+`node_shared_openssl` select this adjacent CLI for static builds. Copying only the
+engine and runner omits a real package dependency and causes CLI-backed crypto
+and TLS checks to skip. CLI subprocesses execute OpenSSL; JavaScript still runs
+in Quench. The frozen Linux qualification bundle copies `/usr/bin/openssl` from
+the same system installation used for the configured OpenSSL headers/archives.
+
 Child process handles keep separate open/closing/closed phases and one
 reference flag. Public ref/unref methods observe the handle guard and method
 lookup, including the repeated getter, and return undefined. Native handle
