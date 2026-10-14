@@ -2137,9 +2137,11 @@ impl<'a> Compiler<'a> {
         self.field_sites.shrink_to_fit();
         let program = ResidualProgram {
             specialized: self.mode == SpecializationMode::Enabled,
+            // Eval code is code compiled for an eval; a host script that only captures its
+            // completion value keeps Script declaration semantics.
             kind: if self.module_goal {
                 crate::bytecode::ProgramKind::Module
-            } else if self.capture_script_completion {
+            } else if self.eval_context.is_some() {
                 crate::bytecode::ProgramKind::Eval
             } else {
                 crate::bytecode::ProgramKind::Script

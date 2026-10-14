@@ -5821,3 +5821,122 @@ const server=net.createServer(socket=>socket.end()).listen(0,()=>{
 process.once('uncaughtException',(error,origin)=>{out.push([error===marker,origin]);client.destroy();server.close(()=>console.log(JSON.stringify(out)));});
 "#);
 }
+
+#[test]
+fn net_server_admission_counts_and_drop_addresses_match_node() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net'),assert=require('assert');const output=[];
+const server=net.createServer(socket=>{
+ output.push(['accepted',server._connections,socket.server===server,socket._server===server]);
+ socket.on('data',data=>socket.write(data));
+});
+server.maxConnections=1;
+server.on('drop',info=>{
+ output.push(['drop',server._connections,Object.getPrototypeOf(info)===null,info.localPort===server.address().port,typeof info.remotePort,info.localFamily,info.remoteFamily]);
+});
+server.listen(0,()=>{
+ const first=net.connect(server.address().port,()=>first.write('one'));
+ first.once('data',()=>{
+  const second=net.connect(server.address().port);
+  second.once('close',()=>{
+   output.push(['beforeDestroy',server._connections]);first.destroy();
+   server.getConnections((error,count)=>{output.push(['count',error===null,count]);server.close(()=>console.log(JSON.stringify(output)));});
+  });
+ });
+});
+"#);
+}
+
+#[test]
+fn net_server_original_admission_hooks_errors_and_count_timing_match_node() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net');const output=[];
+const server=net.createServer().listen(0,()=>{
+ const original=server._handle.onconnection;
+ output.push(['metadata',original.name,original.length,Object.hasOwn(original,'prototype')]);
+ server.maxConnections={valueOf(){output.push('limit');return 0;}};
+ const handle={
+  get getsockname(){output.push('get-local');return function(info){output.push(['local',this===handle,Object.getPrototypeOf(info)===null]);info.address='local';info.port=12;info.family='IPv4';};},
+  get getpeername(){output.push('get-peer');return function(info){output.push(['peer',this===handle,Object.getPrototypeOf(info)===null]);info.address='remote';info.port=34;info.family='IPv6';};},
+  get close(){output.push('get-close');return function(){output.push(['close',this===handle]);};},
+ };
+ server.on('drop',info=>output.push(['drop',Object.getPrototypeOf(info)===null,info]));
+ original.call(server._handle,0,handle);
+ server.once('error',error=>output.push(['error',error.name,error.code,error.errno,error.syscall,error.message]));
+ original.call(server._handle,-22,undefined);
+ let synchronous=true;
+ const returned=server.getConnections((error,count)=>{
+  output.push(['count',error===null,count,synchronous]);
+  server.close(()=>console.log(JSON.stringify(output)));
+ });
+ output.push(['return',returned===server,server.getConnections.name,server.getConnections.length]);
+ synchronous=false;
+});
+"#);
+}
+
+#[test]
+fn net_raw_handle_close_preserves_mutable_callback_and_first_request() {
+    compare_node_stream_source(r#"
+'use strict';
+const net=require('net');const output=[];
+const server=net.createServer(socket=>socket.on('close',()=>server.close(()=>console.log(JSON.stringify(output))))).listen(0,()=>{
+ const client=net.connect(server.address().port,()=>setImmediate(()=>{
+  const handle=client._handle;
+  handle.close(function(){output.push(['first',this===handle]);});
+  const key=Object.getOwnPropertySymbols(handle).find(key=>key.description==='handle_onclose');
+  output.push(['symbol',!!key]);
+  handle[key]=function(){output.push(['replacement',this===handle]);};
+  handle.close(()=>output.push('second'));
+ }));
+});
+"#);
+}
+
+#[test]
+fn net_default_listener_and_native_endpoint_addresses_match_node() {
+    compare_node_stream_source(r#"
+const net=require('net');const out=[];
+const server=net.createServer(socket=>socket.end()).listen(0,()=>{
+ const address=server.address();out.push(['server',address.address,address.family]);
+ const client=net.connect(address.port,()=>{
+  const local={},peer={};const handle=client._handle;
+  out.push(['status',handle.getsockname(local),handle.getpeername(peer)]);
+  out.push(['endpoints',local.address,local.family,peer.address,peer.family,peer.port===address.port]);
+ });
+ client.on('close',()=>server.close(()=>console.log(JSON.stringify(out))));
+});
+"#);
+}
+
+#[test]
+fn native_stat_exact_bigint_metadata_matches_node_across_sync_callback_and_promises() {
+    compare_node_stream_source(r#"
+'use strict';
+const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-stat-exact-')),file=path.join(dir,'file'),link=path.join(dir,'link');
+fs.writeFileSync(file,'abc');fs.symlinkSync(file,link);fs.utimesSync(file,1700000000.999999,1700000001.123456);
+const fd=fs.openSync(file,'r'),out=[];
+function check(label,big,num,exact){
+ for(const key of ['dev','ino','mode','nlink','uid','gid','rdev','size','blksize','blocks']){assert.strictEqual(typeof big[key],'bigint');if(Number.isSafeInteger(num[key]))assert.strictEqual(big[key],BigInt(num[key]));}
+ for(const key of ['atime','mtime','ctime','birthtime']){assert.strictEqual(big[key+'Ns']/1000000n,big[key+'Ms']);assert(Math.abs(num[key+'Ms']-Number(big[key+'Ns']/1000000n))<1.001);}
+ assert.strictEqual(big.isFile(),num.isFile());assert.strictEqual(big.isSymbolicLink(),num.isSymbolicLink());
+ out.push([label,big.isFile(),big.isSymbolicLink(),exact?big.atimeNs.toString():'link',exact?big.mtimeNs.toString():'link']);
+}
+(async()=>{
+ check('statSync',fs.statSync(file,{bigint:true}),fs.statSync(file),true);
+ check('lstatSync',fs.lstatSync(link,{bigint:true}),fs.lstatSync(link),false);
+ check('fstatSync',fs.fstatSync(fd,{bigint:true}),fs.fstatSync(fd),true);
+ for(const [name,arg] of [['stat',file],['lstat',link],['fstat',fd]]){
+  const invoke=options=>new Promise((resolve,reject)=>fs[name](arg,options,(error,stats)=>error?reject(error):resolve(stats)));
+  check(name,await invoke({bigint:true}),await invoke({}),name!=='lstat');
+ }
+ check('promiseStat',await fs.promises.stat(file,{bigint:true}),await fs.promises.stat(file),true);
+ check('promiseLstat',await fs.promises.lstat(link,{bigint:true}),await fs.promises.lstat(link),false);
+ const handle=await fs.promises.open(file,'r');check('handleStat',await handle.stat({bigint:true}),await handle.stat(),true);await handle.close();
+ fs.closeSync(fd);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(out));
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"#);
+}
