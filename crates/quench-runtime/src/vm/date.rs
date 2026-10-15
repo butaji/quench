@@ -246,10 +246,10 @@ impl<H: Host> Vm<H> {
             self.global(program, "Date", constructor)
         } else {
             let atom = self.intern_atom("Date");
-            self.set_property(global, atom, constructor)?;
-            self.set_property_attributes(
+            self.set_property_with_attributes(
                 global,
-                PropertyKey::string(atom),
+                atom,
+                constructor,
                 PropertyAttributes {
                     writable: true,
                     enumerable: false,
@@ -258,7 +258,7 @@ impl<H: Host> Vm<H> {
                     getter: None,
                     setter: None,
                 },
-            );
+            )?;
             Ok(())
         }
     }

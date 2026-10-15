@@ -341,10 +341,10 @@ impl<H: Host> Vm<H> {
                 .expect("new closure is live"),
         );
         let length = self.intern_atom("length");
-        self.set_property(function, length, Value::number(function_plan.length as f64))?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             function,
-            property_key::PropertyKey::string(length),
+            length,
+            Value::number(function_plan.length as f64),
             PropertyAttributes {
                 writable: false,
                 enumerable: false,
@@ -353,7 +353,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         let name = self.intern_atom("name");
         let name_value = function_plan
             .name
@@ -362,10 +362,10 @@ impl<H: Host> Vm<H> {
                     .alloc(Cell::String(JsString::from_str(self.atom_name(atom))))
             })
             .unwrap_or_else(|| self.heap.alloc(Cell::String(JsString::from_str(""))));
-        self.set_property(function, name, name_value)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             function,
-            property_key::PropertyKey::string(name),
+            name,
+            name_value,
             PropertyAttributes {
                 writable: false,
                 enumerable: false,
@@ -374,14 +374,14 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         if let Some(prototype) = prototype
             && let Some(atom) = self.known_prototype_atom()
         {
-            self.set_property(function, atom, prototype)?;
-            self.set_property_attributes(
+            self.set_property_with_attributes(
                 function,
-                property_key::PropertyKey::string(atom),
+                atom,
+                prototype,
                 PropertyAttributes {
                     writable: !function_plan.is_class_constructor,
                     enumerable: false,
@@ -390,7 +390,7 @@ impl<H: Host> Vm<H> {
                     getter: None,
                     setter: None,
                 },
-            );
+            )?;
         }
         let constructor = match (function_plan.is_async, function_plan.is_generator) {
             (true, true) => self

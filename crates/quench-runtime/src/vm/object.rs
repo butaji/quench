@@ -65,11 +65,17 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
     while let Some(id) = current {
         let shape = &shapes[id as usize];
         match shape.transition {
-            ShapeTransition::Add { key, slot } => {
+            ShapeTransition::Add {
+                key,
+                slot,
+                attributes: value,
+            } => {
                 if seen_keys.insert(key) {
                     entries.push((key, slot));
                 }
-                seen_slots.insert(slot);
+                if seen_slots.insert(slot) && value != DEFAULT_DATA_ATTRIBUTES {
+                    attributes.insert(slot, value.shape());
+                }
             }
             ShapeTransition::Delete { key, slot } => {
                 seen_keys.insert(key);
@@ -185,6 +191,7 @@ impl<H: Host> Vm<H> {
                 ShapeTransition::Add {
                     key: candidate,
                     slot,
+                    ..
                 } if candidate == key => break Some(slot as usize),
                 ShapeTransition::Delete { key: candidate, .. } if candidate == key => break None,
                 ShapeTransition::Root
@@ -248,8 +255,12 @@ impl<H: Host> Vm<H> {
                     return Some(attributes.attributes(&self.shape_accessors));
                 }
                 ShapeTransition::Add {
-                    slot: candidate, ..
-                } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
+                    slot: candidate,
+                    attributes,
+                    ..
+                } if candidate as usize == slot => {
+                    return Some(attributes.shape().attributes(&self.shape_accessors));
+                }
                 ShapeTransition::Delete {
                     slot: candidate, ..
                 } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
@@ -1261,6 +1272,31 @@ impl<H: Host> Vm<H> {
         self.set_shape_property(object, PropertyKey::string(atom), value)
     }
 
+    /// `set_property`, then `set_property_attributes`: the host's way to install a property
+    /// with chosen attributes. An absent data property is created with them in one shape.
+    pub(super) fn set_property_with_attributes(
+        &mut self,
+        object: Value,
+        atom: Atom,
+        value: Value,
+        attributes: PropertyAttributes,
+    ) -> Result<(), JsError> {
+        let key = PropertyKey::string(atom);
+        if let Some(data) = DataAttributes::of(attributes)
+            && let Some(object_data) = self.object_data(object)
+            && self.property_shape_slot(object_data.shape(), key).is_none()
+        {
+            self.create_shape_data_property(object, key, value, data)?;
+            if data != DEFAULT_DATA_ATTRIBUTES {
+                self.invalidate_method_caches_for_key(key);
+            }
+            return Ok(());
+        }
+        self.set_property(object, atom, value)?;
+        self.set_property_attributes(object, key, attributes);
+        Ok(())
+    }
+
     /// ECMAScript `OrdinarySet` with an explicit receiver. This is the shared
     /// write authority used by `Reflect.set` and `super` references: lookup is
     /// performed on `target`, while a writable data property is created or
@@ -1596,12 +1632,22 @@ impl<H: Host> Vm<H> {
         key: PropertyKey,
         value: Value,
     ) -> Result<(), JsError> {
+        self.create_shape_data_property(object, key, value, DEFAULT_DATA_ATTRIBUTES)
+    }
+
+    fn create_shape_data_property(
+        &mut self,
+        object: Value,
+        key: PropertyKey,
+        value: Value,
+        attributes: DataAttributes,
+    ) -> Result<(), JsError> {
         let shape = self
             .object_data(object)
             .ok_or_else(|| JsError("property write on non-object".into()))?
             .shape();
         self.check_property_key_write(object, key, false)?;
-        let next_shape = self.transition_property_shape(shape, key);
+        let next_shape = self.transition_data_property_shape(shape, key, attributes);
         self.heap.property_add(object, value, next_shape);
         if let PropertyKey::String(atom) = key {
             self.invalidate_method_caches_for_prototype_add(object, atom);
@@ -2244,10 +2290,19 @@ impl<H: Host> Vm<H> {
         self.transition_property_shape(shape, PropertyKey::string(atom))
     }
     pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
+        self.transition_data_property_shape(shape, key, DEFAULT_DATA_ATTRIBUTES)
+    }
+    fn transition_data_property_shape(
+        &mut self,
+        shape: u32,
+        key: PropertyKey,
+        attributes: DataAttributes,
+    ) -> u32 {
         let transition = ShapeTransition::Add {
             key,
             slot: u32::try_from(self.shapes[shape as usize].storage_len())
                 .expect("object property index exceeds u32"),
+            attributes,
         };
         self.append_cached_shape_transition(shape, transition)
     }
