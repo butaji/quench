@@ -8,11 +8,7 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-<<<<<<< HEAD
-    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative, captureKeyBrands) => {
-=======
-    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative, handleSymbol) => {
->>>>>>> origin/v2-merged
+    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative, captureKeyBrands, handleSymbol) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
   let repeatedHmacDigestWarningEmitted = false;
@@ -1933,11 +1929,8 @@ pub(crate) fn module(
             rsa_crypt,
             ecdh,
             set_engine,
-<<<<<<< HEAD
             capture_brands,
-=======
             handle_symbol,
->>>>>>> origin/v2-merged
         ],
     )
 }
