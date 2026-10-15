@@ -52,7 +52,7 @@ const TYPE_PREDICATES: &[(&str, BuiltinBrand)] = &[
 pub(crate) const MAX_SAFE_INTEGER: f64 = ((1_u64 << f64::MANTISSA_DIGITS) - 1) as f64;
 
 const UTIL: &str = quench_js_check::checked_js!(
-    r#"((quote, shallowLabel, customHook, formatString, builtinHook) => {
+    r#"((quote, shallowLabel, customHook, formatString, builtinHook, warnedCodes) => {
   const propertyName = (key) => /^[A-Za-z_$][\w$]*$/.test(key) ? key : quote(key);
 
   function inspect(value, options = {}) {
@@ -246,7 +246,6 @@ const UTIL: &str = quench_js_check::checked_js!(
     return debug;
   };
   const warnedFunctions = new WeakSet();
-  const warnedCodes = new Set();
   const deprecate = (callback, message = "", code, options = {}) => {
     if (typeof callback !== "function") {
       throw new TypeError("The \"fn\" argument must be of type function");
@@ -414,13 +413,18 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     )?;
     let format_string = super::util_format_string_shared_vm::function(context)?;
     let builtin = super::util_inspect_builtin_shared_vm::function(context)?;
-    let module = context.call_rooted(factory, undefined, &[quote, shallow, custom, format_string, builtin])?;
+    let global = context.global_root()?;
+    let set_key = context.string_rooted("Set");
+    let set = context.get_property_rooted(global, set_key)?;
+    let warned_codes = context.construct_rooted(set, set, &[])?;
+    let module = context.call_rooted(factory, undefined, &[quote, shallow, custom, format_string, builtin, warned_codes])?;
     let inspect_key = context.string_rooted("inspect");
     let inspect = context.get_property_rooted(module, inspect_key)?;
     let defaults_key=context.string_rooted("defaultOptions");let defaults=context.get_property_rooted(inspect,defaults_key)?;
     for(name,value)in[("maxArrayLength",super::util_inspect_builtin_shared_vm::DEFAULT_MAX_ARRAY_LENGTH),("breakLength",super::util_inspect_builtin_shared_vm::DEFAULT_BREAK_LENGTH)]{let key=context.string_rooted(name);let value=context.number(value);context.define_data_property_rooted(defaults,key,value,true,true,true)?;}
 
     super::util_style_shared_vm::install(context, module, inspect)?;
+    super::util_extend_shared_vm::install(context, module, warned_codes)?;
     let compare = context.host_function(crate::host::shared_vm::operation("isDeepStrictEqual"))?;
     let compare_key = context.string_rooted("isDeepStrictEqual");
     context.set_property_rooted(module, compare_key, compare, module)?;
