@@ -87,6 +87,37 @@ fn package_scope_applies_inside_nested_checkouts() {
 }
 
 #[test]
+fn package_scope_reads_nearest_type_and_stops_at_node_modules() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("package.json"), r#"{"type":"module"}"#).unwrap();
+    for (name, config, expected) in [
+        ("inherited", None, "undefined\n"),
+        ("empty", Some("{}"), "function\n"),
+        ("common", Some(r#"{"type":"commonjs"}"#), "function\n"),
+        ("unknown", Some(r#"{"type":"other"}"#), "function\n"),
+        ("duplicate", Some(r#"{"type":"commonjs","type":"module"}"#), "undefined\n"),
+        ("bom", Some("\u{feff}{\"type\":\"module\"}"), "undefined\n"),
+        ("node_modules/plain", None, "function\n"),
+        ("node_modules/explicit", Some(r#"{"type":"module"}"#), "undefined\n"),
+    ] {
+        let scope = directory.path().join(name);
+        std::fs::create_dir_all(scope.join("nested")).unwrap();
+        if let Some(config) = config { std::fs::write(scope.join("package.json"), config).unwrap(); }
+        let entry = scope.join("nested/entry.js");
+        std::fs::write(&entry, "console.log(typeof require)").unwrap();
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command.arg(&entry);
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap();
+            assert_eq!(result.exit_code, Some(0), "{name}: {}", String::from_utf8_lossy(&result.stderr));
+            assert_eq!(result.stdout, expected.as_bytes(), "{name}");
+            assert!(result.stderr.is_empty(), "{name}");
+        }
+    }
+}
+
+#[test]
 fn util_type_predicates_match_node_internal_brands() {
     let source = r#"
       const types = require('util').types;
@@ -1866,6 +1897,66 @@ assert.notStrictEqual(clone[1],shared);
 assert.deepStrictEqual(Object.getOwnPropertyDescriptor(clone,'1'),{value:clone[1],writable:true,enumerable:true,configurable:true});
 console.log(JSON.stringify([Object.keys(clone),clone.length,clone[1],reads]));
 "#);
+}
+
+#[test]
+fn cyclic_esm_instantiates_live_bindings_before_running_dependencies() {
+    let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/npm-top300/regressions/esm-graph/entry.mjs");
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.arg(&entry);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, b"cyclic-esm-live-bindings\n");
+        assert!(result.stderr.is_empty());
+    }
+}
+
+#[test]
+fn stack_locations_use_module_urls_and_commonjs_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let entry = directory.path().join("entry space # ü.mjs");
+    let helper = directory.path().join("capture.cjs");
+    std::fs::write(&helper, r#"
+exports.capture = function capture() {
+  const previous = Error.prepareStackTrace;
+  Error.prepareStackTrace = (_, sites) => sites;
+  const target = {};
+  Error.captureStackTrace(target);
+  const sites = target.stack;
+  Error.prepareStackTrace = previous;
+  return sites;
+};
+"#).unwrap();
+    std::fs::write(&entry, r#"
+import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
+import helper from './capture.cjs';
+function caller() { return helper.capture(); }
+const sites = caller();
+const own = sites.find(site => site.getFunctionName() === 'caller');
+const common = sites.find(site => site.getFunctionName() === 'capture');
+assert.equal(own.getFileName(), import.meta.url);
+assert.equal(common.getFileName(), fileURLToPath(new URL('./capture.cjs', import.meta.url)));
+assert(own.toString().includes(import.meta.url));
+assert(common.toString().includes(common.getFileName()));
+console.log('stack-source-identities');
+"#).unwrap();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.arg(&entry);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, b"stack-source-identities\n");
+        assert!(result.stderr.is_empty());
+    }
 }
 
 #[test]
@@ -3904,13 +3995,16 @@ const removed=addAbortListener(signal,()=>result.push('removed'));removed[Symbol
 controller.abort();disposable[Symbol.dispose]();
 const already=addAbortListener(AbortSignal.abort(),function(){'use strict';result.push('queued',this===undefined,arguments.length)});
 already[Symbol.dispose]();result.push('sync');
+const activeSignal=AbortSignal.abort(),EventConstructor=Event;let delivered;
+const active=addAbortListener(activeSignal,function(event){'use strict';delivered=event;assert(event instanceof EventConstructor);assert.strictEqual(event.type,'abort');assert.strictEqual(event.target,activeSignal);assert.strictEqual(event.currentTarget,activeSignal);assert.strictEqual(event.isTrusted,true);result.push('active',this===undefined,arguments.length)});
+globalThis.Event=function(){throw Error('public Event constructor was used')};
 for(const bad of [undefined,null,{},1])assert.throws(()=>addAbortListener(bad,()=>{}),{code:'ERR_INVALID_ARG_TYPE'});
 for(const bad of [undefined,null,{}])assert.throws(()=>addAbortListener(new AbortController().signal,bad),{code:'ERR_INVALID_ARG_TYPE'});
 let options,removedCalls=0;const foreign={aborted:false,addEventListener(type,callback,value){options=value},removeEventListener(){removedCalls++}};
 const foreignDisposable=addAbortListener(foreign,()=>{});foreignDisposable[Symbol.dispose]();foreignDisposable[Symbol.dispose]();
 assert.strictEqual(Object.getPrototypeOf(options),null);assert(Object.isFrozen(options));assert.strictEqual(options.once,true);
 result.push(removedCalls,Object.getOwnPropertySymbols(options).length);
-queueMicrotask(()=>console.log(JSON.stringify(result)));
+queueMicrotask(()=>{globalThis.Event=EventConstructor;assert.strictEqual(delivered.currentTarget,null);active[Symbol.dispose]();console.log(JSON.stringify(result))});
 "#;
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
@@ -6331,10 +6425,12 @@ process.on('exit',()=>console.log(JSON.stringify(output)));
 
 #[test]
 fn tls_wrapped_parent_and_tls_handle_share_original_reading_view() {
-    compare_node_stream_source(r#"
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/node/test/fixtures/keys/");
+    let source = r#"
 'use strict';
 const net=require('net'),tls=require('tls'),fs=require('fs');const output=[];
-const root='/workspace/work/node-fixtures/test/fixtures/keys/';
+const root=__FIXTURE_KEYS__;
 const server=tls.createServer({key:fs.readFileSync(root+'agent1-key.pem'),cert:fs.readFileSync(root+'agent1-cert.pem')}).listen(0,()=>{
  const plain=net.connect(server.address().port,()=>{
   const secure=tls.connect({socket:plain,rejectUnauthorized:false},()=>{
@@ -6345,7 +6441,8 @@ const server=tls.createServer({key:fs.readFileSync(root+'agent1-key.pem'),cert:f
   });
  });
 });
-"#);
+"#.replace("__FIXTURE_KEYS__", &serde_json::to_string(&format!("{}/", fixtures.display())).unwrap());
+    compare_node_stream_source(&source);
 }
 
 #[test]
