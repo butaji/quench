@@ -28,17 +28,21 @@ impl SlotProperty {
     }
 }
 
-/// One own property of an intrinsic holder and its state when the snapshot was sealed.
+/// One own property of an intrinsic holder and its state when the snapshot was sealed,
+/// packed as a shape records it (accessor functions in `StartupIntrinsics::accessors`).
 #[derive(Clone, Copy)]
 struct IntrinsicProperty {
     holder: Value,
     key: PropertyKey,
-    original: SlotProperty,
+    value: Value,
+    attributes: ShapeAttributes,
 }
 
 #[derive(Default)]
 pub(super) struct StartupIntrinsics {
     properties: Vec<IntrinsicProperty>,
+    /// The getters and setters of recorded accessor properties.
+    accessors: Vec<ShapeAccessors>,
     /// Open `enter_startup_intrinsics` calls; only the outermost one swaps.
     depth: usize,
     /// Properties holding their original during the outermost call, with the state the script
@@ -47,16 +51,36 @@ pub(super) struct StartupIntrinsics {
 }
 
 impl StartupIntrinsics {
-    /// Values the snapshot keeps alive: holders, symbol keys and both states of a swap.
+    fn original(&self, index: usize) -> SlotProperty {
+        let property = &self.properties[index];
+        SlotProperty {
+            value: property.value,
+            attributes: property.attributes.attributes(&self.accessors),
+        }
+    }
+
+    fn set_original(&mut self, index: usize, original: SlotProperty) {
+        let attributes = ShapeAttributes::record(original.attributes, &mut self.accessors);
+        let property = &mut self.properties[index];
+        property.value = original.value;
+        property.attributes = attributes;
+    }
+
+    /// Values the snapshot keeps alive: holders, symbol keys, accessor functions and both
+    /// states of a swap.
     pub(super) fn roots(&self) -> impl Iterator<Item = Value> + '_ {
         self.properties
             .iter()
             .flat_map(|property| {
-                [Some(property.holder), property.key.symbol_value()]
+                [Some(property.holder), property.key.symbol_value(), Some(property.value)]
                     .into_iter()
                     .flatten()
-                    .chain(property.original.values())
             })
+            .chain(
+                self.accessors
+                    .iter()
+                    .flat_map(|(getter, setter)| [*getter, *setter].into_iter().flatten()),
+            )
             .chain(
                 self.swapped
                     .iter()
@@ -100,19 +124,23 @@ impl<H: Host> Vm<H> {
             }
         }
         let mut properties = Vec::new();
+        let mut accessors = Vec::new();
         for holder in holders {
             for key in self.own_shape_keys(holder) {
                 if let Some(original) = self.slot_property(holder, key) {
                     properties.push(IntrinsicProperty {
                         holder,
                         key,
-                        original,
+                        value: original.value,
+                        attributes: ShapeAttributes::record(original.attributes, &mut accessors),
                     });
                 }
             }
         }
         properties.shrink_to_fit();
+        accessors.shrink_to_fit();
         self.startup_intrinsics.properties = properties;
+        self.startup_intrinsics.accessors = accessors;
     }
 
     /// Puts every recorded intrinsic back to its sealed state until the matching
@@ -124,13 +152,14 @@ impl<H: Host> Vm<H> {
         }
         for index in 0..self.startup_intrinsics.properties.len() {
             let property = self.startup_intrinsics.properties[index];
+            let original = self.startup_intrinsics.original(index);
             let current = self.slot_property(property.holder, property.key);
-            if current == Some(property.original) {
+            if current == Some(original) {
                 continue;
             }
             // Recorded first: once overwritten, the script's values are rooted only here.
             self.startup_intrinsics.swapped.push((index, current));
-            if !self.redefine_slot_property(p, property.holder, property.key, property.original)? {
+            if !self.redefine_slot_property(p, property.holder, property.key, original)? {
                 self.startup_intrinsics.swapped.pop();
             }
         }
@@ -153,9 +182,9 @@ impl<H: Host> Vm<H> {
             restored[index] = true;
             let property = self.startup_intrinsics.properties[index];
             if let Some(current) = self.slot_property(property.holder, property.key)
-                && current != property.original
+                && current != self.startup_intrinsics.original(index)
             {
-                self.startup_intrinsics.properties[index].original = current;
+                self.startup_intrinsics.set_original(index, current);
             }
             let result = match previous {
                 Some(previous) => self
@@ -174,9 +203,9 @@ impl<H: Host> Vm<H> {
             let property = self.startup_intrinsics.properties[index];
             if !restored
                 && let Some(current) = self.slot_property(property.holder, property.key)
-                && current != property.original
+                && current != self.startup_intrinsics.original(index)
             {
-                self.startup_intrinsics.properties[index].original = current;
+                self.startup_intrinsics.set_original(index, current);
             }
         }
         outcome

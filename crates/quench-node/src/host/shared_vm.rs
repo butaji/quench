@@ -52,6 +52,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "bufferConstructor" (0) => crate::modules::buffer_shared_vm::constructor,
         method "webStreamsInitialize" (0) => commonjs::initialize_web_streams,
         method "webApisInitialize" (0) => commonjs::initialize_web_apis,
+        method "processSurfaceInitialize" (0) => commonjs::initialize_process_surface,
         method "processRawDebug" (0) => crate::modules::process_shared_vm::raw_debug,
         method "processLoadEnvFile" (1) => crate::modules::process_shared_vm::load_env_file,
         method "processSetEnv" (2) => crate::modules::process_shared_vm::set_env,
