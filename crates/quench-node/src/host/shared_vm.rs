@@ -76,6 +76,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "bufferConstructor" (0) => crate::modules::buffer_shared_vm::constructor,
         method "webStreamsInitialize" (0) => commonjs::initialize_web_streams,
         method "markAsUncloneable" (1) => crate::modules::clone_shared_vm::mark_as_uncloneable,
+        method "markAsUntransferable" (1) => crate::modules::clone_shared_vm::mark_as_untransferable,
+        method "isMarkedAsUntransferable" (1) => crate::modules::clone_shared_vm::is_marked_as_untransferable,
         method "webApisInitialize" (0) => commonjs::initialize_web_apis,
         method "webFetchInitialize" (0) => commonjs::initialize_fetch_apis,
         method "processSurfaceInitialize" (0) => commonjs::initialize_process_surface,
