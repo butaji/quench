@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::cell::{Cell, OnceCell};
+use std::cell::{OnceCell, UnsafeCell};
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
@@ -256,14 +256,19 @@ struct JsStringInner {
     /// Every unit is ASCII; known at construction, before a rope flattens.
     ascii: bool,
     flat: OnceCell<FlatUnits>,
-    /// The concatenated halves, present exactly while `flat` is unset. They sit behind their
-    /// own pointer so a flat string, the common case, carries one word for them.
-    rope: Cell<Option<Rc<RopeHalves>>>,
-    /// The host text of a `Wide` string; an `Ascii` string's units are its host text.
-    host: OnceCell<Rc<str>>,
+    /// What the string holds beside its units, behind one word: see `Aside`. Mutated only
+    /// through the methods below, which keep a `Host` in place once made.
+    aside: UnsafeCell<Option<Rc<Aside>>>,
 }
 
-type RopeHalves = (Rc<JsStringInner>, Rc<JsStringInner>);
+/// A string's rarely present parts, which never coexist: the concatenated halves, present
+/// exactly while `flat` is unset, and a `Wide` string's host text, made after flattening (an
+/// `Ascii` string's units are its host text). Sharing one word keeps a flat string's
+/// allocation small.
+enum Aside {
+    Rope(Rc<JsStringInner>, Rc<JsStringInner>),
+    Host(Rc<str>),
+}
 
 /// A length in units as stored; every string is within `MAX_STRING_UNITS`.
 fn stored_length(length: usize) -> u32 {
@@ -280,8 +285,7 @@ impl JsStringInner {
             length: stored_length(length),
             ascii,
             flat: OnceCell::from(units),
-            rope: Cell::new(None),
-            host: OnceCell::new(),
+            aside: UnsafeCell::new(None),
         }
     }
 
@@ -290,8 +294,57 @@ impl JsStringInner {
             length: left.length.saturating_add(right.length),
             ascii: left.ascii && right.ascii,
             flat: OnceCell::new(),
-            rope: Cell::new(Some(Rc::new((left, right)))),
-            host: OnceCell::new(),
+            aside: UnsafeCell::new(Some(Rc::new(Aside::Rope(left, right)))),
+        }
+    }
+
+    /// The halves of a string that is still a rope.
+    fn halves(&self) -> Option<(Rc<Self>, Rc<Self>)> {
+        // SAFETY: a shared read; the slot is written only while no reference into it is live
+        // (`release_halves` and `host`'s first write below).
+        match unsafe { (*self.aside.get()).as_deref() } {
+            Some(Aside::Rope(left, right)) => Some((left.clone(), right.clone())),
+            Some(Aside::Host(_)) | None => None,
+        }
+    }
+
+    /// Drops the halves once the units are flat.
+    fn release_halves(&self) {
+        // SAFETY: while the string is a rope nothing borrows into the slot (`halves` clones),
+        // and no host text exists before flattening.
+        unsafe {
+            let slot = self.aside.get();
+            if matches!((*slot).as_deref(), Some(Aside::Rope(..))) {
+                *slot = None;
+            }
+        }
+    }
+
+    /// A flat `Wide` string's host text, made by `make` on first use.
+    fn host(&self, make: impl FnOnce() -> Rc<str>) -> &Rc<str> {
+        // SAFETY: the slot is written only while empty, when no reference into it exists; a
+        // `Host` is never replaced, so the returned borrow stays valid for `&self`.
+        unsafe {
+            let slot = self.aside.get();
+            if (*slot).is_none() {
+                *slot = Some(Rc::new(Aside::Host(make())));
+            }
+            match (*slot).as_deref() {
+                Some(Aside::Host(host)) => host,
+                Some(Aside::Rope(..)) | None => {
+                    unreachable!("a flat string's aside is its host text")
+                }
+            }
+        }
+    }
+
+    /// A flat `Wide` string's host text, if made.
+    #[cfg(any(test, feature = "profile-aggregate", feature = "profile-memory"))]
+    fn existing_host(&self) -> Option<&Rc<str>> {
+        // SAFETY: as `host`: a made `Host` is never replaced.
+        match unsafe { (*self.aside.get()).as_deref() } {
+            Some(Aside::Host(host)) => Some(host),
+            Some(Aside::Rope(..)) | None => None,
         }
     }
 
@@ -303,10 +356,9 @@ impl JsStringInner {
                 visit(units.view());
                 continue;
             }
-            let halves = part.rope.take().expect("an unflattened string is a rope");
-            pending.push(halves.1.clone());
-            pending.push(halves.0.clone());
-            part.rope.set(Some(halves));
+            let (left, right) = part.halves().expect("an unflattened string is a rope");
+            pending.push(right);
+            pending.push(left);
         }
     }
 }
@@ -474,7 +526,7 @@ impl JsString {
                 self.inner.for_each_run(|run| run.extend_into(&mut output));
                 FlatUnits::Wide(Rc::from(output))
             };
-            drop(self.inner.rope.take());
+            self.inner.release_halves();
             units
         })
     }
@@ -493,8 +545,7 @@ impl JsString {
             FlatUnits::Ascii(text) => text,
             FlatUnits::Wide(units) => self
                 .inner
-                .host
-                .get_or_init(|| Rc::<str>::from(String::from_utf16_lossy(units))),
+                .host(|| Rc::<str>::from(String::from_utf16_lossy(units))),
         }
     }
 
@@ -516,7 +567,8 @@ impl JsString {
         match self.flat() {
             FlatUnits::Ascii(text) => text.len(),
             FlatUnits::Wide(units) => {
-                std::mem::size_of_val(&**units) + self.inner.host.get().map_or(0, |host| host.len())
+                std::mem::size_of_val(&**units)
+                    + self.inner.existing_host().map_or(0, |host| host.len())
             }
         }
     }
@@ -534,7 +586,7 @@ impl JsString {
                 RC_HEADER_BYTES + std::mem::size_of_val(&**units),
             ),
         };
-        let host_storage = self.inner.host.get().map(|host| {
+        let host_storage = self.inner.existing_host().map(|host| {
             (
                 Rc::as_ptr(host) as *const u8 as usize,
                 RC_HEADER_BYTES + host.len(),
@@ -755,12 +807,12 @@ mod tests {
         let paired = JsString::from_units(&[0xD83E, 0xDD80]);
         let lone = JsString::from_units(&[0xD800]);
 
-        assert!(paired.inner.host.get().is_none());
-        assert!(lone.inner.host.get().is_none());
-        assert!(paired.inner.host.get().is_none());
-        assert!(lone.inner.host.get().is_none());
+        assert!(paired.inner.existing_host().is_none());
+        assert!(lone.inner.existing_host().is_none());
+        assert!(paired.inner.existing_host().is_none());
+        assert!(lone.inner.existing_host().is_none());
         assert_eq!(lone.host_string(), "�");
         assert_eq!(lone.units(), &[0xD800]);
-        assert!(lone.inner.host.get().is_some());
+        assert!(lone.inner.existing_host().is_some());
     }
 }
