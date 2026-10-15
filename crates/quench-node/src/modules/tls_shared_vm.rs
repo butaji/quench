@@ -8,6 +8,7 @@ pub(crate) mod contexts;
 pub(crate) mod discovery;
 pub(crate) mod facade;
 pub(crate) mod identity;
+pub(crate) mod handle;
 pub(crate) mod server;
 pub(crate) mod sessions;
 pub(crate) mod socket;
@@ -50,6 +51,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let factory = context.evaluate_script_rooted(TLS_FACTORY, "node:tls/shared.js")?;
     let undefined = context.undefined();
     let api = facade::install(context)?;
+    handle::registry(context)?;
     let patterns = context.evaluate_script_rooted(
         quench_js_check::checked_js!("({trailingDot:()=>/[.]$/,upperCase:()=>/[A-Z]/g})"),
         "node:tls/identity-patterns.js",

@@ -28,7 +28,9 @@ fn read_error(context: &mut NativeContext<'_, NodeHost>, socket: RootId, status:
 pub(crate) fn read(context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
     let socket = args[0];
     let connecting = get(context, socket, "connecting")?;
-    let waiting = if context.truthy_rooted(connecting)? { true } else {
+    let pending_tls = super::tls_shared_vm::sessions::find_owner(context, socket)?.is_some()
+        && super::tls_shared_vm::socket::physical_owner(context, socket)?.is_none();
+    let waiting = if context.truthy_rooted(connecting)? || pending_tls { true } else {
         let handle = get(context, socket, "_handle")?;
         !context.truthy_rooted(handle)?
     };
