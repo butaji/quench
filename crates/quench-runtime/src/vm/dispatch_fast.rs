@@ -105,6 +105,10 @@ pub(super) struct LaneView {
 /// loop over the window's size.
 const ACTIVATION_FILL_BLOCK: usize = 8;
 
+/// `ACTIVATION_FILL_BLOCK` for a JavaScript activation, whose bodies keep more values in
+/// registers: on V8-v7, most called functions have 9 to 16.
+const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
+
 /// A function's register window as a lane activation starts it: every
 /// register its initial value, then the parameters at their base.
 #[derive(Clone, Copy)]
@@ -3285,7 +3289,7 @@ fn lane_activate<H: Host>(
     }
     if vm.lane_stack.activations.len() == vm.lane_stack.activations.capacity()
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
-            < count.max(ACTIVATION_FILL_BLOCK)
+            < count.max(SCRIPT_FILL_BLOCK)
     {
         return Err(lane_script_call_frame::<H>(ip));
     }
@@ -3301,10 +3305,10 @@ fn lane_activate<H: Host>(
     // plain activation (`Vm::place_plain_parameters`).
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        if count <= ACTIVATION_FILL_BLOCK {
+        if count <= SCRIPT_FILL_BLOCK {
             registers
-                .cast::<[Value; ACTIVATION_FILL_BLOCK]>()
-                .write_unaligned([Value::UNDEFINED; ACTIVATION_FILL_BLOCK]);
+                .cast::<[Value; SCRIPT_FILL_BLOCK]>()
+                .write_unaligned([Value::UNDEFINED; SCRIPT_FILL_BLOCK]);
         } else {
             for index in 0..count {
                 registers.add(index).write(Value::UNDEFINED);
