@@ -1824,36 +1824,12 @@ const ASYNC_STAT_API: &str = r#"(statSync, toPathIfFileURL) => {
   };
 }"#;
 
-const STAT_SYNC_API: &str = r#"(hostStatSync, toPathIfFileURL) => function wrappedStatSync(path, options) {
-  path = toPathIfFileURL(path);
-  if (typeof path !== 'string' && !Buffer.isBuffer(path)) {
-    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
-    error.code = 'ERR_INVALID_ARG_TYPE';
-    throw error;
-  }
-  if (Buffer.isBuffer(path)) path = path.toString();
-  try { return hostStatSync(path, options); }
-  catch (error) {
-    if (options?.throwIfNoEntry === false && error?.code === 'ENOENT') return undefined;
-    throw error;
-  }
+const STAT_SYNC_API: &str = r#"(hostStatSync) => function wrappedStatSync(path, options = undefined) {
+  return hostStatSync(path, options);
 }"#;
 
-const STATFS_SYNC_API: &str = r#"(hostStatfsSync, toPathIfFileURL) => function statfsSync(path, options) {
-  path = toPathIfFileURL(path);
-  if (typeof path !== 'string' && !Buffer.isBuffer(path)) {
-    const error = new TypeError(`The "path" argument must be of type string, Buffer, or URL. Received ${path === null || path === undefined ? path : typeof path === 'object' ? `an instance of ${Array.isArray(path) ? 'Array' : 'Object'}` : `type ${typeof path} (${String(path)})`}`);
-    error.code = 'ERR_INVALID_ARG_TYPE';
-    throw error;
-  }
-  if (Buffer.isBuffer(path)) path = path.toString();
-  const stats = hostStatfsSync(path);
-  if (options?.bigint === true) {
-    for (const name of ['type', 'bsize', 'frsize', 'blocks', 'bfree', 'bavail', 'files', 'ffree']) {
-      stats[name] = BigInt(stats[name]);
-    }
-  }
-  return stats;
+const STATFS_SYNC_API: &str = r#"(hostStatfsSync) => function statfsSync(path, options = undefined) {
+  return hostStatfsSync(path, options);
 }"#;
 
 const ASYNC_STATFS_API: &str = r#"(statfsSync, toPathIfFileURL) => function statfs(path, options, callback) {
@@ -2159,17 +2135,12 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let stat_factory =
         context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-stat-sync.js")?;
     let undefined = context.undefined();
-    let stat_sync =
-        context.call_rooted(stat_factory, undefined, &[stat_host, to_path_if_file_url])?;
+    let stat_sync = context.call_rooted(stat_factory, undefined, &[stat_host])?;
     set(context, module, "statSync", stat_sync)?;
     let statfs_host = context.host_function(crate::host::shared_vm::operation("fsStatfsSync"))?;
     let statfs_factory =
         context.evaluate_script_rooted(STATFS_SYNC_API, "node:fs/shared-statfs-sync.js")?;
-    let statfs_sync = context.call_rooted(
-        statfs_factory,
-        undefined,
-        &[statfs_host, to_path_if_file_url],
-    )?;
+    let statfs_sync = context.call_rooted(statfs_factory, undefined, &[statfs_host])?;
     set(context, module, "statfsSync", statfs_sync)?;
     let statfs_factory =
         context.evaluate_script_rooted(ASYNC_STATFS_API, "node:fs/shared-async-statfs.js")?;
@@ -2209,8 +2180,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let lstat_factory =
         context.evaluate_script_rooted(STAT_SYNC_API, "node:fs/shared-lstat-sync.js")?;
     let undefined = context.undefined();
-    let lstat_sync =
-        context.call_rooted(lstat_factory, undefined, &[lstat_host, to_path_if_file_url])?;
+    let lstat_sync = context.call_rooted(lstat_factory, undefined, &[lstat_host])?;
     set(context, module, "lstatSync", lstat_sync)?;
     let lstat_factory =
         context.evaluate_script_rooted(ASYNC_LSTAT_API, "node:fs/shared-async-lstat.js")?;
