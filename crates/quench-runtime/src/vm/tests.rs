@@ -891,6 +891,21 @@ fn array_results_survive_collections_in_proxy_traps() {
 }
 
 #[test]
+fn private_names_resolve_per_class_across_collections() {
+    // Each class evaluation has its own private names; resolution is memoized per
+    // environment and must still reject foreign objects across collections.
+    let source = "function make() { return class { #x = 1; get() { return this.#x; } has(o) { return #x in o; } read(o) { return o.#x; } }; }\n\
+         var A = make(), B = make(), a = new A(), b = new B(), out = [];\n\
+         for (let round = 0; round < 3; round++) { out.push(a.get(), b.get(), a.has(b), a.has(a)); for (let i = 0; i < 50000; i++) ({ i }); }\n\
+         try { a.read(b); } catch (error) { out.push(error.constructor.name); }\n\
+         var result = out.join();";
+    assert_eq!(
+        global_text(source, "result"),
+        "1,1,false,true,1,1,false,true,1,1,false,true,TypeError"
+    );
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();

@@ -478,6 +478,16 @@ struct ArgumentsObjectTemplate {
     iterator_slot: usize,
 }
 const ARGUMENTS_OBJECT_PROPERTY_COUNT: usize = 3;
+/// Where a private name is resolved: the running function and the environment its
+/// lookup starts from.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct PrivateHomeKey {
+    environment: Value,
+    program: ProgramId,
+    function: u32,
+    name: Atom,
+}
+
 #[derive(Default)]
 struct GlobalLexicalState {
     declarations: FxHashSet<Atom>,
@@ -1125,6 +1135,9 @@ pub(crate) struct Vm<H> {
     /// The JavaScript wrapper of each exported Wasm closure, so every export of one
     /// function is one object. Weak: a wrapper nothing holds is made again on demand.
     wasm_exported_functions: FxHashMap<Value, WeakHandle>,
+    /// Private-name home objects found by `private_name_home`, kept while their starting
+    /// environment is live.
+    private_homes: FxHashMap<PrivateHomeKey, Value>,
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
     direct_eval_var_program: Option<ProgramId>,
@@ -1804,6 +1817,7 @@ impl<H: Host> Vm<H> {
         self.descriptors.clear();
         self.function_values.clear();
         self.wasm_exported_functions.clear();
+        self.private_homes.clear();
         self.programs.reset(program.clone());
         self.instanceof_constructor_layout = None;
         self.regexp_last_index_layout = None;
