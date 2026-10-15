@@ -7880,6 +7880,152 @@ Promise.all([callback,promise]).then(results=>{out.push(...results);console.log(
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn read_file_preserves_raw_paths_descriptor_positions_and_utf8_conversion_boundaries() {
+    use std::os::unix::ffi::OsStringExt;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory
+            .path()
+            .join(std::ffi::OsString::from_vec(vec![0xff])),
+        b"raw-\xff-text",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("plain"), b"plain-data").unwrap();
+    let source = format!(
+        "const directory={:?};\n",
+        directory.path().to_str().unwrap()
+    ) + r#"
+const fs=require('node:fs'),assert=require('node:assert'),out=[];
+const raw=Buffer.concat([Buffer.from(directory+'/'),Buffer.from([255])]),n=raw.length;
+const pathMarker={};raw.toString=()=>{throw pathMarker};for(const encoding of [undefined,'utf8'])assert.throws(()=>fs.readFileSync(raw,encoding),e=>e===pathMarker);delete raw.toString;
+for(const path of [raw,(()=>{const b=new Uint8Array(n+2);b.set(raw,1);return b.subarray(1,-1)})()]){out.push(Array.from(fs.readFileSync(path)),fs.readFileSync(path,'utf8'));}
+for(const encoding of ['',null,'buffer']){try{const value=fs.readFileSync(directory+'/plain',encoding);out.push([encoding,Buffer.isBuffer(value),typeof value])}catch(e){out.push([encoding,e.name,e.code,e.message])}}
+const original=Buffer.prototype.toString;
+try{Buffer.prototype.toString=function(encoding){return 'public-buffer-hook:'+encoding};out.push(fs.readFileSync(raw,'utf8'),fs.readFileSync(raw,'utf-8'),fs.readFileSync(raw,'UTF8'));}finally{Buffer.prototype.toString=original;}
+const fd=fs.openSync(directory+'/plain','r');try{const b=Buffer.alloc(1);assert.strictEqual(fs.readSync(fd,b,0,1,null),1);out.push(fs.readFileSync(fd,'utf8'),Array.from(fs.readFileSync(fd)),fs.fstatSync(fd).size);assert.strictEqual(fs.readSync(fd,b,0,1,0),1);assert.strictEqual(b[0],112);}finally{fs.closeSync(fd);}
+for(const input of [-1,fd,2147483648,1.5])for(const encoding of [undefined,'utf8']){try{fs.readFileSync(input,encoding);assert.fail('accepted invalid input')}catch(e){out.push([input===fd?'closed':input,encoding??null,e.name,e.code,e.syscall??null,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack')]);}}
+for(const path of ['a\0b',Buffer.from([97,0,98]),new Uint8ClampedArray([47]),'']){try{fs.readFileSync(path)}catch(e){out.push([e.name,e.code,e.syscall??null,e.path??null,e.message]);}}
+console.log(JSON.stringify(out));
+"#;
+    compare_node_stream_source(&source);
+}
+
+#[test]
+fn application_fs_utility_names_do_not_adopt_node_library_types_or_state() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert'),out=[];
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-fs-library-identity-'));
+try{
+ let C;
+ for(const phase of ['before','after']){
+  const root=path.join(dir,phase,'internal/fs');fs.mkdirSync(root,{recursive:true});const file=path.join(root,'utils.js');
+  fs.writeFileSync(file,`module.exports={applicationValue:17,get BigIntStats(){throw Error('application getter')},get getStatFsFromBinding(){throw Error('application getter')},get vfsState(){throw Error('application getter')}};`);
+  const value=require(file);assert.strictEqual(value.applicationValue,17);
+  const stats=fs.statSync(dir,{bigint:true}),statfs=fs.statfsSync('/');assert.strictEqual(typeof stats.size,'bigint');assert.strictEqual(statfs.constructor.name,'StatFs');
+  if(C)assert.strictEqual(statfs.constructor,C);C=statfs.constructor;out.push([phase,value.applicationValue,typeof stats.size,C.name]);
+ }
+}finally{fs.rmSync(dir,{recursive:true,force:true});}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn read_file_options_flags_and_getter_order_match_node_policy() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert'),out=[];
+const original=process.cwd(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-options-'));
+function capture(options,file='plain'){fs.writeFileSync('plain','data');try{const value=fs.readFileSync(file,options);return ['value',Buffer.isBuffer(value)?Array.from(value):value]}catch(e){return ['error',e.name,e.code??null,e.syscall??null,e.message]}}
+try{process.chdir(dir);
+ for(const options of [undefined,null,false,true,0,42,Symbol('x'),[],{},function(){},'utf8','UTF8','','buffer','bad',{encoding:'bad'},{encoding:1},{encoding:false},{flag:'bad'},{flag:1.5},{flag:'r+'},{flag:'sr'},{flag:0},{flag:null},{signal:1},{buffer:null},{buffer:1},{buffer:{}},{buffer:[]}])out.push(capture(options));
+ const fn=function(){};Object.defineProperty(fn,'encoding',{get(){throw Error('ignored function options')}});out.push(capture(fn));
+ for(const encoding of [undefined,'utf8']){
+  const trace=[],marker={},input=Buffer.from('plain');input.valueOf=function(){trace.push('valueOf');return this};input.toString=function(){trace.push('toString');return 'plain'};
+  const options={get encoding(){trace.push('encoding');return encoding},get signal(){trace.push('signal');return undefined},get buffer(){trace.push('buffer');return undefined},get flag(){trace.push('flag');throw marker}};
+  assert.throws(()=>fs.readFileSync(input,options),e=>e===marker);out.push([encoding??null,trace]);
+ }
+ for(const encoding of [undefined,'utf8']){const trace=[],options={encoding,get flag(){trace.push('flag');return 'bad'}};out.push([encoding??null,capture(options,'a\0b'),trace]);}
+ fs.writeFileSync('plain','data');const fd=fs.openSync('plain','r');try{const marker={};out.push(fs.readFileSync(fd,{encoding:'ascii',get flag(){throw marker}}));assert.throws(()=>fs.readFileSync(fd,{encoding:'utf8',get flag(){throw marker}}),e=>e===marker);}finally{fs.closeSync(fd);}
+ const isEncoding=Buffer.isEncoding,calls=[];try{Buffer.isEncoding=function(value){calls.push(value);return true};out.push(capture({encoding:'bad'},'missing'));}finally{Buffer.isEncoding=isEncoding;}out.push(calls);
+}finally{process.chdir(original);fs.rmSync(dir,{recursive:true,force:true});}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn read_file_supplied_buffers_factories_aliases_and_cleanup_match_node() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert'),out=[];
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-buffers-')),file=path.join(dir,'file'),empty=path.join(dir,'empty');
+fs.writeFileSync(file,'abcdef');fs.writeFileSync(empty,'');
+function capture(operation){try{const value=operation();return ['value',Buffer.isBuffer(value),typeof value==='string'?value:Array.from(value)]}catch(e){return ['error',e.name,e.code??null,e.syscall??null,e.message]}}
+try{
+ for(const kind of ['Buffer','Uint8Array','Uint16Array','DataView']){
+  const backing=new ArrayBuffer(20),view=kind==='Buffer'?Buffer.from(backing,2,12):kind==='Uint8Array'?new Uint8Array(backing,2,12):kind==='Uint16Array'?new Uint16Array(backing,2,6):new DataView(backing,2,12);
+  const result=fs.readFileSync(file,{buffer:view});assert(Buffer.isBuffer(result));assert.strictEqual(result.buffer,backing);assert.strictEqual(result.byteOffset,2);assert.strictEqual(result.length,6);assert.strictEqual(result.toString(),'abcdef');out.push([kind,Array.from(new Uint8Array(backing)),result.length]);
+ }
+ const options={buffer(size){assert.strictEqual(this,options);out.push(['factory',size]);fs.writeFileSync(file,'UVWXYZmore');return new Uint8Array(12)}};out.push(capture(()=>fs.readFileSync(file,options)));fs.writeFileSync(file,'abcdef');
+ for(const buffer of [Buffer.alloc(3),new Uint8Array(3),()=>Buffer.alloc(3),()=>null,()=>({}),()=>{throw 'factory-marker'}])out.push(capture(()=>fs.readFileSync(file,{buffer})));
+ for(const size of [0,2])out.push(capture(()=>fs.readFileSync(empty,{buffer:Buffer.alloc(size)})));
+ out.push(capture(()=>fs.readFileSync(file,{encoding:'utf8',buffer:Buffer.alloc(8)})));
+ const originalOpen=fs.openSync,originalRead=fs.readSync,originalClose=fs.closeSync,trace=[];let opened;
+ try{
+  fs.openSync=function(...args){trace.push('open');opened=Reflect.apply(originalOpen,this,args);return opened};
+  fs.readSync=function(...args){trace.push('read');return Reflect.apply(originalRead,this,args)};
+  fs.closeSync=function(...args){trace.push('close');return Reflect.apply(originalClose,this,args)};
+  out.push(capture(()=>fs.readFileSync(file,{buffer(size){trace.push('factory:'+size);return Buffer.alloc(8)}})));assert.throws(()=>fs.fstatSync(opened),e=>e.code==='EBADF');out.push(trace.splice(0));
+  const marker={};assert.throws(()=>fs.readFileSync(file,{buffer(){throw marker}}),e=>e===marker);assert.throws(()=>fs.fstatSync(opened),e=>e.code==='EBADF');out.push(trace.splice(0));
+ }finally{fs.openSync=originalOpen;fs.readSync=originalRead;fs.closeSync=originalClose;}
+ const fd=fs.openSync(file,'r');try{const marker={};assert.throws(()=>fs.readFileSync(fd,{buffer(){throw marker}}),e=>e===marker);assert.strictEqual(fs.fstatSync(fd).size,6);out.push(capture(()=>fs.readFileSync(fd,{buffer:Buffer.alloc(8)})));}finally{fs.closeSync(fd);}
+ out.push(capture(()=>fs.readFileSync(dir,{buffer:Buffer.alloc(8)})));
+}finally{fs.rmSync(dir,{recursive:true,force:true});}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn read_sync_copies_raw_bytes_without_public_set_or_metadata_hooks() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert');
+const directory=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-copy-')),file=path.join(directory,'file'),output=[];
+fs.writeFileSync(file,'abcdef');
+try {
+ for (const kind of ['Uint8Array','Uint16Array','Int32Array','Float64Array','BigInt64Array','DataView']) {
+  const backing=new ArrayBuffer(32),view=kind==='DataView'?new DataView(backing,8,16):new globalThis[kind](backing,8,16/globalThis[kind].BYTES_PER_ELEMENT);
+  for(const name of ['buffer','byteOffset','set']) Object.defineProperty(view,name,{get(){throw new Error('public '+name)}});
+  const fd=fs.openSync(file,'r');try {
+   const count=fs.readSync(fd,view,2,4,0);assert.strictEqual(count,4);output.push([kind,Array.from(new Uint8Array(backing)),fs.readSync(fd,view,0,2,6)]);
+  }finally{fs.closeSync(fd)}
+ }
+ const fd=fs.openSync(file,'r'),buffer=Buffer.alloc(8);try {
+  Object.defineProperty(buffer,'set',{value(){throw new Error('public Buffer.set')}});
+  output.push(['buffer',fs.readSync(fd,buffer,1,6,0),Array.from(buffer)]);
+ }finally{fs.closeSync(fd)}
+}finally{fs.rmSync(directory,{recursive:true,force:true})}
+console.log(JSON.stringify(output));
+"#,
+    );
+}
+
+#[test]
+fn error_capture_stack_trace_primitive_targets_match_node() {
+    compare_node_stream_source(
+        r#"
+const out=[];for(const target of [undefined,null,1,'x',true,1n,Symbol('x')]){
+ try{Error.captureStackTrace(target);out.push('accepted')}catch(error){out.push([error.name,error.message,Reflect.ownKeys(error).filter(k=>k!=='stack')])}
+}console.log(JSON.stringify(out));
+"#,
+    );
+}
+
 #[test]
 fn native_builtin_setup_preserves_regexp_and_crypto_uses_canonical_streams() {
     compare_node_stream_source(r#"
@@ -7942,5 +8088,100 @@ console.log(['ReadableStream','WritableStream','TransformStream','TextEncoderStr
 
 #[test]
 fn native_encoding_and_array_buffer_copy_match_stable_slots_and_byte_ranges() {
-    compare_node_source_with_args(include_str!("../node-tests/test-native-encoding-bytes.js"), &["--no-warnings", "--expose-internals"]);
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-encoding-bytes.js"),
+        &["--no-warnings", "--expose-internals"],
+    );
+}
+
+#[test]
+fn read_sync_overloads_validation_order_and_bigint_positions_match_node() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert'),out=[];
+const directory=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-policy-')),file=path.join(directory,'file');fs.writeFileSync(file,'abcdef');
+function capture(args){try{return ['value',fs.readSync(...args)]}catch(e){return ['error',e.name,e.code??null,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack').map(String),Reflect.ownKeys(Object.getPrototypeOf(e)).map(String)]}}
+try {
+ for(const fd of [-1,999999,{},'1',null,1.5])for(const buffer of [{},Buffer.alloc(1)])for(const length of [0,1,undefined])out.push(capture([fd,buffer,0,length,0]));
+ for(const offset of [undefined,null,0,-1,1.5,'0',{},[],()=>0])out.push(capture([-1,Buffer.alloc(2),offset]));
+ for(const length of [undefined,null,0,-1,1.5,'1',NaN,Infinity,2**32,2**32+1,1n,Symbol('length')])out.push(capture([-1,Buffer.alloc(2),0,length,0]));
+ for(const position of [undefined,null,-1,0,-2,1.5,'0',0n,-1n,3n,2n**63n-1n,2n**63n]){
+  const fd=fs.openSync(file,'r'),buffer=Buffer.alloc(2);try{out.push([capture([fd,buffer,0,2,position]),Array.from(buffer),fs.readFileSync(fd,'utf8')])}finally{fs.closeSync(fd)}
+ }
+ const trace=[],marker={};let buffer=Buffer.alloc(2);
+ let options={get offset(){trace.push('offset');return -1},get length(){trace.push('length');throw marker},get position(){trace.push('position');return 0}};
+ assert.throws(()=>fs.readSync(-1,buffer,options),e=>e===marker);out.push(trace.splice(0));
+ options={get offset(){trace.push('offset');return 0},get length(){trace.push('length');return {valueOf(){trace.push('coerce length');return 0}}},get position(){trace.push('position');return null}};
+ out.push(capture([{},buffer,options]),trace.splice(0));
+ for(const name of ['byteLength'])Object.defineProperty(buffer,name,{get(){trace.push(name);return 2}});
+ out.push(capture([-1,buffer,{offset:0,length:0}]),trace.splice(0));
+ out.push(capture([-1,buffer,{offset:0,length:1}]),trace.splice(0));
+}finally{fs.rmSync(directory,{recursive:true,force:true})}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn read_file_unknown_size_supplied_buffer_errors_preserve_node_prototypes() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),out=[];
+const directory=fs.mkdtempSync(path.join(os.tmpdir(),'quench-read-unknown-')),file=path.join(directory,'empty');fs.writeFileSync(file,'');
+try{for(const size of [0,3,6,7]){
+ const fd=fs.openSync(file,'r'),original=fs.readSync,source=Buffer.from('abcdef');let pos=0;
+ fs.readSync=function(fd,buffer,offset,length){const n=Math.min(length,source.length-pos);buffer.set(source.subarray(pos,pos+n),offset);pos+=n;return n};
+ try{const b=fs.readFileSync(fd,{buffer:Buffer.alloc(size)});out.push(['value',b.toString(),pos])}catch(e){out.push(['error',e.name,e.code,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack'),Object.getPrototypeOf(e).constructor.name,Reflect.ownKeys(Object.getPrototypeOf(e)),pos])}finally{fs.readSync=original;fs.closeSync(fd)}
+}}finally{fs.rmSync(directory,{recursive:true,force:true})}console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn read_sync_positional_directory_errors_preserve_kernel_errno() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),out=[],fd=fs.openSync('/tmp','r');try{for(const position of [null,0,2**32,2n**40n])try{out.push(['value',fs.readSync(fd,Buffer.alloc(1),0,1,position)])}catch(e){out.push([e.name,e.code,e.syscall,e.message])}}finally{fs.closeSync(fd)}console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn application_internal_module_names_do_not_receive_node_bootstrap_transforms() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"type":"commonjs"}"#,
+    )
+    .unwrap();
+    for (name, source) in [
+        ("crypto/util.js", "const kHandle = Symbol('kHandle'); module.exports=[kHandle.description,Symbol.keyFor(kHandle)===undefined];"),
+        ("per_context/primordials.js", "module.exports='application-primordials';"),
+        ("bootstrap/realm.js", "module.exports=[typeof getInternalBinding,typeof getLinkedBinding];"),
+    ] {
+        let file=directory.path().join("internal").join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file,source).unwrap();
+    }
+    let source=format!("const p={};console.log(JSON.stringify(['crypto/util','per_context/primordials','bootstrap/realm'].map(name=>require(p+'/internal/'+name+'.js'))));",serde_json::to_string(&directory.path().to_string_lossy()).unwrap());
+    compare_node_stream_source(&source);
+}
+
+#[test]
+fn crypto_hash_handle_symbols_are_private_canonical_and_not_public_registry_keys() {
+    compare_node_source_with_args(
+        r#"
+const assert=require('node:assert'),crypto=require('node:crypto'),utility=require('internal/crypto/util'),key=utility.kHandle;
+assert.strictEqual(key.description,'kHandle');assert.strictEqual(Symbol.keyFor(key),undefined);
+const first=crypto.createHash('sha256');assert(Object.getOwnPropertySymbols(first).includes(key));
+const replacement=Symbol('replacement');utility.kHandle=replacement;
+try {
+ const second=crypto.createHash('sha256');assert(Object.getOwnPropertySymbols(second).includes(key));assert(!Object.getOwnPropertySymbols(second).includes(replacement));
+ assert.strictEqual(first.update('abc').digest('hex'),second.update('abc').digest('hex'));
+ console.log(key.description,Symbol.keyFor(key)===undefined,first instanceof crypto.Hash);
+}finally{utility.kHandle=key;}
+"#,
+        &["--expose-internals"],
+    );
 }
