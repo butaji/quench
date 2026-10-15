@@ -12,7 +12,7 @@ fn shape_reclaim_threshold_met(shape_count: usize, unreachable: usize) -> bool {
     unreachable >= shape_count.div_ceil(SHAPE_COMPACTION_MIN_RECLAIM_DENOMINATOR)
 }
 
-fn active_shape_attributes(
+pub(super) fn active_shape_attributes(
     shapes: &[Shape],
     shape: u32,
 ) -> Vec<Option<(property_key::PropertyKey, ShapeAttributes)>> {
@@ -851,6 +851,7 @@ impl<H: Host> Vm<H> {
             .map(|shape| shape.storage_len())
             .collect::<Vec<_>>();
         self.heap.remap_live_object_shapes(&mapping, &lengths);
+        self.startup_intrinsics.remap_shapes(&mapping);
         self.shapes = shapes;
         self.transitions = transitions;
         self.object_shapes.fill(u32::MAX);
