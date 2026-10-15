@@ -13,6 +13,7 @@ pub(crate) fn module(
         "node:stream/shared.js",
     )?;
     let dependencies = context.object_rooted()?;
+    super::stream_constructor_shared_vm::prepare(context, dependencies)?;
     let read_zero = context.host_function_with_data(
         crate::host::shared_vm::operation("streamReadZero"),
         dependencies,
@@ -51,15 +52,6 @@ pub(crate) fn module(
     let pipe_end =
         context.host_function(crate::host::shared_vm::operation("streamPipeShouldEnd"))?;
     set(context, dependencies, "pipeShouldEnd", pipe_end)?;
-    let apply_options = context.host_function(crate::host::shared_vm::operation(
-        "streamApplyTransformOptions",
-    ))?;
-    set(
-        context,
-        dependencies,
-        "applyTransformOptions",
-        apply_options,
-    )?;
     let default_hwm = context.host_function(crate::host::shared_vm::operation(
         "streamGetDefaultHighWaterMark",
     ))?;
@@ -84,11 +76,7 @@ pub(crate) fn module(
 
     let undefined = context.undefined();
     let module = context.call_rooted(factory, undefined, &[dependencies])?;
-    let duplex = get(context, module, "Duplex")?;
-    for (key, value) in [("name", context.string_rooted("Duplex")), ("length", context.number(1.0))] {
-        let key = context.string_rooted(key);
-        context.define_data_property_rooted(duplex, key, value, false, false, true)?;
-    }
+    super::stream_constructor_shared_vm::install(context, module, dependencies)?;
     super::stream_duplex_pair_shared_vm::install(context, module)?;
     let key = context.string_rooted("Writable");
     let writable = context.get_property_rooted(module, key)?;

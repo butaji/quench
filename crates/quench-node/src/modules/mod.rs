@@ -90,6 +90,7 @@ pub(crate) mod shared_event_loop;
 pub(crate) mod stream_close_shared_vm;
 pub(crate) mod stream_pipe_shared_vm;
 pub(crate) mod stream_shared_vm;
+pub(crate) mod stream_constructor_shared_vm;
 pub(crate) mod stream_source;
 pub(crate) mod stream_state;
 pub(crate) mod string_decoder_codec;

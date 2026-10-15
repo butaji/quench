@@ -3094,20 +3094,7 @@
       super(
         Object.assign({}, options || {}, { __quenchCompatConstruct: true }),
       );
-      this._isDuplex = true;
-      initWritable(this, options || {});
-      initConstruct(this, options || {});
-      this.allowHalfOpen = !options || options.allowHalfOpen !== false;
-      if (options?.readable === false) {
-        this.readable = false;
-        this._readableState.ended = true;
-        this._readableState.endEmitted = true;
-      }
-      if (options?.writable === false) {
-        this.writable = false;
-        this._writableState.ended = true;
-        this._writableState.finished = true;
-      }
+      deps.initializeDuplex(this, options || {});
     }
   }
   mixWritable(Duplex.prototype);
@@ -3115,30 +3102,7 @@
   class TransformClass extends Duplex {
     constructor(options) {
       super(options || {});
-      this._isTransform = true;
-      this._transformBackpressure = null;
-      if (deps.applyTransformOptions) deps.applyTransformOptions(this, options);
-      else {
-        if (options && options.transform) this._transform = options.transform;
-        if (options && options.flush) this._flush = options.flush;
-      }
-      if (options && options.final) this._final = options.final;
-      // When the writable side finishes, flush then end the readable side.
-      // Node flushes and closes the readable side during prefinish, before
-      // the writable side emits finish.  Keeping this on the shared lifecycle
-      // event preserves the observable end -> finish ordering.
-      this.once("prefinish", () => {
-        const end = (error, data) => {
-          if (error) {
-            this.destroy(error);
-            return;
-          }
-          if (data != null) this.push(data);
-          this.push(null);
-        };
-        if (this._flush) this._flush(end);
-        else end();
-      });
+      deps.initializeTransform(this, options);
     }
 
     _transform(chunk, encoding, callback) {
@@ -3185,12 +3149,7 @@
   class PassThroughClass extends TransformClass {
     constructor(options) {
       super(options || {});
-      this._passThrough = true;
-      this._passThroughRead = false;
-      this._transform = (chunk, encoding, callback) => {
-        this.push(chunk);
-        callback();
-      };
+      deps.initializePassThrough(this);
     }
   }
   const PassThrough = function (options = {}) {
@@ -4351,6 +4310,9 @@
       });
     },
   };
+
+  deps.initializeWritableState = initWritable;
+  deps.initializeConstruct = initConstruct;
 
   return Object.assign(Stream, {
     Readable,
