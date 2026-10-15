@@ -1,0 +1,396 @@
+diff --git a/crates/quench-runtime/src/api.rs b/crates/quench-runtime/src/api.rs
+index 837d14550..59f7f0191 100644
+--- a/crates/quench-runtime/src/api.rs
++++ b/crates/quench-runtime/src/api.rs
+@@ -1757,7 +1757,7 @@ var reason={};try{Date.parse({toString(){throw reason;}});print(false);}catch(e)
+   for(var file of ['bad','mixed','parent','reexport']){
+     var path='./task20-module-source-fixtures/'+file+'.mjs', first;
+     try{await import(path);print(false);}catch(e){$262.gc();print(e instanceof SyntaxError);first=e;}
+-    try{await import(path);print(false);}catch(e){print(e===first);}
++    try{await import(path);print(false);}catch(e){print(e!==first);}
+     print(qq_source_runs===0 && qq_bad_runs===0 && qq_effect_runs===0);
+   }
+   var effect=await import('./task20-module-source-fixtures/effect.mjs');print(effect.value===43 && qq_effect_runs===1);
+@@ -4589,6 +4589,22 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
+             print(a.value + ':' + barrel.value + ':' + read());
+             print(Object.getOwnPropertyDescriptor(barrel, 'value').value);
+             import('./a.mjs').then(namespace => print(namespace === a));
++            (async () => {
++                for (const name of ['missing-export', 'syntax-failure']) {
++                    const failures = await Promise.allSettled([
++                        import('./' + name + '.mjs'), import('./' + name + '.mjs')
++                    ]);
++                    print(failures.every(result => result.status === 'rejected'
++                        && result.reason instanceof SyntaxError)
++                        && failures[0].reason !== failures[1].reason);
++                }
++                const failures = await Promise.allSettled([
++                    import('./evaluation-failure.mjs'), import('./evaluation-failure.mjs')
++                ]);
++                print(failures[0].reason === failures[1].reason && evaluationEffects === 1);
++                const effect = await import('./effect.mjs');
++                print(effect.value === 43 && failureEffects === 1);
++            })();
+         "#;
+         const MODULES: &[(&str, &str)] = &[
+             ("entry.mjs", SOURCE),
+@@ -4597,6 +4613,10 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
+             ("alias.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/alias.mjs")),
+             ("barrel.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/barrel.mjs")),
+             ("config.json", include_str!("../../../tests/npm-top300/regressions/esm-graph/config.json")),
++            ("missing-export.mjs", "import { missing } from './effect.mjs';"),
++            ("syntax-failure.mjs", "export const = 1;"),
++            ("evaluation-failure.mjs", "globalThis.evaluationEffects = (globalThis.evaluationEffects || 0) + 1; throw new Error('evaluation');"),
++            ("effect.mjs", "globalThis.failureEffects = (globalThis.failureEffects || 0) + 1; export const value = 43;"),
+         ];
+         struct ModuleCapture(Capture);
+         impl Host for ModuleCapture {
+@@ -4614,7 +4634,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
+             let mut runtime = Runtime::new(ModuleCapture(view.clone()));
+             let program = compile(SOURCE, "cyclic-module-graph/entry.mjs").unwrap();
+             runtime.execute(&program).unwrap();
+-            assert_eq!(view.0.borrow().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true"]);
++            assert_eq!(view.0.borrow().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true", "true", "true", "true", "true"]);
+         }
+     }
+ 
+diff --git a/crates/quench-runtime/src/vm/gc.rs b/crates/quench-runtime/src/vm/gc.rs
+index 82b57737c..d41452567 100644
+--- a/crates/quench-runtime/src/vm/gc.rs
++++ b/crates/quench-runtime/src/vm/gc.rs
+@@ -590,7 +590,7 @@ impl<H: Host> Vm<H> {
+                 .promise
+                 .dynamic_import_jobs
+                 .iter()
+-                .flat_map(|job| job.promises.iter().copied()),
++                .map(|job| job.promise),
+         );
+         roots.extend(self.realm.jobs.iter().flat_map(|job| {
+             std::iter::once(job.callback)
+diff --git a/crates/quench-runtime/src/vm/module.rs b/crates/quench-runtime/src/vm/module.rs
+index 9de513d5b..bc23adf41 100644
+--- a/crates/quench-runtime/src/vm/module.rs
++++ b/crates/quench-runtime/src/vm/module.rs
+@@ -226,6 +226,16 @@ impl ModuleRecord {
+         }
+     }
+ 
++    /// Instantiation failure leaves the compiled graph unlinked, so the next
++    /// import retries it. Only failures after evaluation starts are permanent.
++    pub(crate) fn retry_instantiation(&mut self) -> Option<Vec<Value>> {
++        if !matches!(self.phase(), ModulePhase::Loading | ModulePhase::Linking) {
++            return None;
++        }
++        self.outcome = ModuleOutcome::Pending(ModulePhase::Loading);
++        Some(std::mem::take(&mut self.waiters))
++    }
++
+     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> {
+         let outcome = match self.outcome {
+             ModuleOutcome::Deferred(value)
+diff --git a/crates/quench-runtime/src/vm/promise.rs b/crates/quench-runtime/src/vm/promise.rs
+index 43ca76290..229d1899f 100644
+--- a/crates/quench-runtime/src/vm/promise.rs
++++ b/crates/quench-runtime/src/vm/promise.rs
+@@ -1077,7 +1077,7 @@ pub(super) struct AsyncResumeJob {
+ pub(super) struct DynamicImportJob {
+     pub(super) cache_key: String,
+     pub(super) module: ModuleSource,
+-    pub(super) promises: Vec<Value>,
++    pub(super) promise: Value,
+ }
+ 
+ #[derive(Default)]
+@@ -2548,24 +2548,12 @@ impl<H: Host> Vm<H> {
+         module: ModuleSource,
+         promise: Value,
+     ) {
+-        if let Some(job) = self
+-            .realm
++        // Each import owns an instantiation attempt. Successful evaluation is
++        // shared by the module record; link failures must produce fresh errors.
++        self.realm
+             .promise
+             .dynamic_import_jobs
+-            .iter_mut()
+-            .find(|job| job.cache_key == cache_key)
+-        {
+-            job.promises.push(promise);
+-        } else {
+-            self.realm
+-                .promise
+-                .dynamic_import_jobs
+-                .push(DynamicImportJob {
+-                    cache_key,
+-                    module,
+-                    promises: vec![promise],
+-                });
+-        }
++            .push(DynamicImportJob { cache_key, module, promise });
+     }
+ 
+     pub(super) fn advance_dynamic_import_jobs(
+@@ -2579,7 +2567,7 @@ impl<H: Host> Vm<H> {
+         // is settled or transferred back to a queue/module record.
+         let waiters: Vec<_> = jobs
+             .iter()
+-            .flat_map(|job| job.promises.iter().copied())
++            .map(|job| job.promise)
+             .collect();
+         self.with_call_roots(waiters, |vm| {
+             for job in jobs {
+@@ -2589,7 +2577,7 @@ impl<H: Host> Vm<H> {
+                     .modules
+                     .get(&job.cache_key)
+                     .map(|record| record.outcome)
+-                    && vm.settle_dynamic_import_waiters(p, &job.promises, outcome)?
++                    && vm.settle_dynamic_import_waiter(p, job.promise, outcome)?
+                 {
+                     continue;
+                 }
+@@ -2602,9 +2590,7 @@ impl<H: Host> Vm<H> {
+                     let reason = error
+                         .thrown_value()
+                         .unwrap_or_else(|| vm.heap.alloc(Cell::Error(error.into_message())));
+-                    for promise in job.promises {
+-                        vm.promise_settle(p, promise, PromiseState::Rejected, reason)?;
+-                    }
++                    vm.promise_settle(p, job.promise, PromiseState::Rejected, reason)?;
+                     continue;
+                 }
+                 let outcome = vm
+@@ -2614,22 +2600,20 @@ impl<H: Host> Vm<H> {
+                     .get(&job.cache_key)
+                     .map(|record| record.outcome)
+                     .unwrap_or(ModuleOutcome::Pending(ModulePhase::Evaluating));
+-                if !vm.settle_dynamic_import_waiters(p, &job.promises, outcome)?
++                if !vm.settle_dynamic_import_waiter(p, job.promise, outcome)?
+                     && let Some(record) = vm.realm.promise.modules.get_mut(&job.cache_key)
+                 {
+-                    for promise in job.promises {
+-                        record.add_waiter(promise);
+-                    }
++                    record.add_waiter(job.promise);
+                 }
+             }
+             Ok(())
+         })
+     }
+ 
+-    fn settle_dynamic_import_waiters(
++    fn settle_dynamic_import_waiter(
+         &mut self,
+         p: &ResidualProgram,
+-        promises: &[Value],
++        promise: Value,
+         outcome: ModuleOutcome,
+     ) -> Result<bool, JsError> {
+         let (state, value) = match outcome {
+@@ -2637,9 +2621,7 @@ impl<H: Host> Vm<H> {
+             ModuleOutcome::Errored(reason) => (PromiseState::Rejected, reason),
+             ModuleOutcome::Pending(_) | ModuleOutcome::Deferred(_) => return Ok(false),
+         };
+-        for promise in promises {
+-            self.promise_settle(p, *promise, state, value)?;
+-        }
++        self.promise_settle(p, promise, state, value)?;
+         Ok(true)
+     }
+ 
+@@ -2731,6 +2713,18 @@ impl<H: Host> Vm<H> {
+         Ok(())
+     }
+ 
++    fn missing_module_export(
++        &mut self,
++        p: &ResidualProgram,
++        source: &str,
++        name: &str,
++    ) -> Result<Value, JsError> {
++        self.syntax_error_result(
++            p,
++            &format!("The requested module '{source}' does not provide an export named '{name}'"),
++        )
++    }
++
+     fn resolve_module_import_values(
+         &mut self,
+         p: &ResidualProgram,
+@@ -2826,7 +2820,7 @@ impl<H: Host> Vm<H> {
+                     && Self::static_module_declares_export(&module, name) == Some(false)
+                 {
+                     return self
+-                        .syntax_error_result(p, "module import binding could not be resolved")
++                        .missing_module_export(p, &import.source, name)
+                         .map(|_| Vec::new());
+                 }
+                 return Err(self.type_error(p, "deferred module namespace is unavailable".into()));
+@@ -2849,7 +2843,7 @@ impl<H: Host> Vm<H> {
+                     if module_type == "json" && name != "default" =>
+                 {
+                     return self
+-                        .syntax_error_result(p, "JSON modules expose only a default binding")
++                        .missing_module_export(p, &import.source, name)
+                         .map(|_| Vec::new());
+                 }
+                 (_, crate::bytecode::ModuleImportName::Named(name)) => {
+@@ -2860,7 +2854,7 @@ impl<H: Host> Vm<H> {
+                     let fallback = self.own_property(namespace, atom);
+                     if is_namespace && named_binding.is_none() && fallback.is_none() {
+                         return self
+-                            .syntax_error_result(p, "module import binding could not be resolved")
++                            .missing_module_export(p, &import.source, name)
+                             .map(|_| Vec::new());
+                     }
+                     match (named_binding, fallback) {
+@@ -3512,7 +3506,7 @@ impl<H: Host> Vm<H> {
+                     record
+                 });
+             if let Err(error) = self.instantiate_static_module_graph(p, &module, None) {
+-                return self.settle_static_module(p, &cache_key, Err(error));
++                return self.reject_module_instantiation(p, &cache_key, error);
+             }
+         }
+         let resuming_waiting = matches!(
+@@ -3683,19 +3677,57 @@ impl<H: Host> Vm<H> {
+         let Some(waiters) = waiters else {
+             return Err(self.type_error(p, "module record was not evaluating".into()));
+         };
+-        let rejection_is_observed = state != PromiseState::Rejected
+-            || !waiters.is_empty()
+-            || self.waiting_static_parent(p, cache_key)?;
+-        for waiter in waiters {
+-            self.promise_settle(p, waiter, state, value)?;
+-        }
+-        if state == PromiseState::Rejected && !rejection_is_observed {
+-            return Err(JsError::thrown(
+-                value,
+-                "static module evaluation failed".into(),
+-            ));
+-        }
+-        Ok(())
++        self.settle_module_waiters(p, cache_key, waiters, state, value)
++    }
++
++    fn reject_module_instantiation(
++        &mut self,
++        p: &ResidualProgram,
++        cache_key: &str,
++        error: JsError,
++    ) -> Result<(), JsError> {
++        let waiters = self
++            .realm
++            .promise
++            .modules
++            .get_mut(cache_key)
++            .and_then(ModuleRecord::retry_instantiation)
++            .ok_or_else(|| self.type_error(p, "module was not being instantiated".into()))?;
++        // Queued imports own their promises outside the module record. Return
++        // the transient error to that job instead of leaving it waiting on an
++        // unlinked record that deliberately does not cache the error.
++        if waiters.is_empty() {
++            return Err(error);
++        }
++        let reason = error
++            .thrown_value()
++            .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
++        self.settle_module_waiters(p, cache_key, waiters, PromiseState::Rejected, reason)
++    }
++
++    fn settle_module_waiters(
++        &mut self,
++        p: &ResidualProgram,
++        cache_key: &str,
++        waiters: Vec<Value>,
++        state: PromiseState,
++        value: Value,
++    ) -> Result<(), JsError> {
++        self.with_call_roots(waiters.iter().copied().chain([value]), |vm| {
++            let rejection_is_observed = state != PromiseState::Rejected
++                || !waiters.is_empty()
++                || vm.waiting_static_parent(p, cache_key)?;
++            for &waiter in &waiters {
++                vm.promise_settle(p, waiter, state, value)?;
++            }
++            if state == PromiseState::Rejected && !rejection_is_observed {
++                return Err(JsError::thrown(
++                    value,
++                    "static module evaluation failed".into(),
++                ));
++            }
++            Ok(())
++        })
+     }
+ 
+     fn waiting_static_parent(
+diff --git a/crates/quench-runtime/src/vm/tests.rs b/crates/quench-runtime/src/vm/tests.rs
+index e2a801c46..a60edde7d 100644
+--- a/crates/quench-runtime/src/vm/tests.rs
++++ b/crates/quench-runtime/src/vm/tests.rs
+@@ -4186,7 +4186,7 @@ fn dynamic_import_waiters_are_rooted_while_queued_and_during_batch_evaluation()
+                     bytes: source.as_bytes().to_vec(),
+                     source,
+                 },
+-                promises: vec![promise],
++                promise,
+             });
+         }
+         if collect_while_queued {
+diff --git a/tests/npm-top300/regressions/esm-errors/entry.mjs b/tests/npm-top300/regressions/esm-errors/entry.mjs
+index aad00df23..d15752394 100644
+--- a/tests/npm-top300/regressions/esm-errors/entry.mjs
++++ b/tests/npm-top300/regressions/esm-errors/entry.mjs
+@@ -5,15 +5,36 @@ let parentError, repeatedError, directError;
+ try { await import('./parent.mjs'); } catch (error) { parentError = error; }
+ try { await import('./parent.mjs'); } catch (error) { repeatedError = error; }
+ assert(parentError instanceof SyntaxError);
+-assert.equal(repeatedError, parentError);
++assert.notEqual(repeatedError, parentError);
++assert.equal(parentError.message, "The requested module './effect.mjs' does not provide an export named 'missing'");
++assert.equal(repeatedError.message, parentError.message);
+ assert.equal(moduleEffects, 0);
+ assert.equal(parentEffects, 0);
+ try { await import('./bad.mjs'); } catch (error) { directError = error; }
+ assert(directError instanceof SyntaxError);
+ assert.notEqual(directError, parentError);
+ try { await import('./bad.mjs'); assert.fail('invalid import accepted'); }
+-catch (error) { assert.equal(error, directError); }
++catch (error) {
++  assert(error instanceof SyntaxError);
++  assert.notEqual(error, directError);
++  assert.equal(error.message, parentError.message);
++}
+ assert.equal(moduleEffects, 0);
++const concurrent = await Promise.allSettled([import('./bad.mjs'), import('./bad.mjs')]);
++for (const result of concurrent) {
++  assert.equal(result.status, 'rejected');
++  assert(result.reason instanceof SyntaxError);
++  assert.equal(result.reason.message, parentError.message);
++}
++assert.notEqual(concurrent[0].reason, concurrent[1].reason);
++const parse = await Promise.allSettled([import('./parse.mjs'), import('./parse.mjs')]);
++assert(parse.every(result => result.status === 'rejected' && result.reason instanceof SyntaxError));
++assert.notEqual(parse[0].reason, parse[1].reason);
++const evaluation = await Promise.allSettled([import('./evaluation.mjs'), import('./evaluation.mjs')]);
++assert(evaluation.every(result => result.status === 'rejected' && result.reason instanceof Error));
++assert.equal(evaluation[0].reason, evaluation[1].reason);
++assert.equal(evaluation[0].reason.message, 'module evaluation failed');
++assert.equal(evaluationEffects, 1);
+ const effect = await import('./effect.mjs');
+ assert.equal(effect.value, 43);
+ assert.equal(moduleEffects, 1);
+diff --git a/tests/npm-top300/regressions/esm-errors/evaluation.mjs b/tests/npm-top300/regressions/esm-errors/evaluation.mjs
+new file mode 100644
+index 000000000..40c94fc11
+--- /dev/null
++++ b/tests/npm-top300/regressions/esm-errors/evaluation.mjs
+@@ -0,0 +1,2 @@
++globalThis.evaluationEffects = (globalThis.evaluationEffects || 0) + 1;
++throw new Error('module evaluation failed');
+diff --git a/tests/npm-top300/regressions/esm-errors/parse.mjs b/tests/npm-top300/regressions/esm-errors/parse.mjs
+new file mode 100644
+index 000000000..d39ee8c5c
+--- /dev/null
++++ b/tests/npm-top300/regressions/esm-errors/parse.mjs
+@@ -0,0 +1 @@
++export const = 1;
