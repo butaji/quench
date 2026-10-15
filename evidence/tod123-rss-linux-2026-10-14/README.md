@@ -251,3 +251,42 @@ rounds, evicted): Crypto 7.6 -> 7.3, DeltaBlue 7.4 -> 7.2, EarleyBoyer 14.0 ->
 Richards 6.7 -> 6.4, Splay 52.1 -> 51.7. Callgrind
 (`guard-shapes-process-raw.txt`): start-up -0.8% (RegExp) to -12.5%
 (Richards), per-run -0.43% to +0.01%.
+
+## Touched pages only (userfaultfd write protection)
+
+Fault-around maps a faulting page's cached 64 KB neighbourhood (or a whole large
+folio) into the process, so code and constants a run never touches stayed
+resident beside what it touches: a small fixture kept 4-6 MB of file pages for
+about 1.5 MB it uses. The kernel skips fault-around in a mapping registered
+with userfaultfd for write protection; quench-node registers its read-only
+file mappings at start with asynchronous write protection
+(`UFFD_FEATURE_WP_ASYNC`, Linux 6.7), which needs no handler and which these
+never-written mappings never trigger (`resident_pages::map_touched_pages_only`).
+Without the feature the mappings keep fault-around.
+
+Same static binary without and with the registration (MB): Richards 7.5 -> 4.2,
+DeltaBlue 8.0 -> 4.7, RayTrace 7.9 -> 4.3, Crypto 8.6 -> 5.1. Start-up minor
+faults 1215 -> 3929, wall unchanged within noise (median 23-31 ms either way),
+Scores unchanged within noise. 529 Node parallel fixtures run directly on the
+binary exit identically (207 pass both ways). A freshly written binary now
+measures 0.3 MB above the same file evicted, against 8 MB with fault-around.
+
+Stock V8-v7 max RSS after retraining both orders and the BOLT profile (MB;
+static build, then BOLT; QuickJS 2026-06-04, Bun and Node without JIT, same
+host):
+
+| Fixture | Quench | Quench BOLT | QuickJS | Bun | Node | Bun JIT | Node JIT |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Crypto | 5.0 | 4.5 | 3.5 | 22.0 | 44.2 | 45.9 | 60.0 |
+| DeltaBlue | 4.7 | 4.2-4.4 | 3.5 | 22.5 | 47.0 | 43.2 | 84.8 |
+| EarleyBoyer | 11.2 | 10.8-10.9 | 17.0 | 26.9 | 110.3 | 72.4 | 129.4 |
+| NavierStokes | 5.3 | 5.0-5.2 | 5.0 | 22.0 | 49.3 | 36.3 | 59.5 |
+| RayTrace | 4.4 | 4.0 | 3.3 | 23.2 | 51.3 | 54.5 | 67.5 |
+| RegExp | 15.4 | 14.9 | 6.6 | 30.5 | 55.1 | 52.6 | 70.7 |
+| Richards | 4.0 | 3.5 | 3.4 | 21.9 | 44.8 | 39.2 | 56.8 |
+| Splay | 49.3 | 49.0 | 147.0 | 62.5 | 395.6 | 188.4 | 460.8 |
+
+Callgrind (`guard-touched-pages-raw.txt`, previous publication against this
+one, across a v2-merged sync): start-up -2.0% to -12.6% except NavierStokes
++1.3% and RegExp +1.7%; per-run -25% (Richards) to +2.6% (RegExp), most of the
+per-run change from the merged upstream work.
