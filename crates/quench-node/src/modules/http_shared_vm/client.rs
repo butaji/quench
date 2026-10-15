@@ -19,11 +19,13 @@ const REQUEST_FUNCTION: &str = r#"((Writable, create, write, removeHeader, end, 
     }
     return pairs;
   };
-  const request = (input = {}, callback) => {
+  const request = (input = {}, overrides, callback) => {
+    if (typeof overrides === "function") { callback = overrides; overrides = undefined; }
     let options = input;
     if (typeof input === "string" || (input && typeof input.href === "string")) {
       options = normalizeUrl(String(input));
     }
+    if (overrides !== undefined && overrides !== null) options = { ...options, ...overrides };
     const id = create(options, headerPairs(options?.headers));
     let ending = false;
     const request = new Writable({
@@ -435,7 +437,10 @@ fn serialize(request: &super::state::OutgoingRequest) -> Vec<u8> {
     let has_chunked = request.headers.iter().any(|(name, value)| {
         name.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked")
     });
-    let chunked = has_chunked || (request.body.has_writes() && !has_length);
+    let chunked = has_chunked
+        || (request.body.has_writes()
+            && !has_length
+            && crate::modules::http_protocol::default_request_chunking(&request.method));
     let host_header = if request.port == 80 {
         request.host.clone()
     } else {
