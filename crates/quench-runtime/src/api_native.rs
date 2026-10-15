@@ -155,6 +155,9 @@ pub struct NativeContext<'a, H: Host> {
 }
 
 impl<'a, H: Host> NativeContext<'a, H> {
+    /// The core string representation's maximum UTF-16 code-unit count.
+    pub const MAX_STRING_CODE_UNITS: usize = crate::vm::wtf16::MAX_STRING_UNITS;
+
     pub(crate) fn new(vm: &'a mut Vm<H>) -> Self {
         Self {
             vm,
