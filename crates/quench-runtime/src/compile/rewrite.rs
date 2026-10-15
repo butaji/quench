@@ -278,12 +278,13 @@ fn coalesce_distant_producer_moves(
         }
         let span_is_block = (producer + 1..=target).all(|pc| !protected[pc])
             && (producer..target).all(|pc| {
-                let op = function.code[pc].op();
+                let instruction = fixed_width(function.code[pc], &function.wide);
+                let op = instruction.op();
                 matches!(
                     op.control_flow_layout(),
                     crate::bytecode::ControlFlowLayout::Fallthrough
                         | crate::bytecode::ControlFlowLayout::Call
-                ) && !function.code[pc].returns_from_frame()
+                ) && !instruction.returns_from_frame()
             })
             && function
                 .handlers
@@ -590,8 +591,9 @@ pub(super) fn protected_positions(
 ) -> Vec<bool> {
     let mut protected = region_boundaries(code.len(), handlers, parameter_end_pc, binding_sites);
     for instruction in code {
+        let instruction = fixed_width(*instruction, wide);
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
-            protected[fixed_width(*instruction, wide).jump_target() as usize] = true;
+            protected[instruction.jump_target() as usize] = true;
         }
     }
     protected
@@ -735,7 +737,8 @@ pub(super) fn relocate(
     old_code: &[Instr],
 ) {
     for instruction in code.iter_mut() {
-        if instruction.op().immediate_role() != ImmediateRole::JumpTarget {
+        let decoded = fixed_width(*instruction, wide);
+        if decoded.op().immediate_role() != ImmediateRole::JumpTarget {
             continue;
         }
         // A wide instruction's target lives in the wide table, which each relocation visits
@@ -830,6 +833,50 @@ fn source_instruction_survives(old_pc: usize, old_code: &[Instr], map: &[usize])
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_jump_targets_are_protected_and_relocated() {
+        for op in [Op::Jump, Op::JumpTrue, Op::JumpFalse] {
+            let mut wide = vec![WideInstruction::new(op, 0, 0, 0, 3)];
+            let old = vec![
+                Instr::wide(0).unwrap(),
+                Instr::new(Op::Nop, 0, 0, 0, 0),
+                Instr::new(Op::Return, 0, 0, 0, 0),
+                Instr::new(Op::Return, 0, 0, 0, 0),
+            ];
+            assert!(protected_positions(&old, &wide, &[], 0, &[])[3]);
+            let mut code = vec![old[0], old[2], old[3]];
+            let mut parameter_end = 0;
+            relocate(
+                &mut code,
+                &mut wide,
+                &[0, 1, 1, 2, 3],
+                &mut [],
+                &mut parameter_end,
+                &mut [],
+                &mut vec![],
+                &old,
+            );
+            assert_eq!(wide[0].jump_target(), 2);
+        }
+    }
+
+    #[test]
+    fn wide_control_flow_keeps_producer_moves_inside_their_basic_block() {
+        let mut program = Engine::specialize_unspecialized("", "wide-control-flow.js").unwrap();
+        let function = &mut program.functions[0];
+        function.registers = 6;
+        function.wide = vec![WideInstruction::new(Op::JumpTrue, 0, 0, 0, 3)];
+        function.code = vec![
+            Instr::new(Op::LoadConst, 3, 0, 0, 0),
+            Instr::wide(0).unwrap(),
+            Instr::new(Op::Move, 5, 3, 0, 0),
+            Instr::new(Op::Return, 5, 0, 0, 0),
+        ];
+        let original = function.code.clone();
+        assert!(!coalesce_distant_producer_moves(function, &[], &[], &[]));
+        assert_eq!(function.code, original);
+    }
 
     #[test]
     fn constant_fusion_falls_back_when_tagged_operand_cannot_fit() {
