@@ -620,11 +620,22 @@ llvm-bolt $BINARY -o $BINARY-bolt -data=bolt/profile.fdata \
   -skip-funcs-file=bolt/skip.funcs -use-gnu-stack
 ```
 
-Compare binaries only with equal page-cache state: a freshly written file is
-cached in large folios, whose pages fault-around maps together (a just-written
-BOLT output measured 8 MB above the same file once evicted with
-`posix_fadvise(POSIX_FADV_DONTNEED)`).
+`quench-node` registers its read-only file mappings with userfaultfd for
+asynchronous write protection at start (`resident_pages::map_touched_pages_only`,
+Linux 6.7 `UFFD_FEATURE_WP_ASYNC`): the kernel then skips fault-around in them,
+so a fault maps only the touched page, not its cached 64 KB neighbourhood or
+whole large folio. The mappings are never written, so the registration changes
+nothing else; without the feature they keep fault-around. Resident code is then
+what a run touches, and the block layout above decides how many pages that is.
+Page-cache state matters far less once faults stop mapping neighbours (a
+freshly written binary measured 0.3 MB above the same file evicted, against 8 MB
+with fault-around), but comparisons still evict every binary first
+(`posix_fadvise(POSIX_FADV_DONTNEED)`).
 
 Measure peak RSS with a launcher whose own image is small (`vfork`, `exec`,
 `wait4`): a forked interpreter's pre-`exec` image counts toward the child's
 `ru_maxrss`.
+
+The [no-JIT web framework benchmark](web-benchmarks.md) compares Quench, Node
+and Bun using pinned upstream HTTP workloads and retains correctness and runtime
+identity evidence for each framework/runtime combination.

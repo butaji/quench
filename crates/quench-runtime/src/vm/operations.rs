@@ -1707,48 +1707,55 @@ impl<H: Host> Vm<H> {
         }
     }
 
+    /// `identity_equality` decided from the operand words alone: identical non-Number
+    /// words, or a record object against another record object or a nullish value. A record
+    /// object is never `document.all` (`is_html_dda`), so loose and strict equality agree.
+    /// `None` leaves the operands to `identity_equality`.
+    #[inline(always)]
+    pub(super) fn word_identity_equality(op: u32, left: Value, right: Value) -> Option<bool> {
+        let (_, negated) = equality_operator(op)?;
+        let record = |value: Value| {
+            value.direct_object_index().is_some() || value.direct_array_index().is_some()
+        };
+        let record_or_nullish =
+            |value: Value| record(value) || value.is_null() || value.is_undefined();
+        if left == right {
+            return left.as_number().is_none().then_some(!negated);
+        }
+        ((record(left) && record_or_nullish(right)) || (record(right) && record_or_nullish(left)))
+            .then_some(negated)
+    }
+
     /// `==`, `!=`, `===` or `!==` of non-number operands when no conversion can decide it:
-    /// equal bits are the same value; distinct strict operands differ unless both carry
-    /// contents (strings, BigInts); a loose null or undefined equals only null, undefined and
-    /// [[IsHTMLDDA]] objects; two distinct objects are loosely unequal. `None` leaves numbers
-    /// and every comparison that may coerce to the full algorithm.
+    /// equal bits are the same value; distinct strict operands are equal only as strings or
+    /// BigInts of equal contents, as are loose operands of one of those types; a loose null or
+    /// undefined equals only null, undefined and [[IsHTMLDDA]] objects; two distinct objects
+    /// are loosely unequal. `None` leaves numbers and every comparison that may coerce to the
+    /// full algorithm.
     #[inline(always)]
     pub(super) fn identity_equality(&self, op: u32, left: Value, right: Value) -> Option<bool> {
-        const EQUALITY: u32 = BinaryOperator::Equality as u32;
-        const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
-        const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
-        const STRICT_INEQUALITY: u32 = BinaryOperator::StrictInequality as u32;
-        let (strict, negated) = match op {
-            EQUALITY => (false, false),
-            INEQUALITY => (false, true),
-            STRICT_EQUALITY => (true, false),
-            STRICT_INEQUALITY => (true, true),
-            _ => return None,
-        };
+        let (strict, negated) = equality_operator(op)?;
         if left.as_number().is_some() || right.as_number().is_some() {
             return None;
         }
         let equal = if left == right {
             true
         } else if strict {
-            let has_contents = |value: Value| {
-                matches!(
-                    self.heap.get(value),
-                    Some(Cell::String(_) | Cell::BigInt(_))
-                )
-            };
-            if has_contents(left) && has_contents(right) {
-                return None;
-            }
-            false
+            // Distinct words are equal only as strings or BigInts of equal contents.
+            self.strict_equal(left, right)
         } else {
             let nullish = |value: Value| value.is_null() || value.is_undefined();
             match (nullish(left), nullish(right)) {
                 (true, true) => true,
                 (true, false) => self.is_html_dda(right),
                 (false, true) => self.is_html_dda(left),
-                (false, false) if self.is_object_like(left) && self.is_object_like(right) => false,
-                (false, false) => return None,
+                (false, false) => match (self.heap.get(left), self.heap.get(right)) {
+                    // Operands of one type compare as `===` does.
+                    (Some(Cell::String(left)), Some(Cell::String(right))) => left == right,
+                    (Some(Cell::BigInt(left)), Some(Cell::BigInt(right))) => left == right,
+                    _ if self.is_object_like(left) && self.is_object_like(right) => false,
+                    _ => return None,
+                },
             }
         };
         Some(equal != negated)
@@ -1883,4 +1890,20 @@ fn is_odd_integer(value: f64) -> bool {
     value.is_finite()
         && value.fract() == EXPONENTIATION_ZERO
         && value.abs() % EXPONENTIATION_TWO == ODD_INTEGER_PARITY
+}
+
+/// Whether an equality operator is strict and whether it is negated; `None` for any other.
+#[inline(always)]
+fn equality_operator(op: u32) -> Option<(bool, bool)> {
+    const EQUALITY: u32 = BinaryOperator::Equality as u32;
+    const INEQUALITY: u32 = BinaryOperator::Inequality as u32;
+    const STRICT_EQUALITY: u32 = BinaryOperator::StrictEquality as u32;
+    const STRICT_INEQUALITY: u32 = BinaryOperator::StrictInequality as u32;
+    match op {
+        EQUALITY => Some((false, false)),
+        INEQUALITY => Some((false, true)),
+        STRICT_EQUALITY => Some((true, false)),
+        STRICT_INEQUALITY => Some((true, true)),
+        _ => None,
+    }
 }

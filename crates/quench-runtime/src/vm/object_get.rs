@@ -3,6 +3,25 @@ use super::*;
 use crate::heap::PrivateBrand;
 
 impl<H: Host> Vm<H> {
+    /// Inspect data properties for diagnostics without invoking accessors or Proxy traps.
+    pub(super) fn diagnostic_data_property(&self, mut object: Value, key: PropertyKey) -> Option<Value> {
+        loop {
+            if self.proxy_parts(object).is_some() { return None; }
+            let data = self.object_data(object)?;
+            if self.property_attributes(object, key).is_some_and(|attributes| attributes.accessor) {
+                return None;
+            }
+            let value = match key {
+                PropertyKey::String(atom) => self.own_property(object, atom),
+                PropertyKey::Symbol(symbol) => self.symbol_property(object, symbol),
+                PropertyKey::Private(_) => None,
+            };
+            if value.is_some() { return value; }
+            object = data.proto();
+            if object.is_null() { return None; }
+        }
+    }
+
     pub(super) fn nullish_property_error(&mut self, p: &ResidualProgram, object: Value, property: Option<&str>) -> JsError {
         let kind = if object.is_null() { "null" } else { "undefined" };
         let message = match property { Some(property) => format!("Cannot read properties of {kind} (reading '{property}')"), None => format!("Cannot read properties of {kind}") };
@@ -11,6 +30,9 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn module_binding_value(&self, object: Value, atom: Atom) -> Option<Value> {
         let (program, slot) = self.object_data(object)?.module_binding(atom)?;
+        if let Some(value) = self.module_import_value(program, super::ROOT_FUNCTION_ID, usize::from(slot)) {
+            return Some(value);
+        }
         let environment = self.programs.module_environment(program)?;
         self.heap.environment_slot(environment, slot as usize)
     }
@@ -182,6 +204,19 @@ impl<H: Host> Vm<H> {
         property: PropertyKey,
         value: Value,
     ) -> Result<bool, JsError> {
+        self.proxy_set_mode(p, target, handler, receiver, property, value, false)
+    }
+
+    pub(super) fn proxy_set_mode(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        handler: Value,
+        receiver: Value,
+        property: PropertyKey,
+        value: Value,
+        strict: bool,
+    ) -> Result<bool, JsError> {
         let key = self.proxy_key_value(p, property)?;
         if handler.is_null() {
             return Err(self.type_error(p, "cannot access a revoked proxy".into()));
@@ -194,16 +229,23 @@ impl<H: Host> Vm<H> {
         let outcome = (|| {
             let trap = self.proxy_trap(p, self.heap.root_value(handler).unwrap(), "set")?;
             if trap.is_null() || trap.is_undefined() {
-                let target = self.heap.root_value(target).unwrap();
+                let delegate_target = self.heap.root_value(target).unwrap();
                 let receiver = self.heap.root_value(receiver).unwrap();
                 let value = self.heap.root_value(value).unwrap();
+                if let Some((inner, handler)) = self.proxy_parts(delegate_target) {
+                    return self.proxy_set_mode(p, inner, handler, receiver, property, value, strict);
+                }
                 return match property {
                     PropertyKey::String(atom) => {
-                        self.set_property_with_receiver(p, target, atom, value, receiver)
+                        let written = self.set_property_with_receiver(p, delegate_target, atom, value, receiver)?;
+                        if !written && strict {
+                            return Err(self.rejected_assignment_error(p, self.heap.root_value(target).unwrap(), atom, true));
+                        }
+                        Ok(written)
                     }
                     PropertyKey::Symbol(_) => self.set_symbol_property_with_receiver(
                         p,
-                        target,
+                        delegate_target,
                         self.heap.root_value(key).unwrap(),
                         value,
                         receiver,
@@ -226,6 +268,10 @@ impl<H: Host> Vm<H> {
                 ],
             )?;
             if !self.truthy(result) {
+                if strict {
+                    let property = self.detail_string(self.heap.root_value(key).unwrap());
+                    return Err(self.type_error(p, format!("'set' on proxy: trap returned falsish for property '{property}'")));
+                }
                 return Ok(false);
             }
             let descriptor = self.object_get_own_property_descriptor(

@@ -28,7 +28,9 @@ pub(crate) fn encode_str(input: &str, encoding: &str) -> Vec<u8> {
 pub(crate) fn encode_units(input: &[u16], encoding: &str) -> Vec<u8> {
     match encoding {
         "latin1" | "ascii" | "utf16le" => encode_fixed_width_units(input.iter().copied(), encoding),
-        "base64" | "base64url" => base64_decode(&input.iter().map(|unit| *unit as u8).collect::<Vec<_>>()),
+        "base64" | "base64url" => {
+            base64_decode(&input.iter().map(|unit| *unit as u8).collect::<Vec<_>>())
+        }
         _ => encode_str(&String::from_utf16_lossy(input), encoding),
     }
 }
@@ -43,21 +45,63 @@ fn encode_fixed_width_units(input: impl Iterator<Item = u16>, encoding: &str) ->
 
 /// Decode bytes to UTF-16 code units under a canonical encoding.
 pub(crate) fn decode_units(bytes: &[u8], encoding: &str) -> Vec<u16> {
+    decode_units_limited(bytes, encoding, usize::MAX).expect("unbounded codec output length")
+}
+
+/// Check the resulting string's UTF-16 length before allocating its unit storage.
+/// The caller supplies the original runtime limit; public mutable exports are not read.
+pub(crate) fn decode_units_limited(
+    bytes: &[u8],
+    encoding: &str,
+    maximum: usize,
+) -> Option<Vec<u16>> {
+    const HEX_CHARACTERS_PER_BYTE: usize = 2;
+    let direct_length = match encoding {
+        "latin1" | "ascii" => Some(bytes.len()),
+        "hex" => Some(bytes.len().checked_mul(HEX_CHARACTERS_PER_BYTE)?),
+        "utf16le" => Some(bytes.len() / std::mem::size_of::<u16>()),
+        "base64" | "base64url" => {
+            // Each complete three-byte quantum becomes four characters.
+            const INPUT_QUANTUM: usize = 3;
+            const OUTPUT_QUANTUM: usize = 4;
+            let complete = (bytes.len() / INPUT_QUANTUM).checked_mul(OUTPUT_QUANTUM)?;
+            let remainder = bytes.len() % INPUT_QUANTUM;
+            Some(complete.checked_add(if remainder == 0 {
+                0
+            } else if encoding == "base64" {
+                OUTPUT_QUANTUM
+            } else {
+                remainder + 1
+            })?)
+        }
+        _ => None,
+    };
+    if direct_length.is_some_and(|length| length > maximum) {
+        return None;
+    }
     let text = match encoding {
         "hex" => hex::encode(bytes),
-        "latin1" => return bytes.iter().map(|byte| u16::from(*byte)).collect(),
-        "ascii" => return bytes.iter().map(|byte| u16::from(byte & 0x7f)).collect(),
+        "latin1" => return Some(bytes.iter().map(|byte| u16::from(*byte)).collect()),
+        "ascii" => return Some(bytes.iter().map(|byte| u16::from(byte & 0x7f)).collect()),
         "base64" => base64_encode(bytes, true, false),
         "base64url" => base64_encode(bytes, false, true),
         "utf16le" => {
-            return bytes
-                .chunks_exact(2)
-                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-                .collect();
+            return Some(
+                bytes
+                    .chunks_exact(std::mem::size_of::<u16>())
+                    .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                    .collect(),
+            )
         }
-        _ => String::from_utf8_lossy(bytes).into_owned(),
+        _ => {
+            let text = String::from_utf8_lossy(bytes);
+            if bytes.len() > maximum && text.encode_utf16().count() > maximum {
+                return None;
+            }
+            return Some(text.encode_utf16().collect());
+        }
     };
-    text.encode_utf16().collect()
+    Some(text.encode_utf16().collect())
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
