@@ -100,7 +100,7 @@ pub(crate) fn install(c: &mut Context<'_>, prototype: RootId) -> Result<(), Root
 pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     const CACHE_KEY: &str = "\0binding:buffer";
     let shared = c.host_mut().shared_state();
-    if let Some(binding) = shared.borrow().module_cache.get(CACHE_KEY).copied() {
+    if let Some(binding) = shared.borrow().builtin_cache.get(CACHE_KEY).copied() {
         return Ok(binding);
     }
     let binding = c.with_startup_intrinsics(|c| {
@@ -113,7 +113,7 @@ pub(crate) fn binding(c: &mut Context<'_>) -> Result<RootId, RootedError> {
     let binding = c.retain(binding)?;
     shared
         .borrow_mut()
-        .module_cache
+        .builtin_cache
         .insert(CACHE_KEY.to_owned(), binding);
     Ok(binding)
 }
