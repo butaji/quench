@@ -931,7 +931,7 @@ impl<H: Host> Vm<H> {
                     Some(Cell::Symbol(description)) => format!("Symbol({})", description.as_deref().unwrap_or("")),
                     Some(Cell::String(_) | Cell::BigInt(_)) => self.to_string(p, this)?,
                     _ if this.as_number().is_some() || this.as_bool().is_some() => self.to_string(p, this)?,
-                    _ => "#<Object>".to_owned(),
+                    _ => self.diagnostic_object_receiver(this),
                 }};
             return Err(self.type_error(p, format!("Method get TypedArray.prototype.{property} called on incompatible receiver {receiver}")));
         };

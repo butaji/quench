@@ -1267,7 +1267,10 @@ impl<H: Host> Vm<H> {
                 },
             );
         }
-        let value = self.heap.alloc(Cell::String(JsString::from_str(name)));
+        // A builtin's name usually spells the key it is installed under, whose interned
+        // string the name then shares instead of copying the text for every function.
+        let name_atom = self.intern_atom(name);
+        let value = self.heap.alloc(Cell::String(self.atom_value(name_atom)));
         self.set_property(function, atom, value)?;
         self.set_property_attributes(
             function,

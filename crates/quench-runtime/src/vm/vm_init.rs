@@ -86,6 +86,7 @@ impl<H: Host> Vm<H> {
             #[cfg(not(feature = "profile-aggregate"))]
             profile: Profile,
             shapes: vec![Shape::root()],
+            shape_accessors: Vec::new(),
             transitions: FxHashMap::default(),
             atom_text: AtomTable::default(),
             atoms: FxHashMap::default(),
@@ -126,6 +127,7 @@ impl<H: Host> Vm<H> {
             descriptors: FxHashMap::default(),
             function_values: FxHashMap::default(),
             wasm_exported_functions: FxHashMap::default(),
+            private_homes: FxHashMap::default(),
             wasm_js: Default::default(),
             direct_eval: false,
             direct_eval_var_program: None,

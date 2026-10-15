@@ -77,7 +77,7 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
                 slot,
                 attributes: value,
             } => {
-                if seen_slots.insert(slot) && value != DEFAULT_PROPERTY_ATTRIBUTES {
+                if seen_slots.insert(slot) && value != DEFAULT_SHAPE_ATTRIBUTES {
                     attributes.insert(slot, value);
                 }
             }
@@ -85,7 +85,7 @@ fn derive_shape_lookup_index(shapes: &[Shape], shape: u32) -> ShapeLookupIndex {
             | ShapeTransition::Vacant
             | ShapeTransition::Dictionary { .. } => {}
         }
-        current = shape.parent;
+        current = shape.parent();
     }
     entries.reverse();
     let slots = entries.iter().copied().collect();
@@ -190,7 +190,7 @@ impl<H: Host> Vm<H> {
                 | ShapeTransition::Delete { .. }
                 | ShapeTransition::Vacant
                 | ShapeTransition::Descriptor { .. }
-                | ShapeTransition::Dictionary { .. } => current = shape.parent,
+                | ShapeTransition::Dictionary { .. } => current = shape.parent(),
             }
             distance += 1;
         };
@@ -230,8 +230,9 @@ impl<H: Host> Vm<H> {
                 index
                     .attributes
                     .get(&(slot as u32))
-                    .copied()
-                    .unwrap_or(DEFAULT_PROPERTY_ATTRIBUTES),
+                    .map_or(DEFAULT_PROPERTY_ATTRIBUTES, |attributes| {
+                        attributes.attributes(&self.shape_accessors)
+                    }),
             );
         }
         let mut current = Some(shape);
@@ -241,7 +242,9 @@ impl<H: Host> Vm<H> {
                 ShapeTransition::Descriptor {
                     slot: candidate,
                     attributes,
-                } if candidate as usize == slot => return Some(attributes),
+                } if candidate as usize == slot => {
+                    return Some(attributes.attributes(&self.shape_accessors));
+                }
                 ShapeTransition::Add {
                     slot: candidate, ..
                 } if candidate as usize == slot => return Some(DEFAULT_PROPERTY_ATTRIBUTES),
@@ -253,7 +256,7 @@ impl<H: Host> Vm<H> {
                 | ShapeTransition::Delete { .. }
                 | ShapeTransition::Vacant
                 | ShapeTransition::Descriptor { .. }
-                | ShapeTransition::Dictionary { .. } => current = shape.parent,
+                | ShapeTransition::Dictionary { .. } => current = shape.parent(),
             }
         }
         None
@@ -307,7 +310,7 @@ impl<H: Host> Vm<H> {
         if self.shape_is_dictionary(shape) {
             return;
         }
-        let storage_len = self.shapes[shape as usize].storage_len;
+        let storage_len = self.shapes[shape as usize].storage_len();
         let dictionary_shape =
             self.append_shape(shape, ShapeTransition::Dictionary { trigger }, storage_len);
         self.object_data_mut(object)
@@ -362,6 +365,7 @@ impl<H: Host> Vm<H> {
             if self.shape_attribute(shape, slot) == Some(attributes) {
                 return;
             }
+            let attributes = ShapeAttributes::record(attributes, &mut self.shape_accessors);
             let next_id = self.append_cached_shape_transition(
                 shape,
                 ShapeTransition::Descriptor {
@@ -385,7 +389,7 @@ impl<H: Host> Vm<H> {
                 shape,
                 ShapeTransition::Descriptor {
                     slot: slot as u32,
-                    attributes: DEFAULT_PROPERTY_ATTRIBUTES,
+                    attributes: DEFAULT_SHAPE_ATTRIBUTES,
                 },
             );
             self.object_data_mut(object)
@@ -1732,14 +1736,8 @@ impl<H: Host> Vm<H> {
         // the generic object mutator's fallback error is not an ECMAScript
         // error object and loses constructor identity at the Test262 boundary.
         if object.is_null() || object.is_undefined() {
-            return Err(self.type_error(
-                p,
-                if object.is_null() {
-                    "cannot set properties of null".into()
-                } else {
-                    "cannot set properties of undefined".into()
-                },
-            ));
+            let key = self.atom_name(atom).to_owned();
+            return Err(self.nullish_assignment_error(p, object, &key));
         }
         if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
@@ -1755,7 +1753,7 @@ impl<H: Host> Vm<H> {
                 return self.set_shape_property(object, PropertyKey::string(atom), value);
             }
             let written =
-                self.proxy_set(p, target, handler, object, PropertyKey::string(atom), value)?;
+                self.proxy_set_mode(p, target, handler, object, PropertyKey::string(atom), value, strict)?;
             return if written || !strict {
                 Ok(())
             } else {
@@ -1771,7 +1769,7 @@ impl<H: Host> Vm<H> {
             return if succeeded || !strict {
                 Ok(())
             } else {
-                Err(self.type_error(p, "cannot assign property on primitive value".into()))
+                Err(self.primitive_assignment_error(p, object, atom))
             };
         }
         let own = self.own_property(object, atom).is_some();
@@ -1782,7 +1780,7 @@ impl<H: Host> Vm<H> {
             if let Some(setter) = attributes.setter {
                 self.call_value(p, setter, object, &[value])?;
             } else if strict || self.is_private_name(atom) {
-                return Err(self.type_error(p, "property has no setter".into()));
+                return Err(self.rejected_assignment_error(p, object, atom, false));
             }
             return Ok(());
         }
@@ -1792,14 +1790,14 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|attributes| !attributes.writable)
         {
             return if strict || self.is_private_name(atom) {
-                Err(self.type_error(p, "cannot write non-writable property".into()))
+                Err(self.rejected_assignment_error(p, object, atom, false))
             } else {
                 Ok(())
             };
         }
         if !own && self.inherited_write_blocked(object, atom) {
             return if strict || self.is_private_name(atom) {
-                Err(self.type_error(p, "cannot write inherited non-writable property".into()))
+                Err(self.rejected_assignment_error(p, object, atom, false))
             } else {
                 Ok(())
             };
@@ -1810,7 +1808,7 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|object| !object.is_extensible())
         {
             return if strict {
-                Err(self.type_error(p, "cannot add property to non-extensible object".into()))
+                Err(self.rejected_assignment_error(p, object, atom, false))
             } else {
                 Ok(())
             };
@@ -1863,7 +1861,7 @@ impl<H: Host> Vm<H> {
         if slot <= u16::MAX as usize && !self.shape_is_dictionary(data_shape) {
             if existing.is_none()
                 && data_shape != shape
-                && slot == self.shapes[shape as usize].storage_len
+                && slot == self.shapes[shape as usize].storage_len()
                 && !self.shape_is_dictionary(shape)
                 && let Some(prototype_guard) = add_prototype_guard
             {
@@ -1931,7 +1929,7 @@ impl<H: Host> Vm<H> {
         if !self.field_add_prototype_chain_matches(proto, cache.prototype_shapes()) {
             return false;
         }
-        debug_assert_eq!(cache.slot as usize, self.shapes[shape as usize].storage_len);
+        debug_assert_eq!(cache.slot as usize, self.shapes[shape as usize].storage_len());
         self.heap.property_add(object, value, cache.target_shape);
         if self.method_caches_may_name(atom) {
             self.invalidate_method_caches_for_prototype_add(object, atom);
@@ -2066,14 +2064,8 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<(), JsError> {
         if object.is_null() || object.is_undefined() {
-            return Err(self.type_error(
-                p,
-                if object.is_null() {
-                    "cannot set properties of null".into()
-                } else {
-                    "cannot set properties of undefined".into()
-                },
-            ));
+            let key = self.atom_name(atom).to_owned();
+            return Err(self.nullish_assignment_error(p, object, &key));
         }
         if !self.is_object_like(object) {
             if self.is_private_name(atom) {
@@ -2084,14 +2076,18 @@ impl<H: Host> Vm<H> {
             return if written || !strict {
                 Ok(())
             } else {
-                Err(self.type_error(p, "cannot assign property on primitive value".into()))
+                Err(self.primitive_assignment_error(p, object, atom))
             };
         }
-        let written = self.set_property_with_receiver(p, object, atom, value, object)?;
+        let written = if let Some((target, handler)) = self.proxy_parts(object) {
+            self.proxy_set_mode(p, target, handler, object, PropertyKey::string(atom), value, strict)?
+        } else {
+            self.set_property_with_receiver(p, object, atom, value, object)?
+        };
         if written || !strict {
             Ok(())
         } else {
-            Err(self.type_error(p, "cannot assign property".into()))
+            Err(self.rejected_assignment_error(p, object, atom, false))
         }
     }
 
@@ -2244,7 +2240,7 @@ impl<H: Host> Vm<H> {
     pub(super) fn transition_property_shape(&mut self, shape: u32, key: PropertyKey) -> u32 {
         let transition = ShapeTransition::Add {
             key,
-            slot: u32::try_from(self.shapes[shape as usize].storage_len)
+            slot: u32::try_from(self.shapes[shape as usize].storage_len())
                 .expect("object property index exceeds u32"),
         };
         self.append_cached_shape_transition(shape, transition)
@@ -2260,7 +2256,7 @@ impl<H: Host> Vm<H> {
         if key.is_some() || matches!(transition, ShapeTransition::Add { .. }) {
             self.profile.shape_transition(false);
         }
-        let storage_len = self.shapes[shape as usize].storage_len;
+        let storage_len = self.shapes[shape as usize].storage_len();
         let next_storage_len = match transition {
             ShapeTransition::Add { .. } => storage_len
                 .checked_add(1)
@@ -2301,7 +2297,7 @@ impl<H: Host> Vm<H> {
         let Some(slot) = self.property_shape_slot(shape, key) else {
             return;
         };
-        let storage_len = self.shapes[shape as usize].storage_len;
+        let storage_len = self.shapes[shape as usize].storage_len();
         let next_id = self.append_shape(
             shape,
             ShapeTransition::Delete {
