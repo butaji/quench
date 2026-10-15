@@ -90,9 +90,13 @@ const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOpera
       // Writable `finish` completes the response body, while the socket owns
       // the response's transport lifetime.
       autoDestroy: false,
-      write(chunk, encoding, callback) { callback(); },
+      write(chunk, encoding, callback) {
+        write(id, chunk, !ending, response.statusCode, response.statusMessage, response, encoding);
+        response.headersSent = true;
+        callback();
+      },
       final(callback) {
-        try { finish(id, response.statusCode, response.statusMessage, request, response, server, socket); callback(); }
+        try { finish(id, response.statusCode, response.statusMessage, request, response, server, socket); response.headersSent = true; callback(); }
         catch (error) { callback(error); }
       },
       destroy(error, callback) {
@@ -103,14 +107,6 @@ const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOpera
     Object.setPrototypeOf(response, ServerResponse.prototype);
     response.finished = false;
     response.statusCode = statusCode;
-    const writeStream = response.write.bind(response);
-    response.write = (chunk, encoding, callback) => {
-      const ended = response.writableEnded;
-      const result = writeStream(chunk, encoding, callback);
-      if (!ended) write(id, chunk, !ending, response.statusCode, response.statusMessage, response, typeof encoding === "string" ? encoding : undefined);
-      response.headersSent = true;
-      return result;
-    };
     const endStream = response.end.bind(response);
     response.end = (chunk, encoding, callback) => {
       ending = true;

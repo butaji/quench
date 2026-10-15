@@ -303,7 +303,10 @@ pub(super) fn codec_input(
     )?)
 }
 
-fn constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+pub(crate) fn constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    const CACHE_KEY: &str = "\0builtin:zlib/constants";
+    let shared = context.host_mut().shared_state();
+    if let Some(value) = shared.borrow().module_cache.get(CACHE_KEY).copied() { return Ok(value); }
     let object = context.object_rooted()?;
     for (name, number) in crate::modules::zlib_constants::ZLIB_CONSTANTS {
         let key = context.string_rooted(name);
@@ -312,6 +315,8 @@ fn constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, Rooted
             return Err(RootedError::host("cannot install zlib constant"));
         }
     }
+    let retained = context.retain(object)?;
+    shared.borrow_mut().module_cache.insert(CACHE_KEY.to_owned(), retained);
     Ok(object)
 }
 
