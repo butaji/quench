@@ -7854,3 +7854,22 @@ console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[test]
+fn filesystem_statfs_results_share_node_constructor_prototypes_and_field_descriptors() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),assert=require('node:assert'),out=[];
+const numeric=fs.statfsSync('/'),big=fs.statfsSync('/',{bigint:true}),C=numeric.constructor;
+assert.strictEqual(C,big.constructor);assert.strictEqual(C.name,'StatFs');assert.strictEqual(C.length,8);
+assert.strictEqual(Object.getPrototypeOf(numeric),C.prototype);assert.strictEqual(Object.getPrototypeOf(big),C.prototype);
+for(const value of [numeric,big]){out.push([value.constructor.name,Reflect.ownKeys(Object.getPrototypeOf(value)),Object.entries(Object.getOwnPropertyDescriptors(value)).map(([k,d])=>[k,typeof d.value,d.writable,d.enumerable,d.configurable])]);}
+const made=new C(1,2,3,4,5,6,7,8);out.push(Object.entries(made));assert.throws(()=>C(),TypeError);
+C.prototype.marker='shared-statfs';assert.strictEqual(fs.statfsSync('/').marker,'shared-statfs');delete C.prototype.marker;
+const marker={},seen=[];Object.defineProperty(C.prototype,'blocks',{configurable:true,set(value){seen.push(typeof value);throw marker}});for(const bigint of [false,true])assert.throws(()=>fs.statfsSync('/',{bigint}),e=>e===marker);delete C.prototype.blocks;out.push(seen);
+const callback=new Promise(resolve=>fs.statfs('/',(error,value)=>{assert.strictEqual(error,null);assert.strictEqual(value.constructor,C);resolve(['callback',value.constructor.name]);}));
+const promise=fs.promises.statfs('/',{bigint:true}).then(value=>{assert.strictEqual(value.constructor,C);assert.strictEqual(typeof value.blocks,'bigint');return ['promise',value.constructor.name]});
+Promise.all([callback,promise]).then(results=>{out.push(...results);console.log(JSON.stringify(out));});
+"#,
+    );
+}

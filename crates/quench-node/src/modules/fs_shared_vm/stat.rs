@@ -185,6 +185,10 @@ pub(crate) fn stat_sync(
     sync_metadata(context, args, MetadataOperation::Stat)
 }
 
+// libuv statfs counters in the order consumed by Node getStatFsFromBinding.
+#[cfg(not(target_os = "linux"))]
+const STATFS_FIELD_COUNT: usize = 8;
+
 pub(crate) fn statfs_sync(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
@@ -204,14 +208,14 @@ pub(crate) fn statfs_sync(
                 if status == 0 {
                     let stats = unsafe { stats.assume_init() };
                     Ok([
-                        ("type", stats.f_type as i128),
-                        ("bsize", stats.f_bsize as i128),
-                        ("frsize", stats.f_frsize as i128),
-                        ("blocks", stats.f_blocks as i128),
-                        ("bfree", stats.f_bfree as i128),
-                        ("bavail", stats.f_bavail as i128),
-                        ("files", stats.f_files as i128),
-                        ("ffree", stats.f_ffree as i128),
+                        stats.f_type as i128,
+                        stats.f_bsize as i128,
+                        stats.f_frsize as i128,
+                        stats.f_blocks as i128,
+                        stats.f_bfree as i128,
+                        stats.f_bavail as i128,
+                        stats.f_files as i128,
+                        stats.f_ffree as i128,
                     ])
                 } else {
                     Err(io::Error::last_os_error())
@@ -221,21 +225,21 @@ pub(crate) fn statfs_sync(
         }
     };
     #[cfg(not(target_os = "linux"))]
-    let result: Result<[(&str, i128); 8], io::Error> =
+    let result: Result<[i128; STATFS_FIELD_COUNT], io::Error> =
         Err(io::Error::from_raw_os_error(libc::ENOSYS));
     match result {
         Ok(values) => {
-            let object = context.object_rooted()?;
-            for (name, value) in values {
-                let value = if bigint {
-                    context.bigint_rooted(value)
-                } else {
-                    context.number(value as f64)
-                };
-                let key = context.string_rooted(name);
-                context.define_data_property_rooted(object, key, value, true, true, true)?;
-            }
-            Ok(object)
+            let values = values
+                .into_iter()
+                .map(|value| {
+                    if bigint {
+                        context.bigint_rooted(value)
+                    } else {
+                        context.number(value as f64)
+                    }
+                })
+                .collect::<Vec<_>>();
+            types::statfs_from_values(context, &values)
         }
         Err(error) => {
             let path = super::super::fs_path::display(context, value)?;
