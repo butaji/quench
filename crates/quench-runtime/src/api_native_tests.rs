@@ -631,6 +631,34 @@ fn collect_json(
 #[derive(Default)]
 struct LazyHost;
 
+struct RestartIntrinsicsHost;
+
+impl Host for RestartIntrinsicsHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn initialize(context: &mut NativeContext<'_, Self>) -> Result<(), RootedError> {
+        context.with_startup_intrinsics(|context| {
+            context.evaluate_script_rooted(
+                "Array.bootstrapRealmMarker = { fresh: true };",
+                "restart-intrinsics-bootstrap.js",
+            )
+        })?;
+        context.seal_startup_intrinsics();
+        Ok(())
+    }
+}
+
+#[test]
+fn startup_intrinsics_are_reset_before_a_replacement_realm_bootstraps() {
+    let source = "if (!Array.bootstrapRealmMarker.fresh) throw new Error('stale bootstrap'); Array.bootstrapRealmMarker.fresh = false;";
+    for program in [Engine::compile(crate::ExecutionRequest { source, name: "restart-intrinsics.js", kind: crate::SourceKind::Script }).unwrap(), Engine::specialize(source, "restart-intrinsics.js").unwrap()] {
+        let mut runtime = Runtime::new(RestartIntrinsicsHost);
+        for _ in 0..2 {
+            runtime.execute(&program).unwrap();
+        }
+    }
+}
+
 const LAZY_GROUP_SCRIPT: &str = "globalThis.inits = (globalThis.inits || 0) + 1; \
     globalThis.A = 'a'; globalThis.B = 'b'; \
     Object.defineProperty(globalThis, 'C', { value: 'c', writable: true, configurable: true });";
