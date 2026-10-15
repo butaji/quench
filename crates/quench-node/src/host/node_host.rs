@@ -65,6 +65,7 @@ pub(crate) struct SharedNodeState {
     pub(crate) module_cache: std::collections::HashMap<String, quench_runtime::RootId>,
     /// Node's internal primordial snapshot used when loading `lib/internal/*`.
     pub(crate) primordials_module: Option<quench_runtime::RootId>,
+    pub(crate) crypto_handle_symbol: Option<quench_runtime::RootId>,
     pub(crate) event_targets_api: Option<quench_runtime::RootId>,
     pub(crate) trace: crate::modules::trace_state::TraceState,
     pub(crate) util_intrinsics: Option<crate::modules::util_shared_vm::UtilIntrinsics>,
@@ -165,6 +166,7 @@ impl SharedNodeState {
         self.module_cache.clear();
         self.buffer_prototype = None;
         self.primordials_module = None;
+        self.crypto_handle_symbol = None;
         self.event_targets_api = None;
         self.process_module = None;
         self.assert_module = None;
@@ -210,6 +212,7 @@ impl SharedNodeState {
             buffer_prototype: None,
             module_cache: std::collections::HashMap::new(),
             primordials_module: None,
+            crypto_handle_symbol: None,
             event_targets_api: None,
             util_intrinsics: None,
             node_error_api: None,
