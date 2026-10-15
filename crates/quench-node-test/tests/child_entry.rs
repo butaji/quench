@@ -6941,3 +6941,38 @@ function next(){
 next();
 "#);
 }
+
+#[test]
+fn http_header_validators_preserve_metadata_coercions_errors_and_byte_rules() {
+compare_node_stream_source(r#"
+'use strict';
+const http=require('http'),out=[],hooks=[];
+function shape(fn){
+ if(typeof fn!=='function')return typeof fn;
+ let constructible;try{Reflect.construct(Object,[],fn);constructible=true}catch{constructible=false}
+ const properties=Object.getOwnPropertyDescriptors(fn);
+ return [fn.name,fn.length,Object.hasOwn(fn,'prototype'),constructible,Object.keys(fn),Object.fromEntries(['name','length','withoutStackTrace'].filter(k=>properties[k]).map(k=>[k,[properties[k].writable,properties[k].enumerable,properties[k].configurable]]))];
+}
+function invoke(tag,fn,args){
+ hooks.length=0;
+ try{const result=Reflect.apply(fn,undefined,args);out.push([tag,'return',typeof result,result===undefined,hooks.slice()])}
+ catch(e){out.push([tag,'throw',e.name,e.code,e.message,hooks.slice()])}
+}
+for(const name of ['validateHeaderName','validateHeaderValue']){
+ const fn=http[name];out.push([name,shape(fn),shape(fn.withoutStackTrace),fn===fn.withoutStackTrace]);
+}
+const names=[undefined,null,false,0,1,1n,Symbol('name'),'', 'valid-Name','x space','x\tname','x\x7fname','é','😀','\ud800',new String('boxed'),[],{}, {toString(){hooks.push('name-string');return 'bad name'}},{[Symbol.toPrimitive](hint){hooks.push(['name-hint',hint]);return 'bad name'}}];
+const labels=[undefined,null,false,0,'','Custom label',Symbol('label'),{toString(){hooks.push('label-string');return 'Object label'}}];
+for(let n=0;n<names.length;n++)for(let l=0;l<labels.length;l++)invoke(['name',n,l],http.validateHeaderName,[names[n],labels[l]]);
+for(const [tag,value] of [['string-throw',{toString(){hooks.push('throw');throw new RangeError('hook failed')}}],['primitive-throw',{[Symbol.toPrimitive](hint){hooks.push(hint);throw new RangeError('primitive failed')}}]]){
+ invoke(['name-hook',tag],http.validateHeaderName,[value]);
+ invoke(['value-hook',tag],http.validateHeaderValue,['x',value]);
+}
+const values=[undefined,null,false,0,-0,1n,Symbol('value'),'', 'valid','\t','\r','\n','\0','\x7f','é','\u0100','😀','\ud800',new String('boxed'),[],{}, {toString(){hooks.push('value-string');return 'ok'}},{[Symbol.toPrimitive](hint){hooks.push(['value-hint',hint]);return 'ok'}}];
+for(let v=0;v<values.length;v++)for(const lenient of [undefined,false,true,0,1,'',{},null])invoke(['value',v,typeof lenient,String(lenient)],http.validateHeaderValue,['x',values[v],lenient]);
+for(let code=0;code<=255;code++)for(const lenient of [false,true])invoke(['byte',code,lenient],http.validateHeaderValue,['x',String.fromCharCode(code),lenient]);
+for(let n=0;n<names.length;n++)for(const value of [undefined,'\r','ok'])invoke(['error-name',n,value],http.validateHeaderValue,[names[n],value]);
+for(const name of ['validateHeaderName','validateHeaderValue'])for(const args of [[],['valid','ok'],['bad name','\r']])invoke(['unwrapped',name,args],http[name].withoutStackTrace,args);
+console.log(JSON.stringify(out));
+"#);
+}

@@ -110,10 +110,25 @@ pub(crate) fn is_http_token_char(character: char) -> bool {
         )
 }
 
+/// RFC 7230 field-vchar/obs-text, or Fetch's relaxed byte-value rules.
+pub(crate) fn valid_header_unit(unit: u16, lenient: bool) -> bool {
+    const OBS_TEXT_START: u16 = 0x80;
+    let byte = unit <= u16::from(u8::MAX);
+    if lenient {
+        byte && ![b'\0', b'\r', b'\n']
+            .iter()
+            .any(|value| unit == u16::from(*value))
+    } else {
+        unit == u16::from(b'\t')
+            || (u16::from(b' ')..=u16::from(b'~')).contains(&unit)
+            || (OBS_TEXT_START..=u16::from(u8::MAX)).contains(&unit)
+    }
+}
+
 pub(crate) fn valid_header_value(value: &str) -> bool {
-    !value.chars().any(|character| {
-        (character != '\t' && (character as u32) < 0x20) || character as u32 > 0xFF
-    })
+    value
+        .encode_utf16()
+        .all(|unit| valid_header_unit(unit, false))
 }
 
 pub(crate) fn default_status_message(status: u16) -> &'static str {
