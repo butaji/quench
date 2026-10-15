@@ -10,6 +10,7 @@ use quench_runtime::{
 use crate::Test262Host;
 
 const TEST262_MODULE_SOURCE_SPECIFIER: &str = "<module source>";
+const HARNESS_SCRIPT_NAME: &str = "<test262-harness>";
 
 static HOST_GLOBALS: [HostGlobal; 2] = [
     HostGlobal {
@@ -111,6 +112,18 @@ impl Test262RuntimeHost {
     }
 
     fn execute_kind(&mut self, source: &str, name: &str, kind: SourceKind) -> Result<(), String> {
+        self.execute_after_harness(&[], source, name, kind)
+    }
+
+    /// Harness files are global Scripts evaluated in the test's realm before
+    /// its entry, so modules the entry loads observe the same harness bindings.
+    fn execute_after_harness(
+        &mut self,
+        harness: &[&str],
+        source: &str,
+        name: &str,
+        kind: SourceKind,
+    ) -> Result<(), String> {
         self.done = None;
         let async_test = self.async_test;
         let mut runtime = Runtime::new(std::mem::take(self));
@@ -121,7 +134,11 @@ impl Test262RuntimeHost {
                 SourceKind::Eval => Engine::compile(ExecutionRequest { source, name, kind }),
             }
             .map_err(|errors| format!("quench runtime SyntaxError: {errors:?}"))?;
-            runtime.execute(&program).map_err(|error| {
+            let harness = harness
+                .iter()
+                .map(|script| (*script, HARNESS_SCRIPT_NAME))
+                .collect::<Vec<_>>();
+            runtime.execute_after_scripts(&harness, &program).map_err(|error| {
                 format!("quench runtime: {}", runtime.format_error(&program, &error))
             })?;
             if async_test {
@@ -202,11 +219,7 @@ impl Test262Host for Test262RuntimeHost {
     }
 
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
-        self.execute_kind(
-            &Self::compose(harness, source, false),
-            "<test262-module>",
-            SourceKind::Module,
-        )
+        self.execute_after_harness(harness, source, "<test262-module>", SourceKind::Module)
     }
 
     fn run_harnessed_module_at(
@@ -215,8 +228,9 @@ impl Test262Host for Test262RuntimeHost {
         source: &str,
         path: &Path,
     ) -> Result<(), String> {
-        self.execute_kind(
-            &Self::compose(harness, source, false),
+        self.execute_after_harness(
+            harness,
+            source,
             &path.display().to_string(),
             SourceKind::Module,
         )
