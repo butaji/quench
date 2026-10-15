@@ -1557,11 +1557,12 @@ fn native_recursive_watch_class_close_and_per_path_hooks_match_node() {
     compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-hooks-')),sub=path.join(dir,'sub'),file=path.join(sub,'file');fs.mkdirSync(sub);fs.writeFileSync(file,'before');
-const original=fs.watch,hooks=[];
-fs.watch=function(filename,options,listener){hooks.push(path.relative(dir,filename));return Reflect.apply(original,this,[filename,options,listener]);};
+const original=fs.watch,hooks=[],references=[];
+fs.symlinkSync(file,path.join(dir,'link'));
+fs.watch=function(filename,options,listener){const name=path.relative(dir,filename);hooks.push(name);const child=Reflect.apply(original,this,[filename,options,listener]);for(const key of ['ref','unref']){const method=child[key];child[key]=function(){references.push([name,key]);return Reflect.apply(method,this,[]);};}return child;};
 const watcher=original(dir,{recursive:true});fs.watch=original;
 const result=[['paths',hooks],['meta',watcher.constructor.name,Object.keys(watcher),Object.getOwnPropertySymbols(Object.getPrototypeOf(watcher)).map(String),['close','ref','unref'].map(k=>[watcher[k].name,watcher[k].length,Object.hasOwn(watcher[k],'prototype')])]];
-assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);
+assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);result.push(['references',references]);
 let synchronous=true,closed=0;watcher.on('close',()=>{assert(synchronous);closed++;result.push('close');});
 watcher.close();synchronous=false;watcher.close();assert.strictEqual(closed,1);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));
 "#);
@@ -1588,6 +1589,7 @@ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-options-')),resu
 for(const options of [{recursive:'1'},{recursive:1},{recursive:true,persistent:1},{recursive:true,throwIfNoEntry:'1'}]){
 try{fs.watch(dir,options).close();assert.fail('expected error');}catch(error){result.push([error.name,error.code,error.message]);}}
 const watcher=fs.watch(dir,{recursive:true,persistent:false,encoding:'buffer'});assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);watcher.close();
+const missing=path.join(dir,'missing');for(const throwIfNoEntry of [undefined,true,false]){try{const absent=fs.watch(missing,{recursive:true,throwIfNoEntry});assert.strictEqual(throwIfNoEntry,false);absent.close();result.push(['missing','ignored']);}catch(error){assert.notStrictEqual(throwIfNoEntry,false);assert.strictEqual(error.code,'ENOENT');assert.strictEqual(error.filename,missing);result.push(['missing',error.name,error.code]);}}
 fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));
 "#);
 }
@@ -6072,24 +6074,29 @@ server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
         .replace("raw=>{const socket=", "raw=>{setTimeout(()=>{console.log(JSON.stringify([raw.readableLength>0,raw.bytesRead>0,raw.readableFlowing==null]));const socket=")
         .replace("socket.on('error',()=>{});});", "socket.on('error',()=>{});},100);});");
     let abrupt_server_source = direct_server_source.replace("chunk=>socket.end(chunk)", "chunk=>socket.destroy()");
-    for (server_source, expected_client_exit) in [(server_source,0),(direct_server_source,0),(delayed_server_source.as_str(),0),(abrupt_server_source.as_str(),1)] {
+    // Keep the abrupt-close client open until the server destroys its socket.
+    // Racing both peers' shutdown can make even Node's client alternate between
+    // clean EOF and ECONNRESET. Compare full outcomes on a directed exchange.
+    for (server_source, half_close) in [(server_source,true),(direct_server_source,true),(delayed_server_source.as_str(),true),(abrupt_server_source.as_str(),false)] {
     let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
         let mut command=Command::new(executable);command.args(["-e",server_source]).env("QUENCH_TLS_PEER_ROOT",&fixtures).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
         if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
         let mut peer=Peer(command.spawn().unwrap());let (mut stdout,line)=tls_peer_first_line(&mut peer.0);
         let port:u16=line.trim().parse().expect("TLS server did not start");
+        let send=if half_close {"end"} else {"write"};
         let source=format!(r#"
 const tls=require('tls'),fs=require('fs');const socket=tls.connect({{port:{port},host:'127.0.0.1',servername:'agent1',ca:fs.readFileSync(process.env.QUENCH_TLS_PEER_ROOT+'/test/fixtures/keys/ca1-cert.pem')}});let chunks=[];
-socket.on('secureConnect',()=>socket.end(Buffer.from([0,22,23,127,254,255])));socket.on('data',chunk=>chunks.push(chunk));socket.on('end',()=>console.log(JSON.stringify([socket.authorized,Array.from(Buffer.concat(chunks))])));socket.on('error',e=>{{console.log(e.code,e.message);process.exitCode=1}});
+socket.on('secureConnect',()=>socket.{send}(Buffer.from([0,22,23,127,254,255])));socket.on('data',chunk=>chunks.push(chunk));socket.on('end',()=>console.log(JSON.stringify([socket.authorized,Array.from(Buffer.concat(chunks))])));socket.on('error',e=>{{console.log(e.code,e.message);process.exitCode=1}});
 "#);
         let mut client=Command::new("node");client.args(["-e",&source]).env("QUENCH_TLS_PEER_ROOT",&fixtures);
         let result=quench_node_test::case_process::observe_command(client,Duration::from_secs(10)).unwrap();
-        assert!(!result.timed_out,"external client timed out");assert_eq!(result.exit_code,Some(expected_client_exit),"engine {executable}; server {server_source}; client stdout: {}; stderr: {}",String::from_utf8_lossy(&result.stdout),String::from_utf8_lossy(&result.stderr));
+        assert!(!result.timed_out,"external client timed out");assert_eq!(result.signal,None,"external client crashed");
+        assert_eq!(result.exit_code,Some(0),"engine {executable}; server {server_source}; client stdout: {}; stderr: {}",String::from_utf8_lossy(&result.stdout),String::from_utf8_lossy(&result.stderr));
         let deadline=std::time::Instant::now()+Duration::from_secs(5);
         let status=loop{if let Some(status)=peer.0.try_wait().unwrap(){break status;}if std::time::Instant::now()>=deadline{let _=peer.0.kill();let _=peer.0.wait();panic!("TLS server did not close after peer EOF");}std::thread::sleep(Duration::from_millis(10));};
         let mut rest=String::new();stdout.read_to_string(&mut rest).unwrap();
         assert!(status.success(),"TLS server failed");
-        (result.stdout,rest)
+        (result.exit_code,result.signal,result.stdout,result.stderr,rest)
     });
     assert_eq!(observations[1],observations[0]);
     }
