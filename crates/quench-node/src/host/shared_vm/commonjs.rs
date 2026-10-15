@@ -89,6 +89,17 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         "node:bootstrap/process-surface.js",
     )?;
     context.release_root(process_surface);
+    let global = context.global_root()?;
+    let process_key = context.string_rooted("process");
+    let process = context.get_property_rooted(global, process_key)?;
+    let initializer = context.host_function(super::operation("processSurfaceInitialize"))?;
+    context.define_lazy_data_properties_rooted(
+        process,
+        crate::polyfills::post_bootstrap::process_surface_00::LAZY_MEMBERS,
+        true,
+        initializer,
+    )?;
+    context.release_root(initializer);
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_process_surface");
     crate::modules::buffer_shared_vm::install_global(context)?;
@@ -332,6 +343,18 @@ pub(super) fn initialize_web_streams(
         context,
         crate::polyfills::bootstrap::web_streams::JS,
         "node:bootstrap/shared-vm/web-streams.js",
+    )
+}
+
+pub(super) fn initialize_process_surface(
+    context: &mut Context<'_>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    evaluate_polyfill_block(
+        context,
+        crate::polyfills::post_bootstrap::process_surface_00::LAZY_JS,
+        "node:bootstrap/process-surface-lazy.js",
     )
 }
 
