@@ -1,12 +1,13 @@
 # npm module graph qualification, 2026-10-15
 
 **The requested all-function parity and subsequent no-JIT package wins remain
-open.** Latest completed 300-package snapshot: 8c9bedaf8 against official stable
-Node 26.12.0, with 267 API passes, 13 declaration passes, 19 Quench failures and
-one Node platform failure. Descriptor discovery has 151 unqualified matches,
+open.** Published functional milestone: e17120a3c on v2-merged and v2-npm. Latest
+completed 300-package binary snapshot: 606439b9e against official stable Node
+26.12.0, with 268 API passes, 13 declaration passes, 18 Quench failures and one
+Node platform failure. Descriptor discovery has 151 unqualified matches,
 140 differences and nine oracle failures. Only 339 of 70,236 observed callable
 paths (aliases included) have matching retained contracts; 69,897 are uncovered.
-These reports predate the newer retry repair and integration refresh.
+These reports include the retry repair and predate the later 1d7439285 integration refresh.
 
 ## Retained repairs
 
