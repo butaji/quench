@@ -85,7 +85,7 @@ impl<H: Host> Vm<H> {
             profile: Profile::default(),
             #[cfg(not(feature = "profile-aggregate"))]
             profile: Profile,
-            shapes: vec![Shape::root()],
+            shapes: Shape::table(),
             shape_accessors: Vec::new(),
             transitions: FxHashMap::default(),
             atom_text: AtomTable::default(),
