@@ -1335,13 +1335,24 @@ impl<H: Host> Vm<H> {
     #[inline(always)]
     pub(super) fn capture_env(&self, frame: usize, depth: u16) -> Option<Value> {
         let frame = &self.frames[frame];
-        let mut env = if frame.captured {
-            match self.heap.get(frame.env)? {
+        self.environment_capture_env(frame.env, frame.captured, depth)
+    }
+
+    /// `capture_env` from an activation's environment `env`, which is its own when
+    /// `captured`.
+    pub(super) fn environment_capture_env(
+        &self,
+        env: Value,
+        captured: bool,
+        depth: u16,
+    ) -> Option<Value> {
+        let mut env = if captured {
+            match self.heap.get(env)? {
                 Cell::Environment { parent, .. } => *parent,
                 _ => return None,
             }
         } else {
-            frame.env
+            env
         };
         env = self.skip_with_environment_layers(env)?;
         for _ in 0..depth {
@@ -1424,7 +1435,7 @@ impl<H: Host> Vm<H> {
     /// of a non-root function's environment; of a root environment (`root` names its program),
     /// only a slot no projection reads through.
     #[inline(always)]
-    fn owned_capture(
+    pub(super) fn owned_capture(
         &self,
         slots: &crate::heap::EnvironmentSlots,
         root: Option<Option<u32>>,
@@ -1449,8 +1460,19 @@ impl<H: Host> Vm<H> {
         depth: u16,
     ) -> Option<(&crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
         let frame = &self.frames[frame];
-        let mut cell = self.heap.get(frame.env)?;
-        if frame.captured {
+        self.environment_capture_slots(frame.env, frame.captured, depth)
+    }
+
+    /// `direct_capture_slots` from an activation's environment `env`, which is its own
+    /// when `captured`.
+    pub(super) fn environment_capture_slots(
+        &self,
+        env: Value,
+        captured: bool,
+        depth: u16,
+    ) -> Option<(&crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
+        let mut cell = self.heap.get(env)?;
+        if captured {
             let Cell::Environment { parent, .. } = cell else {
                 return None;
             };
@@ -1485,7 +1507,7 @@ impl<H: Host> Vm<H> {
     /// The frame's cached innermost slots and root program while the cache is current
     /// (`cached_direct_capture`).
     #[inline(always)]
-    fn current_capture_slots(
+    pub(super) fn current_capture_slots(
         &self,
         frame: usize,
     ) -> Option<(*const crate::heap::EnvironmentSlots, Option<Option<u32>>)> {
@@ -1498,16 +1520,6 @@ impl<H: Host> Vm<H> {
         .then_some((cache.slots, cache.root))
     }
 
-    /// `cached_direct_capture` at depth zero of a function's environment while the frame's
-    /// cache is current: the read a loop repeats. `None` leaves the rest to that method.
-    #[inline(always)]
-    pub(super) fn current_function_capture(&self, frame: usize, slot: u16) -> Option<Value> {
-        let (slots, None) = self.current_capture_slots(frame)? else {
-            return None;
-        };
-        // SAFETY: as for `cached_direct_capture`.
-        self.owned_capture(unsafe { &*slots }, None, slot)
-    }
 
     /// `direct_capture` through the frame's cached innermost slots. The cache names the
     /// environment, whether it is the frame's own, and the collection it was taken in: while
@@ -1678,7 +1690,7 @@ impl<H: Host> Vm<H> {
         let env = self
             .capture_env(frame, depth)
             .ok_or_else(|| JsError("invalid capture environment".into()))?;
-        if self.direct_store_environment(p, frame, env, slot, value) {
+        if self.direct_store_environment(p, self.frames[frame].program, env, slot, value) {
             return Ok(());
         }
         self.store_environment_binding(p, frame, env, slot, value)
@@ -1690,10 +1702,10 @@ impl<H: Host> Vm<H> {
     /// store. Root bindings, with-object layers and everything else return false for
     /// `store_environment_binding`.
     #[inline(always)]
-    fn direct_store_environment(
+    pub(super) fn direct_store_environment(
         &mut self,
         p: &ResidualProgram,
-        frame: usize,
+        program: super::ProgramId,
         env: Value,
         slot: u16,
         value: Value,
@@ -1705,7 +1717,6 @@ impl<H: Host> Vm<H> {
             return false;
         };
         let function = *function;
-        let program = self.frames[frame].program;
         debug_assert_eq!(program, self.active_program);
         if function == super::ROOT_FUNCTION_ID
             || function == u32::MAX
