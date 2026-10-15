@@ -292,6 +292,23 @@ impl ProcessCwd {
         self.0.borrow().path.join(path)
     }
 
+    /// Resolve an I/O path against the retained directory inode, including after rename.
+    pub(crate) fn resolve_io_path(&self, path: &std::path::Path) -> std::path::PathBuf {
+        if path.is_absolute() || path.as_os_str().is_empty() {
+            return path.to_owned();
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(directory) = &self.0.borrow().directory {
+            use std::os::fd::AsRawFd;
+            let directory =
+                std::path::PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()));
+            if directory.is_dir() {
+                return directory.join(path);
+            }
+        }
+        self.path().join(path)
+    }
+
     /// Resolve relative child cwd against the retained directory at the OS boundary.
     pub(crate) fn configure_child_command(
         &self,

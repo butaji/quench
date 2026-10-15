@@ -7783,3 +7783,93 @@ out.push(calls);console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn filesystem_metadata_paths_preserve_bytes_validation_and_option_getter_order() {
+    use std::os::unix::ffi::OsStringExt;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory
+            .path()
+            .join(std::ffi::OsString::from_vec(vec![0xff])),
+        b"raw",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("x"), b"xxx").unwrap();
+    std::fs::write(directory.path().join("y"), b"yyyyyyy").unwrap();
+    let source = format!(
+        "const directory={:?};\n",
+        directory.path().to_str().unwrap()
+    ) + r#"
+const fs=require('node:fs'),assert=require('node:assert'),out=[];
+for(const detached of [false,true]){const b=new ArrayBuffer(8,{maxByteLength:16}),v=new Uint8Array(b,4,2);if(detached)b.transfer();else b.resize(2);for(const method of ['statSync','lstatSync','statfsSync']){try{fs[method](v);assert.fail('accepted unavailable backing bytes')}catch(e){assert(e instanceof TypeError);out.push([method,detached,e.name,e.message,e.code??null]);}}}
+const raw=Buffer.concat([Buffer.from(directory+'/'),Buffer.from([255])]);
+const rawLength=raw.length;raw.toString=raw.includes=()=>{throw 'public-conversion'};for(const key of ['length','byteLength','byteOffset','buffer'])Object.defineProperty(raw,key,{get(){throw 'public-view-metadata'}});
+for(const method of ['statSync','lstatSync','statfsSync']){
+ const b=new Uint8Array(rawLength+2);b.set(raw,1);const view=b.subarray(1,-1);
+ for(const path of [raw,view]){const value=fs[method](path);assert(value);if(method!=='statfsSync')assert.strictEqual(value.size,3);out.push([method,typeof value.size,typeof value.bsize]);}
+ for(const path of ['a\0b',Buffer.from([97,0,98]),new Uint8Array([97,0,98]),new Uint8ClampedArray([47]),new Int8Array([47]),new DataView(new ArrayBuffer(1)),{},null,undefined]){
+  try{fs[method](path);assert.fail('accepted invalid path')}catch(e){assert(e instanceof TypeError);out.push([method,e.name,e.code,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack')]);}
+ }
+ try{fs[method]('')}catch(e){out.push([method,e.code,e.syscall,e.path,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack')]);}
+ const path=Buffer.from(directory+'/x'),trace=[];
+ const options={get bigint(){trace.push('bigint');path[path.length-1]=121;return false},get throwIfNoEntry(){trace.push('throwIfNoEntry');return true}};
+ const stats=fs[method](path,options);if(method!=='statfsSync')assert.strictEqual(stats.size,7);out.push([method,trace]);
+}
+for(const method of ['statSync','lstatSync'])for(const path of ['',directory+'/missing',directory+'/x/missing']){
+ try{out.push([method,path.endsWith('/x/missing')?'not-directory':path?'missing':'empty',fs[method](path,{throwIfNoEntry:false})===undefined])}catch(e){out.push([method,'not-directory',e.code,e.syscall]);}
+}
+console.log(JSON.stringify(out));
+"#;
+    compare_node_stream_source(&source);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn filesystem_metadata_relative_paths_follow_directory_identity_after_rename_and_unlink() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),assert=require('node:assert');
+const original=process.cwd(),base=fs.mkdtempSync(path.join(os.tmpdir(),'quench-metadata-cwd-')),old=path.join(base,'old'),renamed=path.join(base,'renamed');
+try{fs.mkdirSync(old);fs.writeFileSync(path.join(old,'x'),'data');process.chdir(old);fs.renameSync(old,renamed);assert.strictEqual(fs.statSync('x').size,4);assert.strictEqual(fs.lstatSync('x').size,4);assert(fs.statfsSync('.'));fs.unlinkSync(path.join(renamed,'x'));fs.rmdirSync(renamed);assert(fs.statSync('.').isDirectory());assert(fs.lstatSync('.').isDirectory());assert(fs.statfsSync('.'));console.log('renamed and unlinked directory identity');}finally{process.chdir(original);fs.rmSync(base,{recursive:true,force:true});}
+"#,
+    );
+}
+
+#[test]
+fn typed_array_base_method_receiver_failures_match_node() {
+    compare_node_stream_source(
+        r#"
+const out=[],assert=require('node:assert');
+for(const name of ['includes','indexOf','join','reverse','fill','copyWithin','slice','keys','values','entries']){
+ for(const kind of ['brand','detached','out-of-bounds']){
+  let value={toString(){throw Error('public conversion')}};
+  if(kind!=='brand'){const b=new ArrayBuffer(8,{maxByteLength:16});value=new Uint8Array(b,4,2);if(kind==='detached')b.transfer();else b.resize(2);}
+  let called=false;const arg={valueOf(){called=true;throw Error('converted argument')},toString(){called=true;throw Error('converted argument')}};
+  assert.throws(()=>Uint8Array.prototype[name].call(value,arg),e=>{out.push([name,kind,e.name,e.message,e.code??null]);return e instanceof TypeError});assert.strictEqual(called,false);
+ }
+}
+console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[test]
+fn filesystem_statfs_results_share_node_constructor_prototypes_and_field_descriptors() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),assert=require('node:assert'),out=[];
+const numeric=fs.statfsSync('/'),big=fs.statfsSync('/',{bigint:true}),C=numeric.constructor;
+assert.strictEqual(C,big.constructor);assert.strictEqual(C.name,'StatFs');assert.strictEqual(C.length,8);
+assert.strictEqual(Object.getPrototypeOf(numeric),C.prototype);assert.strictEqual(Object.getPrototypeOf(big),C.prototype);
+for(const value of [numeric,big]){out.push([value.constructor.name,Reflect.ownKeys(Object.getPrototypeOf(value)),Object.entries(Object.getOwnPropertyDescriptors(value)).map(([k,d])=>[k,typeof d.value,d.writable,d.enumerable,d.configurable])]);}
+const made=new C(1,2,3,4,5,6,7,8);out.push(Object.entries(made));assert.throws(()=>C(),TypeError);
+C.prototype.marker='shared-statfs';assert.strictEqual(fs.statfsSync('/').marker,'shared-statfs');delete C.prototype.marker;
+const marker={},seen=[];Object.defineProperty(C.prototype,'blocks',{configurable:true,set(value){seen.push(typeof value);throw marker}});for(const bigint of [false,true])assert.throws(()=>fs.statfsSync('/',{bigint}),e=>e===marker);delete C.prototype.blocks;out.push(seen);
+const callback=new Promise(resolve=>fs.statfs('/',(error,value)=>{assert.strictEqual(error,null);assert.strictEqual(value.constructor,C);resolve(['callback',value.constructor.name]);}));
+const promise=fs.promises.statfs('/',{bigint:true}).then(value=>{assert.strictEqual(value.constructor,C);assert.strictEqual(typeof value.blocks,'bigint');return ['promise',value.constructor.name]});
+Promise.all([callback,promise]).then(results=>{out.push(...results);console.log(JSON.stringify(out));});
+"#,
+    );
+}
