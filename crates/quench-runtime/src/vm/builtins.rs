@@ -1112,7 +1112,7 @@ impl<H: Host> Vm<H> {
         let hash = Self::atom_hash_units(name.units());
         self.insert_dynamic_atom(name.clone(), hash)
     }
-    fn insert_dynamic_atom(&mut self, name: JsString, hash: u64) -> Atom {
+    pub(super) fn insert_dynamic_atom(&mut self, name: JsString, hash: u64) -> Atom {
         let atom = (self.atom_text.len() + self.dynamic_atoms.len()) as Atom;
         self.record_array_index_atom(name.host_string(), atom);
         self.atom_sequence.append(name.host_name());
