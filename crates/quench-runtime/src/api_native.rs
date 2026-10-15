@@ -537,6 +537,11 @@ impl<'a, H: Host> NativeContext<'a, H> {
     }
 
     /// Structured-clone a rooted value using the active realm's object graph.
+    /// Mark an ordinary host object as excluded from structured serialization.
+    pub fn mark_uncloneable_rooted(&mut self, value: RootId) -> Result<(), RootedError> {
+        self.vm.embedding_mark_uncloneable(value).map_err(|error| self.error(error))
+    }
+
     pub fn structured_clone_rooted(
         &mut self,
         value: RootId,
