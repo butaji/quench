@@ -177,3 +177,30 @@ console.log(vm.runInContext('Object.getPrototypeOf(Object.prototype) === null', 
     assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
     assert_eq!(quench.stdout, node.stdout);
 }
+
+#[test]
+fn promise_resolution_with_promises_keeps_job_order_and_species_reads() {
+    // Resolving a promise with an intrinsic promise takes one extra job; the species lookup
+    // `then` performs stays observable (getter order and throws), as in Node.
+    let source = r#"
+const log = [];
+const a = Promise.resolve(1);
+new Promise(r => r(a)).then(v => log.push('b' + v));
+Promise.resolve().then(() => log.push('t1')).then(() => log.push('t2')).then(() => log.push('t3'));
+class P extends Promise {}
+new Promise(r => r(P.resolve(2))).then(v => log.push('c' + v));
+const d = Promise.resolve(3);
+Object.defineProperty(d, 'constructor', { get() { log.push('ctor-get'); return Promise; } });
+new Promise(r => r(d)).then(v => log.push('e' + v));
+new Promise(r => r(Promise.reject(new Error('x')))).catch(error => log.push('g:' + error.message));
+const h = Promise.resolve(4);
+Object.defineProperty(h, 'constructor', { get() { throw new Error('boom'); } });
+new Promise(r => r(h)).catch(error => log.push('h:' + error.message));
+setTimeout(() => console.log(log.join(' ')), 0);
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}
