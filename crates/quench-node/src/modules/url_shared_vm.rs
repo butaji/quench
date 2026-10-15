@@ -42,19 +42,9 @@ pub(crate) fn to_path_if_file_url(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let value = args.first().copied().unwrap_or_else(|| context.undefined());
-    if context.is_object_rooted(value)? {
-        let shared = context.host_mut().shared_state();
-        let state = shared.borrow().url_state;
-        if let Some(state) = state {
-            let stored = context.weak_map_get_rooted(state, value)?;
-            if !context
-                .rooted_value(stored)
-                .is_some_and(|value| value.is_undefined())
-            {
-                let undefined = context.undefined();
-                return file_url_to_path(context, undefined, &[value]);
-            }
-        }
+    if is_url_like(context, value)? {
+        let undefined = context.undefined();
+        return file_url_to_path(context, undefined, &[value]);
     }
     Ok(value)
 }
@@ -437,73 +427,167 @@ pub(crate) fn path_to_file_url(
     context.construct_rooted(constructor, constructor, &[href])
 }
 
+/// Node observes URL-like properties rather than serializing through `toString`.
 pub(crate) fn file_url_to_path(
     context: &mut NativeContext<'_, NodeHost>,
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
-    let Some(input) = args.first().copied() else {
-        return Err(invalid_url_argument(context));
-    };
-    let input = url_argument_text(context, input)?.ok_or_else(|| invalid_url_argument(context))?;
     let windows = windows_option(context, args)?;
-    let parsed = url::Url::parse(&input).map_err(|_| invalid_url(context, &input))?;
-    if parsed.scheme() != "file" {
+    let input = args.first().copied().unwrap_or_else(|| context.undefined());
+    let path = if context.string_text(input)?.is_some() {
+        context.with_startup_intrinsics(|context| {
+            let global = context.global_root()?;
+            let constructor = get(context, global, "URL")?;
+            context.construct_rooted(constructor, constructor, &[input])
+        })?
+    } else if is_url_like(context, input)? {
+        input
+    } else {
+        return Err(super::util_shared_vm::argument_type_error_with_expected(
+            context,
+            input,
+            "path",
+            "of type string or an instance of URL",
+        )?);
+    };
+    let protocol = get(context, path, "protocol")?;
+    if context.string_text(protocol)?.as_deref() != Some("file:") {
         return Err(coded_url_type_error(
             context,
             "ERR_INVALID_URL_SCHEME",
             "The URL must be of scheme file",
         ));
     }
-    if !windows
-        && parsed
-            .host_str()
-            .is_some_and(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost"))
-    {
+    let hostname = get(context, path, "hostname")?;
+    let local = context.string_text(hostname)?.as_deref() == Some("");
+    if !windows && !local {
+        let platform = match std::env::consts::OS {
+            "windows" => "win32",
+            "macos" => "darwin",
+            platform => platform,
+        };
         return Err(coded_url_type_error(
             context,
             "ERR_INVALID_FILE_URL_HOST",
-            &format!(
-                "File URL host must be \"localhost\" or empty on {}",
-                std::env::consts::OS
-            ),
+            &format!("File URL host must be \"localhost\" or empty on {platform}"),
         ));
     }
-    if parsed.path().to_ascii_lowercase().contains("%2f")
-        || (windows && parsed.path().to_ascii_lowercase().contains("%5c"))
-    {
-        return Err(coded_url_type_error(
-            context,
-            "ERR_INVALID_FILE_URL_PATH",
-            "File URL path must not include encoded / characters",
-        ));
-    }
-    let path = if windows {
-        if cfg!(windows) {
-            parsed
-                .to_file_path()
-                .map_err(|_| invalid_url(context, &input))?
-                .to_string_lossy()
-                .into_owned()
-        } else {
-            windows_file_url_path(&parsed).ok_or_else(|| {
-                coded_url_type_error(
-                    context,
-                    "ERR_INVALID_FILE_URL_PATH",
-                    "File URL path must be an absolute Windows path",
-                )
-            })?
+    let mut pathname = get(context, path, "pathname")?;
+    // The length and indexed reads deliberately remain observable for URL-like objects.
+    let mut index = 0usize;
+    loop {
+        let length = get(context, pathname, "length")?;
+        let position = context.number(index as f64);
+        if !context.greater_than_rooted(length, position)? {
+            break;
         }
-    } else {
-        percent_decode(parsed.path()).ok_or_else(|| {
-            coded_url_type_error(
-                context,
-                "ERR_INVALID_FILE_URL_PATH",
-                "File URL path contains invalid UTF-8",
-            )
-        })?
+        let character = get(context, pathname, &index.to_string())?;
+        if context.string_text(character)?.as_deref() == Some("%") {
+            let third_index = context.number((index + 2) as f64);
+            let third = intrinsic_string_method(context, "codePointAt", pathname, &[third_index])?;
+            let third = context.to_number(third)? as u32 | 0x20;
+            let second = get(context, pathname, &(index + 1).to_string())?;
+            let second = context.string_text(second)?;
+            let slash = second.as_deref() == Some("2") && third == u32::from(b'f');
+            let backslash = if windows && !slash {
+                let second = get(context, pathname, &(index + 1).to_string())?;
+                context.string_text(second)?.as_deref() == Some("5") && third == u32::from(b'c')
+            } else {
+                false
+            };
+            if slash || backslash {
+                let message = if windows {
+                    "File URL path must not include encoded \\ or / characters"
+                } else {
+                    "File URL path must not include encoded / characters"
+                };
+                return Err(invalid_file_url_path(context, path, message));
+            }
+        }
+        index += 1;
+    }
+    if windows {
+        let mut units = context.to_string_code_units(pathname)?;
+        for unit in &mut units {
+            if *unit == u16::from(b'/') {
+                *unit = u16::from(b'\\');
+            }
+        }
+        pathname = context.string_units_rooted(&units);
+    }
+    let percent = context.string_rooted("%");
+    let encoded = intrinsic_string_method(context, "includes", pathname, &[percent])?;
+    if context.truthy_rooted(encoded)? {
+        let decode = context.with_startup_intrinsics(|context| {
+            let global = context.global_root()?;
+            get(context, global, "decodeURIComponent")
+        })?;
+        let undefined = context.undefined();
+        pathname = context.call_rooted(decode, undefined, &[pathname])?;
+    }
+    if !windows {
+        return Ok(pathname);
+    }
+    if !local {
+        let undefined = context.undefined();
+        let domain = domain_to_unicode(context, undefined, &[hostname])?;
+        let domain = context.to_string(domain)?;
+        let suffix = context.to_string_code_units(pathname)?;
+        let mut units = format!("\\\\{domain}").encode_utf16().collect::<Vec<_>>();
+        units.extend(suffix);
+        return Ok(context.string_units_rooted(&units));
+    }
+    let units = context.to_string_code_units(pathname)?;
+    if !units.get(1).is_some_and(|unit| {
+        (*unit >= u16::from(b'A') && *unit <= u16::from(b'Z'))
+            || (*unit >= u16::from(b'a') && *unit <= u16::from(b'z'))
+    }) || units.get(2) != Some(&u16::from(b':'))
+    {
+        return Err(invalid_file_url_path(
+            context,
+            path,
+            "File URL path must be absolute",
+        ));
+    }
+    Ok(context.string_units_rooted(&units[1..]))
+}
+
+/// Capture the primordial method, then invoke it outside the capture scope so guest
+/// conversions observe the application's globals and preserve thrown values.
+fn intrinsic_string_method(
+    context: &mut NativeContext<'_, NodeHost>,
+    name: &str,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let method = context.with_startup_intrinsics(|context| {
+        let global = context.global_root()?;
+        let constructor = get(context, global, "String")?;
+        let prototype = get(context, constructor, "prototype")?;
+        get(context, prototype, name)
+    })?;
+    context.call_rooted(method, receiver, args)
+}
+
+fn invalid_file_url_path(
+    context: &mut NativeContext<'_, NodeHost>,
+    input: RootId,
+    message: &str,
+) -> RootedError {
+    let exception = match context.type_error_rooted(message) {
+        Ok(exception) => exception,
+        Err(error) => return error,
     };
-    Ok(context.string_rooted(&path))
+    if let Err(error) = super::node_errors_shared_vm::decorate_type_error_with_fields(
+        context,
+        exception,
+        "ERR_INVALID_FILE_URL_PATH",
+        &[("input", input)],
+    ) {
+        return error;
+    }
+    context.throw(exception)
 }
 
 pub(crate) fn file_url_to_path_buffer(
@@ -616,7 +700,7 @@ fn windows_option(
     let windows = context.get_property_rooted(options, key)?;
     if context
         .rooted_value(windows)
-        .is_some_and(|value| value.is_undefined())
+        .is_some_and(|value| value.is_null() || value.is_undefined())
     {
         Ok(cfg!(windows))
     } else {

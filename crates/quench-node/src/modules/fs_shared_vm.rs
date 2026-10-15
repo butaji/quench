@@ -1789,8 +1789,10 @@ const ASYNC_LSTAT_API: &str = r#"(lstatSync, toPathIfFileURL) => {
     }
     if (Buffer.isBuffer(path)) path = path.toString();
     queueMicrotask(() => {
-      try { Reflect.apply(callback, undefined, [null, lstatSync(path, options)]); }
-      catch (error) { Reflect.apply(callback, undefined, [error]); }
+      let stats;
+      try { stats = lstatSync(path, options); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); return; }
+      Reflect.apply(callback, undefined, [null, stats]);
     });
   };
 }"#;
@@ -1814,11 +1816,10 @@ const ASYNC_STAT_API: &str = r#"(statSync, toPathIfFileURL) => {
     }
     if (Buffer.isBuffer(path)) path = path.toString();
     queueMicrotask(() => {
-      try {
-        const stats = statSync(path, options);
-        Reflect.apply(callback, undefined, [null, stats]);
-      }
-      catch (error) { Reflect.apply(callback, undefined, [error]); }
+      let stats;
+      try { stats = statSync(path, options); }
+      catch (error) { Reflect.apply(callback, undefined, [error]); return; }
+      Reflect.apply(callback, undefined, [null, stats]);
     });
   };
 }"#;
@@ -1873,8 +1874,10 @@ const ASYNC_STATFS_API: &str = r#"(statfsSync, toPathIfFileURL) => function stat
   }
   if (Buffer.isBuffer(path)) path = path.toString();
   queueMicrotask(() => {
-    try { Reflect.apply(callback, undefined, [null, statfsSync(path, options)]); }
-    catch (error) { Reflect.apply(callback, undefined, [error]); }
+    let stats;
+    try { stats = statfsSync(path, options); }
+    catch (error) { Reflect.apply(callback, undefined, [error]); return; }
+    Reflect.apply(callback, undefined, [null, stats]);
   });
 }"#;
 
