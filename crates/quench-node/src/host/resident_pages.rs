@@ -147,5 +147,44 @@ pub fn map_touched_pages_only() {
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn map_touched_pages_only() {}
 
+/// Stack below the caller's frame that a release keeps, for the calls it makes and the
+/// signal frames the kernel may push.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const STACK_RELEASE_MARGIN_BYTES: usize = 64 * 1024;
+
+/// Releases the calling thread's stack pages below its current frame. Bootstrap and
+/// compilation recurse deeply once, and the pages they reached stay resident though only the
+/// shallow frames above them run again; the next deep call refaults zeroed pages.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub fn release_unused_stack() {
+    // SAFETY: the attribute object is initialized by pthread_getattr_np before use and
+    // destroyed after; the released range lies below the live frames and their margin, which
+    // nothing references.
+    unsafe {
+        let mut attributes = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+        if libc::pthread_getattr_np(libc::pthread_self(), attributes.as_mut_ptr()) != 0 {
+            return;
+        }
+        let mut attributes = attributes.assume_init();
+        let mut low = std::ptr::null_mut::<libc::c_void>();
+        let mut size = 0usize;
+        let found = libc::pthread_attr_getstack(&attributes, &mut low, &mut size) == 0;
+        libc::pthread_attr_destroy(&mut attributes);
+        if !found {
+            return;
+        }
+        let page = libc::sysconf(libc::_SC_PAGESIZE) as usize;
+        let frame = std::hint::black_box(&page) as *const usize as usize;
+        let start = (low as usize).div_ceil(page) * page;
+        let end = frame.saturating_sub(STACK_RELEASE_MARGIN_BYTES) / page * page;
+        if end > start {
+            libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_DONTNEED);
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+pub fn release_unused_stack() {}
+
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub fn release_read_only_pages() {}
