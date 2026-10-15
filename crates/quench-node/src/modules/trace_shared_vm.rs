@@ -361,6 +361,7 @@ pub(crate) fn internal_binding(
     let binding = context.object_rooted()?;
     match name.as_str() {
         "types" => return super::util_shared_vm::types_binding(context),
+        "crypto_keys" => return super::crypto_key_shared_vm::binding(context),
         "util" => return super::util_shared_vm::key_binding(context),
         "string_decoder" => return super::string_decoder_shared_vm::binding(context),
         "encoding_binding" => return super::encoding_binding_shared_vm::binding(context),
