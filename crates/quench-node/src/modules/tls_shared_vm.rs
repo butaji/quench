@@ -2,6 +2,7 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
+pub(crate) mod bundled;
 pub(crate) mod certificate;
 pub(crate) mod configuration;
 pub(crate) mod contexts;
@@ -140,6 +141,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let value = context.string_rooted(text);
         context.set_property_rooted(module, key, value, module)?;
     }
+    bundled::install(context, module)?;
     let key = context.string_rooted("module");
     context.set_property_rooted(api, key, module, api)?;
     Ok(module)
