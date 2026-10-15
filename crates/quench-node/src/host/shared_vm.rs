@@ -222,6 +222,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "streamShouldResumeData" (1) => crate::modules::stream_shared_vm::should_resume_data,
         method "streamIsPaused" (1) => crate::modules::stream_shared_vm::is_paused,
         method "streamSetFlowing" (2) => crate::modules::stream_shared_vm::set_flowing,
+        method "streamResumeFlow" (1) => crate::modules::stream_shared_vm::resume_flow,
         method "streamPipeStart" (2) => crate::modules::stream_pipe_shared_vm::start,
         method "streamListenerRemoved" (3) => crate::modules::stream_shared_vm::listener_removed,
         method "streamUpdateReadableListening" (1) => crate::modules::stream_shared_vm::update_readable_listening,

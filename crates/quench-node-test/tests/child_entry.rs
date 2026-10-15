@@ -6270,6 +6270,25 @@ const server=net.createServer({pauseOnConnect:true},socket=>{
 }
 
 #[test]
+fn stream_resume_preserves_readable_listener_buffer_ownership() {
+    compare_node_stream_source(r#"
+'use strict';
+const {Readable}=require('node:stream');
+const out=[];
+const stream=new Readable({read(){}});
+stream.on('readable',()=>{});
+stream.on('data',chunk=>out.push(['data',chunk.toString()]));
+stream.resume();
+stream.push('retained');
+process.nextTick(()=>{
+ out.push(['state',stream.readableFlowing,stream.isPaused(),stream.readableLength]);
+ out.push(['read',stream.read()?.toString()]);
+ console.log(JSON.stringify(out));
+});
+"#);
+}
+
+#[test]
 fn stream_explicit_flowing_false_prevents_automatic_data_resume() {
     compare_node_stream_source(r#"
 'use strict';
