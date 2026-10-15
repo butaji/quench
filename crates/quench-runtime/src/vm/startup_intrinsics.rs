@@ -112,6 +112,16 @@ impl StartupIntrinsics {
 }
 
 impl<H: Host> Vm<H> {
+    /// Read a captured data property without temporarily changing guest state.
+    /// This also works after a script makes its replacement non-configurable.
+    pub(crate) fn startup_data_property(&self, holder: Value, name: &str) -> Option<Value> {
+        let key = PropertyKey::string(self.lookup_atom(name)?);
+        let index = self.startup_intrinsics.properties.iter()
+            .position(|property| property.holder == holder && property.key == key)?;
+        let original = self.startup_intrinsics.original(index);
+        (!original.attributes.accessor).then_some(original.value)
+    }
+
     pub(crate) fn has_startup_global_name(&self, name: &str) -> bool {
         self.lookup_atom(name).is_some_and(|atom| {
             self.startup_intrinsics.properties.iter().any(|property|
