@@ -14,7 +14,7 @@ pub(crate) fn owner(
     let error = context.type_error_rooted("TLS socket has no native transport")?;
     Err(context.throw(error))
 }
-fn physical_owner(
+pub(crate) fn physical_owner(
     context: &mut NativeContext<'_, NodeHost>,
     socket: RootId,
 ) -> Result<Option<u64>, RootedError> {
@@ -153,7 +153,7 @@ pub(crate) fn info(
         Text(String),
         Bool(bool),
         Certificate(Option<openssl::x509::X509>),
-        Missing,
+        Verification(i32, String),
     }
     let value = {
         let state = shared.borrow();
@@ -172,11 +172,7 @@ pub(crate) fn info(
             "protocol" => Info::Text(ssl.version_str().to_owned()),
             "sessionReused" => Info::Bool(ssl.session_reused()),
             "verifyError" => {
-                if ssl.verify_result() == openssl::x509::X509VerifyResult::OK {
-                    Info::Missing
-                } else {
-                    Info::Text(ssl.verify_result().error_string().to_owned())
-                }
+                Info::Verification(ssl.verify_result().as_raw(), ssl.verify_result().error_string().to_owned())
             }
             "peerCertificate" => Info::Certificate(ssl.peer_certificate()),
             _ => return Err(RootedError::host("TLS session query is not implemented")),
@@ -185,9 +181,10 @@ pub(crate) fn info(
     match value {
         Info::Text(text) => Ok(context.string_rooted(&text)),
         Info::Bool(value) => Ok(context.boolean(value)),
-        Info::Missing => Ok(context.null()),
         Info::Certificate(None) => context.object_rooted(),
         Info::Certificate(Some(cert)) => super::certificate::legacy(context, &cert),
+        Info::Verification(code, _) if code == openssl_sys::X509_V_OK => Ok(context.null()),
+        Info::Verification(code, reason) => verify_error(context, code, &reason),
     }
 }
 
@@ -317,6 +314,7 @@ pub(crate) fn construct(
         set(context, socket, "connecting", false_value)?;
         set(context, socket, "pending", false_value)?;
     }
+    super::handle::install(context, socket)?;
     let secure = context.string_rooted("secure");
     let callback = context.host_function(crate::host::shared_vm::operation("tlsSocketSecure"))?;
     method(context, socket, "on", &[secure, callback])?;
@@ -350,6 +348,7 @@ pub(crate) fn init_read(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let socket = args[0];
+    if physical_owner(context, socket)?.is_none() { return Ok(context.undefined()); }
     let handle = get(context, socket, "_handle")?;
     if !context.truthy_rooted(handle)? {
         return Ok(context.undefined());
@@ -477,9 +476,19 @@ pub(crate) fn start(
             id,
         );
     }
-    let handle = get(context, socket, "_handle")?;
-    set(context, socket, "ssl", handle)?;
     Ok(context.undefined())
+}
+pub(crate) fn start_for_write(context: &mut NativeContext<'_, NodeHost>, socket: RootId) -> Result<(), RootedError> {
+    let Some(index) = super::sessions::find_owner(context, socket)? else { return Ok(()); };
+    let id = physical_owner(context, socket)?;
+    let shared = context.host_mut().shared_state();
+    let needed = {
+        let state = shared.borrow();
+        state.tls_contexts.sessions.entries[index].pending.as_ref().is_some_and(|pending| !pending.start_requested)
+            || id.is_some_and(|id| super::super::net_shared_vm::tls_is_dormant(&state.tcp, id))
+    };
+    if needed { let undefined = context.undefined(); start(context, undefined, &[socket])?; }
+    Ok(())
 }
 pub(super) fn verify_error(
     context: &mut NativeContext<'_, NodeHost>,

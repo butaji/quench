@@ -2,12 +2,14 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
+pub(crate) mod bundled;
 pub(crate) mod certificate;
 pub(crate) mod configuration;
 pub(crate) mod contexts;
 pub(crate) mod discovery;
 pub(crate) mod facade;
 pub(crate) mod identity;
+pub(crate) mod handle;
 pub(crate) mod server;
 pub(crate) mod sessions;
 pub(crate) mod socket;
@@ -50,6 +52,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let factory = context.evaluate_script_rooted(TLS_FACTORY, "node:tls/shared.js")?;
     let undefined = context.undefined();
     let api = facade::install(context)?;
+    handle::registry(context)?;
     let patterns = context.evaluate_script_rooted(
         quench_js_check::checked_js!("({trailingDot:()=>/[.]$/,upperCase:()=>/[A-Z]/g})"),
         "node:tls/identity-patterns.js",
@@ -138,6 +141,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let value = context.string_rooted(text);
         context.set_property_rooted(module, key, value, module)?;
     }
+    bundled::install(context, module)?;
     let key = context.string_rooted("module");
     context.set_property_rooted(api, key, module, api)?;
     Ok(module)

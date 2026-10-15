@@ -5934,6 +5934,21 @@ console.log(tls.createSecureContext().context.getMinProto(),creations);console.l
 }
 
 #[test]
+fn native_tls_bundled_roots_preserve_stable_trust_material_cache_metadata_and_intrinsic_hooks() {
+    compare_node_stream_source(r#"
+const tls=require('tls'),crypto=require('crypto');
+const O=Object,A=Array,descriptor=O.getOwnPropertyDescriptor(tls,'rootCertificates'),getter=descriptor.get;
+console.log(JSON.stringify([descriptor.enumerable,descriptor.configurable,descriptor.set,getter.name,getter.length,O.hasOwn(getter,'prototype')]));
+globalThis.Array=function(){throw new Error('public Array used')};globalThis.Object=function(){throw new Error('public Object used')};
+const roots=getter.call({});
+console.log(JSON.stringify([A.isArray(roots),O.isFrozen(roots),roots===tls.rootCertificates,Reflect.construct(getter,[])===roots,roots.length,new Set(roots).size]));
+globalThis.Array=A;globalThis.Object=O;
+console.log(crypto.createHash('sha256').update(JSON.stringify(roots)).digest('hex'));
+for(const change of [()=>{'use strict';roots[0]='changed'},()=>{'use strict';tls.rootCertificates=[]},()=>roots.push('changed')])try{change();console.log('unexpected mutation')}catch(e){console.log(e.name)}
+"#);
+}
+
+#[test]
 fn native_tls_cipher_discovery_and_cached_copy_contract_match_node() {
     compare_node_stream_source(r#"
 const tls=require('tls');const first=tls.getCiphers();console.log(JSON.stringify(first));
@@ -6039,7 +6054,13 @@ socket.once('secure',()=>{{console.log(JSON.stringify([socket instanceof tls.TLS
 socket.on('secureConnect',()=>{{throw new Error('direct socket must emit secure')}});socket.on('data',chunk=>result.push(chunk));socket.on('end',()=>console.log(JSON.stringify(Array.from(Buffer.concat(result)))));
 socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.code,error.message]));process.exitCode=1}});socket.connect({{port:{port},host:'127.0.0.1'}});socket._start();
 "#);
-    for source in [source,trusted,rejected,mismatch,direct] {
+    let direct_write = direct
+        .replace("socket.end(Buffer.from([0,1,2,127,128,255,10,13]));", "")
+        .replace("let result=[];", "let result=[];const initialHandle=socket.ssl;")
+        .replace("socket.once('secure',()=>{", "socket.once('secure',()=>{console.log(JSON.stringify([socket.ssl===initialHandle,socket.ssl===socket._handle,socket.ssl.verifyError()?.code]));")
+        .replace("socket.connect(", "socket.on('connect',()=>socket.end(Buffer.from([0,1,2,127,128,255,10,13])));socket.connect(")
+        .replace("socket._start();", "");
+    for source in [source,trusted,rejected,mismatch,direct,direct_write] {
     let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
         let mut command=Command::new(executable);command.args(["-e",&source]).env("QUENCH_TLS_PEER_ROOT",&fixtures);
         if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
@@ -6048,7 +6069,7 @@ socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.
     assert!(!observations[0].timed_out,"Node TLS oracle timed out");
     assert!(!observations[1].timed_out,"native TLS client timed out: {}",String::from_utf8_lossy(&observations[1].stderr));
     assert_eq!(observations[0].exit_code,Some(0),"Node TLS oracle: {}",String::from_utf8_lossy(&observations[0].stderr));
-    assert_eq!(observations[1].exit_code,Some(0),"native TLS client: {}",String::from_utf8_lossy(&observations[1].stderr));
+    assert_eq!(observations[1].exit_code,Some(0),"native TLS client: {} stdout: {} case: {source}",String::from_utf8_lossy(&observations[1].stderr),String::from_utf8_lossy(&observations[1].stdout));
     assert_eq!(String::from_utf8_lossy(&observations[1].stdout),String::from_utf8_lossy(&observations[0].stdout),"case: {source}");
     }
 }

@@ -1,6 +1,6 @@
 Bundled roots extracted without modification from Node.js src/node_root_certs.h
-Commit: 55e4ca33f3a6dfe364bd9558b726576a6d1a2fba
-Source: https://github.com/nodejs/node/blob/55e4ca33f3a6dfe364bd9558b726576a6d1a2fba/src/node_root_certs.h
+Commit: 26e72d85a611e222e3f06025de8a3c496923bacd
+Source: https://github.com/nodejs/node/blob/26e72d85a611e222e3f06025de8a3c496923bacd/src/node_root_certs.h
 
 Copyright Node.js contributors. All rights reserved.
 
