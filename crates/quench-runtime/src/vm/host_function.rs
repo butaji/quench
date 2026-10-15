@@ -34,11 +34,11 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn create_host_function(&mut self, id: HostFunctionId) -> Result<Value, JsError> {
-        self.create_host_function_with_capture(id, None, false)
+        self.create_host_function_with_capture(id, None, false, None)
     }
 
     pub(crate) fn create_host_constructor(&mut self, id: HostFunctionId) -> Result<Value, JsError> {
-        self.create_host_function_with_capture(id, None, true)
+        self.create_host_function_with_capture(id, None, true, None)
     }
 
     pub(crate) fn create_host_constructor_with_data(
@@ -46,7 +46,7 @@ impl<H: Host> Vm<H> {
         id: HostFunctionId,
         data: Value,
     ) -> Result<Value, JsError> {
-        self.create_host_function_with_capture(id, Some(data), true)
+        self.create_host_function_with_capture(id, Some(data), true, None)
     }
 
     pub(crate) fn create_host_function_with_data(
@@ -54,7 +54,15 @@ impl<H: Host> Vm<H> {
         id: HostFunctionId,
         data: Value,
     ) -> Result<Value, JsError> {
-        self.create_host_function_with_capture(id, Some(data), false)
+        self.create_host_function_with_capture(id, Some(data), false, None)
+    }
+
+    pub(crate) fn create_named_host_function(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        self.create_host_function_with_capture(id, None, false, Some(name))
     }
 
     fn create_host_function_with_capture(
@@ -62,6 +70,7 @@ impl<H: Host> Vm<H> {
         id: HostFunctionId,
         data: Option<Value>,
         constructible: bool,
+        name_override: Option<&str>,
     ) -> Result<Value, JsError> {
         self.embedding_program()?;
         let (name, length) = self
@@ -70,6 +79,7 @@ impl<H: Host> Vm<H> {
             .get(id.0 as usize)
             .map(|binding| (binding.name, binding.length))
             .ok_or_else(|| JsError("unknown host function index".into()))?;
+        let name = name_override.unwrap_or(name);
         // Plain callbacks need only the exact numeric operation index. A captured
         // callback adds ordinary traced environment slots, not a side registry.
         let environment = match (data, constructible) {
