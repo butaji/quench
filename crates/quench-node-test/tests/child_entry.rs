@@ -7691,3 +7691,20 @@ console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[test]
+fn filesystem_metadata_file_urls_validate_scheme_host_and_encoded_separators() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),assert=require('node:assert'),out=[];
+const cases=[['https://example.org/','ERR_INVALID_URL_SCHEME'],['file://example.org/','ERR_INVALID_FILE_URL_HOST'],['file:///a%2Fb','ERR_INVALID_FILE_URL_PATH']];
+for(const [input,code] of cases){
+ const path=new URL(input);assert.strictEqual(fs.existsSync(path),false);
+ for(const name of ['statSync','lstatSync','statfsSync']){assert.throws(()=>fs[name](path),e=>{out.push([name,e.name,e.code,e.message]);return e.code===code});}
+ for(const name of ['stat','lstat','statfs']){let called=false;assert.throws(()=>fs[name](path,()=>{called=true}),e=>{out.push([name,e.name,e.code,e.message]);return e.code===code});assert.strictEqual(called,false);}
+}
+for(const name of ['statSync','lstatSync'])assert.strictEqual(fs[name](new URL('file:///')).isDirectory(),true);
+console.log(JSON.stringify(out));
+"#,
+    );
+}
