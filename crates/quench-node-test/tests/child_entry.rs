@@ -1901,8 +1901,9 @@ console.log(JSON.stringify([Object.keys(clone),clone.length,clone[1],reads]));
 
 #[test]
 fn cyclic_esm_instantiates_live_bindings_before_running_dependencies() {
+    for (fixture, expected) in [("esm-graph", "cyclic-esm-live-bindings\n"), ("esm-errors", "esm-link-error-retry\n")] {
     let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/npm-top300/regressions/esm-graph/entry.mjs");
+        .join(format!("../../tests/npm-top300/regressions/{fixture}/entry.mjs"));
     for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
         let mut command = Command::new(executable);
         command.arg(&entry);
@@ -1911,8 +1912,9 @@ fn cyclic_esm_instantiates_live_bindings_before_running_dependencies() {
         }
         let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
         assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
-        assert_eq!(result.stdout, b"cyclic-esm-live-bindings\n");
+        assert_eq!(result.stdout, expected.as_bytes());
         assert!(result.stderr.is_empty());
+    }
     }
 }
 

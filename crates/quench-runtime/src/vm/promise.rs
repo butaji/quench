@@ -1708,6 +1708,13 @@ impl<H: Host> Vm<H> {
                                 }
                                 return Ok(Value::UNDEFINED);
                             }
+                            ModuleOutcome::Pending(ModulePhase::Loading)
+                                if module_type == "javascript"
+                                    && phase == crate::bytecode::ModuleRequestPhase::Evaluation =>
+                            {
+                                vm.queue_dynamic_import_job(cache_key, module, promise);
+                                return Ok(Value::UNDEFINED);
+                            }
                             ModuleOutcome::Pending(_) => {
                                 let joined = vm
                                     .realm
@@ -1732,21 +1739,7 @@ impl<H: Host> Vm<H> {
                         && phase == crate::bytecode::ModuleRequestPhase::Evaluation
                         && vm.deferred_dependency_batch
                     {
-                        if let Some(job) = vm
-                            .realm
-                            .promise
-                            .dynamic_import_jobs
-                            .iter_mut()
-                            .find(|job| job.cache_key == cache_key)
-                        {
-                            job.promises.push(promise);
-                        } else {
-                            vm.realm.promise.dynamic_import_jobs.push(DynamicImportJob {
-                                cache_key,
-                                module,
-                                promises: vec![promise],
-                            });
-                        }
+                        vm.queue_dynamic_import_job(cache_key, module, promise);
                         return Ok(Value::UNDEFINED);
                     }
                     if module_type == "javascript"
@@ -2545,6 +2538,32 @@ impl<H: Host> Vm<H> {
         )?;
         self.programs.set_module_imports(ProgramId::MAIN, imports);
         Ok(())
+    }
+
+    fn queue_dynamic_import_job(
+        &mut self,
+        cache_key: String,
+        module: ModuleSource,
+        promise: Value,
+    ) {
+        if let Some(job) = self
+            .realm
+            .promise
+            .dynamic_import_jobs
+            .iter_mut()
+            .find(|job| job.cache_key == cache_key)
+        {
+            job.promises.push(promise);
+        } else {
+            self.realm
+                .promise
+                .dynamic_import_jobs
+                .push(DynamicImportJob {
+                    cache_key,
+                    module,
+                    promises: vec![promise],
+                });
+        }
     }
 
     pub(super) fn advance_dynamic_import_jobs(
