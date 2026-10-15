@@ -1916,7 +1916,10 @@ const getLinkedBinding = () => ({});
             transition_child(context, parent, module, ChildTransition::Detach)?;
         }
     }
-    if key.ends_with("/internal/fs/utils.js") {
+    let is_fs_utilities = filename
+        .strip_prefix(&context.host_mut().node_library_root)
+        .is_ok_and(|relative| relative == Path::new("lib/internal/fs/utils.js"));
+    if is_fs_utilities {
         if let Ok(exports) = &result {
             crate::modules::fs_shared_vm::stat::types::adopt_binding_types(context, *exports)?;
             let state = get(context, *exports, "vfsState")?;
