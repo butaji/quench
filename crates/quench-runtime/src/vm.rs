@@ -432,7 +432,7 @@ struct Realm {
     immutable_global_lexical_bindings: FxHashSet<Atom>,
     global_lexical_states: FxHashMap<Value, GlobalLexicalState>,
     intrinsics: RealmIntrinsics,
-    jobs: Vec<PendingJob>,
+    jobs: std::collections::VecDeque<PendingJob>,
     template_objects: FxHashMap<(ProgramId, u32, u32), Value>,
     promise: PromiseRuntime,
 }
@@ -1165,6 +1165,10 @@ pub(crate) struct Vm<H> {
     /// data `prototype` at the paired slot; derived from shapes, so field-cache invalidation
     /// clears it.
     instanceof_constructor_layout: Option<(u32, usize)>,
+    /// The shapes an ordinary closure's own properties step through, without and with a
+    /// `prototype` (`construction::ClosureShapes`); derived from shapes, so field-cache
+    /// invalidation clears it.
+    closure_shapes: [Option<construction::ClosureShapes>; 2],
     /// A RegExp receiver shape verified to hold an own writable data `lastIndex` at the paired
     /// slot; derived from shapes, so field-cache invalidation clears it.
     regexp_last_index_layout: Option<(u32, u32)>,
@@ -1286,7 +1290,7 @@ impl<H: Host> Vm<H> {
         self.heap.root_value(root)
     }
     pub(crate) fn enqueue_job(&mut self, callback: Value, args: Vec<Value>) {
-        self.realm.jobs.push(PendingJob {
+        self.realm.jobs.push_back(PendingJob {
             callback,
             this: Value::UNDEFINED,
             args,
@@ -1495,25 +1499,38 @@ impl<H: Host> Vm<H> {
         self.realm.global_lexical_bindings.extend(bindings);
     }
     pub(crate) fn execute(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        self.execute_with_job_drain(program, true)
+        self.execute_with_job_drain(program, &[], true)
+    }
+
+    /// Evaluate host-supplied global scripts, then `program`, in one realm.
+    pub(crate) fn execute_after_scripts(
+        &mut self,
+        scripts: &[(&str, &str)],
+        program: &ResidualProgram,
+    ) -> Result<Value, JsError> {
+        self.execute_with_job_drain(program, scripts, true)
     }
 
     pub(crate) fn execute_deferred_jobs(
         &mut self,
         program: &ResidualProgram,
     ) -> Result<Value, JsError> {
-        self.execute_with_job_drain(program, false)
+        self.execute_with_job_drain(program, &[], false)
     }
 
     fn execute_with_job_drain(
         &mut self,
         program: &ResidualProgram,
+        scripts: &[(&str, &str)],
         drain_jobs: bool,
     ) -> Result<Value, JsError> {
         if program.functions.is_empty() {
             return Err(JsError::validation("program has no entry function".into()));
         }
         self.initialize(program)?;
+        for (source, name) in scripts {
+            self.eval_script_source(program, source, name)?;
+        }
         if program.is_module() {
             self.instantiate_main_module(program)?;
             self.evaluate_program_module_requests(program)?;
@@ -1879,6 +1896,7 @@ impl<H: Host> Vm<H> {
         self.private_homes.clear();
         self.programs.reset(program.clone());
         self.instanceof_constructor_layout = None;
+        self.closure_shapes = [None; 2];
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
         self.instanceof_has_instance_holder = Value::NULL;

@@ -1247,6 +1247,7 @@ struct ObjectExtras {
     error_data: bool,
     module_namespace: bool,
     structured_clone_forbidden: bool,
+    structured_transfer_forbidden: bool,
     module_bindings: Vec<(Atom, ProgramId, u16)>,
     deferred_module: Option<crate::ModuleSource>,
     private_names: Vec<PrivateBrand>,
@@ -1563,6 +1564,15 @@ impl Object {
 
     pub(crate) fn is_structured_clone_forbidden(&self) -> bool {
         self.extras().is_some_and(|extras| extras.structured_clone_forbidden)
+    }
+
+    pub(crate) fn forbid_structured_transfer(&mut self) {
+        self.extras_mut().structured_transfer_forbidden = true;
+    }
+
+    pub(crate) fn is_structured_transfer_forbidden(&self) -> bool {
+        self.extras()
+            .is_some_and(|extras| extras.structured_transfer_forbidden)
     }
 
     pub(crate) fn has_error_data(&self) -> bool {

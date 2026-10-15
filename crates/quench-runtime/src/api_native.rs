@@ -70,6 +70,14 @@ pub enum BuiltinBrand {
     BoxedPrimitive,
 }
 
+/// A real Promise's current settlement, without running reactions or guest hooks.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PromiseSnapshot<T = RootId> {
+    Pending,
+    Fulfilled(T),
+    Rejected(T),
+}
+
 /// Intrinsic payload snapshot. Value roots remain scoped to the native callback.
 #[derive(Debug)]
 pub enum BuiltinData<T = RootId> {
@@ -139,6 +147,9 @@ pub struct NativeContext<'a, H: Host> {
 }
 
 impl<'a, H: Host> NativeContext<'a, H> {
+    /// The core string representation's maximum UTF-16 code-unit count.
+    pub const MAX_STRING_CODE_UNITS: usize = crate::vm::wtf16::MAX_STRING_UNITS;
+
     pub(crate) fn new(vm: &'a mut Vm<H>) -> Self {
         Self {
             vm,
@@ -206,6 +217,21 @@ impl<'a, H: Host> NativeContext<'a, H> {
     pub fn is_promise_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
         let result = self.vm.embedding_is_promise(root);
         result.map_err(|error| self.error(error))
+    }
+
+    /// Observe settlement without then/species access, reactions or a job checkpoint.
+    pub fn promise_snapshot_rooted(&mut self, promise: RootId) -> Result<Option<PromiseSnapshot>, RootedError> {
+        let snapshot = self.vm.embedding_promise_snapshot(promise).map_err(|error| self.error(error))?;
+        Ok(snapshot.map(|snapshot| match snapshot {
+            PromiseSnapshot::Pending => PromiseSnapshot::Pending,
+            PromiseSnapshot::Fulfilled(value) => PromiseSnapshot::Fulfilled(self.scoped_value(value)),
+            PromiseSnapshot::Rejected(value) => PromiseSnapshot::Rejected(self.scoped_value(value)),
+        }))
+    }
+
+    /// Mark the same rejection owner handled that then/await observe.
+    pub fn mark_promise_handled_rooted(&mut self, promise: RootId) -> Result<(), RootedError> {
+        self.vm.embedding_mark_promise_handled(promise).map_err(|error| self.error(error))
     }
 
     /// Whether a name was an own global property in the sealed host bootstrap.
@@ -542,12 +568,37 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.vm.embedding_mark_uncloneable(value).map_err(|error| self.error(error))
     }
 
+    pub fn mark_untransferable_rooted(&mut self, value: RootId) -> Result<(), RootedError> {
+        self.vm
+            .embedding_mark_untransferable(value)
+            .map_err(|error| self.error(error))
+    }
+
+    pub fn is_marked_untransferable_rooted(&mut self, value: RootId) -> Result<bool, RootedError> {
+        self.vm
+            .embedding_is_marked_untransferable(value)
+            .map_err(|error| self.error(error))
+    }
+
     pub fn structured_clone_rooted(
         &mut self,
         value: RootId,
         options: Option<RootId>,
     ) -> Result<RootId, RootedError> {
         let result = self.vm.embedding_structured_clone(value, options);
+        self.completion(result)
+    }
+
+    /// Clone with an already-converted transfer sequence. Host Web IDL conversion
+    /// owns iteration; the VM must not consult the public iterator a second time.
+    pub fn structured_clone_with_transfers_rooted(
+        &mut self,
+        value: RootId,
+        transfers: &[RootId],
+    ) -> Result<RootId, RootedError> {
+        let result = self
+            .vm
+            .embedding_structured_clone_with_transfers(value, transfers);
         self.completion(result)
     }
 

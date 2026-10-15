@@ -424,6 +424,7 @@ impl<H: Host> Vm<H> {
         self.megamorphic_fields.clear();
         self.inherited_field_caches.clear();
         self.instanceof_constructor_layout = None;
+        self.closure_shapes = [None; 2];
         self.regexp_last_index_layout = None;
         self.regexp_builtin_layout = None;
     }
@@ -725,9 +726,10 @@ impl<H: Host> Vm<H> {
         if cache.receiver != receiver.shape() || cache.holder != NO_FIELD_HOLDER {
             return None;
         }
-        self.profile.field_cache_hit(0, 0);
         // SAFETY: as for `cached_field_hit`.
-        Some(unsafe { self.heap.property_get_unchecked(receiver, cache.slot as usize) })
+        let value = unsafe { self.heap.property_get_shaped(receiver, cache.slot as usize) }?;
+        self.profile.field_cache_hit(0, 0);
+        Some(value)
     }
 
     /// The data field a direct object's immediate prototype holds at the site's primary
@@ -750,6 +752,32 @@ impl<H: Host> Vm<H> {
         Some(hit.value)
     }
 
+    /// The data field a direct object inherits from beyond its immediate prototype, at the
+    /// site's inherited entry (`cached_inherited_field_value`): `field_miss_data_value`'s
+    /// cache hit for a site that has one (`field_site_inherited`).
+    #[inline(always)]
+    pub(super) fn inherited_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        if !(self.specialized && p.specialized) {
+            return None;
+        }
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let hit = self.cached_inherited_field_value(self.field_cache_index(site), receiver)?;
+        self.profile
+            .field_cache_hit(usize::from(hit.tier), hit.depth);
+        Some(hit.value)
+    }
+
+    /// Whether the site has an inherited entry (`inherited_field_hit`).
+    pub(super) fn field_site_inherited(&self, site: u16) -> bool {
+        self.inherited_field_caches
+            .contains_key(&self.field_cache_index(site))
+    }
+
     /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
     pub(super) fn field_site_holder(&self, site: u16) -> bool {
         self.field_caches[self.field_cache_index(site)].holder != NO_FIELD_HOLDER
@@ -769,9 +797,10 @@ impl<H: Host> Vm<H> {
         }
         let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
         let slot = self.inline_megamorphic_field_slot(self.field_cache_index(site), receiver.shape())?;
-        self.profile.field_cache_hit(2, 0);
         // SAFETY: as for `cached_field_hit`.
-        Some(unsafe { self.heap.property_get_unchecked(receiver, usize::from(slot)) })
+        let value = unsafe { self.heap.property_get_shaped(receiver, usize::from(slot)) }?;
+        self.profile.field_cache_hit(2, 0);
+        Some(value)
     }
 
     /// `get_field_polymorphic` for an ordinary record receiver up to the point where it
@@ -1007,10 +1036,7 @@ impl<H: Host> Vm<H> {
         }
         // SAFETY: both immutable shapes and the property slot were recorded together after
         // confirming an immediate-prototype data property.
-        let value = unsafe {
-            self.heap
-                .property_get_unchecked(holder, cache.slot as usize)
-        };
+        let value = unsafe { self.heap.property_get_shaped(holder, cache.slot as usize) }?;
         Some(FieldCacheHit {
             value,
             tier: 0,
@@ -1186,10 +1212,7 @@ impl<H: Host> Vm<H> {
             holder = Some(data);
         }
         // SAFETY: the holder's shape was recorded together with this data slot.
-        let value = unsafe {
-            self.heap
-                .property_get_unchecked(holder?, usize::from(cache.slot))
-        };
+        let value = unsafe { self.heap.property_get_shaped(holder?, usize::from(cache.slot)) }?;
         Some(FieldCacheHit {
             value,
             tier: 0,

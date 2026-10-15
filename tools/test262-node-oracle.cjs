@@ -111,7 +111,8 @@ async function main() {
   if (triage.length > 0) {
     for (const relative of triage) {
       const verdict = await nodeFailures(relative);
-      console.log(`${verdict === null ? 'node-pass' : 'node-fail'} ${relative}${verdict ? `  ${JSON.stringify(verdict)}` : ''}`);
+      const label = verdict === null ? 'node-pass' : verdict.unverifiable ? 'node-unverifiable' : 'node-fail';
+      console.log(`${label} ${relative}${verdict ? `  ${JSON.stringify(verdict)}` : ''}`);
     }
     return;
   }

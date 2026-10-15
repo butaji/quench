@@ -477,46 +477,11 @@ pub(super) fn path_argument(
     value: RootId,
     name: &str,
 ) -> Result<(PathBuf, RootId), RootedError> {
-    let bytes = if let Some(text) = context.string_text(value)? {
-        text.into_bytes()
-    } else if let Some(bytes) = context.view_bytes_rooted(value) {
-        bytes
-    } else if context.is_object_rooted(value)? {
-        let href = get(context, value, "href")?;
-        if context.string_text(href)?.is_none() {
-            return Err(super::util_shared_vm::argument_type_error_with_expected(
-                context,
-                value,
-                name,
-                "of type string or an instance of Buffer or URL",
-            )?);
-        }
-        let undefined = context.undefined();
-        let filename = super::url_shared_vm::file_url_to_path(context, undefined, &[value])?;
-        return path_argument(context, filename, name);
-    } else {
-        return Err(super::util_shared_vm::argument_type_error_with_expected(
-            context,
-            value,
-            name,
-            "of type string or an instance of Buffer or URL",
-        )?);
-    };
-    if bytes.contains(&0) {
-        let error = context.type_error_rooted(&format!(
-            "The argument '{name}' must be a string, Uint8Array, or URL without null bytes",
-        ))?;
-        super::node_errors_shared_vm::decorate_type_error(context, error, "ERR_INVALID_ARG_VALUE")?;
-        return Err(context.throw(error));
-    }
-    #[cfg(unix)]
-    let pathname = {
-        use std::os::unix::ffi::OsStringExt;
-        PathBuf::from(std::ffi::OsString::from_vec(bytes))
-    };
-    #[cfg(not(unix))]
-    let pathname = PathBuf::from(String::from_utf8_lossy(&bytes).into_owned());
-    let resolved = if pathname.is_absolute() {
+    let value = super::fs_path::validate(context, value, name)?;
+    let pathname = super::fs_path::native_path(context, value)?;
+    // Watch registries use lexical absolute names, including nonexistent targets.
+    // Keep that key separate from the inode-based path used for immediate I/O.
+    let pathname = if pathname.is_absolute() {
         pathname
     } else {
         let cwd = context.host_mut().shared_state().borrow().cwd.clone();
@@ -524,8 +489,9 @@ pub(super) fn path_argument(
             .map_err(|error| RootedError::host(error.to_string()))?
             .join(pathname)
     };
-    Ok((resolved, value))
+    Ok((pathname, value))
 }
+
 fn watch_error(
     context: &mut NativeContext<'_, NodeHost>,
     error: std::io::Error,
