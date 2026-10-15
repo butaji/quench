@@ -418,9 +418,7 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let target = args.first().copied().unwrap_or(Value::UNDEFINED);
         if !self.is_object_like(target) {
-            return Err(
-                self.type_error(program, "Error.captureStackTrace requires an object".into())
-            );
+            return Err(self.type_error(program, "invalid_argument".into()));
         }
         let constructor_opt = args.get(1).copied().unwrap_or(Value::UNDEFINED);
         let trim_constructor =
