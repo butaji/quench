@@ -787,6 +787,7 @@ fn cell_bytes(cell: &Cell) -> usize {
     object_extra_bytes
         + match cell {
             Cell::Object(_)
+            | Cell::WasmObject { .. }
             | Cell::Function { .. }
             | Cell::ShadowRealm { .. }
             | Cell::PromiseResolvingState { .. }

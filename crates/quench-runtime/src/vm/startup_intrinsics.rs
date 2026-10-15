@@ -4,7 +4,9 @@
 //! builtin can be built on first use instead of at startup.
 //!
 //! Properties are read from their shape slots, so recording and comparing allocate nothing; a
-//! key becomes a JavaScript value only when a property actually has to be redefined.
+//! key becomes a JavaScript value only when a property actually has to be redefined. A holder
+//! still in the shape a property was recorded in keeps that key in the same slot with the same
+//! attributes, so comparing it reads only the slot, without building lookup indexes.
 
 use super::object_descriptors::PropertyDescriptorRecord;
 use super::*;
@@ -36,7 +38,14 @@ struct IntrinsicProperty {
     key: PropertyKey,
     value: Value,
     attributes: ShapeAttributes,
+    /// The holder's shape when the original was recorded (`UNRECORDED_SHAPE` once unknown)
+    /// and the property's slot in it.
+    shape: u32,
+    slot: u32,
 }
+
+/// `IntrinsicProperty::shape` when the holder's recording shape is unknown.
+const UNRECORDED_SHAPE: u32 = u32::MAX;
 
 #[derive(Default)]
 pub(super) struct StartupIntrinsics {
@@ -59,11 +68,23 @@ impl StartupIntrinsics {
         }
     }
 
-    fn set_original(&mut self, index: usize, original: SlotProperty) {
+    fn set_original(&mut self, index: usize, original: SlotProperty, place: Option<(u32, usize)>) {
         let attributes = ShapeAttributes::record(original.attributes, &mut self.accessors);
         let property = &mut self.properties[index];
         property.value = original.value;
         property.attributes = attributes;
+        (property.shape, property.slot) = place
+            .map_or((UNRECORDED_SHAPE, 0), |(shape, slot)| (shape, slot as u32));
+    }
+
+    /// Follows shape compaction (`mapping` from old to new shape ids).
+    pub(super) fn remap_shapes(&mut self, mapping: &[u32]) {
+        for property in &mut self.properties {
+            property.shape = mapping
+                .get(property.shape as usize)
+                .copied()
+                .unwrap_or(UNRECORDED_SHAPE);
+        }
     }
 
     /// Values the snapshot keeps alive: holders, symbol keys, accessor functions and both
@@ -126,15 +147,29 @@ impl<H: Host> Vm<H> {
         let mut properties = Vec::new();
         let mut accessors = Vec::new();
         for holder in holders {
-            for key in self.own_shape_keys(holder) {
-                if let Some(original) = self.slot_property(holder, key) {
-                    properties.push(IntrinsicProperty {
-                        holder,
-                        key,
-                        value: original.value,
-                        attributes: ShapeAttributes::record(original.attributes, &mut accessors),
-                    });
-                }
+            let Some(object) = self.object_data(holder) else {
+                continue;
+            };
+            let shape = object.shape();
+            let entries = super::gc::active_shape_attributes(&self.shapes, shape);
+            for (slot, (key, attributes)) in entries
+                .into_iter()
+                .enumerate()
+                .filter_map(|(slot, entry)| Some((slot, entry?)))
+            {
+                let value = self
+                    .heap
+                    .property_get(object, slot)
+                    .unwrap_or(Value::UNDEFINED);
+                let attributes = attributes.attributes(&self.shape_accessors);
+                properties.push(IntrinsicProperty {
+                    holder,
+                    key,
+                    value,
+                    attributes: ShapeAttributes::record(attributes, &mut accessors),
+                    shape,
+                    slot: slot as u32,
+                });
             }
         }
         properties.shrink_to_fit();
@@ -153,7 +188,7 @@ impl<H: Host> Vm<H> {
         for index in 0..self.startup_intrinsics.properties.len() {
             let property = self.startup_intrinsics.properties[index];
             let original = self.startup_intrinsics.original(index);
-            let current = self.slot_property(property.holder, property.key);
+            let current = self.current_intrinsic(index);
             if current == Some(original) {
                 continue;
             }
@@ -181,10 +216,11 @@ impl<H: Host> Vm<H> {
         for &(index, previous) in swapped.iter().rev() {
             restored[index] = true;
             let property = self.startup_intrinsics.properties[index];
-            if let Some(current) = self.slot_property(property.holder, property.key)
+            if let Some(current) = self.current_intrinsic(index)
                 && current != self.startup_intrinsics.original(index)
             {
-                self.startup_intrinsics.set_original(index, current);
+                let place = self.object_property_slot(property.holder, property.key);
+                self.startup_intrinsics.set_original(index, current, place);
             }
             let result = match previous {
                 Some(previous) => self
@@ -202,13 +238,31 @@ impl<H: Host> Vm<H> {
         for (index, restored) in restored.into_iter().enumerate() {
             let property = self.startup_intrinsics.properties[index];
             if !restored
-                && let Some(current) = self.slot_property(property.holder, property.key)
+                && let Some(current) = self.current_intrinsic(index)
                 && current != self.startup_intrinsics.original(index)
             {
-                self.startup_intrinsics.set_original(index, current);
+                let place = self.object_property_slot(property.holder, property.key);
+                self.startup_intrinsics.set_original(index, current, place);
             }
         }
         outcome
+    }
+
+    /// Recorded property `index`'s current state, read from its slot while the holder keeps
+    /// the shape the original was recorded in.
+    fn current_intrinsic(&self, index: usize) -> Option<SlotProperty> {
+        let property = self.startup_intrinsics.properties[index];
+        if let Some(object) = self.object_data(property.holder)
+            && object.shape() == property.shape
+        {
+            let value = self
+                .heap
+                .property_get(object, property.slot as usize)
+                .unwrap_or(Value::UNDEFINED);
+            let attributes = self.startup_intrinsics.original(index).attributes;
+            return Some(SlotProperty { value, attributes });
+        }
+        self.slot_property(property.holder, property.key)
     }
 
     fn own_shape_keys(&self, holder: Value) -> Vec<PropertyKey> {
