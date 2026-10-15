@@ -31,6 +31,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "stripVTControlCharacters" (1) => crate::modules::util_shared_vm::strip_vt,
         method "getSystemErrorName" (1) => crate::modules::util_system_error_shared_vm::get_system_error_name,
         method "parseEnv" (1) => crate::modules::util_shared_vm::parse_env,
+        method "parseArgs" (0) => crate::modules::util_parse_args_shared_vm::parse,
+        method "utilParseArgsPositional" (1) => crate::modules::util_parse_args_shared_vm::positional_map,
         method "utilTypeCheck" (1) => crate::modules::util_shared_vm::type_check,
         method "uptime" (0) => crate::modules::process_shared_vm::uptime,
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,

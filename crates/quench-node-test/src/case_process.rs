@@ -67,6 +67,10 @@ impl CaseObservation {
     }
 }
 
+/// Select a frozen production CLI for raw child/API differential fixtures.
+/// Unix exec preserves the process ID, groups, descriptors and signal boundary.
+pub const NODE_TEST_EXECUTABLE_ENV: &str = "QUENCH_NODE_TEST_EXECUTABLE";
+
 /// Both runner binaries consume this private mode before parsing public options.
 pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
     if arguments.first().map(String::as_str) != Some(WORKER_OPTION) {
@@ -74,6 +78,27 @@ pub fn worker_entry(arguments: &[String]) -> Option<ExitCode> {
         // executable. Its children must execute the requested Node entry,
         // rather than interpreting those arguments as a suite invocation.
         if std::env::var_os(quench_node::shared_run::CHILD_RUNNER_ENV).is_some() {
+            if let Some(executable) = std::env::var_os(NODE_TEST_EXECUTABLE_ENV) {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::CommandExt;
+                    let current = std::env::current_exe().and_then(std::fs::canonicalize);
+                    let selected = std::fs::canonicalize(&executable);
+                    if matches!((&current, &selected), (Ok(current), Ok(selected)) if current == selected) {
+                        eprintln!("{NODE_TEST_EXECUTABLE_ENV} must select a distinct CLI");
+                        return Some(ExitCode::from(2));
+                    }
+                    let error = Command::new(executable).args(arguments).exec();
+                    eprintln!("external Node-compatible CLI: {error}");
+                    return Some(ExitCode::from(1));
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = executable;
+                    eprintln!("{NODE_TEST_EXECUTABLE_ENV} requires Unix exec for process parity");
+                    return Some(ExitCode::from(2));
+                }
+            }
             return Some(
                 match quench_node::shared_run::run_shared_cli(arguments.iter().cloned()) {
                     Ok(code) => code,

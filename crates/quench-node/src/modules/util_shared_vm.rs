@@ -435,6 +435,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.set_property_rooted(module, key, function, module)?;
     }
     let callbackify = crate::modules::util_callbackify_shared_vm::function(context)?;
+    let parse_args = super::util_parse_args_shared_vm::function(context)?;
+    let parse_args_key = context.string_rooted("parseArgs");
+    context.set_property_rooted(module, parse_args_key, parse_args, module)?;
     let callbackify_key = context.string_rooted("callbackify");
     context.set_property_rooted(module, callbackify_key, callbackify, module)?;
     let types = context.object_rooted()?;
@@ -651,6 +654,15 @@ pub(crate) fn argument_type_error(
     name: &str,
     expected: &str,
 ) -> Result<RootedError, RootedError> {
+    argument_type_error_units(context, root, &name.encode_utf16().collect::<Vec<_>>(), expected)
+}
+
+pub(crate) fn argument_type_error_units(
+    context: &mut NativeContext<'_, NodeHost>,
+    root: RootId,
+    name: &[u16],
+    expected: &str,
+) -> Result<RootedError, RootedError> {
     // Node treats the validator's "Object" token as the object primitive type.
     let expected = if expected == "Object" {
         "of type object".to_owned()
@@ -659,7 +671,7 @@ pub(crate) fn argument_type_error(
     } else {
         format!("of type {expected}")
     };
-    argument_type_error_with_expected(context, root, name, &expected)
+    argument_type_error_with_expected_units(context, root, name, &expected)
 }
 
 /// Already formatted union of accepted Node argument types.
@@ -669,17 +681,28 @@ pub(crate) fn argument_type_error_with_expected(
     name: &str,
     expected: &str,
 ) -> Result<RootedError, RootedError> {
+    argument_type_error_with_expected_units(context, root, &name.encode_utf16().collect::<Vec<_>>(), expected)
+}
+
+pub(crate) fn argument_type_error_with_expected_units(
+    context: &mut NativeContext<'_, NodeHost>,
+    root: RootId,
+    name: &[u16],
+    expected: &str,
+) -> Result<RootedError, RootedError> {
     let received = argument_type_description(context, root)?;
-    let label = if name.ends_with(" argument") {
-        name.to_owned()
-    } else if name.contains('.') {
-        format!("\"{name}\" property")
+    let mut units = "The ".encode_utf16().collect::<Vec<_>>();
+    if name.ends_with(&" argument".encode_utf16().collect::<Vec<_>>()) {
+        units.extend_from_slice(name);
     } else {
-        format!("\"{name}\" argument")
-    };
-    let error = context.type_error_rooted(&format!(
-        "The {label} must be {expected}. Received {received}"
-    ))?;
+        units.push(u16::from(b'"'));
+        units.extend_from_slice(name);
+        units.extend(if name.contains(&u16::from(b'.')) { "\" property" } else { "\" argument" }.encode_utf16());
+    }
+    units.extend(format!(" must be {expected}. Received {received}").encode_utf16());
+    let error = context.type_error_rooted("")?;
+    let message = context.string_units_rooted(&units);
+    context.assign_named_property_rooted(error, "message", message)?;
     super::node_errors_shared_vm::decorate_argument_type(context, error)?;
     Ok(context.throw(error))
 }
@@ -689,6 +712,15 @@ pub(crate) fn argument_value_error(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
     name: &str,
+    reason: &str,
+) -> Result<RootedError, RootedError> {
+    argument_value_error_units(context, value, &name.encode_utf16().collect::<Vec<_>>(), reason)
+}
+
+pub(crate) fn argument_value_error_units(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    name: &[u16],
     reason: &str,
 ) -> Result<RootedError, RootedError> {
     const MAX_INSPECTED_VALUE_UNITS: usize = 128;
@@ -702,14 +734,14 @@ pub(crate) fn argument_value_error(
         detail.truncate(MAX_INSPECTED_VALUE_UNITS);
         detail.extend("...".encode_utf16());
     }
-    let kind = if name.contains('.') {
+    let kind = if name.contains(&u16::from(b'.')) {
         "property"
     } else {
         "argument"
     };
-    let mut units = format!("The {kind} '{name}' {reason}. Received ")
-        .encode_utf16()
-        .collect::<Vec<_>>();
+    let mut units = format!("The {kind} '").encode_utf16().collect::<Vec<_>>();
+    units.extend_from_slice(name);
+    units.extend(format!("' {reason}. Received ").encode_utf16());
     units.extend(detail);
     let message = context.string_units_rooted(&units);
     let error = context.type_error_rooted("")?;
