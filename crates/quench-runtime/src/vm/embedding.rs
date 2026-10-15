@@ -666,6 +666,25 @@ impl<H: Host> Vm<H> {
         self.embedding_has_builtin_brand(root, crate::BuiltinBrand::Promise)
     }
 
+    pub(crate) fn embedding_promise_snapshot(&self, root: RootId) -> Result<Option<crate::PromiseSnapshot<Value>>, JsError> {
+        use crate::PromiseSnapshot as Snapshot;
+        let value = self.embedding_value(root)?;
+        Ok(self.realm.promise.records.get(&value).map(|record| match record.state {
+            super::promise::PromiseState::Pending => Snapshot::Pending,
+            super::promise::PromiseState::Fulfilled => Snapshot::Fulfilled(record.result),
+            super::promise::PromiseState::Rejected => Snapshot::Rejected(record.result),
+        }))
+    }
+
+    pub(crate) fn embedding_mark_promise_handled(&mut self, root: RootId) -> Result<(), JsError> {
+        let promise = self.embedding_value(root)?;
+        if !self.realm.promise.records.contains_key(&promise) {
+            return Err(JsError("value does not have Promise internal slots".into()));
+        }
+        self.observe_promise_rejection(promise);
+        Ok(())
+    }
+
     pub(crate) fn embedding_to_string(&mut self, root: RootId) -> Result<String, JsError> {
         let value = self.embedding_value(root)?;
         let program = self.embedding_program()?;
