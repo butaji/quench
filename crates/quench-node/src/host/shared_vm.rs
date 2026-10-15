@@ -23,6 +23,8 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "parseArgs" (0) => crate::modules::util_parse_args_shared_vm::parse,
         method "utilParseArgsPositional" (1) => crate::modules::util_parse_args_shared_vm::positional_map,
         method "utilTypeCheck" (1) => crate::modules::util_shared_vm::type_check,
+        method "availableMemory" (0) => crate::modules::process_memory_shared_vm::available,
+        method "constrainedMemory" (0) => crate::modules::process_memory_shared_vm::constrained,
         method "uptime" (0) => crate::modules::process_shared_vm::uptime,
         method "processExitCodeGet" (0) => crate::modules::process_shared_vm::exit_code_get,
         method "processExitCodeSet" (1) => crate::modules::process_shared_vm::exit_code_set,

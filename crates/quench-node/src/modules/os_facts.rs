@@ -10,12 +10,20 @@ pub(crate) fn type_str() -> String {
     }
 }
 
-pub(crate) fn total_memory_bytes() -> u64 {
-    sysinfo_total()
+pub(crate) struct MemoryInfo {
+    pub(crate) total: u64,
+    pub(crate) available: u64,
 }
-
-fn sysinfo_total() -> u64 {
-    sysinfo::System::new_all().total_memory()
+pub(crate) fn memory_info() -> MemoryInfo {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    MemoryInfo {
+        total: system.total_memory(),
+        available: system.available_memory(),
+    }
+}
+pub(crate) fn total_memory_bytes() -> u64 {
+    memory_info().total
 }
 
 #[cfg(target_os = "linux")]

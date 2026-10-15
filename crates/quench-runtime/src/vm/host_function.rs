@@ -90,7 +90,6 @@ impl<H: Host> Vm<H> {
             }
         };
         let function = self.native_with_env(Native::HostFunction, environment);
-        self.set_builtin_function_name(function, name)?;
         let atom = self.intern_atom("length");
         self.set_property(function, atom, Value::number(f64::from(length)))?;
         self.set_property_attributes(
@@ -105,6 +104,7 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        self.set_builtin_function_name(function, name)?;
         if constructible {
             let prototype = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
             let constructor_atom = self.intern_atom("constructor");
