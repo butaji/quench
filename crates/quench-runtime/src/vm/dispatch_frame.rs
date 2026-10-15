@@ -878,7 +878,7 @@ impl<H: Host> Vm<H> {
         else {
             return;
         };
-        if self.shapes[shape as usize].storage_len != ARGUMENTS_OBJECT_PROPERTY_COUNT {
+        if self.shapes[shape as usize].storage_len() != ARGUMENTS_OBJECT_PROPERTY_COUNT {
             return;
         }
         let mut properties = [Value::UNDEFINED; ARGUMENTS_OBJECT_PROPERTY_COUNT];
