@@ -717,3 +717,33 @@ var result = "ok";
             .is_some_and(|value| !value.is_undefined())
     );
 }
+
+#[derive(Default)]
+struct NumberCoercionHost;
+impl Host for NumberCoercionHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "nativeNumber" (1) => native_number_coercion]
+    }
+}
+fn native_number_coercion(context: &mut NativeContext<'_, NumberCoercionHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    context.collect()?;
+    let number = context.to_number(args[0])?;
+    Ok(context.number(number))
+}
+#[test]
+fn native_number_conversion_uses_original_hooks_and_shared_language_errors() {
+    let source = r#"
+      const log=[];
+      const value={ [Symbol.toPrimitive](hint){log.push(hint);return '0x10';} };
+      if(nativeNumber(value)!==16||log.join()!=='number')throw Error('number coercion changed');
+      if(!Number.isNaN(nativeNumber(undefined))||!Object.is(nativeNumber('-0'),-0))throw Error('numeric primitive changed');
+      const marker={};try{nativeNumber({valueOf(){throw marker;}});throw Error('missing exception');}catch(error){if(error!==marker)throw error;}
+      for(const value of [Symbol('x'),1n]) {try{nativeNumber(value);throw Error('missing type error');}catch(error){if(!(error instanceof TypeError))throw error;}}
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest { source, name: "native-number.js", kind: crate::SourceKind::Script }).unwrap(),
+        Engine::specialize(source,"native-number.js").unwrap(),
+    ] { Runtime::new(NumberCoercionHost).execute(&program).unwrap(); }
+}
