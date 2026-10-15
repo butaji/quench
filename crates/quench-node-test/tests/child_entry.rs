@@ -7873,3 +7873,35 @@ Promise.all([callback,promise]).then(results=>{out.push(...results);console.log(
 "#,
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn read_file_preserves_raw_paths_descriptor_positions_and_utf8_conversion_boundaries() {
+    use std::os::unix::ffi::OsStringExt;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory
+            .path()
+            .join(std::ffi::OsString::from_vec(vec![0xff])),
+        b"raw-\xff-text",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("plain"), b"plain-data").unwrap();
+    let source = format!(
+        "const directory={:?};\n",
+        directory.path().to_str().unwrap()
+    ) + r#"
+const fs=require('node:fs'),assert=require('node:assert'),out=[];
+const raw=Buffer.concat([Buffer.from(directory+'/'),Buffer.from([255])]),n=raw.length;
+const pathMarker={};raw.toString=()=>{throw pathMarker};for(const encoding of [undefined,'utf8'])assert.throws(()=>fs.readFileSync(raw,encoding),e=>e===pathMarker);delete raw.toString;
+for(const path of [raw,(()=>{const b=new Uint8Array(n+2);b.set(raw,1);return b.subarray(1,-1)})()]){out.push(Array.from(fs.readFileSync(path)),fs.readFileSync(path,'utf8'));}
+for(const encoding of ['',null,'buffer']){try{const value=fs.readFileSync(directory+'/plain',encoding);out.push([encoding,Buffer.isBuffer(value),typeof value])}catch(e){out.push([encoding,e.name,e.code,e.message])}}
+const original=Buffer.prototype.toString;
+try{Buffer.prototype.toString=function(encoding){return 'public-buffer-hook:'+encoding};out.push(fs.readFileSync(raw,'utf8'),fs.readFileSync(raw,'utf-8'),fs.readFileSync(raw,'UTF8'));}finally{Buffer.prototype.toString=original;}
+const fd=fs.openSync(directory+'/plain','r');try{const b=Buffer.alloc(1);assert.strictEqual(fs.readSync(fd,b,0,1,null),1);out.push(fs.readFileSync(fd,'utf8'),Array.from(fs.readFileSync(fd)),fs.fstatSync(fd).size);assert.strictEqual(fs.readSync(fd,b,0,1,0),1);assert.strictEqual(b[0],112);}finally{fs.closeSync(fd);}
+for(const input of [-1,fd,2147483648,1.5])for(const encoding of [undefined,'utf8']){try{fs.readFileSync(input,encoding);assert.fail('accepted invalid input')}catch(e){out.push([input===fd?'closed':input,encoding??null,e.name,e.code,e.syscall??null,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack')]);}}
+for(const path of ['a\0b',Buffer.from([97,0,98]),new Uint8ClampedArray([47]),'']){try{fs.readFileSync(path)}catch(e){out.push([e.name,e.code,e.syscall??null,e.path??null,e.message]);}}
+console.log(JSON.stringify(out));
+"#;
+    compare_node_stream_source(&source);
+}

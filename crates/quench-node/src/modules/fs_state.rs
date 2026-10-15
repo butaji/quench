@@ -69,7 +69,7 @@ impl FsState {
         Ok(fd)
     }
 
-    fn with_descriptor<T>(
+    pub(crate) fn with_descriptor<T>(
         &self,
         fd: i32,
         operation: impl FnOnce(&mut std::fs::File) -> std::io::Result<T>,
