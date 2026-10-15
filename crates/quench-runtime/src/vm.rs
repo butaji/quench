@@ -1077,8 +1077,8 @@ pub(crate) struct Vm<H> {
     /// The JavaScript wrapper of each exported Wasm closure, so every export of one
     /// function is one object. Weak: a wrapper nothing holds is made again on demand.
     wasm_exported_functions: FxHashMap<Value, WeakHandle>,
-    /// Private-name home objects found by `private_name_home`, until the next collection
-    /// (an environment Value may name a new cell afterwards).
+    /// Private-name home objects found by `private_name_home`, kept while their starting
+    /// environment is live.
     private_homes: FxHashMap<PrivateHomeKey, Value>,
     wasm_js: wasm_js::WasmJsIntrinsics,
     direct_eval: bool,
