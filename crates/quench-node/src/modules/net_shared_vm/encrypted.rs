@@ -91,6 +91,9 @@ impl EncryptedStream {
     pub(crate) fn ready(&self) -> bool {
         matches!(self.phase, Phase::Ready)
     }
+    pub(crate) fn dormant(&self) -> bool {
+        matches!(self.phase, Phase::Dormant(_))
+    }
     pub(crate) fn start(&mut self) {
         if let Phase::Dormant(role) = self.phase {
             self.phase = Phase::Handshaking(role);

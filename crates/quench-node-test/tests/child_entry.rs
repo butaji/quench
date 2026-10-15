@@ -5937,7 +5937,13 @@ socket.once('secure',()=>{{console.log(JSON.stringify([socket instanceof tls.TLS
 socket.on('secureConnect',()=>{{throw new Error('direct socket must emit secure')}});socket.on('data',chunk=>result.push(chunk));socket.on('end',()=>console.log(JSON.stringify(Array.from(Buffer.concat(result)))));
 socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.code,error.message]));process.exitCode=1}});socket.connect({{port:{port},host:'127.0.0.1'}});socket._start();
 "#);
-    for source in [source,trusted,rejected,mismatch,direct] {
+    let direct_write = direct
+        .replace("socket.end(Buffer.from([0,1,2,127,128,255,10,13]));", "")
+        .replace("let result=[];", "let result=[];const initialHandle=socket.ssl;")
+        .replace("socket.once('secure',()=>{", "socket.once('secure',()=>{console.log(JSON.stringify([socket.ssl===initialHandle,socket.ssl===socket._handle,socket.ssl.verifyError()?.code]));")
+        .replace("socket.connect(", "socket.on('connect',()=>socket.end(Buffer.from([0,1,2,127,128,255,10,13])));socket.connect(")
+        .replace("socket._start();", "");
+    for source in [source,trusted,rejected,mismatch,direct,direct_write] {
     let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
         let mut command=Command::new(executable);command.args(["-e",&source]).env("QUENCH_TLS_PEER_ROOT",&fixtures);
         if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
@@ -5946,7 +5952,7 @@ socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.
     assert!(!observations[0].timed_out,"Node TLS oracle timed out");
     assert!(!observations[1].timed_out,"native TLS client timed out: {}",String::from_utf8_lossy(&observations[1].stderr));
     assert_eq!(observations[0].exit_code,Some(0),"Node TLS oracle: {}",String::from_utf8_lossy(&observations[0].stderr));
-    assert_eq!(observations[1].exit_code,Some(0),"native TLS client: {}",String::from_utf8_lossy(&observations[1].stderr));
+    assert_eq!(observations[1].exit_code,Some(0),"native TLS client: {} stdout: {} case: {source}",String::from_utf8_lossy(&observations[1].stderr),String::from_utf8_lossy(&observations[1].stdout));
     assert_eq!(String::from_utf8_lossy(&observations[1].stdout),String::from_utf8_lossy(&observations[0].stdout),"case: {source}");
     }
 }
