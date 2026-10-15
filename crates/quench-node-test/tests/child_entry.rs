@@ -5934,6 +5934,31 @@ console.log(tls.createSecureContext().context.getMinProto(),creations);console.l
 }
 
 #[test]
+fn native_internal_key_filters_and_raw_engine_binding_match_node() {
+    const SOURCE: &str = r#"
+const {internalBinding}=require('internal/test/binding');const u=internalBinding('util'),c=internalBinding('crypto');
+console.log(JSON.stringify([c.setEngine.name,c.setEngine.length,u.getOwnNonIndexProperties.name,u.getOwnNonIndexProperties.length,u===internalBinding('util'),Object.entries(u.constants)]));
+for(const flags of [0,1,65535])console.log(JSON.stringify(['dynamic',flags,c.setEngine('dynamic',flags)]));
+const a=[1,2];a.extra=3;Object.defineProperty(a,'hidden',{value:4});a[Symbol('x')]=5;a['01']=6;a['4294967295']=7;
+const o={data:1};Object.defineProperties(o,{get:{get(){throw Error('getter invoked')},enumerable:true,configurable:true},set:{set(v){},enumerable:true,configurable:true},both:{get(){throw Error('getter invoked')},set(v){},enumerable:true,configurable:true},fixed:{value:2,enumerable:true}});
+for(const object of [a,o,new Uint8Array(3),Object.create(null)])for(const flags of [0,1,2,3,4,8,16,17,31])console.log(JSON.stringify([flags,u.getOwnNonIndexProperties(object,flags).map(k=>typeof k==='symbol'?String(k):k)]));
+for(const flags of [0,1,2,3,4,8,16,17,31]){const trace=[];const p=new Proxy({a:1},{ownKeys(){trace.push('keys');return ['a','ghost','0']},getOwnPropertyDescriptor(t,k){trace.push('desc:'+k);return Object.getOwnPropertyDescriptor(t,k)}});console.log(JSON.stringify([flags,u.getOwnNonIndexProperties(p,flags),trace]));}
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--no-warnings", "--expose-internals", "-e", SOURCE]);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(10)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty(),"{}",String::from_utf8_lossy(&observation.stderr));
+    }
+    assert_eq!(String::from_utf8_lossy(&observations[0].stdout),String::from_utf8_lossy(&observations[1].stdout));
+}
+
+#[test]
 fn native_tls_bundled_roots_preserve_stable_trust_material_cache_metadata_and_intrinsic_hooks() {
     compare_node_stream_source(r#"
 const tls=require('tls'),crypto=require('crypto');
@@ -7459,4 +7484,55 @@ const http=require('http'),net=require('net');
 });console.log(JSON.stringify(rows))})();
 "#,
     );
+}
+
+#[test]
+fn util_parse_args_preserves_defaults_getter_order_tokens_and_strict_writes() {
+    compare_node_stream_source(include_str!("../node-tests/test-util-parse-args-contract.js"));
+}
+
+#[test]
+fn util_parse_args_uses_captured_intrinsics_after_nonconfigurable_guest_replacement() {
+    compare_node_stream_source(r#"
+const savedStringify=JSON.stringify;
+for(const [owner,key] of [[Array.prototype,'slice'],[Array.prototype,'shift'],[Array.prototype,'unshift'],[Array.prototype,'push'],[Array.prototype,'map'],[Object,'hasOwn'],[Object,'entries'],[Reflect,'apply'],[String.prototype,'charAt'],[String.prototype,'startsWith'],[String.prototype,'includes'],[String.prototype,'indexOf'],[String.prototype,'slice']]){
+Object.defineProperty(owner,key,{value(){throw Error('guest intrinsic '+key)},configurable:false,writable:false});
+}
+const parse=require('node:util').parseArgs;
+const result=parse({args:['-abx','--no-flag','--','pos'],options:{alpha:{type:'boolean',short:'a'},beta:{type:'string',short:'b'},flag:{type:'boolean'}},allowNegative:true,allowPositionals:true,tokens:true});
+process.stdout.write(savedStringify({name:parse.name,length:parse.length,prototype:Object.hasOwnProperty.call(parse,'prototype'),result})+'\n');
+"#);
+}
+
+#[test]
+fn util_parse_args_default_argv_matches_eval_print_and_file_entry_forms() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = "JSON.stringify(require('util').parseArgs({strict:false}).values)";
+    std::fs::write(directory.path().join("entry.cjs"), format!("process.stdout.write({source})")).unwrap();
+    std::fs::write(directory.path().join("preload.cjs"),format!("process.stdout.write({source})")).unwrap();
+    for args in [
+        vec!["-e".to_owned(),format!("process.stdout.write({source})"),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["--eval".to_owned(),format!("process.stdout.write({source})"),"--".into(),"--foo".into(),"--bar".into()],
+        vec![format!("--eval=process.stdout.write({source})"),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["-p".into(),source.into(),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["--print".into(),"--eval".into(),source.into(),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["--print".into(),format!("--eval={source}"),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["-r".into(),"./preload.cjs".into(),"-e".into(),"".into(),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["-r".into(),"./preload.cjs".into(),"-p".into(),"".into(),"--".into(),"--foo".into(),"--bar".into()],
+        vec!["entry.cjs".into(),"--foo".into(),"--bar".into()],
+        vec!["--".into(),"entry.cjs".into(),"--foo".into(),"--bar".into()],
+    ] {
+        let observations = ["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command = Command::new(executable);
+            command.current_dir(directory.path()).args(&args);
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+            quench_node_test::case_process::observe_command(command,Duration::from_secs(10)).unwrap()
+        });
+        for observation in &observations {
+            assert!(!observation.timed_out,"{args:?}");
+            assert_eq!(observation.exit_code,Some(0),"{args:?}: {}",String::from_utf8_lossy(&observation.stderr));
+            assert!(observation.stderr.is_empty(),"{args:?}");
+        }
+        assert_eq!(observations[0].stdout,observations[1].stdout,"{args:?}");
+    }
 }
