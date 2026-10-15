@@ -424,14 +424,9 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         self.clone_frame_environment(frame, &[slot], &[])?;
-        if self.local_slot_is_environment_owned(p, frame, usize::from(slot)) {
-            *self
-                .heap
-                .environment_slot_mut(self.frames[frame].env, usize::from(slot))
-                .ok_or_else(|| JsError("invalid handler binding".into()))? = value;
-        } else {
-            self.frames[frame].locals[usize::from(slot)] = value;
-        }
+        *self
+            .frame_binding_mut(p, frame, usize::from(slot))
+            .ok_or_else(|| JsError("invalid handler binding".into()))? = value;
         Ok(())
     }
 
@@ -556,12 +551,7 @@ impl<H: Host> Vm<H> {
         if initializing {
             return Ok(());
         }
-        let value = if self.local_slot_is_environment_owned(p, frame, slot) {
-            self.heap.environment_slot(self.frames[frame].env, slot)
-        } else {
-            self.frames[frame].locals.get(slot).copied()
-        };
-        if let Some(value) = value
+        if let Some(value) = self.frame_binding(p, frame, slot)
             && value.is_deleted()
         {
             let atom = p.functions[self.frames[frame].function as usize]
@@ -586,6 +576,82 @@ impl<H: Host> Vm<H> {
             && p.functions[activation.function as usize].local_slot_uses_environment(slot)
     }
 
+    /// The binding a frame owns for `slot`: its environment's slot once the environment is
+    /// captured, else its local. `None` for a slot outside both.
+    pub(super) fn frame_binding(
+        &self,
+        p: &ResidualProgram,
+        frame: usize,
+        slot: usize,
+    ) -> Option<Value> {
+        if self.local_slot_is_environment_owned(p, frame, slot) {
+            self.heap.environment_slot(self.frames[frame].env, slot)
+        } else {
+            self.frames[frame].locals.get(slot).copied()
+        }
+    }
+
+    /// `frame_binding`, to write.
+    pub(super) fn frame_binding_mut(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        slot: usize,
+    ) -> Option<&mut Value> {
+        if self.local_slot_is_environment_owned(p, frame, slot) {
+            self.heap.environment_slot_mut(self.frames[frame].env, slot)
+        } else {
+            self.frames[frame].locals.get_mut(slot)
+        }
+    }
+
+    /// `load_local_binding` where it raises nothing: the initialized binding a frame other than
+    /// a root body owns, read through a mapped `arguments`. `None` leaves the read to
+    /// `load_local_binding`.
+    pub(super) fn initialized_frame_binding(
+        &self,
+        p: &ResidualProgram,
+        frame: usize,
+        slot: usize,
+    ) -> Option<Value> {
+        if self.frames[frame].function == super::ROOT_FUNCTION_ID {
+            return None;
+        }
+        let value = self
+            .frame_binding(p, frame, slot)
+            .filter(|value| !value.is_deleted())?;
+        Some(self.mapped_argument_load(p, frame, slot, value))
+    }
+
+    /// `StoreLocal`, and `StoreEnvLocal` of a function that resolves no names at run time
+    /// (`Function::has_dynamic_scope_access`, which the caller decides), where they raise
+    /// nothing and run no guest code: the store to an initialized (or initializing) binding a
+    /// frame other than a root body owns, of a slot other than its self binding, mirrored into
+    /// a mapped `arguments`. `false` leaves the store to the general path.
+    pub(super) fn store_initialized_frame_binding(
+        &mut self,
+        p: &ResidualProgram,
+        frame: usize,
+        slot: usize,
+        value: Value,
+        initializing: bool,
+    ) -> bool {
+        let function_id = self.frames[frame].function;
+        if function_id == super::ROOT_FUNCTION_ID {
+            return false;
+        }
+        let function = &p.functions[function_id as usize];
+        if function.is_self_binding_slot(slot) {
+            return false;
+        }
+        match self.frame_binding_mut(p, frame, slot) {
+            Some(binding) if initializing || !binding.is_deleted() => *binding = value,
+            _ => return false,
+        }
+        self.mapped_argument_store(p, frame, slot, value);
+        true
+    }
+
     /// All local execution views read the same binding owner before coercion.
     pub(super) fn load_local_binding(
         &mut self,
@@ -596,13 +662,8 @@ impl<H: Host> Vm<H> {
     ) -> Result<Value, JsError> {
         let value = match self.root_body_binding(p, frame, slot)? {
             Some(value) => value,
-            None if self.local_slot_is_environment_owned(p, frame, slot) => self
-                .heap
-                .environment_slot(self.frames[frame].env, slot)
-                .ok_or_else(|| JsError("invalid local environment".into()))?,
-            None => *self.frames[frame]
-                .locals
-                .get(slot)
+            None => self
+                .frame_binding(p, frame, slot)
                 .ok_or_else(|| JsError("invalid local slot".into()))?,
         };
         if value.is_deleted() {
