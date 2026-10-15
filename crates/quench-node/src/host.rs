@@ -1,7 +1,7 @@
 //! Canonical Node host backed by the shared runtime.
 
 pub(crate) mod node_host;
-pub(crate) mod resident_pages;
+pub mod resident_pages;
 pub(crate) mod shared_vm;
 
 pub(crate) use crate::shared_run::EntryGoal;

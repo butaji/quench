@@ -355,14 +355,9 @@ impl<H: Host> Vm<H> {
                         return Err(self.type_error(p, "assignment to constant binding".into()));
                     }
                 }
-                if self.local_slot_is_environment_owned(p, f, slot) {
-                    *self
-                        .heap
-                        .environment_slot_mut(self.frames[f].env, slot)
-                        .ok_or_else(|| JsError("invalid local slot".into()))? = value;
-                } else {
-                    self.frames[f].locals[slot] = value;
-                }
+                *self
+                    .frame_binding_mut(p, f, slot)
+                    .ok_or_else(|| JsError("invalid local slot".into()))? = value;
                 self.mirror_global_lexical_binding(p, f, slot, value);
                 self.mapped_argument_store(p, f, slot, value);
                 if let Some(register) = i.optional_register_b() {
@@ -444,14 +439,9 @@ impl<H: Host> Vm<H> {
                 {
                     self.realm.global_lexical_bindings.insert(atom, value);
                 }
-                if self.local_slot_is_environment_owned(p, f, slot) {
-                    *self
-                        .heap
-                        .environment_slot_mut(self.frames[f].env, slot)
-                        .ok_or_else(|| JsError("invalid local environment".into()))? = value;
-                } else {
-                    self.frames[f].locals[slot] = value;
-                }
+                *self
+                    .frame_binding_mut(p, f, slot)
+                    .ok_or_else(|| JsError("invalid local environment".into()))? = value;
                 self.mapped_argument_store(p, f, slot, value);
                 if let Some(register) = i.optional_register_b() {
                     self.write(f, register, value);
@@ -846,14 +836,9 @@ impl<H: Host> Vm<H> {
             }
             Op::InitializeTdz => {
                 let slot = i.local_slot();
-                if self.local_slot_is_environment_owned(p, f, slot) {
-                    *self
-                        .heap
-                        .environment_slot_mut(self.frames[f].env, slot)
-                        .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
-                } else {
-                    self.frames[f].locals[slot] = Value::DELETED;
-                }
+                *self
+                    .frame_binding_mut(p, f, slot)
+                    .ok_or_else(|| JsError("invalid local slot".into()))? = Value::DELETED;
             }
             Op::GetAsyncIterator => {
                 let value = self.get_async_iterator(p, self.read(f, i.register_b()))?;
