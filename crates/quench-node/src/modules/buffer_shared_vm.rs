@@ -231,37 +231,8 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       return { type: "Buffer", data: Array.from(this) };
     }
 
-    toString(encoding = "utf8", start = 0, end = this.length) {
-      const normalized = normalizeEncoding(encoding);
-      const index = (value, fallback) => {
-        const number = Math.trunc(Number(value));
-        if (Number.isNaN(number)) return fallback;
-        if (number < 0) return 0;
-        return Math.min(this.length, number);
-      };
-      const first = index(start, 0);
-      const last = Math.max(first, index(end, 0));
-      return decode(this.subarray(first, last), normalized);
-    }
-
     slice(start = 0, end = this.length) {
       return this.subarray(start, end);
-    }
-
-    equals(other) {
-      if (!(other instanceof Uint8Array)) {
-        throw codedTypeError(
-          'The "otherBuffer" argument must be an instance of Buffer or Uint8Array.' +
-            invalidArgumentDescription(other),
-          "ERR_INVALID_ARG_TYPE",
-        );
-      }
-      const length = intrinsicByteLength(this);
-      if (intrinsicByteLength(other) !== length) return false;
-      for (let index = 0; index < length; index++) {
-        if (this[index] !== other[index]) return false;
-      }
-      return true;
     }
 
     copy(target, targetStart = 0, sourceStart = 0, sourceEnd = this.length) {
@@ -578,11 +549,19 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let module = context.object_rooted()?;
     let buffer = get(context, constructor, "Buffer")?;
     let buffer = super::buffer_constructor_shared_vm::install(context, buffer)?;
+    super::buffer_compare_shared_vm::install(context, buffer)?;
     let prototype = get(context, buffer, "prototype")?;
     super::buffer_search_shared_vm::install(context, prototype)?;
     super::buffer_bigint_shared_vm::install(context, prototype)?;
     super::buffer_swap_shared_vm::install(context, prototype)?;
     super::buffer_write_shared_vm::install(context, prototype)?;
+    let limits = get(context, constructor, "constants")?;
+    for name in ["MAX_LENGTH", "MAX_STRING_LENGTH"] {
+        let key = context.string_rooted(name);
+        let value = get(context, limits, name)?;
+        context.define_data_property_rooted(limits, key, value, false, true, false)?;
+    }
+    super::buffer_string_shared_vm::install(context, prototype, limits)?;
     super::buffer_fill_shared_vm::install(context, prototype)?;
     super::buffer_inspect_shared_vm::install(context, module, prototype)?;
     install_backing_getters(context, buffer, prototype)?;

@@ -6775,6 +6775,20 @@ process.emitWarning=originalWarning;out.push(warnings);console.log(JSON.stringif
 }
 
 #[test]
+fn buffer_pool_size_preserves_public_configuration_and_legacy_numeric_construction() {
+    compare_node_stream_source(r#"
+const B=require('buffer').Buffer,out=[];
+const d=Object.getOwnPropertyDescriptor(B,'poolSize');
+out.push([d.value,d.writable,d.enumerable,d.configurable]);
+const emit=process.emitWarning;process.emitWarning=()=>{};
+const b=new B(B.poolSize);out.push([b.length,b.parent instanceof ArrayBuffer]);
+B.poolSize=128;out.push(B.poolSize);delete B.poolSize;out.push(Object.hasOwn(B,'poolSize'));
+Object.defineProperty(B,'poolSize',d);out.push(B.poolSize);
+process.emitWarning=emit;console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
 fn native_buffer_constructor_deprecation_follows_original_vm_filenames_and_process_flags() {
     compare_node_stream_source(r#"
 'use strict';
@@ -7022,5 +7036,78 @@ const marker={};M.prototype.require=function(){throw marker};
 try{void vm}catch(e){out.push(['original-error',e===marker])}
 M.prototype.require=original;
 console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_from_and_copy_bytes_preserve_conversion_bounds_brands_and_hooks() {
+compare_node_stream_source(r#"
+'use strict';const B=Buffer,out=[],hooks=[];
+function check(tag,value,...tail){hooks.length=0;try{const b=B.from(value,...tail);out.push([tag,'ok',Array.from(b),Object.getPrototypeOf(b)===B.prototype,b.buffer===value,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,hooks.slice()])}}
+for(const fn of [B.from,B.copyBytesFrom])out.push(['shape',fn&&fn.name,fn&&fn.length,!!fn&&Object.hasOwn(fn,'prototype')]);
+const values=[undefined,null,false,0,1,1n,Symbol('v'),{},Object.create(null),new Boolean(true),new Number(3),new String('test'),{valueOf(){hooks.push('valueOf');return 'test'}},{[Symbol.toPrimitive](hint){hooks.push(hint);return 'test'}},{valueOf(){hooks.push('valueOf');return null}},{valueOf:null},{valueOf:1},{length:3,0:257,1:-1,2:2},{length:'3',0:1},{length:NaN},{type:'Buffer',data:[1,2,3]},new Uint8Array([1,2,255]),new Uint16Array([0xffff,256]),new BigInt64Array([1n]),new DataView(new ArrayBuffer(3)),[1,2,257],['1','2',null]];
+for(let i=0;i<values.length;i++)check(['value',i],values[i]);
+for(const value of ['test','é','😀','\ud800','aaZZbb'])for(const enc of [undefined,null,false,0,{},'utf8','utf16le','latin1','hex','base64','bogus'])check(['string',value,typeof enc,String(enc)],value,enc);
+for(const offset of [undefined,null,0,1,1.5,-1,6,NaN,Infinity,'2',1n,{valueOf(){hooks.push('offset');return 1}}])for(const length of [undefined,null,0,2,2.5,-1,9,NaN,Infinity,'2',1n])check(['ab',typeof offset,String(offset),typeof length,String(length)],new Uint8Array([1,2,3,4,5]).buffer,offset,length);
+for(const kind of ['valueOf','primitive','length','buffer','type','data']){
+ let o={};
+ if(kind==='valueOf')Object.defineProperty(o,'valueOf',{get(){hooks.push('get-valueOf');return function(){hooks.push('call-valueOf');return 'xy'}}});
+ if(kind==='primitive')o[Symbol.toPrimitive]=hint=>{hooks.push(hint);return 'xy'};
+ if(kind==='length')Object.defineProperty(o,'length',{get(){hooks.push('length');return 2}});
+ if(kind==='buffer'){o.buffer=new ArrayBuffer(2)};
+ if(kind==='type'){o.type='Buffer';Object.defineProperty(o,'data',{get(){hooks.push('data');return [3,4]}})};
+ if(kind==='data')o={type:'Buffer',data:new Uint8Array([3,4])};
+ check(['hooks',kind],o);
+}
+for(const source of [new Uint8Array([1,2,3]),new Uint16Array([0x1234,0xabcd]),new BigInt64Array([1n,-2n]),new DataView(new ArrayBuffer(4)),[],new Uint8Array(0)])for(const offset of [undefined,null,0,1,-1,NaN,1.5,9,'1',1n])for(const length of [undefined,0,1,9,-1]){
+ hooks.length=0;try{const b=B.copyBytesFrom(source,offset,length);out.push(['copy',source.constructor.name,typeof offset,String(offset),length,'ok',Array.from(b)])}catch(e){out.push(['copy',source.constructor.name,typeof offset,String(offset),length,e.name,e.code,e.message])}
+}
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn inspect_shallow_null_prototype_records_preserve_empty_hidden_and_symbol_keys() {
+compare_node_stream_source(r#"
+const u=require('util'),out=[],empty=Object.create(null),visible=Object.assign(Object.create(null),{a:1}),hidden=Object.create(null),symbol=Object.create(null),hiddenSymbol=Object.create(null);
+Object.defineProperty(hidden,'x',{value:1});symbol[Symbol('x')]=1;Object.defineProperty(hiddenSymbol,Symbol('x'),{value:1});
+for(const value of [empty,visible,hidden,symbol,hiddenSymbol])for(const depth of [-2,-1])for(const showHidden of [false,true])out.push(u.inspect(value,{depth,showHidden}));
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_string_conversion_preserves_bounds_metadata_encodings_and_original_hooks() {
+compare_node_stream_source(r#"
+const B=require('buffer').Buffer,out=[],hooks=[];
+function record(tag,fn){hooks.length=0;try{const value=fn();out.push([tag,'ok',typeof value==='string'?Array.from(value,c=>c.codePointAt(0)):value,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,hooks.slice()])}}
+for(const n of ['toString','toLocaleString','asciiSlice','base64Slice','base64urlSlice','latin1Slice','hexSlice','ucs2Slice','utf8Slice']){const f=B.prototype[n];record(['shape',n],()=>[f.name,f.length,Object.hasOwn(f,'prototype'),Object.getOwnPropertyDescriptor(B.prototype,n).enumerable])}
+record('alias',()=>B.prototype.toString===B.prototype.toLocaleString);
+const b=B.from([0,65,127,128,195,169,255,0,216]);
+for(const enc of [undefined,'utf8','hex','base64','base64url','latin1','ascii','utf16le','bogus','\ud800',null,false,0,Symbol('enc'),{toString(){hooks.push('encoding');return 'hex'}}])for(const start of [undefined,-1,0,1,1.5,20,NaN,Infinity,'2',1n])record(['toString',typeof enc,String(enc),typeof start,String(start)],()=>b.toString(enc,start));
+for(const start of [undefined,-1,0,2,2.9,20,NaN,Infinity,'2',null,1n,{valueOf(){hooks.push('start');return 2}}])for(const end of [undefined,-1,0,4,4.9,20,NaN,Infinity,'5',null,1n,{valueOf(){hooks.push('end');return 5}}])record(['range',typeof start,String(start),typeof end,String(end)],()=>b.toString('hex',start,end));
+for(const value of [{length:0},Object.create(B.prototype),new Uint8Array([65,66]),new Uint16Array([65,66]),new DataView(new ArrayBuffer(2)),null,undefined])for(const args of [[],['hex'],['hex',20],['bogus',0,0]])record(['receiver',Object.prototype.toString.call(value),args],()=>B.prototype.toString.apply(value,args));
+for(const n of ['asciiSlice','base64Slice','base64urlSlice','latin1Slice','hexSlice','ucs2Slice','utf8Slice'])for(const start of [undefined,-1,-0.5,-1.5,0,1,1.5,20,NaN,Infinity,-Infinity,2**63,2**64,'2',1n,Symbol('index')])for(const end of [undefined,-1,0,4,20,NaN,'5',1n])record([n,typeof start,String(start),typeof end,String(end)],()=>B.prototype[n].call(b,start,end));
+const own=B.from([65,66,67]);Object.defineProperty(own,'length',{get(){hooks.push('length');return 1}});own.subarray=()=>{throw Error('public subarray')};
+for(const args of [[],[undefined],['hex'],['hex',0,2]])record(['original-hooks',args],()=>own.toString(...args));
+console.log(JSON.stringify(out));
+"#);
+}
+
+#[test]
+fn native_buffer_string_slices_preserve_detached_views_and_original_conversion_errors() {
+compare_node_stream_source(r#"
+const out=[],marker={},hooks=[];function check(tag,fn){hooks.length=0;try{const v=fn();out.push([tag,'ok',v,hooks.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,e===marker,hooks.slice()])}}
+for(const detach of [false,true]){const ab=new ArrayBuffer(4);new Uint8Array(ab).set([65,66,67,68]);const dv=new DataView(ab);if(detach)structuredClone(ab,{transfer:[ab]});for(const method of ['utf8Slice','hexSlice'])check([method,'dv',detach],()=>Buffer.prototype[method].call(dv,{valueOf(){hooks.push('start');throw marker}}));}
+const rab=new ArrayBuffer(8,{maxByteLength:16}),dv=new DataView(rab,4,4);rab.resize(2);check('oob-dv',()=>Buffer.prototype.hexSlice.call(dv,0,4));
+const b=Buffer.from([65,66,67,68]);check('changing-start',()=>b.toString('hex',{valueOf(){hooks.push('start');return hooks.length}}));
+for(const position of ['start','end','encoding'])check(['throw',position],()=>b.toString(position==='encoding'?{toString(){throw marker}}:'hex',position==='start'?{valueOf(){throw marker}}:0,position==='end'?{valueOf(){throw marker}}:4));
+const constants=require('buffer').constants;check('limit-export-isolation',()=>{try{constants.MAX_STRING_LENGTH=0}catch{}return b.toString('hex')});for(const name of ['MAX_LENGTH','MAX_STRING_LENGTH'])check(['constant',name],()=>Object.getOwnPropertyDescriptor(constants,name));console.log(JSON.stringify(out));"#);
+}
+
+#[test]
+fn native_buffer_static_comparison_preserves_brands_detachment_metadata_and_byte_order() {
+compare_node_stream_source(r#"
+const B=Buffer,out=[];const f=B.compare,d=Object.getOwnPropertyDescriptor(B,'compare');out.push([f.name,f.length,Object.hasOwn(f,'prototype'),d.writable,d.enumerable,d.configurable]);function record(a,b){try{out.push(['ok',f(a,b)])}catch(e){out.push([e.name,e.code,e.message])}};const fake=Object.create(B.prototype),u8=new Uint8Array([1,2]);for(const a of [undefined,null,0,'x',{},fake,new Uint8ClampedArray([1]),new Uint16Array([1]),new DataView(new ArrayBuffer(1)),B.from([]),B.from([1]),u8])for(const b of [undefined,fake,new Uint8Array([]),new Uint8Array([1,3]),u8])record(a,b);const ab=new ArrayBuffer(2),view=new Uint8Array(ab);structuredClone(ab,{transfer:[ab]});record(view,view);record(view,B.alloc(0));for(const left of [{},fake,new Uint8Array([1,2]),new Uint16Array([513]),B.alloc(0)])for(const right of [undefined,fake,new Uint8Array([]),new Uint8Array([1,2])]){try{out.push(['equals','ok',B.prototype.equals.call(left,right)])}catch(e){out.push(['equals',e.name,e.code,e.message])}};const eq=B.prototype.equals;out.push(['equals-shape',eq.name,eq.length,Object.hasOwn(eq,'prototype')]);console.log(JSON.stringify(out));
 "#);
 }

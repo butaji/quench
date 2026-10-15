@@ -891,6 +891,21 @@ fn array_results_survive_collections_in_proxy_traps() {
 }
 
 #[test]
+fn private_names_resolve_per_class_across_collections() {
+    // Each class evaluation has its own private names; resolution is memoized per
+    // environment and must still reject foreign objects across collections.
+    let source = "function make() { return class { #x = 1; get() { return this.#x; } has(o) { return #x in o; } read(o) { return o.#x; } }; }\n\
+         var A = make(), B = make(), a = new A(), b = new B(), out = [];\n\
+         for (let round = 0; round < 3; round++) { out.push(a.get(), b.get(), a.has(b), a.has(a)); for (let i = 0; i < 50000; i++) ({ i }); }\n\
+         try { a.read(b); } catch (error) { out.push(error.constructor.name); }\n\
+         var result = out.join();";
+    assert_eq!(
+        global_text(source, "result"),
+        "1,1,false,true,1,1,false,true,1,1,false,true,TypeError"
+    );
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();
@@ -9780,7 +9795,9 @@ fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
       let hooks=0;const object={toString(){hooks++;throw Error('guest hook');},[Symbol.toStringTag]:'Special'};
       for(const property of ['length','byteLength','byteOffset','buffer']) {
         const getter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),property).get;
-        for(const [value,label] of [[null,'null'],[undefined,'undefined'],[object,'#<Object>'],[new DataView(new ArrayBuffer(0)),'#<DataView>']]) {
+        const accessor={};Object.defineProperty(accessor,'toString',{get(){hooks++;throw Error('getter');}});
+        const tagged={toString(){hooks++;throw Error('conversion');}};Object.defineProperty(tagged,Symbol.toStringTag,{get(){hooks++;throw Error('tag');}});
+        for(const [value,label] of [[null,'null'],[undefined,'undefined'],[{},'#<Object>'],[object,'[object Special]'],[Object.create(Uint8Array.prototype),'[object Object]'],[Object.create(null),'[object Object]'],[accessor,'[object Object]'],[tagged,'[object Object]'],[new DataView(new ArrayBuffer(0)),'#<DataView>']]) {
           try { getter.call(value);throw Error('accepted invalid receiver'); }
           catch(error) { if(!(error instanceof TypeError)||error.message!==`Method get TypedArray.prototype.${property} called on incompatible receiver ${label}`)throw error; }
         }
@@ -9807,4 +9824,29 @@ fn nullish_property_diagnostics_include_original_property_names() {
       if(hooks!==0)throw Error('rejected base invoked key conversion');
     "#;
     for program in [Engine::compile(crate::ExecutionRequest{source,name:"nullish-property-errors.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"nullish-property-errors.js").unwrap()] {Vm::new(SilentHost).execute(&program).unwrap();}
+}
+
+#[test]
+fn typed_array_offset_and_content_errors_preserve_numeric_hooks_and_targets() {
+    let source = r#"
+const ab=new ArrayBuffer(5),calls=[];
+try{new Uint8Array(ab,{valueOf(){calls.push('offset');return -1.5}},{valueOf(){calls.push('length');return 1}})}catch(e){print(e.name);print(e.message)}
+print(calls.join());print(new Uint8Array(ab,-0.5).length);
+const marker={};try{new Uint8Array(ab,{valueOf(){throw marker}})}catch(e){print(e===marker)}
+for(const [target,source] of [[new Uint8Array(2),new BigInt64Array(1)],[new BigInt64Array(2),new Uint8Array(1)]]){
+ try{target.set(source)}catch(e){print(e.name);print(e.message)}
+ print(Array.from(target,String).join());
+}
+"#;
+    for compile in [Engine::specialize, Engine::specialize_unspecialized] {
+        let output=Rc::new(RefCell::new(Vec::new()));
+        let mut vm=Vm::new(RecordingHost(output.clone()));
+        let program=compile(source,"typed-array-offset-content-errors.js").unwrap();
+        vm.execute(&program).unwrap();
+        assert_eq!(output.borrow().as_slice(),[
+            "RangeError","Start offset -1.5 is outside the bounds of the buffer","offset","5","true",
+            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
+            "TypeError","Cannot mix BigInt and other types, use explicit conversions","0,0",
+        ]);
+    }
 }
