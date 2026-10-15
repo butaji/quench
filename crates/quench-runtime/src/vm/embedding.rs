@@ -1031,6 +1031,21 @@ impl<H: Host> Vm<H> {
         self.construct_value_with_new_target(&program, callee, new_target, &args)
     }
 
+    /// Host builtins that perform strict named assignment share the language
+    /// operation, including rejected-write diagnostics and Proxy effects.
+    pub(crate) fn assign_named_property_rooted(
+        &mut self,
+        object: RootId,
+        name: &str,
+        value: RootId,
+    ) -> Result<(), JsError> {
+        let object = self.embedding_value(object)?;
+        let value = self.embedding_value(value)?;
+        let atom = self.intern_atom(name);
+        let program = self.embedding_program()?;
+        self.set_property_with_program_mode(&program, object, atom, value, true)
+    }
+
     pub(crate) fn set_property_rooted(
         &mut self,
         object: RootId,

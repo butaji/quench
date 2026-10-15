@@ -1,5 +1,6 @@
 //! Shared-VM utilities and native builtin-brand predicates.
 
+use crate::modules::event_constructor_shared_vm::get;
 use crate::host::NodeHost;
 use quench_runtime::{BuiltinBrand, NativeContext, RootId, RootedError};
 
@@ -434,6 +435,9 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         context.set_property_rooted(module, key, function, module)?;
     }
     let callbackify = crate::modules::util_callbackify_shared_vm::function(context)?;
+    let parse_args = super::util_parse_args_shared_vm::function(context)?;
+    let parse_args_key = context.string_rooted("parseArgs");
+    context.set_property_rooted(module, parse_args_key, parse_args, module)?;
     let callbackify_key = context.string_rooted("callbackify");
     context.set_property_rooted(module, callbackify_key, callbackify, module)?;
     let types = context.object_rooted()?;
@@ -650,6 +654,15 @@ pub(crate) fn argument_type_error(
     name: &str,
     expected: &str,
 ) -> Result<RootedError, RootedError> {
+    argument_type_error_units(context, root, &name.encode_utf16().collect::<Vec<_>>(), expected)
+}
+
+pub(crate) fn argument_type_error_units(
+    context: &mut NativeContext<'_, NodeHost>,
+    root: RootId,
+    name: &[u16],
+    expected: &str,
+) -> Result<RootedError, RootedError> {
     // Node treats the validator's "Object" token as the object primitive type.
     let expected = if expected == "Object" {
         "of type object".to_owned()
@@ -658,7 +671,7 @@ pub(crate) fn argument_type_error(
     } else {
         format!("of type {expected}")
     };
-    argument_type_error_with_expected(context, root, name, &expected)
+    argument_type_error_with_expected_units(context, root, name, &expected)
 }
 
 /// Already formatted union of accepted Node argument types.
@@ -668,17 +681,28 @@ pub(crate) fn argument_type_error_with_expected(
     name: &str,
     expected: &str,
 ) -> Result<RootedError, RootedError> {
+    argument_type_error_with_expected_units(context, root, &name.encode_utf16().collect::<Vec<_>>(), expected)
+}
+
+pub(crate) fn argument_type_error_with_expected_units(
+    context: &mut NativeContext<'_, NodeHost>,
+    root: RootId,
+    name: &[u16],
+    expected: &str,
+) -> Result<RootedError, RootedError> {
     let received = argument_type_description(context, root)?;
-    let label = if name.ends_with(" argument") {
-        name.to_owned()
-    } else if name.contains('.') {
-        format!("\"{name}\" property")
+    let mut units = "The ".encode_utf16().collect::<Vec<_>>();
+    if name.ends_with(&" argument".encode_utf16().collect::<Vec<_>>()) {
+        units.extend_from_slice(name);
     } else {
-        format!("\"{name}\" argument")
-    };
-    let error = context.type_error_rooted(&format!(
-        "The {label} must be {expected}. Received {received}"
-    ))?;
+        units.push(u16::from(b'"'));
+        units.extend_from_slice(name);
+        units.extend(if name.contains(&u16::from(b'.')) { "\" property" } else { "\" argument" }.encode_utf16());
+    }
+    units.extend(format!(" must be {expected}. Received {received}").encode_utf16());
+    let error = context.type_error_rooted("")?;
+    let message = context.string_units_rooted(&units);
+    context.assign_named_property_rooted(error, "message", message)?;
     super::node_errors_shared_vm::decorate_argument_type(context, error)?;
     Ok(context.throw(error))
 }
@@ -688,6 +712,15 @@ pub(crate) fn argument_value_error(
     context: &mut NativeContext<'_, NodeHost>,
     value: RootId,
     name: &str,
+    reason: &str,
+) -> Result<RootedError, RootedError> {
+    argument_value_error_units(context, value, &name.encode_utf16().collect::<Vec<_>>(), reason)
+}
+
+pub(crate) fn argument_value_error_units(
+    context: &mut NativeContext<'_, NodeHost>,
+    value: RootId,
+    name: &[u16],
     reason: &str,
 ) -> Result<RootedError, RootedError> {
     const MAX_INSPECTED_VALUE_UNITS: usize = 128;
@@ -701,14 +734,14 @@ pub(crate) fn argument_value_error(
         detail.truncate(MAX_INSPECTED_VALUE_UNITS);
         detail.extend("...".encode_utf16());
     }
-    let kind = if name.contains('.') {
+    let kind = if name.contains(&u16::from(b'.')) {
         "property"
     } else {
         "argument"
     };
-    let mut units = format!("The {kind} '{name}' {reason}. Received ")
-        .encode_utf16()
-        .collect::<Vec<_>>();
+    let mut units = format!("The {kind} '").encode_utf16().collect::<Vec<_>>();
+    units.extend_from_slice(name);
+    units.extend(format!("' {reason}. Received ").encode_utf16());
     units.extend(detail);
     let message = context.string_units_rooted(&units);
     let error = context.type_error_rooted("")?;
@@ -947,4 +980,102 @@ pub(crate) fn typed_array_name(context: &mut NativeContext<'_, NodeHost>, value:
         if brand != BuiltinBrand::TypedArray && name.ends_with("Array") && context.has_builtin_brand_rooted(value,brand)? { return Ok(name.strip_prefix("is").expect("type predicate prefix")); }
     }
     Err(RootedError::host("typed array brand has no display name"))
+}
+
+const ONLY_WRITABLE: u32 = 1;
+const ONLY_ENUMERABLE: u32 = 2;
+const ONLY_CONFIGURABLE: u32 = 4;
+const SKIP_STRINGS: u32 = 8;
+const SKIP_SYMBOLS: u32 = 16;
+
+/// V8's internal utility returns string keys, excluding array indices, with
+/// the requested enumerable filter. The Core internal methods own key semantics.
+pub(crate) fn own_non_index_properties(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let missing = context.undefined();
+    let object = args.first().copied().unwrap_or(missing);
+    let flags = args.get(1).and_then(|root| context.rooted_value(*root))
+        .and_then(|value| value.as_number()).unwrap_or_default() as u32;
+    // V8's own-only key accumulator treats proxy results as trap snapshots:
+    // ALL_PROPERTIES preserves integer keys as numbers, while filtered queries
+    // skip indices and only the enumerable filter consults descriptors.
+    if context.proxy_target_rooted(object)?.is_some() {
+        let mut keys = Vec::new();
+        for key in context.own_keys_rooted(object)? {
+            if let Some(text) = context.string_text(key)? {
+                if flags & SKIP_STRINGS != 0 { continue; }
+                let index = text.parse::<u32>().ok().filter(|index| *index != u32::MAX && index.to_string() == text);
+                if let Some(index) = index {
+                    if flags == 0 { keys.push(context.number(f64::from(index))); }
+                    continue;
+                }
+            } else if flags & SKIP_SYMBOLS != 0 { continue; }
+            if flags & ONLY_ENUMERABLE != 0 {
+                let descriptor = context.own_property_descriptor_rooted(object, key)?;
+                if !context.is_object_rooted(descriptor)? { continue; }
+                let enumerable = get(context, descriptor, "enumerable")?;
+                if !context.truthy_rooted(enumerable)? { continue; }
+            }
+            keys.push(key);
+        }
+        return context.array_rooted(&keys);
+    }
+    let mut keys = Vec::new();
+    for key in context.own_non_index_keys_rooted(object, flags & ONLY_ENUMERABLE != 0)? {
+        let string = context.string_text(key)?.is_some();
+        if (string && flags & SKIP_STRINGS != 0) || (!string && flags & SKIP_SYMBOLS != 0) { continue; }
+        if flags & (ONLY_WRITABLE | ONLY_CONFIGURABLE) != 0 {
+            let descriptor = context.own_property_descriptor_rooted(object, key)?;
+            if !context.is_object_rooted(descriptor)? { continue; }
+            if flags & ONLY_WRITABLE != 0 {
+                let name = context.string_rooted("writable");
+                let writable = context.own_property_descriptor_rooted(descriptor, name)?;
+                // V8 accessors have no READ_ONLY attribute. A data property's
+                // explicit writable=false is the only rejection here.
+                if context.is_object_rooted(writable)? {
+                    let value = get(context, writable, "value")?;
+                    if !context.truthy_rooted(value)? { continue; }
+                }
+            }
+            if flags & ONLY_CONFIGURABLE != 0 {
+                let value = get(context, descriptor, "configurable")?;
+                if !context.truthy_rooted(value)? { continue; }
+            }
+        }
+        keys.push(key);
+    }
+    context.array_rooted(&keys)
+}
+
+/// Cache the genuine internal key binding in Core-owned private formatter data.
+pub(crate) fn key_binding(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    let data = internal_formatters(context)?;
+    let cache_key = context.string_rooted("nativeKeyBinding");
+    let cached = context.own_property_descriptor_rooted(data, cache_key)?;
+    if context.is_object_rooted(cached)? { return get(context, cached, "value"); }
+    let binding = context.object_rooted()?;
+    let function = context.host_function(crate::host::shared_vm::operation("utilOwnNonIndexProperties"))?;
+    let key = context.string_rooted("name");
+    let name = context.string_rooted("getOwnNonIndexProperties");
+    context.define_data_property_rooted(function, key, name, false, false, true)?;
+    let key = context.string_rooted("getOwnNonIndexProperties");
+    context.define_data_property_rooted(binding, key, function, true, true, true)?;
+    let constants = context.object_rooted()?;
+    for (name, number) in [
+        ("kPending",0),("kFulfilled",1),("kRejected",2),
+        ("kExiting",0),("kExitCode",1),("kHasExitCode",2),
+        ("ALL_PROPERTIES",0),("ONLY_WRITABLE",ONLY_WRITABLE),
+        ("ONLY_ENUMERABLE",ONLY_ENUMERABLE),("ONLY_CONFIGURABLE",ONLY_CONFIGURABLE),
+        ("SKIP_STRINGS",SKIP_STRINGS),("SKIP_SYMBOLS",SKIP_SYMBOLS),
+        ("kDisallowCloneAndTransfer",0),("kTransferable",1),("kCloneable",2),
+    ] {
+        let key = context.string_rooted(name);
+        let value = context.number(f64::from(number));
+        context.define_data_property_rooted(constants, key, value, true, true, true)?;
+    }
+    let key = context.string_rooted("constants");
+    context.define_data_property_rooted(binding, key, constants, true, true, true)?;
+    context.define_data_property_rooted(data, cache_key, binding, false, false, false)?;
+    Ok(binding)
 }
