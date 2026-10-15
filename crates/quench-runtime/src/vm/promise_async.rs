@@ -84,6 +84,7 @@ impl<H: Host> Vm<H> {
                 generator,
                 rejected: false,
                 yielded,
+                sibling: rejected,
             },
         );
         self.realm.promise.async_resume_jobs.insert(
@@ -94,6 +95,7 @@ impl<H: Host> Vm<H> {
                 generator,
                 rejected: true,
                 yielded,
+                sibling: fulfilled,
             },
         );
         // `source` is a Promise, or a primitive standing for the fulfilled one an `await`
@@ -139,10 +141,15 @@ impl<H: Host> Vm<H> {
             .async_resume_jobs
             .remove(&job)
             .ok_or_else(|| JsError("stale Promise async resume job".into()))?;
-        self.realm
-            .promise
-            .async_resume_jobs
-            .retain(|_, candidate| candidate.continuation != resume.continuation);
+        // The sibling's entry is this await's only if it points back here: a collected
+        // sibling's slot can hold another await's reaction.
+        let jobs = &mut self.realm.promise.async_resume_jobs;
+        if jobs
+            .get(&resume.sibling)
+            .is_some_and(|sibling| sibling.sibling == job)
+        {
+            jobs.remove(&resume.sibling);
+        }
         self.with_call_roots(
             [Some(resume.promise), resume.generator, Some(value)]
                 .into_iter()

@@ -713,6 +713,31 @@ impl<H: Host> Vm<H> {
         Some(unsafe { self.heap.property_get_unchecked(receiver, cache.slot as usize) })
     }
 
+    /// The data field a direct object's immediate prototype holds at the site's primary
+    /// holder entry: `cached_field_hit`'s holder tier for a site whose primary entry names a
+    /// prototype (`field_site_holder`).
+    #[inline(always)]
+    pub(super) fn primary_holder_field_hit(
+        &mut self,
+        p: &ResidualProgram,
+        object: Value,
+        site: u16,
+    ) -> Option<Value> {
+        if !(self.specialized && p.specialized) {
+            return None;
+        }
+        let receiver = self.heap.object_record_by_id(object.direct_object_index()?);
+        let hit = self.cached_ordinary_holder_field_value(self.field_cache_index(site), receiver)?;
+        self.profile
+            .field_cache_hit(usize::from(hit.tier), hit.depth);
+        Some(hit.value)
+    }
+
+    /// Whether the site's primary entry names a prototype holder (`primary_holder_field_hit`).
+    pub(super) fn field_site_holder(&self, site: u16) -> bool {
+        self.field_caches[self.field_cache_index(site)].holder != NO_FIELD_HOLDER
+    }
+
     /// The own data field of a direct object among the site's inline megamorphic entries,
     /// which include the primary entry: `cached_field_hit` for a site past one shape.
     #[inline(always)]
@@ -1711,14 +1736,8 @@ impl<H: Host> Vm<H> {
         // the generic object mutator's fallback error is not an ECMAScript
         // error object and loses constructor identity at the Test262 boundary.
         if object.is_null() || object.is_undefined() {
-            return Err(self.type_error(
-                p,
-                if object.is_null() {
-                    "cannot set properties of null".into()
-                } else {
-                    "cannot set properties of undefined".into()
-                },
-            ));
+            let key = self.atom_name(atom).to_owned();
+            return Err(self.nullish_assignment_error(p, object, &key));
         }
         if let Some((target, handler)) = self.proxy_parts(object) {
             if self.is_private_name(atom) {
@@ -1734,7 +1753,7 @@ impl<H: Host> Vm<H> {
                 return self.set_shape_property(object, PropertyKey::string(atom), value);
             }
             let written =
-                self.proxy_set(p, target, handler, object, PropertyKey::string(atom), value)?;
+                self.proxy_set_mode(p, target, handler, object, PropertyKey::string(atom), value, strict)?;
             return if written || !strict {
                 Ok(())
             } else {
@@ -1750,7 +1769,7 @@ impl<H: Host> Vm<H> {
             return if succeeded || !strict {
                 Ok(())
             } else {
-                Err(self.type_error(p, "cannot assign property on primitive value".into()))
+                Err(self.primitive_assignment_error(p, object, atom))
             };
         }
         let own = self.own_property(object, atom).is_some();
@@ -1761,7 +1780,7 @@ impl<H: Host> Vm<H> {
             if let Some(setter) = attributes.setter {
                 self.call_value(p, setter, object, &[value])?;
             } else if strict || self.is_private_name(atom) {
-                return Err(self.type_error(p, "property has no setter".into()));
+                return Err(self.rejected_assignment_error(p, object, atom, false));
             }
             return Ok(());
         }
@@ -1771,14 +1790,14 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|attributes| !attributes.writable)
         {
             return if strict || self.is_private_name(atom) {
-                Err(self.type_error(p, "cannot write non-writable property".into()))
+                Err(self.rejected_assignment_error(p, object, atom, false))
             } else {
                 Ok(())
             };
         }
         if !own && self.inherited_write_blocked(object, atom) {
             return if strict || self.is_private_name(atom) {
-                Err(self.type_error(p, "cannot write inherited non-writable property".into()))
+                Err(self.rejected_assignment_error(p, object, atom, false))
             } else {
                 Ok(())
             };
@@ -1789,7 +1808,7 @@ impl<H: Host> Vm<H> {
                 .is_some_and(|object| !object.is_extensible())
         {
             return if strict {
-                Err(self.type_error(p, "cannot add property to non-extensible object".into()))
+                Err(self.rejected_assignment_error(p, object, atom, false))
             } else {
                 Ok(())
             };
@@ -2045,14 +2064,8 @@ impl<H: Host> Vm<H> {
         strict: bool,
     ) -> Result<(), JsError> {
         if object.is_null() || object.is_undefined() {
-            return Err(self.type_error(
-                p,
-                if object.is_null() {
-                    "cannot set properties of null".into()
-                } else {
-                    "cannot set properties of undefined".into()
-                },
-            ));
+            let key = self.atom_name(atom).to_owned();
+            return Err(self.nullish_assignment_error(p, object, &key));
         }
         if !self.is_object_like(object) {
             if self.is_private_name(atom) {
@@ -2063,14 +2076,18 @@ impl<H: Host> Vm<H> {
             return if written || !strict {
                 Ok(())
             } else {
-                Err(self.type_error(p, "cannot assign property on primitive value".into()))
+                Err(self.primitive_assignment_error(p, object, atom))
             };
         }
-        let written = self.set_property_with_receiver(p, object, atom, value, object)?;
+        let written = if let Some((target, handler)) = self.proxy_parts(object) {
+            self.proxy_set_mode(p, target, handler, object, PropertyKey::string(atom), value, strict)?
+        } else {
+            self.set_property_with_receiver(p, object, atom, value, object)?
+        };
         if written || !strict {
             Ok(())
         } else {
-            Err(self.type_error(p, "cannot assign property".into()))
+            Err(self.rejected_assignment_error(p, object, atom, false))
         }
     }
 
