@@ -1,0 +1,8 @@
+    Finished `iteration` profile [optimized] target(s) in 0.11s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-0c4d472d0248eb46)
+
+running 1 test
+test read_file_unknown_size_supplied_buffer_errors_preserve_node_prototypes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 280 filtered out; finished in 0.52s
+

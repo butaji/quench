@@ -303,7 +303,7 @@ pub(crate) fn write(
             .get(&fd)
             .map(|descriptor| descriptor.path.clone())
             .unwrap_or_default();
-        let result = state.fs.write_descriptor(fd, &bytes, position);
+        let result = state.fs.write_all_descriptor(fd, &bytes, position);
         (result, path)
     };
     match result {

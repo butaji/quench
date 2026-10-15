@@ -2455,7 +2455,6 @@ impl Heap {
             | Cell::DataView { .. }
             | Cell::ShadowRealm { .. }
             | Cell::Proxy { .. }
-            | Cell::WasmObject { .. }
             | Cell::PromiseResolvingState { .. } => CellKind::Object,
             Cell::Array { .. } => CellKind::Array,
             Cell::Map { .. } => CellKind::Map,
@@ -2516,7 +2515,6 @@ impl Heap {
                 | Cell::WeakRef { .. }
                 | Cell::FinalizationRegistry { .. }
                 | Cell::WasmGlobal { .. }
-                | Cell::WasmObject { .. }
                 | Cell::WasmBits64(_)
                 | Cell::WasmV128(_)
                 | Cell::WasmExtern(_)

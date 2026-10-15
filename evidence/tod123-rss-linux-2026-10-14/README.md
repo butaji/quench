@@ -290,3 +290,38 @@ Callgrind (`guard-touched-pages-raw.txt`, previous publication against this
 one, across a v2-merged sync): start-up -2.0% to -12.6% except NavierStokes
 +1.3% and RegExp +1.7%; per-run -25% (Richards) to +2.6% (RegExp), most of the
 per-run change from the merged upstream work.
+
+## One-word string aside, retrained orders
+
+A string's rope halves (present only until it flattens) and a wide string's host text (made
+only after) share one `Aside` slot, shrinking every string allocation. Unbolted static A/B
+(MiB, 3 evicted runs, medians): RegExp 15.18 → 14.64, Splay 49.26 → 48.77, DeltaBlue
+4.45 → 4.26, Richards 3.94 → 3.90; Crypto, NavierStokes, RayTrace within +0.1 (layout).
+Both symbol orders were retrained on the packed-seal/touched-pages code.
+
+Guard (`guard-strings-orders-raw.txt`, base `origin/v2-merged` d1c09c900, candidate its merge
+with this batch): per-run deltas Crypto −0.00%, DeltaBlue +0.23%, EarleyBoyer +0.34%,
+NavierStokes −0.00%, RayTrace +0.95%, RegExp +0.79%, Richards −0.00%, Splay −0.04%.
+Matched unbolted maxrss (MiB, median of 3): Crypto 7.43 → 7.06, DeltaBlue 7.06 → 6.53,
+EarleyBoyer 13.48 → 13.21, NavierStokes 8.14 → 7.87, RayTrace 6.72 → 6.56, RegExp 17.09 →
+16.85, Richards 6.43 → 6.07, Splay 50.78 → 50.69.
+
+Both sides start about 2 MiB higher than this batch before the merge: the trunk's start-up
+rose from about 67M to 712M instructions (Richards N=0), now under investigation.
+
+## Node primordials on first use
+
+The trunk embeds the pinned Node library, so `primordials.js` became available, and ran, at
+every start (Richards N=0 instructions 67M → 712M, every fixture about 2 MiB more resident).
+Only Node's internal modules and the emitter async resource read the snapshot; it now builds
+on first use inside the sealed startup intrinsics. The async-hook registry keeps the plain
+`Set` it always received (it initializes before the snapshot existed).
+
+Guard (`guard-lazy-primordials-raw.txt`, base merge 710f759bc, candidate e3ea30380):
+start-up −640M instructions on all eight; per run Crypto +0.22%, DeltaBlue +0.67%,
+EarleyBoyer +1.32%, NavierStokes 0.00%, RayTrace +0.98%, RegExp −1.61%, Richards −0.01%,
+Splay −20.62% (a smaller live heap moves the trunk-owned collection points).
+Matched unbolted maxrss (`board-lazy-primordials.txt`, MiB, medians): Crypto 6.94 → 5.08,
+DeltaBlue 6.54 → 4.65, EarleyBoyer 13.08 → 11.19, NavierStokes 7.83 → 5.45, RayTrace
+6.43 → 4.30, RegExp 16.89 → 14.90, Richards 6.08 → 4.25, Splay 50.76 → 49.00.
+Node `framework-core` gate: 43/43.

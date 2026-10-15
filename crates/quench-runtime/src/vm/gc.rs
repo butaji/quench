@@ -624,7 +624,7 @@ impl<H: Host> Vm<H> {
         );
         roots.extend(self.symbol_registry.values().copied());
         roots.extend(self.well_known_symbols.values().copied());
-        roots.extend(self.startup_intrinsics.roots());
+        roots.extend(self.startup_intrinsic_roots());
         roots.extend(self.frames.iter().flat_map(|frame| {
             // A missing map means the function uses a register form
             // the liveness pass cannot represent; keep the safe
@@ -691,7 +691,9 @@ impl<H: Host> Vm<H> {
             Some(&parallel_object_roots),
             full,
         );
-        let live_shapes = shape_trace.live_shapes();
+        let mut live_shapes = shape_trace.live_shapes();
+        // The startup snapshot reads its holders' sealed shapes, which no object may hold now.
+        live_shapes.extend(self.startup_intrinsics.sealed_shapes());
         // Heap weak fields are pruned during collection. Prune the VM-owned
         // weak function cache before any post-collection cleanup can allocate
         // into newly freed slots.

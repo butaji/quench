@@ -125,7 +125,6 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
-    let roots = context.host_mut().shared_state();
     let process_surface = context.evaluate_script_rooted(
         crate::polyfills::post_bootstrap::process_surface_00::JS,
         "node:bootstrap/process-surface.js",
@@ -174,13 +173,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.define_data_property_rooted(global, key, print_eval, false, false, false)?;
     install_performance_global(context)?;
     crate::modules::crypto_shared_vm::install_global(context)?;
-    let node_primordials = context
-        .host_mut()
-        .node_library_root
-        .join("lib/internal/per_context/primordials.js");
-    if node_primordials.is_file()
-        || crate::node_sources::source(&node_primordials, &context.host_mut().node_library_root).is_some()
-    {
+    if node_primordials_source(context).is_some() {
         // Node 24 exposes these well-known disposal symbols before its
         // primordial snapshot is built. The runtime may not provide them yet,
         // so seed stable symbols for Node's internal modules first.
@@ -190,10 +183,6 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
         )?;
         let undefined = context.undefined();
         context.call_rooted(seed_disposal_symbols, undefined, &[])?;
-        let exports = load(context, &node_primordials, None, EntryGoal::CommonJs)?;
-        let retained = context.retain(exports)?;
-        roots.borrow_mut().primordials_module = Some(retained);
-        context.release_root(exports);
     }
     #[cfg(feature = "profile-memory")]
     context.profile_memory_checkpoint("node_primordials");
@@ -324,10 +313,7 @@ fn install_performance_global(context: &mut Context<'_>) -> Result<(), RootedErr
 /// (as in Node), so a polyfill is evaluated only when script first observes one of its globals.
 /// A member materializes writable, so a polyfill defining one read-only says so explicitly.
 const WEB_STREAM_GLOBALS: &[&str] = &[
-    "__quenchWebStreamsState",
     "ReadableStream",
-    "__quenchWebStreams",
-    "__quenchReadableStream",
     "WritableStream",
     "TransformStream",
     "CompressionStream",
@@ -390,11 +376,14 @@ pub(super) fn initialize_web_streams(
     _: RootId,
     _: &[RootId],
 ) -> Result<RootId, RootedError> {
-    evaluate_polyfill_block(
-        context,
-        crate::polyfills::bootstrap::web_streams::JS,
-        "node:bootstrap/shared-vm/web-streams.js",
-    )
+    let module = cached_builtin(context, BuiltinModule::WebStreams)?;
+    let global = context.global_root()?;
+    for name in WEB_STREAM_GLOBALS {
+        let value = get(context, module, name)?;
+        let key = context.string_rooted(name);
+        context.define_data_property_rooted(global, key, value, true, false, true)?;
+    }
+    Ok(context.undefined())
 }
 
 pub(super) fn initialize_process_surface(
@@ -950,6 +939,8 @@ pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
 }
 
 const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
+    ("internal/process/task_queues", BuiltinModule::Internal("internal/process/task_queues")),
+    ("internal/worker/io", BuiltinModule::Internal("internal/worker/io")),
     ("constants", BuiltinModule::Internal("constants")),
     ("node:constants", BuiltinModule::Internal("constants")),
     ("dns/promises", BuiltinModule::Internal("dns/promises")),
@@ -1166,6 +1157,12 @@ fn cached_builtin(
     context: &mut Context<'_>,
     builtin: BuiltinModule,
 ) -> Result<RootId, RootedError> {
+    // Source-owned CommonJS modules keep their live exports on the module record.
+    // Reentrant requires must observe module.exports reassignment during loading,
+    // rather than a second cache retaining an earlier partial export object.
+    if matches!(builtin, BuiltinModule::Stream | BuiltinModule::StreamPromises) {
+        return context.with_startup_intrinsics(|context| build_builtin(context, builtin));
+    }
     let canonical = builtin
         .cache_key()
         .ok_or_else(|| RootedError::host("builtin module has no canonical cache key"))?;
@@ -1177,7 +1174,8 @@ fn cached_builtin(
 
     let module = context.with_startup_intrinsics(|context| build_builtin(context, builtin))?;
     let retained = context.retain(module)?;
-    roots.borrow_mut().module_cache.insert(key.clone(), retained);
+    let previous = roots.borrow_mut().module_cache.insert(key.clone(), retained);
+    if let Some(previous) = previous { context.release_root(previous); }
     if matches!(builtin, BuiltinModule::Crypto) {
         let policy = context.with_startup_intrinsics(|context| {
             let setter = node_library_export(context, "crypto.js", "internal/crypto/util.js", "setEngine")?;
@@ -1196,10 +1194,14 @@ fn cached_builtin(
 pub(crate) fn node_library_export(
     context: &mut Context<'_>, owner: &str, relative: &str, name: &str,
 ) -> Result<RootId, RootedError> {
+    let library = node_library_module(context, owner, relative)?;
+    get(context, library, name)
+}
+
+fn node_library_module(context: &mut Context<'_>, owner: &str, relative: &str) -> Result<RootId, RootedError> {
     let root = context.host_mut().node_library_root.clone();
     let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
-    let library = load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)?;
-    get(context, library, name)
+    load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)
 }
 
 pub(crate) fn module_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -1212,6 +1214,10 @@ pub(crate) fn stream_module(context: &mut Context<'_>) -> Result<RootId, RootedE
 
 pub(crate) fn http2_binding(context: &mut Context<'_>) -> Result<RootId, RootedError> {
     cached_builtin(context, BuiltinModule::Http2Binding)
+}
+
+pub(crate) fn fs_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
+    cached_builtin(context, BuiltinModule::Fs)
 }
 
 pub(crate) fn buffer_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -1240,6 +1246,25 @@ pub(crate) fn dns_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
+        BuiltinModule::Internal("internal/worker/io") => {
+            let global = context.global_root()?;
+            let module = context.object_rooted()?;
+            for name in ["MessageChannel", "MessagePort"] {
+                let value = context.with_startup_intrinsics(|context| get(context, global, name))?;
+                let key = context.string_rooted(name);
+                context.define_data_property_rooted(module, key, value, true, true, true)?;
+            }
+            Ok(module)
+        }
+        BuiltinModule::Internal("internal/process/task_queues") => {
+            let global = context.global_root()?;
+            let queue = context.startup_data_property_rooted(global, "queueMicrotask")
+                .ok_or_else(|| RootedError::host("startup microtask queue missing"))?;
+            let module = context.object_rooted()?;
+            let key = context.string_rooted("queueMicrotask");
+            context.define_data_property_rooted(module, key, queue, true, true, true)?;
+            Ok(module)
+        }
         BuiltinModule::Internal("_http_incoming") => {
             let root = context.host_mut().node_library_root.clone();
             let parent = module_record(context, &root.join("lib/http.js"), None, false)?;
@@ -1278,18 +1303,9 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             crate::modules::buffer_shared_vm::install_blob_export(context, module)?;
             Ok(module)
         }
-        BuiltinModule::Stream => {
-            let decoder = cached_builtin(context, BuiltinModule::StringDecoder)?;
-            crate::modules::stream_shared_vm::module(context, decoder)
-        }
-        BuiltinModule::StreamPromises => {
-            let stream = cached_builtin(context, BuiltinModule::Stream)?;
-            get(context, stream, "promises")
-        }
-        BuiltinModule::WebStreams => {
-            let global = context.global_root()?;
-            get(context, global, "__quenchWebStreams")
-        }
+        BuiltinModule::Stream => node_library_module(context, "stream.js", "stream.js"),
+        BuiltinModule::StreamPromises => node_library_module(context, "stream.js", "stream/promises.js"),
+        BuiltinModule::WebStreams => node_library_module(context, "stream/web.js", "stream/web.js"),
         BuiltinModule::StringDecoder => crate::modules::string_decoder_shared_vm::module(context),
         BuiltinModule::Timers => {
             let promises = cached_builtin(context, BuiltinModule::TimersPromises)?;
@@ -1304,8 +1320,16 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
                 "({ isMainThread: true, MessageChannel: globalThis.MessageChannel, MessagePort: globalThis.MessagePort, Worker: class Worker { constructor() { throw Object.assign(new Error('Worker threads are unavailable in this runtime'), { code: 'ERR_WORKER_UNSUPPORTED_OPERATION' }); } } })",
                 "node:worker_threads.js",
             )?;
-            let mark = context.host_function(super::operation("markAsUncloneable"))?;
-            set(context, module, "markAsUncloneable", mark)?;
+            for name in ["markAsUncloneable", "markAsUntransferable", "isMarkedAsUntransferable"] {
+                let operation = context.host_function(super::operation(name))?;
+                let factory = context.evaluate_script_rooted(
+                    &format!("(operation)=>function {name}(object){{return operation(object)}}"),
+                    "node:worker_threads/marker.js",
+                )?;
+                let undefined = context.undefined();
+                let method = context.call_rooted(factory, undefined, &[operation])?;
+                set(context, module, name, method)?;
+            }
             Ok(module)
         }
         BuiltinModule::Url => crate::modules::url_shared_vm::module(context),
@@ -1341,8 +1365,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             crate::modules::zlib_shared_vm::module(context, stream)
         }
         BuiltinModule::Crypto => {
-            let string_decoder = crate::modules::string_decoder_shared_vm::module(context)?;
-            let stream = crate::modules::stream_shared_vm::module(context, string_decoder)?;
+            let stream = cached_builtin(context, BuiltinModule::Stream)?;
             let transform_key = context.string_rooted("Transform");
             let transform = context.get_property_rooted(stream, transform_key)?;
             crate::modules::crypto_shared_vm::module(context, transform)
@@ -1632,6 +1655,32 @@ pub(crate) fn create_require(
     get(context, module, "require")
 }
 
+/// The pinned Node library's primordials module, when the library is present.
+fn node_primordials_source(context: &mut Context<'_>) -> Option<PathBuf> {
+    let root = context.host_mut().node_library_root.clone();
+    let path = root.join("lib/internal/per_context/primordials.js");
+    (path.is_file() || crate::node_sources::source(&path, &root).is_some()).then_some(path)
+}
+
+/// Node's primordials snapshot, which only Node's internal modules and their host
+/// counterparts read: built on first use from the sealed intrinsics, so it captures the
+/// same originals at any time, and never paid for by a script that does not reach them.
+pub(crate) fn node_primordials(context: &mut Context<'_>) -> Result<Option<RootId>, RootedError> {
+    let state = context.host_mut().shared_state();
+    if let Some(primordials) = state.borrow().primordials_module {
+        return Ok(Some(primordials));
+    }
+    let Some(path) = node_primordials_source(context) else {
+        return Ok(None);
+    };
+    let exports = context
+        .with_startup_intrinsics(|context| load(context, &path, None, EntryGoal::CommonJs))?;
+    let retained = context.retain(exports)?;
+    context.release_root(exports);
+    state.borrow_mut().primordials_module = Some(retained);
+    Ok(Some(retained))
+}
+
 fn load(
     context: &mut Context<'_>,
     filename: &Path,
@@ -1647,6 +1696,8 @@ fn load(
         }
         return get(context, module, "exports");
     }
+    let library_root = context.host_mut().node_library_root.clone();
+    let library_relative = filename.strip_prefix(&library_root).ok();
     let is_main = parent.is_none() && context.host_mut().commonjs_entry.is_some();
     let module = module_record(context, filename, parent, is_main)?;
     if let Some(parent) = parent {
@@ -1687,26 +1738,8 @@ fn load(
                         "requiring an ES module is not implemented on the shared VM",
                     ));
                 }
-                // Node's internal crypto utility creates a private `kHandle`
-                // symbol for native Hash objects. The compact crypto builtin
-                // uses the global registry to expose the matching handle to
-                // that source module.
-                let source: std::borrow::Cow<'_, str> = if filename
-                    .to_string_lossy()
-                    .ends_with("/internal/crypto/util.js")
-                {
-                    text.replace(
-                        "const kHandle = Symbol('kHandle');",
-                        "const kHandle = Symbol.for('quench.internal.crypto.kHandle');",
-                    )
-                    .into()
-                } else {
-                    text.into()
-                };
-                let text = source.strip_prefix('\u{feff}').unwrap_or(&source);
-                let is_primordials = filename
-                    .to_string_lossy()
-                    .ends_with("/internal/per_context/primordials.js");
+                let is_primordials = library_relative
+                    == Some(Path::new("lib/internal/per_context/primordials.js"));
                 let text = if text.starts_with("#!") {
                     text.find('\n').map_or("", |end| &text[end..])
                 } else {
@@ -1732,19 +1765,16 @@ fn load(
                         .unwrap_or(Path::new("."))
                         .to_string_lossy(),
                 );
-                let in_node_internal =
-                    filename.starts_with(context.host_mut().node_library_root.join("lib"));
+                let in_node_internal = library_relative.is_some_and(|path| path.starts_with("lib"));
                 let primordials = match primordial_seed {
                     Some(root) => root,
-                    None if in_node_internal => roots
-                        .borrow()
-                        .primordials_module
-                        .unwrap_or_else(|| context.undefined()),
+                    None if in_node_internal => {
+                        node_primordials(context)?.unwrap_or_else(|| context.undefined())
+                    }
                     None => context.undefined(),
                 };
-                let is_realm_bootstrap = filename
-                    .to_string_lossy()
-                    .ends_with("/internal/bootstrap/realm.js");
+                let is_realm_bootstrap = library_relative
+                    == Some(Path::new("lib/internal/bootstrap/realm.js"));
                 let internal_binding = if is_realm_bootstrap {
                     r#"const getInternalBinding = (name) => {
   if (name === "builtins") return { builtinIds: [], compileFunction() {}, setInternalLoaders() {} };
@@ -1756,16 +1786,16 @@ const getLinkedBinding = () => ({});
                 } else if in_node_internal {
                     r#"const internalBinding = (name) => {
   switch (String(name)) {
+    case "encoding_binding":
+    case "symbols":
     case "http2":
     case "fs_event_wrap": return __nativeInternalBinding(name);
     case "util": return Object.assign({}, require("util"), {
-      privateSymbols: {
-        arrow_message_private_symbol: Symbol.for("nodejs.util.inspect.custom"),
-        decorated_private_symbol: Symbol.for("nodejs.util.inspect.decorated"),
-      },
+      privateSymbols: __nativeInternalBinding("util").privateSymbols,
       constants: __nativeInternalBinding("util").constants,
       getOwnNonIndexProperties: __nativeInternalBinding("util").getOwnNonIndexProperties,
-      getPromiseDetails: () => [0, undefined],
+      getPromiseDetails: __nativeInternalBinding("util").getPromiseDetails,
+      markPromiseAsHandled: __nativeInternalBinding("util").markPromiseAsHandled,
       getProxyDetails: () => undefined,
       previewEntries: () => undefined,
       getConstructorName: (value) => value?.constructor?.name,
@@ -1775,18 +1805,15 @@ const getLinkedBinding = () => ({});
       defineLazyProperties: () => undefined,
       sleep: () => undefined,
     });
-    case "types": return require("internal/util/types");
+    case "types": return __nativeInternalBinding("types");
     case "constants": return {
-      fs: Object.assign({
-        UV_DIRENT_UNKNOWN: 0, UV_DIRENT_FILE: 1, UV_DIRENT_DIR: 2,
-        UV_DIRENT_LINK: 3, UV_DIRENT_FIFO: 4, UV_DIRENT_SOCKET: 5,
-        UV_DIRENT_CHAR: 6, UV_DIRENT_BLOCK: 7,
-      }, require("fs").constants),
+      fs: __nativeInternalBinding("constants").fs,
+      zlib: __nativeInternalBinding("constants").zlib,
       os: { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
       crypto: { ENGINE_METHOD_ALL: 0xffff },
     };
     case "string_decoder": return { encodings: ["hex", "utf8", "ascii", "binary", "base64", "base64url", "latin1", "ucs2", "utf16le"] };
-    case "buffer": return require("buffer");
+    case "buffer": return Object.assign({}, require("buffer"), __nativeInternalBinding("buffer"));
     case "fs": return require("fs");
     case "crypto": {
       const crypto = require("crypto");
@@ -1859,7 +1886,6 @@ const getLinkedBinding = () => ({});
                 };
                 let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
                 drop(text);
-                drop(source);
                 let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
                 // The compiled program keeps its own source; the module body runs inside this
                 // call, so the file text and wrapper are released before it.
@@ -1883,9 +1909,17 @@ const getLinkedBinding = () => ({});
                 }
             }
         }
+        let exports = get(context, module, "exports")?;
+        if library_relative == Some(Path::new("lib/internal/util/debuglog.js")) {
+            let initialize = get(context, exports, "initializeDebugEnv")?;
+            let initial = context.host_mut().initial_node_debug.clone();
+            let debug = initial.map(|value| context.string_rooted(&value)).unwrap_or_else(|| context.undefined());
+            let absent = context.undefined();
+            context.call_rooted(initialize, absent, &[debug])?;
+        }
         let loaded = context.boolean(true);
         set(context, module, "loaded", loaded)?;
-        get(context, module, "exports")
+        Ok(exports)
     })();
     if result.is_err() {
         roots.borrow_mut().module_cache.remove(&key);
@@ -1894,9 +1928,18 @@ const getLinkedBinding = () => ({});
             transition_child(context, parent, module, ChildTransition::Detach)?;
         }
     }
-    if key.ends_with("/internal/fs/utils.js") {
+    if library_relative == Some(Path::new("lib/internal/crypto/util.js")) {
         if let Ok(exports) = &result {
-            crate::modules::fs_shared_vm::stat::types::adopt_bigint_stats(context, *exports)?;
+            if roots.borrow().crypto_handle_symbol.is_none() {
+                let symbol = get(context, *exports, "kHandle")?;
+                roots.borrow_mut().crypto_handle_symbol = Some(context.retain(symbol)?);
+            }
+        }
+    }
+    let is_fs_utilities = library_relative == Some(Path::new("lib/internal/fs/utils.js"));
+    if is_fs_utilities {
+        if let Ok(exports) = &result {
+            crate::modules::fs_policy_shared_vm::adopt(context, *exports)?;
             let state = get(context, *exports, "vfsState")?;
             let global = context.global_root()?;
             set(context, global, "\0quench:vfsState", state)?;
