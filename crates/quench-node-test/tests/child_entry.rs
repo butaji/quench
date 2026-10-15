@@ -7497,3 +7497,48 @@ fn util_parse_args_default_argv_matches_eval_print_and_file_entry_forms() {
         assert_eq!(observations[0].stdout,observations[1].stdout,"{args:?}");
     }
 }
+
+#[test]
+fn file_url_module_imports_share_plain_aliases_and_preserve_query_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("sibling.mjs"), "globalThis.siblingLoads=(globalThis.siblingLoads||0)+1;export const sibling={};").unwrap();
+    let dependency=directory.path().join("module # ü.mjs");
+    std::fs::write(&dependency,"import {sibling} from './sibling.mjs';export {sibling};export const id=globalThis.moduleLoads=(globalThis.moduleLoads||0)+1;export let live=1;export function increment(){live++}export const url=import.meta.url;").unwrap();
+    let url=url::Url::from_file_path(&dependency).unwrap().to_string();
+    let entry=directory.path().join("entry.mjs");
+    std::fs::write(&entry,format!(r#"
+import * as first from {literal};
+import assert from 'node:assert/strict';
+const base={literal};
+const same=await import(base);
+assert.strictEqual(first,same);
+const relative=await import('./module%20%23%20%C3%BC.mjs');
+assert.strictEqual(first,relative);
+assert.strictEqual(first,await import(base.replace('file:','FILE:')));
+same.increment();assert.strictEqual(first.live,2);
+const suffixes=['?x=one','?x=two','?x=/../one','?x=/one','#part','#other','?','#'];
+const out=[];
+for(const suffix of suffixes){{
+ const variant=await import(base+suffix);
+ if(suffix==='?'||suffix==='#'){{assert.strictEqual(variant,first);continue;}}
+ assert.notStrictEqual(variant,first);
+ assert.strictEqual(variant,await import(base+suffix));
+ assert.strictEqual(variant.sibling,first.sibling);
+ assert.strictEqual(variant.url,base+suffix);
+ out.push([suffix,variant.id,variant.live]);
+}}
+for(const [input,canonical] of [['?x=one#','?x=one'],['?#part','#part']]){{
+ assert.strictEqual(await import(base+input),await import(base+canonical));
+}}
+assert.strictEqual(globalThis.siblingLoads,1);
+assert.strictEqual(globalThis.moduleLoads,7);
+console.log(JSON.stringify({{out,firstId:first.id,firstLive:first.live}}));
+"#,literal=serde_json::to_string(&url).unwrap())).unwrap();
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
+        let mut command=Command::new(executable);command.arg(&entry);
+        if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1");}
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(20)).unwrap()
+    });
+    for result in &observations {assert!(!result.timed_out);assert_eq!(result.exit_code,Some(0),"{}",String::from_utf8_lossy(&result.stderr));assert!(result.stderr.is_empty());}
+    assert_eq!(observations[0].stdout,observations[1].stdout);
+}
