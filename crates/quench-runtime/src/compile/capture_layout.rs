@@ -3,7 +3,7 @@ use super::CompilerAtoms;
 use crate::bytecode::{Function, Op, WITH_ENTER_BINDING};
 
 pub(super) fn apply(functions: &mut [Function], atoms: &CompilerAtoms<'_>) {
-    let captured = captured_slots(functions);
+    let mut captured = captured_slots(functions);
     let dynamic_ancestors = dynamic_scope_ancestors(functions, atoms);
 
     for (id, function) in functions.iter_mut().enumerate() {
@@ -11,13 +11,25 @@ pub(super) fn apply(functions: &mut [Function], atoms: &CompilerAtoms<'_>) {
             continue;
         }
 
-        let can_split = selective_layout_is_safe(function, id, dynamic_ancestors[id])
-            && function.local_atoms.iter().all(|atom| {
-                !atoms
-                    .get(*atom as usize)
-                    .is_some_and(crate::bytecode::local_name_requires_environment)
-            });
+        let can_split = selective_layout_is_safe(function, id, dynamic_ancestors[id]);
         if can_split {
+            // The runtime finds compiler bindings such as class home objects by name in
+            // the environment, so they live there like captured bindings; the other
+            // locals stay in registers.
+            captured[id].extend(
+                function
+                    .local_atoms
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, atom)| {
+                        atoms
+                            .get(**atom as usize)
+                            .is_some_and(crate::bytecode::local_name_requires_environment)
+                    })
+                    .filter_map(|(slot, _)| u16::try_from(slot).ok()),
+            );
+            captured[id].sort_unstable();
+            captured[id].dedup();
             function.selective_capture_slots = Some(captured[id].clone());
             rewrite_local_ownership(function, &captured[id]);
             remove_unobservable_clones(function, &captured[id]);
