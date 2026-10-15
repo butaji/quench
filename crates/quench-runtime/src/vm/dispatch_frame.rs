@@ -432,6 +432,28 @@ impl<H: Host> Vm<H> {
         Ok(self.frames.len() - 1)
     }
 
+    /// The frame a frameless lane activation of `id` stands for (`ScriptActivation`): the
+    /// activation its call would have pushed with the same callee, receiver and `passed`
+    /// arguments, holding the activation's current registers.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn push_script_frame_with_registers(
+        &mut self,
+        p: &ResidualProgram,
+        id: u32,
+        env: Value,
+        this: Value,
+        callee: Value,
+        passed: &[Value],
+        registers: &[Value],
+    ) {
+        // The receiver is already coerced and the body binds no `arguments` object, so
+        // activation cannot fail; the registers below replace what it placed in them.
+        self.activate_user_frame(p, id, env, this, passed, CallContext::user_function(id, callee))
+            .expect("a frameless activation's frame activates without error");
+        let frame = self.frames.last_mut().expect("the activation pushed a frame");
+        frame.registers.copy_from_slice(registers);
+    }
+
     /// A frame from the pool, or a fresh one; its fields are set by activation.
     pub(super) fn pooled_frame(&mut self) -> Box<Frame> {
         self.frame_pool.pop().unwrap_or_else(|| self.empty_frame())

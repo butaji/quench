@@ -78,6 +78,7 @@ fn execute_shared_on_worker(
     input: SharedInput,
     argv: Vec<String>,
 ) -> Result<SharedCompletion, String> {
+    let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
     let inline_source = match &input {
         SharedInput::Stdin { .. } => crate::host::node_host::InlineSource::Stdin,
         _ => crate::host::node_host::InlineSource::Eval,
@@ -128,6 +129,7 @@ fn execute_shared_on_worker(
 
     let mut host = NodeHost::new(argv).with_exec_argv(exec_argv)?;
     host.inline_source = inline_source;
+    host.eval_builtin_globals = eval_builtin_globals;
     let host = match commonjs_entry {
         Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
         None => host,

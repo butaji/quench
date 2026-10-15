@@ -28,6 +28,7 @@ pub(crate) mod child_process_stdio_shared_vm;
 #[cfg(unix)]
 pub(crate) mod child_process_sync;
 pub(crate) mod clone_shared_vm;
+pub(crate) mod eval_globals_shared_vm;
 pub(crate) mod console_shared_vm;
 pub(crate) mod console_source;
 pub(crate) mod crypto_engine_shared_vm;
