@@ -2403,6 +2403,7 @@ impl Heap {
     pub(super) fn cell_kind(cell: &Cell) -> CellKind {
         match cell {
             Cell::Object(_)
+            | Cell::WasmObject { .. }
             | Cell::ArrayBuffer { .. }
             | Cell::TypedArray { .. }
             | Cell::DataView { .. }
@@ -2453,6 +2454,7 @@ impl Heap {
         object_extra_bytes
             + match cell {
                 Cell::Object(_)
+                | Cell::WasmObject { .. }
                 | Cell::ShadowRealm { .. }
                 | Cell::Iterator { .. }
                 | Cell::ArrayFromAsyncState(_)

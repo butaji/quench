@@ -2158,6 +2158,7 @@ impl Cell {
     pub(crate) fn profile_variant_name(&self) -> &'static str {
         match self {
             Self::Object(_) => "object",
+            Self::WasmObject { .. } => "wasm_object",
             Self::Array { .. } => "array",
             Self::ArrayBuffer { .. } => "array_buffer",
             Self::TypedArray { .. } => "typed_array",
