@@ -9,6 +9,12 @@
 //! of the first profile's kind touches one contiguous region. (Ordering hot
 //! functions first within a profile's group measured more resident pages.)
 //! Layout changes, behavior does not.
+//!
+//! Profiles after `--run` describe a run phase instead: callgrind dumps split
+//! at a start-of-run marker (`--dump-before`), whose final part holds only what
+//! executes once start-up is over. Those functions come first, the first run
+//! profile's in its order and the rest by how many run profiles executed them,
+//! so the code every run touches is dense and start-up code stays apart.
 
 use std::{collections::HashSet, env, fs, process::Command, process::ExitCode};
 
@@ -52,16 +58,67 @@ fn code_symbols(binary: &str) -> Result<Vec<String>, String> {
         .collect())
 }
 
-/// The functions a profile executed, in first-appearance order.
+/// The functions a profile executed, in first-appearance order. Callgrind
+/// compresses a repeated name to its `(id)`, which the first use defines.
 fn executed(profile: &str) -> Result<Vec<String>, String> {
     let text = fs::read_to_string(profile).map_err(|error| format!("{profile}: {error}"))?;
-    Ok(text
-        .lines()
-        .filter_map(|line| line.strip_prefix("fn=").map(str::to_owned))
-        .collect())
+    let mut compressed = std::collections::HashMap::new();
+    let mut seen = HashSet::new();
+    let mut functions = Vec::new();
+    for line in text.lines() {
+        // A callee line (`cfn=`) may define a compressed name first.
+        if let Some((id, defined)) = line
+            .strip_prefix("cfn=(")
+            .and_then(|rest| rest.split_once(')'))
+            .filter(|(_, defined)| !defined.is_empty())
+        {
+            compressed.insert(id.to_owned(), defined.trim_start().to_owned());
+            continue;
+        }
+        let Some(name) = line.strip_prefix("fn=") else {
+            continue;
+        };
+        let name = match name.strip_prefix('(').and_then(|rest| rest.split_once(')')) {
+            Some((id, "")) => compressed.get(id).cloned(),
+            Some((id, defined)) => {
+                let defined = defined.trim_start().to_owned();
+                compressed.insert(id.to_owned(), defined.clone());
+                Some(defined)
+            }
+            None => Some(name.to_owned()),
+        };
+        if let Some(name) = name.filter(|name| seen.insert(name.clone())) {
+            functions.push(name);
+        }
+    }
+    Ok(functions)
 }
 
-fn run(binary: &str, out: &str, profiles: &[String]) -> Result<(), String> {
+/// The run profiles' functions: the first profile's in its order, then the
+/// others' by how many profiles executed them, ties in first-appearance order.
+fn run_phase(profiles: &[String]) -> Result<Vec<String>, String> {
+    let Some((first, rest)) = profiles.split_first() else {
+        return Ok(Vec::new());
+    };
+    let mut order = executed(first)?;
+    let mut counts: std::collections::HashMap<String, (usize, usize)> =
+        std::collections::HashMap::new();
+    for profile in rest {
+        for name in executed(profile)? {
+            let next = counts.len();
+            counts
+                .entry(stable_name(&name).to_owned())
+                .or_insert((0, next))
+                .0 += 1;
+        }
+    }
+    let mut ranked: Vec<_> = counts.into_iter().collect();
+    ranked.sort_by_key(|(_, (count, first_seen))| (std::cmp::Reverse(*count), *first_seen));
+    order.extend(ranked.into_iter().map(|(name, _)| name));
+    Ok(order)
+}
+
+fn run(binary: &str, out: &str, profiles: &[String], run: &[String]) -> Result<(), String> {
     let symbols = code_symbols(binary)?;
     // Profiles may come from an earlier link of the same build: match names
     // without LTO module hashes, and write the binary's current names. A
@@ -73,6 +130,13 @@ fn run(binary: &str, out: &str, profiles: &[String]) -> Result<(), String> {
     }
     let mut seen = HashSet::new();
     let mut order: Vec<&str> = Vec::new();
+    for name in run_phase(run)? {
+        for name in known.get(stable_name(&name)).into_iter().flatten() {
+            if seen.insert(*name) {
+                order.push(name);
+            }
+        }
+    }
     let runtime = PROCESS_RUNTIME.iter().map(|name| (*name).to_owned());
     for profile in profiles {
         for name in runtime.clone().chain(executed(profile)?) {
@@ -93,10 +157,14 @@ fn run(binary: &str, out: &str, profiles: &[String]) -> Result<(), String> {
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let [binary, out, profiles @ ..] = args.as_slice() else {
-        eprintln!("usage: symbol-order <binary> <out.order> <cachegrind.out>...");
+        eprintln!("usage: symbol-order <binary> <out.order> <cachegrind.out>... [--run <callgrind.out>...]");
         return ExitCode::from(2);
     };
-    match run(binary, out, profiles) {
+    let (profiles, run_profiles) = match profiles.iter().position(|arg| arg == "--run") {
+        Some(index) => (&profiles[..index], &profiles[index + 1..]),
+        None => (profiles, &[][..]),
+    };
+    match run(binary, out, profiles, run_profiles) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");

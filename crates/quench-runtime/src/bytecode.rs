@@ -636,6 +636,14 @@ opcodes!(
     ValidateClassHeritage => READ_THROW; layout Scalar; meaning Unused, @ Register, @ fields(Register, Unused, Unused),
     SetFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Register, CacheSiteIndex),
     SetThisFieldStrict => WRITE_THROW; layout Scalar; meaning AtomIndex, @ Register, @ fields(Register, Unused, CacheSiteIndex),
+    // The general loop's fast arms dispatch on these with the opcodes above, so they share
+    // one dense range of opcode numbers.
+    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
+    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
+    JumpTrue => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
+    // `Call` whose last window argument the instruction before it loaded from the activation's
+    // `arguments` binding (`CallPlan::forwards_arguments`).
+    CallForwardingArguments => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
     WasmI32Add => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI32Subtract => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
     WasmI32Multiply => Effect::PURE; layout Scalar; meaning Unused, @ Register, @ fields(ResultRegister, Register, Register),
@@ -812,12 +820,6 @@ opcodes!(
 
     WasmAtomicAccess => Effect::READS_HEAP.union(Effect::WRITES_HEAP).union(Effect::THROWS); layout Scalar; meaning WasmAtomicOperator, @ Register, @ fields(ResultRegister, RegisterWindowBase, RegisterCount),
     WasmAtomicFence => Effect::READS_HEAP.union(Effect::WRITES_HEAP); layout Scalar; meaning Unused, @ Register, @ fields(Unused, Unused, Unused),
-    LoadLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(ResultRegister, NumericLocalTarget, NumericLocalStoreMarker),
-    StoreLocalPlain => Effect::PURE; layout Scalar; meaning LocalSlot, @ Register, @ fields(Register, OptionalRegister, BooleanFlag),
-    JumpTrue => Effect::CONTROL; layout Scalar; meaning JumpTarget; flow ConditionalJump, @ Register, @ fields(Register, Unused, Unused),
-    // `Call` whose last window argument the instruction before it loaded from the activation's
-    // `arguments` binding (`CallPlan::forwards_arguments`).
-    CallForwardingArguments => CALL_EFFECT; layout CallWindowWithEvalFlags; flow Call, @ Returnable, @ fields(ResultRegister, Register, Register),
 
 );
 
@@ -1120,6 +1122,20 @@ pub(crate) enum PlainLocalSlotIneligibility {
 }
 
 impl Function {
+    /// Reusing an activation is observable while its call is protected by a handler.
+    /// A terminal return may skip its following Return instruction without being a
+    /// proper tail call: the caller must still catch the callee's abrupt completion.
+    pub(crate) fn permits_js_tail_call_at(&self, pc: u32) -> bool {
+        self.strict && !self.class_field_initializer && self.handler_at(pc).is_none()
+    }
+
+    pub(crate) fn handler_at(&self, pc: u32) -> Option<Handler> {
+        self.handlers
+            .iter()
+            .find(|handler| pc >= handler.start && pc < handler.end)
+            .copied()
+    }
+
     pub(crate) fn promoted_register(&self, local: u16) -> Option<Register> {
         self.local_registers
             .binary_search_by_key(&local, |entry| entry.local)
@@ -2047,7 +2063,7 @@ impl ResidualProgram {
         Some(position)
     }
 
-    pub const FORMAT_VERSION: u8 = 88;
+    pub const FORMAT_VERSION: u8 = 89;
     pub const RUNTIME_ABI_FINGERPRINT: u64 = {
         const ABI_SIGNATURE: u64 = 0x5251_4a00_0000_0000;
         const FORMAT_VERSION_SHIFT: u32 = 16;
