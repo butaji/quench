@@ -327,6 +327,39 @@ fn native_construction_reentry_scopes_results_and_retains_thrown_identity() {
     }
 }
 
+#[test]
+fn native_backed_ordinary_constructors_preserve_completion_and_new_target() {
+    let (mut runtime, _program, _host) = initialized(
+        "var payload = {}; var Target = function() {};",
+    );
+    let global = runtime.global_root().unwrap();
+    let payload = property(&mut runtime, global, "payload");
+    let target = property(&mut runtime, global, "Target");
+    let constructor = runtime.host_constructor(ECHO).unwrap();
+    let prototype = property(&mut runtime, constructor, "prototype");
+    let linked_constructor = property(&mut runtime, prototype, "constructor");
+    assert_eq!(runtime.rooted_value(linked_constructor), runtime.rooted_value(constructor));
+    let callback = runtime.host_function(CONSTRUCT).unwrap();
+    let receiver = runtime.root(Value::UNDEFINED);
+    let number = runtime.root(Value::number(42.0));
+    let instance = runtime.call_rooted(callback, receiver, &[constructor, target, number]).unwrap();
+    let object = property(&mut runtime, global, "Object");
+    let get_prototype = property(&mut runtime, object, "getPrototypeOf");
+    let object_prototype = runtime.call_rooted(get_prototype, object, &[instance]).unwrap();
+    let target_prototype = property(&mut runtime, target, "prototype");
+    assert_eq!(runtime.rooted_value(object_prototype), runtime.rooted_value(target_prototype));
+    let returned = runtime.call_rooted(callback, receiver, &[constructor, target, payload]).unwrap();
+    assert_eq!(runtime.rooted_value(returned), runtime.rooted_value(payload));
+    let original_prototype = runtime.call_rooted(get_prototype, object, &[payload]).unwrap();
+    assert_ne!(runtime.rooted_value(original_prototype), runtime.rooted_value(target_prototype));
+
+    // Adding a public prototype does not change the private [[Construct]] fact.
+    let ordinary = runtime.host_function(ECHO).unwrap();
+    let key = runtime.string_rooted("prototype");
+    assert!(runtime.set_property_rooted(ordinary, key, target_prototype, ordinary).unwrap());
+    assert!(runtime.call_rooted(callback, receiver, &[ordinary, ordinary, number]).is_err());
+}
+
 fn escaped(
     ctx: &mut NativeContext<'_, TestHost>,
     receiver: RootId,
