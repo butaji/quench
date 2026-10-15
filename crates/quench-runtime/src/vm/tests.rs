@@ -9935,3 +9935,40 @@ check('setter-original',()=>field({set x(v){throw marker}}));const hostile={get 
         assert_eq!(output.borrow().as_slice(), [r#"[["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["undefined","TypeError","Cannot set properties of undefined (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["null","TypeError","Cannot set properties of null (setting 'x')",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["boolean","TypeError","Cannot create property 'x' on boolean 'false'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["number","TypeError","Cannot create property 'x' on number '1'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["string","TypeError","Cannot create property 'x' on string 'abc'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["symbol","TypeError","Cannot create property 'x' on symbol 'Symbol(s)'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["bigint","TypeError","Cannot create property 'x' on bigint '1'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["frozen","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["sealed","TypeError","Cannot add property x, object is not extensible",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["getter","TypeError","Cannot set property x of #<Object> which has only a getter",false],["proxy","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["proxy-readonly","TypeError","Cannot assign to read only property 'x' of object '#<Object>'",false],["proxy-extend","TypeError","Cannot define property x, object is not extensible",false],["nested","TypeError","'set' on proxy: trap returned falsish for property 'x'",false],["setter-original",null,null,true],["hostile","TypeError","Cannot assign to read only property 'x' of object '[object Object]'",false],[["string","0"],"TypeError","Cannot assign to read only property '0' of string 'abc'",false],[["string","length"],"TypeError","Cannot assign to read only property 'length' of string 'abc'",false],[["string","5"],"TypeError","Cannot create property '5' on string 'abc'",false],["primitive-getter","TypeError","Cannot set property x of [object Boolean] which has only a getter",false],["reflect",false],["trap-get","trap-call","inner"]]"#]);
     }
 }
+
+#[test]
+fn typed_array_base_methods_validate_backing_before_arguments_with_node_diagnostics() {
+    let source = r#"
+      for(const name of ['includes','indexOf','join','reverse','fill','copyWithin','slice','keys','values','entries']) {
+        for(const detached of [false,true]) {
+          const buffer=new ArrayBuffer(8,{maxByteLength:16}),view=new Uint8Array(buffer,4,2);
+          if(detached)buffer.transfer();else buffer.resize(2);
+          let called=false;
+          const argument={valueOf(){called=true;throw Error('argument coercion');},toString(){called=true;throw Error('argument coercion');}};
+          try{Uint8Array.prototype[name].call(view,argument);throw Error('accepted invalid backing');}
+          catch(error){
+            const state=name==='keys'?'detached':'detached or out-of-bounds';
+            if(!(error instanceof TypeError)||error.message!==`Cannot perform %TypedArray%.prototype.${name} on a ${state} ArrayBuffer`)throw error;
+          }
+          if(called)throw Error('converted argument before validating receiver');
+        }
+        const value={toString(){throw Error('public conversion');}};
+        try{Uint8Array.prototype[name].call(value);throw Error('accepted invalid brand');}
+        catch(error){
+          const expected=name==='join'||name==='slice'?`Method %TypedArray%.prototype.${name} called on incompatible receiver #<Object>`:'this is not a typed array.';
+          if(!(error instanceof TypeError)||error.message!==expected)throw error;
+        }
+      }
+    "#;
+    for program in [
+        Engine::compile(crate::ExecutionRequest {
+            source,
+            name: "typed-method-diagnostics.js",
+            kind: crate::SourceKind::Script,
+        })
+        .unwrap(),
+        Engine::specialize(source, "typed-method-diagnostics.js").unwrap(),
+    ] {
+        Vm::new(SilentHost).execute(&program).unwrap();
+    }
+}
