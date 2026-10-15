@@ -246,6 +246,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Apply shared InstanceofOperator, including original @@hasInstance hooks
+    /// and proxy prototype effects.
+    pub fn instance_of_rooted(&mut self, value: RootId, constructor: RootId) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_instanceof(value, constructor);
+        result.map_err(|error| self.error(error))
+    }
+
     /// Apply IsArray, including proxy target and revocation semantics.
     pub fn is_array_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
         let result = self.vm.embedding_is_array(root);
@@ -311,6 +318,19 @@ impl<'a, H: Host> NativeContext<'a, H> {
     /// Apply the realm's ordinary ToString operation at a host boundary.
     pub fn to_string(&mut self, root: RootId) -> Result<String, RootedError> {
         let result = self.vm.embedding_to_string(root);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Apply ordinary ToString while preserving every UTF-16 code unit.
+    pub fn to_string_code_units(&mut self, root: RootId) -> Result<Vec<u16>, RootedError> {
+        let result = self.vm.embedding_to_string_code_units(root);
+        result.map_err(|error| self.error(error))
+    }
+
+    /// Apply shared ToNumber, including original number-hint conversion hooks
+    /// and Symbol/BigInt rejection, without replacing it with host parsing.
+    pub fn to_number(&mut self, root: RootId) -> Result<f64, RootedError> {
+        let result = self.vm.embedding_to_number(root);
         result.map_err(|error| self.error(error))
     }
 
@@ -715,6 +735,23 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Create a native-backed ordinary constructor. Primitive completions return
+    /// the allocated receiver; object completions replace it, like JavaScript functions.
+    pub fn host_constructor(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
+        let result = self.vm.create_host_constructor(id);
+        self.completion(result)
+    }
+
+    pub fn host_constructor_with_data(
+        &mut self,
+        id: HostFunctionId,
+        data: RootId,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.embedding_value(data)
+            .and_then(|value| self.vm.create_host_constructor_with_data(id, value));
+        self.completion(result)
+    }
+
     pub fn get_property_rooted(
         &mut self,
         object: RootId,
@@ -868,6 +905,13 @@ impl<H: Host> Runtime<H> {
     /// Create a persistent native callable from this host's stable table.
     pub fn host_function(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
         match self.vm.create_host_function(id) {
+            Ok(value) => Ok(self.root(value)),
+            Err(error) => Err(RootedError::retain(&mut self.vm, error)),
+        }
+    }
+
+    pub fn host_constructor(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
+        match self.vm.create_host_constructor(id) {
             Ok(value) => Ok(self.root(value)),
             Err(error) => Err(RootedError::retain(&mut self.vm, error)),
         }

@@ -1,0 +1,23 @@
+[
+  {
+    "engine": "node",
+    "executable": "/workspace/shared/node-v26.11.1-linux-x64/bin/node",
+    "exit_code": 0,
+    "stdout": "[0,18000]\n",
+    "stderr": ""
+  },
+  {
+    "engine": "before",
+    "executable": "/workspace/scratch/npm-capabilities-post-core-candidate",
+    "exit_code": -11,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "engine": "fixed",
+    "executable": "/workspace/scratch/npm-wide-target-fix-candidate",
+    "exit_code": 0,
+    "stdout": "[0,18000]\n",
+    "stderr": ""
+  }
+]

@@ -1,5 +1,7 @@
 use super::*;
-use crate::bytecode::{ImmediateRole, Superinstruction};
+use crate::bytecode::{
+    FieldLayout, ImmediateRole, InstructionField, Superinstruction, WideInstruction,
+};
 
 #[derive(Clone, Copy)]
 struct Rule {
@@ -128,6 +130,9 @@ pub(super) fn apply(
     while coalesce_distant_producer_moves(function, methods, field_sites, superinstructions) {
         changed_passes += 1;
     }
+    if forward_move_sources(function, methods, field_sites, superinstructions) {
+        changed_passes += 1;
+    }
     while rewrite_once(function, methods, field_sites, superinstructions) {
         changed_passes += 1;
     }
@@ -147,14 +152,16 @@ fn thread_jumps(function: &mut BcFunction) {
     let length = function.code.len();
     for pc in 0..length {
         let mut instruction = function.code[pc];
-        if instruction.op() != Op::Jump {
+        if instruction.op() != Op::Jump || instruction.is_wide() {
             continue;
         }
         let mut target = instruction.jump_target();
         // A chain longer than the function is a cycle of jumps; any member is equivalent.
         for _ in 0..length {
             match function.code.get(target as usize) {
-                Some(next) if next.op() == Op::Jump && next.jump_target() != target => {
+                Some(next)
+                    if next.op() == Op::Jump && !next.is_wide() && next.jump_target() != target =>
+                {
                     target = next.jump_target();
                 }
                 _ => break,
@@ -173,12 +180,16 @@ fn thread_jumps(function: &mut BcFunction) {
 fn invert_branches_over_jumps(function: &mut BcFunction) {
     let protected = protected_positions(
         &function.code,
+        &function.wide,
         &function.handlers,
         function.parameter_end_pc,
         &function.binding_sites,
     );
     for pc in 0..function.code.len().saturating_sub(1) {
         let (branch, skipped) = (function.code[pc], function.code[pc + 1]);
+        if branch.is_wide() || skipped.is_wide() {
+            continue;
+        }
         let inverted = match branch.op() {
             Op::JumpTrue => Op::JumpFalse,
             Op::JumpFalse => Op::JumpTrue,
@@ -227,6 +238,7 @@ fn coalesce_distant_producer_moves(
     let live = liveness::analyze_transfers(function, &transfers);
     let protected = protected_positions(
         &function.code,
+        &function.wide,
         &function.handlers,
         function.parameter_end_pc,
         &function.binding_sites,
@@ -239,7 +251,7 @@ fn coalesce_distant_producer_moves(
     let mut changed = false;
     for target in 0..function.code.len() {
         let mov = function.code[target];
-        if mov.op() != Op::Move || protected[target] {
+        if mov.op() != Op::Move || mov.is_wide() || protected[target] {
             continue;
         }
         let (source, destination) = (mov.register_b(), mov.result_register());
@@ -247,7 +259,8 @@ fn coalesce_distant_producer_moves(
         if source == destination
             || pair.count_ones() != 2
             || pair & storage != 0
-            || liveness::live_out(function, &live, target, mov) & register_bit(source) != 0
+            || liveness::live_out(function, &live, target, mov.as_wide()) & register_bit(source)
+                != 0
         {
             continue;
         }
@@ -260,14 +273,18 @@ fn coalesce_distant_producer_moves(
             continue;
         };
         let instruction = function.code[producer];
+        if instruction.is_wide() {
+            continue;
+        }
         let span_is_block = (producer + 1..=target).all(|pc| !protected[pc])
             && (producer..target).all(|pc| {
-                let op = function.code[pc].op();
+                let instruction = fixed_width(function.code[pc], &function.wide);
+                let op = instruction.op();
                 matches!(
                     op.control_flow_layout(),
                     crate::bytecode::ControlFlowLayout::Fallthrough
                         | crate::bytecode::ControlFlowLayout::Call
-                ) && !function.code[pc].returns_from_frame()
+                ) && !instruction.returns_from_frame()
             })
             && function
                 .handlers
@@ -291,6 +308,108 @@ fn coalesce_distant_producer_moves(
         changed = true;
     }
     changed
+}
+
+/// Lets the instruction after a `Move` read the move's source in place of its destination when
+/// the move feeds only that instruction: `d = Move s; x(d)` becomes `Nop; x(s)`, the forward
+/// counterpart of `coalesce_distant_producer_moves`. The consumer must be reachable only through
+/// the move, `d` dead after it and not promoted local storage (whose writes legacy `f.arguments`
+/// reflection reads), and neither instruction inside a handler region. Only register, operand
+/// and field-base fields are rewritten; the consumer's use and definition masks confirm that the
+/// rewrite trades `d` for `s` and changes nothing else it reads or writes.
+fn forward_move_sources(
+    function: &mut BcFunction,
+    methods: &[MethodSiteSpec],
+    field_sites: &[FieldSite],
+    superinstructions: &[Superinstruction],
+) -> bool {
+    if !function
+        .code
+        .iter()
+        .any(|instruction| instruction.op() == Op::Move)
+    {
+        return false;
+    }
+    let Some(transfers) = liveness::transfers(function, methods, field_sites, superinstructions)
+    else {
+        return false;
+    };
+    let live = liveness::analyze_transfers(function, &transfers);
+    let protected = protected_positions(
+        &function.code,
+        &function.wide,
+        &function.handlers,
+        function.parameter_end_pc,
+        &function.binding_sites,
+    );
+    let storage = function
+        .local_registers
+        .iter()
+        .fold(0_u64, |mask, entry| mask | register_bit(entry.register));
+    let in_handler = |pc: usize| {
+        function
+            .handlers
+            .iter()
+            .any(|handler| handler.start as usize <= pc && pc < handler.end as usize)
+    };
+    let mut changed = false;
+    let mut pc = 0;
+    while pc + 1 < function.code.len() {
+        let (mov, consumer) = (function.code[pc], function.code[pc + 1]);
+        let candidate = mov.op() == Op::Move && !mov.is_wide() && !consumer.is_wide();
+        let rewritten = candidate
+            .then(|| {
+                let (source, destination) = (mov.register_b(), mov.result_register());
+                let (read, written) = transfers[pc + 1];
+                let viable = source != destination
+                    && !protected[pc + 1]
+                    && !in_handler(pc)
+                    && !in_handler(pc + 1)
+                    && register_bit(destination) & storage == 0
+                    && read & register_bit(destination) != 0
+                    && liveness::live_out(function, &live, pc + 1, consumer.as_wide())
+                        & register_bit(destination)
+                        == 0;
+                let rewritten = substitute_register_read(consumer, destination, source)?;
+                let expected = (read & !register_bit(destination)) | register_bit(source);
+                (viable
+                    && liveness::uses(rewritten.as_wide(), methods, field_sites, superinstructions)
+                        == expected
+                    && liveness::definitions(rewritten.as_wide(), superinstructions) == written)
+                    .then_some(rewritten)
+            })
+            .flatten();
+        if let Some(rewritten) = rewritten {
+            function.code[pc] = Instr::new(Op::Nop, 0, 0, 0, 0);
+            function.code[pc + 1] = rewritten;
+            changed = true;
+            pc += 2;
+        } else {
+            pc += 1;
+        }
+    }
+    changed
+}
+
+/// `instruction` reading register `to` wherever a register, operand or field-base field reads
+/// `from`; `None` when a rewritten field does not fit the packed form.
+fn substitute_register_read(instruction: Instr, from: Register, to: Register) -> Option<Instr> {
+    let op = instruction.op();
+    let fields = InstructionField::ALL.iter().map(|&field| {
+        let value = instruction.field_value(field);
+        match op.field_layout(field) {
+            FieldLayout::Register if value == from => to,
+            layout
+                if layout.is_operand_field() && Operand(value).register_index() == Some(from) =>
+            {
+                Operand::register(to).0
+            }
+            FieldLayout::FieldBase if FieldBase(value).register_index() == Some(from) => to,
+            _ => value,
+        }
+    });
+    let [a, b, c] = <[u16; 3]>::try_from(fields.collect::<Vec<_>>()).ok()?;
+    Instr::try_new(op, a, b, c, instruction.imm())
 }
 
 /// Lets a producer whose fallthrough successor returns its result return directly, including
@@ -382,6 +501,7 @@ fn rewrite_super_window(
     let old = std::mem::take(&mut function.code);
     let protected = protected_positions(
         &old,
+        &function.wide,
         &function.handlers,
         function.parameter_end_pc,
         &function.binding_sites,
@@ -396,6 +516,7 @@ fn rewrite_super_window(
             let width = rule.pattern.len();
             let window = old.get(index..index + width)?;
             if (1..width).any(|offset| protected[index + offset])
+                || window.iter().any(|instruction| instruction.is_wide())
                 || window
                     .iter()
                     .map(|instruction| instruction.op())
@@ -420,6 +541,7 @@ fn rewrite_super_window(
     map[old.len()] = code.len();
     relocate(
         &mut code,
+        &mut function.wide,
         &map,
         &mut function.handlers,
         &mut function.parameter_end_pc,
@@ -462,17 +584,28 @@ fn fuse_const_array_object2(
 
 pub(super) fn protected_positions(
     code: &[Instr],
+    wide: &[WideInstruction],
     handlers: &[crate::bytecode::Handler],
     parameter_end_pc: u32,
     binding_sites: &[crate::bytecode::BindingSite],
 ) -> Vec<bool> {
     let mut protected = region_boundaries(code.len(), handlers, parameter_end_pc, binding_sites);
     for instruction in code {
+        let instruction = fixed_width(*instruction, wide);
         if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
             protected[instruction.jump_target() as usize] = true;
         }
     }
     protected
+}
+
+/// `instruction` in fixed-width form: a wide one through the function's wide table.
+fn fixed_width(instruction: Instr, wide: &[WideInstruction]) -> WideInstruction {
+    if instruction.is_wide() {
+        wide[instruction.wide_index()]
+    } else {
+        instruction.as_wide()
+    }
 }
 
 /// Positions that open or close a handler or parameter region, or resume a binding site.
@@ -512,6 +645,7 @@ fn rewrite_once(
     let old = std::mem::take(&mut function.code);
     let protected = protected_positions(
         &old,
+        &function.wide,
         &function.handlers,
         function.parameter_end_pc,
         &function.binding_sites,
@@ -529,22 +663,23 @@ fn rewrite_once(
         }
         let rewritten = old
             .get(index + 1)
-            .filter(|_| !protected[index + 1])
+            .filter(|second| !protected[index + 1] && !old[index].is_wide() && !second.is_wide())
             .and_then(|second| {
                 // The same control-flow facts justify frame roots and every
                 // removed register write. An unavailable map keeps the pair.
                 let live = live.as_ref()?;
                 let first = old[index];
-                let original_definitions = liveness::definitions(first, superinstructions)
-                    | liveness::definitions(*second, superinstructions);
-                let live_out = liveness::live_out(function, live, index + 1, *second);
+                let original_definitions =
+                    liveness::definitions(first.as_wide(), superinstructions)
+                        | liveness::definitions(second.as_wide(), superinstructions);
+                let live_out = liveness::live_out(function, live, index + 1, second.as_wide());
                 RULES
                     .iter()
                     .filter(|rule| rule.pattern == [first.op(), second.op()])
                     .find_map(|rule| {
                         let replacement = apply_rule(*rule, first, *second, field_sites)?;
                         let removed_definitions = original_definitions
-                            & !liveness::definitions(replacement, superinstructions);
+                            & !liveness::definitions(replacement.as_wide(), superinstructions);
                         (live_out & removed_definitions == 0).then_some(replacement)
                     })
             });
@@ -561,6 +696,7 @@ fn rewrite_once(
     map[old.len()] = code.len();
     relocate(
         &mut code,
+        &mut function.wide,
         &map,
         &mut function.handlers,
         &mut function.parameter_end_pc,
@@ -589,8 +725,10 @@ fn sound_replacement(first: Instr, second: Instr, replacement: Instr) -> Option<
         .then_some(replacement)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn relocate(
     code: &mut [Instr],
+    wide: &mut [WideInstruction],
     map: &[usize],
     handlers: &mut [crate::bytecode::Handler],
     parameter_end_pc: &mut u32,
@@ -599,7 +737,16 @@ pub(super) fn relocate(
     old_code: &[Instr],
 ) {
     for instruction in code.iter_mut() {
-        if instruction.op().immediate_role() == ImmediateRole::JumpTarget {
+        let decoded = fixed_width(*instruction, wide);
+        if decoded.op().immediate_role() != ImmediateRole::JumpTarget {
+            continue;
+        }
+        // A wide instruction's target lives in the wide table, which each relocation visits
+        // once: packed code refers to every wide entry at most once.
+        if instruction.is_wide() {
+            let entry = &mut wide[instruction.wide_index()];
+            entry.set_jump_target(map[entry.jump_target() as usize] as u32);
+        } else {
             let target = map[instruction.jump_target() as usize] as u32;
             assert!(instruction.try_set_jump_target(target));
         }
@@ -686,6 +833,50 @@ fn source_instruction_survives(old_pc: usize, old_code: &[Instr], map: &[usize])
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_jump_targets_are_protected_and_relocated() {
+        for op in [Op::Jump, Op::JumpTrue, Op::JumpFalse] {
+            let mut wide = vec![WideInstruction::new(op, 0, 0, 0, 3)];
+            let old = vec![
+                Instr::wide(0).unwrap(),
+                Instr::new(Op::Nop, 0, 0, 0, 0),
+                Instr::new(Op::Return, 0, 0, 0, 0),
+                Instr::new(Op::Return, 0, 0, 0, 0),
+            ];
+            assert!(protected_positions(&old, &wide, &[], 0, &[])[3]);
+            let mut code = vec![old[0], old[2], old[3]];
+            let mut parameter_end = 0;
+            relocate(
+                &mut code,
+                &mut wide,
+                &[0, 1, 1, 2, 3],
+                &mut [],
+                &mut parameter_end,
+                &mut [],
+                &mut vec![],
+                &old,
+            );
+            assert_eq!(wide[0].jump_target(), 2);
+        }
+    }
+
+    #[test]
+    fn wide_control_flow_keeps_producer_moves_inside_their_basic_block() {
+        let mut program = Engine::specialize_unspecialized("", "wide-control-flow.js").unwrap();
+        let function = &mut program.functions[0];
+        function.registers = 6;
+        function.wide = vec![WideInstruction::new(Op::JumpTrue, 0, 0, 0, 3)];
+        function.code = vec![
+            Instr::new(Op::LoadConst, 3, 0, 0, 0),
+            Instr::wide(0).unwrap(),
+            Instr::new(Op::Move, 5, 3, 0, 0),
+            Instr::new(Op::Return, 5, 0, 0, 0),
+        ];
+        assert!(!coalesce_distant_producer_moves(function, &[], &[], &[]));
+        assert_eq!(function.code[0].result_register(), 3);
+        assert_eq!(function.code[2].op(), Op::Move);
+    }
 
     #[test]
     fn constant_fusion_falls_back_when_tagged_operand_cannot_fit() {
@@ -1055,6 +1246,7 @@ mod tests {
 
         relocate(
             &mut code,
+            &mut [],
             &map,
             &mut handlers,
             &mut parameter_end_pc,

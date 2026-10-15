@@ -99,6 +99,7 @@ pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
     context.profile_memory_checkpoint("node_url_global");
     crate::host::resident_pages::release_read_only_pages();
     install_shared_web_globals(context)?;
+    crate::modules::base64_shared_vm::install(context)?;
     if context.host_mut().vfs_enabled() {
         install_vfs_globals(context)?;
     }
@@ -348,6 +349,15 @@ pub(super) fn require(
     _: RootId,
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
+    let parent = context.host_function_data()?;
+    require_for_module(context, parent, args)
+}
+
+pub(crate) fn require_for_module(
+    context: &mut Context<'_>,
+    parent: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Require)?;
     if specifier == "vfs" {
         let error = context.error_rooted("Cannot find module 'vfs'")?;
@@ -410,7 +420,7 @@ pub(super) fn require(
         );
         return context.evaluate_script_rooted(&source, "internal/bootstrap/realm.js");
     }
-    match BuiltinModule::from_specifier(&specifier) {
+    match requested_builtin(context, &specifier) {
         Some(BuiltinModule::Process) => {
             return match context.host_mut().shared_state().borrow().process_module {
                 Some(root) => Ok(root),
@@ -610,6 +620,7 @@ pub(super) fn require(
             | BuiltinModule::Stream
             | BuiltinModule::StreamPromises
             | BuiltinModule::Timers
+            | BuiltinModule::InternalTimers
             | BuiltinModule::TimersPromises
             | BuiltinModule::NodeTest
             | BuiltinModule::StringDecoder
@@ -633,7 +644,6 @@ pub(super) fn require(
         }
         None => {}
     }
-    let parent = context.host_function_data()?;
     let filename = resolve_filename(context, &specifier, parent)?;
     let goal = if filename.starts_with(context.host_mut().node_library_root.join("lib")) {
         EntryGoal::CommonJs
@@ -659,7 +669,7 @@ pub(crate) fn resolve_from_parent(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let specifier = specifier(context, args, Request::Resolve)?;
-    if BuiltinModule::from_specifier(&specifier).is_some() {
+    if requested_builtin(context, &specifier).is_some() {
         return Ok(context.string_rooted(&specifier));
     }
     let parent = match args.get(1).copied() {
@@ -677,7 +687,7 @@ fn resolve_request(
     specifier: &str,
     parent: RootId,
 ) -> Result<RootId, RootedError> {
-    if BuiltinModule::from_specifier(specifier).is_some() {
+    if requested_builtin(context, specifier).is_some() {
         return Ok(context.string_rooted(specifier));
     }
     let filename = resolve_filename(context, specifier, parent)?;
@@ -733,6 +743,7 @@ enum BuiltinModule {
     InternalVfsFd,
     InternalUndici,
     InternalTestBinding,
+    InternalTimers,
     InternalBlockList,
     InternalSocketAddress,
     Https,
@@ -773,6 +784,7 @@ impl BuiltinModule {
             Self::Util => Some("util"),
             Self::UtilTypes => Some("util/types"),
             Self::Timers => Some("timers"),
+            Self::InternalTimers => Some("internal/timers"),
             Self::TimersPromises => Some("timers/promises"),
             Self::NodeTest => Some("node:test"),
             Self::ChildProcess => Some("child_process"),
@@ -818,6 +830,18 @@ impl BuiltinModule {
             | Self::InternalSocketAddress => None,
         }
     }
+}
+
+fn internal_timers_exposed(context: &mut Context<'_>) -> bool {
+    context.host_mut().shared_state().borrow().exec_argv.iter()
+        .any(|argument| argument == "--expose-internals")
+}
+
+fn requested_builtin(context: &mut Context<'_>, specifier: &str) -> Option<BuiltinModule> {
+    let builtin = BuiltinModule::from_specifier(specifier)?;
+    if matches!(builtin, BuiltinModule::InternalTimers) && !internal_timers_exposed(context) {
+        None
+    } else { Some(builtin) }
 }
 
 pub(crate) fn is_builtin_specifier(specifier: &str) -> bool {
@@ -947,6 +971,7 @@ const BUILTIN_SPECIFIERS: &[(&str, BuiltinModule)] = &[
     ("stream/consumers", BuiltinModule::StreamConsumers),
     ("node:stream/consumers", BuiltinModule::StreamConsumers),
     ("timers", BuiltinModule::Timers),
+    ("internal/timers", BuiltinModule::InternalTimers),
     ("node:timers", BuiltinModule::Timers),
     ("timers/promises", BuiltinModule::TimersPromises),
     ("node:timers/promises", BuiltinModule::TimersPromises),
@@ -1136,6 +1161,7 @@ fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<Ro
             crate::modules::timers_shared_vm::timers_module(context, promises)
         }
         BuiltinModule::TimersPromises => crate::modules::timers_shared_vm::promises_module(context),
+        BuiltinModule::InternalTimers => crate::modules::timers_shared_vm::internal_module(context),
         BuiltinModule::NodeTest => crate::modules::test_shared_vm::module(context),
         BuiltinModule::Vm => crate::modules::vm_shared_vm::module(context),
         BuiltinModule::WorkerThreads => {
@@ -1285,13 +1311,20 @@ fn resolve_filename(
     parent: RootId,
 ) -> Result<PathBuf, RootedError> {
     let filename = get(context, parent, "filename")?;
-    let filename = context
-        .string_text(filename)?
-        .ok_or_else(|| RootedError::host("invalid parent module filename"))?;
+    let directory = match context.string_text(filename)? {
+        Some(filename) => Path::new(&filename).parent().unwrap_or(Path::new(".")).to_owned(),
+        None => {
+            let directory = get(context, parent, "path")?;
+            let directory = context.string_text(directory)?
+                .ok_or_else(|| RootedError::host("invalid parent module path"))?;
+            PathBuf::from(directory)
+        }
+    };
     let resolver = commonjs_resolver();
     let node_lib = context.host_mut().node_library_root.join("lib");
     let internal_specifier = specifier.strip_prefix("node:").unwrap_or(specifier);
-    let node_internal = internal_specifier.starts_with("internal/")
+    let node_internal = (internal_specifier.starts_with("internal/")
+        && (internal_specifier != "internal/timers" || internal_timers_exposed(context)))
         || (internal_specifier.starts_with('_')
             && node_lib
                 .join(internal_specifier)
@@ -1301,7 +1334,7 @@ fn resolve_filename(
         (node_lib.as_path(), format!("./{internal_specifier}"))
     } else {
         (
-            Path::new(&filename).parent().unwrap_or(Path::new(".")),
+            directory.as_path(),
             specifier.to_owned(),
         )
     };
@@ -1642,35 +1675,14 @@ const getLinkedBinding = () => ({});
                 let wrapper_source = format!("{prefix}{text}{WRAPPER_SUFFIX}");
                 drop(text);
                 drop(source);
-                let line_offset = u32::try_from(
-                    prefix.bytes().filter(|byte| *byte == b'\n').count(),
-                )
-                .map_err(|_| {
-                    RootedError::host("CommonJS wrapper line origin exceeds compiler positions")
-                })?;
-                let column_offset = u32::try_from(
-                    prefix
-                        .rsplit('\n')
-                        .next()
-                        .unwrap_or("")
-                        .encode_utf16()
-                        .count(),
-                )
-                .map_err(|_| {
-                    RootedError::host("CommonJS wrapper column origin exceeds compiler positions")
-                })?;
-                let wrapper = context.evaluate_specialized_script_with_origin_rooted(
-                    &wrapper_source,
-                    &key,
-                    line_offset,
-                    column_offset,
-                )?;
+                let wrapper = evaluate_wrapper(context, &prefix, &wrapper_source, &key)?;
                 // The compiled program keeps its own source; the module body runs inside this
                 // call, so the file text and wrapper are released before it.
                 drop(wrapper_source);
                 drop(file_text);
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
+                    crate::host::resident_pages::quench_entry_compiled();
                 }
                 let mut arguments = vec![exports, require, module, name, directory];
                 if in_node_internal {
@@ -1706,6 +1718,36 @@ const getLinkedBinding = () => ({});
         }
     }
     result
+}
+
+fn evaluate_wrapper(context: &mut Context<'_>, prefix: &str, source: &str, filename: &str) -> Result<RootId, RootedError> {
+    let line_offset = u32::try_from(prefix.bytes().filter(|byte| *byte == b'\n').count())
+        .map_err(|_| RootedError::host("CommonJS wrapper line origin exceeds compiler positions"))?;
+    let column_offset = u32::try_from(prefix.rsplit('\n').next().unwrap_or("").encode_utf16().count())
+        .map_err(|_| RootedError::host("CommonJS wrapper column origin exceeds compiler positions"))?;
+    context.evaluate_specialized_script_with_origin_rooted(source, filename, line_offset, column_offset)
+}
+
+pub(crate) fn compile_public(context: &mut Context<'_>, module: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let content = args.first().copied().unwrap_or_else(|| context.undefined());
+    let filename = args.get(1).copied().unwrap_or_else(|| context.undefined());
+    let content = context.string_text(content)?.ok_or_else(|| RootedError::host("Module._compile content must be a string"))?;
+    let name = context.string_text(filename)?.ok_or_else(|| RootedError::host("Module._compile filename must be a string"))?;
+    let text = content.as_str();
+    let text = if text.starts_with("#!") { text.find('\n').map_or("", |end| &text[end..]) } else { text };
+    let source = format!("{WRAPPER_PREFIX}{text}{WRAPPER_SUFFIX}");
+    let wrapper = evaluate_wrapper(context, WRAPPER_PREFIX, &source, &name)?;
+    let exports = get(context, module, "exports")?;
+    let require = context.host_function_with_data(super::operation("require"), module)?;
+    let resolve = context.host_function_with_data(super::operation("resolve"), module)?;
+    set(context, require, "resolve", resolve)?;
+    let global = context.global_root()?;
+    let process = get(context, global, "process")?;
+    let main = get(context, process, "mainModule")?;
+    set(context, require, "main", main)?;
+    let directory = crate::modules::path_shared_vm::host_dirname(context, filename)?;
+    context.call_rooted(wrapper, exports, &[exports, require, module, filename, directory])?;
+    Ok(context.undefined())
 }
 
 enum ChildTransition {

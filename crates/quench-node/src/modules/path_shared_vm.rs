@@ -217,6 +217,21 @@ pub(crate) fn dirname_operation(
     apply(context, function, args, Method::Dirname)
 }
 
+/// Native host consumers share the path argument contract and platform algorithm
+/// without borrowing an unrelated callback's private operation data.
+pub(crate) fn host_dirname(
+    context: &mut NativeContext<'_, NodeHost>,
+    path: RootId,
+) -> Result<RootId, RootedError> {
+    let path = argument_string(context, path, 0, Method::Dirname)?;
+    let directory = if cfg!(windows) {
+        crate::modules::path_algorithms::win32_extra::dirname_str(&path)
+    } else {
+        crate::modules::path_algorithms::posix::dirname_str(&path)
+    };
+    Ok(context.string_rooted(&directory))
+}
+
 pub(crate) fn extname_operation(
     context: &mut NativeContext<'_, NodeHost>,
     function: RootId,

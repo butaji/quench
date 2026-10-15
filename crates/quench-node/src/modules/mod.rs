@@ -5,11 +5,13 @@
 
 pub(crate) mod assert_rejects_source;
 pub(crate) mod assert_shared_vm;
+pub(crate) mod base64_shared_vm;
 pub(crate) mod async_hook_registry_shared_vm;
 pub(crate) mod async_hooks_shared_vm;
 pub(crate) mod async_hooks_state;
 pub(crate) mod buffer_codec;
 pub(crate) mod buffer_shared_vm;
+pub(crate) mod buffer_search_shared_vm;
 pub(crate) mod child_process_env_shared_vm;
 pub(crate) mod child_process_exec_shared_vm;
 pub(crate) mod child_process_fork_shared_vm;
