@@ -87,6 +87,37 @@ fn package_scope_applies_inside_nested_checkouts() {
 }
 
 #[test]
+fn package_scope_reads_nearest_type_and_stops_at_node_modules() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("package.json"), r#"{"type":"module"}"#).unwrap();
+    for (name, config, expected) in [
+        ("inherited", None, "undefined\n"),
+        ("empty", Some("{}"), "function\n"),
+        ("common", Some(r#"{"type":"commonjs"}"#), "function\n"),
+        ("unknown", Some(r#"{"type":"other"}"#), "function\n"),
+        ("duplicate", Some(r#"{"type":"commonjs","type":"module"}"#), "undefined\n"),
+        ("bom", Some("\u{feff}{\"type\":\"module\"}"), "undefined\n"),
+        ("node_modules/plain", None, "function\n"),
+        ("node_modules/explicit", Some(r#"{"type":"module"}"#), "undefined\n"),
+    ] {
+        let scope = directory.path().join(name);
+        std::fs::create_dir_all(scope.join("nested")).unwrap();
+        if let Some(config) = config { std::fs::write(scope.join("package.json"), config).unwrap(); }
+        let entry = scope.join("nested/entry.js");
+        std::fs::write(&entry, "console.log(typeof require)").unwrap();
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command.arg(&entry);
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap();
+            assert_eq!(result.exit_code, Some(0), "{name}: {}", String::from_utf8_lossy(&result.stderr));
+            assert_eq!(result.stdout, expected.as_bytes(), "{name}");
+            assert!(result.stderr.is_empty(), "{name}");
+        }
+    }
+}
+
+#[test]
 fn util_type_predicates_match_node_internal_brands() {
     let source = r#"
       const types = require('util').types;
@@ -1526,11 +1557,12 @@ fn native_recursive_watch_class_close_and_per_path_hooks_match_node() {
     compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-hooks-')),sub=path.join(dir,'sub'),file=path.join(sub,'file');fs.mkdirSync(sub);fs.writeFileSync(file,'before');
-const original=fs.watch,hooks=[];
-fs.watch=function(filename,options,listener){hooks.push(path.relative(dir,filename));return Reflect.apply(original,this,[filename,options,listener]);};
+const original=fs.watch,hooks=[],references=[];
+fs.symlinkSync(file,path.join(dir,'link'));
+fs.watch=function(filename,options,listener){const name=path.relative(dir,filename);hooks.push(name);const child=Reflect.apply(original,this,[filename,options,listener]);for(const key of ['ref','unref']){const method=child[key];child[key]=function(){references.push([name,key]);return Reflect.apply(method,this,[]);};}return child;};
 const watcher=original(dir,{recursive:true});fs.watch=original;
 const result=[['paths',hooks],['meta',watcher.constructor.name,Object.keys(watcher),Object.getOwnPropertySymbols(Object.getPrototypeOf(watcher)).map(String),['close','ref','unref'].map(k=>[watcher[k].name,watcher[k].length,Object.hasOwn(watcher[k],'prototype')])]];
-assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);
+assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);result.push(['references',references]);
 let synchronous=true,closed=0;watcher.on('close',()=>{assert(synchronous);closed++;result.push('close');});
 watcher.close();synchronous=false;watcher.close();assert.strictEqual(closed,1);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));
 "#);
@@ -1557,6 +1589,7 @@ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-options-')),resu
 for(const options of [{recursive:'1'},{recursive:1},{recursive:true,persistent:1},{recursive:true,throwIfNoEntry:'1'}]){
 try{fs.watch(dir,options).close();assert.fail('expected error');}catch(error){result.push([error.name,error.code,error.message]);}}
 const watcher=fs.watch(dir,{recursive:true,persistent:false,encoding:'buffer'});assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);watcher.close();
+const missing=path.join(dir,'missing');for(const throwIfNoEntry of [undefined,true,false]){try{const absent=fs.watch(missing,{recursive:true,throwIfNoEntry});assert.strictEqual(throwIfNoEntry,false);absent.close();result.push(['missing','ignored']);}catch(error){assert.notStrictEqual(throwIfNoEntry,false);assert.strictEqual(error.code,'ENOENT');assert.strictEqual(error.filename,missing);result.push(['missing',error.name,error.code]);}}
 fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));
 "#);
 }
@@ -1722,6 +1755,10 @@ fn commonjs_namespace_static_prefix_uses_syntax_and_matches_node() {
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-cjs-export-prefix-'));
 const sources={accessor:"const refresh=()=>1,resolve=()=>2;module.exports={refresh,resolve,get path(){return '.';}};",nested:"const before=1,after=2;module.exports={before,nested:{x:1},after};",literal:"const later=2;module.exports={first:1,later};",assignments:"const text='exports.fake=1';/* exports.comment=1 */module.exports['hyphen-name']=3;module.exports.for=4;function unused(){exports.never=5;} exports.compound+=1;exports.logical ||=3;"};
+const expressions=['value','value.x','value["x"]','value?.x','fn()','fn+1','true','null','undefined','this','new Date()','function(){}','class{}','async()=>1','/x/','`x`','"text"','1','-1','(value)','\\u0076alue','π'];
+const properties=[...expressions.map(value=>'b:'+value),'...value','...require("./spread.cjs")','...value.x','b(){}','async b(){}','get b(){return 1}','set b(x){}','*b(){}','"b"(){}','["b"]:value','b:value /* hi */','b:π','b:v\\u0061lue'];
+fs.writeFileSync(path.join(dir,'spread.cjs'),'exports.spread=1');
+for(const [index,property] of properties.entries()) sources['prefix-'+index]='const value={x:1},fn=()=>1,π=value;module.exports={a:value,'+property+',c:value}';
 (async()=>{for(const [name,source] of Object.entries(sources)){const file=path.join(dir,name+'.cjs');fs.writeFileSync(file,source);const namespace=await import(file);assert.strictEqual(namespace.default,require(file));assert.strictEqual(namespace['module.exports'],namespace.default);console.log(name,Object.keys(namespace).join(','));if(name==='accessor'){assert.strictEqual(namespace.refresh(),1);assert.strictEqual(namespace.resolve(),2);}if(name==='assignments'){assert(!Object.hasOwn(namespace,'fake'));assert(!Object.hasOwn(namespace,'comment'));assert.strictEqual(namespace['hyphen-name'],3);assert.strictEqual(namespace.for,4);}}fs.rmSync(dir,{recursive:true,force:true});})();
 "#);
 }
@@ -1866,6 +1903,68 @@ assert.notStrictEqual(clone[1],shared);
 assert.deepStrictEqual(Object.getOwnPropertyDescriptor(clone,'1'),{value:clone[1],writable:true,enumerable:true,configurable:true});
 console.log(JSON.stringify([Object.keys(clone),clone.length,clone[1],reads]));
 "#);
+}
+
+#[test]
+fn cyclic_esm_instantiates_live_bindings_before_running_dependencies() {
+    for (fixture, expected) in [("esm-graph", "cyclic-esm-live-bindings\n"), ("esm-errors", "esm-link-error-retry\n")] {
+    let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("../../tests/npm-top300/regressions/{fixture}/entry.mjs"));
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.arg(&entry);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, expected.as_bytes());
+        assert!(result.stderr.is_empty());
+    }
+    }
+}
+
+#[test]
+fn stack_locations_use_module_urls_and_commonjs_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let entry = directory.path().join("entry space # ü.mjs");
+    let helper = directory.path().join("capture.cjs");
+    std::fs::write(&helper, r#"
+exports.capture = function capture() {
+  const previous = Error.prepareStackTrace;
+  Error.prepareStackTrace = (_, sites) => sites;
+  const target = {};
+  Error.captureStackTrace(target);
+  const sites = target.stack;
+  Error.prepareStackTrace = previous;
+  return sites;
+};
+"#).unwrap();
+    std::fs::write(&entry, r#"
+import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
+import helper from './capture.cjs';
+function caller() { return helper.capture(); }
+const sites = caller();
+const own = sites.find(site => site.getFunctionName() === 'caller');
+const common = sites.find(site => site.getFunctionName() === 'capture');
+assert.equal(own.getFileName(), import.meta.url);
+assert.equal(common.getFileName(), fileURLToPath(new URL('./capture.cjs', import.meta.url)));
+assert(own.toString().includes(import.meta.url));
+assert(common.toString().includes(common.getFileName()));
+console.log('stack-source-identities');
+"#).unwrap();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.arg(&entry);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, b"stack-source-identities\n");
+        assert!(result.stderr.is_empty());
+    }
 }
 
 #[test]
@@ -3904,13 +4003,16 @@ const removed=addAbortListener(signal,()=>result.push('removed'));removed[Symbol
 controller.abort();disposable[Symbol.dispose]();
 const already=addAbortListener(AbortSignal.abort(),function(){'use strict';result.push('queued',this===undefined,arguments.length)});
 already[Symbol.dispose]();result.push('sync');
+const activeSignal=AbortSignal.abort(),EventConstructor=Event;let delivered;
+const active=addAbortListener(activeSignal,function(event){'use strict';delivered=event;assert(event instanceof EventConstructor);assert.strictEqual(event.type,'abort');assert.strictEqual(event.target,activeSignal);assert.strictEqual(event.currentTarget,activeSignal);assert.strictEqual(event.isTrusted,true);result.push('active',this===undefined,arguments.length)});
+globalThis.Event=function(){throw Error('public Event constructor was used')};
 for(const bad of [undefined,null,{},1])assert.throws(()=>addAbortListener(bad,()=>{}),{code:'ERR_INVALID_ARG_TYPE'});
 for(const bad of [undefined,null,{}])assert.throws(()=>addAbortListener(new AbortController().signal,bad),{code:'ERR_INVALID_ARG_TYPE'});
 let options,removedCalls=0;const foreign={aborted:false,addEventListener(type,callback,value){options=value},removeEventListener(){removedCalls++}};
 const foreignDisposable=addAbortListener(foreign,()=>{});foreignDisposable[Symbol.dispose]();foreignDisposable[Symbol.dispose]();
 assert.strictEqual(Object.getPrototypeOf(options),null);assert(Object.isFrozen(options));assert.strictEqual(options.once,true);
 result.push(removedCalls,Object.getOwnPropertySymbols(options).length);
-queueMicrotask(()=>console.log(JSON.stringify(result)));
+queueMicrotask(()=>{globalThis.Event=EventConstructor;assert.strictEqual(delivered.currentTarget,null);active[Symbol.dispose]();console.log(JSON.stringify(result))});
 "#;
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
@@ -5832,6 +5934,21 @@ console.log(tls.createSecureContext().context.getMinProto(),creations);console.l
 }
 
 #[test]
+fn native_tls_bundled_roots_preserve_stable_trust_material_cache_metadata_and_intrinsic_hooks() {
+    compare_node_stream_source(r#"
+const tls=require('tls'),crypto=require('crypto');
+const O=Object,A=Array,descriptor=O.getOwnPropertyDescriptor(tls,'rootCertificates'),getter=descriptor.get;
+console.log(JSON.stringify([descriptor.enumerable,descriptor.configurable,descriptor.set,getter.name,getter.length,O.hasOwn(getter,'prototype')]));
+globalThis.Array=function(){throw new Error('public Array used')};globalThis.Object=function(){throw new Error('public Object used')};
+const roots=getter.call({});
+console.log(JSON.stringify([A.isArray(roots),O.isFrozen(roots),roots===tls.rootCertificates,Reflect.construct(getter,[])===roots,roots.length,new Set(roots).size]));
+globalThis.Array=A;globalThis.Object=O;
+console.log(crypto.createHash('sha256').update(JSON.stringify(roots)).digest('hex'));
+for(const change of [()=>{'use strict';roots[0]='changed'},()=>{'use strict';tls.rootCertificates=[]},()=>roots.push('changed')])try{change();console.log('unexpected mutation')}catch(e){console.log(e.name)}
+"#);
+}
+
+#[test]
 fn native_tls_cipher_discovery_and_cached_copy_contract_match_node() {
     compare_node_stream_source(r#"
 const tls=require('tls');const first=tls.getCiphers();console.log(JSON.stringify(first));
@@ -5937,7 +6054,13 @@ socket.once('secure',()=>{{console.log(JSON.stringify([socket instanceof tls.TLS
 socket.on('secureConnect',()=>{{throw new Error('direct socket must emit secure')}});socket.on('data',chunk=>result.push(chunk));socket.on('end',()=>console.log(JSON.stringify(Array.from(Buffer.concat(result)))));
 socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.code,error.message]));process.exitCode=1}});socket.connect({{port:{port},host:'127.0.0.1'}});socket._start();
 "#);
-    for source in [source,trusted,rejected,mismatch,direct] {
+    let direct_write = direct
+        .replace("socket.end(Buffer.from([0,1,2,127,128,255,10,13]));", "")
+        .replace("let result=[];", "let result=[];const initialHandle=socket.ssl;")
+        .replace("socket.once('secure',()=>{", "socket.once('secure',()=>{console.log(JSON.stringify([socket.ssl===initialHandle,socket.ssl===socket._handle,socket.ssl.verifyError()?.code]));")
+        .replace("socket.connect(", "socket.on('connect',()=>socket.end(Buffer.from([0,1,2,127,128,255,10,13])));socket.connect(")
+        .replace("socket._start();", "");
+    for source in [source,trusted,rejected,mismatch,direct,direct_write] {
     let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
         let mut command=Command::new(executable);command.args(["-e",&source]).env("QUENCH_TLS_PEER_ROOT",&fixtures);
         if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
@@ -5946,7 +6069,7 @@ socket.on('error',error=>{{console.log(JSON.stringify(['error',error.name,error.
     assert!(!observations[0].timed_out,"Node TLS oracle timed out");
     assert!(!observations[1].timed_out,"native TLS client timed out: {}",String::from_utf8_lossy(&observations[1].stderr));
     assert_eq!(observations[0].exit_code,Some(0),"Node TLS oracle: {}",String::from_utf8_lossy(&observations[0].stderr));
-    assert_eq!(observations[1].exit_code,Some(0),"native TLS client: {}",String::from_utf8_lossy(&observations[1].stderr));
+    assert_eq!(observations[1].exit_code,Some(0),"native TLS client: {} stdout: {} case: {source}",String::from_utf8_lossy(&observations[1].stderr),String::from_utf8_lossy(&observations[1].stdout));
     assert_eq!(String::from_utf8_lossy(&observations[1].stdout),String::from_utf8_lossy(&observations[0].stdout),"case: {source}");
     }
 }
@@ -5972,24 +6095,29 @@ server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
         .replace("raw=>{const socket=", "raw=>{setTimeout(()=>{console.log(JSON.stringify([raw.readableLength>0,raw.bytesRead>0,raw.readableFlowing==null]));const socket=")
         .replace("socket.on('error',()=>{});});", "socket.on('error',()=>{});},100);});");
     let abrupt_server_source = direct_server_source.replace("chunk=>socket.end(chunk)", "chunk=>socket.destroy()");
-    for (server_source, expected_client_exit) in [(server_source,0),(direct_server_source,0),(delayed_server_source.as_str(),0),(abrupt_server_source.as_str(),1)] {
+    // Keep the abrupt-close client open until the server destroys its socket.
+    // Racing both peers' shutdown can make even Node's client alternate between
+    // clean EOF and ECONNRESET. Compare full outcomes on a directed exchange.
+    for (server_source, half_close) in [(server_source,true),(direct_server_source,true),(delayed_server_source.as_str(),true),(abrupt_server_source.as_str(),false)] {
     let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
         let mut command=Command::new(executable);command.args(["-e",server_source]).env("QUENCH_TLS_PEER_ROOT",&fixtures).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
         if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
         let mut peer=Peer(command.spawn().unwrap());let (mut stdout,line)=tls_peer_first_line(&mut peer.0);
         let port:u16=line.trim().parse().expect("TLS server did not start");
+        let send=if half_close {"end"} else {"write"};
         let source=format!(r#"
 const tls=require('tls'),fs=require('fs');const socket=tls.connect({{port:{port},host:'127.0.0.1',servername:'agent1',ca:fs.readFileSync(process.env.QUENCH_TLS_PEER_ROOT+'/test/fixtures/keys/ca1-cert.pem')}});let chunks=[];
-socket.on('secureConnect',()=>socket.end(Buffer.from([0,22,23,127,254,255])));socket.on('data',chunk=>chunks.push(chunk));socket.on('end',()=>console.log(JSON.stringify([socket.authorized,Array.from(Buffer.concat(chunks))])));socket.on('error',e=>{{console.log(e.code,e.message);process.exitCode=1}});
+socket.on('secureConnect',()=>socket.{send}(Buffer.from([0,22,23,127,254,255])));socket.on('data',chunk=>chunks.push(chunk));socket.on('end',()=>console.log(JSON.stringify([socket.authorized,Array.from(Buffer.concat(chunks))])));socket.on('error',e=>{{console.log(e.code,e.message);process.exitCode=1}});
 "#);
         let mut client=Command::new("node");client.args(["-e",&source]).env("QUENCH_TLS_PEER_ROOT",&fixtures);
         let result=quench_node_test::case_process::observe_command(client,Duration::from_secs(10)).unwrap();
-        assert!(!result.timed_out,"external client timed out");assert_eq!(result.exit_code,Some(expected_client_exit),"engine {executable}; server {server_source}; client stdout: {}; stderr: {}",String::from_utf8_lossy(&result.stdout),String::from_utf8_lossy(&result.stderr));
+        assert!(!result.timed_out,"external client timed out");assert_eq!(result.signal,None,"external client crashed");
+        assert_eq!(result.exit_code,Some(0),"engine {executable}; server {server_source}; client stdout: {}; stderr: {}",String::from_utf8_lossy(&result.stdout),String::from_utf8_lossy(&result.stderr));
         let deadline=std::time::Instant::now()+Duration::from_secs(5);
         let status=loop{if let Some(status)=peer.0.try_wait().unwrap(){break status;}if std::time::Instant::now()>=deadline{let _=peer.0.kill();let _=peer.0.wait();panic!("TLS server did not close after peer EOF");}std::thread::sleep(Duration::from_millis(10));};
         let mut rest=String::new();stdout.read_to_string(&mut rest).unwrap();
         assert!(status.success(),"TLS server failed");
-        (result.stdout,rest)
+        (result.exit_code,result.signal,result.stdout,result.stderr,rest)
     });
     assert_eq!(observations[1],observations[0]);
     }
@@ -6331,10 +6459,12 @@ process.on('exit',()=>console.log(JSON.stringify(output)));
 
 #[test]
 fn tls_wrapped_parent_and_tls_handle_share_original_reading_view() {
-    compare_node_stream_source(r#"
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/node/test/fixtures/keys/");
+    let source = r#"
 'use strict';
 const net=require('net'),tls=require('tls'),fs=require('fs');const output=[];
-const root='/workspace/work/node-fixtures/test/fixtures/keys/';
+const root=__FIXTURE_KEYS__;
 const server=tls.createServer({key:fs.readFileSync(root+'agent1-key.pem'),cert:fs.readFileSync(root+'agent1-cert.pem')}).listen(0,()=>{
  const plain=net.connect(server.address().port,()=>{
   const secure=tls.connect({socket:plain,rejectUnauthorized:false},()=>{
@@ -6345,7 +6475,8 @@ const server=tls.createServer({key:fs.readFileSync(root+'agent1-key.pem'),cert:f
   });
  });
 });
-"#);
+"#.replace("__FIXTURE_KEYS__", &serde_json::to_string(&format!("{}/", fixtures.display())).unwrap());
+    compare_node_stream_source(&source);
 }
 
 #[test]
@@ -7110,4 +7241,222 @@ fn native_buffer_static_comparison_preserves_brands_detachment_metadata_and_byte
 compare_node_stream_source(r#"
 const B=Buffer,out=[];const f=B.compare,d=Object.getOwnPropertyDescriptor(B,'compare');out.push([f.name,f.length,Object.hasOwn(f,'prototype'),d.writable,d.enumerable,d.configurable]);function record(a,b){try{out.push(['ok',f(a,b)])}catch(e){out.push([e.name,e.code,e.message])}};const fake=Object.create(B.prototype),u8=new Uint8Array([1,2]);for(const a of [undefined,null,0,'x',{},fake,new Uint8ClampedArray([1]),new Uint16Array([1]),new DataView(new ArrayBuffer(1)),B.from([]),B.from([1]),u8])for(const b of [undefined,fake,new Uint8Array([]),new Uint8Array([1,3]),u8])record(a,b);const ab=new ArrayBuffer(2),view=new Uint8Array(ab);structuredClone(ab,{transfer:[ab]});record(view,view);record(view,B.alloc(0));for(const left of [{},fake,new Uint8Array([1,2]),new Uint16Array([513]),B.alloc(0)])for(const right of [undefined,fake,new Uint8Array([]),new Uint8Array([1,2])]){try{out.push(['equals','ok',B.prototype.equals.call(left,right)])}catch(e){out.push(['equals',e.name,e.code,e.message])}};const eq=B.prototype.equals;out.push(['equals-shape',eq.name,eq.length,Object.hasOwn(eq,'prototype')]);console.log(JSON.stringify(out));
 "#);
+}
+
+#[test]
+fn node_modules_bounds_package_scope_without_hiding_local_package_types() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"type":"module"}"#,
+    )
+    .unwrap();
+    for (package_type, expected) in [
+        (None, "function\n"),
+        (Some("module"), "undefined\n"),
+        (Some("commonjs"), "function\n"),
+    ] {
+        let package = directory.path().join("node_modules/fixture");
+        std::fs::create_dir_all(&package).unwrap();
+        let manifest = package.join("package.json");
+        if let Some(package_type) = package_type {
+            std::fs::write(&manifest, format!(r#"{{"type":"{package_type}"}}"#)).unwrap();
+        }
+        std::fs::write(package.join("entry.js"), "console.log(typeof require)").unwrap();
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command
+                .current_dir(directory.path())
+                .arg("node_modules/fixture/entry.js");
+            if executable != "node" {
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            }
+            let result =
+                quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
+                    .unwrap();
+            assert_eq!(
+                result.exit_code,
+                Some(0),
+                "{executable}: {:?}",
+                result.stderr
+            );
+            assert_eq!(result.stdout, expected.as_bytes(), "{executable}");
+        }
+        if manifest.exists() {
+            std::fs::remove_file(manifest).unwrap();
+        }
+    }
+}
+
+#[test]
+fn binary_http_response_views_match_the_node_oracle() {
+    let source = r#"
+const http = require('http');
+const chunks = [Buffer.from([0,128,255,13,10]), new Uint8Array([9,1,254,8]).subarray(1,3)];
+const server = http.Server((req,res) => { for (const chunk of chunks) res.write(chunk); res.write('ff','hex'); res.end(Buffer.from([0,255])); });
+server.listen(0,'127.0.0.1',()=>http.get({host:'127.0.0.1',port:server.address().port},response=>{
+  const body=[]; response.on('data',chunk=>body.push(chunk)); response.on('end',()=>{
+    console.log(Buffer.concat(body).toString('hex'), Math.abs(Date.now()-Date.parse(response.headers.date)) < 5000, Object.getPrototypeOf(response.headers)===Object.prototype); server.close();
+  });
+}));
+"#;
+    let mut observations = Vec::new();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let result =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
+                .unwrap();
+        assert_eq!(
+            result.exit_code,
+            Some(0),
+            "{executable}: {:?}",
+            result.stderr
+        );
+        observations.push(result.stdout);
+    }
+    assert_eq!(observations[0], b"0080ff0d0a01feff00ff true true\n");
+    assert_eq!(observations[0], observations[1]);
+}
+
+#[test]
+fn headers_and_host_clone_markers_match_the_node_oracle() {
+    let source = r#"
+const {markAsUncloneable}=require('worker_threads');
+const globals=['File','FormData','Headers','Request','Response'].map(name=>{const d=Object.getOwnPropertyDescriptor(globalThis,name);return [name,d.writable,d.enumerable,d.configurable,typeof globalThis[name]]});
+const h=new Headers([['X-Test',' a '],['x-test','b'],['set-cookie','a=1'],['set-cookie','b=2']]);
+const rows=[globals,[...h],h.get('x-test'),h.has('X-Test'),h.getSetCookie()];
+h.delete('X-Test'); rows.push(h.has('x-test'));
+for (const [name,args] of [['has',[]],['set',['x']],['append',['a b','c']],['append',['x','a\nb']],['get',[Symbol()]]]) {
+  try { h[name](...args); } catch(e) { rows.push([e.name,e.message]); }
+}
+const target=Object.freeze({x:1}); const before=Reflect.ownKeys(target); markAsUncloneable(target); markAsUncloneable(target);
+rows.push(JSON.stringify(before)===JSON.stringify(Reflect.ownKeys(target)));
+try { structuredClone({target}); } catch(e) { rows.push([e instanceof DOMException,e.name,e.code,e.message]); }
+const getterError=new Error('getter'); const input={get x(){throw getterError}};
+try {structuredClone(input)} catch(e) {rows.push(e===getterError)}
+let saved;try{structuredClone(target)}catch(e){saved=e}
+try{structuredClone({get x(){throw saved}})}catch(e){rows.push(e===saved)}
+const array=[1,2];markAsUncloneable(array);rows.push(structuredClone(array));
+console.log(JSON.stringify(rows));
+"#;
+    let mut observations = Vec::new();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let result =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
+                .unwrap();
+        assert_eq!(
+            result.exit_code,
+            Some(0),
+            "{executable}: {:?}",
+            result.stderr
+        );
+        observations.push(result.stdout);
+    }
+    assert_eq!(observations[0], observations[1]);
+}
+
+#[test]
+fn native_http_status_reasons_preserve_mutable_map_coercion_errors_and_wire_bytes() {
+compare_node_stream_source(r#"
+const http=require('http'),net=require('net'),codes=http.STATUS_CODES,marker={},out=[],saved=Object.getOwnPropertyDescriptors(codes);
+const initial=[Object.keys(codes).map(k=>[k,codes[k],Object.getOwnPropertyDescriptor(codes,k)]),Object.getOwnPropertyDescriptor(http,'STATUS_CODES').writable,Object.getPrototypeOf(codes)===Object.prototype];
+const cases=[
+ ['head-default',r=>r.writeHead(200)],
+ ['cached-default-map-mutation',r=>{codes[200]='New';r.writeHead(200)}],
+ ['custom-message-accessor',(r,events)=>{Object.defineProperty(r,'statusMessage',{configurable:true,get(){events.push('get');return 'Custom'}});r.writeHead(200)}],
+ ['implicit-default',r=>{r.statusCode=451;r.end('x')}],
+ ['map-mutation',r=>{codes[600]='Changed';r.statusCode=600;r.end('x')}],
+ ['map-falsy',r=>{codes[601]=0;r.statusCode=601;r.end('x')}],
+ ['map-replacement',r=>{codes[602]='Captured';http.STATUS_CODES={602:'Wrong'};r.writeHead(602)}],
+ ['explicit-empty',r=>r.writeHead(200,'')],
+ ['existing-empty',r=>{r.statusMessage='';r.writeHead(404)}],
+ ['existing-number',r=>{r.statusMessage=123;r.writeHead(200)}],
+ ['existing-object',(r,events)=>{r.statusMessage={toString(){events.push('convert');return 'Object Reason'}};r.writeHead(200)}],
+ ['latin1',r=>r.writeHead(200,'caf\u00e9')],
+ ['invalid-crlf',r=>r.writeHead(201,'bad\r\nInjected: x')],
+ ['invalid-wide',r=>r.writeHead(202,'bad\u010d')],
+ ['invalid-del',r=>r.writeHead(203,'bad\x7f')],
+ ['status-object',r=>r.writeHead({})],
+ ['status-array',r=>r.writeHead([])],
+ ['status-string',r=>r.writeHead('201')],
+ ['status-fraction',r=>r.writeHead(201.7)],
+ ['status-wrap',r=>r.writeHead(2**32+200)],
+ ['map-throw',r=>{Object.defineProperty(codes,500,{configurable:true,get(){throw marker}});r.writeHead(500)}],
+ ['message-accessor',(r,events)=>{let value='';Object.defineProperty(r,'statusMessage',{configurable:true,get(){events.push('get');return value},set(v){events.push(['set',v]);value=v}});r.writeHead(200)}],
+];
+const server=http.createServer((req,res)=>{const i=Number(req.url.slice(1)),events=[];res.sendDate=false;let error=null;try{cases[i][1](res,events)}catch(e){error=[e.name,e.code,e.message,e===marker]}
+ const value=res.statusMessage;out[i]=[cases[i][0],error,res.statusCode,typeof value,typeof value==='string'||typeof value==='number'?value:null,!!res.headersSent,events.slice()];
+ http.STATUS_CODES=codes;for(const key of Object.keys(codes))if(!(key in saved))delete codes[key];for(const [k,d]of Object.entries(saved))Object.defineProperty(codes,k,d);
+ if(error){res.statusMessage='OK';res.statusCode=200}if(!res.finished)res.end('x');});
+server.listen(0,'127.0.0.1',()=>{let i=0;function next(){const parts=[];const socket=net.connect(server.address().port,'127.0.0.1',()=>socket.write(`GET /${i} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`));socket.on('data',b=>parts.push(b));socket.on('end',()=>{out[i].push(Buffer.concat(parts).toString('latin1').split('\r\n')[0]);if(++i<cases.length)next();else server.close(()=>console.log(JSON.stringify([initial,out])))});}next();});
+
+"#);
+}
+
+#[test]
+fn native_util_extend_preserves_reverse_copy_effects_metadata_errors_and_deprecation() {
+compare_node_stream_source(r#"
+const u=require('util'),f=u._extend,out=[],marker={},events=[],original=process.emitWarning;
+process.emitWarning=function(...args){events.push(['warning',...args.map(x=>typeof x==='function'?[x.name,x.length]:x)])};
+function check(tag,fn){events.length=0;try{out.push([tag,'ok',fn(),events.slice()])}catch(e){out.push([tag,e.name,e.code,e.message,e===marker,events.slice()])}}
+check('metadata',()=>{const d=Object.getOwnPropertyDescriptor(u,'_extend'),p=Object.getPrototypeOf(f);return [f.name,f.length,Object.hasOwn(f,'prototype'),p.name,p.length,f.prototype===p.prototype,d.writable,d.enumerable,d.configurable]});
+check('no-deprecation',()=>{process.noDeprecation=true;const result=f({},{});delete process.noDeprecation;return result});check('warning-first',()=>f({},{}));check('warning-once',()=>f({},{}));check('shared-warning-code',()=>u.deprecate(()=>42,'duplicate','DEP0060')());
+for(const source of [undefined,null,false,1,'abc',Symbol('s'),1n,()=>{},[],[1,2],new Uint8Array([3,4]),Object('ab'),{x:1}])check(['source',typeof source,String(source)],()=>{const target={};return [f(target,source)===target,target]});
+for(const target of [undefined,null,false,1,'abc',Symbol('t'),1n,{},Object.preventExtensions({}),Object.freeze({x:0})])check(['target',typeof target,String(target)],()=>f(target,{x:1}));
+check('reverse',()=>{const target={};const source={get a(){events.push('a');return 1},get b(){events.push('b');return 2}};return [f(target,source)===target,Object.keys(target)]});
+check('snapshot',()=>{const source={a:1,get b(){events.push('b');delete source.a;source.c=3;return 2}};return f({},source)});
+check('symbols',()=>{const source={x:1,[Symbol('key')]:2};Object.defineProperty(source,'hidden',{value:3});return Reflect.ownKeys(f({},source))});
+check('setters',()=>{const target={set a(v){events.push(['a',this===target,v])},set b(v){events.push(['b',this===target,v])}};return f(target,{a:1,b:2})===target});
+check('getter-throws',()=>f({},{get a(){events.push('get');throw marker}}));
+check('setter-throws',()=>f({set a(v){events.push('set');throw marker}},{a:1}));
+check('proxy',()=>{const source=new Proxy({a:1,b:2},{ownKeys(t){events.push('keys');return ['a','b']},getOwnPropertyDescriptor(t,k){events.push(['descriptor',k]);return Object.getOwnPropertyDescriptor(t,k)},get(t,k){events.push(['get',k]);return t[k]}});return f({},source)});
+check('proxy-false',()=>f(new Proxy({},{set(t,k,v){events.push(['set',k,v]);return false}}),{a:1}));
+check('proto',()=>{const source=JSON.parse('{"__proto__":{"inherited":42}}');const target=f({},source);return [target.inherited,Object.hasOwn(target,'__proto__')]});
+check('construct',()=>{const source={x:1},target={};return new f(target,source)===target});
+process.emitWarning=original;console.log(JSON.stringify(out));
+
+"#);
+}
+
+#[test]
+fn native_stream_duplex_pair_preserves_metadata_demand_finish_and_peer_destruction() {
+compare_node_stream_source(r#"
+const {duplexPair,Duplex}=require('stream'),out=[],events=[];const f=duplexPair;out.push(['function',f.name,f.length,Object.hasOwn(f,'prototype'),Object.getOwnPropertyDescriptor(require('stream'),'duplexPair')]);
+const [a,b]=f({objectMode:true,highWaterMark:2});const proto=Object.getPrototypeOf(a);out.push(['side',a instanceof Duplex,b instanceof Duplex,a!==b,Object.getPrototypeOf(b)===proto,proto.constructor.name,Object.getOwnPropertyNames(proto),Object.getOwnPropertySymbols(proto).map(s=>[String(s),Object.getOwnPropertyDescriptor(proto,s).value.name]),Object.getOwnPropertySymbols(a).map(s=>[String(s),typeof a[s]])]);
+const item={id:1};a.write(item,()=>events.push('write-callback'));events.push(['queued',a.writableLength,b.readableLength]);const value=b.read();events.push(['read',value===item]);a.end(()=>events.push('finish-callback'));b.on('end',()=>events.push('peer-end'));b.resume();a.on('finish',()=>events.push('finish'));setImmediate(()=>{out.push(['flow',events]);const [c,d]=f();const error=new Error('marker'),closed=[];c.on('error',e=>closed.push(['error',e===error]));d.on('error',()=>closed.push('peer-error'));c.on('close',()=>closed.push('close'));d.on('close',()=>closed.push('peer-close'));c.destroy(error);setImmediate(()=>{out.push(['destroy',closed,c.destroyed,d.destroyed]);console.log(JSON.stringify(out));});});
+
+"#);
+}
+
+#[test]
+fn native_stream_emitters_preserve_capture_flags_limits_and_domain_owner() {
+compare_node_stream_source(r#"
+const {Readable,Writable,Duplex,PassThrough}=require('stream'),EE=require('events'),out=[];
+for(const Type of [Readable,Writable,Duplex,PassThrough]){const s=new Type({read(){},write(c,e,cb){cb()},captureRejections:true});const symbols=Object.getOwnPropertySymbols(s),shape=symbols.find(x=>String(x)==='Symbol(shapeMode)'),capture=symbols.find(x=>String(x)==='Symbol(kCapture)');s.setMaxListeners(7);out.push([Type.name,s[shape],s[capture],s._maxListeners,s.getMaxListeners(),Object.getOwnPropertyDescriptor(s,capture)]);s.destroy();}
+const domain=require('domain').create(),marker=new Error('marker');let stream;domain.on('error',e=>out.push(['domain-error',e===marker,e.domainEmitter===stream,e.domain===domain]));domain.run(()=>{stream=new PassThrough({autoDestroy:false});out.push(['domain',stream.domain===domain,domain.members.includes(stream),domain.members.length]);});try{stream.emit('error',marker)}catch(e){out.push(['thrown',e===marker])}setImmediate(()=>console.log(JSON.stringify(out)));
+
+"#,
+    );
+}
+
+#[test]
+fn http_transfer_codings_match_node_default_error_order_and_wire_bytes() {
+    compare_node_stream_source(
+        r#"
+const http=require('http'),net=require('net');
+(async()=>{const rows=[];for(const [te,early] of [...['chunkedchunked','gzip','chunked, chunked','chunked, gzip','gzip, chunked','CHUNKED'].map(te=>[te,false]),['gzip',true]])await new Promise(resolve=>{
+ const events=[];const s=http.createServer((req,res)=>{events.push('request');res.sendDate=false;if(early)res.end('early');req.on('data',b=>events.push('data:'+b));req.on('end',()=>{events.push('end');res.end('ok')})});
+ s.listen(0,'127.0.0.1',()=>{let wire='';const c=net.connect(s.address().port,'127.0.0.1',()=>c.write('POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: '+te+'\r\nConnection: close\r\n\r\n1\r\nA\r\n0\r\n\r\n'));c.setEncoding('utf8');c.on('data',b=>wire+=b);c.on('end',()=>s.close(()=>{rows.push([te,early,events,wire.startsWith('HTTP/1.1 400')?wire:[wire.split('\r\n')[0],wire.split('\r\n\r\n')[1]]]);resolve()}));});
+});console.log(JSON.stringify(rows))})();
+"#,
+    );
 }

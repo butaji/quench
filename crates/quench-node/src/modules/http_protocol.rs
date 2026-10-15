@@ -131,49 +131,87 @@ pub(crate) fn valid_header_value(value: &str) -> bool {
         .all(|unit| valid_header_unit(unit, false))
 }
 
-pub(crate) fn default_status_message(status: u16) -> &'static str {
-    match status {
-        200 => "OK",
-        201 => "Created",
-        202 => "Accepted",
-        204 => "No Content",
-        301 => "Moved Permanently",
-        302 => "Found",
-        304 => "Not Modified",
-        400 => "Bad Request",
-        401 => "Unauthorized",
-        403 => "Forbidden",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        408 => "Request Timeout",
-        409 => "Conflict",
-        410 => "Gone",
-        413 => "Payload Too Large",
-        415 => "Unsupported Media Type",
-        418 => "I'm a Teapot",
-        422 => "Unprocessable Entity",
-        429 => "Too Many Requests",
-        500 => "Internal Server Error",
-        501 => "Not Implemented",
-        502 => "Bad Gateway",
-        503 => "Service Unavailable",
-        504 => "Gateway Timeout",
-        _ => "unknown",
-    }
-}
+/// Initial entries of Node's mutable public STATUS_CODES object.
+pub(crate) const STATUS_CODES: &[(u16, &str)] = &[
+    (100, "Continue"),
+    (101, "Switching Protocols"),
+    (102, "Processing"),
+    (103, "Early Hints"),
+    (200, "OK"),
+    (201, "Created"),
+    (202, "Accepted"),
+    (203, "Non-Authoritative Information"),
+    (204, "No Content"),
+    (205, "Reset Content"),
+    (206, "Partial Content"),
+    (207, "Multi-Status"),
+    (208, "Already Reported"),
+    (226, "IM Used"),
+    (300, "Multiple Choices"),
+    (301, "Moved Permanently"),
+    (302, "Found"),
+    (303, "See Other"),
+    (304, "Not Modified"),
+    (305, "Use Proxy"),
+    (307, "Temporary Redirect"),
+    (308, "Permanent Redirect"),
+    (400, "Bad Request"),
+    (401, "Unauthorized"),
+    (402, "Payment Required"),
+    (403, "Forbidden"),
+    (404, "Not Found"),
+    (405, "Method Not Allowed"),
+    (406, "Not Acceptable"),
+    (407, "Proxy Authentication Required"),
+    (408, "Request Timeout"),
+    (409, "Conflict"),
+    (410, "Gone"),
+    (411, "Length Required"),
+    (412, "Precondition Failed"),
+    (413, "Payload Too Large"),
+    (414, "URI Too Long"),
+    (415, "Unsupported Media Type"),
+    (416, "Range Not Satisfiable"),
+    (417, "Expectation Failed"),
+    (418, "I'm a Teapot"),
+    (421, "Misdirected Request"),
+    (422, "Unprocessable Entity"),
+    (423, "Locked"),
+    (424, "Failed Dependency"),
+    (425, "Too Early"),
+    (426, "Upgrade Required"),
+    (428, "Precondition Required"),
+    (429, "Too Many Requests"),
+    (431, "Request Header Fields Too Large"),
+    (451, "Unavailable For Legal Reasons"),
+    (500, "Internal Server Error"),
+    (501, "Not Implemented"),
+    (502, "Bad Gateway"),
+    (503, "Service Unavailable"),
+    (504, "Gateway Timeout"),
+    (505, "HTTP Version Not Supported"),
+    (506, "Variant Also Negotiates"),
+    (507, "Insufficient Storage"),
+    (508, "Loop Detected"),
+    (509, "Bandwidth Limit Exceeded"),
+    (510, "Not Extended"),
+    (511, "Network Authentication Required"),
+];
 
 pub(crate) fn compose(
     status: u16,
-    text: &str,
+    text: &[u8],
     headers: &[(String, String)],
     body: &[u8],
     _trailers: &[(String, String)],
     keep_alive: bool,
     http10: bool,
     send_date: bool,
+    now: std::time::SystemTime,
 ) -> Vec<u8> {
-    let text = if text.is_empty() { "OK" } else { text };
-    let mut out = format!("HTTP/1.1 {status} {text}\r\n").into_bytes();
+    let mut out = format!("HTTP/1.1 {status} ").into_bytes();
+    out.extend_from_slice(text);
+    out.extend_from_slice(b"\r\n");
     let chunked = headers.iter().any(|(key, value)| {
         key.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked")
     });
@@ -190,7 +228,8 @@ pub(crate) fn compose(
             .iter()
             .any(|(key, _)| key.eq_ignore_ascii_case("date"))
     {
-        out.extend_from_slice(b"Date: Thu, 01 Jan 1970 00:00:00 GMT\r\n");
+        let now: chrono::DateTime<chrono::Utc> = now.into();
+        out.extend_from_slice(format!("Date: {}\r\n", now.format("%a, %d %b %Y %H:%M:%S GMT")).as_bytes());
     }
     let connection = headers
         .iter()
@@ -278,7 +317,7 @@ pub(crate) fn request_head_with_chunking(
         }
     } else if force_chunked && !has_content_length {
         head.push_str("Transfer-Encoding: chunked\r\n");
-    } else if !has_content_length && (body_len > 0 || default_empty_body(method)) {
+    } else if !has_content_length && default_request_chunking(method) {
         head.push_str(&format!("Content-Length: {body_len}\r\n"));
     }
     if !headers
@@ -291,6 +330,9 @@ pub(crate) fn request_head_with_chunking(
     head
 }
 
-fn default_empty_body(method: &str) -> bool {
-    matches!(method.to_ascii_uppercase().as_str(), "POST" | "PUT")
+pub(crate) fn default_request_chunking(method: &str) -> bool {
+    !matches!(
+        method.to_ascii_uppercase().as_str(),
+        "GET" | "HEAD" | "DELETE" | "OPTIONS" | "TRACE" | "CONNECT"
+    )
 }

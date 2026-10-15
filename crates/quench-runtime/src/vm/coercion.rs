@@ -6,7 +6,7 @@ const UNARY_PLUS: u32 = UnaryOperator::UnaryPlus as u32;
 const UNARY_NEGATION: u32 = UnaryOperator::UnaryNegation as u32;
 pub(super) const LOGICAL_NOT: u32 = UnaryOperator::LogicalNot as u32;
 const BITWISE_NOT: u32 = UnaryOperator::BitwiseNot as u32;
-const TYPEOF: u32 = UnaryOperator::Typeof as u32;
+pub(super) const TYPEOF: u32 = UnaryOperator::Typeof as u32;
 const VOID: u32 = UnaryOperator::Void as u32;
 
 /// The unary operators that convert their operand to a numeric value; on a Number they

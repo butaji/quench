@@ -4,7 +4,13 @@ pub(crate) struct RequestMessage {
     pub(crate) version: String,
     pub(crate) headers: Vec<(String, String)>,
     pub(crate) raw_headers: Vec<(String, String)>,
-    pub(crate) body: Vec<u8>,
+    pub(crate) body: Result<Vec<u8>, RequestFramingError>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RequestFramingError {
+    InvalidTransferCodingOrder,
+    MissingFinalChunked,
 }
 
 pub(crate) struct ResponseMessage {
@@ -16,7 +22,11 @@ pub(crate) struct ResponseMessage {
 
 pub(crate) fn request(bytes: &[u8]) -> Option<RequestMessage> {
     let head = parse_head(bytes)?;
-    let body = framed_body(bytes, head.body_start, &head.headers)?;
+    let coding = request_transfer_coding(&head.headers);
+    let body = match coding {
+        Ok(()) => Ok(framed_body(bytes, head.body_start, &head.headers)?),
+        Err(error) => Err(error),
+    };
     Some(RequestMessage {
         method: head.first.first()?.to_owned(),
         target: head.first.get(1)?.to_owned(),
@@ -296,9 +306,33 @@ fn response_has_no_body(status: u16) -> bool {
     (100..200).contains(&status) || matches!(status, 204 | 304)
 }
 
+fn request_transfer_coding(headers: &[(String, String)]) -> Result<(), RequestFramingError> {
+    let Some((_, value)) = headers.iter().find(|(name, _)| name == "transfer-encoding") else {
+        return Ok(());
+    };
+    let mut tokens = value.split(',').map(str::trim).peekable();
+    let mut chunked = false;
+    while let Some(token) = tokens.next() {
+        if token.eq_ignore_ascii_case("chunked") {
+            if chunked || tokens.peek().is_some() {
+                return Err(RequestFramingError::InvalidTransferCodingOrder);
+            }
+            chunked = true;
+        }
+    }
+    if chunked {
+        Ok(())
+    } else {
+        Err(RequestFramingError::MissingFinalChunked)
+    }
+}
+
 fn has_chunked_encoding(headers: &[(String, String)]) -> bool {
     headers.iter().any(|(name, value)| {
-        name == "transfer-encoding" && value.to_ascii_lowercase().contains("chunked")
+        name == "transfer-encoding"
+            && value
+                .split(',')
+                .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
     })
 }
 

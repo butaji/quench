@@ -113,6 +113,7 @@ mod method_cache;
 mod module;
 mod number;
 mod object;
+mod object_assignment;
 mod object_array;
 mod object_builtins;
 mod object_descriptors;

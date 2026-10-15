@@ -60,6 +60,9 @@ lto = "thin"
 # The final release profile remains the production/performance authority.
 [profile.iteration]
 inherits = "release"
+# Share dependency artifacts between iterative binaries and Rust API tests,
+# which require unwinding. Production/release retain abort-on-panic.
+panic = "unwind"
 opt-level = 1
 lto = false
 codegen-units = 256

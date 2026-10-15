@@ -75,17 +75,21 @@ pub(crate) fn module(
         replay_state,
     )?;
     set(context, dependencies, "replayWrite", replay)?;
-    let events = context.object_rooted()?;
     let global = context.global_root()?;
     let emitter_key = context.string_rooted("__nodeEventEmitter");
     let emitter = context.get_property_rooted(global, emitter_key)?;
-    set(context, events, "EventEmitter", emitter)?;
-    set(context, dependencies, "events", events)?;
+    super::stream_emitter_shared_vm::install(context, dependencies, emitter)?;
 
     set(context, dependencies, "string_decoder", string_decoder)?;
 
     let undefined = context.undefined();
     let module = context.call_rooted(factory, undefined, &[dependencies])?;
+    let duplex = get(context, module, "Duplex")?;
+    for (key, value) in [("name", context.string_rooted("Duplex")), ("length", context.number(1.0))] {
+        let key = context.string_rooted(key);
+        context.define_data_property_rooted(duplex, key, value, false, false, true)?;
+    }
+    super::stream_duplex_pair_shared_vm::install(context, module)?;
     let key = context.string_rooted("Writable");
     let writable = context.get_property_rooted(module, key)?;
     let key = context.string_rooted("prototype");
