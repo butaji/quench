@@ -458,6 +458,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "tlsSocketUpgrade" (3) => crate::modules::tls_shared_vm::socket::upgrade,
         method "tlsSocketAuthorize" (1) => crate::modules::tls_shared_vm::socket::authorize,
         method "tlsSocketInfo" (2) => crate::modules::tls_shared_vm::socket::info,
+        method "tlsHandleVerifyError" (0) => crate::modules::tls_shared_vm::handle::verify_error,
         method "tlsMatchName" (1) => crate::modules::tls_shared_vm::identity::match_name,
         method "tlsLowercaseName" (1) => crate::modules::tls_shared_vm::identity::lowercase_name,
         method "tlsCollectAltName" (1) => crate::modules::tls_shared_vm::identity::collect_alt_name,
