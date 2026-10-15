@@ -89,6 +89,7 @@ pub(crate) fn install(context: &mut Context<'_>, fast: RootId) -> Result<RootId,
     let yes = context.boolean(true);
     set(context, descriptor, "configurable", yes)?;
     context.define_property_descriptor_rooted(constructor, species, descriptor)?;
+    super::buffer_from_shared_vm::install(context, constructor, fast)?;
     Ok(constructor)
 }
 fn warn(context: &mut Context<'_>, data: RootId) -> Result<(), RootedError> {
