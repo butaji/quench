@@ -483,6 +483,7 @@ pub(crate) fn bindings() -> &'static [HostFunction<NodeHost>] {
         method "zlibCallbackQueue" (5) => crate::modules::zlib_shared_vm::queue_callback,
         method "zlibCallbackRun" (0) => crate::modules::zlib_shared_vm::run_callback,
         method "zlibCrc32" (2) => crate::modules::zlib_shared_vm::crc32,
+        method "bufferBigInt" (3) => crate::modules::buffer_bigint_shared_vm::operation,
         method "bufferBackingGet" (0) => crate::modules::buffer_shared_vm::backing_get,
         method "bufferSearch" (5) => crate::modules::buffer_search_shared_vm::search,
         method "bufferEncode" (2) => crate::modules::buffer_shared_vm::encode,

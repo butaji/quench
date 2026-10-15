@@ -665,6 +665,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let buffer = get(context, constructor, "Buffer")?;
     let prototype = get(context, buffer, "prototype")?;
     super::buffer_search_shared_vm::install(context, prototype)?;
+    super::buffer_bigint_shared_vm::install(context, prototype)?;
     install_backing_getters(context, buffer, prototype)?;
     let shared = context.host_mut().shared_state();
     let capture_prototype = shared.borrow().buffer_prototype.is_none();

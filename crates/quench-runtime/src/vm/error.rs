@@ -846,16 +846,12 @@ impl<H: Host> Vm<H> {
 
     pub(super) fn box_bigint_object(
         &mut self,
-        p: &ResidualProgram,
+        _p: &ResidualProgram,
         value: Value,
     ) -> Result<Value, JsError> {
-        let prototype_atom = self.prototype_atom();
-        let constructor_atom = self.intern_atom("BigInt");
-        let constructor = self
-            .active_native_env()
-            .and_then(|global| self.own_property(global, constructor_atom))
-            .unwrap_or_else(|| self.native_value(Native::BigInt));
-        let prototype = self.get_property(p, constructor, prototype_atom)?;
+        let realm = self.active_native_env().unwrap_or(self.realm.globals);
+        let prototype = self.realm.intrinsics.builtin_prototypes.get(&(realm, Native::BigInt)).copied()
+            .or_else(|| self.primitive_prototype(value)).unwrap_or(self.object_proto);
         let object = self.heap.alloc(Cell::Object(Self::empty_object(prototype)));
         let value_atom = self.intern_atom("\0quench:bigint-value");
         self.set_property(object, value_atom, value)?;
