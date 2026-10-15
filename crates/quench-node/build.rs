@@ -57,6 +57,9 @@ fn main() {
         for hook in FRAME_REGISTRATION_HOOKS {
             println!("cargo:rustc-link-arg-bins=-Wl,--defsym={hook}=0");
         }
+        // The link's relocations stay in the file (never loaded), so `llvm-bolt` can move
+        // basic blocks: the qualification build's block layout (`bolt-profile`).
+        println!("cargo:rustc-link-arg-bins=-Wl,--emit-relocs");
     } else if os == "linux" {
         println!("cargo:rustc-link-arg-bins=-no-pie");
     }
