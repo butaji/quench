@@ -5934,6 +5934,21 @@ console.log(tls.createSecureContext().context.getMinProto(),creations);console.l
 }
 
 #[test]
+fn native_tls_bundled_roots_preserve_stable_trust_material_cache_metadata_and_intrinsic_hooks() {
+    compare_node_stream_source(r#"
+const tls=require('tls'),crypto=require('crypto');
+const O=Object,A=Array,descriptor=O.getOwnPropertyDescriptor(tls,'rootCertificates'),getter=descriptor.get;
+console.log(JSON.stringify([descriptor.enumerable,descriptor.configurable,descriptor.set,getter.name,getter.length,O.hasOwn(getter,'prototype')]));
+globalThis.Array=function(){throw new Error('public Array used')};globalThis.Object=function(){throw new Error('public Object used')};
+const roots=getter.call({});
+console.log(JSON.stringify([A.isArray(roots),O.isFrozen(roots),roots===tls.rootCertificates,Reflect.construct(getter,[])===roots,roots.length,new Set(roots).size]));
+globalThis.Array=A;globalThis.Object=O;
+console.log(crypto.createHash('sha256').update(JSON.stringify(roots)).digest('hex'));
+for(const change of [()=>{'use strict';roots[0]='changed'},()=>{'use strict';tls.rootCertificates=[]},()=>roots.push('changed')])try{change();console.log('unexpected mutation')}catch(e){console.log(e.name)}
+"#);
+}
+
+#[test]
 fn native_tls_cipher_discovery_and_cached_copy_contract_match_node() {
     compare_node_stream_source(r#"
 const tls=require('tls');const first=tls.getCiphers();console.log(JSON.stringify(first));
