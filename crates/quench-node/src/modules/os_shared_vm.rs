@@ -22,6 +22,14 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         let function = context.host_function(crate::host::shared_vm::operation(operation))?;
         set(context, module, name, function)?;
     }
+    #[cfg(target_os = "linux")]
+    {
+        let cpus = context.host_constructor(crate::host::shared_vm::operation("osCpus"))?;
+        let key = context.string_rooted("name");
+        let name = context.string_rooted("cpus");
+        context.define_data_property_rooted(cpus, key, name, false, false, true)?;
+        set(context, module, "cpus", cpus)?;
+    }
     set_string(
         context,
         module,
@@ -46,6 +54,30 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
         set(context, module, "constants", constants)?;
     }
     Ok(module)
+}
+
+pub(crate) fn cpus_operation(context: &mut NativeContext<'_, NodeHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut result = Vec::new();
+        for cpu in crate::modules::os_facts::cpus() {
+            let object = context.object_rooted()?;
+            set_string(context, object, "model", &cpu.model)?;
+            set_number(context, object, "speed", cpu.speed as f64)?;
+            let times = context.object_rooted()?;
+            for (name, time) in [("user", cpu.times.user), ("nice", cpu.times.nice), ("sys", cpu.times.sys), ("idle", cpu.times.idle), ("irq", cpu.times.irq)] {
+                set_number(context, times, name, time as f64)?;
+            }
+            set(context, object, "times", times)?;
+            result.push(object);
+        }
+        context.array_rooted(&result)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = context;
+        Err(RootedError::host("CPU facts are not implemented on this platform"))
+    }
 }
 
 pub(crate) fn string_operation(
