@@ -665,6 +665,7 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let buffer = get(context, constructor, "Buffer")?;
     let prototype = get(context, buffer, "prototype")?;
     super::buffer_search_shared_vm::install(context, prototype)?;
+    install_backing_getters(context, buffer, prototype)?;
     let shared = context.host_mut().shared_state();
     let capture_prototype = shared.borrow().buffer_prototype.is_none();
     if capture_prototype {
@@ -967,5 +968,46 @@ pub(crate) fn cleanup(runtime: &mut quench_runtime::Runtime<NodeHost>) {
     let prototype = shared.borrow_mut().buffer_prototype.take();
     if let Some(prototype) = prototype {
         runtime.release_root(prototype);
+    }
+}
+
+/// Node's legacy backing aliases observe Buffer membership and original properties.
+fn install_backing_getters(
+    context: &mut NativeContext<'_, NodeHost>,
+    constructor: RootId,
+    prototype: RootId,
+) -> Result<(), RootedError> {
+    for (name, property) in [("parent", "buffer"), ("offset", "byteOffset")] {
+        let data = context.object_rooted()?;
+        set(context, data, "constructor", constructor)?;
+        let property = context.string_rooted(property);
+        set(context, data, "property", property)?;
+        let getter = context
+            .host_function_with_data(crate::host::shared_vm::operation("bufferBackingGet"), data)?;
+        let key = context.string_rooted("name");
+        let get_name = context.string_rooted("get");
+        context.define_data_property_rooted(getter, key, get_name, false, false, true)?;
+        let descriptor = context.null_object_rooted()?;
+        set(context, descriptor, "get", getter)?;
+        let yes = context.boolean(true);
+        set(context, descriptor, "enumerable", yes)?;
+        let key = context.string_rooted(name);
+        context.define_property_descriptor_rooted(prototype, key, descriptor)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn backing_get(
+    context: &mut NativeContext<'_, NodeHost>,
+    receiver: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let data = context.host_function_data()?;
+    let constructor = get(context, data, "constructor")?;
+    if context.instance_of_rooted(receiver, constructor)? {
+        let property = get(context, data, "property")?;
+        context.get_property_rooted(receiver, property)
+    } else {
+        Ok(context.undefined())
     }
 }
