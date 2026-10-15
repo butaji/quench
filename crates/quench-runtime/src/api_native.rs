@@ -246,6 +246,12 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Compiler-owned source names of live JavaScript callers, nearest first.
+    /// This reads frame metadata without evaluating guest stack accessors.
+    pub fn call_stack_source_names(&self) -> Vec<String> {
+        self.vm.embedding_call_stack_source_names()
+    }
+
     /// Apply shared InstanceofOperator, including original @@hasInstance hooks
     /// and proxy prototype effects.
     pub fn instance_of_rooted(&mut self, value: RootId, constructor: RootId) -> Result<bool, RootedError> {

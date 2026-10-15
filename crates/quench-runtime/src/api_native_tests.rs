@@ -792,3 +792,33 @@ fn native_instanceof_preserves_original_hooks_proxy_effects_and_abrupt_completio
         Runtime::new(InstanceOfHost).execute(&program).unwrap();
     }
 }
+
+#[derive(Default)]
+struct CallerSourcesHost;
+impl Host for CallerSourcesHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "nativeCallerSources" (0) => native_caller_sources, global "nativeDynamicCaller" (0) => native_dynamic_caller]
+    }
+}
+fn native_caller_sources(context: &mut NativeContext<'_, CallerSourcesHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    context.collect()?;
+    let sources=context.call_stack_source_names();
+    let sources=sources.iter().map(|source|context.string_rooted(source)).collect::<Vec<_>>();
+    context.array_rooted(&sources)
+}
+fn native_dynamic_caller(context: &mut NativeContext<'_, CallerSourcesHost>, _: RootId, _: &[RootId]) -> Result<RootId, RootedError> {
+    context.evaluate_script_rooted("nativeCallerSources()", "dynamic-caller-source.js")
+}
+#[test]
+fn native_call_stack_source_names_follow_original_compiler_metadata_after_collection() {
+    let source=r#"
+    function inner(){return nativeCallerSources();}function outer(){return inner();}
+    const names=outer();if(names.length===0||names.some(name=>name!=='native-caller-sources.js'))throw Error('caller metadata changed');
+    const dynamic=nativeDynamicCaller();if(dynamic[0]!=='dynamic-caller-source.js'||!dynamic.includes('native-caller-sources.js'))throw Error('dynamic caller metadata changed');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-caller-sources.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-caller-sources.js").unwrap()] {
+        Runtime::new(CallerSourcesHost).execute(&program).unwrap();
+    }
+}
