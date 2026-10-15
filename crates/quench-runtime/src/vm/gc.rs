@@ -908,28 +908,28 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn drain_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
-        let mut index = 0;
-        while index < self.realm.jobs.len() {
-            let job = &self.realm.jobs[index];
-            let callback = job.callback;
-            let this = job.this;
-            let args = job.args.clone();
-            if let Err(error) = self.call_value(program, callback, this, &args) {
-                self.realm.jobs.drain(..=index);
-                return Err(error);
-            }
-            index += 1;
-            if let Err(error) = self.advance_static_module_jobs(program) {
-                self.realm.jobs.drain(..index);
-                return Err(error);
-            }
-            if let Err(error) = self.advance_dynamic_import_jobs(program, true) {
-                self.realm.jobs.drain(..index);
-                return Err(error);
-            }
+        while let Some(job) = self.realm.jobs.pop_front() {
+            self.run_pending_job(program, job)?;
+            self.advance_static_module_jobs(program)?;
+            self.advance_dynamic_import_jobs(program, true)?;
         }
-        self.realm.jobs.drain(..index);
         Ok(Value::UNDEFINED)
+    }
+
+    /// Runs a job already taken off the queue: a finished job roots nothing, so a drain
+    /// whose jobs keep enqueueing more holds only the jobs still pending.
+    fn run_pending_job(
+        &mut self,
+        program: &ResidualProgram,
+        job: PendingJob,
+    ) -> Result<(), JsError> {
+        let roots = [job.callback, job.this]
+            .into_iter()
+            .chain(job.args.iter().copied());
+        self.with_call_roots(roots, |vm| {
+            vm.call_value(program, job.callback, job.this, &job.args)
+                .map(|_| ())
+        })
     }
 
     pub(crate) fn drain_host_jobs(&mut self, program: &ResidualProgram) -> Result<Value, JsError> {
@@ -943,25 +943,18 @@ impl<H: Host> Vm<H> {
         program: &ResidualProgram,
         promise: Value,
     ) -> Result<(), JsError> {
-        let mut index = 0;
         while self
             .realm
             .promise
             .records
             .get(&promise)
             .is_some_and(|record| record.state == PromiseState::Pending)
-            && index < self.realm.jobs.len()
+            && let Some(job) = self.realm.jobs.pop_front()
         {
-            let job = &self.realm.jobs[index];
-            let callback = job.callback;
-            let this = job.this;
-            let args = job.args.clone();
-            self.call_value(program, callback, this, &args)?;
-            index += 1;
+            self.run_pending_job(program, job)?;
             self.advance_static_module_jobs(program)?;
             self.advance_dynamic_import_jobs(program, true)?;
         }
-        self.realm.jobs.drain(..index);
         Ok(())
     }
 }

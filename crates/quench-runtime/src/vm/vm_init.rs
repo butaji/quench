@@ -13,7 +13,7 @@ impl<H: Host> Vm<H> {
                 immutable_global_lexical_bindings: FxHashSet::default(),
                 global_lexical_states: FxHashMap::default(),
                 intrinsics: RealmIntrinsics::default(),
-                jobs: vec![],
+                jobs: std::collections::VecDeque::new(),
                 template_objects: FxHashMap::default(),
                 promise: Default::default(),
             },
