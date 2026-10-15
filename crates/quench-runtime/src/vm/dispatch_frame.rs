@@ -432,9 +432,9 @@ impl<H: Host> Vm<H> {
         Ok(self.frames.len() - 1)
     }
 
-    /// The frame a frameless lane activation of `id` stands for (`ScriptActivation`):
-    /// the plain activation its call would have pushed with the same callee, receiver and
-    /// `argc` arguments, holding the activation's current registers.
+    /// The frame a frameless lane activation of `id` stands for (`ScriptActivation`): the
+    /// activation its call would have pushed with the same callee, receiver and `passed`
+    /// arguments, holding the activation's current registers.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn push_script_frame_with_registers(
         &mut self,
@@ -443,22 +443,13 @@ impl<H: Host> Vm<H> {
         env: Value,
         this: Value,
         callee: Value,
-        argc: usize,
+        passed: &[Value],
         registers: &[Value],
     ) {
-        let function = &p.functions[id as usize];
-        // The receiver is already coerced, so activation cannot fail; parameter `k` is
-        // register `k`, which the registers below replace with their current values.
-        self.activate_plain_frame(
-            p,
-            id,
-            function,
-            env,
-            this,
-            &registers[..argc],
-            CallContext::user_function(id, callee),
-        )
-        .expect("a coerced receiver activates without error");
+        // The receiver is already coerced and the body binds no `arguments` object, so
+        // activation cannot fail; the registers below replace what it placed in them.
+        self.activate_user_frame(p, id, env, this, passed, CallContext::user_function(id, callee))
+            .expect("a frameless activation's frame activates without error");
         let frame = self.frames.last_mut().expect("the activation pushed a frame");
         frame.registers.copy_from_slice(registers);
     }
