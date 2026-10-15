@@ -35,7 +35,7 @@ const CODE_MAPPING: &str = "r-xp";
 /// Unmaps the read-only pages above from the resident set; the next touch of each refaults it
 /// from its file.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub(crate) fn release_read_only_pages() {
+pub fn release_read_only_pages() {
     // SAFETY: the linker defines both symbols at the bounds of the read-only segments, which
     // are never written, so discarding their pages loses nothing.
     unsafe {
@@ -90,7 +90,7 @@ const DATA_MAPPING: &str = "r--p";
 /// fault-around. The descriptor stays open for the process's life (closing it unregisters);
 /// without the feature the mappings keep fault-around.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub(crate) fn map_touched_pages_only() {
+pub fn map_touched_pages_only() {
     /// `struct uffdio_api` and `struct uffdio_register` from `<linux/userfaultfd.h>`.
     #[repr(C)]
     struct UffdioApi {
@@ -113,6 +113,11 @@ pub(crate) fn map_touched_pages_only() {
     /// `_IOWR(UFFDIO, _UFFDIO_REGISTER, struct uffdio_register)`.
     const UFFDIO_API: libc::c_ulong = 0xc018_aa3f;
     const UFFDIO_REGISTER: libc::c_ulong = 0xc020_aa00;
+    /// The registration is per process; a second one would only open another descriptor.
+    static REGISTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if REGISTERED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     // SAFETY: the descriptor is fresh; both ioctls read and write only the structs passed.
     unsafe {
         let fd = libc::syscall(
@@ -140,7 +145,7 @@ pub(crate) fn map_touched_pages_only() {
 }
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-pub(crate) fn map_touched_pages_only() {}
+pub fn map_touched_pages_only() {}
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-pub(crate) fn release_read_only_pages() {}
+pub fn release_read_only_pages() {}
