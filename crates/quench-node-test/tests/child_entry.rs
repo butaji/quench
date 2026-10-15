@@ -8185,3 +8185,101 @@ try {
         &["--expose-internals"],
     );
 }
+
+#[test]
+fn write_sync_raw_views_positions_encoding_fallbacks_and_native_errors_match_node() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),out=[];
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-write-policy-')),file=path.join(dir,'file');
+function error(e){return ['error',e.name,e.code??null,e.syscall??null,e.message,Reflect.ownKeys(e).filter(k=>k!=='stack').map(String),Reflect.ownKeys(Object.getPrototypeOf(e)).map(String)]}
+try{
+ for(const kind of ['Uint8Array','Uint16Array','Int32Array','DataView']){
+  fs.writeFileSync(file,'--------');const fd=fs.openSync(file,'r+'),backing=new ArrayBuffer(12),view=kind==='DataView'?new DataView(backing,4,8):new globalThis[kind](backing,4,8/globalThis[kind].BYTES_PER_ELEMENT);new Uint8Array(backing).set([65,66,67,68,69,70,71,72],4);
+  for(const name of ['buffer','byteOffset','subarray'])Object.defineProperty(view,name,{get(){throw new Error('public '+name)}});
+  try{out.push([kind,fs.writeSync(fd,view,2,4,1),fs.readFileSync(file,'utf8')])}catch(e){out.push([kind,error(e)])}finally{fs.closeSync(fd)}
+ }
+ for(const position of [undefined,null,-1,-2,0,1,1.5,NaN,Infinity,Number.MAX_SAFE_INTEGER+1,'2',2n,{}]){
+  fs.writeFileSync(file,'abcdef');const fd=fs.openSync(file,'r+');try{fs.readSync(fd,Buffer.alloc(3),0,3,null);out.push(['position',typeof position,(()=>{try{return fs.writeSync(fd,'X',position,'utf8')}catch(e){return error(e)}})(),fs.readFileSync(file,'utf8'),fs.readFileSync(fd,'utf8')])}finally{fs.closeSync(fd)}
+ }
+ for(const data of [{},null,1,new Uint8Array(0),'x'])for(const fd of [-1,{},999999])try{out.push(['fd',fs.writeSync(fd,data,0,0,0)])}catch(e){out.push(error(e))}
+ for(const encoding of [undefined,null,'','bad','buffer','hex','HEX',1,{},Symbol('encoding')]){
+  fs.writeFileSync(file,'');const fd=fs.openSync(file,'r+');try{out.push(['encoding',(()=>{try{return fs.writeSync(fd,'éA',null,encoding)}catch(e){return error(e)}})(),Array.from(fs.readFileSync(file))])}finally{fs.closeSync(fd)}
+ }
+}finally{fs.rmSync(dir,{recursive:true,force:true})}console.log(JSON.stringify(out));
+"#,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn write_sync_reports_partial_nonblocking_pipe_progress_and_kernel_errors() {
+    let directory = tempfile::tempdir().unwrap();
+    let fifo = directory.path().join("pipe");
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let source = format!(
+        r#"
+const fs=require('node:fs'),assert=require('node:assert'),fd=fs.openSync({},fs.constants.O_RDWR|fs.constants.O_NONBLOCK);
+try {{
+ const buffer=Buffer.alloc(1024*1024,90),count=fs.writeSync(fd,buffer);
+ assert(count>0&&count<buffer.length);
+ let failure;try{{fs.writeSync(fd,buffer)}}catch(error){{failure=error;}}
+ assert.strictEqual(failure.code,'EAGAIN');assert.strictEqual(failure.syscall,'write');assert.strictEqual(failure.path,undefined);
+ const result=Buffer.alloc(count);assert.strictEqual(fs.readSync(fd,result,0,count,null),count);assert(result.every(value=>value===90));
+ console.log('partial',typeof count,failure.code,failure.syscall,result.length===count);
+}}finally{{fs.closeSync(fd)}}
+"#,
+        serde_json::to_string(&fifo.to_string_lossy()).unwrap()
+    );
+    compare_node_stream_source(&source);
+}
+
+#[cfg(unix)]
+#[test]
+fn filesystem_errors_use_platform_errno_names_for_loops_long_names_and_empty_pipes() {
+    let directory = tempfile::tempdir().unwrap();
+    let loop_path = directory.path().join("loop");
+    std::os::unix::fs::symlink("loop", &loop_path).unwrap();
+    let fifo = directory.path().join("pipe");
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let source = format!(
+        r#"
+const fs=require('node:fs'),path=require('node:path'),out=[];
+const directory={},loopPath=path.join(directory,'loop'),longPath=path.join(directory,'x'.repeat(300));
+for(const file of [loopPath,longPath])for(const operation of [()=>fs.statSync(file),()=>fs.openSync(file,'r'),()=>fs.readFileSync(file,'utf8')]){{
+ try{{operation();out.push('unexpected')}}catch(error){{out.push([error.name,error.code,error.errno,error.syscall,error.message.replaceAll(directory,'<directory>')]);}}
+}}
+const fd=fs.openSync(path.join(directory,'pipe'),fs.constants.O_RDWR|fs.constants.O_NONBLOCK);
+try {{try{{fs.readSync(fd,Buffer.alloc(1),0,1,null)}}catch(error){{out.push([error.name,error.code,error.errno,error.syscall,error.message]);}}}}finally{{fs.closeSync(fd)}}
+console.log(JSON.stringify(out));
+"#,
+        serde_json::to_string(&directory.path().to_string_lossy()).unwrap()
+    );
+    compare_node_stream_source(&source);
+}
+
+#[test]
+fn descriptor_read_write_forwarding_does_not_invoke_public_argument_iterators() {
+    compare_node_stream_source(
+        r#"
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path');const directory=fs.mkdtempSync(path.join(os.tmpdir(),'quench-fs-iterator-')),file=path.join(directory,'file');fs.writeFileSync(file,'---');
+const fd=fs.openSync(file,'r+'),source=Buffer.from('Q'),target=Buffer.alloc(1),prototype=Object.getPrototypeOf([][Symbol.iterator]()),descriptor=Object.getOwnPropertyDescriptor(prototype,'next'),marker={},out=[],poison=function(){throw marker};
+try {
+ Object.defineProperty(prototype,'next',{...descriptor,value:poison});
+ try{out[0]=fs.writeSync(fd,source,0,1,0)}catch(error){out[0]=error===marker?'iterator-marker':error.message}
+ out[3]=prototype.next===poison;
+ try{out[1]=fs.readSync(fd,target,0,1,0)}catch(error){out[1]=error===marker?'iterator-marker':error.message}
+ out[4]=prototype.next===poison;
+}finally{Object.defineProperty(prototype,'next',descriptor);fs.closeSync(fd);fs.rmSync(directory,{recursive:true,force:true})}
+out[2]=target[0];console.log(JSON.stringify(out));
+"#,
+    );
+}
