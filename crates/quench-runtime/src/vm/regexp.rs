@@ -781,15 +781,25 @@ impl<H: Host> Vm<H> {
     /// remembering a few keeps the input's preparation across them.
     fn regexp_subject(&mut self, input: &JsString) -> Rc<quench_regexp::Subject> {
         let flat = input.flat();
-        let cached = self.regexp_subjects.iter().position(|subject| match flat {
+        let text = match flat {
+            // A short subject prepares in proportion to its few units and has no shared storage
+            // to recognize it by, so it neither consults nor displaces the cache.
+            FlatUnits::Short(text) => {
+                return Rc::new(quench_regexp::Subject::from_ascii(Rc::from(text.as_str())));
+            }
+            FlatUnits::Ascii(_) | FlatUnits::Wide(_) => flat,
+        };
+        let cached = self.regexp_subjects.iter().position(|subject| match text {
             FlatUnits::Ascii(text) => subject.is_ascii_text_of(text),
             FlatUnits::Wide(units) => subject.is_text_of(units),
+            FlatUnits::Short(_) => false,
         });
         let subject = match cached {
             Some(position) => self.regexp_subjects.remove(position),
-            None => Rc::new(match flat {
+            None => Rc::new(match text {
                 FlatUnits::Ascii(text) => quench_regexp::Subject::from_ascii(Rc::clone(text)),
                 FlatUnits::Wide(units) => quench_regexp::Subject::new(Rc::clone(units)),
+                FlatUnits::Short(_) => unreachable!("short subjects returned above"),
             }),
         };
         self.regexp_subjects.insert(0, Rc::clone(&subject));
