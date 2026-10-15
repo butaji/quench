@@ -109,5 +109,50 @@ export function exercise(api) {
   equal('URLSearchParams', p.size, 3);
   throws('URLSearchParams', () => new api.URLSearchParams([['one']]), TypeError);
   throws('URLSearchParams.prototype.get', () => api.URLSearchParams.prototype.get.call({},'x'), TypeError);
+  const initial = 'https://user:pass@example.com:8443/a?x=1#f';
+  for (const [key, expected] of Object.entries({
+    href:initial, origin:'https://example.com:8443', protocol:'https:',
+    username:'user', password:'pass', host:'example.com:8443', hostname:'example.com',
+    port:'8443', pathname:'/a', search:'?x=1', hash:'#f'
+  })) {
+    const descriptor = Object.getOwnPropertyDescriptor(api.URL.prototype,key);
+    equal(`URL.prototype.${key}:get`, descriptor.get.call(new api.URL(initial)), expected);
+    throws(`URL.prototype.${key}:get`, () => descriptor.get.call({}), TypeError);
+  }
+  for (const [key, input, expected] of [
+    ['href','http://other.test/b?y=2#h','http://other.test/b?y=2#h'],
+    ['protocol','http:','http:'], ['username','a b@','a%20b%40'],
+    ['password','p:/','p%3A%2F'], ['host','other.test:9090','other.test:9090'],
+    ['hostname','other.test','other.test'], ['port','443',''],
+    ['pathname','/é x','/%C3%A9%20x'], ['search','?é=x y','?%C3%A9=x%20y'],
+    ['hash','#é x','#%C3%A9%20x']
+  ]) {
+    const object = new api.URL(initial);
+    const descriptor = Object.getOwnPropertyDescriptor(api.URL.prototype,key);
+    equal(`URL.prototype.${key}:set`, descriptor.set.call(object,input), undefined);
+    equal(`URL.prototype.${key}:get`, descriptor.get.call(object), expected);
+    throws(`URL.prototype.${key}:set`, () => descriptor.set.call({},input), TypeError);
+  }
+  const href = Object.getOwnPropertyDescriptor(api.URL.prototype,'href');
+  throws('URL.prototype.href:set', () => href.set.call(new api.URL(initial),'http://['), TypeError);
+  const invalidPort = new api.URL(initial);
+  invalidPort.port = '65536';
+  equal('URL.prototype.port:set', invalidPort.port, '8443');
+  invalidPort.protocol = 'mailto:';
+  equal('URL.prototype.protocol:set', invalidPort.protocol, 'https:');
+  const searchParams = Object.getOwnPropertyDescriptor(api.URL.prototype,'searchParams');
+  const object = new api.URL(initial), instance = searchParams.get.call(object);
+  equal('URL.prototype.searchParams:get', searchParams.get.call(object), instance);
+  equal('URL.prototype.searchParams:get', instance.toString(), 'x=1');
+  object.search = '?y=2';
+  equal('URL.prototype.searchParams:get', instance.toString(), 'y=2');
+  throws('URL.prototype.searchParams:get', () => searchParams.get.call({}), TypeError);
+  const size = Object.getOwnPropertyDescriptor(api.URLSearchParams.prototype,'size');
+  equal('URLSearchParams.prototype.size:get', size.get.call(new api.URLSearchParams('a=1&a=2&b=3')), 3);
+  equal('URLSearchParams.prototype.size:get', size.get.call(new api.URLSearchParams()), 0);
+  throws('URLSearchParams.prototype.size:get', () => size.get.call({}), TypeError);
+  const iterator = api.URLSearchParams.prototype[Symbol.iterator];
+  equal('URLSearchParams.prototype[Symbol.iterator]', Array.from(iterator.call(new api.URLSearchParams('a=1&a=2'))), [['a','1'],['a','2']]);
+  throws('URLSearchParams.prototype[Symbol.iterator]', () => iterator.call({}), TypeError);
   return {package:'whatwg-url',assertions,checks,scope:'Finite public parser, serializer, URL and search-parameter corpus; matching cases do not prove all inputs or conditional entries'};
 }
