@@ -7223,12 +7223,135 @@ const B=Buffer,out=[];const f=B.compare,d=Object.getOwnPropertyDescriptor(B,'com
 }
 
 #[test]
+fn node_modules_bounds_package_scope_without_hiding_local_package_types() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"type":"module"}"#,
+    )
+    .unwrap();
+    for (package_type, expected) in [
+        (None, "function\n"),
+        (Some("module"), "undefined\n"),
+        (Some("commonjs"), "function\n"),
+    ] {
+        let package = directory.path().join("node_modules/fixture");
+        std::fs::create_dir_all(&package).unwrap();
+        let manifest = package.join("package.json");
+        if let Some(package_type) = package_type {
+            std::fs::write(&manifest, format!(r#"{{"type":"{package_type}"}}"#)).unwrap();
+        }
+        std::fs::write(package.join("entry.js"), "console.log(typeof require)").unwrap();
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command
+                .current_dir(directory.path())
+                .arg("node_modules/fixture/entry.js");
+            if executable != "node" {
+                command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+            }
+            let result =
+                quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
+                    .unwrap();
+            assert_eq!(
+                result.exit_code,
+                Some(0),
+                "{executable}: {:?}",
+                result.stderr
+            );
+            assert_eq!(result.stdout, expected.as_bytes(), "{executable}");
+        }
+        if manifest.exists() {
+            std::fs::remove_file(manifest).unwrap();
+        }
+    }
+}
+
+#[test]
+fn binary_http_response_views_match_the_node_oracle() {
+    let source = r#"
+const http = require('http');
+const chunks = [Buffer.from([0,128,255,13,10]), new Uint8Array([9,1,254,8]).subarray(1,3)];
+const server = http.Server((req,res) => { for (const chunk of chunks) res.write(chunk); res.write('ff','hex'); res.end(Buffer.from([0,255])); });
+server.listen(0,'127.0.0.1',()=>http.get({host:'127.0.0.1',port:server.address().port},response=>{
+  const body=[]; response.on('data',chunk=>body.push(chunk)); response.on('end',()=>{
+    console.log(Buffer.concat(body).toString('hex'), Math.abs(Date.now()-Date.parse(response.headers.date)) < 5000, Object.getPrototypeOf(response.headers)===Object.prototype); server.close();
+  });
+}));
+"#;
+    let mut observations = Vec::new();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let result =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(10))
+                .unwrap();
+        assert_eq!(
+            result.exit_code,
+            Some(0),
+            "{executable}: {:?}",
+            result.stderr
+        );
+        observations.push(result.stdout);
+    }
+    assert_eq!(observations[0], b"0080ff0d0a01feff00ff true true\n");
+    assert_eq!(observations[0], observations[1]);
+}
+
+#[test]
+fn headers_and_host_clone_markers_match_the_node_oracle() {
+    let source = r#"
+const {markAsUncloneable}=require('worker_threads');
+const globals=['File','FormData','Headers','Request','Response'].map(name=>{const d=Object.getOwnPropertyDescriptor(globalThis,name);return [name,d.writable,d.enumerable,d.configurable,typeof globalThis[name]]});
+const h=new Headers([['X-Test',' a '],['x-test','b'],['set-cookie','a=1'],['set-cookie','b=2']]);
+const rows=[globals,[...h],h.get('x-test'),h.has('X-Test'),h.getSetCookie()];
+h.delete('X-Test'); rows.push(h.has('x-test'));
+for (const [name,args] of [['has',[]],['set',['x']],['append',['a b','c']],['append',['x','a\nb']],['get',[Symbol()]]]) {
+  try { h[name](...args); } catch(e) { rows.push([e.name,e.message]); }
+}
+const target=Object.freeze({x:1}); const before=Reflect.ownKeys(target); markAsUncloneable(target); markAsUncloneable(target);
+rows.push(JSON.stringify(before)===JSON.stringify(Reflect.ownKeys(target)));
+try { structuredClone({target}); } catch(e) { rows.push([e instanceof DOMException,e.name,e.code,e.message]); }
+const getterError=new Error('getter'); const input={get x(){throw getterError}};
+try {structuredClone(input)} catch(e) {rows.push(e===getterError)}
+let saved;try{structuredClone(target)}catch(e){saved=e}
+try{structuredClone({get x(){throw saved}})}catch(e){rows.push(e===saved)}
+const array=[1,2];markAsUncloneable(array);rows.push(structuredClone(array));
+console.log(JSON.stringify(rows));
+"#;
+    let mut observations = Vec::new();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.args(["-e", source]);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let result =
+            quench_node_test::case_process::observe_command(command, Duration::from_secs(15))
+                .unwrap();
+        assert_eq!(
+            result.exit_code,
+            Some(0),
+            "{executable}: {:?}",
+            result.stderr
+        );
+        observations.push(result.stdout);
+    }
+    assert_eq!(observations[0], observations[1]);
+}
+
+#[test]
 fn native_http_status_reasons_preserve_mutable_map_coercion_errors_and_wire_bytes() {
 compare_node_stream_source(r#"
 const http=require('http'),net=require('net'),codes=http.STATUS_CODES,marker={},out=[],saved=Object.getOwnPropertyDescriptors(codes);
 const initial=[Object.keys(codes).map(k=>[k,codes[k],Object.getOwnPropertyDescriptor(codes,k)]),Object.getOwnPropertyDescriptor(http,'STATUS_CODES').writable,Object.getPrototypeOf(codes)===Object.prototype];
 const cases=[
  ['head-default',r=>r.writeHead(200)],
+ ['cached-default-map-mutation',r=>{codes[200]='New';r.writeHead(200)}],
+ ['custom-message-accessor',(r,events)=>{Object.defineProperty(r,'statusMessage',{configurable:true,get(){events.push('get');return 'Custom'}});r.writeHead(200)}],
  ['implicit-default',r=>{r.statusCode=451;r.end('x')}],
  ['map-mutation',r=>{codes[600]='Changed';r.statusCode=600;r.end('x')}],
  ['map-falsy',r=>{codes[601]=0;r.statusCode=601;r.end('x')}],
