@@ -24,6 +24,7 @@ pub(crate) fn module(
         ("shouldResumeData", "streamShouldResumeData"),
         ("isPaused", "streamIsPaused"),
         ("setFlowing", "streamSetFlowing"),
+        ("resumeFlow", "streamResumeFlow"),
         ("pipeStart", "streamPipeStart"),
         ("listenerRemoved", "streamListenerRemoved"),
     ] {
@@ -436,6 +437,20 @@ pub(crate) fn set_flowing(context: &mut NativeContext<'_, NodeHost>, _: RootId, 
         context.set_property_rooted(args[0], key, value, args[0])?;
     }
     Ok(context.undefined())
+}
+
+/// Resuming activates reads without stealing buffered data from readable listeners.
+pub(crate) fn resume_flow(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let state = args[0];
+    let flowing = get(context, state, "flowing")?;
+    let flowing = context.truthy_rooted(flowing)?;
+    let listening = get(context, state, "readableListening")?;
+    let listening = context.truthy_rooted(listening)?;
+    Ok(context.boolean(flowing || !listening))
 }
 
 

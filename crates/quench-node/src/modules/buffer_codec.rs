@@ -61,6 +61,10 @@ pub(crate) fn decode_units(bytes: &[u8], encoding: &str) -> Vec<u16> {
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+pub(crate) fn is_standard_base64_digit(byte: u8) -> bool {
+    B64.contains(&byte)
+}
+
 /// Base64 encode with Node's standard and URL-safe output variants.
 pub(crate) fn base64_encode(bytes: &[u8], padding: bool, url: bool) -> String {
     use base64::Engine;

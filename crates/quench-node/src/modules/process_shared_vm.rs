@@ -2431,7 +2431,11 @@ fn drain_shared_jobs(
     program: &quench_runtime::ResidualProgram,
     shared_state: &Rc<RefCell<crate::host::SharedNodeState>>,
 ) -> Result<(), String> {
+    let process_control = shared_state.borrow().process_control.clone();
     loop {
+        if process_control.requested_exit_code().is_some() {
+            return Ok(());
+        }
         loop {
             let callback = { shared_state.borrow_mut().scheduler.take_shared_next_tick() };
             let Some(callback) = callback else {
@@ -2440,8 +2444,17 @@ fn drain_shared_jobs(
             runtime.with_native_stack_frame("process.processTicksAndRejections", |runtime| {
                 invoke_async_callback(runtime, program, callback)
             })?;
+            if process_control.requested_exit_code().is_some() {
+                return Ok(());
+            }
         }
         run_host_jobs_with_uncaught(runtime, program)?;
+        // An async callback can wrap the host's exit completion in a rejected
+        // promise. Termination wins over further ticks/rejection notification;
+        // dispatching that synthetic rejection would replace the requested code.
+        if process_control.requested_exit_code().is_some() {
+            return Ok(());
+        }
         if shared_state.borrow().scheduler.has_shared_next_ticks() {
             continue;
         }
