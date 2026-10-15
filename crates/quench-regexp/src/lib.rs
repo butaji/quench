@@ -269,13 +269,22 @@ pub struct Regex {
     compiled: Option<regex::bytes::Regex>,
     /// Test-only matching may use regular syntax with captures whose reported
     /// values differ from ECMAScript; the boolean and end offset remain exact.
-    compiled_test: Option<regex::bytes::Regex>,
+    range_backend: RangeBackend,
     /// Reusable capture workspace for the compiled backend. Creating
     /// `CaptureLocations` for every `exec`/`replace` call allocates a fresh
     /// vector on the fixture's hot path; the regex object is already cached
     /// and execution is single-threaded, so this disposable physical state
     /// can live beside it without changing semantic match data.
     compiled_locations: RefCell<Option<regex::bytes::CaptureLocations>>,
+}
+
+/// The byte matcher that answers range-only queries (`Regex::range_matcher`).
+enum RangeBackend {
+    None,
+    /// `compiled` itself: both uses compile the same source and flags, and one matcher keeps
+    /// one cache pool.
+    Compiled,
+    Own(regex::bytes::Regex),
 }
 
 impl std::fmt::Debug for Regex {
@@ -335,14 +344,13 @@ impl Regex {
             && compiled_structure_is_safe(&parsed.body))
         .then(|| compile_byte_regex(source, flags))
         .flatten();
-        // Both uses compile the same source and flags; a clone shares the compiled program.
-        let compiled_test = (backend_enabled && compiled_test_source_is_safe(source))
-            .then(|| {
-                compiled
-                    .clone()
-                    .or_else(|| compile_byte_regex(source, flags))
-            })
-            .flatten();
+        let range_backend = if !(backend_enabled && compiled_test_source_is_safe(source)) {
+            RangeBackend::None
+        } else if compiled.is_some() {
+            RangeBackend::Compiled
+        } else {
+            compile_byte_regex(source, flags).map_or(RangeBackend::None, RangeBackend::Own)
+        };
         let compiled_locations = compiled
             .as_ref()
             .map(regex::bytes::Regex::capture_locations);
@@ -354,9 +362,18 @@ impl Regex {
             required_literal,
             compiled_dot_requires_cr_guard: !flags.dot_all && has_bare_dot(source),
             compiled,
-            compiled_test,
+            range_backend,
             compiled_locations: RefCell::new(compiled_locations),
         })
+    }
+
+    /// The byte matcher sound for match ranges, if any.
+    fn range_matcher(&self) -> Option<&regex::bytes::Regex> {
+        match &self.range_backend {
+            RangeBackend::None => None,
+            RangeBackend::Compiled => self.compiled.as_ref(),
+            RangeBackend::Own(compiled) => Some(compiled),
+        }
     }
 
     #[inline]
@@ -463,7 +480,7 @@ impl Regex {
         }
         if let (Some(bytes), Some(compiled)) = (
             subject.ascii(),
-            self.compiled_test.as_ref().or(self.compiled.as_ref()),
+            self.range_matcher().or(self.compiled.as_ref()),
         ) {
             if !self.compiled_dot_requires_cr_guard || !subject.has_carriage_return {
                 return compiled
@@ -498,7 +515,7 @@ impl Regex {
         if input.iter().all(|unit| *unit <= ASCII_MAX)
             && (!self.compiled_dot_requires_cr_guard || !input.contains(&u16::from(b'\r')))
         {
-            if let Some(compiled) = &self.compiled_test {
+            if let Some(compiled) = self.range_matcher() {
                 let bytes = input.iter().map(|unit| *unit as u8).collect::<Vec<_>>();
                 return compiled
                     .find_at(&bytes, start)
