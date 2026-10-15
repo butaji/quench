@@ -9955,7 +9955,7 @@ fn typed_array_base_methods_validate_backing_before_arguments_with_node_diagnost
         const value={toString(){throw Error('public conversion');}};
         try{Uint8Array.prototype[name].call(value);throw Error('accepted invalid brand');}
         catch(error){
-          const expected=name==='join'||name==='slice'?`Method %TypedArray%.prototype.${name} called on incompatible receiver #<Object>`:'this is not a typed array.';
+          const expected=name==='join'||name==='slice'?`Method %TypedArray%.prototype.${name} called on incompatible receiver [object Object]`:'this is not a typed array.';
           if(!(error instanceof TypeError)||error.message!==expected)throw error;
         }
       }
