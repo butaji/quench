@@ -99,6 +99,9 @@ pub(crate) fn string_operation(
         "homedir" => std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
             .unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned()),
+        #[cfg(target_os = "linux")]
+        "tmpdir" => crate::modules::os_facts::temporary_directory(),
+        #[cfg(not(target_os = "linux"))]
         "tmpdir" => std::env::temp_dir().to_string_lossy().into_owned(),
         _ => String::new(),
     };
