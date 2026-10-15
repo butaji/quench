@@ -87,6 +87,37 @@ fn package_scope_applies_inside_nested_checkouts() {
 }
 
 #[test]
+fn package_scope_reads_nearest_type_and_stops_at_node_modules() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("package.json"), r#"{"type":"module"}"#).unwrap();
+    for (name, config, expected) in [
+        ("inherited", None, "undefined\n"),
+        ("empty", Some("{}"), "function\n"),
+        ("common", Some(r#"{"type":"commonjs"}"#), "function\n"),
+        ("unknown", Some(r#"{"type":"other"}"#), "function\n"),
+        ("duplicate", Some(r#"{"type":"commonjs","type":"module"}"#), "undefined\n"),
+        ("bom", Some("\u{feff}{\"type\":\"module\"}"), "undefined\n"),
+        ("node_modules/plain", None, "function\n"),
+        ("node_modules/explicit", Some(r#"{"type":"module"}"#), "undefined\n"),
+    ] {
+        let scope = directory.path().join(name);
+        std::fs::create_dir_all(scope.join("nested")).unwrap();
+        if let Some(config) = config { std::fs::write(scope.join("package.json"), config).unwrap(); }
+        let entry = scope.join("nested/entry.js");
+        std::fs::write(&entry, "console.log(typeof require)").unwrap();
+        for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+            let mut command = Command::new(executable);
+            command.arg(&entry);
+            if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+            let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(10)).unwrap();
+            assert_eq!(result.exit_code, Some(0), "{name}: {}", String::from_utf8_lossy(&result.stderr));
+            assert_eq!(result.stdout, expected.as_bytes(), "{name}");
+            assert!(result.stderr.is_empty(), "{name}");
+        }
+    }
+}
+
+#[test]
 fn util_type_predicates_match_node_internal_brands() {
     let source = r#"
       const types = require('util').types;
@@ -1526,11 +1557,12 @@ fn native_recursive_watch_class_close_and_per_path_hooks_match_node() {
     compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-hooks-')),sub=path.join(dir,'sub'),file=path.join(sub,'file');fs.mkdirSync(sub);fs.writeFileSync(file,'before');
-const original=fs.watch,hooks=[];
-fs.watch=function(filename,options,listener){hooks.push(path.relative(dir,filename));return Reflect.apply(original,this,[filename,options,listener]);};
+const original=fs.watch,hooks=[],references=[];
+fs.symlinkSync(file,path.join(dir,'link'));
+fs.watch=function(filename,options,listener){const name=path.relative(dir,filename);hooks.push(name);const child=Reflect.apply(original,this,[filename,options,listener]);for(const key of ['ref','unref']){const method=child[key];child[key]=function(){references.push([name,key]);return Reflect.apply(method,this,[]);};}return child;};
 const watcher=original(dir,{recursive:true});fs.watch=original;
 const result=[['paths',hooks],['meta',watcher.constructor.name,Object.keys(watcher),Object.getOwnPropertySymbols(Object.getPrototypeOf(watcher)).map(String),['close','ref','unref'].map(k=>[watcher[k].name,watcher[k].length,Object.hasOwn(watcher[k],'prototype')])]];
-assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);
+assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);result.push(['references',references]);
 let synchronous=true,closed=0;watcher.on('close',()=>{assert(synchronous);closed++;result.push('close');});
 watcher.close();synchronous=false;watcher.close();assert.strictEqual(closed,1);fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));
 "#);
@@ -1557,6 +1589,7 @@ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-recwatch-options-')),resu
 for(const options of [{recursive:'1'},{recursive:1},{recursive:true,persistent:1},{recursive:true,throwIfNoEntry:'1'}]){
 try{fs.watch(dir,options).close();assert.fail('expected error');}catch(error){result.push([error.name,error.code,error.message]);}}
 const watcher=fs.watch(dir,{recursive:true,persistent:false,encoding:'buffer'});assert.strictEqual(watcher.ref(),undefined);assert.strictEqual(watcher.unref(),undefined);watcher.close();
+const missing=path.join(dir,'missing');for(const throwIfNoEntry of [undefined,true,false]){try{const absent=fs.watch(missing,{recursive:true,throwIfNoEntry});assert.strictEqual(throwIfNoEntry,false);absent.close();result.push(['missing','ignored']);}catch(error){assert.notStrictEqual(throwIfNoEntry,false);assert.strictEqual(error.code,'ENOENT');assert.strictEqual(error.filename,missing);result.push(['missing',error.name,error.code]);}}
 fs.rmSync(dir,{recursive:true,force:true});console.log(JSON.stringify(result));
 "#);
 }
@@ -1722,6 +1755,10 @@ fn commonjs_namespace_static_prefix_uses_syntax_and_matches_node() {
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'quench-cjs-export-prefix-'));
 const sources={accessor:"const refresh=()=>1,resolve=()=>2;module.exports={refresh,resolve,get path(){return '.';}};",nested:"const before=1,after=2;module.exports={before,nested:{x:1},after};",literal:"const later=2;module.exports={first:1,later};",assignments:"const text='exports.fake=1';/* exports.comment=1 */module.exports['hyphen-name']=3;module.exports.for=4;function unused(){exports.never=5;} exports.compound+=1;exports.logical ||=3;"};
+const expressions=['value','value.x','value["x"]','value?.x','fn()','fn+1','true','null','undefined','this','new Date()','function(){}','class{}','async()=>1','/x/','`x`','"text"','1','-1','(value)','\\u0076alue','π'];
+const properties=[...expressions.map(value=>'b:'+value),'...value','...require("./spread.cjs")','...value.x','b(){}','async b(){}','get b(){return 1}','set b(x){}','*b(){}','"b"(){}','["b"]:value','b:value /* hi */','b:π','b:v\\u0061lue'];
+fs.writeFileSync(path.join(dir,'spread.cjs'),'exports.spread=1');
+for(const [index,property] of properties.entries()) sources['prefix-'+index]='const value={x:1},fn=()=>1,π=value;module.exports={a:value,'+property+',c:value}';
 (async()=>{for(const [name,source] of Object.entries(sources)){const file=path.join(dir,name+'.cjs');fs.writeFileSync(file,source);const namespace=await import(file);assert.strictEqual(namespace.default,require(file));assert.strictEqual(namespace['module.exports'],namespace.default);console.log(name,Object.keys(namespace).join(','));if(name==='accessor'){assert.strictEqual(namespace.refresh(),1);assert.strictEqual(namespace.resolve(),2);}if(name==='assignments'){assert(!Object.hasOwn(namespace,'fake'));assert(!Object.hasOwn(namespace,'comment'));assert.strictEqual(namespace['hyphen-name'],3);assert.strictEqual(namespace.for,4);}}fs.rmSync(dir,{recursive:true,force:true});})();
 "#);
 }
@@ -1866,6 +1903,68 @@ assert.notStrictEqual(clone[1],shared);
 assert.deepStrictEqual(Object.getOwnPropertyDescriptor(clone,'1'),{value:clone[1],writable:true,enumerable:true,configurable:true});
 console.log(JSON.stringify([Object.keys(clone),clone.length,clone[1],reads]));
 "#);
+}
+
+#[test]
+fn cyclic_esm_instantiates_live_bindings_before_running_dependencies() {
+    for (fixture, expected) in [("esm-graph", "cyclic-esm-live-bindings\n"), ("esm-errors", "esm-link-error-retry\n")] {
+    let entry = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("../../tests/npm-top300/regressions/{fixture}/entry.mjs"));
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.arg(&entry);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, expected.as_bytes());
+        assert!(result.stderr.is_empty());
+    }
+    }
+}
+
+#[test]
+fn stack_locations_use_module_urls_and_commonjs_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let entry = directory.path().join("entry space # ü.mjs");
+    let helper = directory.path().join("capture.cjs");
+    std::fs::write(&helper, r#"
+exports.capture = function capture() {
+  const previous = Error.prepareStackTrace;
+  Error.prepareStackTrace = (_, sites) => sites;
+  const target = {};
+  Error.captureStackTrace(target);
+  const sites = target.stack;
+  Error.prepareStackTrace = previous;
+  return sites;
+};
+"#).unwrap();
+    std::fs::write(&entry, r#"
+import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
+import helper from './capture.cjs';
+function caller() { return helper.capture(); }
+const sites = caller();
+const own = sites.find(site => site.getFunctionName() === 'caller');
+const common = sites.find(site => site.getFunctionName() === 'capture');
+assert.equal(own.getFileName(), import.meta.url);
+assert.equal(common.getFileName(), fileURLToPath(new URL('./capture.cjs', import.meta.url)));
+assert(own.toString().includes(import.meta.url));
+assert(common.toString().includes(common.getFileName()));
+console.log('stack-source-identities');
+"#).unwrap();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.arg(&entry);
+        if executable != "node" {
+            command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1");
+        }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, b"stack-source-identities\n");
+        assert!(result.stderr.is_empty());
+    }
 }
 
 #[test]
@@ -3904,13 +4003,16 @@ const removed=addAbortListener(signal,()=>result.push('removed'));removed[Symbol
 controller.abort();disposable[Symbol.dispose]();
 const already=addAbortListener(AbortSignal.abort(),function(){'use strict';result.push('queued',this===undefined,arguments.length)});
 already[Symbol.dispose]();result.push('sync');
+const activeSignal=AbortSignal.abort(),EventConstructor=Event;let delivered;
+const active=addAbortListener(activeSignal,function(event){'use strict';delivered=event;assert(event instanceof EventConstructor);assert.strictEqual(event.type,'abort');assert.strictEqual(event.target,activeSignal);assert.strictEqual(event.currentTarget,activeSignal);assert.strictEqual(event.isTrusted,true);result.push('active',this===undefined,arguments.length)});
+globalThis.Event=function(){throw Error('public Event constructor was used')};
 for(const bad of [undefined,null,{},1])assert.throws(()=>addAbortListener(bad,()=>{}),{code:'ERR_INVALID_ARG_TYPE'});
 for(const bad of [undefined,null,{}])assert.throws(()=>addAbortListener(new AbortController().signal,bad),{code:'ERR_INVALID_ARG_TYPE'});
 let options,removedCalls=0;const foreign={aborted:false,addEventListener(type,callback,value){options=value},removeEventListener(){removedCalls++}};
 const foreignDisposable=addAbortListener(foreign,()=>{});foreignDisposable[Symbol.dispose]();foreignDisposable[Symbol.dispose]();
 assert.strictEqual(Object.getPrototypeOf(options),null);assert(Object.isFrozen(options));assert.strictEqual(options.once,true);
 result.push(removedCalls,Object.getOwnPropertySymbols(options).length);
-queueMicrotask(()=>console.log(JSON.stringify(result)));
+queueMicrotask(()=>{globalThis.Event=EventConstructor;assert.strictEqual(delivered.currentTarget,null);active[Symbol.dispose]();console.log(JSON.stringify(result))});
 "#;
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
@@ -5972,24 +6074,29 @@ server.listen(0,'127.0.0.1',()=>console.log(server.address().port));
         .replace("raw=>{const socket=", "raw=>{setTimeout(()=>{console.log(JSON.stringify([raw.readableLength>0,raw.bytesRead>0,raw.readableFlowing==null]));const socket=")
         .replace("socket.on('error',()=>{});});", "socket.on('error',()=>{});},100);});");
     let abrupt_server_source = direct_server_source.replace("chunk=>socket.end(chunk)", "chunk=>socket.destroy()");
-    for (server_source, expected_client_exit) in [(server_source,0),(direct_server_source,0),(delayed_server_source.as_str(),0),(abrupt_server_source.as_str(),1)] {
+    // Keep the abrupt-close client open until the server destroys its socket.
+    // Racing both peers' shutdown can make even Node's client alternate between
+    // clean EOF and ECONNRESET. Compare full outcomes on a directed exchange.
+    for (server_source, half_close) in [(server_source,true),(direct_server_source,true),(delayed_server_source.as_str(),true),(abrupt_server_source.as_str(),false)] {
     let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable|{
         let mut command=Command::new(executable);command.args(["-e",server_source]).env("QUENCH_TLS_PEER_ROOT",&fixtures).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
         if executable!="node"{command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1").env("QUENCH_NODE_LIBRARY_ROOT",&fixtures);}
         let mut peer=Peer(command.spawn().unwrap());let (mut stdout,line)=tls_peer_first_line(&mut peer.0);
         let port:u16=line.trim().parse().expect("TLS server did not start");
+        let send=if half_close {"end"} else {"write"};
         let source=format!(r#"
 const tls=require('tls'),fs=require('fs');const socket=tls.connect({{port:{port},host:'127.0.0.1',servername:'agent1',ca:fs.readFileSync(process.env.QUENCH_TLS_PEER_ROOT+'/test/fixtures/keys/ca1-cert.pem')}});let chunks=[];
-socket.on('secureConnect',()=>socket.end(Buffer.from([0,22,23,127,254,255])));socket.on('data',chunk=>chunks.push(chunk));socket.on('end',()=>console.log(JSON.stringify([socket.authorized,Array.from(Buffer.concat(chunks))])));socket.on('error',e=>{{console.log(e.code,e.message);process.exitCode=1}});
+socket.on('secureConnect',()=>socket.{send}(Buffer.from([0,22,23,127,254,255])));socket.on('data',chunk=>chunks.push(chunk));socket.on('end',()=>console.log(JSON.stringify([socket.authorized,Array.from(Buffer.concat(chunks))])));socket.on('error',e=>{{console.log(e.code,e.message);process.exitCode=1}});
 "#);
         let mut client=Command::new("node");client.args(["-e",&source]).env("QUENCH_TLS_PEER_ROOT",&fixtures);
         let result=quench_node_test::case_process::observe_command(client,Duration::from_secs(10)).unwrap();
-        assert!(!result.timed_out,"external client timed out");assert_eq!(result.exit_code,Some(expected_client_exit),"engine {executable}; server {server_source}; client stdout: {}; stderr: {}",String::from_utf8_lossy(&result.stdout),String::from_utf8_lossy(&result.stderr));
+        assert!(!result.timed_out,"external client timed out");assert_eq!(result.signal,None,"external client crashed");
+        assert_eq!(result.exit_code,Some(0),"engine {executable}; server {server_source}; client stdout: {}; stderr: {}",String::from_utf8_lossy(&result.stdout),String::from_utf8_lossy(&result.stderr));
         let deadline=std::time::Instant::now()+Duration::from_secs(5);
         let status=loop{if let Some(status)=peer.0.try_wait().unwrap(){break status;}if std::time::Instant::now()>=deadline{let _=peer.0.kill();let _=peer.0.wait();panic!("TLS server did not close after peer EOF");}std::thread::sleep(Duration::from_millis(10));};
         let mut rest=String::new();stdout.read_to_string(&mut rest).unwrap();
         assert!(status.success(),"TLS server failed");
-        (result.stdout,rest)
+        (result.exit_code,result.signal,result.stdout,result.stderr,rest)
     });
     assert_eq!(observations[1],observations[0]);
     }
@@ -6331,10 +6438,12 @@ process.on('exit',()=>console.log(JSON.stringify(output)));
 
 #[test]
 fn tls_wrapped_parent_and_tls_handle_share_original_reading_view() {
-    compare_node_stream_source(r#"
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/node/test/fixtures/keys/");
+    let source = r#"
 'use strict';
 const net=require('net'),tls=require('tls'),fs=require('fs');const output=[];
-const root='/workspace/work/node-fixtures/test/fixtures/keys/';
+const root=__FIXTURE_KEYS__;
 const server=tls.createServer({key:fs.readFileSync(root+'agent1-key.pem'),cert:fs.readFileSync(root+'agent1-cert.pem')}).listen(0,()=>{
  const plain=net.connect(server.address().port,()=>{
   const secure=tls.connect({socket:plain,rejectUnauthorized:false},()=>{
@@ -6345,7 +6454,8 @@ const server=tls.createServer({key:fs.readFileSync(root+'agent1-key.pem'),cert:f
   });
  });
 });
-"#);
+"#.replace("__FIXTURE_KEYS__", &serde_json::to_string(&format!("{}/", fixtures.display())).unwrap());
+    compare_node_stream_source(&source);
 }
 
 #[test]

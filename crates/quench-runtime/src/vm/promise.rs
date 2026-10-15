@@ -1077,7 +1077,7 @@ pub(super) struct AsyncResumeJob {
 pub(super) struct DynamicImportJob {
     pub(super) cache_key: String,
     pub(super) module: ModuleSource,
-    pub(super) promises: Vec<Value>,
+    pub(super) promise: Value,
 }
 
 #[derive(Default)]
@@ -1710,6 +1710,13 @@ impl<H: Host> Vm<H> {
                                 }
                                 return Ok(Value::UNDEFINED);
                             }
+                            ModuleOutcome::Pending(ModulePhase::Loading)
+                                if module_type == "javascript"
+                                    && phase == crate::bytecode::ModuleRequestPhase::Evaluation =>
+                            {
+                                vm.queue_dynamic_import_job(cache_key, module, promise);
+                                return Ok(Value::UNDEFINED);
+                            }
                             ModuleOutcome::Pending(_) => {
                                 let joined = vm
                                     .realm
@@ -1734,21 +1741,7 @@ impl<H: Host> Vm<H> {
                         && phase == crate::bytecode::ModuleRequestPhase::Evaluation
                         && vm.deferred_dependency_batch
                     {
-                        if let Some(job) = vm
-                            .realm
-                            .promise
-                            .dynamic_import_jobs
-                            .iter_mut()
-                            .find(|job| job.cache_key == cache_key)
-                        {
-                            job.promises.push(promise);
-                        } else {
-                            vm.realm.promise.dynamic_import_jobs.push(DynamicImportJob {
-                                cache_key,
-                                module,
-                                promises: vec![promise],
-                            });
-                        }
+                        vm.queue_dynamic_import_job(cache_key, module, promise);
                         return Ok(Value::UNDEFINED);
                     }
                     if module_type == "javascript"
@@ -1949,7 +1942,15 @@ impl<H: Host> Vm<H> {
         &self,
         locals: Vec<(String, String)>,
     ) -> Option<Vec<(String, StaticModuleValue)>> {
-        let residual = self.programs.get(ProgramId::MAIN)?;
+        self.module_local_exports(ProgramId::MAIN, locals)
+    }
+
+    fn module_local_exports(
+        &self,
+        program: ProgramId,
+        locals: Vec<(String, String)>,
+    ) -> Option<Vec<(String, StaticModuleValue)>> {
+        let residual = self.programs.get(program)?;
         let root = residual.functions.first()?;
         locals
             .into_iter()
@@ -1962,11 +1963,11 @@ impl<H: Host> Vm<H> {
                 Some((
                     exported,
                     StaticModuleValue::Binding {
-                        program: ProgramId::MAIN,
+                        program,
                         slot: u16::try_from(slot).ok()?,
                         value: self
                             .programs
-                            .module_environment(ProgramId::MAIN)
+                            .module_environment(program)
                             .and_then(|environment| self.heap.environment_slot(environment, slot))
                             .filter(|value| !value.is_deleted())
                             .unwrap_or(Value::UNDEFINED),
@@ -2175,6 +2176,7 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: &ModuleSource,
     ) -> Result<Value, JsError> {
+        self.instantiate_static_module_graph(p, module, None)?;
         if crate::Engine::static_module_has_early_error(&module.source) {
             return self.syntax_error_result(p, "module source has an early error");
         }
@@ -2422,6 +2424,22 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: &ModuleSource,
     ) -> Result<Value, JsError> {
+        let key = module_cache_key(&module.name, "javascript");
+        if let Some(namespace) = self
+            .realm
+            .promise
+            .modules
+            .get(&key)
+            .and_then(|record| record.program.and_then(|_| record.pending_namespace()))
+        {
+            self.evaluate_module_locals(
+                p,
+                module,
+                Vec::new(),
+                &mut ActiveModuleExports::default(),
+            )?;
+            return Ok(namespace);
+        }
         if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
             let exports = exports
                 .into_iter()
@@ -2483,12 +2501,12 @@ impl<H: Host> Vm<H> {
             source: String::new(),
             bytes: Vec::new(),
         };
-        if let Some(namespace) = self.root_module_namespace(p, &root)? {
-            self.realm.promise.modules.insert(
-                module_cache_key(&p.source_name, "javascript"),
-                ModuleRecord::evaluating_main(namespace),
-            );
-        }
+        let namespace = self.module_namespace(Vec::new())?;
+        self.realm.promise.modules.insert(
+            module_cache_key(&p.source_name, "javascript"),
+            ModuleRecord::evaluating_main(namespace),
+        );
+        self.instantiate_static_module_graph(p, &root, Some(ProgramId::MAIN))?;
         if p.module_requests.is_empty() {
             return Ok(());
         }
@@ -2524,6 +2542,20 @@ impl<H: Host> Vm<H> {
         Ok(())
     }
 
+    fn queue_dynamic_import_job(
+        &mut self,
+        cache_key: String,
+        module: ModuleSource,
+        promise: Value,
+    ) {
+        // Each import owns an instantiation attempt. Successful evaluation is
+        // shared by the module record; link failures must produce fresh errors.
+        self.realm
+            .promise
+            .dynamic_import_jobs
+            .push(DynamicImportJob { cache_key, module, promise });
+    }
+
     pub(super) fn advance_dynamic_import_jobs(
         &mut self,
         p: &ResidualProgram,
@@ -2535,7 +2567,7 @@ impl<H: Host> Vm<H> {
         // is settled or transferred back to a queue/module record.
         let waiters: Vec<_> = jobs
             .iter()
-            .flat_map(|job| job.promises.iter().copied())
+            .map(|job| job.promise)
             .collect();
         self.with_call_roots(waiters, |vm| {
             for job in jobs {
@@ -2545,7 +2577,7 @@ impl<H: Host> Vm<H> {
                     .modules
                     .get(&job.cache_key)
                     .map(|record| record.outcome)
-                    && vm.settle_dynamic_import_waiters(p, &job.promises, outcome)?
+                    && vm.settle_dynamic_import_waiter(p, job.promise, outcome)?
                 {
                     continue;
                 }
@@ -2558,9 +2590,7 @@ impl<H: Host> Vm<H> {
                     let reason = error
                         .thrown_value()
                         .unwrap_or_else(|| vm.heap.alloc(Cell::Error(error.into_message())));
-                    for promise in job.promises {
-                        vm.promise_settle(p, promise, PromiseState::Rejected, reason)?;
-                    }
+                    vm.promise_settle(p, job.promise, PromiseState::Rejected, reason)?;
                     continue;
                 }
                 let outcome = vm
@@ -2570,22 +2600,20 @@ impl<H: Host> Vm<H> {
                     .get(&job.cache_key)
                     .map(|record| record.outcome)
                     .unwrap_or(ModuleOutcome::Pending(ModulePhase::Evaluating));
-                if !vm.settle_dynamic_import_waiters(p, &job.promises, outcome)?
+                if !vm.settle_dynamic_import_waiter(p, job.promise, outcome)?
                     && let Some(record) = vm.realm.promise.modules.get_mut(&job.cache_key)
                 {
-                    for promise in job.promises {
-                        record.add_waiter(promise);
-                    }
+                    record.add_waiter(job.promise);
                 }
             }
             Ok(())
         })
     }
 
-    fn settle_dynamic_import_waiters(
+    fn settle_dynamic_import_waiter(
         &mut self,
         p: &ResidualProgram,
-        promises: &[Value],
+        promise: Value,
         outcome: ModuleOutcome,
     ) -> Result<bool, JsError> {
         let (state, value) = match outcome {
@@ -2593,9 +2621,7 @@ impl<H: Host> Vm<H> {
             ModuleOutcome::Errored(reason) => (PromiseState::Rejected, reason),
             ModuleOutcome::Pending(_) | ModuleOutcome::Deferred(_) => return Ok(false),
         };
-        for promise in promises {
-            self.promise_settle(p, *promise, state, value)?;
-        }
+        self.promise_settle(p, promise, state, value)?;
         Ok(true)
     }
 
@@ -2616,7 +2642,15 @@ impl<H: Host> Vm<H> {
     }
 
     pub(super) fn instantiate_main_module(&mut self, p: &ResidualProgram) -> Result<(), JsError> {
-        if !p.is_module() || self.programs.module_environment(ProgramId::MAIN).is_some() {
+        self.instantiate_module_environment(p, ProgramId::MAIN)
+    }
+
+    fn instantiate_module_environment(
+        &mut self,
+        p: &ResidualProgram,
+        program: ProgramId,
+    ) -> Result<(), JsError> {
+        if !p.is_module() || self.programs.module_environment(program).is_some() {
             return Ok(());
         }
         let Some(root) = p.functions.first() else {
@@ -2633,15 +2667,14 @@ impl<H: Host> Vm<H> {
             function: super::ROOT_FUNCTION_ID,
             slots: slots.into_boxed_slice().into(),
             scope: Box::new(crate::heap::EnvironmentScope {
-                program: Some(ProgramId::MAIN.raw()),
+                program: Some(program.raw()),
                 root_eval_scope: false,
                 binding_site_pc: None,
                 dynamic_bindings: Vec::new().into(),
                 with_objects: Box::default(),
             }),
         });
-        self.programs
-            .set_module_environment(ProgramId::MAIN, environment);
+        self.programs.set_module_environment(program, environment);
 
         let hoisted_functions = p
             .module_link_plan
@@ -2669,12 +2702,27 @@ impl<H: Host> Vm<H> {
             })
             .collect::<Vec<_>>();
         for (slot, function) in hoisted_functions {
-            let closure = self.closure(p, function, environment)?;
+            let previous = self.replace_active_program(program);
+            let closure = self.closure(p, function, environment);
+            self.set_active_program(previous);
+            let closure = closure?;
             if let Some(binding) = self.heap.environment_slot_mut(environment, slot) {
                 *binding = closure;
             }
         }
         Ok(())
+    }
+
+    fn missing_module_export(
+        &mut self,
+        p: &ResidualProgram,
+        source: &str,
+        name: &str,
+    ) -> Result<Value, JsError> {
+        self.syntax_error_result(
+            p,
+            &format!("The requested module '{source}' does not provide an export named '{name}'"),
+        )
     }
 
     fn resolve_module_import_values(
@@ -2772,7 +2820,7 @@ impl<H: Host> Vm<H> {
                     && Self::static_module_declares_export(&module, name) == Some(false)
                 {
                     return self
-                        .syntax_error_result(p, "module import binding could not be resolved")
+                        .missing_module_export(p, &import.source, name)
                         .map(|_| Vec::new());
                 }
                 return Err(self.type_error(p, "deferred module namespace is unavailable".into()));
@@ -2795,7 +2843,7 @@ impl<H: Host> Vm<H> {
                     if module_type == "json" && name != "default" =>
                 {
                     return self
-                        .syntax_error_result(p, "JSON modules expose only a default binding")
+                        .missing_module_export(p, &import.source, name)
                         .map(|_| Vec::new());
                 }
                 (_, crate::bytecode::ModuleImportName::Named(name)) => {
@@ -2806,7 +2854,7 @@ impl<H: Host> Vm<H> {
                     let fallback = self.own_property(namespace, atom);
                     if is_namespace && named_binding.is_none() && fallback.is_none() {
                         return self
-                            .syntax_error_result(p, "module import binding could not be resolved")
+                            .missing_module_export(p, &import.source, name)
                             .map(|_| Vec::new());
                     }
                     match (named_binding, fallback) {
@@ -3233,6 +3281,203 @@ impl<H: Host> Vm<H> {
         Ok(namespace)
     }
 
+    /// Allocate every reachable environment and namespace before linking imports.
+    /// The temporary graph owns traversal order only; each ModuleRecord owns its
+    /// program and namespace throughout linking, evaluation, and subsequent imports.
+    fn instantiate_static_module_graph(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        precompiled: Option<ProgramId>,
+    ) -> Result<(), JsError> {
+        let mut graph = Vec::new();
+        self.collect_static_module_programs(p, module, precompiled, &mut graph)?;
+        let mut nodes = StaticModuleNodes::default();
+        for (module, _) in &graph {
+            let Some(StaticModuleGraph::Linked {
+                exports,
+                incomplete: false,
+                ..
+            }) = self.resolve_static_module_plan_graph_with_nodes(p, module.clone(), &mut nodes)?
+            else {
+                return self
+                    .syntax_error_result(p, "module export could not be resolved unambiguously")
+                    .map(|_| ());
+            };
+            let linked = self.module_namespace_from_static(exports)?;
+            let key = module_cache_key(&module.name, "javascript");
+            let namespace = self
+                .realm
+                .promise
+                .modules
+                .get(&key)
+                .and_then(ModuleRecord::pending_namespace)
+                .ok_or_else(|| {
+                    self.type_error(p, "module namespace is unavailable during linking".into())
+                })?;
+            self.copy_module_namespace(linked, namespace, p)?;
+        }
+        for (module, program) in &graph {
+            let residual = self
+                .programs
+                .get(*program)
+                .ok_or_else(|| self.type_error(p, "module program is unavailable".into()))?;
+            for request in &residual.module_requests {
+                let module_type = request.module_type.as_deref().unwrap_or("javascript");
+                if request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
+                    && module_type == "javascript"
+                {
+                    continue;
+                }
+                let dependency = self
+                    .host
+                    .resolve_dynamic_import(&module.name, &request.source)
+                    .map_err(|message| self.type_error(p, message))?
+                    .ok_or_else(|| {
+                        self.type_error(p, "static module request was not resolved".into())
+                    })?;
+                match request.phase {
+                    crate::bytecode::ModuleRequestPhase::Source => {
+                        self.module_source_value(p, &dependency)?;
+                    }
+                    crate::bytecode::ModuleRequestPhase::Defer => {
+                        self.prepare_deferred_module_request(p, dependency, module_type)?;
+                    }
+                    crate::bytecode::ModuleRequestPhase::Evaluation => {
+                        self.evaluate_static_synthetic_module(p, &dependency, module_type)?;
+                    }
+                }
+            }
+            let imports = self.resolve_module_import_values(
+                p,
+                &residual,
+                &module.name,
+                &residual.module_imports,
+                &mut ActiveModuleExports::default(),
+            )?;
+            self.programs.set_module_imports(*program, imports);
+        }
+        for (module, _) in graph {
+            let key = module_cache_key(&module.name, "javascript");
+            if let Some(record) = self.realm.promise.modules.get_mut(&key) {
+                record.begin_linking();
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_static_module_programs(
+        &mut self,
+        p: &ResidualProgram,
+        module: &ModuleSource,
+        precompiled: Option<ProgramId>,
+        graph: &mut Vec<(ModuleSource, ProgramId)>,
+    ) -> Result<(), JsError> {
+        let key = module_cache_key(&module.name, "javascript");
+        let existing = self.realm.promise.modules.get(&key);
+        if existing.is_some_and(|record| {
+            matches!(
+                record.outcome,
+                ModuleOutcome::Evaluated(_)
+                    | ModuleOutcome::Deferred(_)
+                    | ModuleOutcome::Errored(_)
+            ) || record.program.is_some_and(|program| {
+                record.phase() != ModulePhase::Loading
+                    || graph.iter().any(|(_, visited)| *visited == program)
+            })
+        }) {
+            return Ok(());
+        }
+        let precompiled = precompiled.or_else(|| existing.and_then(|record| record.program));
+        let _stack =
+            quench_stack::StackGuard::enter().map_err(|()| self.stack_exhaustion_error())?;
+        let program = match precompiled {
+            Some(program) => program,
+            None => {
+                if crate::Engine::static_module_has_early_error(&module.source) {
+                    return self
+                        .syntax_error_result(p, "module source has an early error")
+                        .map(|_| ());
+                }
+                let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
+                    &module.source,
+                    &module.name,
+                    &*self,
+                )
+                .map_err(|diagnostics| {
+                    if diagnostics
+                        .iter()
+                        .any(crate::compile::Diagnostic::is_stack_exhausted)
+                    {
+                        self.stack_exhaustion_error()
+                    } else {
+                        self.type_error(
+                            p,
+                            format!("dynamic module compilation failed: {diagnostics:?}"),
+                        )
+                    }
+                })?;
+                self.store_module_program(residual)
+                    .ok_or_else(|| self.type_error(p, "module program store is full".into()))?
+            }
+        };
+        let residual = self
+            .programs
+            .get(program)
+            .ok_or_else(|| self.type_error(p, "module program is unavailable".into()))?;
+        self.instantiate_module_environment(&residual, program)?;
+        let namespace = match self
+            .realm
+            .promise
+            .modules
+            .get(&key)
+            .and_then(ModuleRecord::pending_namespace)
+        {
+            Some(namespace) => namespace,
+            None => self.module_namespace(Vec::new())?,
+        };
+        let record = self.realm.promise.modules.entry(key).or_insert_with(|| {
+            let mut record = ModuleRecord::evaluating_static();
+            record.outcome = ModuleOutcome::Pending(ModulePhase::Loading);
+            record
+        });
+        record.program = Some(program);
+        record.cache_pending_namespace(namespace);
+        // Graph instantiation can allocate many environments before the first
+        // guest instruction. The record and program store now own all roots.
+        self.maybe_collect(p);
+        graph.push((module.clone(), program));
+        let dependencies = residual
+            .module_requests
+            .iter()
+            .map(|request| {
+                self.host
+                    .resolve_dynamic_import(&module.name, &request.source)
+                    .map_err(|message| self.type_error(p, message))?
+                    .ok_or_else(|| {
+                        self.type_error(p, "static module request was not resolved".into())
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.realm
+            .promise
+            .modules
+            .get_mut(&module_cache_key(&module.name, "javascript"))
+            .expect("module program registered before resolution")
+            .resolved_requests = dependencies
+            .iter()
+            .map(|dependency| dependency.name.clone())
+            .collect();
+        for (request, dependency) in residual.module_requests.iter().zip(dependencies) {
+            if request.phase == crate::bytecode::ModuleRequestPhase::Evaluation
+                && request.module_type.as_deref().unwrap_or("javascript") == "javascript"
+            {
+                self.collect_static_module_programs(p, &dependency, None, graph)?;
+            }
+        }
+        Ok(())
+    }
+
     fn evaluate_static_module_source(
         &mut self,
         p: &ResidualProgram,
@@ -3244,6 +3489,26 @@ impl<H: Host> Vm<H> {
             return Ok(());
         }
         let cache_key = module_cache_key(&module.name, "javascript");
+        if self
+            .realm
+            .promise
+            .modules
+            .get(&cache_key)
+            .is_none_or(|record| record.phase() == ModulePhase::Loading)
+        {
+            self.realm
+                .promise
+                .modules
+                .entry(cache_key.clone())
+                .or_insert_with(|| {
+                    let mut record = ModuleRecord::evaluating_static();
+                    record.outcome = ModuleOutcome::Pending(ModulePhase::Loading);
+                    record
+                });
+            if let Err(error) = self.instantiate_static_module_graph(p, &module, None) {
+                return self.reject_module_instantiation(p, &cache_key, error);
+            }
+        }
         let resuming_waiting = matches!(
             self.realm
                 .promise
@@ -3260,6 +3525,15 @@ impl<H: Host> Vm<H> {
             .map(|record| record.outcome)
         {
             Some(ModuleOutcome::Evaluated(_)) => return Ok(()),
+            Some(ModuleOutcome::Pending(ModulePhase::Linking)) => {
+                self.realm
+                    .promise
+                    .modules
+                    .get_mut(&cache_key)
+                    .unwrap()
+                    .begin_evaluation();
+            }
+
             Some(ModuleOutcome::Pending(ModulePhase::WaitingForDependencies)) => {
                 if self.static_module_has_pending_dependencies(p, &module)? {
                     return Ok(());
@@ -3295,7 +3569,7 @@ impl<H: Host> Vm<H> {
         let Some(plan) = crate::Engine::static_module_plan(&module.source, &module.name) else {
             return Err(self.type_error(p, "static module metadata is unavailable".into()));
         };
-        if !resuming_waiting {
+        if !resuming_waiting && !self.realm.promise.modules.contains_key(&cache_key) {
             self.realm
                 .promise
                 .modules
@@ -3403,19 +3677,57 @@ impl<H: Host> Vm<H> {
         let Some(waiters) = waiters else {
             return Err(self.type_error(p, "module record was not evaluating".into()));
         };
-        let rejection_is_observed = state != PromiseState::Rejected
-            || !waiters.is_empty()
-            || self.waiting_static_parent(p, cache_key)?;
-        for waiter in waiters {
-            self.promise_settle(p, waiter, state, value)?;
+        self.settle_module_waiters(p, cache_key, waiters, state, value)
+    }
+
+    fn reject_module_instantiation(
+        &mut self,
+        p: &ResidualProgram,
+        cache_key: &str,
+        error: JsError,
+    ) -> Result<(), JsError> {
+        let waiters = self
+            .realm
+            .promise
+            .modules
+            .get_mut(cache_key)
+            .and_then(ModuleRecord::retry_instantiation)
+            .ok_or_else(|| self.type_error(p, "module was not being instantiated".into()))?;
+        // Queued imports own their promises outside the module record. Return
+        // the transient error to that job instead of leaving it waiting on an
+        // unlinked record that deliberately does not cache the error.
+        if waiters.is_empty() {
+            return Err(error);
         }
-        if state == PromiseState::Rejected && !rejection_is_observed {
-            return Err(JsError::thrown(
-                value,
-                "static module evaluation failed".into(),
-            ));
-        }
-        Ok(())
+        let reason = error
+            .thrown_value()
+            .unwrap_or_else(|| self.heap.alloc(Cell::Error(error.into_message())));
+        self.settle_module_waiters(p, cache_key, waiters, PromiseState::Rejected, reason)
+    }
+
+    fn settle_module_waiters(
+        &mut self,
+        p: &ResidualProgram,
+        cache_key: &str,
+        waiters: Vec<Value>,
+        state: PromiseState,
+        value: Value,
+    ) -> Result<(), JsError> {
+        self.with_call_roots(waiters.iter().copied().chain([value]), |vm| {
+            let rejection_is_observed = state != PromiseState::Rejected
+                || !waiters.is_empty()
+                || vm.waiting_static_parent(p, cache_key)?;
+            for &waiter in &waiters {
+                vm.promise_settle(p, waiter, state, value)?;
+            }
+            if state == PromiseState::Rejected && !rejection_is_observed {
+                return Err(JsError::thrown(
+                    value,
+                    "static module evaluation failed".into(),
+                ));
+            }
+            Ok(())
+        })
     }
 
     fn waiting_static_parent(
@@ -3620,25 +3932,38 @@ impl<H: Host> Vm<H> {
         exports: Vec<(String, String)>,
         active: &mut ActiveModuleExports,
     ) -> Result<Vec<(String, StaticModuleValue)>, JsError> {
-        let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
-            &module.source,
-            &module.name,
-            &*self,
-        )
-        .map_err(|diagnostics| {
-            if diagnostics
-                .iter()
-                .any(crate::compile::Diagnostic::is_stack_exhausted)
-            {
-                return self.stack_exhaustion_error();
+        let key = module_cache_key(&module.name, "javascript");
+        let program_id = match self
+            .realm
+            .promise
+            .modules
+            .get(&key)
+            .and_then(|record| record.program)
+        {
+            Some(program) => program,
+            None => {
+                let residual = crate::Engine::specialize_module_unspecialized_with_atom_prefix(
+                    &module.source,
+                    &module.name,
+                    &*self,
+                )
+                .map_err(|diagnostics| {
+                    if diagnostics
+                        .iter()
+                        .any(crate::compile::Diagnostic::is_stack_exhausted)
+                    {
+                        return self.stack_exhaustion_error();
+                    }
+                    self.type_error(
+                        p,
+                        format!("dynamic module compilation failed: {diagnostics:?}"),
+                    )
+                })?;
+                let Some(program_id) = self.store_module_program(residual) else {
+                    return Err(self.type_error(p, "module program store is full".into()));
+                };
+                program_id
             }
-            self.type_error(
-                p,
-                format!("dynamic module compilation failed: {diagnostics:?}"),
-            )
-        })?;
-        let Some(program_id) = self.store_module_program(residual) else {
-            return Err(self.type_error(p, "module program store is full".into()));
         };
         let residual = self
             .programs
@@ -3832,6 +4157,33 @@ impl<H: Host> Vm<H> {
         if nodes.contains_key(&identity) {
             return Ok(true);
         }
+        let key = module_cache_key(&module.name, "javascript");
+        if let Some(program) = self
+            .realm
+            .promise
+            .modules
+            .get(&key)
+            .and_then(|record| record.program)
+        {
+            let residual = self
+                .programs
+                .get(program)
+                .ok_or_else(|| self.type_error(p, "module program is unavailable".into()))?;
+            let Some(plan) = &residual.module_link_plan else {
+                return Ok(false);
+            };
+            let locals = self
+                .module_local_exports(program, plan.locals.clone())
+                .ok_or_else(|| self.type_error(p, "module export binding is unavailable".into()))?;
+            nodes.insert(
+                identity,
+                StaticModuleNode::Planned {
+                    locals,
+                    reexports: plan.reexports.clone(),
+                },
+            );
+            return Ok(true);
+        }
         if let Some(exports) = crate::Engine::static_module_exports(&module.source, &module.name) {
             let exports = exports
                 .into_iter()
@@ -3953,6 +4305,26 @@ impl<H: Host> Vm<H> {
         referrer: &str,
         source: &str,
     ) -> Result<Option<ModuleSource>, JsError> {
+        // Export resolution follows the graph's already-resolved module edges.
+        // It needs compiled metadata, never another host load or another source
+        // copy. Execution and source-phase imports keep their original byte path.
+        let key = module_cache_key(referrer, "javascript");
+        if let Some(record) = self.realm.promise.modules.get(&key)
+            && let Some(program) = record
+                .program
+                .and_then(|program| self.programs.get(program))
+            && let Some(index) = program
+                .module_requests
+                .iter()
+                .position(|request| request.source == source)
+            && let Some(name) = record.resolved_requests.get(index)
+        {
+            return Ok(Some(ModuleSource {
+                name: name.clone(),
+                source: String::new(),
+                bytes: Vec::new(),
+            }));
+        }
         self.host
             .resolve_dynamic_import(referrer, source)
             .map_err(|message| self.type_error(p, message))
@@ -4010,6 +4382,23 @@ impl<H: Host> Vm<H> {
                 else {
                     return Ok(StaticModuleResolution::Missing);
                 };
+                let key = module_cache_key(&dependency.name, "javascript");
+                if let Some(namespace) =
+                    self.realm
+                        .promise
+                        .modules
+                        .get(&key)
+                        .and_then(|record| match record.outcome {
+                            ModuleOutcome::Evaluated(namespace)
+                            | ModuleOutcome::Deferred(namespace) => Some(namespace),
+                            ModuleOutcome::Pending(_) => record.pending_namespace(),
+                            ModuleOutcome::Errored(_) => None,
+                        })
+                {
+                    return Ok(StaticModuleResolution::Binding(StaticModuleValue::Cached(
+                        namespace,
+                    )));
+                }
                 let Some(names) = self.static_module_export_names(
                     p,
                     &dependency,
@@ -4138,14 +4527,26 @@ impl<H: Host> Vm<H> {
         p: &ResidualProgram,
         module: ModuleSource,
     ) -> Result<Option<StaticModuleGraph>, JsError> {
-        let mut nodes = StaticModuleNodes::default();
+        self.resolve_static_module_plan_graph_with_nodes(
+            p,
+            module,
+            &mut StaticModuleNodes::default(),
+        )
+    }
+
+    fn resolve_static_module_plan_graph_with_nodes(
+        &mut self,
+        p: &ResidualProgram,
+        module: ModuleSource,
+        nodes: &mut StaticModuleNodes,
+    ) -> Result<Option<StaticModuleGraph>, JsError> {
         let Some(names) =
-            self.static_module_export_names(p, &module, &mut nodes, &mut FxHashSet::default())?
+            self.static_module_export_names(p, &module, nodes, &mut FxHashSet::default())?
         else {
             return Ok(None);
         };
         let Some(valid) =
-            self.validate_static_module_links(p, &module, &mut nodes, &mut FxHashSet::default())?
+            self.validate_static_module_links(p, &module, nodes, &mut FxHashSet::default())?
         else {
             return Ok(None);
         };
@@ -4158,7 +4559,7 @@ impl<H: Host> Vm<H> {
                 p,
                 &module,
                 &name,
-                &mut nodes,
+                nodes,
                 &mut StaticModuleResolveSet::default(),
             )? {
                 StaticModuleResolution::Binding(value) => exports.push((name, value)),

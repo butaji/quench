@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import * as a from './a.mjs';
+import * as barrel from './barrel.mjs';
+import { read, early, namespace, config as reexportedConfig } from './b.mjs';
+import config from './config.json' with { type: 'json' };
+export function entryHoisted() { return a.value; }
+globalThis.cycleTrace.push('entry');
+assert.deepEqual(globalThis.cycleTrace, ['b', 'a', 'entry']);
+assert.equal(early, true);
+assert.equal(config.answer, 42);
+assert.equal(reexportedConfig, config);
+assert.equal(read(), 1);
+assert.equal(namespace, a);
+assert.equal(barrel.alias, a.hoisted);
+assert.equal(barrel.hoisted, a.hoisted);
+assert.equal(barrel.namespace, a);
+import('./a.mjs').then(namespace => assert.equal(namespace, a));
+assert.equal(Object.getPrototypeOf(a), null);
+assert.equal(Object.isExtensible(a), false);
+assert.equal(Object.getOwnPropertyDescriptor(a, 'value').value, 1);
+a.bump();
+assert.equal(a.value, 2);
+assert.equal(barrel.value, 2);
+assert.equal(read(), 2);
+assert.equal(Object.getOwnPropertyDescriptor(barrel, 'value').value, 2);
+console.log('cyclic-esm-live-bindings');
