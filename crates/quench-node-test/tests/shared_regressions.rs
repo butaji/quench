@@ -148,3 +148,32 @@ WebAssembly.instantiate(m, { env: { log() {} } })
     assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
     assert_eq!(quench.stdout, node.stdout);
 }
+
+#[test]
+fn vm_context_lexicals_survive_collection_and_prototypes_end_in_the_context() {
+    // A context's script-scope `let` is reachable only through the realm while its code
+    // runs; collections inside that code must keep it alive.
+    let source = r#"
+const vm = require('vm');
+const context = vm.createContext({});
+let source = 'let kept = [';
+for (let i = 0; i < 50; i++) source += `{"id":${i},"params":{"a":[1,"x${i}",{"b":${i}}]}},`;
+source += '{"z":1}];';
+vm.runInContext(source, context);
+console.log(vm.runInContext(`
+  let total = 0;
+  for (let round = 0; round < 20; round++) {
+    const garbage = [];
+    for (let i = 0; i < 100000; i++) garbage.push({ i });
+    total += JSON.stringify(kept).length;
+  }
+  total`, context));
+// Every chain in the context ends at its own %Object.prototype%.
+console.log(vm.runInContext('Object.getPrototypeOf(Object.prototype) === null', context));
+"#;
+    let node = observe_node_source(source);
+    assert!(node.status.success(), "Node oracle failed: {node:?}");
+    let quench = observe_source(source);
+    assert_eq!(quench.outcome(), RunResult::Pass, "{:?}", quench.worker);
+    assert_eq!(quench.stdout, node.stdout);
+}

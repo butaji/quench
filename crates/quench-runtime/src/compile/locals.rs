@@ -321,6 +321,18 @@ impl Compiler<'_> {
                             annex_b_collisions,
                         );
                     }
+                    if let Some(finalizer) = &item.finalizer {
+                        self.collect_locals_into(
+                            &finalizer.body,
+                            output,
+                            seen,
+                            function_scope,
+                            strict,
+                            implicit_arguments_binding,
+                            true,
+                            annex_b_collisions,
+                        );
+                    }
                 }
                 _ => {}
             }
