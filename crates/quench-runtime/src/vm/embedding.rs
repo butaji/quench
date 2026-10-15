@@ -208,6 +208,7 @@ impl<H: Host> Vm<H> {
         let value = self.embedding_value(root)?;
         let cell = self.heap.get(value);
         Ok(match brand {
+            B::External => self.heap.object(value).and_then(Object::external_address).is_some(),
             B::Date => matches!(cell, Some(Cell::Date { .. })),
             B::RegExp => matches!(cell, Some(Cell::RegExp { .. })),
             B::NativeError => self.error_is_error(value) || matches!(cell, Some(Cell::Error(_))),
@@ -923,6 +924,17 @@ impl<H: Host> Vm<H> {
     pub(crate) fn string_units_rooted(&mut self, units: &[u16]) -> RootId {
         let value = self.heap.alloc(Cell::String(JsString::from_units(units)));
         self.root(value)
+    }
+
+    pub(crate) fn create_embedding_external(&mut self, address: usize) -> Result<Value, JsError> {
+        let value = self.create_embedding_null_object()?;
+        self.heap.object_mut(value).expect("new native object").set_external_address(address);
+        Ok(value)
+    }
+
+    pub(crate) fn embedding_external_address(&self, root: RootId) -> Option<usize> {
+        let value = self.root_value(root)?;
+        self.heap.object(value)?.external_address()
     }
 
     pub(crate) fn create_embedding_object(&mut self) -> Result<Value, JsError> {
