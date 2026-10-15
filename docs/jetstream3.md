@@ -32,10 +32,14 @@ runner's process accounting, as for V8-v7.
 JetStream targets the d8, jsc and SpiderMonkey shells. The runner supplies the
 same shell surface to Node-compatible engines through a prelude on `node:vm`:
 `print`, `printErr`, `read`/`readFile`, `load`, and `runString`, which creates
-a fresh realm for each benchmark exactly as JetStream does in shells. The
-driver runs with `--no-prefetch`, so each benchmark realm loads its resources
-on demand. Engines therefore need no WebAssembly to decompress prefetched
-resources; Node `--jitless` has none. Iteration counts, validation and scoring
+a fresh realm for each benchmark exactly as JetStream does in shells. Dynamic
+`import()` in benchmark code goes through the main context's loader
+(`vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER`), resolved relative to the
+corpus root. The driver runs with `--no-prefetch`, so each benchmark realm
+loads its resources on demand. Engines therefore need no WebAssembly to
+decompress prefetched resources; Node `--jitless` has none. Instead, each `.z`
+resource must already be inflated next to itself (JetStream's
+`npm run decompress`, or a zlib inflate of each file). Iteration counts, validation and scoring
 are JetStream's and are never altered.
 
 The no-JIT bars are Node `--jitless` and Bun with `BUN_JSC_useJIT=0`, with the

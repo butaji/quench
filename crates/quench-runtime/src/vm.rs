@@ -976,7 +976,7 @@ pub(crate) struct Vm<H> {
     frames: Vec<Box<Frame>>,
     native_stack_frames: Vec<(usize, String)>,
     frame_pool: Vec<Box<Frame>>,
-    /// Wasm activations a running lane holds without frames.
+    /// Activations a running lane holds without frames.
     lane_stack: dispatch_fast::LaneStack,
     /// Whether Wasm functions with a compiled denotation run as native code.
     execution_mode: ExecutionMode,
@@ -1709,6 +1709,7 @@ impl<H: Host> Vm<H> {
         self.well_known_symbols.clear();
         self.string_concats = None;
         *self.call_targets = [EMPTY_CALL_TARGET; CALL_TARGET_CACHE_SIZE];
+        self.lane_stack.clear_script_targets();
         let atom_text = self.atom_text.clone();
         for (id, name) in atom_text.iter().enumerate() {
             self.index_atom(Self::atom_hash_str(name), id as Atom, name);
