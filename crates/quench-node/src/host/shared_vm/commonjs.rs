@@ -20,6 +20,22 @@ pub(super) fn commonjs_resolver() -> oxc_resolver::Resolver {
     })
 }
 
+/// An existing explicit filesystem target needs no package or extension search.
+/// URL delimiters and percent escapes stay with the full resolver.
+pub(super) fn exact_file_path(base: &Path, specifier: &str) -> Option<PathBuf> {
+    if specifier
+        .chars()
+        .any(|character| matches!(character, '%' | '?' | '#'))
+        || !(Path::new(specifier).is_absolute()
+            || specifier.starts_with("./")
+            || specifier.starts_with("../"))
+    {
+        return None;
+    }
+    let path = base.join(specifier);
+    path.is_file().then_some(path)
+}
+
 pub(crate) fn entry_path(path: &Path) -> Result<PathBuf, String> {
     let cwd = if path.is_absolute() {
         path.parent()
@@ -33,6 +49,9 @@ pub(crate) fn entry_path(path: &Path) -> Result<PathBuf, String> {
     } else {
         cwd.join(path)
     };
+    if let Some(path) = exact_file_path(&cwd, &path.to_string_lossy()) {
+        return std::fs::canonicalize(path).map_err(|error| error.to_string());
+    }
     commonjs_resolver()
         .resolve(&cwd, &path.to_string_lossy())
         .map(|resolution| resolution.full_path())
@@ -62,34 +81,47 @@ pub(crate) fn source_kind(path: &Path) -> Result<quench_runtime::SourceKind, Str
         _ => {}
     }
     let path = std::fs::canonicalize(path).map_err(|error| error.to_string())?;
-    let resolution = oxc_resolver::Resolver::new(Default::default())
-        .resolve(
-            path.parent().unwrap_or(Path::new(".")),
-            &path.to_string_lossy(),
-        )
-        .map_err(|error| error.to_string())?;
-    // A node_modules directory terminates package-scope lookup. Resolver metadata
-    // for the enclosing application must not classify an unconfigured package.
-    let scope_boundary = path.ancestors().find(|directory| {
-        directory.file_name().is_some_and(|name| name == "node_modules")
-    });
-    let module = resolution
-        .package_json()
-        .filter(|package| {
-            scope_boundary.is_none_or(|boundary| {
-                package.directory() != boundary && package.directory().starts_with(boundary)
-            })
-        })
-        .and_then(|package| package.r#type.as_ref())
-        .and_then(serde_json::Value::as_str)
-        == Some("module");
-    Ok(
-        if (path.extension().is_none() || path.extension().is_some_and(|extension| extension == "js")) && module {
-            quench_runtime::SourceKind::Module
-        } else {
-            quench_runtime::SourceKind::Script
-        },
-    )
+    // Package scope is a filesystem/JSON question, not another resolution of
+    // this already-resolved file. In particular, do not build a resolver cache
+    // (with parsed exports maps) for every source-kind query.
+    for directory in path.ancestors().skip(1) {
+        if directory
+            .file_name()
+            .is_some_and(|name| name == "node_modules")
+        {
+            break;
+        }
+        let package = directory.join("package.json");
+        let text = match std::fs::read_to_string(&package) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("{}: {error}", package.display())),
+        };
+        let package_json: serde_json::Value =
+            serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text))
+                .map_err(|_| format!("Invalid package config {}.", package.display()))?;
+        let module = match package_json.get("type") {
+            Some(serde_json::Value::String(kind)) => kind == "module",
+            None => false,
+            Some(_) => {
+                return Err(format!(
+                    "Invalid package config {}. \"type\" key must be a string",
+                    package.display()
+                ))
+            }
+        };
+        return Ok(
+            if (path.extension().is_none()
+                || path.extension().is_some_and(|extension| extension == "js"))
+                && module
+            {
+                quench_runtime::SourceKind::Module
+            } else {
+                quench_runtime::SourceKind::Script
+            },
+        );
+    }
+    Ok(quench_runtime::SourceKind::Script)
 }
 
 pub(super) fn initialize(context: &mut Context<'_>) -> Result<(), RootedError> {
@@ -1419,7 +1451,6 @@ fn resolve_filename(
             PathBuf::from(directory)
         }
     };
-    let resolver = commonjs_resolver();
     let node_lib = context.host_mut().node_library_root.join("lib");
     let internal_specifier = specifier.strip_prefix("node:").unwrap_or(specifier);
     let node_internal = (internal_specifier.starts_with("internal/")
@@ -1453,7 +1484,10 @@ fn resolve_filename(
             specifier.to_owned(),
         )
     };
-    match resolver.resolve(base, &resolved_specifier) {
+    if let Some(path) = exact_file_path(base, &resolved_specifier) {
+        return std::fs::canonicalize(path).map_err(|error| RootedError::host(error.to_string()));
+    }
+    match commonjs_resolver().resolve(base, &resolved_specifier) {
         Ok(resolution) => Ok(resolution.full_path()),
         Err(oxc_resolver::ResolveError::NotFound(_) | oxc_resolver::ResolveError::Specifier(_)) => {
             let mut stack = Vec::new();

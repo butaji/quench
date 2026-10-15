@@ -4,6 +4,7 @@ use oxc_ast::ast::{
     SimpleAssignmentTarget, Statement,
 };
 use oxc_ast_visit::{walk, Visit};
+use oxc_span::GetSpan;
 use std::{collections::BTreeSet, path::Path};
 
 pub(super) fn names(path: &Path, source: &str) -> Vec<String> {
@@ -31,6 +32,7 @@ fn collect(
     let allocator = oxc_allocator::Allocator::default();
     let parsed = oxc_parser::Parser::new(&allocator, source, oxc_span::SourceType::cjs()).parse();
     let mut exports = Exports {
+        source,
         names: BTreeSet::new(),
         reexports: BTreeSet::new(),
     };
@@ -53,7 +55,8 @@ fn collect(
         }
     }
 }
-struct Exports {
+struct Exports<'s> {
+    source: &'s str,
     names: BTreeSet<String>,
     reexports: BTreeSet<String>,
 }
@@ -69,7 +72,32 @@ fn is_module_exports(target: &SimpleAssignmentTarget<'_>) -> bool {
     matches!(target, SimpleAssignmentTarget::StaticMemberExpression(member)
         if identifier(&member.object, "module") && member.property.name == "exports")
 }
-impl<'a> Visit<'a> for Exports {
+fn require_specifier<'e>(expression: &'e Expression<'_>) -> Option<&'e str> {
+    let Expression::CallExpression(call) = expression else {
+        return None;
+    };
+    if !identifier(&call.callee, "require") || call.arguments.len() != 1 {
+        return None;
+    }
+    match call.arguments[0].as_expression()? {
+        Expression::StringLiteral(specifier) => Some(specifier.value.as_str()),
+        _ => None,
+    }
+}
+// Node recognizes an identifier prefix, even when the complete expression is
+// more complex. OXC remains the authority for the surrounding syntax and spans.
+fn identifier_prefix(source: &str) -> Option<&str> {
+    let mut chars = source.char_indices();
+    let (_, first) = chars.next()?;
+    if !oxc_syntax::identifier::is_identifier_start(first) {
+        return None;
+    }
+    let end = chars
+        .find(|(_, ch)| !oxc_syntax::identifier::is_identifier_part(*ch))
+        .map_or(source.len(), |(offset, _)| offset);
+    Some(&source[..end])
+}
+impl<'a> Visit<'a> for Exports<'_> {
     fn visit_statement(&mut self, statement: &Statement<'a>) {
         let Ok(_guard) = quench_stack::StackGuard::enter() else {
             return;
@@ -104,28 +132,38 @@ impl<'a> Visit<'a> for Exports {
                 _ => {}
             }
             if is_module_exports(target) {
-                if let Expression::CallExpression(call) = &assignment.right {
-                    if identifier(&call.callee, "require") && call.arguments.len() == 1 {
-                        if let Some(Expression::StringLiteral(specifier)) =
-                            call.arguments[0].as_expression()
-                        {
-                            self.reexports.insert(specifier.value.to_string());
-                        }
-                    }
+                if let Some(specifier) = require_specifier(&assignment.right) {
+                    self.reexports.insert(specifier.to_owned());
                 }
                 if let Expression::ObjectExpression(object) = &assignment.right {
-                    // Node's CJS lexer recognizes this lexical prefix. A method,
-                    // accessor, spread, computed key, or non-identifier value
-                    // ends recognition; already discovered names remain exports.
+                    // Names survive when a later token ends Node's lexical
+                    // recognition. In particular, `re: internal.re` contributes
+                    // `re`, but prevents discovery of subsequent properties.
                     for property in &object.properties {
                         let ObjectPropertyKind::ObjectProperty(property) = property else {
+                            if let ObjectPropertyKind::SpreadProperty(spread) = property {
+                                if let Expression::Identifier(_) = &spread.argument {
+                                    let raw = spread.argument.span().source_text(self.source);
+                                    if identifier_prefix(raw) == Some(raw) {
+                                        continue;
+                                    }
+                                }
+                                if let Some(specifier) = require_specifier(&spread.argument) {
+                                    self.reexports.insert(specifier.to_owned());
+                                    continue;
+                                }
+                            }
                             break;
                         };
-                        if property.method
-                            || property.computed
-                            || property.kind != PropertyKind::Init
-                            || !matches!(property.value, Expression::Identifier(_))
-                        {
+                        if property.computed || property.kind == PropertyKind::Get {
+                            break;
+                        }
+                        if property.method || property.kind == PropertyKind::Set {
+                            if let Some(name) =
+                                identifier_prefix(property.span.source_text(self.source))
+                            {
+                                self.names.insert(name.to_owned());
+                            }
                             break;
                         }
                         let name = match &property.key {
@@ -133,7 +171,22 @@ impl<'a> Visit<'a> for Exports {
                             PropertyKey::StringLiteral(name) => name.value.as_str(),
                             _ => break,
                         };
+                        let raw = property.value.span().source_text(self.source);
+                        let Some(prefix) = identifier_prefix(raw) else {
+                            break;
+                        };
                         self.names.insert(name.to_owned());
+                        if !property.shorthand
+                            && (prefix.len() != raw.len()
+                                || !matches!(
+                                    self.source
+                                        .as_bytes()
+                                        .get(property.value.span().end as usize),
+                                    Some(b',' | b'}')
+                                ))
+                        {
+                            break;
+                        }
                     }
                 }
             }
