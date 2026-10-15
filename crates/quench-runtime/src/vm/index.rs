@@ -50,6 +50,17 @@ impl<H: Host> Vm<H> {
     }
 
     #[inline(always)]
+    /// A string's own integer-indexed property (String exotic [[GetOwnProperty]]): the
+    /// one-unit string at `index`, or `None` past its end, where lookup continues on the
+    /// prototype.
+    pub(super) fn string_index_value(&mut self, string: Value, index: usize) -> Option<Value> {
+        let Some(Cell::String(text)) = self.heap.get(string) else {
+            return None;
+        };
+        let unit = text.units().get(index)?;
+        Some(self.heap.alloc(Cell::String(JsString::from_units(&[unit]))))
+    }
+
     pub(super) fn get_index(
         &mut self,
         p: &ResidualProgram,
@@ -72,6 +83,9 @@ impl<H: Host> Vm<H> {
             }
             if let Some(value) = self.typed_array_get(object, index) {
                 return Ok(value);
+            }
+            if let Some(unit) = self.string_index_value(object, index) {
+                return Ok(unit);
             }
             if let Some((atom, attributes)) = self.array_descriptor_entry(object, index)
                 && attributes.accessor

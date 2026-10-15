@@ -876,3 +876,39 @@ fn native_bounded_byte_snapshots_and_non_index_keys_preserve_views_and_gc_roots(
     "#;
     for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-bounded-view.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-bounded-view.js").unwrap()]{Runtime::new(BoundedViewHost).execute(&program).unwrap();}
 }
+
+struct NonIndexKeyHost;
+impl Host for NonIndexKeyHost {
+    fn write_line(&mut self, _: &str) {}
+    fn clock_millis(&mut self) -> f64 { 0.0 }
+    fn functions(&self) -> &[HostFunction<Self>] {
+        crate::host_functions![global "nativeNonIndexKeys" (2) => native_non_index_keys]
+    }
+}
+fn native_non_index_keys(context: &mut NativeContext<'_, NonIndexKeyHost>, _: RootId, args: &[RootId]) -> Result<RootId, RootedError> {
+    let enumerable = context.truthy_rooted(args[1])?;
+    let keys = context.own_non_index_keys_rooted(args[0], enumerable)?;
+    context.collect()?;
+    context.array_rooted(&keys)
+}
+#[test]
+fn native_non_index_keys_keep_array_length_order_descriptors_symbols_and_proxy_semantics() {
+    let source = r#"
+      const symbol=Symbol('extra');
+      for(const array of [[1,2],new Array(4096)]) {
+        array.extra=3;Object.defineProperty(array,'hidden',{value:4});array[symbol]=5;
+        for(const value of [array,new Proxy(array,{})]) {
+          const all=nativeNonIndexKeys(value,false),visible=nativeNonIndexKeys(value,true);
+          if(all.length!==4||all[0]!=='length'||all[1]!=='extra'||all[2]!=='hidden'||all[3]!==symbol)throw Error('non-index own-key order');
+          if(visible.length!==2||visible[0]!=='extra'||visible[1]!==symbol)throw Error('non-index enumerable filter');
+        }
+      }
+      const object={length:7,'0':1,extra:2};
+      if(nativeNonIndexKeys(object,false).join()!=='length,extra')throw Error('ordinary length key');
+      const view=new Uint8Array(4096);view.extra=1;
+      if(nativeNonIndexKeys(view,false).join()!=='extra')throw Error('view indices expanded');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source,name:"native-non-index-keys.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(source,"native-non-index-keys.js").unwrap()] {
+        Runtime::new(NonIndexKeyHost).execute(&program).unwrap();
+    }
+}

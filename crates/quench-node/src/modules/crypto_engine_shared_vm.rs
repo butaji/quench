@@ -2,12 +2,13 @@
 use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
-pub(crate) const EXPECTED_ENGINE_TYPES: &str = "of type string or one of null or undefined";
+pub(crate) const ENGINE_METHOD_ALL: u32 = 0xffff;
 
 pub(crate) const SUPPORTED: bool = cfg!(quench_openssl_engine);
 
 #[cfg_attr(not(quench_openssl_engine), allow(dead_code))]
 pub(crate) enum Failure {
+    #[cfg(not(quench_openssl_engine))]
     Unsupported,
     Search(openssl::error::ErrorStack, String),
     Operation(openssl::error::ErrorStack),
@@ -27,6 +28,7 @@ pub(crate) fn error(context: &mut NativeContext<'_, NodeHost>, failure: Failure)
         Failure::Initialize => {
             super::tls_shared_vm::operation_error(context, "Failure to initialize engine")
         }
+        #[cfg(not(quench_openssl_engine))]
         Failure::Unsupported => {
             let result = (|| {
                 let error = context.error_rooted("Custom engines not supported by this OpenSSL")?;
@@ -40,11 +42,7 @@ pub(crate) fn error(context: &mut NativeContext<'_, NodeHost>, failure: Failure)
     }
 }
 
-pub(crate) fn set_engine(
-    context: &mut NativeContext<'_, NodeHost>,
-    _: RootId,
-    args: &[RootId],
-) -> Result<RootId, RootedError> {
+fn engine_arguments(context: &mut NativeContext<'_, NodeHost>, args: &[RootId]) -> Result<(String, u32), RootedError> {
     let id = args.first().copied().unwrap_or_else(|| context.undefined());
     let Some(name) = context.string_text(id)? else {
         return Err(super::util_shared_vm::argument_type_error(
@@ -70,9 +68,20 @@ pub(crate) fn set_engine(
         .rooted_value(flags)
         .and_then(|value| value.as_number())
         .expect("integer coercion result") as i32 as u32;
-    if let Err(failure) = native::set_default(&name, flags) {
-        if matches!(failure, Failure::Unsupported) {
-            return Err(error(context, failure));
+    Ok((name, flags))
+}
+
+pub(crate) fn set_engine(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (name, flags) = engine_arguments(context, args)?;
+    let flags = if flags == 0 { ENGINE_METHOD_ALL } else { flags };
+    if let Err(_failure) = native::set_default(&name, flags) {
+        #[cfg(not(quench_openssl_engine))]
+        if matches!(_failure, Failure::Unsupported) {
+            return Err(error(context, _failure));
         }
         let error = context.error_rooted(&format!("Engine \"{name}\" was not found"))?;
         let key = context.string_rooted("code");
@@ -81,6 +90,21 @@ pub(crate) fn set_engine(
         return Err(context.throw(error));
     }
     Ok(context.undefined())
+}
+
+/// The private binding returns the actual native engine-selection result;
+/// the configured standard library owns the public error and warning policy.
+pub(crate) fn set_engine_binding(
+    context: &mut NativeContext<'_, NodeHost>, _: RootId, args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let (name, flags) = engine_arguments(context, args)?;
+    let result = match native::set_default(&name, flags) {
+        Ok(()) => true,
+        #[cfg(not(quench_openssl_engine))]
+        Err(Failure::Unsupported) => return Err(error(context, Failure::Unsupported)),
+        Err(_) => false,
+    };
+    Ok(context.boolean(result))
 }
 
 pub(crate) fn set_client(
@@ -180,10 +204,7 @@ mod native {
         }
     }
     pub(super) fn set_default(id: &str, flags: u32) -> Result<(), Failure> {
-        // OpenSSL engine.h's complete method mask.
-        const ENGINE_METHOD_ALL: u32 = 0xffff;
         let engine = load(id)?;
-        let flags = if flags == 0 { ENGINE_METHOD_ALL } else { flags };
         if unsafe { ENGINE_set_default(engine.pointer.as_ptr(), flags) } != 0 {
             Ok(())
         } else {

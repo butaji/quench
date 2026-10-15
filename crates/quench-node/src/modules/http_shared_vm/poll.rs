@@ -387,10 +387,12 @@ pub(crate) fn poll(
                         } else {
                             Value::FALSE
                         });
+                        let transport = runtime.root(Value::number(socket as f64));
+                        let server_side = runtime.root(Value::TRUE);
                         let readable = match runtime.call_rooted(
                             incoming_factory,
                             undefined,
-                            &[request, body, open],
+                            &[request, body, open, transport, server_side],
                         ) {
                             Ok(readable) => readable,
                             Err(error) => {
@@ -401,6 +403,8 @@ pub(crate) fn poll(
                                 runtime.release_root(request);
                                 runtime.release_root(body);
                                 runtime.release_root(open);
+                                runtime.release_root(transport);
+                                runtime.release_root(server_side);
                                 runtime.release_root(undefined);
                                 runtime.release_root(socket_object);
                                 return Err(message);
@@ -409,6 +413,8 @@ pub(crate) fn poll(
                         runtime.release_root(request);
                         runtime.release_root(body);
                         runtime.release_root(open);
+                        runtime.release_root(transport);
+                        runtime.release_root(server_side);
                         runtime.release_root(undefined);
                         let id = runtime.root(Value::number(response_id as f64));
                         let status = runtime.root(Value::number(200.0));
@@ -1449,7 +1455,7 @@ fn request_object(
     method: String,
     path: String,
     version: String,
-    headers: Vec<(String, String)>,
+    _headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     socket: RootId,
 ) -> Result<RootId, String> {
@@ -1463,13 +1469,6 @@ fn request_object(
         .unwrap_or((1, 1));
     set_number(runtime, request, "httpVersionMajor", major as f64)?;
     set_number(runtime, request, "httpVersionMinor", minor as f64)?;
-    let headers_object = runtime
-        .object_rooted()
-        .map_err(|error| error.to_string())?;
-    for (name, value) in headers {
-        set_text(runtime, headers_object, &name, &value)?;
-    }
-    set_named(runtime, request, "headers", headers_object)?;
     let raw_headers = raw_header_array(runtime, raw_headers)?;
     set_named(runtime, request, "rawHeaders", raw_headers)?;
     // IncomingMessage consumers use socket.readable to distinguish a fully
@@ -1525,7 +1524,7 @@ fn response_object(
     runtime: &mut Runtime<NodeHost>,
     status: u16,
     message: String,
-    headers: Vec<(String, String)>,
+    _headers: Vec<(String, String)>,
     raw_headers: Vec<(String, String)>,
     complete: bool,
 ) -> Result<RootId, String> {
@@ -1533,13 +1532,6 @@ fn response_object(
     set_number(runtime, response, "statusCode", status as f64)?;
     set_text(runtime, response, "statusMessage", &message)?;
     set_text(runtime, response, "httpVersion", "1.1")?;
-    let headers_object = runtime
-        .object_rooted()
-        .map_err(|error| error.to_string())?;
-    for (name, value) in headers {
-        set_text(runtime, headers_object, &name, &value)?;
-    }
-    set_named(runtime, response, "headers", headers_object)?;
     let raw_headers = raw_header_array(runtime, raw_headers)?;
     set_named(runtime, response, "rawHeaders", raw_headers)?;
     set_bool(runtime, response, "complete", complete)?;

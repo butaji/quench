@@ -1166,8 +1166,29 @@ fn cached_builtin(
 
     let module = context.with_startup_intrinsics(|context| build_builtin(context, builtin))?;
     let retained = context.retain(module)?;
-    roots.borrow_mut().module_cache.insert(key, retained);
+    roots.borrow_mut().module_cache.insert(key.clone(), retained);
+    if matches!(builtin, BuiltinModule::Crypto) {
+        let policy = context.with_startup_intrinsics(|context| {
+            let setter = node_library_export(context, "crypto.js", "internal/crypto/util.js", "setEngine")?;
+            set(context, module, "setEngine", setter)
+        });
+        if let Err(error) = policy {
+            roots.borrow_mut().module_cache.remove(&key);
+            context.release_root(retained);
+            return Err(error);
+        }
+    }
     Ok(module)
+}
+
+/// Load a real configured standard-library export over this VM's native bindings.
+pub(crate) fn node_library_export(
+    context: &mut Context<'_>, owner: &str, relative: &str, name: &str,
+) -> Result<RootId, RootedError> {
+    let root = context.host_mut().node_library_root.clone();
+    let parent = module_record(context, &root.join("lib").join(owner), None, false)?;
+    let library = load(context, &root.join("lib").join(relative), Some(parent), EntryGoal::CommonJs)?;
+    get(context, library, name)
 }
 
 pub(crate) fn module_module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
@@ -1208,6 +1229,11 @@ pub(crate) fn dns_module(context: &mut Context<'_>) -> Result<RootId, RootedErro
 
 fn build_builtin(context: &mut Context<'_>, builtin: BuiltinModule) -> Result<RootId, RootedError> {
     match builtin {
+        BuiltinModule::Internal("_http_incoming") => {
+            let root = context.host_mut().node_library_root.clone();
+            let parent = module_record(context, &root.join("lib/http.js"), None, false)?;
+            load(context, &root.join("lib/_http_incoming.js"), Some(parent), EntryGoal::CommonJs)
+        }
         BuiltinModule::Internal(_) => context.object_rooted(),
         BuiltinModule::Fs => crate::modules::fs_shared_vm::module(context),
         BuiltinModule::InternalUrl => {
@@ -1722,7 +1748,7 @@ fn load(
                         .to_string_lossy(),
                 );
                 let in_node_internal =
-                    filename.starts_with(context.host_mut().node_library_root.join("lib/internal"));
+                    filename.starts_with(context.host_mut().node_library_root.join("lib"));
                 let primordials = match primordial_seed {
                     Some(root) => root,
                     None if in_node_internal => {
@@ -1751,8 +1777,8 @@ const getLinkedBinding = () => ({});
         arrow_message_private_symbol: Symbol.for("nodejs.util.inspect.custom"),
         decorated_private_symbol: Symbol.for("nodejs.util.inspect.decorated"),
       },
-      constants: { ALL_PROPERTIES: 0, ONLY_ENUMERABLE: 1, kPending: 0, kRejected: 1 },
-      getOwnNonIndexProperties: (value) => Object.getOwnPropertyNames(value),
+      constants: __nativeInternalBinding("util").constants,
+      getOwnNonIndexProperties: __nativeInternalBinding("util").getOwnNonIndexProperties,
       getPromiseDetails: () => [0, undefined],
       getProxyDetails: () => undefined,
       previewEntries: () => undefined,
@@ -1771,7 +1797,7 @@ const getLinkedBinding = () => ({});
         UV_DIRENT_CHAR: 6, UV_DIRENT_BLOCK: 7,
       }, require("fs").constants),
       os: { signals: (require("os").constants || {}).signals || {}, errno: { EISDIR: -21 } },
-      crypto: { ENGINE_METHOD_ALL: 0xffffffff },
+      crypto: { ENGINE_METHOD_ALL: 0xffff },
     };
     case "string_decoder": return { encodings: ["hex", "utf8", "ascii", "binary", "base64", "base64url", "latin1", "ucs2", "utf16le"] };
     case "buffer": return require("buffer");
@@ -1779,6 +1805,7 @@ const getLinkedBinding = () => ({});
     case "crypto": {
       const crypto = require("crypto");
       return Object.assign({}, crypto, {
+        setEngine: __nativeInternalBinding("crypto").setEngine,
         getFipsCrypto: () => crypto.getFips(),
         getCachedAliases: () => ({}),
         getOpenSSLSecLevelCrypto: () => 0,
