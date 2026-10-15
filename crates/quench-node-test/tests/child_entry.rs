@@ -8373,3 +8373,21 @@ console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn os_tmpdir_uses_live_nonempty_environment_precedence_and_removes_one_slash() {
+    compare_node_stream_source(
+        r#"
+const os=require('node:os'),out=[];
+for(const values of [[undefined,undefined,undefined],['','/tmp-value','/temp-value'],['','','/temp-value'],['','',''],['a///','b','c'],['/','b','c'],['//','b','c'],['a\\','b','c'],['relative/','b','c'],['😀///','b','c']]){
+ for(const [i,key] of ['TMPDIR','TMP','TEMP'].entries()){if(values[i]===undefined)delete process.env[key];else process.env[key]=values[i]}
+ out.push(os.tmpdir());
+}
+const environment=process.env;process.env={TMPDIR:'/replacement'};
+try{out.push(os.tmpdir())}finally{process.env=environment}
+process.env.TMPDIR='';process.env.TMP='';process.env.TEMP='';process.env.TEMPDIR='/ignored';out.push(os.tmpdir());
+console.log(JSON.stringify(out));
+"#,
+    );
+}
