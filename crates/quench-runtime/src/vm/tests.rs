@@ -906,6 +906,43 @@ fn private_names_resolve_per_class_across_collections() {
 }
 
 #[test]
+fn json_and_object_keys_read_enumerable_keys_in_own_property_order() {
+    // Shape-backed objects skip descriptor objects; order, enumerability, wrapper unboxing
+    // and the keys handed to toJSON and replacers stay those of the generic path.
+    let source = "var o = { b: 1, 2: 'x', a: 2, 1: 'y', '01': 3, 4294967295: 4 };\n\
+         Object.defineProperty(o, 'h', { value: 0, enumerable: false });\n\
+         Object.defineProperty(o, 'g', { get() { delete this.z; return 5; }, enumerable: true });\n\
+         o.z = 6; delete o.b; o.b = 7;\n\
+         var seen = [];\n\
+         var replaced = JSON.stringify({ a: [8, { toJSON(k) { return typeof k + k; } }] }, function (k, v) { seen.push(k); return v; });\n\
+         var p = new Proxy({ a: 1, b: 2 }, { ownKeys: () => ['b', 'a'], getOwnPropertyDescriptor: (t, k) => ({ value: t[k], enumerable: k !== 'a', configurable: true }) });\n\
+         var result = [JSON.stringify(o), Object.keys(o).join(), replaced, seen.join(), JSON.stringify(p), Object.keys(p).join(),\n\
+           JSON.stringify([new Number(1), new String('s\"'), new Boolean(false)]), JSON.stringify(o, ['b', 1, 'b'])].join('|');";
+    assert_eq!(
+        global_text(source, "result"),
+        "{\"1\":\"y\",\"2\":\"x\",\"a\":2,\"01\":3,\"4294967295\":4,\"g\":5,\"b\":7}|1,2,a,01,4294967295,g,b|\
+         {\"a\":[8,\"string1\"]}|,a,0,1|{\"b\":2}|b|[1,\"s\\\"\",false]|{\"b\":7,\"1\":\"y\"}"
+    );
+}
+
+#[test]
+fn string_indices_are_canonical_and_iterator_results_define_data_properties() {
+    // Only canonical array-index names read a string's units; other names reach the
+    // prototype. Iterator results define `value` and `done` without running setters.
+    let source = "String.prototype[3] = 'p';\n\
+         var s = 'abc', keys = ['01', '+1', '1', '1.0', '3', 2];\n\
+         var units = keys.map(function (k) { return String(s[k]); }).join();\n\
+         Object.defineProperty(Object.prototype, 'value', { set: function () { throw 1; }, configurable: true });\n\
+         var it = (function* () { yield 1; })(), first = it.next(), last = it.next();\n\
+         delete Object.prototype.value; delete String.prototype[3];\n\
+         var result = [units, Object.keys(first).join(), first.value, first.done, last.done].join('|');";
+    assert_eq!(
+        global_text(source, "result"),
+        "undefined,undefined,b,undefined,p,c|value,done|1|false|true"
+    );
+}
+
+#[test]
 fn promise_record_edges_follow_promise_and_resolver_lifetime() {
     let mut vm = Vm::new(SilentHost);
     let promise = vm.promise_object();
