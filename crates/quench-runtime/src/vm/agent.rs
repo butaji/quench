@@ -1,6 +1,5 @@
 use super::atomics::AgentTimer;
 use super::promise::PromiseState;
-use super::property_key::PropertyKey;
 use super::*;
 use std::time::{Duration, Instant};
 
@@ -75,10 +74,10 @@ impl<H: Host> Vm<H> {
 
     fn set_agent_function_length(&mut self, function: Value, length: f64) {
         let atom = self.intern_atom("length");
-        let _ = self.set_property(function, atom, Value::number(length));
-        self.set_property_attributes(
+        let _ = self.set_property_with_attributes(
             function,
-            PropertyKey::string(atom),
+            atom,
+            Value::number(length),
             PropertyAttributes {
                 writable: false,
                 enumerable: false,

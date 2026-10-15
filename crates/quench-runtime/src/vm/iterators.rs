@@ -475,10 +475,10 @@ impl<H: Host> Vm<H> {
             self.set_builtin_value_named(constructor, name, method)?;
         }
         let iterator_atom = self.intern_atom("Iterator");
-        self.set_property(global, iterator_atom, constructor)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             global,
-            PropertyKey::string(iterator_atom),
+            iterator_atom,
+            constructor,
             PropertyAttributes {
                 writable: true,
                 enumerable: false,
@@ -487,7 +487,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         Ok(())
     }
 
@@ -524,10 +524,10 @@ impl<H: Host> Vm<H> {
         let constructor_setter =
             self.iterator_native(Native::IteratorPrototypeConstructorSetter, realm);
         let constructor_atom = self.intern_atom("constructor");
-        self.set_property(prototype, constructor_atom, Value::UNDEFINED)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             prototype,
-            PropertyKey::string(constructor_atom),
+            constructor_atom,
+            Value::UNDEFINED,
             PropertyAttributes {
                 writable: false,
                 enumerable: false,
@@ -536,7 +536,7 @@ impl<H: Host> Vm<H> {
                 getter: Some(constructor_getter),
                 setter: Some(constructor_setter),
             },
-        );
+        )?;
         if let Some(symbol) = self.well_known_symbols.get("toStringTag").copied() {
             self.set_symbol_property(prototype, symbol, Value::UNDEFINED)?;
             let getter = self.iterator_native(Native::IteratorPrototypeToStringTagGetter, realm);

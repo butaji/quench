@@ -161,10 +161,10 @@ impl<H: Host> Vm<H> {
                 self.set_builtin_function_name(getter, &format!("get {name}"))?;
             }
             let atom = self.intern_atom(name);
-            self.set_property(prototype, atom, Value::UNDEFINED)?;
-            self.set_property_attributes(
+            self.set_property_with_attributes(
                 prototype,
-                PropertyKey::string(atom),
+                atom,
+                Value::UNDEFINED,
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,
@@ -173,7 +173,7 @@ impl<H: Host> Vm<H> {
                     getter: Some(getter),
                     setter: None,
                 },
-            );
+            )?;
         }
         Ok(())
     }
@@ -223,10 +223,10 @@ impl<H: Host> Vm<H> {
             let getter = self.realm_native_value(native, global, current_realm);
             self.set_builtin_function_name(getter, &format!("get {name}"))?;
             let atom = self.intern_atom(name);
-            self.set_property(prototype, atom, Value::UNDEFINED)?;
-            self.set_property_attributes(
+            self.set_property_with_attributes(
                 prototype,
-                PropertyKey::string(atom),
+                atom,
+                Value::UNDEFINED,
                 PropertyAttributes {
                     writable: false,
                     enumerable: false,
@@ -235,7 +235,7 @@ impl<H: Host> Vm<H> {
                     getter: Some(getter),
                     setter: None,
                 },
-            );
+            )?;
         }
         Ok(())
     }
