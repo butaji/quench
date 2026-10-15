@@ -6733,3 +6733,21 @@ const locale=Object.getOwnPropertyDescriptor(Buffer.prototype,'toLocaleString');
 console.log(JSON.stringify(out));
 "#);
 }
+
+#[test]
+fn stream_once_readable_pipe_preserves_original_resume_calls_and_completion() {
+    compare_node_stream_source(r#"
+'use strict';
+const {Readable,Writable}=require('stream'),out=[];
+for(const placement of ['before','after']){
+ const result={placement,readable:0,finish:0,data:'',resumes:0};out.push(result);
+ const source=new Readable({read(){}}),destination=new Writable({write(chunk,encoding,callback){result.data+=chunk;callback();}});
+ const resume=source.resume;source.resume=function(...args){result.resumes++;return resume.apply(this,args);};
+ if(placement==='before')source.once('readable',()=>result.readable++);
+ source.pipe(destination);for(const chunk of ['foo','bar','baz',null])source.push(chunk);
+ if(placement==='after')source.once('readable',()=>result.readable++);
+ destination.on('finish',()=>result.finish++);
+}
+process.on('exit',()=>console.log(JSON.stringify(out)));
+"#);
+}
