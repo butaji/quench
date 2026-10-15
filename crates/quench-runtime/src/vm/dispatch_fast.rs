@@ -105,6 +105,10 @@ pub(super) struct LaneView {
 /// loop over the window's size.
 const ACTIVATION_FILL_BLOCK: usize = 8;
 
+/// `ACTIVATION_FILL_BLOCK` for a JavaScript activation, whose bodies keep more values in
+/// registers: on V8-v7, most called functions have 9 to 16.
+const SCRIPT_FILL_BLOCK: usize = 2 * ACTIVATION_FILL_BLOCK;
+
 /// A function's register window as a lane activation starts it: every
 /// register its initial value, then the parameters at their base.
 #[derive(Clone, Copy)]
@@ -279,6 +283,17 @@ struct ScriptActivation {
     guard: crate::stack::GuestCallGuard,
     /// A `new` made it: its completion is `this` unless it returns an object.
     constructs: bool,
+    /// The `argc` values passed follow the registers in the window, for a forwarded
+    /// `arguments` (`ScriptCallTarget::forwards`).
+    forwards: bool,
+}
+
+/// Where a lane activation's arguments come from: a window of the caller's registers, or
+/// values a forwarding activation or frame kept (`f.apply(this, arguments)`).
+#[derive(Clone, Copy)]
+enum ActivationArguments {
+    Window(u16),
+    Kept(*const Value, usize),
 }
 
 /// A user function a lane `Call` may activate without a frame, valid as the general loop's
@@ -297,6 +312,8 @@ pub(super) struct ScriptCallTarget {
     strict: bool,
     /// `new` may activate it too (`Vm::inline_constructible`).
     constructs: bool,
+    /// It keeps the values it was passed for a forwarded `arguments` (`CallPlan::forwards_arguments`).
+    forwards: bool,
 }
 
 const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
@@ -311,6 +328,7 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
     params: 0,
     strict: false,
     constructs: false,
+    forwards: false,
 };
 
 /// Entries of the script call cache, indexed by the callee's heap index.
@@ -2915,13 +2933,21 @@ impl<H: Host> Vm<H> {
                 .and_then(|script| script.constructs.then_some(script.this));
             let call_guard = match activation.script {
                 Some(script) => {
+                    let argc = usize::from(script.argc);
+                    // A forwarding activation kept the values after its registers; any other
+                    // passed them all to parameter registers.
+                    let passed = if script.forwards {
+                        &registers[activation.window + count..activation.window + count + argc]
+                    } else {
+                        &window[..argc]
+                    };
                     self.push_script_frame_with_registers(
                         code,
                         activation.function,
                         script.env,
                         script.this,
                         script.callee,
-                        usize::from(script.argc),
+                        passed,
                         window,
                     );
                     Some(script.guard)
@@ -2975,10 +3001,8 @@ impl<H: Host> Vm<H> {
     }
 
     /// Resolve and cache `callee` as a frameless lane call target: a user function of the
-    /// active program that the general loop would push in place as a plain activation
-    /// (`CallPlan::plain`, `CallPlan::in_loop`) and whose registers are its whole frame
-    /// state: no instruction reaches its locals, and legacy argument reflection, if any,
-    /// reads the parameter registers.
+    /// active program whose activation is its registers, plus the values it was passed when
+    /// it forwards them (`CallPlan::registers_only`).
     #[inline(never)]
     fn resolve_script_call_target(
         &mut self,
@@ -2992,12 +3016,7 @@ impl<H: Host> Vm<H> {
         }
         let body = code.functions.get(function as usize)?;
         let plan = body.call_plan(&code.atoms);
-        if !plan.plain
-            || !plan.in_loop
-            || plan.addresses_locals
-            || (plan.legacy_reflection && !plan.live_parameters)
-            || body.initial_register != crate::bytecode::InitialRegister::Undefined
-        {
+        if !plan.registers_only {
             return None;
         }
         let view = self.lane_view_any(program, function)?;
@@ -3013,6 +3032,7 @@ impl<H: Host> Vm<H> {
             params: body.params,
             strict: body.strict,
             constructs: Self::inline_constructible(body),
+            forwards: plan.forwards_arguments,
         };
         self.lane_stack.script_targets[index] = target;
         Some(target)
@@ -3038,6 +3058,9 @@ lane_handler! {
         let Some(target) = lane_script_target(cx, r.get(i.b)) else {
             return exit(ip);
         };
+        if target.forwards {
+            sibling!(lane_script_call_keeping::<H>, r, ip, Carried::SCRIPT)
+        }
         let receiver = r.get(i.c);
         // `call_this_value` without its boxing of primitives, which allocates.
         let this = if target.strict || vm.is_object_like(receiver) {
@@ -3072,6 +3095,9 @@ lane_handler! {
         else {
             return exit(ip);
         };
+        if target.forwards {
+            sibling!(lane_script_construct_keeping::<H>, r, ip, Carried::SCRIPT)
+        }
         let Some(this) = vm.inline_construct_receiver(callee) else {
             return exit(ip);
         };
@@ -3084,6 +3110,140 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// `lane_script_call` of a target that keeps its passed values
+    /// (`ScriptCallTarget::forwards`); out of line, so ordinary calls keep their code.
+    #[inline(never)]
+    fn lane_script_call_keeping<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let Some(target) = lane_script_target(cx, r.get(i.b)) else {
+            return exit(ip);
+        };
+        let receiver = r.get(i.c);
+        let this = if target.strict || vm.is_object_like(receiver) {
+            receiver
+        } else if receiver.is_null() || receiver.is_undefined() {
+            vm.realm.globals
+        } else {
+            return exit(ip);
+        };
+        let arguments = ActivationArguments::Window(ImmediateLayout::call_window_base(i.imm()));
+        match lane_activate_keeping(cx, r, ip, target, arguments, this, false) {
+            Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
+            Err(next) => next,
+        }
+    }
+}
+
+lane_handler! {
+    /// `lane_script_construct` of a target that keeps its passed values
+    /// (`ScriptCallTarget::forwards`); out of line, so ordinary constructions keep their
+    /// code.
+    #[inline(never)]
+    fn lane_script_construct_keeping<>(cx, r, ip, i, view) {
+        let vm = unsafe { vm(cx) };
+        let callee = r.get(i.b);
+        let Some(target) = lane_script_target(cx, callee) else {
+            return exit(ip);
+        };
+        let Some(this) = vm.inline_construct_receiver(callee) else {
+            return exit(ip);
+        };
+        // Allocating the receiver can make a collection due.
+        note_allocation(vm);
+        match lane_activate_keeping(cx, r, ip, target, ActivationArguments::Window(i.c), this, true) {
+            Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
+            Err(next) => next,
+        }
+    }
+}
+
+lane_handler! {
+    /// `f.apply(this, arguments)` of the running activation's forwarded `arguments`
+    /// (`CallForwardingArguments`): `f` runs frameless with the values the activation, or
+    /// the frame, kept, as `Vm::try_inline_call_apply` pushes it. Any other call takes the
+    /// general path.
+    fn lane_forward_call<>(cx, r, ip, i, view) {
+        let window = ImmediateLayout::call_window_base(i.imm());
+        if !unsafe { (*cx).script_calls }
+            || ImmediateLayout::argument_count(i.imm()) != FORWARDED_APPLY_ARGUMENTS
+            || r.get(window + 1) != Value::UNMATERIALIZED_ARGUMENTS
+        {
+            return exit(ip);
+        }
+        let vm = unsafe { vm(cx) };
+        if !matches!(
+            vm.heap.get(r.get(i.b)),
+            Some(Cell::Function {
+                kind: FunctionKind::Native(Native::FunctionApply),
+                ..
+            })
+        ) {
+            return exit(ip);
+        }
+        let Some(kept) = (unsafe { lane_kept_arguments(cx) }) else {
+            return exit(ip);
+        };
+        let Some(target) = lane_script_target(cx, r.get(i.c)) else {
+            return exit(ip);
+        };
+        let receiver = r.get(window);
+        let this = if target.strict || vm.is_object_like(receiver) {
+            receiver
+        } else if receiver.is_null() || receiver.is_undefined() {
+            vm.realm.globals
+        } else {
+            return exit(ip);
+        };
+        match lane_activate_keeping(cx, r, ip, target, kept, this, false) {
+            Ok((registers, base)) => next!(cx, registers, base, Carried::SCRIPT),
+            Err(next) => next,
+        }
+    }
+}
+
+/// The argument count of a forwarding `apply` call: the receiver and `arguments`.
+const FORWARDED_APPLY_ARGUMENTS: u16 = 2;
+
+/// The values the running function kept for its forwarded `arguments`: a forwarding
+/// activation's, after its registers, or a frame's `original_arguments`.
+///
+/// # Safety
+/// `cx` is the running lane's context.
+#[inline(always)]
+unsafe fn lane_kept_arguments<H: Host>(cx: *mut LaneContext<H>) -> Option<ActivationArguments> {
+    let vm = unsafe { vm(cx) };
+    if unsafe { (*cx).env }.is_deleted() {
+        let frame = &vm.frames[unsafe { (*cx).frame }];
+        return Some(ActivationArguments::Kept(
+            frame.original_arguments.as_ptr(),
+            frame.original_arguments.len(),
+        ));
+    }
+    let activation = vm.lane_stack.activations.last()?;
+    let script = activation.script.as_ref().filter(|script| script.forwards)?;
+    let registers = usize::from(unsafe { &*(*cx).code }.functions[activation.function as usize].registers);
+    // SAFETY: the activation's window holds its registers, then its kept values.
+    let values = unsafe { vm.lane_stack.values.as_ptr().add(activation.window + registers) };
+    Some(ActivationArguments::Kept(values, usize::from(script.argc)))
+}
+
+lane_handler! {
+    /// `LoadLocal` of a forwarded `arguments` binding (`CallPlan::forwards_arguments`): a
+    /// frameless activation's is unmaterialized, as a frame's starts; a frame's binding is
+    /// read as the general path reads it.
+    fn lane_load_forwarded_arguments<>(cx, r, ip, i, view) {
+        let value = if unsafe { (*cx).env }.is_deleted() {
+            // SAFETY: validated bytecode bounds the slot by Function.locals.
+            unsafe { vm(cx).read_validated_local((*cx).frame, i.imm() as usize) }
+        } else {
+            Value::UNMATERIALIZED_ARGUMENTS
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
 /// The frameless target of a lane call to `callee`, resolved on first use.
 #[inline(always)]
 fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option<ScriptCallTarget> {
@@ -3092,9 +3252,10 @@ fn lane_script_target<H: Host>(cx: *mut LaneContext<H>, callee: Value) -> Option
         .or_else(|| vm.resolve_script_call_target(unsafe { &*(*cx).code }, callee))
 }
 
-/// Activate `target` for the call record at `ip`, whose arguments start at register
-/// `arguments`: the activation's registers and the callee's first record, or the record
-/// to continue at when the call takes the general path.
+/// Activate `target`, which keeps no passed values (callers route those to
+/// `lane_activate_keeping`), for the call record at `ip` with the arguments from register
+/// `arguments` on: the activation's registers and the callee's
+/// first record, or the record to continue at when the call takes the general path.
 #[inline(always)]
 fn lane_activate<H: Host>(
     cx: *mut LaneContext<H>,
@@ -3128,7 +3289,7 @@ fn lane_activate<H: Host>(
     }
     if vm.lane_stack.activations.len() == vm.lane_stack.activations.capacity()
         || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
-            < count.max(ACTIVATION_FILL_BLOCK)
+            < count.max(SCRIPT_FILL_BLOCK)
     {
         return Err(lane_script_call_frame::<H>(ip));
     }
@@ -3144,10 +3305,10 @@ fn lane_activate<H: Host>(
     // plain activation (`Vm::place_plain_parameters`).
     let callee_registers = unsafe {
         let registers = stack.values.as_mut_ptr().add(window);
-        if count <= ACTIVATION_FILL_BLOCK {
+        if count <= SCRIPT_FILL_BLOCK {
             registers
-                .cast::<[Value; ACTIVATION_FILL_BLOCK]>()
-                .write_unaligned([Value::UNDEFINED; ACTIVATION_FILL_BLOCK]);
+                .cast::<[Value; SCRIPT_FILL_BLOCK]>()
+                .write_unaligned([Value::UNDEFINED; SCRIPT_FILL_BLOCK]);
         } else {
             for index in 0..count {
                 registers.add(index).write(Value::UNDEFINED);
@@ -3178,6 +3339,7 @@ fn lane_activate<H: Host>(
             caller_capture: unsafe { (*cx).capture },
             guard,
             constructs,
+            forwards: false,
         }),
     });
     // SAFETY: the program store keeps a derived view alive with its program.
@@ -3190,6 +3352,157 @@ fn lane_activate<H: Host>(
         (*cx).capture = std::ptr::null();
     }
     Ok((callee_registers, base))
+}
+
+/// `lane_activate` for a target that keeps its passed values, or for values a forwarding
+/// activation or frame kept: the activation's registers and the callee's first record, or
+/// the record to continue at when the call takes the general path. Out of line, so the
+/// common activation keeps its code.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn lane_activate_keeping<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    ip: Ip,
+    target: ScriptCallTarget,
+    arguments: ActivationArguments,
+    this: Value,
+    constructs: bool,
+) -> Result<(Registers, Ip), Ip> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: `ip` is a record of the running view.
+    let i = unsafe { &*ip };
+    let argc = match arguments {
+        ActivationArguments::Window(_) => usize::from(ImmediateLayout::argument_count(i.imm())),
+        ActivationArguments::Kept(_, count) => count,
+    };
+    let count = usize::from(target.registers);
+    // A forwarding activation keeps every value passed after its registers.
+    let window_size = if target.forwards { count + argc } else { count };
+    // A call that returns its callee's completion completes its caller too, which only an
+    // activation's return does in the lane; a strict caller makes it a tail call instead.
+    let returns = i.a & crate::bytecode::RETURN_REGISTER != 0;
+    if returns
+        && vm.lane_stack.activations.last().is_none_or(|caller| {
+            unsafe { &*(*cx).code }.functions[caller.function as usize].strict
+        })
+    {
+        return Err(exit(ip));
+    }
+    if (argc > usize::from(target.params) && !target.forwards)
+        || argc > usize::from(u16::MAX)
+        || vm.with_scope_entered
+        || LANE_FLOOR.with(std::cell::Cell::get) == COLLECTION_DUE_FLOOR
+    {
+        return Err(exit(ip));
+    }
+    if vm.lane_stack.activations.len() == vm.lane_stack.activations.capacity()
+        || vm.lane_stack.values.capacity() - vm.lane_stack.values.len()
+            < window_size.max(ACTIVATION_FILL_BLOCK)
+    {
+        return Err(lane_script_call_frame::<H>(ip));
+    }
+    let Ok(guard) = crate::stack::GuestCallGuard::enter() else {
+        return Err(exit(ip));
+    };
+    // A `new.target` set for this activation has no observable binding to land in.
+    vm.construct_target = None;
+    let stack = &mut vm.lane_stack;
+    let window = stack.values.len();
+    // SAFETY: capacity holds the window; each slot is written before the length covers
+    // it, and no activation's window moves. Parameter `k` lives in register `k` of a
+    // plain activation (`Vm::place_plain_parameters`).
+    let callee_registers = unsafe {
+        let registers = stack.values.as_mut_ptr().add(window);
+        if count <= ACTIVATION_FILL_BLOCK {
+            registers
+                .cast::<[Value; ACTIVATION_FILL_BLOCK]>()
+                .write_unaligned([Value::UNDEFINED; ACTIVATION_FILL_BLOCK]);
+        } else {
+            for index in 0..count {
+                registers.add(index).write(Value::UNDEFINED);
+            }
+        }
+        match arguments {
+            ActivationArguments::Window(base) => {
+                for index in 0..argc.min(usize::from(target.params)) {
+                    registers.add(index).write(r.get(base + index as u16));
+                }
+            }
+            ActivationArguments::Kept(values, _) => {
+                lane_place_kept(registers, values, argc, usize::from(target.params));
+            }
+        }
+        if target.forwards {
+            lane_keep_arguments(registers.add(count), r, arguments, argc);
+        }
+        stack.values.set_len(window + window_size);
+        Registers(registers)
+    };
+    stack.activations.push(Activation {
+        function: target.function,
+        call: ip,
+        caller_base: unsafe { (*cx).base },
+        caller_registers: r,
+        caller_memory: MemoryView::NONE,
+        window,
+        script: Some(ScriptActivation {
+            callee: target.callee,
+            env: target.env,
+            this,
+            argc: argc as u16,
+            caller_this: unsafe { (*cx).this },
+            caller_env: unsafe { (*cx).env },
+            caller_capture: unsafe { (*cx).capture },
+            guard,
+            constructs,
+            forwards: target.forwards,
+        }),
+    });
+    // SAFETY: the program store keeps a derived view alive with its program.
+    let base = unsafe { (*target.view).records() };
+    unsafe {
+        (*cx).registers = callee_registers;
+        (*cx).base = base;
+        (*cx).this = this;
+        (*cx).env = target.env;
+        (*cx).capture = std::ptr::null();
+    }
+    Ok((callee_registers, base))
+}
+
+/// Place kept values in a frameless activation's parameter registers.
+///
+/// # Safety
+/// `registers` holds `params` writable registers and `values` holds `argc` values.
+#[cold]
+#[inline(never)]
+unsafe fn lane_place_kept(registers: *mut Value, values: *const Value, argc: usize, params: usize) {
+    for index in 0..argc.min(params) {
+        unsafe { registers.add(index).write(*values.add(index)) };
+    }
+}
+
+/// Keep a forwarding activation's passed values after its registers.
+///
+/// # Safety
+/// `kept` holds `argc` writable slots; `arguments` names `argc` readable values.
+#[cold]
+#[inline(never)]
+unsafe fn lane_keep_arguments(
+    kept: *mut Value,
+    r: Registers,
+    arguments: ActivationArguments,
+    argc: usize,
+) {
+    for index in 0..argc {
+        let value = match arguments {
+            ActivationArguments::Window(base) => r.get(base + index as u16),
+            // SAFETY: kept values lie below the new window, or in a frame, and stay put.
+            ActivationArguments::Kept(values, _) => unsafe { *values.add(index) },
+        };
+        unsafe { kept.add(index).write(value) };
+    }
 }
 
 /// A frameless call without room on the lane stack: grow the stack, then take the
@@ -3601,6 +3914,7 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::Call => Some(lane_script_call::<H>),
         Op::Construct => Some(lane_script_construct::<H>),
         Op::MakeObject2 => Some(lane_make_object2::<H>),
+        Op::CallForwardingArguments => Some(lane_forward_call::<H>),
         Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Op::Return => Some(lane_return::<H>),
         _ => None,
@@ -3723,6 +4037,7 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
                     && (matches!(
                         op,
                         Op::Call
+                            | Op::CallForwardingArguments
                             | Op::Construct
                             | Op::GetField
                             | Op::Unary
@@ -3793,6 +4108,7 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
                 && !instruction.direct_eval()
                 && !instruction.parameter_eval()
         }
+        Op::CallForwardingArguments => lane_returns(instruction),
         Op::Construct => {
             lane_returns(instruction)
                 && !instruction.is_super_construct()
@@ -3947,6 +4263,14 @@ fn derive_lane_view<H: Host>(
                         FloatArithmetic::<H>::HANDLERS[usize::from(op == Op::WasmF64Binary)]
                             [usize::from(arith)][usize::from(acc)],
                     )
+                })
+            } else if op == Op::LoadLocal
+                && function.forwards_arguments_only()
+                && function.arguments_slot == u16::try_from(instruction.local_slot()).ok()
+            {
+                Some(LaneHandler {
+                    handler: lane_load_forwarded_arguments::<H> as Handler,
+                    produces: false,
                 })
             } else if op == Op::GetField && lane_sinks_field(instruction) {
                 Some(LaneHandler {
