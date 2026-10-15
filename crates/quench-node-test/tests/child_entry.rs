@@ -1582,7 +1582,7 @@ fn ipc_counted_references_preserve_initial_state_explicit_overrides_and_exit() {
     ] {
         let source = format!(r#"
 const assert=require('assert'),{{spawn}}=require('child_process');
-const child=spawn(process.execPath,['-e','setTimeout(()=>process.exit(0),300)'],{{stdio:['ignore','ignore','ignore','ipc']}});
+const child=spawn(process.execPath,['-e','process.on("message",()=>process.exit(0))'],{{stdio:['ignore','ignore','ignore','ipc']}});
 child.unref();
 for(const name of ['refCounted','unrefCounted']){{
  const method=child.channel[name],descriptor=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(child.channel),name);
@@ -1591,7 +1591,7 @@ for(const name of ['refCounted','unrefCounted']){{
  assert.throws(()=>method.call({{}}),TypeError);assert.throws(()=>Reflect.construct(method,[]),TypeError);
 }}
 for(const method of {methods})assert.strictEqual(child.channel[method](),undefined);
-console.log('setup');setTimeout(()=>console.log('kept'),50).unref();
+console.log('setup');setTimeout(()=>{{console.log('kept');child.send('done')}},50).unref();
 "#);
         let observations = compare_node_stream_source(&source);
         assert_eq!(String::from_utf8_lossy(&observations[1].stdout), if kept {"setup\nkept\n"} else {"setup\n"});
