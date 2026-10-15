@@ -241,6 +241,9 @@ fn native_length(kind: Native) -> Option<f64> {
     if let Some(length) = super::finalization::disposal_native_length(kind) {
         return Some(length);
     }
+    if let Some(length) = super::wasm_js::wasm_js_native_length(kind) {
+        return Some(length);
+    }
     Some(match kind {
         Native::FunctionPrototype
         | Native::IsHTMLDDA
@@ -2104,7 +2107,7 @@ impl<H: Host> Vm<H> {
                 let kind = crate::heap::TypedArrayKind::Uint8;
                 let buffer = self.heap.alloc(Cell::ArrayBuffer {
                     object: Box::new(Self::empty_object(self.array_buffer_proto)),
-                    bytes: std::rc::Rc::new(bytes),
+                    bytes: bytes.into(),
                     shared: false,
                     detached: false,
                     max_byte_length: length,
