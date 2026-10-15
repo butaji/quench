@@ -1040,6 +1040,85 @@ lane_handler! {
     }
 }
 
+lane_handler! {
+    /// `MakeObject2`: a two-property literal allocates and runs no guest code.
+    fn lane_make_object2<>(cx, r, ip, i, view) {
+        let value = lane_object_pair(cx, r, i);
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+/// The object a `MakeObject2` record makes (`Vm::object_pair`).
+#[inline(always)]
+fn lane_object_pair<H: Host>(cx: *mut LaneContext<H>, r: Registers, i: &LaneInstruction) -> Value {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let value = vm.object_pair(unsafe { &*(*cx).code }, i.imm() as usize, r.get(i.b), r.get(i.c));
+    note_allocation(vm);
+    value
+}
+
+lane_handler! {
+    /// `SuperConstArrayObject2` whose two fused operations see primitives only: its parts
+    /// as `Vm::execute_const_array_object2` runs them; any other operand takes the
+    /// general path, which runs the whole record again.
+    fn lane_const_array_object2<>(cx, r, ip, i, view) {
+        let Some(value) = (unsafe { lane_literal_value(cx, r, i) }) else {
+            return exit(ip);
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), view)
+    }
+}
+
+/// A `SuperConstArrayObject2` record's object: a copy of the constant array, the two
+/// fused `Binary` results, and the literal holding them, with each part's result in its
+/// register as the general path leaves it. `None` before any guest code could run: an
+/// operation on an object, or one that throws.
+///
+/// # Safety
+/// `cx` is the running lane's context and `r` its registers.
+#[inline(always)]
+unsafe fn lane_literal_value<H: Host>(
+    cx: *mut LaneContext<H>,
+    r: Registers,
+    i: &LaneInstruction,
+) -> Option<Value> {
+    let vm = unsafe { vm(cx) };
+    // SAFETY: the context's program outlives the lane run.
+    let code = unsafe { &*(*cx).code };
+    let parts = &code.superinstructions.get(i.imm() as usize)?.wide;
+    let [array, first, second, object] = [parts[0], parts[1], parts[2], parts[3]];
+    let start = array.constant_index();
+    let elements = vm.programs.const_array(
+        unsafe { (*cx).program },
+        start,
+        usize::from(array.element_count()),
+    )?;
+    let array_value = vm.heap.alloc(Cell::Array {
+        object: crate::heap::ArrayObject::new(Vm::<H>::empty_object(vm.array_proto), elements),
+    });
+    r.set(array.result_register(), array_value);
+    for part in [first, second] {
+        let left = lane_operand_value(cx, r, part.operand_b().0)?;
+        let right = lane_operand_value(cx, r, part.operand_c().0)?;
+        if vm.is_object_like(left) || vm.is_object_like(right) {
+            return None;
+        }
+        let value = vm.binary(code, part.binary_operator(), left, right).ok()?;
+        r.set(part.result_register(), value);
+    }
+    let value = vm.object_pair(
+        code,
+        object.object_site_index(),
+        r.get(object.register_b()),
+        r.get(object.register_c()),
+    );
+    note_allocation(vm);
+    Some(value)
+}
+
 /// The register a field record's base field names; `None` for `this` and a nested base.
 #[inline(always)]
 fn field_register(base: u16) -> Option<u16> {
@@ -3342,6 +3421,8 @@ fn lane_complete_activation<H: Host>(
 const RETURNING_FIELD: u8 = 0;
 const RETURNING_UNARY: u8 = 1;
 const RETURNING_BINARY: u8 = 2;
+const RETURNING_OBJECT: u8 = 3;
+const RETURNING_LITERAL: u8 = 4;
 
 /// The `lane_returning` kind of a value record that returns its result from the frame.
 fn returning_kind(instruction: WideInstruction) -> Option<u8> {
@@ -3352,12 +3433,14 @@ fn returning_kind(instruction: WideInstruction) -> Option<u8> {
         Op::GetField => Some(RETURNING_FIELD),
         Op::Unary => Some(RETURNING_UNARY),
         Op::Binary => Some(RETURNING_BINARY),
+        Op::MakeObject2 => Some(RETURNING_OBJECT),
+        Op::SuperConstArrayObject2 => Some(RETURNING_LITERAL),
         _ => None,
     }
 }
 
 lane_handler! {
-    /// A `GetField`, `Unary` or `Binary` that returns its result from the frame: the value
+    /// A value record that returns its result from the frame (`returning_kind`): the value
     /// as the record's own handler computes it, then the activation's completion. A VM
     /// frame's return, and any other value, take the general path.
     fn lane_returning<KIND: u8>(cx, r, ip, i, view) {
@@ -3365,7 +3448,9 @@ lane_handler! {
             match KIND {
                 RETURNING_FIELD => lane_field_value(cx, r, i),
                 RETURNING_UNARY => lane_unary_value(cx, r, i),
-                _ => lane_binary_value(cx, r, i),
+                RETURNING_BINARY => lane_binary_value(cx, r, i),
+                RETURNING_OBJECT => Some(lane_object_pair(cx, r, i)),
+                _ => lane_literal_value(cx, r, i),
             }
         };
         let Some(value) = value else {
@@ -3515,6 +3600,8 @@ const fn other_handler<H: Host, const BACKWARD: bool, const ACC: u8>(op: Op) -> 
         Op::CallKnown => Some(lane_call_known::<H>),
         Op::Call => Some(lane_script_call::<H>),
         Op::Construct => Some(lane_script_construct::<H>),
+        Op::MakeObject2 => Some(lane_make_object2::<H>),
+        Op::SuperConstArrayObject2 => Some(lane_const_array_object2::<H>),
         Op::Return => Some(lane_return::<H>),
         _ => None,
     }
@@ -3633,7 +3720,15 @@ pub(super) fn lane_fields_fit(instruction: WideInstruction, function: &Function)
             // A lane call reads its return flag from the field (`lane_call_fits`).
             FieldLayout::ResultRegister
                 if field == InstructionField::A
-                    && (matches!(op, Op::Call | Op::Construct | Op::GetField | Op::Unary)
+                    && (matches!(
+                        op,
+                        Op::Call
+                            | Op::Construct
+                            | Op::GetField
+                            | Op::Unary
+                            | Op::MakeObject2
+                            | Op::SuperConstArrayObject2
+                    )
                         || (op == Op::Binary && instruction.returns_from_frame())) =>
             {
                 instruction.result_register() < registers
@@ -3704,7 +3799,7 @@ fn lane_call_fits(instruction: WideInstruction) -> bool {
                 && !ImmediateLayout::construct_array_arguments(instruction.imm())
         }
         Op::GetField => lane_returns(instruction) || lane_sinks_field(instruction),
-        Op::Unary => lane_returns(instruction),
+        Op::Unary | Op::MakeObject2 | Op::SuperConstArrayObject2 => lane_returns(instruction),
         Op::Binary if instruction.returns_from_frame() => lane_returns(instruction),
         _ => true,
     }
@@ -3863,7 +3958,9 @@ fn derive_lane_view<H: Host>(
                     handler: match kind {
                         RETURNING_FIELD => lane_returning::<H, RETURNING_FIELD> as Handler,
                         RETURNING_UNARY => lane_returning::<H, RETURNING_UNARY> as Handler,
-                        _ => lane_returning::<H, RETURNING_BINARY> as Handler,
+                        RETURNING_BINARY => lane_returning::<H, RETURNING_BINARY> as Handler,
+                        RETURNING_OBJECT => lane_returning::<H, RETURNING_OBJECT> as Handler,
+                        _ => lane_returning::<H, RETURNING_LITERAL> as Handler,
                     },
                     produces: false,
                 })
