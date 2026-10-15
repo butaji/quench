@@ -298,6 +298,12 @@ impl<H: Host> Vm<H> {
         Ok(self.strict_equal(self.embedding_value(left)?, self.embedding_value(right)?))
     }
 
+    pub(crate) fn embedding_call_stack_source_names(&self) -> Vec<String> {
+        self.frames.iter().rev().filter_map(|frame| {
+            self.programs.source_name(frame.program).map(str::to_owned)
+        }).collect()
+    }
+
     pub(crate) fn embedding_instanceof(&mut self, value: RootId, constructor: RootId) -> Result<bool, JsError> {
         let value = self.embedding_value(value)?;
         let constructor = self.embedding_value(constructor)?;
