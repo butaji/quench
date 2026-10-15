@@ -1,6 +1,9 @@
 use super::*;
 use oxc_ast::ast::BinaryOperator;
 
+/// Shared Number/BigInt content mismatch diagnostic.
+pub(super) const MIXED_BIGINT_TYPES: &str = "Cannot mix BigInt and other types, use explicit conversions";
+
 pub(super) enum ArrayLikeElementKind {
     Any,
     PropertyKey,
@@ -1516,16 +1519,10 @@ impl<H: Host> Vm<H> {
         right: Value,
     ) -> Result<Value, JsError> {
         let Some(Cell::BigInt(left)) = self.heap.get(left) else {
-            return Err(self.type_error(
-                p,
-                "Cannot mix BigInt and other types, use explicit conversions".into(),
-            ));
+            return Err(self.type_error(p, MIXED_BIGINT_TYPES.into()));
         };
         let Some(Cell::BigInt(right)) = self.heap.get(right) else {
-            return Err(self.type_error(
-                p,
-                "Cannot mix BigInt and other types, use explicit conversions".into(),
-            ));
+            return Err(self.type_error(p, MIXED_BIGINT_TYPES.into()));
         };
         let result = match op {
             8 => crate::bigint::binary(left, right, |a, b| Ok(a + b)),
