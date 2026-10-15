@@ -9,6 +9,20 @@ const MMAP_THRESHOLD_BYTES: libc::c_int = 128 * 1024;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 const MMAP_THRESHOLD_VARIABLE: &str = "MALLOC_MMAP_THRESHOLD_";
 
+/// Runs from `.init_array`, before the Rust runtime and `main`: from here on a fault on the
+/// read-only file mappings maps only the touched page, and the pages the C runtime's start
+/// faulted in with their neighbours are released.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+extern "C" fn fault_only_touched_pages() {
+    quench_node::host::resident_pages::map_touched_pages_only();
+    quench_node::host::resident_pages::release_read_only_pages();
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[used]
+#[unsafe(link_section = ".init_array")]
+static FAULT_ONLY_TOUCHED_PAGES: extern "C" fn() = fault_only_touched_pages;
+
 fn main() -> std::process::ExitCode {
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     if std::env::var_os(MMAP_THRESHOLD_VARIABLE).is_none() {
