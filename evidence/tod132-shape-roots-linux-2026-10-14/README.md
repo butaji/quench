@@ -14,6 +14,12 @@ build logs and executable hashes are retained. The final documentation branch
 also syncs later integration work; these results remain observations of the
 pinned baseline, not measurements of subsequent integration commits.
 
+Both sides used the existing link-order inputs. Candidate-specific retraining
+on a disjoint corpus was not performed. The memory rejection therefore applies
+to these builds; it does not establish that the algorithms regress RSS under
+every retrained layout. Later integration refreshed those order files, without
+changing or requalifying the archived prototypes.
+
 The hypothesis and time/RSS decision rule were recorded in Linear before code
 changes. Each prototype resolves shape transitions newest first, so deletion
 suppresses historical roots and only the latest descriptor contributes accessor
