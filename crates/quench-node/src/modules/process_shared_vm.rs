@@ -1788,7 +1788,6 @@ pub(crate) fn finish_execution(
     // The run is over: what it touched of the code is not needed for exit, whose own code
     // would otherwise add its pages on top of the run's (a small script's peak).
     crate::host::resident_pages::release_read_only_pages();
-    crate::host::resident_pages::release_unused_stack();
     let process_control = runtime
         .host_mut()
         .shared_state()
