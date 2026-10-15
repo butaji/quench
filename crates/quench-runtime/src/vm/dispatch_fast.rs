@@ -330,7 +330,7 @@ const EMPTY_SCRIPT_CALL_TARGET: ScriptCallTarget = ScriptCallTarget {
 };
 
 /// Entries of the script call cache, indexed by the callee's heap index.
-const SCRIPT_CALL_TARGETS: usize = 64;
+const SCRIPT_CALL_TARGETS: usize = 256;
 const _: () = assert!(SCRIPT_CALL_TARGETS.is_power_of_two());
 
 /// Activations a lane runs without VM frames, innermost last, over the
@@ -1317,10 +1317,28 @@ lane_handler! {
 }
 
 lane_handler! {
+    /// `GetField` of a register or `this` at a site with an inherited entry
+    /// (`Vm::field_site_inherited`), a method read beyond the immediate prototype: that entry
+    /// inline; any other read takes `lane_get_field`.
+    fn lane_get_field_inherited<>(cx, r, ip, i, view) {
+        // SAFETY: the context's program outlives the lane run.
+        let code = unsafe { &*(*cx).code };
+        let Some(value) = (unsafe { lane_single_field_base(cx, r, i.b) })
+            .and_then(|object| (unsafe { vm(cx) }).inherited_field_hit(code, object, i.c))
+        else {
+            sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
+        };
+        r.set(i.a, value);
+        next!(cx, r, following(ip), Carried::SCRIPT)
+    }
+}
+
+lane_handler! {
     /// A primary-entry miss of `lane_get_field_own`: a nested record moves to
     /// `lane_get_field`, one whose site went polymorphic to `lane_get_field_polymorphic`,
-    /// one whose primary entry names a prototype holder to `lane_get_field_holder`; the read
-    /// itself takes `lane_get_field`.
+    /// one whose primary entry names a prototype holder to `lane_get_field_holder`, one with
+    /// an inherited entry to `lane_get_field_inherited`; the read itself takes
+    /// `lane_get_field`.
     #[inline(never)]
     fn lane_get_field_miss<>(cx, r, ip, i, view) {
         let vm = unsafe { vm(cx) };
@@ -1330,6 +1348,8 @@ lane_handler! {
             requicken(ip, lane_get_field_polymorphic::<H>);
         } else if vm.field_site_holder(i.c) {
             requicken(ip, lane_get_field_holder::<H>);
+        } else if vm.field_site_inherited(i.c) {
+            requicken(ip, lane_get_field_inherited::<H>);
         }
         sibling!(lane_get_field::<H>, r, ip, Carried::SCRIPT)
     }
@@ -4328,6 +4348,11 @@ fn lane_writes(instruction: WideInstruction, register: u16) -> bool {
 /// whose runs are long, unchanged.
 const LANE_ENTRY_MIN_RUN: usize = 3;
 
+/// `LANE_ENTRY_MIN_RUN` in a function with no loop the lane runs whole: each call the
+/// general loop makes into it enters the lane anew, so a run must repay a fresh lane
+/// context.
+const LANE_ENTRY_MIN_CALL_RUN: usize = 8;
+
 /// Whether records may read the accumulator. Without sibling calls every
 /// handler returns to the lane loop, which carries no accumulator.
 const ACCUMULATOR: bool = cfg!(quench_lane_tail_calls);
@@ -4940,11 +4965,16 @@ fn derive_lane_view<H: Host>(
     }
     specialize_register_operands::<H>(function, constants, &mut records);
     specialize_updates::<H>(&mut records);
+    let min_run = if closes_loop(function, &exits) {
+        LANE_ENTRY_MIN_RUN
+    } else {
+        LANE_ENTRY_MIN_CALL_RUN
+    };
     let mut entries = vec![false; records.len()].into_boxed_slice();
     let mut run = 0usize;
     for pc in (0..records.len()).rev() {
         run = if exits[pc] { 0 } else { run + 1 };
-        entries[pc] = run >= LANE_ENTRY_MIN_RUN && !reads_accumulator[pc];
+        entries[pc] = run >= min_run && !reads_accumulator[pc];
     }
     let activation = function
         .parameter_registers
@@ -5123,6 +5153,18 @@ fn operator_handler<H: Host, const CONSTANT: bool>(operator: u32) -> Option<Hand
         BITWISE_XOR,
         BITWISE_AND
     )
+}
+
+/// Whether some loop of `function`, from a backward jump's target through the jump, has no
+/// instruction the lane exits at.
+fn closes_loop(function: &Function, exits: &[bool]) -> bool {
+    function.code.iter().enumerate().any(|(pc, packed)| {
+        let instruction = decoded_instruction(function, *packed);
+        let target = instruction.imm() as usize;
+        instruction.op().immediate_role() == ImmediateRole::JumpTarget
+            && target <= pc
+            && !exits[target..=pc].contains(&true)
+    })
 }
 
 /// The register field of `instruction` that reads `register`, as an
