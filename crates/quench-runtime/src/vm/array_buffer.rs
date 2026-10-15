@@ -201,6 +201,15 @@ impl<H: Host> Vm<H> {
         if wasm_view {
             return Err(self.type_error(p, "cannot detach a WebAssembly.Memory buffer".into()));
         }
+        if self
+            .object_data(buffer)
+            .is_some_and(Object::is_structured_transfer_forbidden)
+        {
+            return Err(self.type_error(
+                p,
+                "Provided key doesn't match [[ArrayBufferDetachKey]]".into(),
+            ));
+        }
         if !detached {
             self.detach_array_buffer(buffer);
         }
@@ -708,6 +717,15 @@ impl<H: Host> Vm<H> {
             }) => (*detached, *immutable, bytes.clone()),
             _ => (true, true, Default::default()),
         };
+        if self
+            .object_data(this)
+            .is_some_and(Object::is_structured_transfer_forbidden)
+        {
+            return Err(self.type_error(
+                p,
+                "ArrayBuffer is not detachable and could not be cloned.".into(),
+            ));
+        }
         if detached || immutable || bytes.is_wasm_view() {
             return Err(self.type_error(p, "ArrayBuffer is not transferable".into()));
         }

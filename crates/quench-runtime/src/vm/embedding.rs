@@ -36,6 +36,17 @@ fn typed_array_brand(kind: TypedArrayKind) -> crate::BuiltinBrand {
 }
 
 impl<H: Host> Vm<H> {
+    pub(super) fn boxed_primitive_data(
+        &self,
+        value: Value,
+    ) -> Option<(crate::BuiltinBrand, Value)> {
+        BOXED_MARKERS.iter().find_map(|&(brand, marker)| {
+            self.lookup_atom(marker)
+                .and_then(|atom| self.own_property(value, atom))
+                .map(|payload| (brand, payload))
+        })
+    }
+
     pub(crate) fn embedding_host_weak_root(&mut self, target: RootId) -> Result<RootId, JsError> {
         let value = self.embedding_value(target)?;
         let target = self
@@ -338,18 +349,9 @@ impl<H: Host> Vm<H> {
             return Ok(Some(D::Opaque));
         }
         if value.direct_object_index().is_some() {
-            for &(brand, marker) in BOXED_MARKERS {
-                if let Some(payload) = self
-                    .lookup_atom(marker)
-                    .and_then(|atom| self.own_property(value, atom))
-                {
-                    return Ok(Some(D::Primitive {
-                        brand,
-                        value: payload,
-                    }));
-                }
-            }
-            return Ok(None);
+            return Ok(self
+                .boxed_primitive_data(value)
+                .map(|(brand, value)| D::Primitive { brand, value }));
         }
         let data = match self.heap.get(value) {
             Some(Cell::Date { milliseconds, .. }) => D::Primitive {
@@ -387,18 +389,9 @@ impl<H: Host> Vm<H> {
             Some(Cell::WeakMap { .. } | Cell::WeakSet { .. }) => D::Opaque,
             Some(Cell::Error(_)) => D::Error,
             Some(Cell::Object(_)) => {
-                for &(brand, marker) in BOXED_MARKERS {
-                    if let Some(payload) = self
-                        .lookup_atom(marker)
-                        .and_then(|atom| self.own_property(value, atom))
-                    {
-                        return Ok(Some(D::Primitive {
-                            brand,
-                            value: payload,
-                        }));
-                    }
-                }
-                return Ok(None);
+                return Ok(self
+                    .boxed_primitive_data(value)
+                    .map(|(brand, value)| D::Primitive { brand, value }));
             }
             _ => return Ok(None),
         };
