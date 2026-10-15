@@ -862,7 +862,15 @@ impl<H: Host> Vm<H> {
             Op::Await => {
                 // Promise conversion is part of this instruction, so abrupt
                 // completion reaches the active frame's catch/finally handlers.
-                let value = self.promise_for_value(p, self.read(f, i.register_b()))?;
+                // A primitive needs none: the promise PromiseResolve would wrap it in is
+                // already fulfilled and unreachable, so the resume reads the value itself
+                // (`enqueue_async_resume`).
+                let awaited = self.read(f, i.register_b());
+                let value = if self.is_object_like(awaited) {
+                    self.promise_for_value(p, awaited)?
+                } else {
+                    awaited
+                };
                 return Ok(StepResult::Await {
                     value,
                     destination: i.result_register(),
