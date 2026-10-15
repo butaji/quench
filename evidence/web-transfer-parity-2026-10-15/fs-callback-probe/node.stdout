@@ -1,0 +1,6 @@
+stat 1 true true
+uncaught true 1
+lstat 2 true true
+uncaught true 2
+statfs 3 true true
+uncaught true 3
