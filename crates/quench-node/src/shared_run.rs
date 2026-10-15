@@ -40,6 +40,7 @@ pub enum SharedInput {
         source: String,
         goal: EntryGoal,
         exec_argv: Vec<String>,
+        print: bool,
     },
     Stdin {
         source: String,
@@ -79,6 +80,7 @@ fn execute_shared_on_worker(
     argv: Vec<String>,
 ) -> Result<SharedCompletion, String> {
     let eval_builtin_globals = matches!(&input, SharedInput::Eval { .. });
+    let eval_source_nonempty = matches!(&input, SharedInput::Eval { source, .. } if !source.is_empty());
     let inline_source = match &input {
         SharedInput::Stdin { .. } => crate::host::node_host::InlineSource::Stdin,
         _ => crate::host::node_host::InlineSource::Eval,
@@ -88,6 +90,7 @@ fn execute_shared_on_worker(
             source,
             goal,
             exec_argv,
+            print: false,
         }
         | SharedInput::Stdin {
             source,
@@ -104,6 +107,17 @@ fn execute_shared_on_worker(
             exec_argv,
             goal,
         ),
+        SharedInput::Eval { source, exec_argv, print: true, .. } => {
+            let literal = serde_json::to_string(&source).map_err(|error| error.to_string())?;
+            (
+                format!("console.log(globalThis[\"\\0quench:evalScript\"]({literal}));"),
+                inline_source.compilation_name().to_owned(),
+                SourceKind::Script,
+                None,
+                exec_argv,
+                EntryGoal::Node,
+            )
+        }
         SharedInput::File {
             path,
             exec_argv,
@@ -130,6 +144,7 @@ fn execute_shared_on_worker(
     let mut host = NodeHost::new(argv).with_exec_argv(exec_argv)?;
     host.inline_source = inline_source;
     host.eval_builtin_globals = eval_builtin_globals;
+    host.eval_source_nonempty = eval_source_nonempty;
     let host = match commonjs_entry {
         Some(path) => host.with_commonjs_entry_goal(path, entry_goal),
         None => host,
@@ -254,6 +269,8 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     let mut exec_argv = Vec::new();
     let mut input_type_module = false;
     let mut input = None;
+    let mut eval_source = None;
+    let mut print = false;
     let mut guest_arguments = Vec::new();
     let mut index = 0;
     while index < args.len() {
@@ -278,27 +295,58 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
                     .ok_or_else(|| format!("{option} requires an argument"))?;
                 exec_argv.extend([option, value]);
             }
+            "--" => {
+                index += 1;
+                if eval_source.is_some() || index == args.len() {
+                    guest_arguments.extend_from_slice(&args[index..]);
+                    break;
+                }
+                let path = std::env::current_dir()
+                    .map_err(|error| error.to_string())?
+                    .join(&args[index]);
+                guest_arguments.push(path.to_string_lossy().into_owned());
+                guest_arguments.extend_from_slice(&args[index + 1..]);
+                input = Some(SharedInput::File {
+                    path,
+                    exec_argv: exec_argv.clone(),
+                    goal: EntryGoal::Node,
+                });
+                break;
+            }
             "-e" | "--eval" | "-pe" | "-ep" | "-p" | "--print" => {
                 let option = args[index].clone();
-                let print = matches!(option.as_str(), "-pe" | "-ep" | "-p" | "--print");
+                print |= matches!(option.as_str(), "-pe" | "-ep" | "-p" | "--print");
+                exec_argv.push(option.clone());
+                // Node's optional print argument treats an empty argument as
+                // the first guest argv entry, unlike --eval's required argument.
+                if matches!(option.as_str(), "-p" | "--print")
+                    && args.get(index + 1).is_some_and(String::is_empty)
+                {
+                    eval_source = Some(String::new());
+                    guest_arguments.extend_from_slice(&args[index + 1..]);
+                    break;
+                }
+                // --print is also a switch when followed by --eval.
+                if matches!(option.as_str(), "-p" | "--print")
+                    && args.get(index + 1).is_some_and(|next| next.starts_with('-'))
+                {
+                    index += 1;
+                    continue;
+                }
                 index += 1;
-                let source = args.get(index).cloned().unwrap_or_default();
-                exec_argv.extend([option, source.clone()]);
-                guest_arguments.extend_from_slice(args.get(index + 1..).unwrap_or_default());
-                input = Some(SharedInput::Eval {
-                    source: if print {
-                        let literal = serde_json::to_string(&source).map_err(|error| error.to_string())?;
-                        format!("console.log(globalThis[\"\\0quench:evalScript\"]({literal}));")
-                    } else {
-                        source
-                    },
-                    goal: if input_type_module && !print {
-                        EntryGoal::Module
-                    } else {
-                        EntryGoal::Node
-                    },
-                    exec_argv: exec_argv.clone(),
-                });
+                let source = args.get(index).cloned()
+                    .ok_or_else(|| format!("{option} requires an argument"))?;
+                exec_argv.push(source.clone());
+                eval_source = Some(source);
+            }
+            option if option.starts_with("--eval=") || option.starts_with("--print=") => {
+                let (name, source) = option.split_once('=').expect("matched equals option");
+                print |= name == "--print";
+                exec_argv.push(option.to_owned());
+                eval_source = Some(source.to_owned());
+            }
+            _ if eval_source.is_some() && !args[index].starts_with('-') => {
+                guest_arguments.extend_from_slice(&args[index..]);
                 break;
             }
             "-" => {
@@ -348,6 +396,14 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
         }
         index += 1;
     }
+    if let Some(source) = eval_source {
+        input = Some(SharedInput::Eval {
+            source,
+            print,
+            goal: if input_type_module && !print { EntryGoal::Module } else { EntryGoal::Node },
+            exec_argv: exec_argv.clone(),
+        });
+    }
     if input.is_none() && !crate::modules::tty_state::is_terminal_fd(0) {
         input = Some(SharedInput::Stdin {
             source: read_cli_stdin()?,
@@ -361,6 +417,7 @@ pub fn run_shared_cli(arguments: impl IntoIterator<Item = String>) -> Result<Exi
     }
     let input = input.unwrap_or_else(|| SharedInput::Eval {
         source: String::new(),
+        print: false,
         goal: if input_type_module {
             EntryGoal::Module
         } else {

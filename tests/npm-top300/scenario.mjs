@@ -311,7 +311,10 @@ async function exercise() {
       equal(result.status, 0); equal(result.stdout, 'hello\n'); break;
     }
     case 'statuses': equal(api(404), 'Not Found'); equal(api('not found'), 404); break;
-    case 'whatwg-url': equal(new api.URL('../b?q=1', 'https://example.com/a/').href, 'https://example.com/b?q=1'); break;
+    case 'whatwg-url': {
+      const coverage = (await import('./contracts/whatwg-url.mjs')).exercise(api);
+      fs.writeFileSync('function-checks.json', JSON.stringify(coverage)); break;
+    }
     case 'fast-deep-equal': equal(api({ a: [1, 2] }, { a: [1, 2] }), true); equal(api([1], [2]), false); break;
     case 'locate-path': equal(await namespace.locatePath(['absent.txt', fixture]), fixture); break;
     case 'is-number': equal(api('42'), true); equal(api(''), false); break;
@@ -605,7 +608,10 @@ async function exercise() {
     case 'serve-static': { const response = await requestMiddleware(api(process.cwd()), { url: '/fixture.txt' }); equal(response.status, 200); equal(response.text, 'hello\n'); break; }
     case 'body-parser': { const parse = api.json(); const response = await requestMiddleware((req, res, next) => parse(req, res, error => { if (error) return next(error); res.end(JSON.stringify(req.body)); }), { method: 'POST', body: '{"a":1}', headers: { 'content-type': 'application/json', 'content-length': '7' } }); equal(response.status, 200); equal(JSON.parse(response.text), { a: 1 }); break; }
     case 'cors': { const middleware = api(); const response = await requestMiddleware((req, res, next) => middleware(req, res, () => res.end('ok'))); equal(response.headers['access-control-allow-origin'], '*'); equal(response.text, 'ok'); break; }
-    case 'jackspeak': equal(api.jack().opt({ name: {} }).parse(['--name', 'hello']).values.name, 'hello'); break;
+    case 'jackspeak': {
+      const coverage = (await import('./contracts/jackspeak.mjs')).exercise(api);
+      fs.writeFileSync('function-checks.json', JSON.stringify(coverage)); break;
+    }
     case 'foreground-child': { const result = spawnSync(process.execPath, ['-e', `require(${JSON.stringify(createRequire(import.meta.url).resolve('foreground-child'))}).foregroundChild(process.execPath,['-e','console.log(42)']);`], { encoding: 'utf8' }); equal(result.status, 0); equal(result.stdout, '42\n'); break; }
     case 'tar-stream': { const pack = api.pack(), extract = api.extract(); const contents = []; const done = new Promise((resolve, reject) => { extract.on('finish', resolve); extract.on('error', reject); }); extract.on('entry', (header, stream, next) => { let data = ''; stream.on('data', chunk => data += chunk); stream.on('end', () => { contents.push([header.name, data]); next(); }); }); pack.pipe(extract); pack.entry({ name: 'file', mtime: new Date(0) }, 'hello'); pack.finalize(); await done; equal(contents, [['file', 'hello']]); break; }
     case 'minizlib': { const gzip = new api.Gzip(); const chunks = []; const done = new Promise((resolve, reject) => { gzip.on('end', resolve); gzip.on('error', reject); }); gzip.on('data', chunk => chunks.push(chunk)); gzip.end('hello'); await done; const zlib = await import('node:zlib'); equal(zlib.gunzipSync(Buffer.concat(chunks)).toString(), 'hello'); break; }
