@@ -63,6 +63,9 @@ const root = host.argv[2];
 const resolve = (file) => path.resolve(root, file);
 const readFile = (file, mode) =>
   mode === "binary" ? new Uint8Array(fs.readFileSync(resolve(file))) : fs.readFileSync(resolve(file), "utf8");
+// Dynamic import() resolves through the main context loader, relative to the script;
+// loadString sources are named inside the corpus root for that.
+const importModuleDynamically = vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER;
 const print = (...args) => host.stdout.write(args.join(" ") + "\n");
 const printErr = (...args) => host.stderr.write(args.join(" ") + "\n");
 function shellSurface(global, evaluate) {
@@ -71,18 +74,18 @@ function shellSurface(global, evaluate) {
   global.read = readFile;
   global.readFile = readFile;
   global.load = (file) => evaluate(readFile(file), resolve(file));
-  global.loadString = (source) => evaluate(source, "loadString");
+  global.loadString = (source) => evaluate(source, resolve("loadString"));
   global.runString = (source) => {
     const context = vm.createContext({});
     const realm = vm.runInContext("globalThis", context);
-    shellSurface(realm, (code, filename) => vm.runInContext(code, context, { filename }));
+    shellSurface(realm, (code, filename) => vm.runInContext(code, context, { filename, importModuleDynamically }));
     for (const name of ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "queueMicrotask"])
       realm[name] = globalThis[name];
     realm.loadString(source);
     return realm;
   };
 }
-shellSurface(globalThis, (code, filename) => vm.runInThisContext(code, { filename }));
+shellSurface(globalThis, (code, filename) => vm.runInThisContext(code, { filename, importModuleDynamically }));
 globalThis.arguments = host.argv.slice(3);
 globalThis.load("cli.js");
 "#;
