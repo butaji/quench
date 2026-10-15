@@ -1,0 +1,39 @@
+{
+  "oracle": "v26.12.0",
+  "tests_node_commit": "26e72d85a611e222e3f06025de8a3c496923bacd",
+  "source_base_commit": "bb88ab9c483015bfff3d465d79e83c2ede990853",
+  "candidate_sha256": "25bfdc8663fe11646ab07aa466b7766a02f5a5564107ab7e4b035b36f732cfb3",
+  "baseline_sha256": "caf38f7b9b37fb3aea09d442a921dfb32ba1b17a02340613eabf812b41fdcc24",
+  "build_profile": "iteration",
+  "full_node_parity": false,
+  "optimization_allowed": false,
+  "framework_verification_combinations": 9,
+  "framework_core": {
+    "pass": 43,
+    "fail": 0,
+    "skip": 0
+  },
+  "differential_regressions": 5,
+  "focused_cli": {
+    "exit_zero": 5,
+    "nonzero_exit": 3,
+    "timeout": 2,
+    "qualification": "Raw outputs and Node comparison must be reviewed; exit status alone does not prove conformance."
+  },
+  "open_gaps": [
+    "HTTP write-after-end error delivery",
+    "Missing HTTP Server.unref (DELETE payload fixture stops before payload assertions)",
+    "HTTP request argument validation",
+    "Repeated chunked transfer-encoding handling",
+    "Invalid trailer framing",
+    "Native HTTP/2 transport",
+    "Complete Blob/File behavior",
+    "Broader Node/npm parity: see baseline diagnostic audit limitations"
+  ],
+  "candidate_source_commit": "310810075ce24e7cde57bce0836a45954a6e804d",
+  "runtime_tests": {
+    "pass": 617,
+    "fail": 0,
+    "profile": "test (unoptimized)"
+  }
+}

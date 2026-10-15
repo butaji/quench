@@ -1,0 +1,9 @@
+    Finished `iteration` profile [optimized] target(s) in 0.15s
+     Running tests/child_entry.rs (work/host-build/iteration/deps/child_entry-3aa884c89143835b)
+
+running 2 tests
+test binary_http_response_views_match_the_node_oracle ... ok
+test headers_and_host_clone_markers_match_the_node_oracle ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 239 filtered out; finished in 1.47s
+
