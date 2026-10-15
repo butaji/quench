@@ -39,29 +39,10 @@ fn validate_offset(
     name: &str,
     maximum: usize,
 ) -> Result<usize, RootedError> {
-    let Some(n) = number(c, value) else {
-        return Err(super::util_shared_vm::argument_type_error(
-            c, value, name, "number",
-        )?);
-    };
-    if !n.is_finite() || n.fract() != 0.0 || n < 0.0 || n > maximum as f64 {
-        let requirement = if !n.is_finite() || n.fract() != 0.0 {
-            "an integer".to_owned()
-        } else {
-            format!(">= 0 && <= {maximum}")
-        };
-        let received = super::util_shared_vm::range_error_received(c, value)?;
-        return Err(coded(
-            c,
-            &format!(
-                "The value of \"{name}\" is out of range. It must be {requirement}. Received {received}"
-            ),
-            "ERR_OUT_OF_RANGE",
-            true,
-        )?);
-    }
-    Ok(n as usize)
+    let maximum = c.number(maximum as f64);
+    Ok(super::util_shared_vm::validate_integer(c, value, name, 0.0, maximum)? as usize)
 }
+
 pub(crate) fn install(c: &mut Context<'_>, prototype: RootId) -> Result<(), RootedError> {
     let global = c.global_root()?;
     let constructor = get(c, global, "Uint8Array")?;
