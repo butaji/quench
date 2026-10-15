@@ -1814,6 +1814,84 @@ fn extensionless_entries_use_the_package_module_scope() {
 }
 
 #[test]
+fn imported_strict_terminal_calls_preserve_local_exception_handlers() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("library.mjs"), r#"
+function bad() { throw Error('marker'); }
+export function caught() { try { return bad(); } catch (error) { return error.message; } }
+export function viaParameter(fn) { try { return fn(); } catch (error) { return error.message; } }
+export function nested() { try { return bad(); } catch { try { return bad(); } catch { return null; } } }
+export function finalized(events) { try { return bad(); } catch { return 42; } finally { events.push('finally'); } }
+export { bad };
+"#).unwrap();
+    let entry = directory.path().join("entry.mjs");
+    std::fs::write(&entry, r#"
+import { caught, viaParameter, nested, finalized, bad } from './library.mjs';
+const events=[];
+console.log(JSON.stringify([caught(),viaParameter(bad),nested(),finalized(events),events]));
+"#).unwrap();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.arg(&entry);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, b"[\"marker\",\"marker\",null,42,[\"finally\"]]\n");
+        assert!(result.stderr.is_empty());
+    }
+}
+
+#[test]
+fn structured_clone_preserves_array_elements_holes_and_aliases() {
+    compare_node_stream_source(r#"
+const assert=require('node:assert');
+assert.deepStrictEqual(structuredClone([2]),[2]);
+const shared={answer:42}, source=[]; source.length=5000;
+source[1]=shared; source[4096]=shared; source.extra=shared; source.self=source;
+let reads=0;
+Object.defineProperty(source,'3',{enumerable:true,get(){reads++;delete source[4];return shared}});
+source[4]='deleted by getter';
+Object.defineProperty(source,'5',{value:'hidden',enumerable:false});
+source[Symbol('hidden')]='symbol';
+const prototype=Object.create(Array.prototype);
+Object.defineProperty(prototype,'0',{get(){throw Error('inherited index was read')}});
+Object.setPrototypeOf(source,prototype);
+const clone=structuredClone(source);
+assert.strictEqual(reads,1); assert.strictEqual(clone.length,5000);
+assert.strictEqual(Object.getPrototypeOf(clone),Array.prototype);
+for(const index of [0,4,5,4999]) assert.strictEqual(Object.hasOwn(clone,index),false);
+assert.strictEqual(clone[1],clone[3]); assert.strictEqual(clone[1],clone[4096]);
+assert.strictEqual(clone[1],clone.extra); assert.strictEqual(clone.self,clone);
+assert.notStrictEqual(clone[1],shared);
+assert.deepStrictEqual(Object.getOwnPropertyDescriptor(clone,'1'),{value:clone[1],writable:true,enumerable:true,configurable:true});
+console.log(JSON.stringify([Object.keys(clone),clone.length,clone[1],reads]));
+"#);
+}
+
+#[test]
+fn console_formats_module_values_without_a_global_require() {
+    let directory = tempfile::tempdir().unwrap();
+    let entry = directory.path().join("entry.mjs");
+    std::fs::write(&entry, r#"
+import util from 'node:util';
+console.log(null,undefined,42);
+console.log('%s:%d:%j','answer',42,{value:null});
+util.format=()=>{throw Error('public formatter replacement was used')};
+util.formatWithOptions=util.format;
+console.log(null,undefined);
+"#).unwrap();
+    for executable in ["node", env!("CARGO_BIN_EXE_run-parallel")] {
+        let mut command = Command::new(executable);
+        command.arg(&entry);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        let result = quench_node_test::case_process::observe_command(command, Duration::from_secs(15)).unwrap();
+        assert_eq!(result.exit_code, Some(0), "{}", String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stdout, b"null undefined 42\nanswer:42:{\"value\":null}\nnull undefined\n");
+        assert!(result.stderr.is_empty());
+    }
+}
+
+#[test]
 fn json_import_attributes_parse_the_original_payload() {
     compare_node_stream_source(r#"
 const fs=require('fs'),path=require('path'),os=require('os'),assert=require('assert');
@@ -6359,5 +6437,114 @@ const marker={};try{setTimeout(noop,{[Symbol.toPrimitive](){throw marker;}});}ca
 for(const delay of [Symbol('x'),1n]) {try{setTimeout(noop,delay);}catch(error){out.push(error.name);}}
 process.emitWarning=()=>{throw marker;};try{setTimeout(noop,Infinity);}catch(error){out.push(error===marker);}
 let fired=false;process.emitWarning=()=>{};setTimeout(()=>{fired=true;},2147483648);setTimeout(()=>{out.push(fired);console.log(JSON.stringify(out));},30);
+"#);
+}
+
+#[test]
+fn native_timer_refresh_reactivates_original_slots_and_repeat_transitions_like_node() {
+    compare_node_stream_source(r#"
+"use strict";
+const assert=require('assert'),out=[],fired=[];
+const cleared=setTimeout(()=>fired.push('cleared'),1);clearTimeout(cleared);out.push(cleared.refresh()===cleared,cleared._idleTimeout,cleared._onTimeout);
+const replaced=setTimeout(()=>assert.fail('old callback invoked'),1,'old');replaced._timerArgs=['new'];replaced._onTimeout=function(arg){out.push(this===replaced,arg);};
+let count=0,oldId;
+const timer=setTimeout(function(arg){
+ count++;out.push(['phase',count,this===timer,arg,timer._destroyed]);
+ if(count===1){out.push(timer.refresh()===timer);}
+ if(count===2){process.nextTick(()=>{out.push(['completed',timer._destroyed,typeof timer._onTimeout]);const key=Object.getOwnPropertySymbols(timer).find(s=>s.description==='asyncId');oldId=timer[key];let assigned;const marker={};Object.defineProperty(timer,key,{configurable:true,get(){throw marker;},set(value){assigned=value;}});out.push(timer.refresh()===timer,assigned!==oldId,timer._destroyed);Object.defineProperty(timer,key,{configurable:true,writable:true,enumerable:true,value:assigned});});}
+ if(count===3){clearTimeout(timer);out.push(['cancel',timer._destroyed,timer._idleTimeout,timer._onTimeout]);}
+},1,'value');
+const unref=setTimeout(()=>fired.push('unref'),1);unref.unref();out.push(unref.refresh()===unref,unref.hasRef());
+let switched=0;const switchTimer=setTimeout(()=>{switched++;if(switched===1){switchTimer._repeat=1;}else{clearInterval(switchTimer);}},1);
+const d=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer),'refresh');out.push([d.value.name,d.value.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(d.value,'prototype')]);
+setTimeout(()=>{out.push(['end',count,switched,fired,timer._destroyed,typeof timer._onTimeout]);console.log(JSON.stringify(out));},30);
+"#);
+}
+
+#[test]
+fn native_internal_unref_timers_and_promise_init_reference_state_match_node() {
+    let source = r#"
+"use strict";
+const internal=require('internal/timers'),hooks=require('async_hooks'),out=[],phases=[];
+out.push(internal===require('internal/timers'),internal.TIMEOUT_MAX,internal.setUnrefTimeout.name,internal.setUnrefTimeout.length,Object.hasOwn(internal.setUnrefTimeout,'prototype'));
+const hook=hooks.createHook({init(id,type,trigger,resource){if(type==='Timeout')phases.push([type,resource.hasRef()]);}}).enable();
+const t=internal.setUnrefTimeout(function(){out.push(['internal',this===t,arguments.length,this.hasRef()]);},1,'ignored');
+require('timers/promises').setTimeout(1,'value',{ref:false}).then(value=>out.push(['promise',value]));
+setTimeout(()=>{hook.disable();out.push(phases);console.log(JSON.stringify(out));},30);
+"#;
+    let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command = Command::new(executable);
+        command.args(["--expose-internals", "--no-warnings", "-e", source]);
+        if executable != "node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV, "1"); }
+        quench_node_test::case_process::observe_command(command, Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations {
+        assert!(!observation.timed_out);
+        assert_eq!(observation.exit_code, Some(0), "{}", String::from_utf8_lossy(&observation.stderr));
+        assert!(observation.stderr.is_empty());
+    }
+    assert_eq!(observations[0].stdout, observations[1].stdout);
+}
+
+#[test]
+fn native_internal_timer_require_and_resolution_obey_exposure_flag() {
+    let source=r#"for(const operation of [()=>require('internal/timers').setUnrefTimeout,()=>require.resolve('internal/timers')]){try{const value=operation();console.log(JSON.stringify([typeof value,typeof value==='string'?value:value.name]));}catch(error){console.log(JSON.stringify([error.name,error.code,error.message.split('\n')[0]]));}}
+"#;
+    for expose in [false,true] {
+        let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+            let mut command=Command::new(executable);
+            if expose { command.arg("--expose-internals"); }
+            command.args(["-e",source]);
+            if executable!="node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+            quench_node_test::case_process::observe_command(command,Duration::from_secs(5)).unwrap()
+        });
+        for observation in &observations { assert!(!observation.timed_out); assert_eq!(observation.exit_code,Some(0)); assert!(observation.stderr.is_empty()); }
+        assert_eq!(observations[0].stdout,observations[1].stdout);
+    }
+}
+
+#[test]
+fn native_internal_timer_clock_preserves_metadata_and_monotonic_origin() {
+    let source = r#"
+"use strict";
+const {internalBinding}=require('internal/test/binding'),binding=internalBinding('timers'),fn=binding.getLibuvNow,out=[];
+const d=Object.getOwnPropertyDescriptor(binding,'getLibuvNow');out.push(binding===internalBinding('timers'),fn.name,fn.length,Object.hasOwn(fn,'prototype'),d.writable,d.enumerable,d.configurable);
+for(const receiver of [undefined,{},binding]){try{const value=fn.call(receiver);out.push(['value',Number.isInteger(value),value>=0,value<0x3ffffff]);}catch(error){out.push([error.name,error.code||null,error.message]);}}
+process.uptime=()=>99999999;const begin=binding.getLibuvNow();while(binding.getLibuvNow()-begin<2){}out.push(binding.getLibuvNow()-begin>=2);console.log(JSON.stringify(out));
+"#;
+    let observations=["node",env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
+        let mut command=Command::new(executable);
+        command.args(["--expose-internals","--no-warnings","-e",source]);
+        if executable!="node" { command.env(quench_node::shared_run::CHILD_RUNNER_ENV,"1"); }
+        quench_node_test::case_process::observe_command(command,Duration::from_secs(5)).unwrap()
+    });
+    for observation in &observations { assert!(!observation.timed_out); assert_eq!(observation.exit_code,Some(0),"{}",String::from_utf8_lossy(&observation.stderr)); assert!(observation.stderr.is_empty()); }
+    assert_eq!(observations[0].stdout,observations[1].stdout);
+}
+
+#[test]
+fn native_buffer_search_matches_node_offsets_bounds_encodings_and_original_hooks() {
+    compare_node_stream_source(r#"
+"use strict";
+const out=[],buffer=Buffer.from('abcabc');
+for(const name of ['indexOf','lastIndexOf','includes']) {
+ const d=Object.getOwnPropertyDescriptor(Buffer.prototype,name);out.push([name,d.value.name,d.value.length,d.writable,d.enumerable,d.configurable,Object.hasOwn(d.value,'prototype')]);
+ for(const value of ['a','bc','',Buffer.from('bc'),new Uint8Array([99]),97,NaN,-1])
+  for(const offset of [undefined,-Infinity,-10,-1,-0.5,0,1,2.5,5,Infinity,NaN,null])
+   for(const end of [undefined,0,2,4,100,-1,'utf8']) out.push(buffer[name](value,offset,end));
+ const log=[],offset={[Symbol.toPrimitive](hint){log.push(hint);return 1;}};out.push(buffer[name]('a',offset),log);
+ const marker={};try{buffer[name]('a',{valueOf(){throw marker;}});}catch(error){out.push(error===marker);}
+ for(const value of [()=>{}, {}, [], null,undefined,true,Symbol('x'),1n]){try{buffer[name](value);out.push('accepted');}catch(error){out.push([error.name,error.code,error.message]);}}
+ for(const call of [()=>buffer[name]({},0),()=>buffer[name]('a',0,'unknown'),()=>Buffer.prototype[name].call({},'a'),()=>buffer[name]('a',Symbol('x')),()=>buffer[name]('a',1n)]) {try{call();out.push('accepted');}catch(error){out.push([error.name,error.code||null]);}}
+}
+for(const name of ['indexOf','lastIndexOf','includes']) {
+ const b=Buffer.from('aβaβ','utf16le');
+ for(const needle of ['a','β','',Buffer.from('β','utf16le')])
+  for(const offset of [-10,-1,0,1,2,3,5,20]) for(const end of [undefined,0,3,7,100]) out.push(b[name](needle,offset,end,'utf16le'));
+ out.push(buffer[name](Buffer.from('a'),0,undefined,'unknown'));
+ const encoding={valueOf(){return 'utf8';}};out.push(buffer[name]('a',0,undefined,encoding));
+ const b2=Buffer.from('xxx');out.push(b2[name]('a',{valueOf(){b2[1]=97;return 0;}}));
+}
+console.log(JSON.stringify(out));
 "#);
 }
