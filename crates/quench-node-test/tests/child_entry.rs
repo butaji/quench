@@ -8320,3 +8320,16 @@ out[2]=target[0];console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[test]
+fn native_vfs_descriptors_share_live_positions_registry_identity_and_close_ownership() {
+    compare_node_source_with_args(
+        include_str!("../node-tests/test-native-vfs-descriptors.js"),
+        &["--no-warnings", "--experimental-vfs", "--expose-internals"],
+    );
+}
+
+#[test]
+fn scalar_assertion_guards_preserve_aliases_metadata_success_effects_and_failure_policy() {
+    compare_node_stream_source(include_str!("../node-tests/test-assert-scalar-guards.js"));
+}
