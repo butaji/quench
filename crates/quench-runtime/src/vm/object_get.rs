@@ -201,6 +201,19 @@ impl<H: Host> Vm<H> {
         property: PropertyKey,
         value: Value,
     ) -> Result<bool, JsError> {
+        self.proxy_set_mode(p, target, handler, receiver, property, value, false)
+    }
+
+    pub(super) fn proxy_set_mode(
+        &mut self,
+        p: &ResidualProgram,
+        target: Value,
+        handler: Value,
+        receiver: Value,
+        property: PropertyKey,
+        value: Value,
+        strict: bool,
+    ) -> Result<bool, JsError> {
         let key = self.proxy_key_value(p, property)?;
         if handler.is_null() {
             return Err(self.type_error(p, "cannot access a revoked proxy".into()));
@@ -213,16 +226,23 @@ impl<H: Host> Vm<H> {
         let outcome = (|| {
             let trap = self.proxy_trap(p, self.heap.root_value(handler).unwrap(), "set")?;
             if trap.is_null() || trap.is_undefined() {
-                let target = self.heap.root_value(target).unwrap();
+                let delegate_target = self.heap.root_value(target).unwrap();
                 let receiver = self.heap.root_value(receiver).unwrap();
                 let value = self.heap.root_value(value).unwrap();
+                if let Some((inner, handler)) = self.proxy_parts(delegate_target) {
+                    return self.proxy_set_mode(p, inner, handler, receiver, property, value, strict);
+                }
                 return match property {
                     PropertyKey::String(atom) => {
-                        self.set_property_with_receiver(p, target, atom, value, receiver)
+                        let written = self.set_property_with_receiver(p, delegate_target, atom, value, receiver)?;
+                        if !written && strict {
+                            return Err(self.rejected_assignment_error(p, self.heap.root_value(target).unwrap(), atom, true));
+                        }
+                        Ok(written)
                     }
                     PropertyKey::Symbol(_) => self.set_symbol_property_with_receiver(
                         p,
-                        target,
+                        delegate_target,
                         self.heap.root_value(key).unwrap(),
                         value,
                         receiver,
@@ -245,6 +265,10 @@ impl<H: Host> Vm<H> {
                 ],
             )?;
             if !self.truthy(result) {
+                if strict {
+                    let property = self.detail_string(self.heap.root_value(key).unwrap());
+                    return Err(self.type_error(p, format!("'set' on proxy: trap returned falsish for property '{property}'")));
+                }
                 return Ok(false);
             }
             let descriptor = self.object_get_own_property_descriptor(
