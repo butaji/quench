@@ -830,6 +830,17 @@ impl<'a, H: Host> NativeContext<'a, H> {
         self.completion(result)
     }
 
+    /// Create a callback with an intrinsic JavaScript name independent of its
+    /// private dispatch-table key, including unnamed native bindings.
+    pub fn host_function_named(
+        &mut self,
+        id: HostFunctionId,
+        name: &str,
+    ) -> Result<RootId, RootedError> {
+        let result = self.vm.create_named_host_function(id, name);
+        self.completion(result)
+    }
+
     /// Create a native-backed ordinary constructor. Primitive completions return
     /// the allocated receiver; object completions replace it, like JavaScript functions.
     pub fn host_constructor(&mut self, id: HostFunctionId) -> Result<RootId, RootedError> {
