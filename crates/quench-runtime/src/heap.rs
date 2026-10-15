@@ -304,7 +304,7 @@ fn cell_rc_drop_lock(cell: &Cell) -> Option<&'static Mutex<()>> {
         Cell::Array { object } => {
             Some(&RC_DROP_LOCKS[rc_drop_lock_index(Rc::as_ptr(object.elements()) as usize)])
         }
-        Cell::ArrayBuffer { bytes, .. } => Some(if bytes.is_wasm_view() {
+        Cell::ArrayBuffer { bytes, .. } => Some(if bytes.holds_external_rc() {
             &SHARED_RC_DROP_LOCK
         } else {
             &RC_DROP_LOCKS[rc_drop_lock_index(bytes.as_ptr() as usize)]

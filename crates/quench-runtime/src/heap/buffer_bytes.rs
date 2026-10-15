@@ -4,9 +4,7 @@
 //! buffer a `WebAssembly.Memory` exposes instead views the memory's linear bytes, so
 //! JavaScript and Wasm see each other's writes. Such a view has a fixed length: growing the
 //! memory detaches the view (replacing it with an empty owned store) before the linear bytes
-//! can move, so a live view's pointer always names the memory's current bytes. A Wasm
-//! data segment's buffer shares the module's immutable segment bytes, so instances do not
-//! copy them; a write (which an immutable buffer never performs) would copy first.
+//! can move, so a live view's pointer always names the memory's current bytes.
 
 use crate::wasm::memory::MemoryStorage;
 use std::rc::Rc;
@@ -18,7 +16,9 @@ pub(crate) struct BufferBytes(Rc<BufferStore>);
 #[derive(Clone, Debug)]
 enum BufferStore {
     Owned(Vec<u8>),
-    Segment(Rc<Vec<u8>>),
+    /// Bytes shared with an owner outside the heap, such as a module's data segment;
+    /// copied into an owned store on the first write.
+    Shared(Rc<Vec<u8>>),
     Wasm(WasmView),
 }
 
@@ -45,7 +45,7 @@ impl From<Vec<u8>> for BufferBytes {
 
 impl From<Rc<Vec<u8>>> for BufferBytes {
     fn from(bytes: Rc<Vec<u8>>) -> Self {
-        Self(Rc::new(BufferStore::Segment(bytes)))
+        Self(Rc::new(BufferStore::Shared(bytes)))
     }
 }
 
@@ -69,40 +69,40 @@ impl BufferBytes {
         matches!(*self.0, BufferStore::Wasm(_))
     }
 
+    /// Whether the store holds a reference counted outside its own allocation (shared
+    /// bytes or a memory), which the striped drop locks do not cover.
+    pub(crate) fn holds_external_rc(&self) -> bool {
+        !matches!(*self.0, BufferStore::Owned(_))
+    }
+
     /// The store's allocation, which identifies it across the cells sharing it.
     pub(crate) fn as_ptr(&self) -> *const () {
         Rc::as_ptr(&self.0).cast()
     }
 
     /// Whether dropping this handle may release memory other handles still reach: a
-    /// shared store, a segment's module bytes, or a view keeping its memory's bytes alive.
+    /// shared store, or a view keeping its memory's bytes alive.
     pub(crate) fn is_shared(&self) -> bool {
-        Rc::strong_count(&self.0) > 1 || !matches!(*self.0, BufferStore::Owned(_))
+        Rc::strong_count(&self.0) > 1 || self.holds_external_rc()
     }
 
-    /// The heap bytes this store owns; a segment's bytes belong to its module and a
-    /// view's to its memory.
+    /// The heap bytes this store owns; a view's bytes belong to its memory.
     pub(crate) fn capacity(&self) -> usize {
         match &*self.0 {
             BufferStore::Owned(bytes) => bytes.capacity(),
-            BufferStore::Segment(_) | BufferStore::Wasm(_) => 0,
+            BufferStore::Shared(_) | BufferStore::Wasm(_) => 0,
         }
-    }
-
-    /// The store for writing: shared segment bytes become an owned copy first.
-    fn store_mut(&mut self) -> &mut BufferStore {
-        let store = Rc::make_mut(&mut self.0);
-        if let BufferStore::Segment(bytes) = store {
-            *store = BufferStore::Owned(bytes.to_vec());
-        }
-        store
     }
 
     /// The bytes for writing; an owned store is unshared from other cells first.
     pub(crate) fn make_mut(&mut self) -> &mut [u8] {
-        match self.store_mut() {
+        let store = Rc::make_mut(&mut self.0);
+        if let BufferStore::Shared(bytes) = store {
+            *store = BufferStore::Owned(bytes.to_vec());
+        }
+        match store {
             BufferStore::Owned(bytes) => bytes,
-            BufferStore::Segment(_) => unreachable!("store_mut copies segment bytes"),
+            BufferStore::Shared(_) => unreachable!("unshared above"),
             // SAFETY: a live view names the memory's current bytes (see the module
             // comment), and no other borrow of them is held while JavaScript runs.
             BufferStore::Wasm(view) => unsafe {
@@ -113,9 +113,13 @@ impl BufferBytes {
 
     /// The owned bytes for resizing. Views are never resizable buffers.
     pub(crate) fn owned_mut(&mut self) -> &mut Vec<u8> {
-        match self.store_mut() {
+        let store = Rc::make_mut(&mut self.0);
+        if let BufferStore::Shared(bytes) = store {
+            *store = BufferStore::Owned(bytes.to_vec());
+        }
+        match store {
             BufferStore::Owned(bytes) => bytes,
-            BufferStore::Segment(_) => unreachable!("store_mut copies segment bytes"),
+            BufferStore::Shared(_) => unreachable!("unshared above"),
             BufferStore::Wasm(_) => unreachable!("a Wasm memory view is not resizable"),
         }
     }
@@ -127,7 +131,7 @@ impl std::ops::Deref for BufferBytes {
     fn deref(&self) -> &[u8] {
         match &*self.0 {
             BufferStore::Owned(bytes) => bytes,
-            BufferStore::Segment(bytes) => bytes,
+            BufferStore::Shared(bytes) => bytes,
             // SAFETY: as for `make_mut`.
             BufferStore::Wasm(view) => unsafe { std::slice::from_raw_parts(view.base, view.len) },
         }
