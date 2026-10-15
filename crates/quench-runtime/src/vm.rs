@@ -432,7 +432,7 @@ struct Realm {
     immutable_global_lexical_bindings: FxHashSet<Atom>,
     global_lexical_states: FxHashMap<Value, GlobalLexicalState>,
     intrinsics: RealmIntrinsics,
-    jobs: Vec<PendingJob>,
+    jobs: std::collections::VecDeque<PendingJob>,
     template_objects: FxHashMap<(ProgramId, u32, u32), Value>,
     promise: PromiseRuntime,
 }
@@ -1230,7 +1230,7 @@ impl<H: Host> Vm<H> {
         self.heap.root_value(root)
     }
     pub(crate) fn enqueue_job(&mut self, callback: Value, args: Vec<Value>) {
-        self.realm.jobs.push(PendingJob {
+        self.realm.jobs.push_back(PendingJob {
             callback,
             this: Value::UNDEFINED,
             args,
