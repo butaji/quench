@@ -2097,19 +2097,23 @@ const FS_CONSTANT_VALUES: &[(&str, i32)] = &[
     ("COPYFILE_FICLONE_FORCE", UV_FS_COPYFILE_FICLONE_FORCE),
 ];
 
-fn fs_constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
-    let global = context.global_root()?;
-    let object = get(context, global, "Object")?;
-    let create = get(context, object, "create")?;
-    let null = context.null();
-    let constants = context.call_rooted(create, object, &[null])?;
-    for &(name, value) in FS_CONSTANT_VALUES {
+pub(crate) fn fs_constants(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId, RootedError> {
+    const CACHE_KEY: &str = "\0builtin:fs/constants";
+    const DIRENT_TYPES: &[(&str, i32)] = &[
+        ("UV_DIRENT_UNKNOWN", 0), ("UV_DIRENT_FILE", 1), ("UV_DIRENT_DIR", 2),
+        ("UV_DIRENT_LINK", 3), ("UV_DIRENT_FIFO", 4), ("UV_DIRENT_SOCKET", 5),
+        ("UV_DIRENT_CHAR", 6), ("UV_DIRENT_BLOCK", 7),
+    ];
+    let shared = context.host_mut().shared_state();
+    if let Some(constants) = shared.borrow().module_cache.get(CACHE_KEY).copied() { return Ok(constants); }
+    let constants = context.null_object_rooted()?;
+    for &(name, value) in FS_CONSTANT_VALUES.iter().chain(DIRENT_TYPES.iter()) {
         let key = context.string_rooted(name);
         let value = context.number(value as f64);
-        if !context.set_property_rooted(constants, key, value, constants)? {
-            return Err(RootedError::host("cannot set fs.constants property"));
-        }
+        context.define_data_property_rooted(constants, key, value, false, true, false)?;
     }
+    let retained = context.retain(constants)?;
+    shared.borrow_mut().module_cache.insert(CACHE_KEY.to_owned(), retained);
     Ok(constants)
 }
 
@@ -2250,7 +2254,8 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     let realpath = context.call_rooted(realpath_factory, undefined, &[realpath_sync])?;
     set(context, module, "realpath", realpath)?;
     let constants = fs_constants(context)?;
-    set(context, module, "constants", constants)?;
+    let key = context.string_rooted("constants");
+    context.define_data_property_rooted(module, key, constants, false, true, false)?;
     stat::install(context, module)?;
     super::fs_stat_watch_shared_vm::install(context, module)?;
     let rm = context.host_function(crate::host::shared_vm::operation("fsRm"))?;
