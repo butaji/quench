@@ -676,12 +676,8 @@ mod reference_boundary_tests {
             }],
         )
         .unwrap();
-        let binding = vm.heap.alloc(Cell::WasmGlobal {
-            value: host_value,
-            ty: WasmType::EXTERNREF,
-            declarations: Box::default(),
-            mutable: false,
-        });
+        let binding =
+            vm.alloc_wasm_global(host_value, WasmType::EXTERNREF, Default::default(), false);
         let binding_root = vm.root(binding);
         let imported_instance = vm
             .instantiate_wasm_module_with_imports(&imported, &[binding_root])

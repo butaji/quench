@@ -13,7 +13,7 @@ pub(super) enum GcFieldIndex {
 
 enum ArraySegmentValues {
     Data {
-        bytes: Option<std::rc::Rc<Vec<u8>>>,
+        bytes: Option<crate::heap::BufferBytes>,
         load: crate::wasm::memory::MemoryLoad,
         range: std::ops::Range<usize>,
     },
