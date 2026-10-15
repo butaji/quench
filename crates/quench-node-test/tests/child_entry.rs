@@ -7765,3 +7765,21 @@ console.log(JSON.stringify(out));
 "#,
     );
 }
+
+#[test]
+fn file_url_byte_conversion_preserves_raw_paths_forgiving_escapes_and_hooks() {
+    compare_node_stream_source(
+        r#"
+const url=require('node:url'),assert=require('node:assert'),B=Buffer,out=[];
+function result(f){try{const b=f();assert(B.isBuffer(b));return ['bytes',Array.from(b)]}catch(e){return ['error',e.name,e.code??null,e.message]}}
+for(const path of ['file:///tmp/a%20b','file:///%82%A0%82%A2','file:///a%2Fb','file:///a%5Cb','file:///%ZZ%2%','file:///C:/%FF%2F%5C','file://xn--bcher-kva/share%FF','https://example.org/'])for(const windows of [false,true,null])out.push([path,windows,result(()=>url.fileURLToPathBuffer(path,{windows}))]);
+const trace=[],u={};for(const [name,value] of Object.entries({href:'file:///',protocol:'file:',auth:undefined,path:undefined,hostname:'',pathname:'/a%FF%2Fb'}))Object.defineProperty(u,name,{get(){trace.push(name);return value}});out.push(result(()=>url.fileURLToPathBuffer(u,{get windows(){trace.push('windows');return false}})),trace);
+for(const path of ['https://example.org/','file://remote/']){try{url.fileURLToPath(path)}catch(e){out.push([String(e),Reflect.ownKeys(e).filter(k=>k!=='stack')])}}
+const marker={};assert.throws(()=>url.fileURLToPathBuffer(null,{get windows(){throw marker}}),e=>e===marker);
+for(const name of ['href','protocol','auth','path','hostname','pathname']){const u=new URL('file:///');Object.defineProperty(u,name,{get(){throw marker}});assert.throws(()=>url.fileURLToPathBuffer(u),e=>e===marker);}
+const originalFrom=Buffer.from,originalGlobal=globalThis.Buffer,calls=[];
+try{Buffer.from=function(...args){calls.push([typeof args[0],args[0] instanceof ArrayBuffer,args.length,args[1]??null,args[2]??null]);return Reflect.apply(originalFrom,this,args)};globalThis.Buffer=function(){throw marker};out.push(result(()=>url.fileURLToPathBuffer('file:///tmp/a%FF',{windows:false})));}finally{globalThis.Buffer=originalGlobal;Buffer.from=originalFrom;}
+out.push(calls);console.log(JSON.stringify(out));
+"#,
+    );
+}
