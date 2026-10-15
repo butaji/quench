@@ -4,7 +4,6 @@
 // realm by `modules/stream.rs`; `deps` carries the native pieces.
 (function (deps) {
   "use strict";
-  const EventEmitter = deps.events.EventEmitter;
   const StringDecoder = deps.string_decoder.StringDecoder;
   const nextTick = process.nextTick;
   const STREAM_OWNER = Symbol.for("quench.internal.streamOwner");
@@ -434,7 +433,7 @@
   }
 
   function initReadable(stream, options) {
-    if (!stream._emitter) stream._emitter = new EventEmitter();
+    if (!stream._emitter) deps.initializeEmitter(stream, options);
     attachStreamEmitterOwner(stream);
     stream._listenerWrappers ||= [];
     syncEventsView(stream);
@@ -2425,7 +2424,7 @@
   }
 
   function initWritable(stream, options) {
-    if (!stream._emitter) stream._emitter = new EventEmitter();
+    if (!stream._emitter) deps.initializeEmitter(stream, options);
     attachStreamEmitterOwner(stream);
     stream._listenerWrappers ||= [];
     syncEventsView(stream);

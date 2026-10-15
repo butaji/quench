@@ -1623,6 +1623,9 @@ pub(crate) fn write_operation(
         .get(2)
         .copied()
         .ok_or_else(|| RootedError::host("socket write callback is missing"))?;
+    if !bytes.is_empty() {
+        crate::modules::tls_shared_vm::socket::start_for_write(context, socket)?;
+    }
     let state = context.host_mut().shared_state();
     if !state.borrow().net_sockets.contains_key(&id) {
         return Err(RootedError::host("socket is closed"));
@@ -2274,6 +2277,11 @@ pub(crate) fn start_tls(transport: &mut Transport, id: u64) {
     {
         tls.start();
     }
+}
+pub(crate) fn tls_is_dormant(transport: &Transport, id: u64) -> bool {
+    transport.sockets.get(&id).is_some_and(|socket| {
+        matches!(&socket.stream, SocketStream::Encrypted(tls) if tls.dormant())
+    })
 }
 pub(crate) fn receive_tls(transport: &mut Transport, id: u64, bytes: &[u8]) {
     if let Some(SharedSocket {

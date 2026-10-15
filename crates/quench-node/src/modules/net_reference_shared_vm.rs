@@ -99,7 +99,10 @@ fn create_handle(
     object: Option<RootId>,
 ) -> Result<RootId, RootedError> {
     let is_socket = context.boolean(matches!(kind, EndpointKind::Socket));
-    let handle = context.object_rooted()?;
+    let reusable = if matches!(kind, EndpointKind::Socket) {
+        if let Some(object) = object { super::tls_shared_vm::handle::reusable(context, object)? } else { None }
+    } else { None };
+    let handle = if let Some(handle) = reusable { handle } else { context.object_rooted()? };
     if let Some(object) = object {
         let owner_key = owner_symbol(context)?;
         context.set_property_rooted(handle, owner_key, object, handle)?;

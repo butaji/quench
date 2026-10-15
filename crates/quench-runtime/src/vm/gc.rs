@@ -590,7 +590,7 @@ impl<H: Host> Vm<H> {
                 .promise
                 .dynamic_import_jobs
                 .iter()
-                .flat_map(|job| job.promises.iter().copied()),
+                .map(|job| job.promise),
         );
         roots.extend(self.realm.jobs.iter().flat_map(|job| {
             std::iter::once(job.callback)

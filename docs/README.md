@@ -635,3 +635,7 @@ with fault-around), but comparisons still evict every binary first
 Measure peak RSS with a launcher whose own image is small (`vfork`, `exec`,
 `wait4`): a forked interpreter's pre-`exec` image counts toward the child's
 `ru_maxrss`.
+
+The [no-JIT web framework benchmark](web-benchmarks.md) compares Quench, Node
+and Bun using pinned upstream HTTP workloads and retains correctness and runtime
+identity evidence for each framework/runtime combination.

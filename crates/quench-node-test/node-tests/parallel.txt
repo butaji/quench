@@ -1,6 +1,8 @@
 # Reviewed upstream Node.js test/parallel fixtures selected for host behavior.
 # Inline profile tags derive targeted fixture runs; default mode runs all.
 # A selected case stays here when it exposes an implemented API gap.
+# Oracle source: tests/node pinned to stable v26.12.0. Four prior Node-main-only
+# filenames below are retained as comments because that release has no such files.
 test-assert-fail.js
 test-assert-if-error.js
 test-events-getmaxlisteners.js
@@ -394,7 +396,7 @@ test-dns-resolveany-ttl-overflow.js
 test-dns-resolver-max-timeout.js
 test-dns-lookup-promises-options-deprecated.js
 test-dns-multi-channel.js
-test-dns-reverse-dns-only.js
+# Not in v26.12.0: test-dns-reverse-dns-only.js
 test-dns-resolvens-typeerror.js
 test-net-access-byteswritten.js
 test-net-during-close.js
@@ -508,8 +510,8 @@ test-stream-finished.js
 test-stream-construct.js
 test-async-hooks-enable-disable.js
 test-crypto-argon2-unsupported.js
-test-crypto-dep0181.js
-test-crypto-dep0183.js
+# Not in v26.12.0: test-crypto-dep0181.js
+# Not in v26.12.0: test-crypto-dep0183.js
 test-crypto-certificate.js
 test-crypto-classes.js
 test-crypto-default-shake-lengths.js
@@ -518,7 +520,7 @@ test-crypto-dh-curves.js
 test-crypto-dh-errors.js
 test-crypto-dh-group-setters.js
 test-crypto-dep0204.js
-test-crypto-dep0206.js
+# Not in v26.12.0: test-crypto-dep0206.js
 test-crypto-hash.js
 test-crypto-hmac.js
 test-crypto-sign-verify.js
@@ -738,3 +740,10 @@ test-promise-unhandled-warn.js # profile=promise-rejections
 test-promises-warning-on-unhandled-rejection.js # profile=promise-rejections
 test-promises-unhandled-symbol-rejections.js # profile=promise-rejections
 test-promises-unhandled-proxy-rejections.js # profile=promise-rejections
+
+# Web HTTP parity: unchanged stable Node fixtures for request/response framing.
+test-http-res-write-after-end.js # profile=web-parity
+test-http-request-arguments.js # profile=web-parity
+test-http-server-de-chunked-trailer.js # profile=web-parity
+test-http-request-method-delete-payload.js # profile=web-parity
+test-http-transfer-encoding-repeated-chunked.js # profile=web-parity

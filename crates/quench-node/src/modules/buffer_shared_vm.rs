@@ -638,7 +638,9 @@ pub(crate) fn install_blob_export(
 ) -> Result<(), RootedError> {
     let global = context.global_root()?;
     let blob = get(context, global, "Blob")?;
-    set(context, module, "Blob", blob)
+    set(context, module, "Blob", blob)?;
+    let file = get(context, global, "File")?;
+    set(context, module, "File", file)
 }
 
 pub(crate) fn encode(
