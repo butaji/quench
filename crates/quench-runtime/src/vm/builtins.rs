@@ -1158,10 +1158,10 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let atom = self.intern_atom(name);
-        self.set_property(self.realm.globals, atom, value)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             self.realm.globals,
-            PropertyKey::string(atom),
+            atom,
+            value,
             PropertyAttributes {
                 writable: true,
                 enumerable: false,
@@ -1170,7 +1170,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         Ok(())
     }
     pub(super) fn set_named(
@@ -1318,10 +1318,10 @@ impl<H: Host> Vm<H> {
         value: Value,
     ) -> Result<(), JsError> {
         let atom = self.intern_atom(name);
-        self.set_property(object, atom, value)?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             object,
-            property_key::PropertyKey::string(atom),
+            atom,
+            value,
             PropertyAttributes {
                 writable: true,
                 enumerable: false,
@@ -1330,7 +1330,7 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         Ok(())
     }
 }

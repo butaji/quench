@@ -27,8 +27,10 @@ pub(super) fn active_shape_attributes(
     let mut entries = Vec::new();
     for id in chain {
         match shapes[id as usize].transition {
-            ShapeTransition::Add { key, .. } => {
-                entries.push(Some((key, DEFAULT_SHAPE_ATTRIBUTES)));
+            ShapeTransition::Add {
+                key, attributes, ..
+            } => {
+                entries.push(Some((key, attributes.shape())));
             }
             ShapeTransition::Delete { slot, .. } => {
                 if let Some(entry) = entries.get_mut(slot as usize) {
@@ -178,15 +180,22 @@ fn rebuild_shape(
     {
         let slot = u32::try_from(slot).expect("object property index exceeds u32");
         let storage_len = slot as usize + 1;
+        // Data attributes ride on the add; an accessor's take a descriptor after it.
+        let data = entry.and_then(|(_, attributes)| attributes.data());
         let transition = match entry {
-            Some((key, _)) => ShapeTransition::Add { key, slot },
+            Some((key, _)) => ShapeTransition::Add {
+                key,
+                slot,
+                attributes: data.unwrap_or(DEFAULT_DATA_ATTRIBUTES),
+            },
             None => ShapeTransition::Vacant,
         };
         parent = append_compacted_shape(shapes, transitions, parent, transition, storage_len);
         if let Some((_, attributes)) = entry
-            && attributes != DEFAULT_SHAPE_ATTRIBUTES
+            && data.is_none()
         {
-            let attributes = ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
+            let attributes =
+                ShapeAttributes::record(attributes.attributes(old_accessors), accessors);
             parent = append_compacted_shape(
                 shapes,
                 transitions,
@@ -837,7 +846,7 @@ impl<H: Host> Vm<H> {
         #[cfg(feature = "profile-memory")]
         let live_shape_count = live_shapes.len();
         let mut mapping = vec![u32::MAX; old_shapes.len()];
-        let mut shapes = vec![Shape::root()];
+        let mut shapes = Shape::table();
         let mut transitions = FxHashMap::default();
         let old_accessors = std::mem::take(&mut self.shape_accessors);
         let mut accessors = Vec::new();
@@ -962,9 +971,8 @@ mod tests {
     use super::shape_reclaim_threshold_met;
     use crate::value::Value;
     use crate::vm::{
-        DEFAULT_PROPERTY_ATTRIBUTES, DictionaryTrigger, PropertyAttributes, Shape, ShapeAttributes,
-        ShapeTransition,
-        property_key::PropertyKey,
+        DEFAULT_DATA_ATTRIBUTES, DEFAULT_PROPERTY_ATTRIBUTES, DictionaryTrigger,
+        PropertyAttributes, Shape, ShapeAttributes, ShapeTransition, property_key::PropertyKey,
     };
 
     #[test]
@@ -984,6 +992,7 @@ mod tests {
             ShapeTransition::Add {
                 key: PropertyKey::string(0),
                 slot: 0,
+                attributes: DEFAULT_DATA_ATTRIBUTES,
             },
             1,
             None,
@@ -997,6 +1006,7 @@ mod tests {
             ShapeTransition::Add {
                 key: symbol_key,
                 slot: 0,
+                attributes: DEFAULT_DATA_ATTRIBUTES,
             },
             1,
             None,

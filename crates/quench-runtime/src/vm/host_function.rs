@@ -92,10 +92,10 @@ impl<H: Host> Vm<H> {
         let function = self.native_with_env(Native::HostFunction, environment);
         self.set_builtin_function_name(function, name)?;
         let atom = self.intern_atom("length");
-        self.set_property(function, atom, Value::number(f64::from(length)))?;
-        self.set_property_attributes(
+        self.set_property_with_attributes(
             function,
-            PropertyKey::string(atom),
+            atom,
+            Value::number(f64::from(length)),
             PropertyAttributes {
                 writable: false,
                 enumerable: false,
@@ -104,22 +104,30 @@ impl<H: Host> Vm<H> {
                 getter: None,
                 setter: None,
             },
-        );
+        )?;
         if constructible {
             let prototype = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
             let constructor_atom = self.intern_atom("constructor");
-            self.set_property(prototype, constructor_atom, function)?;
-            self.set_property_attributes(prototype, PropertyKey::string(constructor_atom), PropertyAttributes {
-                enumerable: false,
-                ..DEFAULT_PROPERTY_ATTRIBUTES
-            });
+            self.set_property_with_attributes(
+                prototype,
+                constructor_atom,
+                function,
+                PropertyAttributes {
+                    enumerable: false,
+                    ..DEFAULT_PROPERTY_ATTRIBUTES
+                },
+            )?;
             let prototype_atom = self.prototype_atom();
-            self.set_property(function, prototype_atom, prototype)?;
-            self.set_property_attributes(function, PropertyKey::string(prototype_atom), PropertyAttributes {
-                enumerable: false,
-                configurable: false,
-                ..DEFAULT_PROPERTY_ATTRIBUTES
-            });
+            self.set_property_with_attributes(
+                function,
+                prototype_atom,
+                prototype,
+                PropertyAttributes {
+                    enumerable: false,
+                    configurable: false,
+                    ..DEFAULT_PROPERTY_ATTRIBUTES
+                },
+            )?;
         }
         Ok(function)
     }
