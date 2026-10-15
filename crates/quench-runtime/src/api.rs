@@ -1757,7 +1757,7 @@ var reason={};try{Date.parse({toString(){throw reason;}});print(false);}catch(e)
   for(var file of ['bad','mixed','parent','reexport']){
     var path='./task20-module-source-fixtures/'+file+'.mjs', first;
     try{await import(path);print(false);}catch(e){$262.gc();print(e instanceof SyntaxError);first=e;}
-    try{await import(path);print(false);}catch(e){print(e===first);}
+    try{await import(path);print(false);}catch(e){print(e!==first);}
     print(qq_source_runs===0 && qq_bad_runs===0 && qq_effect_runs===0);
   }
   var effect=await import('./task20-module-source-fixtures/effect.mjs');print(effect.value===43 && qq_effect_runs===1);
@@ -4589,6 +4589,22 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             print(a.value + ':' + barrel.value + ':' + read());
             print(Object.getOwnPropertyDescriptor(barrel, 'value').value);
             import('./a.mjs').then(namespace => print(namespace === a));
+            (async () => {
+                for (const name of ['missing-export', 'syntax-failure']) {
+                    const failures = await Promise.allSettled([
+                        import('./' + name + '.mjs'), import('./' + name + '.mjs')
+                    ]);
+                    print(failures.every(result => result.status === 'rejected'
+                        && result.reason instanceof SyntaxError)
+                        && failures[0].reason !== failures[1].reason);
+                }
+                const failures = await Promise.allSettled([
+                    import('./evaluation-failure.mjs'), import('./evaluation-failure.mjs')
+                ]);
+                print(failures[0].reason === failures[1].reason && evaluationEffects === 1);
+                const effect = await import('./effect.mjs');
+                print(effect.value === 43 && failureEffects === 1);
+            })();
         "#;
         const MODULES: &[(&str, &str)] = &[
             ("entry.mjs", SOURCE),
@@ -4597,6 +4613,10 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             ("alias.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/alias.mjs")),
             ("barrel.mjs", include_str!("../../../tests/npm-top300/regressions/esm-graph/barrel.mjs")),
             ("config.json", include_str!("../../../tests/npm-top300/regressions/esm-graph/config.json")),
+            ("missing-export.mjs", "import { missing } from './effect.mjs';"),
+            ("syntax-failure.mjs", "export const = 1;"),
+            ("evaluation-failure.mjs", "globalThis.evaluationEffects = (globalThis.evaluationEffects || 0) + 1; throw new Error('evaluation');"),
+            ("effect.mjs", "globalThis.failureEffects = (globalThis.failureEffects || 0) + 1; export const value = 43;"),
         ];
         struct ModuleCapture(Capture);
         impl Host for ModuleCapture {
@@ -4614,7 +4634,7 @@ print((function* generatorCaller() { yield leaf(); })().next().value === null);
             let mut runtime = Runtime::new(ModuleCapture(view.clone()));
             let program = compile(SOURCE, "cyclic-module-graph/entry.mjs").unwrap();
             runtime.execute(&program).unwrap();
-            assert_eq!(view.0.borrow().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true"]);
+            assert_eq!(view.0.borrow().as_slice(), &["true", "[\"b\",\"a\"]", "1", "true", "true", "true", "2:2:2", "2", "true", "true", "true", "true", "true"]);
         }
     }
 

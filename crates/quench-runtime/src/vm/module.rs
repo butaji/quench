@@ -226,6 +226,16 @@ impl ModuleRecord {
         }
     }
 
+    /// Instantiation failure leaves the compiled graph unlinked, so the next
+    /// import retries it. Only failures after evaluation starts are permanent.
+    pub(crate) fn retry_instantiation(&mut self) -> Option<Vec<Value>> {
+        if !matches!(self.phase(), ModulePhase::Loading | ModulePhase::Linking) {
+            return None;
+        }
+        self.outcome = ModuleOutcome::Pending(ModulePhase::Loading);
+        Some(std::mem::take(&mut self.waiters))
+    }
+
     pub(crate) fn roots(&self) -> impl Iterator<Item = Value> {
         let outcome = match self.outcome {
             ModuleOutcome::Deferred(value)
