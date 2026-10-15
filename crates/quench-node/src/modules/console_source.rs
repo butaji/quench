@@ -1,6 +1,13 @@
 //! Canonical JavaScript source shared by console runtime adapters.
 
-pub(crate) const CONSOLE_CLASS: &str = r#"((initialize, write, format, formatWithOptions) => class Console {
+pub(crate) const CONSOLE_CLASS: &str = r#"((initialize, write, loadUtil) => {
+const formatting = () => loadUtil();
+// util.format leaves strings as they are when the first has no format specifier, so such
+// output needs no util at all.
+const plainStrings = (args) =>
+  args.every((arg) => typeof arg === "string") &&
+  (args.length < 2 || !args[0].includes("%"));
+return class Console {
   constructor(stdout, stderr, ignoreErrors) {
     const options = stdout && typeof stdout === "object" &&
       (stdout.stdout || stdout.stderr) ? stdout : null;
@@ -23,6 +30,8 @@ pub(crate) const CONSOLE_CLASS: &str = r#"((initialize, write, format, formatWit
       typeof this._inspectOptions.get === "function"
       ? this._inspectOptions.get(output)
       : this._inspectOptions;
+    if (plainStrings(args)) return args.join(" ");
+    const { format, formatWithOptions } = formatting();
     if (configured && typeof formatWithOptions === "function") {
       return formatWithOptions(configured, ...args);
     }
@@ -53,4 +62,5 @@ pub(crate) const CONSOLE_CLASS: &str = r#"((initialize, write, format, formatWit
   debug(...args) { this.log(...args); }
   dirxml(...args) { this.log(...args); }
   groupCollapsed() {}
+};
 })"#;

@@ -8,10 +8,12 @@ const NATIVE_ENVIRONMENT_FUNCTION: u32 = u32::MAX;
 enum HostEnvironmentSlot {
     Operation,
     Data,
+    Constructible,
 }
 
 impl HostEnvironmentSlot {
     const COUNT: usize = Self::Data as usize + 1;
+    const CONSTRUCTOR_COUNT: usize = Self::Constructible as usize + 1;
 }
 
 impl<H: Host> Vm<H> {
@@ -32,7 +34,19 @@ impl<H: Host> Vm<H> {
     }
 
     pub(crate) fn create_host_function(&mut self, id: HostFunctionId) -> Result<Value, JsError> {
-        self.create_host_function_with_capture(id, None)
+        self.create_host_function_with_capture(id, None, false)
+    }
+
+    pub(crate) fn create_host_constructor(&mut self, id: HostFunctionId) -> Result<Value, JsError> {
+        self.create_host_function_with_capture(id, None, true)
+    }
+
+    pub(crate) fn create_host_constructor_with_data(
+        &mut self,
+        id: HostFunctionId,
+        data: Value,
+    ) -> Result<Value, JsError> {
+        self.create_host_function_with_capture(id, Some(data), true)
     }
 
     pub(crate) fn create_host_function_with_data(
@@ -40,13 +54,14 @@ impl<H: Host> Vm<H> {
         id: HostFunctionId,
         data: Value,
     ) -> Result<Value, JsError> {
-        self.create_host_function_with_capture(id, Some(data))
+        self.create_host_function_with_capture(id, Some(data), false)
     }
 
     fn create_host_function_with_capture(
         &mut self,
         id: HostFunctionId,
         data: Option<Value>,
+        constructible: bool,
     ) -> Result<Value, JsError> {
         self.embedding_program()?;
         let (name, length) = self
@@ -57,12 +72,20 @@ impl<H: Host> Vm<H> {
             .ok_or_else(|| JsError("unknown host function index".into()))?;
         // Plain callbacks need only the exact numeric operation index. A captured
         // callback adds ordinary traced environment slots, not a side registry.
-        let environment = match data {
-            None => Value::number(f64::from(id.0)),
-            Some(data) => {
-                let mut slots = vec![Value::UNDEFINED; HostEnvironmentSlot::COUNT];
+        let environment = match (data, constructible) {
+            (None, false) => Value::number(f64::from(id.0)),
+            (data, constructible) => {
+                let count = if constructible {
+                    HostEnvironmentSlot::CONSTRUCTOR_COUNT
+                } else {
+                    HostEnvironmentSlot::COUNT
+                };
+                let mut slots = vec![Value::UNDEFINED; count];
                 slots[HostEnvironmentSlot::Operation as usize] = Value::number(f64::from(id.0));
-                slots[HostEnvironmentSlot::Data as usize] = data;
+                slots[HostEnvironmentSlot::Data as usize] = data.unwrap_or(Value::UNDEFINED);
+                if constructible {
+                    slots[HostEnvironmentSlot::Constructible as usize] = Value::TRUE;
+                }
                 self.native_environment(slots)
             }
         };
@@ -82,7 +105,28 @@ impl<H: Host> Vm<H> {
                 setter: None,
             },
         );
+        if constructible {
+            let prototype = self.heap.alloc(Cell::Object(Self::empty_object(self.object_proto)));
+            let constructor_atom = self.intern_atom("constructor");
+            self.set_property(prototype, constructor_atom, function)?;
+            self.set_property_attributes(prototype, PropertyKey::string(constructor_atom), PropertyAttributes {
+                enumerable: false,
+                ..DEFAULT_PROPERTY_ATTRIBUTES
+            });
+            let prototype_atom = self.prototype_atom();
+            self.set_property(function, prototype_atom, prototype)?;
+            self.set_property_attributes(function, PropertyKey::string(prototype_atom), PropertyAttributes {
+                enumerable: false,
+                configurable: false,
+                ..DEFAULT_PROPERTY_ATTRIBUTES
+            });
+        }
         Ok(function)
+    }
+
+    pub(super) fn host_function_constructible(&self, environment: Value) -> bool {
+        self.heap.environment_slot(environment, HostEnvironmentSlot::Constructible as usize)
+            .and_then(Value::as_bool) == Some(true)
     }
 
     pub(crate) fn host_function_data(&self) -> Result<Value, JsError> {

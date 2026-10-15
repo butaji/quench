@@ -454,7 +454,9 @@ Their results belong in `evidence/`; work status belongs in Linear.
 
 ## Lazy web globals
 
-`URL`/`URLSearchParams`, `TextDecoder`/`TextEncoder`, the web-stream family and
+`URL`/`URLSearchParams`, `TextDecoder`/`TextEncoder`, the DOM event family
+(`DOMException`, `AbortSignal`, `AbortController`, `Event`, `EventTarget`,
+`MessageEvent`, `MessagePort`, `MessageChannel`), the web-stream family and
 the web-API group (`Blob`, `Headers`, `Request`, `Response`) are lazy data
 properties of the global object, as in Node, and the runtime's `Temporal` is one
 too. A group's polyfill runs once, under the startup intrinsics, when script
