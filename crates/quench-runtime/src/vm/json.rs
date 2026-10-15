@@ -1357,7 +1357,7 @@ impl<H: Host> Vm<H> {
 
 #[cfg(test)]
 mod tests {
-    use super::{JsString, JsonParser, JsonValue, write_json_string};
+    use super::{JsString, JsonParser, JsonTreeBuilder, JsonValue, write_json_string};
 
     #[test]
     fn json_string_writer_preserves_lone_surrogates() {
