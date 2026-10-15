@@ -8,10 +8,9 @@ use crate::host::NodeHost;
 use quench_runtime::{NativeContext, RootId, RootedError};
 
 const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
-    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative) => {
+    r#"(hashDigest, hmacDigest, signDigest, verifyDigest, Buffer, randomBytes, pbkdf2, scryptNative, Transform, cipherProcess, generateRsaKeyPairNative, rsaCryptNative, ecdhNative, setEngineNative, handleSymbol) => {
   const states = new WeakMap();
   const secretKeys = new WeakMap();
-  const kHandle = Symbol.for("quench.internal.crypto.kHandle");
   let repeatedHmacDigestWarningEmitted = false;
   const unsupportedDigest = (algorithm) => {
     const error = new Error(`Invalid digest: ${algorithm}`);
@@ -89,7 +88,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
       const defaultEncoding = options?.defaultEncoding ?? "utf8";
       const state = { name, chunks: [], lifecycle: "open", defaultEncoding, outputLength };
       states.set(this, state);
-      this[kHandle] = { update: () => true, digest: () => Buffer.from([]) };
+      this[handleSymbol()] = { update: () => true, digest: () => Buffer.from([]) };
       this._writableState.defaultEncoding = defaultEncoding;
       this._transform = (chunk, encoding, callback) => {
         try {
@@ -114,7 +113,7 @@ const CRYPTO_FACTORY: &str = quench_js_check::checked_js!(
     update(data, encoding) {
       const state = states.get(this);
       if (state.lifecycle !== "open") throw finalized();
-      if (!this[kHandle].update(data, encoding)) {
+      if (!this[handleSymbol()].update(data, encoding)) {
         const error = new Error("Hash update failed");
         error.code = "ERR_CRYPTO_HASH_UPDATE_FAILED";
         throw error;
@@ -1906,6 +1905,7 @@ pub(crate) fn module(
     let rsa_crypt = context.host_function(crate::host::shared_vm::operation("cryptoRsaCrypt"))?;
     let set_engine = context.host_function(crate::host::shared_vm::operation("cryptoSetEngine"))?;
     let ecdh = context.host_function(crate::host::shared_vm::operation("cryptoEcdh"))?;
+    let handle_symbol = context.host_function(crate::host::shared_vm::operation("cryptoHandleSymbol"))?;
     let global = context.global_root()?;
     let buffer = get(context, global, "Buffer")?;
     let undefined = context.undefined();
@@ -1927,6 +1927,7 @@ pub(crate) fn module(
             rsa_crypt,
             ecdh,
             set_engine,
+            handle_symbol,
         ],
     )
 }
@@ -2968,4 +2969,25 @@ fn type_error(
 ) -> Result<RootedError, RootedError> {
     let error = context.type_error_rooted(message)?;
     Ok(context.throw(error))
+}
+
+/// Native hashes use the same private symbol captured by the original Node utility.
+/// Resolve on first hash construction, after the crypto module has entered the cache.
+pub(crate) fn handle_symbol(
+    context: &mut NativeContext<'_, NodeHost>,
+    _: RootId,
+    _: &[RootId],
+) -> Result<RootId, RootedError> {
+    let state = context.host_mut().shared_state();
+    if let Some(symbol) = state.borrow().crypto_handle_symbol {
+        return Ok(symbol);
+    }
+    crate::host::shared_vm::commonjs::node_library_export(
+        context,
+        "crypto.js",
+        "internal/crypto/util.js",
+        "kHandle",
+    )?;
+    let symbol = state.borrow().crypto_handle_symbol;
+    symbol.ok_or_else(|| RootedError::host("Node crypto handle symbol capture missing"))
 }

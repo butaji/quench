@@ -8146,3 +8146,42 @@ const fs=require('node:fs'),out=[],fd=fs.openSync('/tmp','r');try{for(const posi
 "#,
     );
 }
+
+#[test]
+fn application_internal_module_names_do_not_receive_node_bootstrap_transforms() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("package.json"),
+        r#"{"type":"commonjs"}"#,
+    )
+    .unwrap();
+    for (name, source) in [
+        ("crypto/util.js", "const kHandle = Symbol('kHandle'); module.exports=[kHandle.description,Symbol.keyFor(kHandle)===undefined];"),
+        ("per_context/primordials.js", "module.exports='application-primordials';"),
+        ("bootstrap/realm.js", "module.exports=[typeof getInternalBinding,typeof getLinkedBinding];"),
+    ] {
+        let file=directory.path().join("internal").join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file,source).unwrap();
+    }
+    let source=format!("const p={};console.log(JSON.stringify(['crypto/util','per_context/primordials','bootstrap/realm'].map(name=>require(p+'/internal/'+name+'.js'))));",serde_json::to_string(&directory.path().to_string_lossy()).unwrap());
+    compare_node_stream_source(&source);
+}
+
+#[test]
+fn crypto_hash_handle_symbols_are_private_canonical_and_not_public_registry_keys() {
+    compare_node_source_with_args(
+        r#"
+const assert=require('node:assert'),crypto=require('node:crypto'),utility=require('internal/crypto/util'),key=utility.kHandle;
+assert.strictEqual(key.description,'kHandle');assert.strictEqual(Symbol.keyFor(key),undefined);
+const first=crypto.createHash('sha256');assert(Object.getOwnPropertySymbols(first).includes(key));
+const replacement=Symbol('replacement');utility.kHandle=replacement;
+try {
+ const second=crypto.createHash('sha256');assert(Object.getOwnPropertySymbols(second).includes(key));assert(!Object.getOwnPropertySymbols(second).includes(replacement));
+ assert.strictEqual(first.update('abc').digest('hex'),second.update('abc').digest('hex'));
+ console.log(key.description,Symbol.keyFor(key)===undefined,first instanceof crypto.Hash);
+}finally{utility.kHandle=key;}
+"#,
+        &["--expose-internals"],
+    );
+}
