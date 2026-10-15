@@ -1712,6 +1712,7 @@ const getLinkedBinding = () => ({});
                 drop(file_text);
                 if parent.is_none() {
                     crate::host::resident_pages::release_read_only_pages();
+                    crate::host::resident_pages::release_unused_stack();
                     crate::host::resident_pages::quench_entry_compiled();
                 }
                 let mut arguments = vec![exports, require, module, name, directory];
