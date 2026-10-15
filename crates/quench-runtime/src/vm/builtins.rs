@@ -719,6 +719,7 @@ impl<H: Host> Vm<H> {
         self.install_typed_array_iterator_symbol(program)?;
         let symbol_prototype_atom = self.prototype_atom();
         let symbol_prototype = self.get_property(program, symbol, symbol_prototype_atom)?;
+        self.realm.intrinsics.builtin_prototypes.insert((self.realm.globals, Native::Symbol), symbol_prototype);
         let symbol_to_primitive = self.native_value(Native::SymbolToPrimitive);
         self.set_builtin_function_name(symbol_to_primitive, "[Symbol.toPrimitive]")?;
         let to_primitive = self.well_known_symbols["toPrimitive"];
@@ -1239,18 +1240,23 @@ impl<H: Host> Vm<H> {
     ) -> Result<(), JsError> {
         let atom = self.intern_atom("name");
         let property = PropertyKey::string(atom);
-        self.set_property_attributes(
-            function,
-            property,
-            PropertyAttributes {
-                writable: true,
-                enumerable: false,
-                configurable: true,
-                accessor: false,
-                getter: None,
-                setter: None,
-            },
-        );
+        // An existing `name` is made writable so the store below replaces it. A function
+        // without one (a fresh bound function) gets it from the store; recording attributes
+        // for an absent key would leave a stale descriptor and flush every field cache.
+        if self.object_property_slot(function, property).is_some() {
+            self.set_property_attributes(
+                function,
+                property,
+                PropertyAttributes {
+                    writable: true,
+                    enumerable: false,
+                    configurable: true,
+                    accessor: false,
+                    getter: None,
+                    setter: None,
+                },
+            );
+        }
         let value = self.heap.alloc(Cell::String(JsString::from_str(name)));
         self.set_property(function, atom, value)?;
         self.set_property_attributes(

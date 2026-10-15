@@ -626,7 +626,9 @@ fn realm_intrinsic_registries_keep_each_realm_rooted() {
 fn unreachable_promise_callback_and_aggregate_cycles_are_collected() {
     let mut vm = Vm::new(SilentHost);
     let program = Engine::specialize(
-        "function make() { var p = new Promise(() => {}), value = {}; var handler = () => value; return [p, p.then(handler), p.finally(handler), Promise.all([p])]; }",
+        // A species other than %Promise% keeps a real capability; %Promise% reactions settle
+        // their promise directly.
+        "function make() { var p = new Promise(() => {}), q = new Promise(() => {}), value = {}; q.constructor = { [Symbol.species]: function (executor) { return new Promise(executor); } }; var handler = () => value; return [p, q, p.then(handler), q.then(handler), p.finally(handler), Promise.all([p])]; }",
         "promise-owner-cycles.js",
     ).unwrap();
     vm.execute(&program).unwrap();
@@ -9709,5 +9711,32 @@ fn script_directive_completion_survives_declarations_and_preserves_string_units(
         vm.execute(&program).unwrap();
         let value = vm.eval_global_script_named(&program, r"'\ud800'; var x;", false, "directive-completion.js").unwrap();
         assert!(matches!(vm.heap.get(value), Some(super::Cell::String(text)) if text.units().wide().as_ref() == [0xd800]));
+    }
+}
+
+#[test]
+fn primitive_intrinsic_prototypes_survive_global_replacement_realms_and_collection() {
+    let setup = r#"
+      globalThis.savedPrimitives={constructors:[Number,Boolean,Symbol,BigInt,String],values:[17,true,Symbol('original'),19n,'text']};
+      savedPrimitives.prototypes=savedPrimitives.constructors.map(constructor=>constructor.prototype);
+      for(const prototype of savedPrimitives.prototypes)prototype.originalReceiver=function(){'use strict';return this;};
+      for(const name of ['Number','Boolean','Symbol','BigInt','String'])globalThis[name]=function Replacement(){};
+    "#;
+    let check = r#"
+      for(let i=0;i<savedPrimitives.values.length;i++){
+        const value=savedPrimitives.values[i],prototype=savedPrimitives.prototypes[i];
+        if(value.originalReceiver()!==value||value.valueOf()!==value)throw Error('primitive receiver or prototype changed');
+        if(Object.getPrototypeOf(Object(value))!==prototype)throw Error('boxed intrinsic prototype changed');
+      }
+      if((19n).toString()!=='19'||(17).toString()!=='17'||true.toString()!=='true')throw Error('primitive formatting changed');
+    "#;
+    for program in [Engine::compile(crate::ExecutionRequest{source:setup,name:"primitive-intrinsics.js",kind:crate::SourceKind::Script}).unwrap(),Engine::specialize(setup,"primitive-intrinsics.js").unwrap()] {
+        let mut vm=Vm::new(SilentHost);vm.execute(&program).unwrap();
+        let original=vm.realm.globals;
+        let other=vm.create_realm_global(&program).unwrap();vm.switch_realm_global(other);
+        vm.eval_global_script_named(&program,setup,false,"foreign-primitive-intrinsics.js").unwrap();
+        vm.collect_now(&program);vm.eval_global_script_named(&program,check,false,"foreign-primitive-check.js").unwrap();
+        vm.switch_realm_global(original);vm.collect_now(&program);
+        vm.eval_global_script_named(&program,check,false,"original-primitive-check.js").unwrap();
     }
 }
