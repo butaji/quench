@@ -231,19 +231,6 @@ const BUFFER_FACTORY: &str = quench_js_check::checked_js!(
       return { type: "Buffer", data: Array.from(this) };
     }
 
-    toString(encoding = "utf8", start = 0, end = this.length) {
-      const normalized = normalizeEncoding(encoding);
-      const index = (value, fallback) => {
-        const number = Math.trunc(Number(value));
-        if (Number.isNaN(number)) return fallback;
-        if (number < 0) return 0;
-        return Math.min(this.length, number);
-      };
-      const first = index(start, 0);
-      const last = Math.max(first, index(end, 0));
-      return decode(this.subarray(first, last), normalized);
-    }
-
     slice(start = 0, end = this.length) {
       return this.subarray(start, end);
     }
@@ -583,6 +570,13 @@ pub(crate) fn module(context: &mut NativeContext<'_, NodeHost>) -> Result<RootId
     super::buffer_bigint_shared_vm::install(context, prototype)?;
     super::buffer_swap_shared_vm::install(context, prototype)?;
     super::buffer_write_shared_vm::install(context, prototype)?;
+    let limits = get(context, constructor, "constants")?;
+    for name in ["MAX_LENGTH", "MAX_STRING_LENGTH"] {
+        let key = context.string_rooted(name);
+        let value = get(context, limits, name)?;
+        context.define_data_property_rooted(limits, key, value, false, true, false)?;
+    }
+    super::buffer_string_shared_vm::install(context, prototype, limits)?;
     super::buffer_fill_shared_vm::install(context, prototype)?;
     super::buffer_inspect_shared_vm::install(context, module, prototype)?;
     install_backing_getters(context, buffer, prototype)?;

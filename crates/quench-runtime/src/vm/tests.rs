@@ -9780,7 +9780,9 @@ fn typed_array_getter_diagnostics_do_not_observe_guest_conversion_hooks() {
       let hooks=0;const object={toString(){hooks++;throw Error('guest hook');},[Symbol.toStringTag]:'Special'};
       for(const property of ['length','byteLength','byteOffset','buffer']) {
         const getter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype),property).get;
-        for(const [value,label] of [[null,'null'],[undefined,'undefined'],[object,'#<Object>'],[new DataView(new ArrayBuffer(0)),'#<DataView>']]) {
+        const accessor={};Object.defineProperty(accessor,'toString',{get(){hooks++;throw Error('getter');}});
+        const tagged={toString(){hooks++;throw Error('conversion');}};Object.defineProperty(tagged,Symbol.toStringTag,{get(){hooks++;throw Error('tag');}});
+        for(const [value,label] of [[null,'null'],[undefined,'undefined'],[{},'#<Object>'],[object,'[object Special]'],[Object.create(Uint8Array.prototype),'[object Object]'],[Object.create(null),'[object Object]'],[accessor,'[object Object]'],[tagged,'[object Object]'],[new DataView(new ArrayBuffer(0)),'#<DataView>']]) {
           try { getter.call(value);throw Error('accepted invalid receiver'); }
           catch(error) { if(!(error instanceof TypeError)||error.message!==`Method get TypedArray.prototype.${property} called on incompatible receiver ${label}`)throw error; }
         }
