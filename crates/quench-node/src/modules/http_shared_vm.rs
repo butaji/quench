@@ -42,7 +42,7 @@ pub(crate) fn has_work(shared_state: &Rc<RefCell<crate::host::SharedNodeState>>)
     host.http
         .servers
         .values()
-        .any(|server| server.listener.is_some() || !server.connections.is_empty())
+        .any(|server| server.listening_pending || (server.closing && server.connections.is_empty()))
         || !host.http.clients.is_empty()
         || crate::modules::net_shared_vm::has_work(&host.tcp)
 }
