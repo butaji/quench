@@ -65,7 +65,7 @@ const SERVER_CLOSE_FACTORY: &str = r#"((closeOperation) => function(callback) {
   return this;
 })"#;
 
-const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOperation, removeHeader, write, finish, writeHeadOperation, destroyOperation) => {
+const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOperation, removeHeader, write, finish, writeHeadOperation, destroyOperation, initializeResponse) => {
   function ServerResponse(id, statusCode, request, server, socket) {
     if (typeof id !== "number") {
       socket = undefined;
@@ -102,7 +102,7 @@ const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOpera
     const writeStream = response.write.bind(response);
     response.write = (chunk, encoding, callback) => {
       const result = writeStream(chunk, encoding, callback);
-      write(id, chunk, !ending, response.statusCode, response.statusMessage);
+      write(id, chunk, !ending, response.statusCode, response.statusMessage, response);
       response.headersSent = true;
       return result;
     };
@@ -143,12 +143,13 @@ const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOpera
           invalid = true;
         }
       }
-      const message = writeHeadOperation(id, status, reason, entries, invalid);
+      const message = writeHeadOperation(id, status, reason, entries, invalid, response);
       response.statusCode = status;
       response.statusMessage = message;
       response.headersSent = true;
       return response;
     };
+    initializeResponse(id, response);
     return response;
   }
   ServerResponse.prototype = Object.create(Writable.prototype);
@@ -198,6 +199,30 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         context.host_function(crate::host::shared_vm::operation("httpResponseWriteHead"))?;
     let destroy_response =
         context.host_function(crate::host::shared_vm::operation("httpResponseDestroy"))?;
+    // Core owns the weak response-to-transport identity. Keeping the method on
+    // the prototype preserves ordinary method identity and receiver dispatch.
+    let response_data = context.null_object_rooted()?;
+    let global = context.global_root()?;
+    let key = context.string_rooted("WeakMap");
+    let weak_map = context.get_property_rooted(global, key)?;
+    let responses = context.construct_rooted(weak_map, weak_map, &[])?;
+    let key = context.string_rooted("prototype");
+    let prototype = context.get_property_rooted(weak_map, key)?;
+    let key = context.string_rooted("set");
+    let map_set = context.get_property_rooted(prototype, key)?;
+    set(context, response_data, "responses", responses)?;
+    set(context, response_data, "set", map_set)?;
+    let initialize_response = context.host_function_with_data(
+        crate::host::shared_vm::operation("httpResponseInitialize"),
+        response_data,
+    )?;
+    let send = context.host_constructor_with_data(
+        crate::host::shared_vm::operation("httpResponseSend"),
+        responses,
+    )?;
+    let key = context.string_rooted("name");
+    let name = context.string_rooted("_send");
+    context.define_data_property_rooted(send, key, name, false, false, true)?;
     let stream = crate::host::shared_vm::commonjs::stream_module(context)?;
     let writable_key = context.string_rooted("Writable");
     let writable = context.get_property_rooted(stream, writable_key)?;
@@ -216,8 +241,12 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
             finish,
             write_head,
             destroy_response,
+            initialize_response,
         ],
     )?;
+    let key = context.string_rooted("prototype");
+    let prototype = context.get_property_rooted(response_factory, key)?;
+    set(context, prototype, "_send", send)?;
     let response_factory = context.retain(response_factory)?;
     let global = context.global_root()?;
     let buffer_key = context.string_rooted("Buffer");
@@ -605,7 +634,11 @@ pub(crate) fn agent_get_name(
         context.get_property_rooted(options, key)
     };
     let host = get(context, "host")?;
-    let mut name = if context.truthy_rooted(host)? { host } else { context.string_rooted("localhost") };
+    let mut name = if context.truthy_rooted(host)? {
+        host
+    } else {
+        context.string_rooted("localhost")
+    };
     for property in ["port", "localAddress"] {
         let colon = context.string_rooted(":");
         name = context.arithmetic_rooted(NativeArithmetic::Add, name, colon)?;
@@ -617,7 +650,9 @@ pub(crate) fn agent_get_name(
     }
     let family = get(context, "family")?;
     let ipv4 = context.rooted_value(family).and_then(Value::as_number) == Some(4.0);
-    let ipv6 = if ipv4 { false } else {
+    let ipv6 = if ipv4 {
+        false
+    } else {
         let family = get(context, "family")?;
         context.rooted_value(family).and_then(Value::as_number) == Some(6.0)
     };
@@ -810,6 +845,105 @@ pub(crate) fn response_get_header(
     }
 }
 
+pub(crate) fn response_initialize(
+    context: &mut Context<'_>,
+    _: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let id = argument(context, args.first().copied());
+    let response = argument(context, args.get(1).copied());
+    let data = context.host_function_data()?;
+    let key = context.string_rooted("responses");
+    let responses = context.get_property_rooted(data, key)?;
+    let key = context.string_rooted("set");
+    let map_set = context.get_property_rooted(data, key)?;
+    context.call_rooted(map_set, responses, &[response, id])?;
+    let yes = context.boolean(true);
+    set(context, response, "sendDate", yes)?;
+    Ok(context.undefined())
+}
+
+pub(crate) fn response_send(
+    context: &mut Context<'_>,
+    receiver: RootId,
+    args: &[RootId],
+) -> Result<RootId, RootedError> {
+    let responses = context.host_function_data()?;
+    let id = context.weak_map_get_rooted(responses, receiver)?;
+    let id = argument_id(context, Some(id))?;
+    let chunk = argument(context, args.first().copied());
+    let bytes = match context.view_bytes_rooted(chunk) {
+        Some(bytes) => bytes,
+        None => {
+            let encoding = args.get(1).copied();
+            let encoding = match encoding {
+                Some(value) if context.truthy_rooted(value)? => context.to_string(value)?,
+                _ => "utf8".to_owned(),
+            };
+            let Some(encoding_name) = crate::modules::buffer_codec::canonical_encoding(&encoding)
+            else {
+                return throw_response_error(
+                    context,
+                    true,
+                    "ERR_UNKNOWN_ENCODING",
+                    &format!("Unknown encoding: {encoding}"),
+                );
+            };
+            let units = context.to_string_code_units(chunk)?;
+            crate::modules::buffer_codec::encode_units(&units, encoding_name)
+        }
+    };
+    let shared = context.host_mut().shared_state();
+    let socket = shared
+        .borrow()
+        .http
+        .responses
+        .get(&id)
+        .map(|response| response.socket);
+    let Some(socket) = socket else {
+        return Ok(context.boolean(false));
+    };
+    if !bytes.is_empty() {
+        net_shared_vm::write(&mut shared.borrow_mut().tcp, socket, &bytes)
+            .map_err(RootedError::host)?;
+    }
+    if let Some(callback) = args.get(2).copied() {
+        if context.is_callable_rooted(callback)? {
+            crate::modules::process_shared_vm::next_tick(context, receiver, &[callback])?;
+        }
+    }
+    Ok(context.boolean(true))
+}
+
+// Public sendDate is consulted when headers are serialized, not after a response
+// has already committed them. Header removal can independently suppress it.
+fn response_send_date(
+    context: &mut Context<'_>,
+    id: u64,
+    response: Option<RootId>,
+) -> Result<(), RootedError> {
+    let shared = context.host_mut().shared_state();
+    let open = shared
+        .borrow()
+        .http
+        .responses
+        .get(&id)
+        .is_some_and(|response| response.lifecycle == super::state::ResponseLifecycle::Open);
+    if open {
+        if let Some(response) = response {
+            let key = context.string_rooted("sendDate");
+            let value = context.get_property_rooted(response, key)?;
+            let enabled = context.truthy_rooted(value)?;
+            if !enabled {
+                if let Some(response) = shared.borrow_mut().http.responses.get_mut(&id) {
+                    response.send_date = false;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn response_write(
     context: &mut Context<'_>,
     _: RootId,
@@ -843,6 +977,7 @@ pub(crate) fn response_write(
         response.body.push(chunk, false);
         return Ok(context.boolean(true));
     }
+    response_send_date(context, id, args.get(5).copied())?;
     let status = args
         .get(3)
         .and_then(|root| context.rooted_value(*root))
@@ -877,7 +1012,10 @@ pub(crate) fn response_write(
         }
         let first_write = response.lifecycle == super::state::ResponseLifecycle::Open;
         let bytes = if first_write {
-            enable_streaming_framing(&mut response.headers);
+            enable_streaming_framing(
+                &mut response.headers,
+                response.use_chunked_encoding_by_default,
+            );
             response.lifecycle.send_headers();
             crate::modules::http_protocol::compose(
                 status,
@@ -885,8 +1023,8 @@ pub(crate) fn response_write(
                 &response.headers,
                 &chunk,
                 &[],
-                true,
-                false,
+                !response.http10,
+                response.http10,
                 response.send_date,
             )
         } else if is_chunked(&response.headers) {
@@ -960,6 +1098,7 @@ pub(crate) fn response_write_head(
     let entry_root = argument(context, args.get(3).copied());
     let entries = write_head_entries(context, entry_root)?;
 
+    response_send_date(context, id, args.get(5).copied())?;
     let state = context.host_mut().shared_state();
     let (socket, bytes) = {
         let mut host = state.borrow_mut();
@@ -977,7 +1116,10 @@ pub(crate) fn response_write_head(
                 .headers
                 .extend(values.into_iter().map(|value| (name.clone(), value)));
         }
-        enable_streaming_framing(&mut response.headers);
+        enable_streaming_framing(
+            &mut response.headers,
+            response.use_chunked_encoding_by_default,
+        );
         response.lifecycle.send_headers();
         let bytes = crate::modules::http_protocol::compose(
             status,
@@ -985,8 +1127,8 @@ pub(crate) fn response_write_head(
             &response.headers,
             &[],
             &[],
-            true,
-            false,
+            !response.http10,
+            response.http10,
             response.send_date,
         );
         (response.socket, bytes)
@@ -1006,6 +1148,7 @@ pub(crate) fn response_finish(
     args: &[RootId],
 ) -> Result<RootId, RootedError> {
     let id = argument_id(context, args.first().copied())?;
+    response_send_date(context, id, args.get(4).copied())?;
     let status = args
         .get(1)
         .and_then(|root| context.rooted_value(*root))
@@ -1043,6 +1186,7 @@ pub(crate) fn response_finish(
                 response.body.bytes(),
                 is_chunked(&response.headers),
                 response.send_date,
+                response.http10,
             ))
         }
     };
@@ -1056,13 +1200,19 @@ pub(crate) fn response_finish(
         body,
         chunked,
         send_date,
+        http10,
     )) = response
     else {
         return Ok(context.undefined());
     };
-    let close_after_response = headers
-        .iter()
-        .any(|(name, value)| name.eq_ignore_ascii_case("connection") && value == "close");
+    let close_after_response = (http10
+        && !chunked
+        && !headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("content-length")))
+        || headers.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case("connection") && value.eq_ignore_ascii_case("close")
+        });
     let bytes = if headers_sent {
         if chunked {
             let mut framed = crate::modules::http_protocol::chunk_frame(&body);
@@ -1079,8 +1229,8 @@ pub(crate) fn response_finish(
             &headers,
             &body,
             &[],
-            true,
-            false,
+            !http10,
+            http10,
             send_date,
         );
         if chunked {
@@ -1088,15 +1238,14 @@ pub(crate) fn response_finish(
         }
         framed
     };
-    if bytes.is_empty() {
-        return Ok(context.undefined());
+    if !bytes.is_empty() {
+        net_shared_vm::write(
+            &mut context.host_mut().shared_state().borrow_mut().tcp,
+            socket,
+            &bytes,
+        )
+        .map_err(RootedError::host)?;
     }
-    net_shared_vm::write(
-        &mut context.host_mut().shared_state().borrow_mut().tcp,
-        socket,
-        &bytes,
-    )
-    .map_err(RootedError::host)?;
     if close_after_response {
         net_shared_vm::end(
             &mut context.host_mut().shared_state().borrow_mut().tcp,
@@ -1183,14 +1332,17 @@ pub(crate) fn response_destroy(
     Ok(context.undefined())
 }
 
-fn enable_streaming_framing(headers: &mut Vec<(String, String)>) {
+fn enable_streaming_framing(
+    headers: &mut Vec<(String, String)>,
+    use_chunked_encoding_by_default: bool,
+) {
     let has_length = headers
         .iter()
         .any(|(name, _)| name.eq_ignore_ascii_case("content-length"));
     let has_transfer_encoding = headers
         .iter()
         .any(|(name, _)| name.eq_ignore_ascii_case("transfer-encoding"));
-    if !has_length && !has_transfer_encoding {
+    if use_chunked_encoding_by_default && !has_length && !has_transfer_encoding {
         headers.push(("Transfer-Encoding".to_owned(), "chunked".to_owned()));
     }
 }
