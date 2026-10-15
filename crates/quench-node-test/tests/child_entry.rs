@@ -1480,7 +1480,7 @@ next();
     compare_node_stream_source(source);
 }
 
-fn compare_node_stream_source(source: &str) {
+fn compare_node_stream_source(source: &str) -> [quench_node_test::case_process::CaseObservation; 2] {
     let observations = ["node", env!("CARGO_BIN_EXE_run-parallel")].map(|executable| {
         let mut command = Command::new(executable);
         command.args(["-e", source]);
@@ -1504,6 +1504,7 @@ fn compare_node_stream_source(source: &str) {
         );
     }
     assert_eq!(observations[0].stdout, observations[1].stdout);
+    observations
 }
 
 #[test]
@@ -7767,4 +7768,42 @@ console.log(JSON.stringify({complete:true,out}));
         assert_eq!(value["complete"], true);
     }
     assert_eq!(String::from_utf8_lossy(&observations[0].stdout), String::from_utf8_lossy(&observations[1].stdout));
+}
+
+#[test]
+fn stream_callable_duplex_transform_and_passthrough_initialize_supplied_receivers() {
+    let observations = compare_node_stream_source(r#"
+const stream=require('node:stream');
+(async()=>{
+const out=[];
+for(const name of ['Duplex','Transform','PassThrough']){
+ const C=stream[name];const parent=stream[name==='Duplex'?'Readable':name==='Transform'?'Duplex':'Transform'];
+ function Derived() {this.returned=C.call(this,{read(){},write(c,e,cb){cb()},transform(c,e,cb){cb(null,c)}})}
+ Object.setPrototypeOf(Derived.prototype,C.prototype);
+ const d=new Derived();out.push([name,d instanceof C,!!d._readableState,!!d._writableState,d.returned===undefined,d.allowHalfOpen]);
+ const plain=C({read(){},write(c,e,cb){cb()}});out.push(['factory',name,plain instanceof C]);
+ class Child extends C {constructor(){super({read(){},write(c,e,cb){cb()}});this.marker=42}}
+ const child=new Child();out.push(['subclass',name,child instanceof Child,child instanceof C,child.marker]);
+ const target=Object.create(C.prototype);out.push(['call',name,C.call(target,{read(){},write(c,e,cb){cb()}})===undefined,!!target._readableState,!!target._writableState]);
+ const closed=new C({readable:false,writable:false,allowHalfOpen:false});out.push(['disabled',name,closed.readableEnded,closed.writableFinished,closed.allowHalfOpen]);
+ out.push(['metadata',name,C.name,C.length,Object.getPrototypeOf(C)===parent,C.prototype.constructor===C,Object.getOwnPropertyDescriptor(C,'prototype').writable]);
+}
+async function collect(value,input){const values=[];value.on('data',c=>values.push(c.toString()));const done=new Promise((resolve,reject)=>{value.on('error',reject);value.on('end',resolve)});value.end(input);await done;return values.join('')}
+let transformed;let constructions=0;
+function Upper(){stream.Transform.call(this,{construct(cb){constructions++;cb()},transform(c,e,cb){out.push(['transform receiver',this===transformed]);cb(null,c.toString().toUpperCase())},flush(cb){out.push(['flush receiver',this===transformed]);cb(null,'!')}})}
+Object.setPrototypeOf(Upper.prototype,stream.Transform.prototype);transformed=new Upper();
+out.push(['output',await collect(transformed,'hello'),constructions]);
+function Through(){stream.PassThrough.call(this)}Object.setPrototypeOf(Through.prototype,stream.PassThrough.prototype);
+out.push(['passthrough',await collect(new Through(),'data')]);
+out.push(['custom pass',await collect(new stream.PassThrough({transform(c,e,cb){cb(null,'custom')}}),'data')]);
+const chunk=Buffer.from('direct');let direct;
+stream.PassThrough.prototype._transform.call({push(){throw Error('unexpected push')}},chunk,'buffer',(error,value)=>{direct=[error===null,value===chunk]});
+out.push(['direct',direct,stream.PassThrough.prototype._transform.name,Object.hasOwn(stream.PassThrough.prototype._transform,'prototype')]);
+console.log(JSON.stringify({complete:true,out}));
+})().catch(e=>{console.error(e.stack);process.exitCode=1});
+"#);
+    for observation in observations {
+        let result: serde_json::Value = serde_json::from_slice(&observation.stdout).unwrap();
+        assert_eq!(result["complete"], true);
+    }
 }
