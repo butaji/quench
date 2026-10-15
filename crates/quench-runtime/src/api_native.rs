@@ -246,6 +246,13 @@ impl<'a, H: Host> NativeContext<'a, H> {
         result.map_err(|error| self.error(error))
     }
 
+    /// Apply shared InstanceofOperator, including original @@hasInstance hooks
+    /// and proxy prototype effects.
+    pub fn instance_of_rooted(&mut self, value: RootId, constructor: RootId) -> Result<bool, RootedError> {
+        let result = self.vm.embedding_instanceof(value, constructor);
+        result.map_err(|error| self.error(error))
+    }
+
     /// Apply IsArray, including proxy target and revocation semantics.
     pub fn is_array_rooted(&mut self, root: RootId) -> Result<bool, RootedError> {
         let result = self.vm.embedding_is_array(root);

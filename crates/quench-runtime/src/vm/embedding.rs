@@ -298,6 +298,13 @@ impl<H: Host> Vm<H> {
         Ok(self.strict_equal(self.embedding_value(left)?, self.embedding_value(right)?))
     }
 
+    pub(crate) fn embedding_instanceof(&mut self, value: RootId, constructor: RootId) -> Result<bool, JsError> {
+        let value = self.embedding_value(value)?;
+        let constructor = self.embedding_value(constructor)?;
+        let program = self.embedding_program()?;
+        self.instanceof(&program, value, constructor)
+    }
+
     pub(crate) fn embedding_builtin_data(
         &self,
         root: RootId,
