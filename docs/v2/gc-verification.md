@@ -27,6 +27,9 @@ budget. Measure this gap separately from the cost of marking the live heap.
 1. Sync `v2-gc` with `origin/v2-merged`. Record the exact baseline, toolchain,
    profile, target, CPU quota, marker count, linker and link-order inputs.
    Preserve baseline and candidate executables separately and hash both.
+   If code placement contributes to an RSS result, requalify each build with
+   the same allowed, disjoint link-order training corpus; keep that experiment
+   separate from a comparison holding existing order files fixed.
 2. Write one hypothesis and its decision rule in the existing Linear experiment
    catalog before changing code. Identify the phase it can improve and the
    component it removes from the memory peak. Profile builds locate costs;
