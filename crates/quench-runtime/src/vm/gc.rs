@@ -96,6 +96,8 @@ impl ParallelShapeTrace<'_> {
         shapes
     }
 
+    // Called once per marked object, so its frame setup would rival its body.
+    #[inline(always)]
     fn append(&self, trace_kind: GcTraceKind, owner: Value, shape: u32, roots: &mut Vec<Value>) {
         let shape_index = shape as usize;
         debug_assert!(shape_index < self.shape_count);
