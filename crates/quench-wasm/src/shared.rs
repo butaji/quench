@@ -90,6 +90,7 @@ impl Module {
         let mut elements = Vec::new();
         let mut start = None;
         let mut tags = Vec::new();
+        let mut exports = Vec::new();
         for payload in Parser::new(0).parse_all(self.bytes()) {
             match payload.map_err(parse_error)? {
                 Payload::Version {
@@ -182,6 +183,11 @@ impl Module {
                         if Some(item.name) == export && item.kind == ExternalKind::Func {
                             selected = Some(item.index);
                         }
+                        exports.push(quench_runtime::WasmExport {
+                            name: item.name.to_owned(),
+                            kind: item.kind,
+                            index: item.index,
+                        });
                     }
                 }
                 Payload::GlobalSection(reader) => decode_globals(reader, &mut globals, &types)?,
@@ -303,6 +309,7 @@ impl Module {
             Some(index) => module.with_start(index),
             None => Ok(module),
         })
+        .map(|module| module.with_exports(exports))
         .map(|module| (module, selected))
         .map_err(|error| Error::Unsupported(error.to_string()))
     }

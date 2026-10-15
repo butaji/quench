@@ -598,7 +598,16 @@ const NATIVES: &[Native] = &[
     Native::PromiseAggregateJob,
     Native::PromiseAsyncResumeJob, Native::DynamicImport, Native::AsyncFromSyncValue,
     Native::AsyncFromSyncValueRejected, Native::AsyncGeneratorDelegateFulfilled,
-    Native::AsyncGeneratorDelegateRejected, ];
+    Native::AsyncGeneratorDelegateRejected,
+    Native::WebAssemblyValidate, Native::WebAssemblyCompile, Native::WebAssemblyInstantiate,
+    Native::WasmModule, Native::WasmModuleExports, Native::WasmModuleImports,
+    Native::WasmInstance, Native::WasmInstanceExportsGetter,
+    Native::WasmMemory, Native::WasmMemoryGrow, Native::WasmMemoryBufferGetter,
+    Native::WasmTable, Native::WasmTableLengthGetter, Native::WasmTableGrow, Native::WasmTableGet,
+    Native::WasmTableSet,
+    Native::WasmGlobal, Native::WasmGlobalValueGetter, Native::WasmGlobalValueSetter,
+    Native::WasmGlobalValueOf,
+    Native::WasmCompileError, Native::WasmLinkError, Native::WasmRuntimeError, ];
 /// How much of a realm a VM installs when it initializes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RealmScope {
@@ -874,6 +883,7 @@ impl<H: Host> Vm<H> {
         self.install_reflect(program)?;
         self.install_math(program)?;
         self.install_promise(program)?;
+        self.install_webassembly(program)?;
         #[cfg(feature = "profile-memory")]
         self.report_memory_if_enabled("runtime_builtins_before_temporal");
         // `Temporal` is about as large as every other builtin together and few programs use

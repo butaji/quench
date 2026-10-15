@@ -592,7 +592,55 @@ pub(crate) enum Native {
     PromiseAsyncResumeJob, AsyncFromSyncValue, AsyncFromSyncValueRejected, AsyncGeneratorDelegateFulfilled, AsyncGeneratorDelegateRejected,
     WithEnter, WithExit,
     WasmHost,
+    WebAssemblyValidate, WebAssemblyCompile, WebAssemblyInstantiate,
+    WasmModule, WasmModuleExports, WasmModuleImports,
+    WasmInstance, WasmInstanceExportsGetter,
+    WasmMemory, WasmMemoryGrow, WasmMemoryBufferGetter,
+    WasmTable, WasmTableLengthGetter, WasmTableGrow, WasmTableGet, WasmTableSet,
+    WasmGlobal, WasmGlobalValueGetter, WasmGlobalValueSetter, WasmGlobalValueOf,
+    WasmCompileError, WasmLinkError, WasmRuntimeError,
+    /// A Wasm function as JavaScript sees it; its environment is the Wasm closure.
+    WasmExportedFunction,
     HostFunction,
+}
+
+/// A global's cold facts, boxed with its object part so the cell stays compact.
+#[derive(Clone, Debug)]
+pub(crate) struct WasmGlobalHeader {
+    pub(crate) object: Object,
+    pub(crate) declarations: crate::WasmTypes,
+}
+
+/// A memory's cold facts, boxed with its object part so the cell stays compact.
+#[derive(Clone, Debug)]
+pub(crate) struct WasmMemoryHeader {
+    pub(crate) object: Object,
+    pub(crate) ty: wasmparser::MemoryType,
+}
+
+/// The internal slot of a `Cell::WasmObject`.
+#[derive(Clone)]
+pub(crate) enum WasmObjectSlot {
+    Module(Box<crate::WasmModule>),
+    /// The frozen exports object of an instance; its bindings stay alive through it.
+    Instance { exports: Value },
+}
+
+impl std::fmt::Debug for WasmObjectSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Module(_) => f.write_str("Module"),
+            Self::Instance { exports } => f.debug_struct("Instance").field("exports", exports).finish(),
+        }
+    }
+}
+
+/// What a Wasm host function runs: an embedder operation, or a JavaScript callable
+/// imported through the `WebAssembly` namespace.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum WasmHostTarget {
+    Host(crate::WasmHostFunctionId),
+    Js(Value),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypedArrayKind {
@@ -681,6 +729,9 @@ impl Native {
                 | Self::TypeError
                 | Self::URIError
                 | Self::RealmTypeError
+                | Self::WasmCompileError
+                | Self::WasmLinkError
+                | Self::WasmRuntimeError
         )
     }
 
@@ -1930,7 +1981,7 @@ pub(crate) enum Cell {
     },
     ArrayBuffer {
         object: Box<Object>,
-        bytes: Rc<Vec<u8>>,
+        bytes: super::BufferBytes,
         shared: bool,
         detached: bool,
         max_byte_length: usize,
@@ -2026,16 +2077,23 @@ pub(crate) enum Cell {
     WasmGc { declarations: Box<crate::WasmTypes>, ty: u32, fields: Box<WasmGcFields> },
     /// The native callable's immutable host operation and structural signature.
     WasmHostFunction {
-        id: crate::WasmHostFunctionId,
+        target: WasmHostTarget,
         signature: Rc<crate::WasmSignature>,
     },
     /// Immutable references available until an element segment drops.
     WasmElements(Vec<Value>),
-    /// One memory identity owns its bytes and original optional maximum.
-    WasmGlobal { value: Value, ty: crate::WasmType, declarations: Box<crate::WasmTypes>, mutable: bool },
-    WasmMemory { bytes: std::rc::Rc<crate::wasm::memory::MemoryStorage>, ty: Box<wasmparser::MemoryType> },
+    /// A `WebAssembly.Module` or `WebAssembly.Instance`.
+    WasmObject { object: Box<Object>, slot: WasmObjectSlot },
+    /// A global, memory or table is also its `WebAssembly.Global`, `.Memory` or `.Table`
+    /// object, so every export of it is the same JavaScript object.
+    WasmGlobal { header: Box<WasmGlobalHeader>, value: Value, ty: crate::WasmType, mutable: bool },
+    /// One memory identity owns its bytes and original optional maximum. `buffer` is the
+    /// ArrayBuffer currently viewing the bytes, or undefined until one is requested; growth
+    /// detaches it.
+    WasmMemory { header: Box<WasmMemoryHeader>, bytes: std::rc::Rc<crate::wasm::memory::MemoryStorage>, buffer: Value },
     /// Typed references owned by a Wasm instance, traced like other heap edges.
     WasmTable {
+        object: Box<Object>,
         table64: bool,
         elements: Box<WasmTableElements>,
         element_type: wasmparser::RefType,
