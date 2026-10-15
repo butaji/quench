@@ -7,9 +7,9 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 mod access;
+mod buffer_bytes;
 mod cell;
 mod cell_access;
-mod buffer_bytes;
 mod collection_entries;
 mod external;
 #[cfg(feature = "profile-memory")]
@@ -19,8 +19,8 @@ mod root;
 mod slots;
 mod thin_slice;
 mod weak;
-pub(crate) use cell::*;
 pub(crate) use buffer_bytes::BufferBytes;
+pub(crate) use cell::*;
 pub(crate) use collection_entries::CollectionEntries;
 use records::{ArrayRecordSpace, ObjectRecordSpace, RecordSweep};
 pub use root::RootId;
@@ -2328,7 +2328,11 @@ impl Heap {
                 object(value);
                 work.extend([*env, value.realm]);
             }
-            Cell::WasmGlobal { header, value: global, .. } => {
+            Cell::WasmGlobal {
+                header,
+                value: global,
+                ..
+            } => {
                 object(&header.object);
                 work.push(*global);
             }
@@ -2355,7 +2359,11 @@ impl Heap {
                 work.extend(with_objects.iter().copied());
             }
             Cell::WasmElements(elements) => work.extend(elements.iter().copied()),
-            Cell::WasmTable { object: value, elements, .. } => {
+            Cell::WasmTable {
+                object: value,
+                elements,
+                ..
+            } => {
                 object(value);
                 work.extend(elements.iter().copied());
             }
@@ -2392,7 +2400,10 @@ impl Heap {
                 target: crate::heap::WasmHostTarget::Js(target),
                 ..
             } => work.push(*target),
-            Cell::WasmObject { object: value, slot } => {
+            Cell::WasmObject {
+                object: value,
+                slot,
+            } => {
                 object(value);
                 if let crate::heap::WasmObjectSlot::Instance { exports } = slot {
                     work.push(*exports);
@@ -2443,6 +2454,7 @@ impl Heap {
             | Cell::DataView { .. }
             | Cell::ShadowRealm { .. }
             | Cell::Proxy { .. }
+            | Cell::WasmObject { .. }
             | Cell::PromiseResolvingState { .. } => CellKind::Object,
             Cell::Array { .. } => CellKind::Array,
             Cell::Map { .. } => CellKind::Map,
@@ -2502,6 +2514,7 @@ impl Heap {
                 | Cell::WeakRef { .. }
                 | Cell::FinalizationRegistry { .. }
                 | Cell::WasmGlobal { .. }
+                | Cell::WasmObject { .. }
                 | Cell::WasmBits64(_)
                 | Cell::WasmV128(_)
                 | Cell::WasmExtern(_)
