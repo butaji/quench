@@ -7944,3 +7944,33 @@ Promise.all([callback,promise]).then(results=>{out.push(...results);console.log(
 "#,
     );
 }
+
+#[test]
+fn canonical_string_decoder_preserves_native_boundaries_and_live_state_views() {
+    compare_node_stream_source(include_str!("../node-tests/test-string-decoder-native-state.js"));
+}
+
+#[test]
+fn internal_fast_buffer_shares_public_buffer_identity_and_backing() {
+    compare_node_source_with_args(r#"
+const {FastBuffer}=require('internal/buffer'),stream=require('stream');
+const original=Buffer.from([1,2,3,4]),view=new FastBuffer(original.buffer,original.byteOffset,original.byteLength);
+console.log(FastBuffer===Buffer[Symbol.species],FastBuffer.prototype===Buffer.prototype,view instanceof Buffer,view.constructor===Buffer,FastBuffer.name,FastBuffer.length);
+view[1]=9;console.log(original.toString('hex'),view.readUInt16BE(0));
+const raw=new Uint8Array([65,66]),converted=stream._uint8ArrayToBuffer(raw);
+console.log(converted instanceof Buffer,Object.getPrototypeOf(converted)===Buffer.prototype,converted.toString(),converted.buffer===raw.buffer);converted[0]=67;console.log(raw[0]);
+"#, &["--no-warnings","--expose-internals"]);
+}
+
+#[test]
+fn socket_end_counts_final_queued_bytes_and_finishes_without_a_transport() {
+    compare_node_stream_source(r#"
+const net=require('net'),events=[];const fresh=new net.Socket();fresh.end(()=>events.push(['fresh',fresh.writable]));
+const server=net.createServer(socket=>{let body='';socket.setEncoding('utf8');socket.on('data',chunk=>body+=chunk);socket.on('end',()=>{events.push(['received',body]);socket.end()})});
+server.listen(0,'127.0.0.1',()=>{
+ const socket=new net.Socket({highWaterMark:0});socket.connect(server.address().port,'127.0.0.1');socket.cork();
+ socket.write('hé',()=>events.push(['write',socket.bytesWritten]));socket.end('😀',()=>events.push(['finish',socket.bytesWritten,socket.writable]));events.push(['queued',socket.bytesWritten]);
+ socket.on('close',()=>server.close(()=>console.log(JSON.stringify(events))));
+});
+"#);
+}
