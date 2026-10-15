@@ -362,6 +362,7 @@ pub(crate) fn internal_binding(
     match name.as_str() {
         "types" => return super::util_shared_vm::types_binding(context),
         "util" => return super::util_shared_vm::key_binding(context),
+        "string_decoder" => return super::string_decoder_shared_vm::binding(context),
         "encoding_binding" => return super::encoding_binding_shared_vm::binding(context),
         "symbols" => return super::util_shared_vm::symbols_binding(context),
         "http2" => return crate::host::shared_vm::commonjs::http2_binding(context),
