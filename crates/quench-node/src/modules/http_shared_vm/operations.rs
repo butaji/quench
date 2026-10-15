@@ -1,4 +1,5 @@
 use crate::host::NodeHost;
+use crate::modules::event_constructor_shared_vm::get;
 use crate::modules::net_shared_vm;
 use quench_runtime::{NativeArithmetic, NativeContext, RootId, RootedError, Value};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
@@ -55,8 +56,8 @@ const MODULE_FACTORY: &str = r#"((initializeServer, EventEmitter, request, creat
       return destroyAgent(this._quenchSharedAgentId);
     }
   }
-  const get = (options, callback) => {
-    const outgoing = request(options, callback);
+  const get = (input, options, callback) => {
+    const outgoing = request(input, options, callback);
     outgoing.end();
     return outgoing;
   };
@@ -104,8 +105,9 @@ const RESPONSE_FACTORY: &str = r#"((Writable, setHeaderOperation, getHeaderOpera
     response.statusCode = statusCode;
     const writeStream = response.write.bind(response);
     response.write = (chunk, encoding, callback) => {
+      const ended = response.writableEnded;
       const result = writeStream(chunk, encoding, callback);
-      write(id, chunk, !ending, response.statusCode, response.statusMessage, response, typeof encoding === "string" ? encoding : undefined);
+      if (!ended) write(id, chunk, !ending, response.statusCode, response.statusMessage, response, typeof encoding === "string" ? encoding : undefined);
       response.headersSent = true;
       return result;
     };
@@ -304,6 +306,13 @@ pub(crate) fn module(context: &mut Context<'_>) -> Result<RootId, RootedError> {
         ],
     )?;
     set(context, module, "STATUS_CODES", status_codes)?;
+    let net = crate::host::shared_vm::commonjs::net_module(context)?;
+    let net_server = get(context, net, "Server")?;
+    let server = get(context, module, "Server")?;
+    let net_prototype = get(context, net_server, "prototype")?;
+    let server_prototype = get(context, server, "prototype")?;
+    context.set_prototype_rooted(server, net_server)?;
+    context.set_prototype_rooted(server_prototype, net_prototype)?;
     let key = context.string_rooted("Agent");
     let agent = context.get_property_rooted(module, key)?;
     let key = context.string_rooted("prototype");
@@ -406,6 +415,9 @@ pub(crate) fn create_server(
     }
     let listening = context.boolean(false);
     set(context, server, "listening", listening)?;
+    set(context, server, "_unref", listening)?;
+    let handle = context.null();
+    set(context, server, "_handle", handle)?;
     let retained = context.retain(server)?;
     context
         .host_mut()
@@ -452,6 +464,8 @@ pub(crate) fn server_listen(
         server.listener = Some(listener);
         server.listening_pending = true;
     }
+    let listener = host.borrow().http.servers[&id].listener.unwrap();
+    crate::modules::net_reference_shared_vm::install(context, listener, receiver)?;
     let callback = if first_is_callback {
         first
     } else if let Some(second) = args.get(1).copied() {
@@ -1084,6 +1098,10 @@ pub(crate) fn response_write(
                 &mut response.headers,
                 response.use_chunked_encoding_by_default,
             );
+            if invalid_trailer(&response.headers) {
+                drop(host);
+                return throw_invalid_trailer(context);
+            }
             response.lifecycle.send_headers();
             crate::modules::http_protocol::compose(
                 status,
@@ -1182,6 +1200,10 @@ pub(crate) fn response_write_head(
             &mut response.headers,
             response.use_chunked_encoding_by_default,
         );
+        if invalid_trailer(&response.headers) {
+            drop(host);
+            return throw_invalid_trailer(context);
+        }
         response.lifecycle.send_headers();
         let bytes = crate::modules::http_protocol::compose(
             status,
@@ -1229,6 +1251,21 @@ pub(crate) fn response_finish(
             return Ok(context.undefined());
         };
         let headers_sent = response.lifecycle == super::state::ResponseLifecycle::HeadersSent;
+        if !headers_sent
+            && response
+                .headers
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("trailer"))
+        {
+            enable_streaming_framing(
+                &mut response.headers,
+                response.use_chunked_encoding_by_default,
+            );
+            if invalid_trailer(&response.headers) {
+                drop(host);
+                return throw_invalid_trailer(context);
+            }
+        }
         if !response.lifecycle.end() {
             None
         } else {
@@ -1408,6 +1445,22 @@ fn is_chunked(headers: &[(String, String)]) -> bool {
     headers.iter().any(|(name, value)| {
         name.eq_ignore_ascii_case("transfer-encoding") && value.eq_ignore_ascii_case("chunked")
     })
+}
+
+fn invalid_trailer(headers: &[(String, String)]) -> bool {
+    headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("trailer"))
+        && !is_chunked(headers)
+}
+
+fn throw_invalid_trailer<T>(context: &mut Context<'_>) -> Result<T, RootedError> {
+    throw_response_error(
+        context,
+        false,
+        "ERR_HTTP_TRAILER_INVALID",
+        "Trailers are invalid with this transfer encoding",
+    )
 }
 
 fn function_data_id(context: &mut Context<'_>) -> Result<u64, RootedError> {
